@@ -1,6 +1,7 @@
 #include "editor/PluginDecorationStore.h"
 
 #include "editor/PathKey.h"
+#include "util/PathMatch.h"
 
 #include <algorithm>
 #include <system_error>
@@ -10,25 +11,7 @@ namespace microide::editor {
 
 namespace {
 
-bool PathEqualsOrWithin(const std::filesystem::path& candidate,
-                        const std::filesystem::path& root) {
-  const std::filesystem::path normalized_candidate = candidate.lexically_normal();
-  const std::filesystem::path normalized_root = root.lexically_normal();
-  if (normalized_candidate.empty() || normalized_root.empty()) {
-    return false;
-  }
-  if (normalized_candidate == normalized_root) {
-    return true;
-  }
-  std::error_code error;
-  const std::filesystem::path relative =
-      std::filesystem::relative(normalized_candidate, normalized_root, error);
-  if (error || relative.empty()) {
-    return false;
-  }
-  const std::string relative_text = relative.generic_string();
-  return relative_text != "." && relative_text != ".." && relative_text.rfind("../", 0) != 0;
-}
+using util::PathEqualsOrWithin;
 
 std::filesystem::path ReplacePathPrefix(const std::filesystem::path& path,
                                         const std::filesystem::path& old_prefix,

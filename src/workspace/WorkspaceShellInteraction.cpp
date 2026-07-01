@@ -10,6 +10,7 @@
 
 #include "editor/FoldingModel.h"
 #include "editor/TextViewport.h"
+#include "util/StringUtil.h"
 
 namespace microide::workspace {
 
@@ -22,18 +23,6 @@ bool IsBlankOrWhitespace(std::string_view text) {
     }
   }
   return true;
-}
-
-std::string TrimmedLine(std::string_view text) {
-  std::size_t begin = 0;
-  std::size_t end = text.size();
-  while (begin < end && std::isspace(static_cast<unsigned char>(text[begin])) != 0) {
-    ++begin;
-  }
-  while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) {
-    --end;
-  }
-  return std::string(text.substr(begin, end - begin));
 }
 
 std::string JoinLineRange(const std::vector<std::string>& lines,
@@ -314,7 +303,8 @@ std::optional<std::string> WorkspaceShell::SelectionTextWithContext() {
         folding_model->InnermostFoldContaining(start_line);
     if (enclosing.has_value() && enclosing->opener_line < start_line &&
         enclosing->opener_line < viewport->lines().size()) {
-      const std::string opener = TrimmedLine(viewport->lines()[enclosing->opener_line]);
+      const std::string opener =
+          util::TrimAsciiWhitespace(viewport->lines()[enclosing->opener_line]);
       if (!opener.empty()) {
         result += "// context: ";
         result += opener;

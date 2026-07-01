@@ -414,6 +414,21 @@ struct ProjectWorkspaceState {
   PanelState panel;
   std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
   std::size_t active_terminal_tab_index = 0;
+
+  // Bounds-checked active terminal tab, or nullptr when there are none / the
+  // stored index is stale. Mirrors clamped_focused_group_index()'s clamp-on-read
+  // discipline so callers never index terminal_tabs by a possibly-stale index
+  // after only an emptiness check.
+  TerminalTabState* active_terminal_tab() {
+    return active_terminal_tab_index < terminal_tabs.size()
+               ? terminal_tabs[active_terminal_tab_index].get()
+               : nullptr;
+  }
+  const TerminalTabState* active_terminal_tab() const {
+    return active_terminal_tab_index < terminal_tabs.size()
+               ? terminal_tabs[active_terminal_tab_index].get()
+               : nullptr;
+  }
   editor::DiagnosticsStore diagnostics_store;
   // Plugin/LSP-published editor presentation: decorations (inline text styles,
   // gutter marks, inline/virtual text, code lenses) keyed by owner+path, and

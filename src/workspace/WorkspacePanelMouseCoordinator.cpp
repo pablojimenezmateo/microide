@@ -8,48 +8,14 @@
 #include <utility>
 #include <vector>
 
-#include "util/Parse.h"
 #include "workspace/TerminalPanelService.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
+#include "workspace/WorkspaceOutputReference.h"
 
 namespace microide::workspace {
 
 namespace {
-
-struct OutputLocation {
-  std::filesystem::path path;
-  std::size_t line = 0;
-  std::size_t column = 0;
-};
-
-std::optional<OutputLocation> ParseOutputLocationLine(std::string_view text) {
-  const std::size_t column_delimiter = text.rfind(':');
-  if (column_delimiter == std::string_view::npos || column_delimiter == 0) {
-    return std::nullopt;
-  }
-  const std::size_t line_delimiter = text.rfind(':', column_delimiter - 1);
-  if (line_delimiter == std::string_view::npos || line_delimiter == 0) {
-    return std::nullopt;
-  }
-
-  const std::string_view path_text = text.substr(0, line_delimiter);
-  const std::string_view line_text =
-      text.substr(line_delimiter + 1, column_delimiter - line_delimiter - 1);
-  const std::string_view column_text = text.substr(column_delimiter + 1);
-
-  const auto line = util::ParseSize(line_text);
-  const auto column = util::ParseSize(column_text);
-  if (path_text.empty() || !line.has_value() || !column.has_value() || *line == 0) {
-    return std::nullopt;
-  }
-
-  return OutputLocation{
-      .path = std::filesystem::path(path_text),
-      .line = *line,
-      .column = *column,
-  };
-}
 
 std::optional<std::size_t> BottomPanelLineIndexAtPoint(
     const WorkspaceShell::LogSurfaceLayout& panel_layout,
@@ -130,8 +96,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         Contains(panel_content, event.button.x, event.button.y)) {
       if (const auto text = operations_.read_primary_selection_text(); text.has_value()) {
         operations_.clear_terminal_selection();
-        if (!state_.terminal_tabs.empty()) {
-          auto* terminal_tab = state_.terminal_tabs[state_.active_terminal_tab_index].get();
+        if (auto* terminal_tab = state_.active_terminal_tab()) {
           terminal_tab->follow_tail = true;
           operations_.append_terminal_pending_input(*text);
           terminal_tab->session.PasteText(*text);
@@ -146,7 +111,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return false;
   }
 
-  if (state_.panel.content == PanelContentKind::Terminal && !state_.terminal_tabs.empty()) {
+  if (auto* terminal_tab = ActivePanelTerminalTab()) {
     const SDL_FRect panel_content = operations_.bottom_panel_content_rect(layout);
     if (Contains(panel_content, event.button.x, event.button.y)) {
       if (const auto url = operations_.terminal_url_at_point(static_cast<float>(event.button.x),
@@ -155,7 +120,6 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         state_.surface.focus = FocusTarget::Panel;
         return true;
       }
-      auto* terminal_tab = state_.terminal_tabs[state_.active_terminal_tab_index].get();
       const std::size_t line_count = terminal_tab->session.LineCount();
       const auto panel_layout = operations_.compute_bottom_panel_log_layout(layout, line_count);
       const std::size_t first_row =
@@ -189,7 +153,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
             BottomPanelLineIndexAtPoint(panel_layout, static_cast<float>(event.button.y),
                                         output_entries->size());
         if (line_index.has_value() && *line_index < output_entries->size()) {
-          const auto parsed = ParseOutputLocationLine((*output_entries)[*line_index]);
+          const auto parsed = ParseOutputReference((*output_entries)[*line_index]);
           if (parsed.has_value()) {
             std::filesystem::path path = parsed->path;
             if (path.is_relative() && !state_.root.empty()) {
@@ -230,8 +194,7 @@ bool PanelMouseCoordinator::HandleButtonUp(const SDL_Event& event) {
     return true;
   }
 
-  if (state_.panel.content == PanelContentKind::Terminal && !state_.terminal_tabs.empty()) {
-    auto* terminal_tab = state_.terminal_tabs[state_.active_terminal_tab_index].get();
+  if (auto* terminal_tab = ActivePanelTerminalTab()) {
     if (terminal_tab->mouse_selecting) {
       terminal_tab->mouse_selecting = false;
       operations_.sync_primary_selection_with_terminal_selection();
@@ -276,8 +239,7 @@ bool PanelMouseCoordinator::HandleDrag(const SDL_Event& event,
 }
 
 bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
-  if (state_.panel.content == PanelContentKind::Terminal && !state_.terminal_tabs.empty()) {
-    auto* terminal_tab = state_.terminal_tabs[state_.active_terminal_tab_index].get();
+  if (auto* terminal_tab = ActivePanelTerminalTab()) {
     const bool buttons_down =
         (event.motion.state & (SDL_BUTTON_LMASK | SDL_BUTTON_MMASK | SDL_BUTTON_RMASK)) != 0;
     if (terminal_tab->session.WantsMouseMotionCapture(buttons_down)) {
@@ -302,8 +264,7 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
     }
   }
 
-  if (state_.panel.content == PanelContentKind::Terminal && !state_.terminal_tabs.empty()) {
-    auto* terminal_tab = state_.terminal_tabs[state_.active_terminal_tab_index].get();
+  if (auto* terminal_tab = ActivePanelTerminalTab()) {
     if (terminal_tab->mouse_selecting && (event.motion.state & SDL_BUTTON_LMASK) != 0 &&
         operations_.bottom_panel_visible()) {
       const auto layout_state = operations_.current_workspace_layout();
@@ -337,8 +298,7 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
 bool PanelMouseCoordinator::HandleWheel(const SDL_Event& event,
                                         const WorkspaceLayout& layout,
                                         int vertical_ticks) {
-  if (state_.panel.content == PanelContentKind::Terminal && !state_.terminal_tabs.empty()) {
-    auto* terminal_tab = state_.terminal_tabs[state_.active_terminal_tab_index].get();
+  if (auto* terminal_tab = ActivePanelTerminalTab()) {
     if (terminal_tab->session.WantsMouseCapture()) {
       if (const auto viewport_position =
               operations_.terminal_viewport_position_for_point(event.wheel.mouse_x, event.wheel.mouse_y);
@@ -372,16 +332,21 @@ bool PanelMouseCoordinator::HandleWheel(const SDL_Event& event,
   return true;
 }
 
+TerminalTabState* PanelMouseCoordinator::ActivePanelTerminalTab() {
+  return state_.panel.content == PanelContentKind::Terminal ? state_.active_terminal_tab()
+                                                            : nullptr;
+}
+
 bool PanelMouseCoordinator::HandleMouseCaptureButton(const SDL_Event& event, bool pressed) {
-  if (state_.panel.content != PanelContentKind::Terminal || state_.terminal_tabs.empty()) {
+  auto* terminal_tab = ActivePanelTerminalTab();
+  if (terminal_tab == nullptr) {
     return false;
   }
 
-  auto* terminal_tab = state_.terminal_tabs[state_.active_terminal_tab_index].get();
   const auto viewport_position =
       operations_.terminal_viewport_position_for_point(event.button.x, event.button.y);
   const auto mouse_button = operations_.terminal_mouse_button_for_sdl(event.button.button);
-  if (terminal_tab == nullptr || !viewport_position.has_value() ||
+  if (!viewport_position.has_value() ||
       mouse_button == terminal::TerminalSession::MouseButton::None ||
       !terminal_tab->session.WantsMouseCapture()) {
     return false;

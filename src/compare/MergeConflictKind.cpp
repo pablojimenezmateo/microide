@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "util/StringUtil.h"
+
 namespace microide::compare {
 namespace {
 
@@ -9,17 +11,9 @@ bool ContentHasNulByte(std::string_view content) {
   return content.find('\0') != std::string_view::npos;
 }
 
-std::string NormalizeLineEndings(std::string_view content) {
-  std::string normalized;
-  normalized.reserve(content.size());
-  for (char ch : content) {
-    if (ch == '\r') {
-      continue;
-    }
-    normalized.push_back(ch);
-  }
-  return normalized;
-}
+// Strips all carriage returns (CRLF/CR -> LF); shared with the rest of the text
+// layer via util::NormalizeLineEndings.
+using util::NormalizeLineEndings;
 
 MergeFileConflictKind KindFromGitConflict(project::GitConflictKind git_kind,
                                           const project::GitRepositoryEntry* entry) {

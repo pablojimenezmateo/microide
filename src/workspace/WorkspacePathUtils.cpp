@@ -1,5 +1,7 @@
 #include "workspace/WorkspacePathUtils.h"
 
+#include "util/PathMatch.h"
+
 namespace microide::workspace {
 
 std::string RelativePathLabel(const std::filesystem::path& root,
@@ -22,21 +24,7 @@ std::string RelativePathLabel(const std::filesystem::path& root,
 
 bool PathEqualsOrWithin(const std::filesystem::path& candidate,
                         const std::filesystem::path& root) {
-  const std::filesystem::path normalized_candidate = candidate.lexically_normal();
-  const std::filesystem::path normalized_root = root.lexically_normal();
-  if (normalized_candidate.empty() || normalized_root.empty()) {
-    return false;
-  }
-  if (normalized_candidate == normalized_root) {
-    return true;
-  }
-
-  const std::filesystem::path relative = normalized_candidate.lexically_relative(normalized_root);
-  if (relative.empty()) {
-    return false;
-  }
-  const std::string relative_text = relative.generic_string();
-  return relative_text != "." && relative_text != ".." && relative_text.rfind("../", 0) != 0;
+  return util::PathEqualsOrWithin(candidate, root);
 }
 
 std::filesystem::path ReplacePathPrefix(const std::filesystem::path& path,

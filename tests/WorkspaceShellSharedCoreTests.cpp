@@ -413,6 +413,22 @@ void TestWorkspaceSharedPathMutationHelpers() {
   Expect(!PathEqualsOrWithin(std::filesystem::path("/tmp/other/file.cpp"), root),
          "path helper should reject unrelated paths");
 
+  // Lexical semantics (must not touch the filesystem or depend on cwd): empty
+  // inputs are never "within", `.`/`..` segments resolve without I/O, and a
+  // candidate that escapes the root via `..` is rejected. These guard the
+  // consolidation onto util::PathEqualsOrWithin, which replaced per-store copies
+  // that used std::filesystem::relative (a cwd-dependent syscall).
+  Expect(!PathEqualsOrWithin(std::filesystem::path{}, root),
+         "empty candidate should never be within a root");
+  Expect(!PathEqualsOrWithin(nested, std::filesystem::path{}),
+         "empty root should never contain a candidate");
+  Expect(PathEqualsOrWithin(root / "src/./main.cpp", root),
+         "unnormalized nested paths should still be detected");
+  Expect(!PathEqualsOrWithin(root / "../sibling/file.cpp", root),
+         "a candidate escaping the root via .. should be rejected");
+  Expect(PathEqualsOrWithin(std::filesystem::path("a/b/c.cpp"), std::filesystem::path("a/b")),
+         "relative (non-absolute) paths should resolve lexically without cwd");
+
   Expect(ReplacePathPrefix(nested, root / "src", root / "lib") ==
              std::filesystem::path("/tmp/project/lib/main.cpp"),
          "path prefix replacement should preserve the relative suffix");
