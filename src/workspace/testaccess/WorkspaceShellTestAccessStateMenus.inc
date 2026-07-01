@@ -26,6 +26,9 @@
     shell.context_.prompts.dirty.selected_action = selected_action;
     shell.ConfirmDirtyPrompt();
   }
+  static void ShowDirtyPromptForQuit(WorkspaceShell& shell) {
+    shell.ShowDirtyPromptForQuit();
+  }
   static bool StageAllGitSidebarEntries(WorkspaceShell& shell) {
     return shell.StageAllGitSidebarEntries();
   }

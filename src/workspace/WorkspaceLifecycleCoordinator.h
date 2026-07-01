@@ -26,7 +26,6 @@ class LifecycleCoordinator {
     std::function<void()> save_user_config;
     std::function<void()> stop_git_blame_service;
     std::function<void()> persist_active_project;
-    std::function<void()> persist_inactive_projects_for_shutdown;
     std::function<void()> save_workspace_session;
     std::function<void()> shutdown_project_search_runtime;
     std::function<void()> stop_control_channel;

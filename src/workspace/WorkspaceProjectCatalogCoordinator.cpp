@@ -125,31 +125,6 @@ void ProjectCatalogCoordinator::PersistActiveEntry() {
   }
 }
 
-void ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown() {
-  util::PerformanceTrace::Scope trace_scope(
-      "ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown");
-  for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
-    auto* entry = context_.ProjectCatalogEntry(i);
-    if (entry == nullptr || !entry->initialized ||
-        (context_.HasActiveProjectCatalogEntry() && i == context_.project_catalog.active_index)) {
-      continue;
-    }
-    std::string entry_scope_label = "ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown::Entry";
-    if (util::PerformanceTrace::Enabled()) {
-      entry_scope_label += "(index=" + std::to_string(i);
-      if (!entry->root.empty()) {
-        entry_scope_label += ",root=" + entry->root.string();
-      }
-      entry_scope_label += ")";
-    }
-    util::PerformanceTrace::Scope entry_scope(entry_scope_label);
-    operations_.load_project_state(*entry);
-    operations_.save_config_state();
-    operations_.save_session_state();
-    operations_.store_current_project_state(*entry);
-  }
-}
-
 bool ProjectCatalogCoordinator::Activate(std::size_t index, bool activate_restored_tab) {
   util::PerformanceTrace::Scope trace_scope("ProjectCatalogCoordinator::Activate");
   auto* entry = context_.ProjectCatalogEntry(index);

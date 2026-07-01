@@ -708,6 +708,31 @@ void TabCoordinator::ReloadVirtualDocumentTabs(const std::filesystem::path& virt
     operations_.request_active_tab_redraw(false);
   }
 }
+std::filesystem::path TabCoordinator::LspCloseCandidatePath(const TabEntry& tab) const {
+  if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+    return operations_.editor_view_path(*tab.editor_state);
+  }
+  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+    const auto& compare_tab = *tab.compare;
+    if (compare_tab.right_editable && !compare_tab.right_viewport.path().empty()) {
+      return compare_tab.right_viewport.path().lexically_normal();
+    }
+  } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
+    const auto& merge_tab = *tab.merge;
+    if (!merge_tab.result_viewport.path().empty()) {
+      return merge_tab.result_viewport.path().lexically_normal();
+    }
+  }
+  return {};
+}
+
+void TabCoordinator::MaybeNotifyLspClose(const TabEntry& tab) {
+  const std::filesystem::path path = LspCloseCandidatePath(tab);
+  if (!path.empty() && operations_.count_open_buffer_views(path) == 1) {
+    operations_.notify_lsp_buffer_close(path);
+  }
+}
+
 void TabCoordinator::Close(std::size_t index) {
   if (index >= state_.focused_group().open_tabs.size()) {
     return;
@@ -715,28 +740,12 @@ void TabCoordinator::Close(std::size_t index) {
   const bool closing_active = index == state_.focused_group().active_tab_index;
   const TabEntry& closing_tab = state_.focused_group().open_tabs[index];
 
-  if (state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() && index != state_.focused_group().active_tab_index) {
-    SyncActiveEditorTab();
-  }
-
-  if (closing_tab.kind == TabEntry::Kind::Editor && closing_tab.editor_state.has_value()) {
-    const std::filesystem::path path = operations_.editor_view_path(*closing_tab.editor_state);
-    if (!path.empty() && operations_.count_open_buffer_views(path) == 1) {
-      operations_.notify_lsp_buffer_close(path);
-    }
-  } else if (closing_tab.kind == TabEntry::Kind::Compare && closing_tab.compare.has_value()) {
-    const auto& compare_tab = *closing_tab.compare;
-    if (compare_tab.right_editable && !compare_tab.right_viewport.path().empty() &&
-        operations_.count_open_buffer_views(compare_tab.right_viewport.path()) == 1) {
-      operations_.notify_lsp_buffer_close(compare_tab.right_viewport.path());
-    }
-  } else if (closing_tab.kind == TabEntry::Kind::Merge && closing_tab.merge.has_value()) {
-    const auto& merge_tab = *closing_tab.merge;
-    if (!merge_tab.result_viewport.path().empty() &&
-        operations_.count_open_buffer_views(merge_tab.result_viewport.path()) == 1) {
-      operations_.notify_lsp_buffer_close(merge_tab.result_viewport.path());
-    }
-  }
+  // No SyncActiveEditorTab() here: closing a non-active tab does not change the
+  // active tab, and every persistence/deactivation path re-syncs the active tab
+  // (SaveSessionState and StoreCurrentProjectState both call it), so capturing its
+  // viewport now would be redundant work — costly in bulk closes via the tree
+  // traversals in SyncActiveEditorTabMetadata.
+  MaybeNotifyLspClose(closing_tab);
 
   state_.focused_group().open_tabs.erase(state_.focused_group().open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
 
@@ -909,15 +918,16 @@ bool TabCoordinator::CloseEditorGroup() {
                                           : std::unordered_map<std::string, std::size_t>{};
   const EditorGroup& closing = state_.focused_group();
   for (const TabEntry& tab : closing.open_tabs) {
-    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
-      const std::filesystem::path path = operations_.editor_view_path(*tab.editor_state);
-      if (path.empty()) {
-        continue;
-      }
-      const auto it = view_counts.find(path.generic_string());
-      if (it != view_counts.end() && it->second == 1) {
-        operations_.notify_lsp_buffer_close(path);
-      }
+    // Whole-group one-shot close: the snapshot count is exact because no tab in
+    // this group is erased until CollapseFocusedGroup below, so ==1 means the
+    // surviving group holds no other view of this buffer.
+    const std::filesystem::path path = LspCloseCandidatePath(tab);
+    if (path.empty()) {
+      continue;
+    }
+    const auto it = view_counts.find(path.generic_string());
+    if (it != view_counts.end() && it->second == 1) {
+      operations_.notify_lsp_buffer_close(path);
     }
   }
   CollapseFocusedGroup();
