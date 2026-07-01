@@ -185,7 +185,11 @@ bool BreakpointStore::HasBreakpoint(const std::filesystem::path& path, std::size
 
 const std::vector<Breakpoint>* BreakpointStore::FindByPath(
     const std::filesystem::path& path) const {
-  const auto it = by_path_.find(PathKey(path));
+  return FindByPathKey(PathKey(path));
+}
+
+const std::vector<Breakpoint>* BreakpointStore::FindByPathKey(std::string_view path_key) const {
+  const auto it = by_path_.find(path_key);
   return it == by_path_.end() ? nullptr : &it->second.breakpoints;
 }
 

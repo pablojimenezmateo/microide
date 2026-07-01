@@ -269,7 +269,8 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
       return std::nullopt;
     }
 
-    const auto* diagnostics = hover_targets_vm.diagnostics_store->FindByPath(compare_tab->right_viewport.path());
+    const auto* diagnostics =
+        hover_targets_vm.diagnostics_store->FindByPathKey(compare_tab->right_viewport.path_key());
     if (diagnostics == nullptr || diagnostics->empty()) {
       return std::nullopt;
     }
@@ -332,7 +333,8 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
       return std::nullopt;
     }
 
-    const auto* diagnostics = hover_targets_vm.diagnostics_store->FindByPath(merge_tab->result_viewport.path());
+    const auto* diagnostics =
+        hover_targets_vm.diagnostics_store->FindByPathKey(merge_tab->result_viewport.path_key());
     if (diagnostics == nullptr || diagnostics->empty()) {
       return std::nullopt;
     }

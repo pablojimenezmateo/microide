@@ -82,6 +82,11 @@ class PanelMouseCoordinator {
 
  private:
   bool HandleMouseCaptureButton(const SDL_Event& event, bool pressed);
+  // Active terminal tab when the bottom panel is showing a terminal, else null.
+  // Consolidates the "panel is a terminal AND a live tab exists" guard and routes
+  // it through the bounds-checked ProjectWorkspaceState::active_terminal_tab()
+  // accessor so no caller indexes terminal_tabs by a possibly-stale index.
+  TerminalTabState* ActivePanelTerminalTab();
 
   ProjectWorkspaceState& state_;
   MenuSurfaceState& menu_state_;

@@ -5,12 +5,11 @@
 #include <utility>
 
 #include "util/Parse.h"
+#include "workspace/WorkspaceOutputReference.h"
 
 namespace microide::workspace {
 
-namespace {
-
-std::optional<std::filesystem::path> ParseOutputReferencePath(std::string_view text) {
+std::optional<OutputReference> ParseOutputReference(std::string_view text) {
   const std::size_t column_delimiter = text.rfind(':');
   if (column_delimiter == std::string_view::npos || column_delimiter == 0) {
     return std::nullopt;
@@ -20,16 +19,24 @@ std::optional<std::filesystem::path> ParseOutputReferencePath(std::string_view t
     return std::nullopt;
   }
 
+  const std::string_view path_text = text.substr(0, line_delimiter);
   const std::string_view line_text =
       text.substr(line_delimiter + 1, column_delimiter - line_delimiter - 1);
   const std::string_view column_text = text.substr(column_delimiter + 1);
   const auto parsed_line = util::ParseSize(line_text);
   const auto parsed_column = util::ParseSize(column_text);
-  if (!parsed_line.has_value() || !parsed_column.has_value() || *parsed_line == 0) {
+  if (path_text.empty() || !parsed_line.has_value() || !parsed_column.has_value() ||
+      *parsed_line == 0) {
     return std::nullopt;
   }
-  return std::filesystem::path(std::string(text.substr(0, line_delimiter)));
+  return OutputReference{
+      .path = std::filesystem::path(path_text),
+      .line = *parsed_line,
+      .column = *parsed_column,
+  };
 }
+
+namespace {
 
 bool ParseOutputContextSnippet(std::string_view text,
                                std::string_view* prefix,
@@ -60,9 +67,9 @@ WorkspaceOutputChannels::ParsedEntry BuildParsedEntry(
     return parsed;
   }
 
-  if (const auto reference_path = ParseOutputReferencePath(line); reference_path.has_value()) {
+  if (const auto reference = ParseOutputReference(line); reference.has_value()) {
     parsed.kind = WorkspaceOutputChannels::ParsedEntry::Kind::ReferencePath;
-    parsed.reference_path = *reference_path;
+    parsed.reference_path = reference->path;
     if (current_reference_path != nullptr) {
       *current_reference_path = parsed.reference_path;
     }

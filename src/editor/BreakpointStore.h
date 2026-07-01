@@ -5,8 +5,11 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
+
+#include "util/TransparentStringHash.h"
 
 namespace microide::editor {
 
@@ -87,6 +90,9 @@ class BreakpointStore {
   bool HasBreakpoint(const std::filesystem::path& path, std::size_t line) const;
   // Breakpoints on `path`, sorted by line, or nullptr when none.
   const std::vector<Breakpoint>* FindByPath(const std::filesystem::path& path) const;
+  // Hot-path variant taking a precomputed NormalizedPathKey (see
+  // TextViewport::path_key). Allocation-free: the map uses heterogeneous lookup.
+  const std::vector<Breakpoint>* FindByPathKey(std::string_view path_key) const;
 
   // Every file with at least one breakpoint (for the launch snapshot).
   std::vector<FileBreakpoints> SnapshotAll() const;
@@ -125,7 +131,10 @@ class BreakpointStore {
     std::filesystem::path path;
     std::vector<Breakpoint> breakpoints;  // sorted by line
   };
-  std::unordered_map<std::string, FileEntry> by_path_;
+  // Transparent hashing lets FindByPathKey() accept a string_view without
+  // allocating a throwaway std::string key on every lookup.
+  std::unordered_map<std::string, FileEntry, util::TransparentStringHash, std::equal_to<>>
+      by_path_;
   std::uint64_t revision_ = 0;
 };
 

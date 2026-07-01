@@ -203,10 +203,6 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
 
 namespace {
 
-bool ColorsEqual(SDL_Color a, SDL_Color b) noexcept {
-  return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
-}
-
 // Flush a contiguous run of same-color fill rects in a single
 // SDL_RenderFillRects call. SDL3's internal batcher already coalesces
 // fills, but it does so per (renderer, draw color) state — every
@@ -244,7 +240,7 @@ void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
     if (fill.rect.w <= 0.0f || fill.rect.h <= 0.0f) {
       continue;
     }
-    if (!batch_open || !ColorsEqual(active_color, fill.color)) {
+    if (!batch_open || !SameColor(active_color, fill.color)) {
       FlushFillRun(renderer, active_color, batch);
       active_color = fill.color;
       batch_open = true;
@@ -278,7 +274,7 @@ void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
                                       0l, 255l));
     const SDL_Color rendered_color{underline.color.r, underline.color.g, underline.color.b,
                                    dim_alpha};
-    if (!batch_open || !ColorsEqual(active_color, rendered_color)) {
+    if (!batch_open || !SameColor(active_color, rendered_color)) {
       FlushFillRun(renderer, active_color, batch);
       active_color = rendered_color;
       batch_open = true;

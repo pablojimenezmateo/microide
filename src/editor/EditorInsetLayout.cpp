@@ -56,7 +56,7 @@ void BuildRowGapsForWindow(const PluginSurfaceStore& surface_store,
   // visible line that carries a lens. Pointers index the store's sorted lens
   // vector, valid until the next store mutation (same contract as surfaces).
   if (want_lenses) {
-    const FileDecorations* decorations = decoration_store.FindByPath(viewport.path());
+    const FileDecorations* decorations = decoration_store.FindByPathKey(viewport.path_key());
     if (decorations != nullptr) {
       for (std::size_t visual_row = scroll; visual_row < window_end; ++visual_row) {
         const std::size_t line = viewport.VisualRowLineIndex(visual_row);

@@ -58,17 +58,11 @@ void WorkspaceShell::OpenDefaultTerminalForProjectInit() {
 }
 
 WorkspaceShell::TerminalTabState* WorkspaceShell::ActiveTerminalTab() {
-  if (context_.current_project_state.active_terminal_tab_index >= context_.current_project_state.terminal_tabs.size()) {
-    return nullptr;
-  }
-  return context_.current_project_state.terminal_tabs[context_.current_project_state.active_terminal_tab_index].get();
+  return context_.current_project_state.active_terminal_tab();
 }
 
 const WorkspaceShell::TerminalTabState* WorkspaceShell::ActiveTerminalTab() const {
-  if (context_.current_project_state.active_terminal_tab_index >= context_.current_project_state.terminal_tabs.size()) {
-    return nullptr;
-  }
-  return context_.current_project_state.terminal_tabs[context_.current_project_state.active_terminal_tab_index].get();
+  return context_.current_project_state.active_terminal_tab();
 }
 
 std::optional<std::size_t> WorkspaceShell::FocusedTerminalTabIndex() const {

@@ -5,36 +5,17 @@
 #include <string_view>
 
 #include "util/PerformanceTrace.h"
-#include "util/Parse.h"
 #include "workspace/CompareMergeRender.h"
 #include "workspace/CompareTabReview.h"
 #include "workspace/SettingsOverlayService.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceOutputReference.h"
 
 namespace microide::workspace {
 
 namespace {
 
 constexpr float kWindowFrameHitThickness = 6.0f;
-
-bool IsNavigableOutputLine(std::string_view text) {
-  const std::size_t column_delimiter = text.rfind(':');
-  if (column_delimiter == std::string_view::npos || column_delimiter == 0) {
-    return false;
-  }
-  const std::size_t line_delimiter = text.rfind(':', column_delimiter - 1);
-  if (line_delimiter == std::string_view::npos || line_delimiter == 0) {
-    return false;
-  }
-
-  const std::string_view path_text = text.substr(0, line_delimiter);
-  const std::string_view line_text =
-      text.substr(line_delimiter + 1, column_delimiter - line_delimiter - 1);
-  const std::string_view column_text = text.substr(column_delimiter + 1);
-  const auto line = util::ParseSize(line_text);
-  const auto column = util::ParseSize(column_text);
-  return !path_text.empty() && line.has_value() && *line > 0 && column.has_value();
-}
 
 SDL_HitTestResult ResizeHitTestResult(bool left, bool right, bool top, bool bottom) {
   if (top && left) {
@@ -671,7 +652,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           const auto line_index = BottomPanelLineIndexAtY(
               panel_layout.text_y, panel_layout.line_height, panel_layout.scroll.visible_rows,
               panel_layout.scroll.vertical_scroll, y, entries->size());
-          if (line_index.has_value() && IsNavigableOutputLine((*entries)[*line_index])) {
+          if (line_index.has_value() &&
+              ParseOutputReference((*entries)[*line_index]).has_value()) {
             return CursorKind::Pointer;
           }
         }

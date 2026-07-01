@@ -644,7 +644,8 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   // fold-mark loop: one mark per visible opener row, deduped to the first visual
   // row of a wrapped line so a dot is not painted on every wrap fragment.
   if (debug_enabled && breakpoints != nullptr && !viewport.is_placeholder()) {
-    if (const std::vector<editor::Breakpoint>* file = breakpoints->FindByPath(viewport.path());
+    if (const std::vector<editor::Breakpoint>* file =
+            breakpoints->FindByPathKey(viewport.path_key());
         file != nullptr && !file->empty()) {
       out.breakpoint_gutter_marks.reserve(file->size());
       for (std::size_t row = 0; row < visible_rows; ++row) {
