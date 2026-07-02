@@ -113,8 +113,14 @@ else
 fi
 
 # --- 3. build --------------------------------------------------------------
-log "3/8  Build (Release)"
-cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release >/dev/null
+# Release ships with LTO (-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON): the perf
+# gate already measures RelWithDebInfo+LTO, so cross-TU inlining in the hot
+# editor/render paths (e.g. TextViewport <-> EditorViewRenderer) is part of the
+# validated codegen. CMakeLists downgrades gracefully if the toolchain lacks IPO
+# and auto-skips ld.lld under LTO. The trade-off is a slower final link.
+log "3/8  Build (Release + LTO)"
+cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON >/dev/null
 cmake --build "$BUILD_DIR" -j"$(nproc)"
 BAKED="$("$BUILD_DIR/microide/microide" --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 [[ "$BAKED" == "$VERSION" ]] || die "built binary reports '$BAKED', expected '$VERSION'"
