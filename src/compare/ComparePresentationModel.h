@@ -22,6 +22,11 @@ struct ComparePresentationRow {
   ComparePresentationRowKind kind = ComparePresentationRowKind::Model;
   std::size_t model_row_index = 0;
   std::string summary_text;
+  // Render-ready summary: `summary_text` with the review-marker prefix
+  // ("[label]* " / "* ") already applied. Composed at presentation build and
+  // re-composed by ApplyBranchReviewPresentationMarkers, so the render path
+  // never assembles summary strings per frame.
+  std::string display_summary_text;
   int hunk_index = -1;
   int collapsed_line_count = 0;
   std::size_t collapsed_run_start_model_row = 0;
@@ -79,6 +84,11 @@ ComparePresentationModel BuildComparePresentationModel(
     const ComparePresentationOptions& options,
     ComparePresentationCollapseState collapse_state,
     std::uint64_t model_generation);
+
+// Recompute `row.display_summary_text` from `summary_text`,
+// `review_marker_label`, and `has_review_note`. Call after mutating any of
+// those fields.
+void ComposeComparePresentationDisplaySummary(ComparePresentationRow& row);
 
 std::optional<std::size_t> ComparePresentationModelRowIndex(
     const ComparePresentationModel& presentation,

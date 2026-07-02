@@ -99,6 +99,9 @@ ComparePresentationModel BuildComparePresentationModel(
 
   if (semantic.file_kind == CompareSemanticFileKind::Binary) {
     RebuildCompareInlineDiffCache(&presentation, model, model_generation, true);
+    for (ComparePresentationRow& row : presentation.rows) {
+      ComposeComparePresentationDisplaySummary(row);
+    }
     return presentation;
   }
 
@@ -198,7 +201,31 @@ ComparePresentationModel BuildComparePresentationModel(
   }
 
   RebuildCompareInlineDiffCache(&presentation, model, model_generation, false);
+  for (ComparePresentationRow& row : presentation.rows) {
+    ComposeComparePresentationDisplaySummary(row);
+  }
   return presentation;
+}
+
+void ComposeComparePresentationDisplaySummary(ComparePresentationRow& row) {
+  row.display_summary_text.clear();
+  if (!row.review_marker_label.empty()) {
+    row.display_summary_text.reserve(row.review_marker_label.size() +
+                                     row.summary_text.size() + 4);
+    row.display_summary_text += '[';
+    row.display_summary_text += row.review_marker_label;
+    row.display_summary_text += ']';
+    if (row.has_review_note) {
+      row.display_summary_text += '*';
+    }
+    row.display_summary_text += ' ';
+    row.display_summary_text += row.summary_text;
+  } else if (row.has_review_note) {
+    row.display_summary_text = "* ";
+    row.display_summary_text += row.summary_text;
+  } else {
+    row.display_summary_text = row.summary_text;
+  }
 }
 
 std::optional<std::size_t> ComparePresentationModelRowIndex(

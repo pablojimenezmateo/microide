@@ -55,7 +55,6 @@ void DrawMergeScrollbarMarkers(SDL_Renderer* renderer,
                                const render::Theme& theme,
                                const SDL_FRect& track,
                                std::size_t total_rows,
-                               const std::vector<MergeScrollbarMarkerInput>& inputs,
                                MergeTabState& merge_tab) {
   if (renderer == nullptr) {
     return;
@@ -64,6 +63,24 @@ void DrawMergeScrollbarMarkers(SDL_Renderer* renderer,
   if (!merge_tab.scrollbar_marker_cache_valid ||
       merge_tab.scrollbar_marker_cache_revision != merge_tab.model_revision ||
       !RectsEqual(merge_tab.scrollbar_marker_cache_track, track)) {
+    // Marker inputs are only needed on a cache miss (model revision or track
+    // change), so the per-conflict vector is built here instead of per frame.
+    std::vector<MergeScrollbarMarkerInput> inputs;
+    inputs.reserve(merge_tab.conflicts.size());
+    for (const auto& conflict : merge_tab.conflicts) {
+      const int start_row = static_cast<int>(std::min(
+          {conflict.incoming_start_line, conflict.start_line, conflict.current_start_line}));
+      const int end_row = static_cast<int>(std::max(
+          {std::max(conflict.incoming_end_line, conflict.incoming_start_line + 1),
+           std::max(conflict.end_line, conflict.start_line + 1),
+           std::max(conflict.current_end_line, conflict.current_start_line + 1)}));
+      inputs.push_back(MergeScrollbarMarkerInput{
+          .start_row = start_row,
+          .end_row = end_row,
+          .choice = conflict.last_choice,
+          .valid = conflict.valid,
+      });
+    }
     merge_tab.scrollbar_marker_cache = BuildMergeScrollbarMarkers(track, total_rows, inputs);
     merge_tab.scrollbar_marker_cache_track = track;
     merge_tab.scrollbar_marker_cache_revision = merge_tab.model_revision;
@@ -152,26 +169,9 @@ void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRe
     const SDL_FRect marker_inner_lane =
         MakeRect(marker_lane.x + 1.0f, marker_lane.y + 1.0f, std::max(0.0f, marker_lane.w - 2.0f),
                  std::max(0.0f, marker_lane.h - 2.0f));
-    std::vector<MergeScrollbarMarkerInput> inputs;
-    inputs.reserve(merge_tab->conflicts.size());
-    for (const auto& conflict : merge_tab->conflicts) {
-      const int start_row = static_cast<int>(std::min(
-          {conflict.incoming_start_line, conflict.start_line, conflict.current_start_line}));
-      const int end_row = static_cast<int>(std::max(
-          {std::max(conflict.incoming_end_line, conflict.incoming_start_line + 1),
-           std::max(conflict.end_line, conflict.start_line + 1),
-           std::max(conflict.current_end_line, conflict.current_start_line + 1)}));
-      inputs.push_back(MergeScrollbarMarkerInput{
-          .start_row = start_row,
-          .end_row = end_row,
-          .choice = conflict.last_choice,
-          .valid = conflict.valid,
-      });
-    }
     DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
     DrawRect(renderer, marker_lane, theme_.border);
-    DrawMergeScrollbarMarkers(renderer, theme_, marker_inner_lane, line_count, inputs,
-                              *merge_tab);
+    DrawMergeScrollbarMarkers(renderer, theme_, marker_inner_lane, line_count, *merge_tab);
     detail::DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
     detail::DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
                        context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);
@@ -232,7 +232,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                std::string_view label,
                                bool selected,
                                bool primary = false) {
-    const std::string display = TruncateLabel(label, button_rect.w - 18.0f);
+    const std::string_view display = TruncateLabelView(label, button_rect.w - 18.0f);
     detail::DrawButtonCentered(text_renderer_, renderer, theme_, button_rect, display,
                                detail::ButtonTone::Neutral,
                                detail::ButtonVisualState{
@@ -303,14 +303,14 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       kMergeToolbarButtonHeight);
   const MergeResolverStatus resolver_status =
       BuildMergeResolverStatus(*merge_tab, merge_tab->remaining_conflicted_files);
-  const std::string status_text = merge_tab->status_message.empty()
-                                      ? resolver_status.progress_label
-                                      : merge_tab->status_message;
+  const std::string_view status_text = merge_tab->status_message.empty()
+                                           ? std::string_view(resolver_status.progress_label)
+                                           : std::string_view(merge_tab->status_message);
   const float status_max_width =
       std::max(0.0f, unresolved_rect.x - kMergeToolbarButtonGap - surface.left_x);
   text_renderer_.DrawString(renderer, surface.left_x, surface.secondary_button_y,
                             theme_.text_secondary,
-                            TruncateLabel(status_text, status_max_width));
+                            TruncateLabelView(status_text, status_max_width));
   draw_button(unresolved_rect, "Unresolved", false, !merge_tab->conflicts.empty());
   draw_button(toggle_base_rect, "Toggle Base", merge_tab->base_pane_visible, true);
   draw_button(mark_resolved_rect, "Mark Resolved", false, true);
@@ -326,12 +326,13 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                    theme_.surface_raised);
     text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, base_y + 2.0f,
                               theme_.text_secondary,
-                              TruncateLabel(merge_tab->base_label, content_width - 16.0f));
+                              TruncateLabelView(merge_tab->base_label, content_width - 16.0f));
     for (std::size_t row = 0; row < merge_tab->model.base_lines.size() && row < 4; ++row) {
       const float y = base_y + 2.0f + surface.line_height * static_cast<float>(row + 1);
       text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, y,
                                 theme_.text_secondary,
-                                TruncateLabel(merge_tab->model.base_lines[row], content_width - 16.0f));
+                                TruncateLabelView(merge_tab->model.base_lines[row],
+                                                  content_width - 16.0f));
     }
   }
 
@@ -348,13 +349,13 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
 
   text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
-                            TruncateLabel(merge_tab->incoming_label, surface.left_width - 8.0f));
+                            TruncateLabelView(merge_tab->incoming_label, surface.left_width - 8.0f));
   text_renderer_.DrawString(renderer, surface.center_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
-                            TruncateLabel(merge_tab->result_label, surface.center_width - 8.0f));
+                            TruncateLabelView(merge_tab->result_label, surface.center_width - 8.0f));
   text_renderer_.DrawString(renderer, surface.right_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
-                            TruncateLabel(merge_tab->current_label, surface.right_width - 8.0f));
+                            TruncateLabelView(merge_tab->current_label, surface.right_width - 8.0f));
 
   for (int row = 0; row < surface.visible_rows; ++row) {
     const std::size_t line_index =
@@ -401,7 +402,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       };
       incoming_input.text_renderer = &text_renderer_;
       incoming_input.theme = &theme_;
-      editor::DecoratedTextRow incoming_row;
+      editor::DecoratedTextRow& incoming_row = merge_incoming_scratch_row_;
       editor::BuildDecoratedRow(incoming_row, incoming_input);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, incoming_row);
       text_renderer_.DrawString(renderer, surface.left_x, y, number_color,
@@ -440,7 +441,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       };
       current_input.text_renderer = &text_renderer_;
       current_input.theme = &theme_;
-      editor::DecoratedTextRow current_row;
+      editor::DecoratedTextRow& current_row = merge_current_scratch_row_;
       editor::BuildDecoratedRow(current_row, current_input);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, current_row);
       text_renderer_.DrawString(renderer, surface.right_x, y, number_color,

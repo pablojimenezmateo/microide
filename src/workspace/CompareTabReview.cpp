@@ -93,16 +93,9 @@ void ApplyBranchReviewPresentationMarkers(
   for (compare::ComparePresentationRow& row : compare_tab.presentation.rows) {
     row.review_marker_label.clear();
     row.has_review_note = false;
-    if (row.kind == compare::ComparePresentationRowKind::HunkHeader && row.hunk_index >= 0) {
-      compare::BranchReviewStateQueryInput query = base_query;
-      query.selected_hunk_index = row.hunk_index;
-      row.review_marker_label =
-          compare::BranchReviewMarkerLabel(review_service.HunkStatus(query));
-      row.has_review_note =
-          review_service.HasNote(query, compare::BranchReviewNoteScope::Hunk);
-      continue;
-    }
-    if (row.kind == compare::ComparePresentationRowKind::Model && row.hunk_index >= 0) {
+    if ((row.kind == compare::ComparePresentationRowKind::HunkHeader ||
+         row.kind == compare::ComparePresentationRowKind::Model) &&
+        row.hunk_index >= 0) {
       compare::BranchReviewStateQueryInput query = base_query;
       query.selected_hunk_index = row.hunk_index;
       row.review_marker_label =
@@ -110,6 +103,7 @@ void ApplyBranchReviewPresentationMarkers(
       row.has_review_note =
           review_service.HasNote(query, compare::BranchReviewNoteScope::Hunk);
     }
+    compare::ComposeComparePresentationDisplaySummary(row);
   }
 }
 

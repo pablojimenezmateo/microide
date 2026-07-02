@@ -65,6 +65,10 @@ std::string WorkspaceShell::TruncateLabel(std::string_view text, float max_width
   return text_renderer_.TruncateToWidth(text, max_width);
 }
 
+std::string_view WorkspaceShell::TruncateLabelView(std::string_view text, float max_width) const {
+  return text_renderer_.TruncateToWidthView(text, max_width);
+}
+
 WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* renderer,
                                                             int width,
                                                             int height) {

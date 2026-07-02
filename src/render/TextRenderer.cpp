@@ -109,11 +109,15 @@ std::string_view TextRenderer::BackendName() const {
 }
 
 std::string TextRenderer::TruncateToWidth(std::string_view text, float max_width) const {
+  return std::string(TruncateToWidthView(text, max_width));
+}
+
+std::string_view TextRenderer::TruncateToWidthView(std::string_view text, float max_width) const {
   if (max_width <= 0.0f || text.empty()) {
     return {};
   }
   if (MeasureWidth(text) <= max_width) {
-    return std::string(text);
+    return text;
   }
 
   static constexpr std::string_view kEllipsis = "...";
@@ -124,9 +128,10 @@ std::string TextRenderer::TruncateToWidth(std::string_view text, float max_width
 
   const float budget = max_width - ellipsis_width;
 
-  // Collect UTF-8 code-point boundary offsets.
-  std::vector<std::size_t> boundaries;
-  boundaries.reserve(text.size());
+  // Collect UTF-8 code-point boundary offsets. Thread-local scratch keeps the
+  // per-call truncation path allocation-free after warmup.
+  thread_local std::vector<std::size_t> boundaries;
+  boundaries.clear();
   for (std::size_t offset = 0; offset < text.size();) {
     offset += util::Utf8SequenceLength(text, offset);
     boundaries.push_back(offset);
@@ -148,11 +153,10 @@ std::string TextRenderer::TruncateToWidth(std::string_view text, float max_width
     }
   }
 
-  std::string result;
-  result.reserve(fit_length + kEllipsis.size());
-  result.append(text, 0, fit_length);
-  result.append(kEllipsis);
-  return result;
+  thread_local std::string truncated;
+  truncated.assign(text.substr(0, fit_length));
+  truncated.append(kEllipsis);
+  return truncated;
 }
 
 TextRendererCacheStats TextRenderer::CacheStats() const {

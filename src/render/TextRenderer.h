@@ -39,6 +39,11 @@ class TextRenderer {
   float MeasureWidth(std::string_view text) const;
   std::string_view BackendName() const;
   std::string TruncateToWidth(std::string_view text, float max_width) const;
+  // Allocation-free variant for render hot paths: when `text` already fits it
+  // returns `text` unchanged; when truncation is needed the returned view points
+  // into a thread-local scratch that is overwritten by the NEXT call on the same
+  // thread. Consume the view immediately (draw it before truncating again).
+  std::string_view TruncateToWidthView(std::string_view text, float max_width) const;
   TextRendererCacheStats CacheStats() const;
   void ResetCacheStats() const;
 

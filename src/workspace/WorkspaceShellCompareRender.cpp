@@ -211,17 +211,17 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         std::max(0.0f, (hint_x - 14.0f) - (rect.x + 8.0f));
     text_renderer_.DrawString(renderer, rect.x + 8.0f, surface.review_summary_y,
                               theme_.text_primary,
-                              TruncateLabel(compare_tab->review_header.summary_line,
-                                            summary_width));
+                              TruncateLabelView(compare_tab->review_header.summary_line,
+                                                summary_width));
     text_renderer_.DrawString(renderer, hint_x, surface.review_summary_y,
                               theme_.text_muted, kShortcutHint);
   }
   text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
-                            TruncateLabel(compare_tab->left_label, surface.left_width - 8.0f));
+                            TruncateLabelView(compare_tab->left_label, surface.left_width - 8.0f));
   text_renderer_.DrawString(renderer, surface.right_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
-                            TruncateLabel(compare_tab->right_label, surface.right_width - 8.0f));
+                            TruncateLabelView(compare_tab->right_label, surface.right_width - 8.0f));
 
   for (int row = 0; row < surface.visible_rows; ++row) {
     const int presentation_index = compare_tab->scroll_row + row;
@@ -268,13 +268,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                     emphasized ? theme_.text_primary : theme_.text_muted,
                                     fill, label);
       };
-      std::string summary = presentation_row->summary_text;
-      if (!presentation_row->review_marker_label.empty()) {
-        summary = "[" + presentation_row->review_marker_label + "]" +
-                  (presentation_row->has_review_note ? "*" : "") + " " + summary;
-      } else if (presentation_row->has_review_note) {
-        summary = "* " + summary;
-      }
+      const std::string& summary = presentation_row->display_summary_text;
       float summary_width = content_width - 16.0f;
       if (presentation_row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
         const SDL_FRect block_rect = CompareCollapsedContextBlockRect(
@@ -312,11 +306,11 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         }
         text_renderer_.DrawString(renderer, summary_x, y,
                                   selected ? theme_.text_primary : theme_.text_secondary,
-                                  TruncateLabel(summary, summary_width));
+                                  TruncateLabelView(summary, summary_width));
       } else {
         text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, y,
                                   selected ? theme_.text_primary : theme_.text_muted,
-                                  TruncateLabel(summary, summary_width));
+                                  TruncateLabelView(summary, summary_width));
       }
       continue;
     }
@@ -336,7 +330,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
     }
 
     const auto draw_text = [&](float x, float width, SDL_Color color, std::string_view text) {
-      const std::string display_text = TruncateLabel(text, width);
+      const std::string_view display_text = TruncateLabelView(text, width);
       if (display_text.empty()) {
         return;
       }
@@ -436,7 +430,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                           : theme_.diff_modified;
       left_input.text_renderer = &text_renderer_;
       left_input.theme = &theme_;
-      editor::DecoratedTextRow left_row;
+      editor::DecoratedTextRow& left_row = compare_left_scratch_row_;
       editor::BuildDecoratedRow(left_row, left_input);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, left_row);
       draw_text(surface.left_x + kDiffGutterNumberInset,
@@ -533,7 +527,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       }
       right_input.text_renderer = &text_renderer_;
       right_input.theme = &theme_;
-      editor::DecoratedTextRow right_row;
+      editor::DecoratedTextRow& right_row = compare_right_scratch_row_;
       editor::BuildDecoratedRow(right_row, right_input);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, right_row);
       if (right_diagnostics != nullptr) {
@@ -575,7 +569,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         }
       }
     }
-    draw_text(divider_x, surface.divider_width, marker_color, std::string(1, marker));
+    draw_text(divider_x, surface.divider_width, marker_color, std::string_view(&marker, 1));
   }
 }
 

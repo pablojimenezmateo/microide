@@ -1616,6 +1616,9 @@
   std::string ProjectTabDisplayTitle(std::size_t index) const;
   std::string ProjectTabTooltipLabel(std::size_t index) const;
   std::string TruncateLabel(std::string_view text, float max_width) const;
+  // Allocation-free truncate for render hot paths; see
+  // render::TextRenderer::TruncateToWidthView for the returned view's lifetime.
+  std::string_view TruncateLabelView(std::string_view text, float max_width) const;
   std::optional<SDL_FRect> CurrentWindowRect() const;
   std::optional<WorkspaceLayout> CurrentWorkspaceLayout() const;
   const WindowChromeState& CurrentWindowChromeState() const;
@@ -1929,3 +1932,10 @@
   };
   mutable std::vector<TerminalForegroundRunScratch> terminal_foreground_runs_scratch_;
   mutable std::string terminal_foreground_runs_blob_;
+  // Reused per-row scratch for compare/merge surface rendering (mirrors
+  // EditorViewRenderer::scratch_row_): BuildDecoratedRow clears these before
+  // filling, so reuse keeps the per-visible-row path allocation-free.
+  editor::DecoratedTextRow compare_left_scratch_row_;
+  editor::DecoratedTextRow compare_right_scratch_row_;
+  editor::DecoratedTextRow merge_incoming_scratch_row_;
+  editor::DecoratedTextRow merge_current_scratch_row_;
