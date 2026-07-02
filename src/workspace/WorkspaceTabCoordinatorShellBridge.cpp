@@ -2,6 +2,7 @@
 
 #include "workspace/SettingFlags.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <mutex>
 #include <optional>
@@ -11,6 +12,7 @@
 
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "project/SubprocessHelper.h"
+#include "util/Parse.h"
 #include "util/StringUtil.h"
 #include "workspace/EditorTabService.h"
 #include "workspace/WorkspacePathUtils.h"
@@ -134,6 +136,45 @@ void WorkspaceShell::MaybeAutosaveDirtyTabs(bool on_focus_change) {
   for (const std::size_t index : MakeEditorTabService().DirtyIndices()) {
     SaveTab(index);
   }
+}
+
+Uint64 WorkspaceShell::AutosaveDelayMs() const {
+  const auto raw = GetSettingValue("editor.autosave.delay_ms");
+  const int parsed = raw.has_value() ? util::ParseInt(*raw).value_or(1000) : 1000;
+  return static_cast<Uint64>(std::clamp(parsed, 200, 60000));
+}
+
+void WorkspaceShell::MaybeArmAutosaveTimer() {
+  // Only the "after delay" mode uses the debounce; other modes leave the timer idle.
+  if (GetSettingValue("editor.autosave").value_or("off") != "after_delay") {
+    autosave_armed_ = false;
+    return;
+  }
+  // Detect a real buffer mutation via the active editable viewport's content revision.
+  // A path-less (untitled) or absent buffer has nothing to autosave, so we do not arm.
+  const editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    return;
+  }
+  const std::uint64_t revision = viewport->content_revision();
+  if (revision == autosave_last_content_revision_) {
+    return;  // No edit since the last sample (navigation/focus only): keep the debounce.
+  }
+  autosave_last_content_revision_ = revision;
+  autosave_edit_epoch_ms_ = SDL_GetTicks();
+  autosave_armed_ = viewport->dirty();
+}
+
+std::optional<Uint32> WorkspaceShell::NextAutosaveDelayMs() const {
+  if (!autosave_armed_) {
+    return std::nullopt;
+  }
+  const Uint64 delay = AutosaveDelayMs();
+  const Uint64 elapsed = SDL_GetTicks() - autosave_edit_epoch_ms_;
+  if (elapsed >= delay) {
+    return static_cast<Uint32>(1);  // Deadline passed: wake immediately to save.
+  }
+  return static_cast<Uint32>(std::max<Uint64>(1, delay - elapsed));
 }
 
 bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& path,

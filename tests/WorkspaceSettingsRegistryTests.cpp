@@ -22,12 +22,13 @@ using microide::workspace::SettingsOverlayService;
 using microide::workspace::SettingSpec;
 using microide::workspace::SettingType;
 
-constexpr std::array<std::string_view, 14> kNewSettingIds = {
+constexpr std::array<std::string_view, 16> kNewSettingIds = {
     "editor.font_family",
     "editor.font_size",
     "editor.line_endings",
     "editor.format_on_save",
     "editor.autosave",
+    "editor.autosave.delay_ms",
     "editor.hover_delay_ms",
     "ui.layout_mode",
     "ui.layout_compact_breakpoint_px",
@@ -36,6 +37,7 @@ constexpr std::array<std::string_view, 14> kNewSettingIds = {
     "ui.show_status_bar",
     "terminal.shell",
     "terminal.font_size",
+    "terminal.font_family",
     "diagnostics.min_severity",
 };
 

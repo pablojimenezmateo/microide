@@ -108,8 +108,13 @@ void TestArchitectureInvariants() {
              // 1617: +1 for ConsumeReloadResult, the post-reload consumption helper that
              // runs registry rebuilds + sidebar/syntax refresh from the non-blocking
              // ReloadAsync completion instead of inline after a UI-parking reload.
+             // 1623: +6 for two deferred-settings features finishing the settings overhaul:
+             // the "after delay" autosave debounce (edit epoch + revision + armed state,
+             // MaybeArmAutosaveTimer / NextAutosaveDelayMs) and the terminal's own font
+             // (terminal_text_renderer_ + last-applied size, PanelTextRenderer /
+             // ApplyTerminalFontPreferences) so terminal.font_size/font_family are live.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1617);
+                                                     1623);
            });
 
   bool hard_failure = false;

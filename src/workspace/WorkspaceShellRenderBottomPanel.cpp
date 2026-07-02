@@ -124,7 +124,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       return;
     }
 
-    const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+    const float char_width = std::max(1.0f, terminal_text_renderer_.CharWidth());
     const std::size_t visible_columns =
         std::min(line.cells.size(), std::max<std::size_t>(
                                       1, static_cast<std::size_t>(std::floor(width / char_width))));
@@ -154,7 +154,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       DrawFilledRect(renderer,
                      MakeRect(run_x, y - 1.0f,
                               static_cast<float>(run_end - column) * char_width,
-                              text_renderer_.LineHeight()),
+                              terminal_text_renderer_.LineHeight()),
                      background);
       column = run_end;
     }
@@ -228,7 +228,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       const float run_x = x + static_cast<float>(run.start_column) * char_width;
       const std::string_view run_text(terminal_foreground_runs_blob_.data() + run.blob_offset,
                                       run.blob_length);
-      text_renderer_.DrawString(renderer, run_x, y, run.foreground, run_text);
+      terminal_text_renderer_.DrawString(renderer, run_x, y, run.foreground, run_text);
     }
 
     // Underline / double-underline / strikethrough decorations. Run-length
@@ -238,7 +238,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     constexpr std::uint16_t kDecorationMask = terminal::cell_attr::kUnderline |
                                               terminal::cell_attr::kDoubleUnderline |
                                               terminal::cell_attr::kStrikethrough;
-    const float line_height = text_renderer_.LineHeight();
+    const float line_height = terminal_text_renderer_.LineHeight();
     const float thickness = std::max(1.0f, std::round(line_height / 14.0f));
     for (std::size_t column = 0; column < visible_columns;) {
       const auto& style = line.cells[column].style;
@@ -538,7 +538,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                                        panel_layout.scroll.visible_rows) &&
           (panel_vm.focus != FocusTarget::Panel ||
            CaretVisibleNow())) {
-        const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+        const float char_width = std::max(1.0f, terminal_text_renderer_.CharWidth());
         const float cursor_x = panel_layout.text_x + static_cast<float>(cursor.column) * char_width;
         const float cursor_y =
             panel_layout.text_y +
@@ -559,8 +559,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                 const SDL_Color cursor_foreground =
                     resolve_terminal_colors(cell.style, false).second;
                 // DrawString takes std::string_view; pass the view directly without copying.
-                text_renderer_.DrawString(renderer, cursor_x, cursor_y, cursor_foreground,
-                                          display_text);
+                terminal_text_renderer_.DrawString(renderer, cursor_x, cursor_y, cursor_foreground,
+                                                   display_text);
               }
             }
           }

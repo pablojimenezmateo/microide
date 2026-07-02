@@ -37,6 +37,9 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
   // Single chokepoint for reactive editor-event sampling: diff the active buffer's
   // content/caret/selection once per input batch (no-op unless a plugin subscribes).
   SamplePluginEditorEvents();
+  // Re-arm the "after delay" autosave debounce on real buffer edits so a settled dirty
+  // buffer saves itself. No-op (one setting read) unless autosave=after_delay.
+  MaybeArmAutosaveTimer();
   return result;
 }
 

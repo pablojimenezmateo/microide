@@ -1405,6 +1405,13 @@
   bool BottomPanelVisible() const;
   bool BottomPanelShowsTerminal() const;
   bool BottomPanelShowsOutput() const;
+  // The renderer whose metrics drive the current bottom-panel content: the dedicated
+  // terminal renderer while a terminal is shown, else the shared editor renderer for the
+  // output log. Keeps grid sizing and glyph drawing on the same font.
+  const render::TextRenderer& PanelTextRenderer() const;
+  // Push `terminal.font_size` / `terminal.font_family` into terminal_text_renderer_. Called
+  // from the render prepare step only while a terminal is shown; re-grids on a real change.
+  void ApplyTerminalFontPreferences();
   LogSurfaceLayout ComputeBottomPanelLogLayout(const WorkspaceLayout& layout,
                                                    std::size_t line_count) const;
   int BottomPanelVisibleRows(float panel_height) const;
@@ -1718,6 +1725,13 @@
       const std::vector<std::string>& before_lines,
       const std::vector<std::string>& after_lines);
   std::optional<Uint32> NextCaretBlinkDelayMs() const;
+  // "After delay" autosave (WorkspaceTabCoordinatorShellBridge.cpp). MaybeArmAutosaveTimer
+  // re-arms the debounce on every real buffer edit; NextAutosaveDelayMs feeds the idle loop
+  // so it wakes near the deadline; the fire check lives in HandleScheduledWake. Returns the
+  // configured idle delay clamped to a sane band.
+  Uint64 AutosaveDelayMs() const;
+  void MaybeArmAutosaveTimer();
+  std::optional<Uint32> NextAutosaveDelayMs() const;
   // Chrome-like tab-slide animation (WorkspaceShellRedraw.cpp). NextTabSlideDelayMs
   // schedules ~60fps wakes while a strip is easing; AdvanceTabSlide steps the
   // offsets on a scheduled wake and clears the state when the post-release settle
@@ -1763,6 +1777,13 @@
 
   render::Theme theme_ = render::MakeDefaultTheme();
   render::TextRenderer text_renderer_;
+  // Dedicated glyph renderer for the terminal grid so `terminal.font_size` /
+  // `terminal.font_family` are independent of the editor font. Lazily initialized only
+  // when the bottom panel first shows a terminal, so a session that never opens one pays
+  // no second glyph atlas. All terminal cell/cursor/grid metrics read from this renderer;
+  // the shared bottom-panel layout helpers branch to it via PanelTextRenderer().
+  render::TextRenderer terminal_text_renderer_;
+  int last_applied_terminal_font_size_ = -1;
   editor::EditorViewRenderer editor_view_renderer_;
   WorkspaceContext context_;
   // Single owner of settings resolution + mutation. Binds non-owning pointers to
@@ -1917,6 +1938,13 @@
   float presentation_scale_y_ = 1.0f;
   WindowAction pending_window_action_ = WindowAction::None;
   Uint64 caret_blink_epoch_ms_ = 0;
+  // "After delay" autosave debounce state. `autosave_edit_epoch_ms_` marks the last
+  // detected buffer edit; the timer is armed only while a dirty, path-backed buffer is
+  // active and re-armed on each edit (tracked via content_revision) so we save once the
+  // buffer settles rather than mid-keystroke.
+  Uint64 autosave_edit_epoch_ms_ = 0;
+  std::uint64_t autosave_last_content_revision_ = 0;
+  bool autosave_armed_ = false;
   RenderInvalidation pending_render_invalidation_;
   int post_render_full_redraws_remaining_ = 0;
   CursorKind cursor_kind_ = CursorKind::Default;

@@ -26,7 +26,8 @@ void WorkspaceShell::ResizeTerminalToPanel(const SDL_FRect& panel_rect) {
   const float usable_width =
       std::max(16.0f, panel_rect.w - 24.0f - kWorkspaceScrollbarThickness - 6.0f);
   const int columns = std::max(
-      1, static_cast<int>(std::floor(usable_width / std::max(1.0f, text_renderer_.CharWidth()))));
+      1, static_cast<int>(
+             std::floor(usable_width / std::max(1.0f, terminal_text_renderer_.CharWidth()))));
   if (terminal_tab->session.rows() == static_cast<std::size_t>(rows) &&
       terminal_tab->session.columns() == static_cast<std::size_t>(columns)) {
     return;
@@ -87,6 +88,13 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   ConsumePendingProjectOpenDialogResult();
   ConsumeProjectSearchUpdates();
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
+  // The terminal renderer is only needed (and only pays for its glyph atlas) once a
+  // terminal is actually shown; initialize + apply its font lazily at that point.
+  if (BottomPanelShowsTerminal()) {
+    terminal_text_renderer_.EnsureInitialized(renderer, presentation_scale_x_,
+                                              presentation_scale_y_);
+    ApplyTerminalFontPreferences();
+  }
   window_presentation_.logical_width = width;
   window_presentation_.logical_height = height;
   const RenderViewModelBuilder view_models(context_);

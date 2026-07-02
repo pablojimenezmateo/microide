@@ -204,7 +204,7 @@ std::optional<SDL_FRect> WorkspaceShell::ActiveTerminalCaretRect(
     return std::nullopt;
   }
 
-  const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+  const float char_width = std::max(1.0f, terminal_text_renderer_.CharWidth());
   const float cursor_x = panel_layout.text_x + static_cast<float>(cursor.column) * char_width;
   const float cursor_y =
       panel_layout.text_y +

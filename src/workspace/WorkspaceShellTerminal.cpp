@@ -2,10 +2,12 @@
 
 #include "platform/HostIntegration.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <string_view>
 
+#include "util/Parse.h"
 #include "util/StringUtil.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceTerminalSelection.h"
@@ -168,6 +170,29 @@ bool WorkspaceShell::BottomPanelVisible() const {
   return BottomPanelShowsTerminal() || BottomPanelShowsOutput();
 }
 
+const render::TextRenderer& WorkspaceShell::PanelTextRenderer() const {
+  return BottomPanelShowsTerminal() ? terminal_text_renderer_ : text_renderer_;
+}
+
+void WorkspaceShell::ApplyTerminalFontPreferences() {
+  const auto raw_size = GetSettingValue("terminal.font_size");
+  const int size =
+      std::clamp(raw_size.has_value() ? util::ParseInt(*raw_size).value_or(13) : 13, 8, 32);
+  bool changed = (size != last_applied_terminal_font_size_);
+  last_applied_terminal_font_size_ = size;
+  terminal_text_renderer_.SetFontPointSize(static_cast<float>(size));
+  if (terminal_text_renderer_.SetFontFamily(
+          GetSettingValue("terminal.font_family").value_or(""))) {
+    changed = true;
+  }
+  if (changed) {
+    // Cell metrics moved: force a terminal re-grid (rows/cols) and repaint. ResizeTerminalToPanel
+    // recomputes off the new metrics next frame; the extra full redraws cover the reflow.
+    MarkLayoutDirty();
+    post_render_full_redraws_remaining_ = std::max(post_render_full_redraws_remaining_, 2);
+  }
+}
+
 WorkspaceShell::LogSurfaceLayout WorkspaceShell::ComputeBottomPanelLogLayout(
     const WorkspaceLayout& layout,
     std::size_t line_count) const {
@@ -175,7 +200,7 @@ WorkspaceShell::LogSurfaceLayout WorkspaceShell::ComputeBottomPanelLogLayout(
   panel_layout.content_rect = BottomPanelContentRect(layout);
   panel_layout.text_x = panel_layout.content_rect.x + kBottomPanelTextInset;
   panel_layout.text_y = panel_layout.content_rect.y + kBottomPanelTextTopInset;
-  panel_layout.line_height = text_renderer_.LineHeight();
+  panel_layout.line_height = PanelTextRenderer().LineHeight();
 
   const int visible_rows = BottomPanelVisibleRows(layout.bottom_panel.h);
   const int scroll_row = BottomPanelScrollRow(line_count, visible_rows);
@@ -189,7 +214,7 @@ WorkspaceShell::LogSurfaceLayout WorkspaceShell::ComputeBottomPanelLogLayout(
 }
 
 int WorkspaceShell::BottomPanelVisibleRows(float panel_height) const {
-  return BottomPanelVisibleRowsForHeight(panel_height, text_renderer_.LineHeight());
+  return BottomPanelVisibleRowsForHeight(panel_height, PanelTextRenderer().LineHeight());
 }
 
 int WorkspaceShell::BottomPanelScrollRow(std::size_t line_count, int visible_rows) const {
@@ -439,7 +464,7 @@ WorkspaceShell::TerminalSelectionPositionForPoint(
                             first_row + lines.size() - 1);
   const float local_x = std::max(0.0f, static_cast<float>(x) - panel_layout.text_x);
   const std::size_t column = static_cast<std::size_t>(
-      std::max(0L, std::lround(local_x / std::max(1.0f, text_renderer_.CharWidth()))));
+      std::max(0L, std::lround(local_x / std::max(1.0f, terminal_text_renderer_.CharWidth()))));
   return TerminalSelectionPosition{
       .row = row,
       .column = std::min(column, lines[row - first_row].cells.size()),
@@ -475,8 +500,8 @@ WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
 
   const float text_x = panel_content.x + 12.0f;
   const float text_y = panel_content.y + 8.0f;
-  const float line_height = text_renderer_.LineHeight();
-  const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+  const float line_height = terminal_text_renderer_.LineHeight();
+  const float char_width = std::max(1.0f, terminal_text_renderer_.CharWidth());
   if (line_height <= 0.0f || y < text_y) {
     return std::nullopt;
   }

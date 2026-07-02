@@ -826,6 +826,13 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
       next_delay = editor_event_delay_ms;
     }
   }
+  // "After delay" autosave wakes the loop near the debounce deadline so a settled
+  // dirty buffer is written without any input to drive the save.
+  if (const auto autosave_delay = NextAutosaveDelayMs(); autosave_delay.has_value()) {
+    if (!next_delay.has_value() || *autosave_delay < *next_delay) {
+      next_delay = *autosave_delay;
+    }
+  }
   return next_delay;
 }
 
@@ -944,6 +951,20 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
   // lockless atomic so a project with no plugin work pays a single load here.
   if (plugin_runtime_.PendingPluginThreadActionCount() > 0 &&
       plugin_runtime_.DrainPluginThreadActions() > 0) {
+    return EventResult{
+        .handled = true,
+        .redraw = RenderInvalidation{
+            .full = true,
+            .rects = {},
+        },
+    };
+  }
+  // "After delay" autosave fires once the debounce elapses. Disarm before saving so a
+  // clean/manually-saved buffer does not busy-loop the wake; the save clears the dirty
+  // marker, so a full redraw refreshes the tab's modified indicator.
+  if (autosave_armed_ && (SDL_GetTicks() - autosave_edit_epoch_ms_) >= AutosaveDelayMs()) {
+    autosave_armed_ = false;
+    MaybeAutosaveDirtyTabs(false);
     return EventResult{
         .handled = true,
         .redraw = RenderInvalidation{
