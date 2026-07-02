@@ -38,6 +38,7 @@ struct CompareHoverState {
   std::size_t presentation_row = 0;
   std::size_t collapsed_run_start_model_row = 0;
   std::size_t collapsed_run_length = 0;
+  bool operator==(const CompareHoverState&) const = default;
 };
 
 struct CompareReviewHeaderState {

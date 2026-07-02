@@ -142,6 +142,7 @@ struct MergeHoverState {
   Kind kind = Kind::None;
   std::size_t conflict_index = 0;
   compare::MergeChoice preview_choice = compare::MergeChoice::Base;
+  bool operator==(const MergeHoverState&) const = default;
 };
 
 struct MergeHoverSurfaceLayout {

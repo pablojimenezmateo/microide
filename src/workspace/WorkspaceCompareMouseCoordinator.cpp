@@ -15,15 +15,6 @@ namespace {
 
 constexpr float kCompareScrollbarReserve = 12.0f;
 
-bool CompareHoverStatesEqual(const std::optional<CompareHoverState>& lhs,
-                             const std::optional<CompareHoverState>& rhs) {
-  return lhs.has_value() == rhs.has_value() &&
-         (!lhs.has_value() ||
-          (lhs->kind == rhs->kind && lhs->presentation_row == rhs->presentation_row &&
-           lhs->collapsed_run_start_model_row == rhs->collapsed_run_start_model_row &&
-           lhs->collapsed_run_length == rhs->collapsed_run_length));
-}
-
 std::optional<CompareHoverKind> CompareHoverKindAtPoint(const CollapsedContextActionRects& rects,
                                                         float x,
                                                         float y) {
@@ -377,7 +368,7 @@ bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
   }
 
   compare_tab->hover_state = next_hover;
-  if (CompareHoverStatesEqual(previous_hover, compare_tab->hover_state)) {
+  if (previous_hover == compare_tab->hover_state) {
     return false;
   }
   if (previous_hover.has_value()) {

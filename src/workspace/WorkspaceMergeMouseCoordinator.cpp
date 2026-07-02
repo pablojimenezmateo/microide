@@ -14,14 +14,6 @@ namespace microide::workspace {
 
 namespace {
 
-bool MergeHoverStatesEqual(const std::optional<MergeHoverState>& lhs,
-                           const std::optional<MergeHoverState>& rhs) {
-  return lhs.has_value() == rhs.has_value() &&
-         (!lhs.has_value() ||
-          (lhs->kind == rhs->kind && lhs->conflict_index == rhs->conflict_index &&
-           lhs->preview_choice == rhs->preview_choice));
-}
-
 }  // namespace
 
 MergeMouseCoordinator::MergeMouseCoordinator(ProjectWorkspaceState& state,
@@ -409,7 +401,7 @@ bool MergeMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
   }
 
   merge_tab->hover_state = next_hover;
-  if (MergeHoverStatesEqual(previous_hover, merge_tab->hover_state)) {
+  if (previous_hover == merge_tab->hover_state) {
     return false;
   }
   if (previous_hover.has_value()) {
