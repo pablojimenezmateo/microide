@@ -1,7 +1,9 @@
 #pragma once
 
 #include <string>
-#include <vector>
+#include <string_view>
+
+#include "workspace/ProviderRegistry.h"
 
 namespace microide::workspace {
 
@@ -13,20 +15,13 @@ struct CompletionProviderSpec {
   std::string trigger_characters;  // e.g., "." or "->."
 };
 
-// Registry for completion providers (Lua-driven).
-class CompletionRegistry {
- public:
-  CompletionRegistry();
-  ~CompletionRegistry();
+using CompletionRegistry = ProviderRegistry<CompletionProviderSpec>;
 
-  void Register(const CompletionProviderSpec& spec);
-  const std::vector<CompletionProviderSpec>& Specs() const { return specs_; }
-
-  // Find provider for language_id; returns first if multiple.
-  const CompletionProviderSpec* FindProvider(const std::string& language_id) const;
-
- private:
-  std::vector<CompletionProviderSpec> specs_;
-};
+// First completion provider for `language_id` (or nullptr).
+inline const CompletionProviderSpec* FindProvider(const CompletionRegistry& registry,
+                                                  std::string_view language_id) {
+  return registry.FindIf(
+      [&](const CompletionProviderSpec& spec) { return spec.language_id == language_id; });
+}
 
 }  // namespace microide::workspace

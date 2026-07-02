@@ -1,9 +1,10 @@
 #pragma once
 
-#include <functional>
-#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
+
+#include "workspace/ProviderRegistry.h"
 
 namespace microide::workspace {
 
@@ -16,20 +17,13 @@ struct FormatterSpec {
   std::string plugin_id;
 };
 
-// Registry for formatters. Formatters run on-save if enabled.
-class FormatterRegistry {
- public:
-  FormatterRegistry();
-  ~FormatterRegistry();
+using FormatterRegistry = ProviderRegistry<FormatterSpec>;
 
-  void Register(const FormatterSpec& spec);
-  const std::vector<FormatterSpec>& Specs() const { return specs_; }
-
-  // Find formatter for language_id (returns first if multiple).
-  const FormatterSpec* FindFormatter(const std::string& language_id) const;
-
- private:
-  std::vector<FormatterSpec> specs_;
-};
+// First formatter for `language_id` (or nullptr).
+inline const FormatterSpec* FindFormatter(const FormatterRegistry& registry,
+                                          std::string_view language_id) {
+  return registry.FindIf(
+      [&](const FormatterSpec& spec) { return spec.language_id == language_id; });
+}
 
 }  // namespace microide::workspace

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <string>
-#include <vector>
+#include <string_view>
+
+#include "workspace/ProviderRegistry.h"
 
 namespace microide::workspace {
 
@@ -12,20 +14,11 @@ struct ScmProviderSpec {
   std::string plugin_id;
 };
 
-// SCM registry: manages source control provider registrations.
-class ScmRegistry {
- public:
-  ScmRegistry();
-  ~ScmRegistry();
+using ScmRegistry = ProviderRegistry<ScmProviderSpec>;
 
-  void Register(const ScmProviderSpec& spec);
-  const std::vector<ScmProviderSpec>& Specs() const { return specs_; }
-
-  // Find provider by id.
-  const ScmProviderSpec* FindProvider(const std::string& id) const;
-
- private:
-  std::vector<ScmProviderSpec> specs_;
-};
+// First SCM provider matching `id` (or nullptr).
+inline const ScmProviderSpec* FindProvider(const ScmRegistry& registry, std::string_view id) {
+  return registry.FindIf([&](const ScmProviderSpec& spec) { return spec.id == id; });
+}
 
 }  // namespace microide::workspace

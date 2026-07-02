@@ -1,7 +1,9 @@
 #pragma once
 
 #include <string>
-#include <vector>
+#include <string_view>
+
+#include "workspace/ProviderRegistry.h"
 
 namespace microide::workspace {
 
@@ -16,20 +18,13 @@ struct ToolSpec {
   std::string install_dir;  // relative to plugin dir or cache
 };
 
-// Registry for downloadable tools.
-class ToolRegistry {
- public:
-  ToolRegistry();
-  ~ToolRegistry();
+using ToolRegistry = ProviderRegistry<ToolSpec>;
 
-  void Register(const ToolSpec& spec);
-  const std::vector<ToolSpec>& Specs() const { return specs_; }
-
-  // Find tool by id and platform.
-  const ToolSpec* FindTool(const std::string& id, const std::string& platform) const;
-
- private:
-  std::vector<ToolSpec> specs_;
-};
+// First tool matching `id` on `platform` (or nullptr).
+inline const ToolSpec* FindTool(const ToolRegistry& registry, std::string_view id,
+                                std::string_view platform) {
+  return registry.FindIf(
+      [&](const ToolSpec& spec) { return spec.id == id && spec.platform == platform; });
+}
 
 }  // namespace microide::workspace

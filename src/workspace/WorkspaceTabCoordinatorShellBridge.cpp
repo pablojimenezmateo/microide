@@ -137,7 +137,7 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
 
   const std::string filetype = editor::runtime_syntax::DetectFiletype(path, viewport.lines());
   if (const FormatterSpec* formatter =
-          filetype.empty() ? nullptr : formatter_registry_.FindFormatter(filetype);
+          filetype.empty() ? nullptr : FindFormatter(formatter_registry_, filetype);
       formatter != nullptr && !formatter->command.empty()) {
     // Save is synchronous from the UI's perspective, so the formatter has to complete before
     // we return. Running it inline avoids the misleading executor-post-then-wait pattern that

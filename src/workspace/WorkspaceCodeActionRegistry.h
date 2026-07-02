@@ -1,7 +1,9 @@
 #pragma once
 
 #include <string>
-#include <vector>
+#include <string_view>
+
+#include "workspace/ProviderRegistry.h"
 
 namespace microide::workspace {
 
@@ -12,20 +14,13 @@ struct CodeActionProviderSpec {
   std::string language_id;
 };
 
-// Registry for code action providers (Lua-driven).
-class CodeActionRegistry {
- public:
-  CodeActionRegistry();
-  ~CodeActionRegistry();
+using CodeActionRegistry = ProviderRegistry<CodeActionProviderSpec>;
 
-  void Register(const CodeActionProviderSpec& spec);
-  const std::vector<CodeActionProviderSpec>& Specs() const { return specs_; }
-
-  // Find provider for language_id; returns first if multiple.
-  const CodeActionProviderSpec* FindProvider(const std::string& language_id) const;
-
- private:
-  std::vector<CodeActionProviderSpec> specs_;
-};
+// First code-action provider for `language_id` (or nullptr).
+inline const CodeActionProviderSpec* FindProvider(const CodeActionRegistry& registry,
+                                                  std::string_view language_id) {
+  return registry.FindIf(
+      [&](const CodeActionProviderSpec& spec) { return spec.language_id == language_id; });
+}
 
 }  // namespace microide::workspace

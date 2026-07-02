@@ -532,15 +532,10 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/DebugPaneRender.cpp
   src/workspace/DebugPaneService.cpp
   src/workspace/DebugPaneMouseCoordinator.cpp
-  src/workspace/WorkspaceFormatterRegistry.cpp
-  src/workspace/WorkspaceSaveParticipants.cpp
-  src/workspace/WorkspaceCompletionRegistry.cpp
-  src/workspace/WorkspaceCodeActionRegistry.cpp
-  src/workspace/WorkspaceToolRegistry.cpp
+  # Provider registries (completion/code-action/formatter/annotation/tool/scm/
+  # save-participant) are header-only ProviderRegistry<Spec> aliases; no .cpp.
   src/workspace/WorkspaceToolDownloader.cpp
   src/workspace/WorkspaceTestController.cpp
-  src/workspace/WorkspaceScmRegistry.cpp
-  src/workspace/WorkspaceAnnotationRegistry.cpp
   src/workspace/WorkspaceVirtualDocument.cpp
   src/workspace/WorkspaceReviewComments.cpp
   src/workspace/WorkspaceTerminalSelection.cpp

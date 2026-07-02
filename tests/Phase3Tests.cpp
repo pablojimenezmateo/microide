@@ -79,15 +79,15 @@ static void TestFormatterRegistry() {
   };
   reg.Register(spec);
   Expect(reg.Specs().size() == 1, "formatter registry should retain registered spec");
-  Expect(reg.FindFormatter("cpp") != nullptr,
+  Expect(FindFormatter(reg, "cpp") != nullptr,
          "formatter registry should resolve cpp formatter");
-  Expect(reg.FindFormatter("cpp")->label == "Clang Format",
+  Expect(FindFormatter(reg, "cpp")->label == "Clang Format",
          "resolved formatter label should match registration");
 }
 
 static void TestFormatterRegistryNotFound() {
   FormatterRegistry reg;
-  Expect(reg.FindFormatter("rust") == nullptr,
+  Expect(FindFormatter(reg, "rust") == nullptr,
          "unregistered language should resolve to nullptr");
 }
 
@@ -111,9 +111,9 @@ static void TestCompletionRegistry() {
   };
   reg.Register(spec);
   Expect(reg.Specs().size() == 1, "completion registry should retain registered spec");
-  Expect(reg.FindProvider("rust") != nullptr,
+  Expect(FindProvider(reg, "rust") != nullptr,
          "completion registry should resolve rust provider");
-  Expect(reg.FindProvider("rust")->trigger_characters == ".",
+  Expect(FindProvider(reg, "rust")->trigger_characters == ".",
          "resolved completion provider should preserve trigger characters");
 }
 
@@ -125,7 +125,7 @@ static void TestCodeActionRegistry() {
       .language_id = "rust",
   };
   reg.Register(spec);
-  Expect(reg.FindProvider("rust") != nullptr,
+  Expect(FindProvider(reg, "rust") != nullptr,
          "code-action registry should resolve rust provider");
 }
 
@@ -141,9 +141,9 @@ static void TestToolRegistry() {
       .install_dir = ".cache/tools",
   };
   reg.Register(spec);
-  Expect(reg.FindTool("rust-analyzer", "linux") != nullptr,
+  Expect(FindTool(reg, "rust-analyzer", "linux") != nullptr,
          "tool registry should resolve linux rust-analyzer");
-  Expect(reg.FindTool("rust-analyzer", "linux")->label == "Rust Analyzer",
+  Expect(FindTool(reg, "rust-analyzer", "linux")->label == "Rust Analyzer",
          "resolved tool label should match registration");
 }
 
@@ -170,11 +170,11 @@ static void TestToolRegistryMultiplePlatforms() {
   reg.Register(linux_spec);
   reg.Register(macos_spec);
   Expect(reg.Specs().size() == 2, "tool registry should retain both platform specs");
-  Expect(reg.FindTool("tool", "linux") != nullptr,
+  Expect(FindTool(reg, "tool", "linux") != nullptr,
          "tool registry should resolve linux variant");
-  Expect(reg.FindTool("tool", "macos") != nullptr,
+  Expect(FindTool(reg, "tool", "macos") != nullptr,
          "tool registry should resolve macos variant");
-  Expect(reg.FindTool("tool", "windows") == nullptr,
+  Expect(FindTool(reg, "tool", "windows") == nullptr,
          "tool registry should not resolve unregistered windows variant");
 }
 

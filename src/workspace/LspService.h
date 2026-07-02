@@ -6,6 +6,8 @@
 #include <vector>
 
 #include "editor/TextViewport.h"
+#include "workspace/WorkspaceCodeActionRegistry.h"
+#include "workspace/WorkspaceCompletionRegistry.h"
 #include "workspace/WorkspaceLspManager.h"
 
 namespace microide::render {
@@ -16,8 +18,6 @@ namespace microide::workspace {
 
 struct WorkspaceContext;
 struct ProjectWorkspaceState;
-class CompletionRegistry;
-class CodeActionRegistry;
 
 // Host-owned home for the LSP glue that used to live directly on WorkspaceShell:
 // per-project server management, document synchronization, diagnostics publishing,

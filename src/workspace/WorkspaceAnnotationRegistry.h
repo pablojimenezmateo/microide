@@ -1,7 +1,8 @@
 #pragma once
 
 #include <string>
-#include <vector>
+
+#include "workspace/ProviderRegistry.h"
 
 namespace microide::workspace {
 
@@ -14,17 +15,6 @@ struct AnnotationProviderSpec {
   std::string plugin_id;
 };
 
-// Annotation registry: manages code annotation providers.
-class AnnotationRegistry {
- public:
-  AnnotationRegistry();
-  ~AnnotationRegistry();
-
-  void Register(const AnnotationProviderSpec& spec);
-  const std::vector<AnnotationProviderSpec>& Specs() const { return specs_; }
-
- private:
-  std::vector<AnnotationProviderSpec> specs_;
-};
+using AnnotationRegistry = ProviderRegistry<AnnotationProviderSpec>;
 
 }  // namespace microide::workspace

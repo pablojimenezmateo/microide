@@ -526,7 +526,7 @@
     return shell.save_participant_registry_.Specs().size();
   }
   static bool HasFormatterForLanguage(WorkspaceShell& shell, std::string_view language_id) {
-    return shell.formatter_registry_.FindFormatter(std::string(language_id)) != nullptr;
+    return FindFormatter(shell.formatter_registry_, language_id) != nullptr;
   }
   static bool RunSaveParticipantsForTesting(WorkspaceShell& shell,
                                             const std::filesystem::path& path,

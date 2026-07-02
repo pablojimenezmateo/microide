@@ -131,14 +131,14 @@ std::string LspService::ActiveLanguageIdForProvider() const {
 bool LspService::HasActiveCompletionProvider() const {
   const std::string language_id = ActiveLanguageIdForProvider();
   return !language_id.empty() &&
-         (completion_registry_->FindProvider(language_id) != nullptr ||
+         (FindProvider(*completion_registry_, language_id) != nullptr ||
           CurrentLspManager().HasServer(language_id));
 }
 
 bool LspService::HasActiveCodeActionProvider() const {
   const std::string language_id = ActiveLanguageIdForProvider();
   return !language_id.empty() &&
-         (code_action_registry_->FindProvider(language_id) != nullptr ||
+         (FindProvider(*code_action_registry_, language_id) != nullptr ||
           CurrentLspManager().HasServer(language_id));
 }
 

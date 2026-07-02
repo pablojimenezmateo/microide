@@ -1,10 +1,10 @@
 #pragma once
 
 #include "util/JsonValue.h"
+#include "workspace/ProviderRegistry.h"
 
 #include <functional>
 #include <string>
-#include <vector>
 
 namespace microide::workspace {
 
@@ -15,17 +15,6 @@ struct SaveParticipantSpec {
   // Lua function ref (as string id) stored in plugin context.
 };
 
-// Registry for save participants (Lua-driven).
-class SaveParticipantRegistry {
- public:
-  SaveParticipantRegistry();
-  ~SaveParticipantRegistry();
-
-  void Register(const SaveParticipantSpec& spec);
-  const std::vector<SaveParticipantSpec>& Specs() const { return specs_; }
-
- private:
-  std::vector<SaveParticipantSpec> specs_;
-};
+using SaveParticipantRegistry = ProviderRegistry<SaveParticipantSpec>;
 
 }  // namespace microide::workspace
