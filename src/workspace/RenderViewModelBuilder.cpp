@@ -1114,6 +1114,8 @@ constexpr float kSettingsBtnH = 22.0f;
 constexpr float kSettingsValueSlotW = 100.0f;
 constexpr float kSettingsSegW = 132.0f;
 constexpr float kSettingsResetW = 22.0f;
+constexpr float kSettingsScopeW = 68.0f;
+constexpr float kSettingsTextEditW = 180.0f;
 constexpr float kSettingsCheckBox = 18.0f;
 constexpr float kSettingsControlGap = 6.0f;
 
@@ -1233,6 +1235,17 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
         leftmost = control.value_rect.x;
         break;
       }
+      case SettingsControlKind::TextEdit: {
+        control.value_rect = MakeRect(content_right - kSettingsTextEditW, cy, kSettingsTextEditW,
+                                      kSettingsBtnH);
+        if (service.EditingValue() && service.EditingRowId() == row.id) {
+          control.editing = true;
+          control.display_value = service.ValueEditor().text();
+          control.edit_caret = service.ValueEditor().caret();
+        }
+        leftmost = control.value_rect.x;
+        break;
+      }
       case SettingsControlKind::Stepper: {
         control.inc_rect = MakeRect(content_right - kSettingsBtnW, cy, kSettingsBtnW, kSettingsBtnH);
         control.value_rect =
@@ -1249,6 +1262,18 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     if (row.resettable) {
       rvm.reset_rect =
           MakeRect(leftmost - kSettingsControlGap - kSettingsResetW, cy, kSettingsResetW, kSettingsBtnH);
+      leftmost = rvm.reset_rect.x;
+    }
+    // Per-row scope chip ("Project" / "Default") for built-in project-scoped
+    // settings, placed to the left of the reset affordance. The active write
+    // target is "Project" (this project) unless a user-level default exists with
+    // no per-project override, in which case edits flow to the shared default.
+    if (row.scope_selectable) {
+      const bool target_project = row.project_override || !row.has_user_default;
+      rvm.scope_is_project = target_project;
+      rvm.scope_text = target_project ? "Project" : "Default";
+      rvm.scope_rect =
+          MakeRect(leftmost - kSettingsControlGap - kSettingsScopeW, cy, kSettingsScopeW, kSettingsBtnH);
     }
     vm.rows.push_back(rvm);
   }

@@ -64,9 +64,6 @@ void TestPersistedStateUserAndProjectConfigRecordRoundTrip() {
          "user config disabled plugins should round-trip");
 
   PersistedProjectConfigState project{
-      .editor_tab_size = 8,
-      .editor_indent_width = 2,
-      .editor_soft_tabs = true,
       .colorscheme_name = "sunrise",
       .project_base_color = SDL_Color{0x12, 0x34, 0x56, 0x78},
       .settings = {{"editor.wrap", "word"}},
@@ -80,9 +77,6 @@ void TestPersistedStateUserAndProjectConfigRecordRoundTrip() {
   PersistedProjectConfigState decoded_project;
   Expect(DecodeProjectConfigRecord(encoded_project, &decoded_project),
          "project config record decode should succeed");
-  Expect(decoded_project.editor_tab_size == 8 && decoded_project.editor_indent_width == 2 &&
-             decoded_project.editor_soft_tabs,
-         "project config editor settings should round-trip");
   Expect(decoded_project.project_base_color.has_value() &&
              decoded_project.project_base_color->r == 0x12 &&
              decoded_project.project_base_color->a == 0x78,

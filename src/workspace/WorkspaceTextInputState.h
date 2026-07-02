@@ -24,6 +24,9 @@ enum class TextInputSurface {
   CommitBody,
   Terminal,
   SettingsQuery,
+  // Inline edit of a String setting's value in the Settings overlay. Routes to
+  // SettingsOverlayService::ValueEditor(); commits on Return, cancels on Esc.
+  SettingsValueEdit,
   // Inline edit of a value in the debug Variables panel (Phase 4). Routes to
   // `debug_variables.EditBuffer()`; the panel renders its own static caret.
   DebugVariableEdit,

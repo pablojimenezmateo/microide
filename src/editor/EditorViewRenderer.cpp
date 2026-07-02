@@ -290,7 +290,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                 bool render_whitespace_enabled,
                                 const FoldingModel* folding_model,
                                 const WelcomeViewModel* welcome_view,
-                                const FileDecorations* plugin_decorations) const {
+                                const FileDecorations* plugin_decorations,
+                                bool show_line_numbers) const {
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
@@ -560,7 +561,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
                                    *severity);
       }
-      if (IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
+      if (show_line_numbers && IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
         const auto [end_sticky, _] =
             std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),
                           line_index + 1);

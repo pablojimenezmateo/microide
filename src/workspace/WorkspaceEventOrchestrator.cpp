@@ -198,6 +198,10 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::WindowFocusLost");
       state_.window_has_input_focus = false;
+      // Autosave dirty buffers when configured for "on focus change".
+      if (operations_.autosave_on_focus_lost) {
+        operations_.autosave_on_focus_lost();
+      }
       // While unfocused another app or the compositor can repaint the global
       // cursor; force a reassert so regaining focus restores ours even if no
       // pointer-enter (which separately forces) crosses the window edge.

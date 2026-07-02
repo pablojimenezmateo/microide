@@ -67,6 +67,13 @@ class PersistenceCoordinator {
   void SaveUserConfig() const;
   bool RestoreConfigState();
   void SaveConfigState() const;
+  // Recompute the current project's canonical editor preferences (tab size,
+  // indent width, font size, soft tabs, wrap) and active colorscheme from the
+  // layered settings store, resolving project-override → user-level default →
+  // spec default. Applies the colorscheme live only when it actually changes.
+  // This is the single materialization point so a user-level default applies to
+  // any project that has no per-project override.
+  void MaterializeCanonicalPreferences();
   bool RestoreSessionState();
   void SaveSessionState();
   bool RestoreWorkspaceSession();

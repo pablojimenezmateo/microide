@@ -863,12 +863,23 @@ std::string_view WorkspaceActionContext::CurrentColorschemeName() const {
 }
 
 void WorkspaceActionContext::SetTabSize(std::size_t value) {
+  // Route through the setting chokepoint so the project layer (not just the
+  // materialized editor_preferences cache) records the override, keeping the
+  // layered "set as default" model consistent with the Settings overlay.
+  if (operations_.set_setting_value) {
+    operations_.set_setting_value("editor.tab_size", std::to_string(value));
+    return;
+  }
   state_.editor_preferences.tab_size = value;
   operations_.apply_editor_preferences_to_all_tabs();
   operations_.save_config_state();
 }
 
 void WorkspaceActionContext::SetIndentWidth(std::size_t value) {
+  if (operations_.set_setting_value) {
+    operations_.set_setting_value("editor.indent_width", std::to_string(value));
+    return;
+  }
   state_.editor_preferences.indent_width = value;
   operations_.apply_editor_preferences_to_all_tabs();
   operations_.save_config_state();
@@ -884,6 +895,10 @@ void WorkspaceActionContext::ApplyUiScale(float scale) {
 }
 
 void WorkspaceActionContext::SetSoftTabs(bool enabled) {
+  if (operations_.set_setting_value) {
+    operations_.set_setting_value("editor.soft_tabs", enabled ? "true" : "false");
+    return;
+  }
   state_.editor_preferences.soft_tabs = enabled;
   operations_.apply_editor_preferences_to_all_tabs();
   operations_.save_config_state();
@@ -894,9 +909,13 @@ bool WorkspaceActionContext::SoftWrapEnabled() const {
 }
 
 void WorkspaceActionContext::SetSoftWrap(bool enabled) {
-  state_.editor_preferences.soft_wrap = enabled;
-  operations_.apply_editor_preferences_to_all_tabs();
-  operations_.save_config_state();
+  if (operations_.set_setting_value) {
+    operations_.set_setting_value("editor.wrap", enabled ? "word" : "off");
+  } else {
+    state_.editor_preferences.soft_wrap = enabled;
+    operations_.apply_editor_preferences_to_all_tabs();
+    operations_.save_config_state();
+  }
   // Wrap toggling reflows every visual row in the active editor; the partial
   // redraw scope from a menu/shortcut close otherwise leaves stale pixels for
   // rows that did not change geometry. Force a full editor-surface redraw.

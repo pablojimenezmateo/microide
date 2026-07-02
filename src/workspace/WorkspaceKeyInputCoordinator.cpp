@@ -65,6 +65,19 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     const auto overlay_redraw = [&]() {
       ensure_redraw([this]() { operations_.request_overlay_redraw(); });
     };
+    // An active inline String-value edit owns the keyboard: Enter commits, Escape
+    // cancels the edit (not the overlay), everything else types into the editor.
+    if (operations_.settings_value_edit_active && operations_.settings_value_edit_active()) {
+      if (event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER) {
+        operations_.settings_commit_value_edit();
+      } else if (event.key == SDLK_ESCAPE) {
+        operations_.settings_cancel_value_edit();
+      } else {
+        operations_.text_input_handle_single_line_key_down(event, modifiers);
+      }
+      overlay_redraw();
+      return true;
+    }
     if (event.key == SDLK_ESCAPE) {
       operations_.close_settings_overlay();
       ensure_redraw([this]() { operations_.request_window_redraw(); });
@@ -706,8 +719,14 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               [this]() {
                 if (const SettingsOverlayRow* row = settings_overlay_service_.SelectedSettingRow();
                     row != nullptr) {
-                  StepSetting(row->id, true);
-                  RefreshSettingsOverlayCatalog();
+                  // Enter/Space on a String row opens the inline editor; every
+                  // other control toggles / cycles in place.
+                  if (row->control_kind == SettingsControlKind::TextEdit) {
+                    BeginSettingValueEdit(row->id);
+                  } else {
+                    StepSetting(row->id, true);
+                    RefreshSettingsOverlayCatalog();
+                  }
                 }
               },
           .settings_reset_selected =
@@ -718,6 +737,10 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
                   RefreshSettingsOverlayCatalog();
                 }
               },
+          .settings_value_edit_active =
+              [this]() { return settings_overlay_service_.EditingValue(); },
+          .settings_commit_value_edit = [this]() { CommitSettingValueEdit(); },
+          .settings_cancel_value_edit = [this]() { CancelSettingValueEdit(); },
           .close_sidebar = [this]() { CloseSidebar(); },
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .activate_overlay_selection =

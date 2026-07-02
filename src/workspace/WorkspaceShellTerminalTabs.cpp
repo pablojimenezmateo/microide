@@ -2,9 +2,16 @@
 
 #include <algorithm>
 
+#include "util/Parse.h"
 #include "workspace/TabReorder.h"
 
 namespace microide::workspace {
+
+std::size_t WorkspaceShell::TerminalScrollbackLines() const {
+  const auto raw = GetSettingValue("terminal.scrollback_lines");
+  const int parsed = raw.has_value() ? util::ParseInt(*raw).value_or(2000) : 2000;
+  return static_cast<std::size_t>(std::clamp(parsed, 200, 100000));
+}
 
 void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool log_feedback) {
   (void) log_feedback;
@@ -19,9 +26,12 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
   if (terminal_event_type_ != 0) {
     terminal_tab->session.SetWakeEventType(terminal_event_type_);
   }
-  const bool started = terminal::UsePlaceholderTerminalsForTesting()
-                           ? terminal_tab->session.StartPlaceholderForTesting(working_directory, command)
-                           : terminal_tab->session.Start(working_directory, command);
+  terminal_tab->session.SetMaxScrollbackLines(TerminalScrollbackLines());
+  const bool started =
+      terminal::UsePlaceholderTerminalsForTesting()
+          ? terminal_tab->session.StartPlaceholderForTesting(working_directory, command)
+          : terminal_tab->session.Start(working_directory, command,
+                                        GetSettingValue("terminal.shell").value_or(""));
   if (!started) {
     return;
   }

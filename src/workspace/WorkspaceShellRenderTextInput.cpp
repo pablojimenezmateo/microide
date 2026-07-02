@@ -43,6 +43,7 @@ bool UsesSharedSingleLineCaret(TextInputSurface surface) {
       // The body is a multi-line field rendered by the sidebar panel, not the
       // shared single-line caret/selection machinery.
     case TextInputSurface::SettingsQuery:
+    case TextInputSurface::SettingsValueEdit:
       // The Settings overlay renders its own caret/selection.
     case TextInputSurface::DebugVariableEdit:
       // The Variables value field renders its own caret/selection in the bottom panel.

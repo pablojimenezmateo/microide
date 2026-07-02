@@ -21,8 +21,9 @@ void Upsert(SettingsLayer& layer, std::string_view id, std::string value);
 bool Erase(SettingsLayer& layer, std::string_view id);
 }  // namespace settings_layer
 
-// Centralizes resolution and mutation of layered settings: the user layer wins
-// over the active project layer. Keeps a resolved index for O(1) reads (the hot
+// Centralizes resolution and mutation of layered settings: the active project
+// layer wins over the user layer (the user layer holds cross-project defaults
+// that a project may override). Keeps a resolved index for O(1) reads (the hot
 // render path resolves settings 10+ times per frame). The backing vectors stay
 // owned by WorkspaceContext / ProjectWorkspaceState so binary persistence and
 // the wholesale project-state move keep working; this store binds non-owning
@@ -36,7 +37,7 @@ class SettingsStore {
   void BindUserLayer(SettingsLayer* user);
   void BindActiveProject(SettingsLayer* project);
 
-  // Resolved lookup (user over project). Returns nullptr when the id is set in
+  // Resolved lookup (project over user). Returns nullptr when the id is set in
   // neither layer. The pointer is valid until the next mutation/bind; callers
   // copy the value if it must outlive that.
   const std::string* Resolve(std::string_view id) const;

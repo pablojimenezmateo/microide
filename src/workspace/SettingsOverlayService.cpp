@@ -49,6 +49,7 @@ void SettingsOverlayService::OpenSettings() {
   focused_pane_ = SettingsPane::Filter;
   query_.clear();
   query_editor_.SetText("");
+  CancelValueEdit();
 }
 
 void SettingsOverlayService::OpenHelpAbout() {
@@ -59,12 +60,29 @@ void SettingsOverlayService::OpenHelpAbout() {
   // its rows are never silently filtered by a stale needle.
   query_.clear();
   query_editor_.SetText("");
+  CancelValueEdit();
 }
 
 void SettingsOverlayService::Close() {
   visible_ = false;
   scroll_row_ = 0;
+  CancelValueEdit();
 }
+
+void SettingsOverlayService::BeginValueEdit(std::string row_id, const std::string& initial_text) {
+  editing_value_ = true;
+  editing_row_id_ = std::move(row_id);
+  value_editor_.SetText(initial_text);
+  value_editor_.SelectAll();
+}
+
+void SettingsOverlayService::CancelValueEdit() {
+  editing_value_ = false;
+  editing_row_id_.clear();
+  value_editor_.SetText("");
+}
+
+std::string SettingsOverlayService::ValueEditText() const { return value_editor_.text(); }
 
 void SettingsOverlayService::SetScrollRow(int row) {
   scroll_row_ = std::max(0, row);
@@ -91,16 +109,33 @@ void SettingsOverlayService::RebuildSettingsRows(
     if (!RowMatchesQuery(setting.label, setting.id)) {
       continue;
     }
-    const std::string* stored = setting.scope == SettingScope::User
-                                    ? settings_layer::Find(user_settings, setting.id)
-                                    : settings_layer::Find(project_settings, setting.id);
+    const std::string* user_stored = settings_layer::Find(user_settings, setting.id);
+    const std::string* project_stored = settings_layer::Find(project_settings, setting.id);
+    // Built-in project-scoped settings support a user-level default that a
+    // per-project override wins over (project → user default → spec default).
+    const bool scope_selectable =
+        setting.plugin_id.empty() && setting.scope == SettingScope::Project;
+    const std::string* active_stored =
+        setting.scope == SettingScope::User ? user_stored
+                                            : (project_stored != nullptr ? project_stored
+                                                                         : user_stored);
     SettingsOverlayRow row;
     row.id = setting.id;
     row.label = setting.label;
-    row.value = stored != nullptr ? *stored : SerializeSettingValue(setting.default_value);
+    row.value =
+        active_stored != nullptr ? *active_stored : SerializeSettingValue(setting.default_value);
     row.value_display = setting.type == SettingType::Float ? CompactFloat(row.value) : row.value;
     row.description = setting.description;
-    row.scope_label = setting.scope == SettingScope::User ? "User" : "Project";
+    row.scope_selectable = scope_selectable;
+    row.project_override = project_stored != nullptr;
+    row.has_user_default = user_stored != nullptr;
+    // The scope label reflects where the active value lives: a project override
+    // reads "Project"; otherwise a project-scoped setting reads "Default".
+    if (setting.scope == SettingScope::User) {
+      row.scope_label = "User";
+    } else {
+      row.scope_label = project_stored != nullptr ? "Project" : "Default";
+    }
     row.detail = setting.scope == SettingScope::User ? "User / " : "Project / ";
     row.detail += setting.plugin_id.empty() ? "built-in" : "plugin:" + setting.plugin_id;
     row.group = setting.group;
@@ -119,10 +154,12 @@ void SettingsOverlayService::RebuildSettingsRows(
         row.control_kind = SettingsControlKind::Stepper;
         break;
       case SettingType::String:
-        row.control_kind = SettingsControlKind::None;
+        row.control_kind = SettingsControlKind::TextEdit;
         break;
     }
-    row.resettable = stored != nullptr;
+    // Resettable when the active layer holds an override (project override when
+    // present, else a user-level default).
+    row.resettable = active_stored != nullptr;
     row.editable = true;
     settings_rows_.push_back(std::move(row));
   }

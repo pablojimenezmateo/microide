@@ -72,6 +72,19 @@ void TextRenderer::SetFontPointSize(float points) {
   width_cache_initialized_ = false;
 }
 
+bool TextRenderer::SetFontFamily(std::string_view family) {
+  if (backend_ == nullptr) {
+    return false;
+  }
+  if (!backend_->SetFontFamily(family)) {
+    return false;
+  }
+  // A different typeface changes every glyph advance; invalidate the width cache.
+  ClearWidthCache();
+  width_cache_initialized_ = false;
+  return true;
+}
+
 float TextRenderer::CharWidth() const {
   return backend_ != nullptr ? backend_->CharWidth() : 8.0f;
 }

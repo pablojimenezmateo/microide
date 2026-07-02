@@ -161,7 +161,7 @@ class PosixTerminalBackend final : public TerminalBackend {
       };
     }
 
-    const std::string shell_path = DefaultShellPath();
+    const std::string shell_path = request.shell.empty() ? DefaultShellPath() : request.shell;
     const std::string shell_name = ShellProgramName(shell_path);
     const pid_t child_pid = fork();
     if (child_pid < 0) {
@@ -484,8 +484,9 @@ class WindowsTerminalBackend final : public TerminalBackend {
       return FailureResult(request.command, "failed to attach pseudoconsole attributes.");
     }
 
-    std::wstring shell = ToWide(DefaultShellPath());
-    const std::wstring shell_name = ToWide(ShellProgramName(DefaultShellPath()));
+    const std::string shell_path = request.shell.empty() ? DefaultShellPath() : request.shell;
+    std::wstring shell = ToWide(shell_path);
+    const std::wstring shell_name = ToWide(ShellProgramName(shell_path));
     std::wstring command_line = shell;
     if (!request.command.empty()) {
       command_line += L" /D /C ";

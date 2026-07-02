@@ -83,6 +83,9 @@ class TextViewport {
   // `editor.save.*` settings before invoking Save().
   void SetSaveTrimTrailingWhitespace(bool enabled) { save_trim_trailing_whitespace_ = enabled; }
   void SetSaveEnsureFinalNewline(bool enabled) { save_ensure_final_newline_ = enabled; }
+  // Force the on-save line ending (the `editor.line_endings` setting). nullopt
+  // ("auto") keeps the file's detected ending; a value normalizes on save.
+  void SetSaveLineEnding(std::optional<LineEnding> ending) { save_line_ending_override_ = ending; }
   bool save_trim_trailing_whitespace() const { return save_trim_trailing_whitespace_; }
   bool save_ensure_final_newline() const { return save_ensure_final_newline_; }
 
@@ -518,6 +521,7 @@ class TextViewport {
   bool soft_wrap_ = false;
   bool save_trim_trailing_whitespace_ = false;
   bool save_ensure_final_newline_ = false;
+  std::optional<LineEnding> save_line_ending_override_;
   LanguageContractView lc_view_;
   std::vector<SecondaryCaret> secondary_carets_;
   // Cache for secondary_caret_positions(): mirrors `secondary_carets_.position` and is rebuilt

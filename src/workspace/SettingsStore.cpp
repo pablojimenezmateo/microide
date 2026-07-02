@@ -46,15 +46,17 @@ void SettingsStore::BindActiveProject(SettingsLayer* project) {
 
 void SettingsStore::Reindex() {
   resolved_.clear();
-  // Project layer first, then the user layer overwrites it: user wins. Mirrors
-  // the precedence in WorkspaceShell::GetSettingValue (user before project).
-  if (project_ != nullptr) {
-    for (const auto& [id, value] : *project_) {
+  // User layer first (the cross-project default), then the active project layer
+  // overwrites it: a per-project override wins over the user-level default. This
+  // matches the "set as default" model where the user layer holds defaults that
+  // projects may override (mirrors VS Code's User vs Workspace precedence).
+  if (user_ != nullptr) {
+    for (const auto& [id, value] : *user_) {
       resolved_[id] = value;
     }
   }
-  if (user_ != nullptr) {
-    for (const auto& [id, value] : *user_) {
+  if (project_ != nullptr) {
+    for (const auto& [id, value] : *project_) {
       resolved_[id] = value;
     }
   }

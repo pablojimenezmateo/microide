@@ -338,15 +338,27 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     RenderMergeSurface(renderer, layout.editor_surface, project_state.root, draw_merge_caret,
                        project_state.diagnostics_store);
   } else {
+    // Resolved once per frame; "hint" (the default) means show all, so the filter
+    // returns the store span untouched (zero cost).
+    const editor::DiagnosticSeverity diagnostics_min_severity =
+        editor::ParseDiagnosticSeverity(
+            GetSettingValue("diagnostics.min_severity").value_or("hint"));
     const auto diagnostics_for_viewport =
-        [this, &project_state](const editor::TextViewport& viewport)
+        [this, &project_state, diagnostics_min_severity](const editor::TextViewport& viewport)
         -> std::span<const editor::PublishedDiagnostic> {
       if (viewport.path().empty() || viewport.dirty()) {
         return {};
       }
       const auto* diagnostics = project_state.diagnostics_store.FindByPathKey(viewport.path_key());
-      return diagnostics != nullptr ? std::span<const editor::PublishedDiagnostic>(*diagnostics)
-                                    : std::span<const editor::PublishedDiagnostic>{};
+      if (diagnostics == nullptr) {
+        return {};
+      }
+      // Reused across panes: each result is consumed by its Render call before the
+      // next diagnostics_for_viewport call, so a single scratch buffer is safe.
+      static thread_local std::vector<editor::PublishedDiagnostic> tls_filtered_diagnostics;
+      return editor::FilterDiagnosticsAtLeastSeverity(
+          std::span<const editor::PublishedDiagnostic>(*diagnostics), diagnostics_min_severity,
+          tls_filtered_diagnostics);
     };
     const auto decorations_for_viewport =
         [&project_state](const editor::TextViewport& viewport) -> const editor::FileDecorations* {
@@ -406,6 +418,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         setting_enabled("editor.view.indent_guides.enabled", true);
     const bool render_whitespace_enabled =
         setting_enabled("editor.view.render_whitespace", false);
+    const bool blame_inline_enabled = setting_enabled("editor.blame.inline.enabled", true);
+    const bool line_numbers_enabled = setting_enabled("editor.line_numbers", true);
     // Phase E1: inline plugin-surface insets. Experimental and off by default, so
     // the editor geometry stays byte-for-byte identical for everyone else. One
     // master gate, like DebugEnabled(): with no plugin/LSP presentation bundle the
@@ -527,12 +541,14 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       tls_pane_scroll_metrics[pane_index] = metrics;
       tls_pane_scroll_metrics_valid[pane_index] = 1;
       const auto blame_overlay =
-          pane.active
+          (pane.active && blame_inline_enabled)
               ? editor_blame_overlay_service_.BuildEditorOverlay(
                     project_state.root, text_renderer_, git_blame_service_, *viewport,
                     pane.rect, 520.0f, tls_editor_surface_vm.sticky_lines.size())
                       : std::nullopt;
       if (pane.active) {
+        // When blame is disabled this clears any previously-visible overlay so
+        // hover/click targets never resolve against stale blame geometry.
         editor_blame_overlay_service_.SetVisibleOverlay(blame_overlay);
       }
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
@@ -548,7 +564,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                    pane.active && bracket_match_highlight_enabled,
                                    indent_guides_enabled, render_whitespace_enabled,
                                    group_folding_model, nullptr,
-                                   decorations_for_viewport(*viewport));
+                                   decorations_for_viewport(*viewport), line_numbers_enabled);
       DrawEditorInsets(renderer, pane.rect, metrics, viewport->scroll_line(),
                        tls_editor_surface_vm);
       draw_review_comment_markers(*viewport, pane.rect, metrics);

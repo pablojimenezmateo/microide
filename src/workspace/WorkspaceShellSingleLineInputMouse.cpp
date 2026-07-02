@@ -373,6 +373,7 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
       context_.current_project_state.surface.focus = FocusTarget::Sidebar;
       break;
     case TextInputSurface::SettingsQuery:
+    case TextInputSurface::SettingsValueEdit:
       // The Settings overlay owns its own focus and mouse handling.
     case TextInputSurface::DebugVariableEdit:
       // The Variables value field is entered/managed by the bottom-panel mouse
@@ -513,6 +514,7 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
     case TextInputSurface::CommitBody:
       // The multi-line body manages its own drag selection.
     case TextInputSurface::SettingsQuery:
+    case TextInputSurface::SettingsValueEdit:
       // The Settings overlay manages its own drag selection.
     case TextInputSurface::DebugVariableEdit:
       // The Variables value field has no shared drag-selection geometry.

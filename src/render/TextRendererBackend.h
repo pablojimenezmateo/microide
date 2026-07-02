@@ -37,6 +37,13 @@ class TextRendererBackend {
   // Set the editor glyph point size. Default no-op: the debug-text fallback
   // renders at a fixed size and has no font to resize.
   virtual void SetFontPointSize(float points) { (void) points; }
+  // Switch the primary editor font to the given family name (empty restores the
+  // built-in default). Returns true when the font actually changed (so callers can
+  // relayout). Default no-op: the debug-text fallback has no real font.
+  virtual bool SetFontFamily(std::string_view family) {
+    (void) family;
+    return false;
+  }
   virtual float CharWidth() const = 0;
   virtual float LineHeight() const = 0;
   virtual TextClipPadding ClipPadding() const { return {}; }

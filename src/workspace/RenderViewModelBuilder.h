@@ -188,7 +188,9 @@ struct SettingsCategoryViewModel {
 struct SettingsControlViewModel {
   SettingsControlKind kind = SettingsControlKind::None;
   bool checkbox_on = false;        // Checkbox
-  std::string_view display_value;  // Stepper/Segmented value text
+  std::string_view display_value;  // Stepper/Segmented value text (or live edit text)
+  bool editing = false;            // TextEdit: the inline value editor is active
+  std::size_t edit_caret = 0;      // TextEdit: caret byte offset into display_value
   // Hit rects; a rect with w == 0 is absent.
   SDL_FRect checkbox_rect{};
   SDL_FRect dec_rect{};
@@ -205,6 +207,9 @@ struct SettingsRowViewModel {
   SettingsControlViewModel control;
   SDL_FRect row_rect{};    // full clickable row rect (row select)
   SDL_FRect reset_rect{};  // reset affordance; w == 0 when not resettable
+  SDL_FRect scope_rect{};  // "This Project / Default" scope chip; w == 0 when absent
+  std::string_view scope_text;    // "Project" or "Default" (the active write target)
+  bool scope_is_project = false;  // true when a per-project override is active
   int row_in_category = 0;
   bool selected = false;
   bool resettable = false;

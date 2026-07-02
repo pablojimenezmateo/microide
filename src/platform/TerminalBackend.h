@@ -12,6 +12,9 @@ namespace microide::platform {
 struct TerminalStartRequest {
   std::filesystem::path working_directory;
   std::string command;
+  // Shell program to launch when `command` is empty (the `terminal.shell`
+  // setting). Empty falls back to the platform default ($SHELL / /bin/sh).
+  std::string shell;
   std::size_t rows = 24;
   std::size_t columns = 80;
 };

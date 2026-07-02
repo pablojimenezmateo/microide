@@ -645,6 +645,31 @@ void TestSdlTtfSetFontPointSizeResizesGlyphMetrics() {
          "an oversized request should clamp to the max supported size, not zero metrics");
 }
 
+void TestSdlTtfSetFontFamilyResilientToUnresolved() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(320, 160);
+  microide::render::TextRenderer renderer;
+  renderer.EnsureInitialized(canvas.renderer());
+  Expect(renderer.BackendName() == "sdl3_ttf",
+         "font-family test should exercise the SDL_ttf backend");
+
+  const float base_char_width = renderer.CharWidth();
+  Expect(base_char_width > 0.0f, "baseline metrics should be positive");
+
+  // An unresolved family name must be a no-op: it reports no change and leaves the
+  // current font (and metrics) intact rather than nulling out the backend.
+  Expect(!renderer.SetFontFamily("this-font-does-not-exist-zzz"),
+         "an unresolved font family should report no change");
+  Expect(std::abs(renderer.CharWidth() - base_char_width) <= 0.01f,
+         "an unresolved font family must keep the current font metrics");
+  Expect(renderer.MeasureWidth("MM") > 0.0f,
+         "text rendering stays functional after an unresolved family request");
+
+  // Empty family resolves to the default file already open -> no visual change.
+  Expect(!renderer.SetFontFamily(""),
+         "empty family resolves to the current default and reports no change");
+}
+
 #endif
 
 void TestDecoratedTextGridRendererPaintsRowFillAndUnderline() {
@@ -2057,6 +2082,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer SDL_ttf SetFontPointSize resizes glyph metrics",
           TestSdlTtfSetFontPointSizeResizesGlyphMetrics);
+  AddTest(tests,
+          "TextRenderer SDL_ttf SetFontFamily resilient to unresolved family",
+          TestSdlTtfSetFontFamilyResilientToUnresolved);
   AddTest(tests,
           "TextRenderer SDL_ttf ASCII prefix glyph stays fixed when appending matches",
           TestSdlTtfAsciiPrefixGlyphStaysFixedWhenAppendingMatches);

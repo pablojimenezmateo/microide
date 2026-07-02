@@ -227,9 +227,48 @@ void TestDiagnosticsStoreTracksSeverityCountsAndRevision() {
          "clearing an already-empty store should be a no-op");
 }
 
+void TestDiagnosticsSeverityFilter() {
+  using microide::editor::DiagnosticSeverity;
+  using microide::editor::FilterDiagnosticsAtLeastSeverity;
+  using microide::editor::ParseDiagnosticSeverity;
+  using microide::editor::PublishedDiagnostic;
+
+  Expect(ParseDiagnosticSeverity("error") == DiagnosticSeverity::Error, "parse error");
+  Expect(ParseDiagnosticSeverity("warning") == DiagnosticSeverity::Warning, "parse warning");
+  Expect(ParseDiagnosticSeverity("hint") == DiagnosticSeverity::Hint, "parse hint");
+  Expect(ParseDiagnosticSeverity("nonsense") == DiagnosticSeverity::Hint, "unknown -> hint");
+
+  std::vector<PublishedDiagnostic> all;
+  for (DiagnosticSeverity sev : {DiagnosticSeverity::Error, DiagnosticSeverity::Warning,
+                                 DiagnosticSeverity::Info, DiagnosticSeverity::Hint}) {
+    PublishedDiagnostic d;
+    d.severity = sev;
+    all.push_back(d);
+  }
+  std::vector<PublishedDiagnostic> scratch;
+
+  // Hint (show-all) returns the SAME buffer (no copy).
+  const auto shown_all = FilterDiagnosticsAtLeastSeverity(all, DiagnosticSeverity::Hint, scratch);
+  Expect(shown_all.data() == all.data() && shown_all.size() == 4,
+         "min=hint returns the input span unchanged");
+
+  // min=warning keeps Error + Warning only.
+  const auto warn = FilterDiagnosticsAtLeastSeverity(all, DiagnosticSeverity::Warning, scratch);
+  Expect(warn.size() == 2, "min=warning keeps error+warning");
+  Expect(warn[0].severity == DiagnosticSeverity::Error &&
+             warn[1].severity == DiagnosticSeverity::Warning,
+         "min=warning suppresses info+hint");
+
+  // min=error keeps only errors.
+  const auto err = FilterDiagnosticsAtLeastSeverity(all, DiagnosticSeverity::Error, scratch);
+  Expect(err.size() == 1 && err[0].severity == DiagnosticSeverity::Error,
+         "min=error keeps only errors");
+}
+
 }  // namespace
 
 void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "DiagnosticsStore/SeverityFilter", TestDiagnosticsSeverityFilter);
   AddTest(tests, "DiagnosticsStore/MergesOwnersPerFile", TestDiagnosticsStoreMergesOwnersPerFile);
   AddTest(tests, "DiagnosticsStore/ClearsOwnersIndependently",
           TestDiagnosticsStoreClearsOwnersIndependently);

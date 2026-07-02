@@ -33,6 +33,10 @@ class TextRenderer {
   // Change the editor glyph point size at runtime (the project `editor.font_size`
   // setting). Forwards to the active backend and invalidates the width cache.
   void SetFontPointSize(float points);
+  // Switch the editor font family at runtime (the user `editor.font_family`
+  // setting; empty restores the platform default). Returns true when the font
+  // actually changed. Forwards to the backend and invalidates the width cache.
+  bool SetFontFamily(std::string_view family);
   float CharWidth() const;
   float LineHeight() const;
   TextClipPadding ClipPadding() const;

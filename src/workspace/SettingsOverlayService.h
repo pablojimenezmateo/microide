@@ -17,10 +17,11 @@ enum class SettingsOverlayMode {
 
 // Inline control drawn for a settings row, chosen from the setting's type.
 enum class SettingsControlKind {
-  None,       // display-only (e.g. free-form String)
+  None,       // display-only
   Checkbox,   // Bool
   Stepper,    // Int / Float / large Enum: [◀] value [▶]
   Segmented,  // small Enum: a value box that cycles on click
+  TextEdit,   // String: a value box that opens an inline text editor on click
 };
 
 // Which of the two-pane surface's focusable regions currently owns the keyboard.
@@ -49,6 +50,13 @@ struct SettingsOverlayRow {
   SettingsControlKind control_kind = SettingsControlKind::None;
   bool resettable = false;
   bool editable = false;
+  // "Set as default" support (built-in project-scoped settings only). When
+  // scope_selectable is true the row shows a per-row scope chip toggling the
+  // write target between "This Project" (project layer) and "Default" (user
+  // layer, applies to every project without its own override).
+  bool scope_selectable = false;
+  bool project_override = false;  // the project layer holds an explicit override
+  bool has_user_default = false;  // the user layer holds a cross-project default
 };
 
 struct HelpAboutRow {
@@ -74,6 +82,18 @@ class SettingsOverlayService {
   editor::SingleLineEditor& QueryEditor() { return query_editor_; }
   const editor::SingleLineEditor& QueryEditor() const { return query_editor_; }
   void SyncQueryFromEditor();
+
+  // Inline value editing for String settings. While a value edit is active the
+  // text-input coordinator routes typing into value_editor_; the host commits on
+  // Return (writing the setting) and cancels on Esc / focus loss.
+  editor::SingleLineEditor& ValueEditor() { return value_editor_; }
+  const editor::SingleLineEditor& ValueEditor() const { return value_editor_; }
+  bool EditingValue() const { return editing_value_; }
+  const std::string& EditingRowId() const { return editing_row_id_; }
+  void BeginValueEdit(std::string row_id, const std::string& initial_text);
+  void CancelValueEdit();
+  // The current editor text, for the host to commit through SetSettingValue.
+  std::string ValueEditText() const;
 
   void RebuildSettingsRows(const std::vector<SettingInfo>& settings,
                            const std::vector<std::pair<std::string, std::string>>& user_settings,
@@ -116,6 +136,9 @@ class SettingsOverlayService {
   int scroll_row_ = 0;
   std::string query_;
   editor::SingleLineEditor query_editor_;
+  editor::SingleLineEditor value_editor_;
+  bool editing_value_ = false;
+  std::string editing_row_id_;
   std::vector<SettingsOverlayRow> settings_rows_;
   std::vector<HelpAboutRow> help_rows_;
   std::vector<std::string> categories_;

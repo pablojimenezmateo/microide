@@ -69,9 +69,6 @@ struct PersistedSidebarViewPolicy {
 };
 
 struct PersistedProjectConfigState {
-  std::size_t editor_tab_size = 4;
-  std::size_t editor_indent_width = 4;
-  bool editor_soft_tabs = false;
   std::string colorscheme_name = "default";
   std::optional<SDL_Color> project_base_color;
   std::vector<std::pair<std::string, std::string>> settings;  // id → serialised value

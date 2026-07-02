@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <variant>
 
 #include "workspace/CommitWorkflowState.h"
 #include "workspace/SettingsStore.h"
@@ -13,26 +14,6 @@
 namespace microide::workspace {
 
 namespace {
-
-bool ApplyCanonicalProjectSetting(ProjectWorkspaceState& state,
-                                  std::string_view id,
-                                  std::string_view value) {
-  // Colorscheme is project state but not an editor preference, and the load path
-  // only records the name (live theme application happens elsewhere on restore).
-  if (id == "editor.colorscheme") {
-    state.active_colorscheme_name = std::string(value);
-    return true;
-  }
-  const auto* spec = FindBuiltinSettingSpec(id);
-  if (spec == nullptr) {
-    return false;
-  }
-  const auto parsed = ParseSettingValue(*spec, value);
-  if (!parsed.has_value()) {
-    return false;
-  }
-  return ApplyCanonicalEditorPreference(state.editor_preferences, id, *parsed);
-}
 
 std::vector<PersistedSidebarViewPolicy> PersistedSidebarPolicies(
     const std::vector<SidebarViewPolicy>& policies) {
@@ -62,24 +43,30 @@ std::vector<SidebarViewPolicy> RuntimeSidebarPolicies(
   return runtime;
 }
 
-void SyncCanonicalProjectSettings(std::vector<std::pair<std::string, std::string>>& settings,
-                                  const ProjectWorkspaceState& state) {
-  settings_layer::Upsert(settings, "editor.tab_size",
-                         SerializeSettingValue(static_cast<int>(state.editor_preferences.tab_size)));
-  settings_layer::Upsert(
-      settings, "editor.indent_width",
-      SerializeSettingValue(static_cast<int>(state.editor_preferences.indent_width)));
-  settings_layer::Upsert(settings, "editor.font_size",
-                         SerializeSettingValue(state.editor_preferences.font_size));
-  settings_layer::Upsert(settings, "editor.soft_tabs",
-                         SerializeSettingValue(state.editor_preferences.soft_tabs));
-  settings_layer::Upsert(settings, "editor.wrap",
-                         state.editor_preferences.soft_wrap ? "word" : "off");
-  settings_layer::Upsert(settings, "editor.colorscheme",
-                         SerializeSettingValue(state.active_colorscheme_name));
-}
-
 }  // namespace
+
+void PersistenceCoordinator::MaterializeCanonicalPreferences() {
+  ProjectWorkspaceState& state = CurrentProjectState();
+  const auto resolve = [&](std::string_view id) -> SettingValue {
+    const SettingSpec* spec = FindBuiltinSettingSpec(id);
+    if (const std::string* stored = settings_store_.Resolve(id); stored != nullptr && spec != nullptr) {
+      if (auto parsed = ParseSettingValue(*spec, *stored); parsed.has_value()) {
+        return *parsed;
+      }
+    }
+    return spec != nullptr ? DefaultSettingValue(*spec) : SettingValue{std::string{}};
+  };
+
+  for (std::string_view id : {"editor.tab_size", "editor.indent_width", "editor.font_size",
+                              "editor.soft_tabs", "editor.wrap"}) {
+    ApplyCanonicalEditorPreference(state.editor_preferences, id, resolve(id));
+  }
+  // Colorscheme is deliberately NOT materialized here: its enum spec only
+  // validates "default", real theme names (light, plugin/filesystem themes) never
+  // pass ParseSettingValue, so the theme-change command sets active_colorscheme_name
+  // directly and persists via the dedicated colorscheme_name field, not the layered
+  // store. RestoreConfigState applies that field explicitly.
+}
 
 void PersistenceCoordinator::RefreshAvailableColorschemeNames() {
   available_colorscheme_names_ = render::ListAvailableThemeNames();
@@ -224,9 +211,6 @@ bool PersistenceCoordinator::RestoreConfigState() {
 
   const auto& current = CurrentProjectState();
   PersistedProjectConfigState persisted_state{
-      .editor_tab_size = current.editor_preferences.tab_size,
-      .editor_indent_width = current.editor_preferences.indent_width,
-      .editor_soft_tabs = current.editor_preferences.soft_tabs,
       .colorscheme_name = current.active_colorscheme_name,
       .project_base_color = current.project_base_color,
       .settings = {},
@@ -240,24 +224,27 @@ bool PersistenceCoordinator::RestoreConfigState() {
 
   auto& mutable_current = CurrentProjectState();
   mutable_current.settings.clear();
-  mutable_current.editor_preferences.tab_size = persisted_state.editor_tab_size;
-  mutable_current.editor_preferences.indent_width = persisted_state.editor_indent_width;
-  mutable_current.editor_preferences.soft_tabs = persisted_state.editor_soft_tabs;
-  mutable_current.editor_preferences.soft_wrap = false;
   mutable_current.project_base_color = persisted_state.project_base_color;
   mutable_current.sidebar_policies = RuntimeSidebarPolicies(persisted_state.sidebar_policies);
   mutable_current.sidebar.git.commit_workflow.loaded_persisted_draft = persisted_state.commit_draft;
   LoadBranchReviewStateFromPersisted(persisted_state.branch_review,
                                      &mutable_current.branch_review);
+  // The project settings vector holds only explicit per-project overrides; the
+  // canonical editor preferences and colorscheme are materialized from the store
+  // (project override → user default → spec default) below. The legacy dedicated
+  // typed fields (editor_tab_size, colorscheme_name, ...) are still written for
+  // format stability but are no longer read here — materialization is authoritative.
   for (const auto& [id, value] : persisted_state.settings) {
-    ApplyCanonicalProjectSetting(mutable_current, id, value);
     settings_layer::Upsert(mutable_current.settings, id, value);
   }
-  operations_.apply_editor_preferences_to_all_tabs();
-  ApplyColorscheme(persisted_state.colorscheme_name, false, false);
-  SyncCanonicalProjectSettings(mutable_current.settings, mutable_current);
-  // The project layer was reloaded in place; rebuild the store's resolved index.
+  // The project layer was reloaded in place; rebuild the store's resolved index
+  // before materializing so the resolved values reflect the loaded overrides.
   settings_store_.Reindex();
+  MaterializeCanonicalPreferences();
+  operations_.apply_editor_preferences_to_all_tabs();
+  // Colorscheme persists via its dedicated typed field (see
+  // MaterializeCanonicalPreferences), so apply it explicitly here.
+  ApplyColorscheme(persisted_state.colorscheme_name, /*persist=*/false, /*log_feedback=*/false);
   return true;
 }
 
@@ -272,9 +259,6 @@ void PersistenceCoordinator::SaveConfigState() const {
     return;
   }
   PersistedProjectConfigState persisted{
-      .editor_tab_size = state.editor_preferences.tab_size,
-      .editor_indent_width = state.editor_preferences.indent_width,
-      .editor_soft_tabs = state.editor_preferences.soft_tabs,
       .colorscheme_name = state.active_colorscheme_name,
       .project_base_color = state.project_base_color.value_or(DefaultProjectBaseColor(state.root)),
       .settings = state.settings,
@@ -291,7 +275,6 @@ void PersistenceCoordinator::SaveConfigState() const {
         .body = CommitWorkflowBodyText(state.sidebar.git.commit_workflow.body),
     };
   }
-  SyncCanonicalProjectSettings(persisted.settings, state);
   StripTransientSettings(persisted.settings);
   operations_.persistence_service->SaveProjectConfig(config_path, persisted);
 }

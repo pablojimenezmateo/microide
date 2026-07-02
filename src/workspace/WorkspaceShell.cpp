@@ -318,6 +318,9 @@ std::optional<std::string> WorkspaceShell::GetSettingValue(std::string_view id) 
   if (id == "editor.soft_tabs") {
     return SerializeSettingValue(context_.current_project_state.editor_preferences.soft_tabs);
   }
+  if (id == "editor.font_size") {
+    return SerializeSettingValue(context_.current_project_state.editor_preferences.font_size);
+  }
   if (id == "editor.wrap") {
     return SerializeSettingValue(
         context_.current_project_state.editor_preferences.soft_wrap ? std::string("word")
@@ -327,12 +330,18 @@ std::optional<std::string> WorkspaceShell::GetSettingValue(std::string_view id) 
     return SerializeSettingValue(context_.current_project_state.active_colorscheme_name);
   }
 
-  // Layered overrides (user wins over project), resolved in O(1) via the store's
-  // index rather than two linear scans — this is read 10+ times per frame.
+  // Layered overrides (project wins over the user-level default), resolved in
+  // O(1) via the store's index rather than two linear scans — read 10+/frame.
   if (const std::string* resolved = settings_store_.Resolve(id); resolved != nullptr) {
     return *resolved;
   }
 
+  // Unset: return the default. Built-ins (the vast majority, and every per-frame
+  // read) resolve through the cheap static spec table; only fall back to the
+  // allocating AllSettingInfos scan for plugin-contributed settings.
+  if (const SettingSpec* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
+    return SerializeSettingValue(DefaultSettingValue(*spec));
+  }
   if (const auto info = FindSettingInfo(id, plugin_runtime_.Host()); info.has_value()) {
     return SerializeSettingValue(info->default_value);
   }

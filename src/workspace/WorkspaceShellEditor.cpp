@@ -68,6 +68,15 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) cons
       setting_enabled("editor.save.trim_trailing_whitespace", true));
   viewport.SetSaveEnsureFinalNewline(
       setting_enabled("editor.save.ensure_final_newline", true));
+  // editor.line_endings: "auto" keeps the file's detected ending; lf/crlf force it.
+  const std::string line_endings = GetSettingValue("editor.line_endings").value_or("auto");
+  std::optional<util::LineEnding> save_ending;
+  if (line_endings == "lf") {
+    save_ending = util::LineEnding::LF;
+  } else if (line_endings == "crlf") {
+    save_ending = util::LineEnding::CRLF;
+  }
+  viewport.SetSaveLineEnding(save_ending);
 
   const std::string language_id =
       editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
@@ -88,6 +97,10 @@ void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
   // no-ops when the size is unchanged, so the common case stays cheap.
   text_renderer_.SetFontPointSize(
       static_cast<float>(context_.current_project_state.editor_preferences.font_size));
+  // Font family is a user-scope, renderer-global setting (not an EditorPreferences
+  // field); push it alongside the size so project activation / session restore
+  // re-applies it. SetFontFamily no-ops when the family is unchanged.
+  text_renderer_.SetFontFamily(GetSettingValue("editor.font_family").value_or(""));
   MarkLayoutDirty();
   tab_strip_service_.InvalidateEditorTabGeometry();
   RequestWindowRedraw();

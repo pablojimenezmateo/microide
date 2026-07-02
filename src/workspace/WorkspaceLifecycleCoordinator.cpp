@@ -6,6 +6,7 @@
 #include "app/BackgroundTaskCounter.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/StartupTrace.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
 #include "workspace/ProjectCatalogService.h"
@@ -341,7 +342,12 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
           .set_project_watcher_deferred_arming =
               [this](bool deferred) { project_file_monitor_.SetDeferredArming(deferred); },
           .skip_workspace_session_restore =
-              [this]() { return startup_options_.skip_workspace_session_restore(); },
+              [this]() {
+                // Startup flags (safe mode / --no-restore) or the user setting can
+                // each suppress session restore on launch.
+                return startup_options_.skip_workspace_session_restore() ||
+                       !SettingFlagEnabled(GetSettingValue("session.restore_on_launch"), true);
+              },
           .restore_workspace_session =
               [this]() { return MakePersistenceCoordinator().RestoreWorkspaceSession(); },
           .reload_plugins_for_current_project = [this]() { ReloadPluginsForCurrentProject(); },

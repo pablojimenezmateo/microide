@@ -4,11 +4,14 @@
 #include <cstdint>
 #include <optional>
 
+#include "util/Parse.h"
+#include "workspace/SettingFlags.h"
+
 namespace microide::workspace {
 
 namespace {
 
-constexpr Uint64 kCaretBlinkIntervalMs = 530;
+constexpr Uint64 kCaretBlinkIntervalDefaultMs = 530;
 // After this many ms with no caret-blink-resetting input (typing, navigation,
 // focus changes, etc.) the caret freezes in its visible phase and we stop
 // scheduling blink-only wake-ups. This cuts the idle wake/partial-redraw
@@ -19,16 +22,29 @@ constexpr Uint64 kCaretBlinkIdleStopMs = 8000;
 
 }  // namespace
 
+bool WorkspaceShell::CaretBlinkEnabled() const {
+  return SettingFlagEnabled(GetSettingValue("editor.caret_blink.enabled"), true);
+}
+
+Uint64 WorkspaceShell::CaretBlinkIntervalMs() const {
+  const auto raw = GetSettingValue("editor.caret_blink.interval_ms");
+  const int parsed = raw.has_value() ? util::ParseInt(*raw).value_or(kCaretBlinkIntervalDefaultMs)
+                                     : static_cast<int>(kCaretBlinkIntervalDefaultMs);
+  return static_cast<Uint64>(std::clamp(parsed, 100, 2000));
+}
+
 std::optional<Uint32> WorkspaceShell::NextCaretBlinkDelayMs() const {
-  if (!ShouldBlinkCaret()) {
+  // A disabled blink shows a solid caret and schedules no blink-only wake-ups.
+  if (!ShouldBlinkCaret() || !CaretBlinkEnabled()) {
     return std::nullopt;
   }
 
+  const Uint64 interval = CaretBlinkIntervalMs();
   const Uint64 elapsed = SDL_GetTicks() - caret_blink_epoch_ms_;
   if (elapsed >= kCaretBlinkIdleStopMs) {
     return std::nullopt;
   }
-  const Uint64 remaining = kCaretBlinkIntervalMs - (elapsed % kCaretBlinkIntervalMs);
+  const Uint64 remaining = interval - (elapsed % interval);
   const Uint64 until_freeze = kCaretBlinkIdleStopMs - elapsed;
   return static_cast<Uint32>(std::max<Uint64>(1, std::min(remaining, until_freeze)));
 }
@@ -38,7 +54,7 @@ void WorkspaceShell::ResetCaretBlink() {
 }
 
 bool WorkspaceShell::CaretBlinkAnimating() const {
-  if (!ShouldBlinkCaret()) {
+  if (!ShouldBlinkCaret() || !CaretBlinkEnabled()) {
     return false;
   }
   return (SDL_GetTicks() - caret_blink_epoch_ms_) < kCaretBlinkIdleStopMs;
@@ -66,6 +82,7 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
     case TextInputSurface::CommitBody:
       return true;
     case TextInputSurface::SettingsQuery:
+    case TextInputSurface::SettingsValueEdit:
       // The Settings overlay renders its own static (non-blinking) caret; it does
       // not participate in the shared caret-blink machinery.
     case TextInputSurface::DebugVariableEdit:
@@ -93,12 +110,16 @@ bool WorkspaceShell::CaretVisibleNow() const {
   if (!ShouldBlinkCaret()) {
     return false;
   }
+  // Blink disabled: a focused caret is always solid.
+  if (!CaretBlinkEnabled()) {
+    return true;
+  }
 
   const Uint64 elapsed = SDL_GetTicks() - caret_blink_epoch_ms_;
   if (elapsed >= kCaretBlinkIdleStopMs) {
     return true;
   }
-  return ((elapsed / kCaretBlinkIntervalMs) % 2) == 0;
+  return ((elapsed / CaretBlinkIntervalMs()) % 2) == 0;
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentCaretDirtyRect() const {

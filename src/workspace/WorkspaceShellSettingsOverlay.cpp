@@ -27,6 +27,16 @@ constexpr const char* kPluginToggleRowPrefix = "plugin.toggle:";
 
 namespace {
 
+// Canonical settings are materialized into the editor_preferences / colorscheme
+// cache rather than read from the store on the hot path, so a write of one of
+// these ids must re-run MaterializeCanonicalPreferences to keep the cache aligned
+// with the resolved (project → user-default → spec) value.
+bool IsCanonicalPreferenceId(std::string_view id) {
+  return id == "editor.tab_size" || id == "editor.indent_width" ||
+         id == "editor.font_size" || id == "editor.soft_tabs" || id == "editor.wrap" ||
+         id == "editor.colorscheme";
+}
+
 // One synthetic Checkbox row per discovered plugin, for the Settings "Plugins" pane.
 // When no plugins are installed, a single display-only row keeps the section visible so
 // the capability stays discoverable.
@@ -221,6 +231,15 @@ std::string NextSettingValue(const SettingSpec& spec,
 }  // namespace
 
 bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value, bool persist) {
+  return WriteSettingValue(id, std::move(value), /*as_user_default=*/false, persist);
+}
+
+bool WorkspaceShell::SetSettingAsUserDefault(std::string_view id, std::string value, bool persist) {
+  return WriteSettingValue(id, std::move(value), /*as_user_default=*/true, persist);
+}
+
+bool WorkspaceShell::WriteSettingValue(std::string_view id, std::string value,
+                                       bool as_user_default, bool persist) {
   const auto info = FindSettingInfo(id, plugin_runtime_.Host());
   if (!info.has_value()) {
     return false;
@@ -234,29 +253,11 @@ bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value, boo
     }
   }
 
-  const auto apply_project_canonical_setting = [&]() {
-    if (!parsed_builtin_value.has_value()) {
-      return;
-    }
-    // Canonical editor preferences (tab size, indent, font size, soft tabs, wrap)
-    // share one id->preference mapping with the persistence load path.
-    if (ApplyCanonicalEditorPreference(context_.current_project_state.editor_preferences, id,
-                                       *parsed_builtin_value)) {
-      return;
-    }
-    // Colorscheme is not an editor preference: apply it live here (the load path
-    // only records the name).
-    if (id == "editor.colorscheme") {
-      if (const std::string* parsed = std::get_if<std::string>(&*parsed_builtin_value);
-          parsed != nullptr) {
-        MakePersistenceCoordinator().ApplyColorscheme(*parsed, false, false);
-      }
-    }
-  };
+  // A user-scoped setting already lives in the user layer; "set as default" only
+  // changes where a project-scoped write lands (user layer instead of project).
+  const bool write_user_layer = info->scope == SettingScope::User || as_user_default;
+  const bool is_canonical = IsCanonicalPreferenceId(id);
 
-  if (builtin != nullptr && !parsed_builtin_value.has_value()) {
-    return false;
-  }
   // Track / untrack the transient marker before the value is moved-from. A later
   // persisting write of the same id promotes it back to durable storage.
   if (persist) {
@@ -264,19 +265,27 @@ bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value, boo
   } else {
     context_.transient_setting_keys.insert(std::string(id));
   }
-  if (info->scope == SettingScope::User) {
-    settings_store_.SetUser(id, std::move(value));
+
+  if (write_user_layer) {
     if (id == "ui.scale") {
       if (const float* parsed = std::get_if<float>(&*parsed_builtin_value); parsed != nullptr) {
         MakePersistenceCoordinator().ApplyUiScale(*parsed, false, false);
       }
     }
+    settings_store_.SetUser(id, std::move(value));
+    // Canonical preferences are materialized from the resolved layers so a new
+    // user-level default takes effect on any project without a project override.
+    if (is_canonical) {
+      MakePersistenceCoordinator().MaterializeCanonicalPreferences();
+    }
     if (persist) {
       MakePersistenceCoordinator().SaveUserConfig();
     }
   } else {
-    apply_project_canonical_setting();
     settings_store_.SetProject(id, std::move(value));
+    if (is_canonical) {
+      MakePersistenceCoordinator().MaterializeCanonicalPreferences();
+    }
     if (persist) {
       MakePersistenceCoordinator().SaveConfigState();
     }
@@ -324,6 +333,25 @@ void WorkspaceShell::ApplyLiveSettings() {
   // Start/stop the control channel when `control.enabled` is toggled at runtime.
   // The wake-event plumbing is already bound; only the listener is gated.
   MaybeStartControlChannel();
+  // Font family is renderer-global and not part of the per-tab editor snapshot,
+  // so apply it here. ApplyLiveSettings runs every frame, so only relayout when
+  // the typeface actually changed (SetFontFamily returns false when unchanged).
+  if (const auto family = GetSettingValue("editor.font_family"); family.has_value()) {
+    if (text_renderer_.SetFontFamily(*family)) {
+      MarkLayoutDirty();
+    }
+  }
+  // Push terminal scrollback to live sessions only when the resolved cap changes
+  // (this hook runs every frame, so avoid touching every terminal's mutex).
+  if (const int scrollback = static_cast<int>(TerminalScrollbackLines());
+      scrollback != last_applied_terminal_scrollback_) {
+    last_applied_terminal_scrollback_ = scrollback;
+    for (auto& tab : context_.current_project_state.terminal_tabs) {
+      if (tab != nullptr) {
+        tab->session.SetMaxScrollbackLines(static_cast<std::size_t>(scrollback));
+      }
+    }
+  }
   if (const auto value = GetSettingValue("ui.show_status_bar"); value.has_value()) {
     layout_mode_service_.SetStatusBarVisible(SettingFlagEnabled(value));
   }
@@ -384,27 +412,102 @@ bool WorkspaceShell::ResetSettingValue(std::string_view id) {
   if (!info.has_value()) {
     return false;
   }
-  // Apply the spec default so live editor/UI state reverts, then drop the stored
-  // override so the row reads as "default" again (resettable becomes false).
-  std::string default_value;
-  if (const SettingSpec* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
-    default_value = SerializeSettingValue(DefaultSettingValue(*spec));
-  } else {
-    default_value = SerializeSettingValue(info->default_value);
-  }
-  SetSettingValue(id, default_value);
+  return ResetSettingInScope(id, info->scope);
+}
 
-  if (info->scope == SettingScope::User) {
+bool WorkspaceShell::ResetSettingInScope(std::string_view id, SettingScope scope) {
+  const auto info = FindSettingInfo(id, plugin_runtime_.Host());
+  if (!info.has_value()) {
+    return false;
+  }
+  // Drop the stored override from the chosen layer. Canonical preferences are then
+  // re-materialized from the remaining layers (a project reset may surface a user
+  // default; a user-default reset falls back to the spec default). Everything else
+  // is re-read live by ApplyLiveSettings + redraw.
+  if (scope == SettingScope::User) {
     settings_store_.ResetUser(id);
-    MakePersistenceCoordinator().SaveUserConfig();
   } else {
     settings_store_.ResetProject(id);
+  }
+  if (IsCanonicalPreferenceId(id)) {
+    MakePersistenceCoordinator().MaterializeCanonicalPreferences();
+  }
+  if (scope == SettingScope::User) {
+    MakePersistenceCoordinator().SaveUserConfig();
+  } else {
     MakePersistenceCoordinator().SaveConfigState();
   }
   ApplyLiveSettings();
   MarkLayoutDirty();
   RequestWindowRedraw();
   return true;
+}
+
+bool WorkspaceShell::SettingWritesToUserDefault(std::string_view id) const {
+  const SettingSpec* spec = FindBuiltinSettingSpec(id);
+  if (spec == nullptr || spec->scope != SettingScope::Project) {
+    return false;
+  }
+  const bool project_override = settings_store_.FindInProjectLayer(id) != nullptr;
+  const bool user_default = settings_store_.FindInUserLayer(id) != nullptr;
+  return !project_override && user_default;
+}
+
+bool WorkspaceShell::WriteSettingRespectingScope(std::string_view id, std::string value) {
+  if (SettingWritesToUserDefault(id)) {
+    return SetSettingAsUserDefault(id, std::move(value));
+  }
+  return SetSettingValue(id, std::move(value));
+}
+
+void WorkspaceShell::ToggleSettingScope(std::string_view id) {
+  const SettingSpec* spec = FindBuiltinSettingSpec(id);
+  if (spec == nullptr || spec->scope != SettingScope::Project) {
+    return;
+  }
+  const std::string current =
+      GetSettingValue(id).value_or(SerializeSettingValue(DefaultSettingValue(*spec)));
+  const bool project_override = settings_store_.FindInProjectLayer(id) != nullptr;
+  const bool user_default = settings_store_.FindInUserLayer(id) != nullptr;
+  const bool target_project = project_override || !user_default;
+  if (target_project) {
+    // Currently "This Project": promote the value to the shared user-level
+    // default and drop the per-project override so the row follows the default.
+    SetSettingAsUserDefault(id, current);
+    ResetSettingInScope(id, SettingScope::Project);
+  } else {
+    // Currently "Default": pin the current value as a per-project override.
+    SetSettingValue(id, current);
+  }
+}
+
+void WorkspaceShell::BeginSettingValueEdit(std::string_view id) {
+  settings_overlay_service_.SetFocusedPane(SettingsPane::Values);
+  settings_overlay_service_.BeginValueEdit(std::string(id), GetSettingValue(id).value_or(""));
+  InvalidateCursorKindFingerprint();
+  RequestOverlayRedraw();
+}
+
+void WorkspaceShell::CommitSettingValueEdit() {
+  if (!settings_overlay_service_.EditingValue()) {
+    return;
+  }
+  const std::string id = settings_overlay_service_.EditingRowId();
+  const std::string value = settings_overlay_service_.ValueEditText();
+  settings_overlay_service_.CancelValueEdit();
+  WriteSettingRespectingScope(id, value);
+  RefreshSettingsOverlayCatalog();
+  InvalidateCursorKindFingerprint();
+  RequestOverlayRedraw();
+}
+
+void WorkspaceShell::CancelSettingValueEdit() {
+  if (!settings_overlay_service_.EditingValue()) {
+    return;
+  }
+  settings_overlay_service_.CancelValueEdit();
+  InvalidateCursorKindFingerprint();
+  RequestOverlayRedraw();
 }
 
 void WorkspaceShell::StepSetting(std::string_view id, bool forward) {
@@ -418,7 +521,7 @@ void WorkspaceShell::StepSetting(std::string_view id, bool forward) {
   if (const SettingSpec* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
     const std::string current =
         GetSettingValue(id).value_or(SerializeSettingValue(DefaultSettingValue(*spec)));
-    SetSettingValue(id, NextSettingValue(*spec, current, direction));
+    WriteSettingRespectingScope(id, NextSettingValue(*spec, current, direction));
     return;
   }
   // Plugin-contributed setting without a built-in spec: support generic Bool /
@@ -515,6 +618,21 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
     return true;  // Help / About is read-only
   }
 
+  // A click anywhere but inside the active inline value editor commits nothing and
+  // cancels the edit, so keyboard focus never strands on a hidden editor.
+  if (settings_overlay_service_.EditingValue()) {
+    bool click_in_editor = false;
+    for (const SettingsRowViewModel& row : vm.rows) {
+      if (row.control.editing && Contains(row.control.value_rect, mx, my)) {
+        click_in_editor = true;
+        break;
+      }
+    }
+    if (!click_in_editor) {
+      settings_overlay_service_.CancelValueEdit();
+    }
+  }
+
   // Scrollbar: clicking the track jumps and begins a drag (tracked via motion).
   if (left && vm.scrollbar.has_value() && Contains(vm.scrollbar->track, mx, my)) {
     context_.interaction_state.drag_target = DragTarget::SettingsScrollbar;
@@ -556,8 +674,17 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
     settings_overlay_service_.SetFocusedPane(SettingsPane::Values);
     settings_overlay_service_.SetSelectedRow(row.row_in_category);
 
-    if (row.resettable && Contains(row.reset_rect, mx, my)) {
-      ResetSettingValue(row.id);
+    if (row.scope_rect.w > 0.0f && Contains(row.scope_rect, mx, my)) {
+      ToggleSettingScope(row.id);
+    } else if (row.resettable && Contains(row.reset_rect, mx, my)) {
+      // Reset the layer the scope chip currently targets (project override vs
+      // user default); non-scope-selectable rows reset their declared scope.
+      if (row.scope_rect.w > 0.0f) {
+        ResetSettingInScope(row.id, row.scope_is_project ? SettingScope::Project
+                                                         : SettingScope::User);
+      } else {
+        ResetSettingValue(row.id);
+      }
     } else if (Contains(row.control.checkbox_rect, mx, my)) {
       StepSetting(row.id, true);  // checkbox toggle (forward == toggle for Bool)
     } else if (Contains(row.control.dec_rect, mx, my)) {
@@ -565,9 +692,12 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
     } else if (Contains(row.control.inc_rect, mx, my)) {
       StepSetting(row.id, true);
     } else if (Contains(row.control.value_rect, mx, my)) {
-      // Segmented value cycles on click; the stepper value field only selects.
+      // Segmented value cycles on click; TextEdit opens the inline editor; the
+      // stepper value field only selects.
       if (row.control.kind == SettingsControlKind::Segmented) {
         StepSetting(row.id, left);
+      } else if (row.control.kind == SettingsControlKind::TextEdit && left) {
+        BeginSettingValueEdit(row.id);
       }
     } else if (right) {
       // Right-click anywhere on a row steps backward as a power-user shortcut.

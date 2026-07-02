@@ -55,6 +55,8 @@ class WorkspaceEventDispatcher {
     std::function<bool(const SDL_TextInputEvent&)> handle_text_input;
     std::function<void()> handle_window_mouse_leave;
     std::function<void()> force_cursor_reassert;
+    // Autosave hook fired when the window loses focus (honors editor.autosave).
+    std::function<void()> autosave_on_focus_lost;
     std::function<void()> request_window_redraw;
     std::function<bool(const SDL_KeyboardEvent&)> handle_key_down;
   };

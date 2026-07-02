@@ -65,8 +65,12 @@ bool TextViewport::Save() {
     if (EnsureSingleFinalNewline(normalized)) changed = true;
   }
 
+  // "auto" keeps the file's detected ending; an explicit lf/crlf override wins and
+  // also updates the document so the status-bar label reflects the saved ending.
+  const LineEnding effective_ending = save_line_ending_override_.value_or(document_->line_ending);
+  document_->line_ending = effective_ending;
   const std::string text = util::SerializeLines(
-      changed ? normalized : document_->lines.Snapshot(), document_->line_ending);
+      changed ? normalized : document_->lines.Snapshot(), effective_ending);
   if (!util::WriteTextFileAtomically(document_->path, text)) {
     return false;
   }

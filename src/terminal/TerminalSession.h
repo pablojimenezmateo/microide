@@ -114,7 +114,8 @@ class TerminalSession {
   TerminalSession& operator=(const TerminalSession&) = delete;
 
   void SetWakeEventType(Uint32 event_type);
-  bool Start(const std::filesystem::path& working_directory, std::string_view command = {});
+  bool Start(const std::filesystem::path& working_directory, std::string_view command = {},
+             std::string_view shell = {});
   void Stop();
   // Test seam: brings the session up without spawning a real PTY/child process.
   // Always compiled; selected at runtime when placeholder-terminal test mode is
@@ -122,6 +123,9 @@ class TerminalSession {
   bool StartPlaceholderForTesting(const std::filesystem::path& working_directory,
                                   std::string_view command = {});
   void Resize(std::size_t rows, std::size_t columns);
+  // Configure the scrollback cap (lines retained above the visible grid). Clamped
+  // to a sane floor; re-trims immediately when lowered below the current backlog.
+  void SetMaxScrollbackLines(std::size_t max_lines);
   void SendBytes(std::string_view bytes);
   void SendKey(Key key);
   // Encode and send a modified key press. Returns true if it produced output.
@@ -282,6 +286,9 @@ class TerminalSession {
   std::string pending_utf8_sequence_;
   std::size_t rows_ = 24;
   std::size_t columns_ = 80;
+  // Scrollback cap (the `terminal.scrollback_lines` setting; default mirrors
+  // kMaxScrollbackLines in TerminalInternalConstants.h).
+  std::size_t max_scrollback_lines_ = 2000;
   std::size_t cursor_row_ = 0;
   std::size_t cursor_column_ = 0;
   std::size_t saved_cursor_row_ = 0;

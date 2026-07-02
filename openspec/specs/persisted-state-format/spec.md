@@ -109,7 +109,7 @@ The one-shot legacy importer added in `comprehensive-tech-debt-cleanup` SHALL be
 
 ### Requirement: User-Config Records New Polish Setting Keys
 
-The user-config persisted artifact SHALL accept and round-trip the following new typed records, with `PersistedRecordReader` and `PersistedRecordWriter` as the only implementations: `editor.font_family`, `editor.font_size`, `editor.line_endings`, `editor.trim_trailing_whitespace`, `editor.insert_final_newline`, `editor.format_on_save`, `editor.autosave`, `editor.hover_delay_ms`, `ui.layout_mode`, `ui.layout_compact_breakpoint_px`, `ui.scrollbar_size`, `ui.resize_handle_size`, `ui.show_status_bar`, `terminal.shell`, `terminal.font_size`, `diagnostics.min_severity`.
+The user-config persisted artifact SHALL accept and round-trip the following new typed records, with `PersistedRecordReader` and `PersistedRecordWriter` as the only implementations: `editor.font_family`, `editor.font_size`, `editor.line_endings`, `editor.save.trim_trailing_whitespace`, `editor.save.ensure_final_newline`, `editor.format_on_save`, `editor.autosave`, `editor.hover_delay_ms`, `ui.layout_mode`, `ui.layout_compact_breakpoint_px`, `ui.scrollbar_size`, `ui.resize_handle_size`, `ui.show_status_bar`, `terminal.shell`, `terminal.font_size`, `diagnostics.min_severity`.
 
 #### Scenario: New keys round-trip
 - **WHEN** any new key listed above is written to the user-config artifact and then read back

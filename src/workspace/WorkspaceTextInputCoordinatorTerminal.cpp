@@ -182,6 +182,10 @@ TextInputCoordinator WorkspaceShell::MakeTextInputCoordinator() {
               [this]() -> editor::SingleLineEditor* {
                 return &settings_overlay_service_.QueryEditor();
               },
+          .settings_value_editor =
+              [this]() -> editor::SingleLineEditor* {
+                return &settings_overlay_service_.ValueEditor();
+              },
           .refresh_settings_overlay =
               [this]() {
                 settings_overlay_service_.SyncQueryFromEditor();

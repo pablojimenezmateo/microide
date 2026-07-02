@@ -92,13 +92,6 @@ bool EncodeProjectConfigRecord(const PersistedProjectConfigState& state, std::ve
   out->clear();
   if (!AppendRecord(ProjectConfigTag::Schema,
                     [&](PrimitiveWriter& w) { return w.WriteU32(kSchemaVersion); }, out) ||
-      !AppendRecord(ProjectConfigTag::EditorTabSize,
-                    [&](PrimitiveWriter& w) { return WriteSize(w, state.editor_tab_size); }, out) ||
-      !AppendRecord(ProjectConfigTag::EditorIndentWidth,
-                    [&](PrimitiveWriter& w) { return WriteSize(w, state.editor_indent_width); },
-                    out) ||
-      !AppendRecord(ProjectConfigTag::EditorSoftTabs,
-                    [&](PrimitiveWriter& w) { return w.WriteBool(state.editor_soft_tabs); }, out) ||
       !AppendRecord(ProjectConfigTag::ColorschemeName,
                     [&](PrimitiveWriter& w) { return w.WriteString(state.colorscheme_name); }, out)) {
     return false;
@@ -165,12 +158,6 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
                    seen_schema = true;
                    return true;
                  }
-                 case ProjectConfigTag::EditorTabSize:
-                   return ReadSize(reader, &state->editor_tab_size) && reader.remaining() == 0;
-                 case ProjectConfigTag::EditorIndentWidth:
-                   return ReadSize(reader, &state->editor_indent_width) && reader.remaining() == 0;
-                 case ProjectConfigTag::EditorSoftTabs:
-                   return reader.ReadBool(&state->editor_soft_tabs) && reader.remaining() == 0;
                  case ProjectConfigTag::ColorschemeName:
                    return reader.ReadString(&state->colorscheme_name) && reader.remaining() == 0;
                  case ProjectConfigTag::ProjectBaseColor: {

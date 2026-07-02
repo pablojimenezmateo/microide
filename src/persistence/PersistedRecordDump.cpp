@@ -49,10 +49,6 @@ void AppendUserConfigSummary(const workspace::PersistedUserConfigState& state,
 
 void AppendProjectConfigSummary(const workspace::PersistedProjectConfigState& state,
                                 std::ostringstream& stream) {
-  stream << "decoded.project_config.editor_tab_size: " << state.editor_tab_size << '\n';
-  stream << "decoded.project_config.editor_indent_width: " << state.editor_indent_width << '\n';
-  stream << "decoded.project_config.editor_soft_tabs: " << (state.editor_soft_tabs ? "true" : "false")
-         << '\n';
   stream << "decoded.project_config.colorscheme_name: " << state.colorscheme_name << '\n';
   stream << "decoded.project_config.settings_count: " << state.settings.size() << '\n';
   stream << "decoded.project_config.sidebar_policies_count: " << state.sidebar_policies.size() << '\n';

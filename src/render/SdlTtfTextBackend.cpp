@@ -6,12 +6,18 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <string>
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+#if MICROIDE_HAS_FONTCONFIG
+#include <fontconfig/fontconfig.h>
+#endif
 
 #include "platform/RuntimePaths.h"
 #include "render/PixelAlign.h"
@@ -84,15 +90,11 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
     return false;
   }
 
-  font_ = TTF_OpenFont(font_path.string().c_str(), font_point_size_);
-  if (font_ == nullptr) {
+  if (!OpenPrimaryFont(font_path)) {
     SDL_Log("microide text: TTF_OpenFont failed for %s: %s", font_path.string().c_str(),
             SDL_GetError());
     return false;
   }
-  font_path_ = font_path;
-  TTF_SetFontHinting(font_, TTF_HINTING_LIGHT_SUBPIXEL);
-  TTF_SetFontKerning(font_, false);
   LoadFallbackFonts();
 
   // Batched-text path is GPU-only: it is a measured win on a GPU backend
@@ -154,6 +156,54 @@ void SdlTtfTextBackend::SetFontPointSize(float points) {
   }
   font_point_size_ = resolved;
   ApplyFontSizeAtCurrentScale();
+}
+
+bool SdlTtfTextBackend::OpenPrimaryFont(const std::filesystem::path& path) {
+  if (renderer_ == nullptr) {
+    return false;
+  }
+  TTF_Font* opened = TTF_OpenFont(path.string().c_str(), font_point_size_);
+  if (opened == nullptr) {
+    return false;
+  }
+  if (font_ != nullptr) {
+    TTF_CloseFont(font_);
+  }
+  font_ = opened;
+  font_path_ = path;
+  TTF_SetFontHinting(font_, TTF_HINTING_LIGHT_SUBPIXEL);
+  TTF_SetFontKerning(font_, false);
+  return true;
+}
+
+bool SdlTtfTextBackend::SetFontFamily(std::string_view family) {
+  if (requested_font_family_ == family && font_ != nullptr) {
+    return false;
+  }
+  const std::filesystem::path resolved = ResolveFamilyToFile(family);
+  if (resolved.empty()) {
+    // Keep the current font; an unresolved family must never brick text rendering.
+    SDL_Log("microide text: font family \"%.*s\" not found; keeping current font",
+            static_cast<int>(family.size()), family.data());
+    return false;
+  }
+  if (resolved == font_path_ && font_ != nullptr) {
+    // Same underlying file (e.g. empty family resolving to the current default):
+    // record the request but nothing visually changed.
+    requested_font_family_ = std::string(family);
+    return false;
+  }
+  if (!OpenPrimaryFont(resolved)) {
+    SDL_Log("microide text: failed to open font family \"%.*s\" (%s); keeping current font",
+            static_cast<int>(family.size()), family.data(), resolved.string().c_str());
+    return false;
+  }
+  requested_font_family_ = std::string(family);
+  // Fallbacks are relative to the new primary; reload, then rebuild caches/metrics
+  // for the new glyph shapes at the current size/scale.
+  LoadFallbackFonts();
+  ApplyFontSizeAtCurrentScale();
+  return true;
 }
 
 void SdlTtfTextBackend::RefreshMetrics() {
@@ -360,6 +410,129 @@ std::filesystem::path SdlTtfTextBackend::LocateFontFile() {
     }
   }
   return {};
+}
+
+namespace {
+
+// Normalize a family/stem for fuzzy matching: lowercase, drop spaces, hyphens and
+// underscores so "JetBrains Mono" matches "JetBrainsMono-Regular".
+std::string NormalizeFontToken(std::string_view text) {
+  std::string out;
+  out.reserve(text.size());
+  for (char c : text) {
+    if (c == ' ' || c == '-' || c == '_') {
+      continue;
+    }
+    out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+  }
+  return out;
+}
+
+}  // namespace
+
+std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view family) {
+  if (family.empty()) {
+    return LocateFontFile();
+  }
+  // Allow an explicit path (absolute or existing) so power users can point straight
+  // at a font file.
+  {
+    const std::filesystem::path direct(family);
+    std::error_code ec;
+    if (std::filesystem::exists(direct, ec) && !std::filesystem::is_directory(direct, ec)) {
+      return direct;
+    }
+  }
+
+#if MICROIDE_HAS_FONTCONFIG
+  if (FcConfig* config = FcInitLoadConfigAndFonts()) {
+    std::filesystem::path result;
+    const std::string family_str(family);
+    FcPattern* pattern = FcNameParse(reinterpret_cast<const FcChar8*>(family_str.c_str()));
+    if (pattern != nullptr) {
+      FcConfigSubstitute(config, pattern, FcMatchPattern);
+      FcDefaultSubstitute(pattern);
+      FcResult match_result = FcResultNoMatch;
+      if (FcPattern* matched = FcFontMatch(config, pattern, &match_result)) {
+        FcChar8* file = nullptr;
+        if (FcPatternGetString(matched, FC_FILE, 0, &file) == FcResultMatch && file != nullptr) {
+          result = std::filesystem::path(reinterpret_cast<const char*>(file));
+        }
+        FcPatternDestroy(matched);
+      }
+      FcPatternDestroy(pattern);
+    }
+    FcConfigDestroy(config);
+    if (!result.empty()) {
+      return result;
+    }
+  }
+#endif
+
+  // Fallback: scan the standard font directories once per family (cheap: only on a
+  // font-family setting change) and fuzzy-match the file stem. Prefer an exact
+  // stem match, then a "<family>-regular" variant, then any containing match.
+  static const std::array<const char*, 5> kFontDirs = {
+      "/usr/share/fonts",
+      "/usr/local/share/fonts",
+      "/run/host/usr/share/fonts",
+      "/usr/share/fonts/truetype",
+      "/usr/share/fonts/opentype",
+  };
+  const std::string needle = NormalizeFontToken(family);
+  if (needle.empty()) {
+    return LocateFontFile();
+  }
+  std::filesystem::path exact;
+  std::filesystem::path regular;
+  std::filesystem::path contains;
+  const char* home = SDL_getenv("HOME");
+  std::vector<std::filesystem::path> roots;
+  if (home != nullptr) {
+    roots.emplace_back(std::filesystem::path(home) / ".local/share/fonts");
+    roots.emplace_back(std::filesystem::path(home) / ".fonts");
+  }
+  for (const char* dir : kFontDirs) {
+    roots.emplace_back(dir);
+  }
+  for (const std::filesystem::path& root : roots) {
+    std::error_code ec;
+    if (!std::filesystem::exists(root, ec)) {
+      continue;
+    }
+    for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end && !ec;
+         it.increment(ec)) {
+      if (!it->is_regular_file(ec)) {
+        continue;
+      }
+      const std::filesystem::path& path = it->path();
+      const std::string ext = NormalizeFontToken(path.extension().string());
+      if (ext != "ttf" && ext != "otf") {
+        continue;
+      }
+      const std::string stem = NormalizeFontToken(path.stem().string());
+      if (stem == needle) {
+        exact = path;
+        break;
+      }
+      if (regular.empty() && stem == needle + "regular") {
+        regular = path;
+      }
+      if (contains.empty() && stem.find(needle) != std::string::npos) {
+        contains = path;
+      }
+    }
+    if (!exact.empty()) {
+      break;
+    }
+  }
+  if (!exact.empty()) {
+    return exact;
+  }
+  if (!regular.empty()) {
+    return regular;
+  }
+  return contains;  // empty when nothing matched -> caller keeps the current font
 }
 
 std::vector<std::filesystem::path> SdlTtfTextBackend::LocateFallbackFontFiles(

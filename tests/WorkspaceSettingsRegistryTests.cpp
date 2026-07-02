@@ -8,6 +8,7 @@
 #include <array>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace microide::tests {
@@ -21,12 +22,10 @@ using microide::workspace::SettingsOverlayService;
 using microide::workspace::SettingSpec;
 using microide::workspace::SettingType;
 
-constexpr std::array<std::string_view, 16> kNewSettingIds = {
+constexpr std::array<std::string_view, 14> kNewSettingIds = {
     "editor.font_family",
     "editor.font_size",
     "editor.line_endings",
-    "editor.trim_trailing_whitespace",
-    "editor.insert_final_newline",
     "editor.format_on_save",
     "editor.autosave",
     "editor.hover_delay_ms",
@@ -74,6 +73,24 @@ void TestSettingsCatalogIncludesPolishKeys() {
     Expect(spec != nullptr, "settings catalog should include every responsive-polish key");
     Expect(!spec->label.empty(), "new setting specs should have user-facing labels");
     Expect(!spec->description.empty(), "new setting specs should have descriptions");
+  }
+}
+
+void TestSettingsCatalogSaveDefaultsAndDedup() {
+  // The stale duplicate keys were removed in favor of the wired editor.save.* pair.
+  Expect(FindBuiltinSettingSpec("editor.trim_trailing_whitespace") == nullptr,
+         "stale editor.trim_trailing_whitespace spec should be gone");
+  Expect(FindBuiltinSettingSpec("editor.insert_final_newline") == nullptr,
+         "stale editor.insert_final_newline spec should be gone");
+  // The canonical save specs default to true so the shown default matches the
+  // runtime fallback used by the save pipeline (WorkspaceShellEditor.cpp).
+  for (std::string_view id :
+       {"editor.save.trim_trailing_whitespace", "editor.save.ensure_final_newline"}) {
+    const SettingSpec* spec = FindBuiltinSettingSpec(id);
+    Expect(spec != nullptr, "canonical save setting should exist");
+    const microide::workspace::SettingValue value = DefaultSettingValue(*spec);
+    const auto* on = std::get_if<bool>(&value);
+    Expect(on != nullptr && *on, "canonical save setting should default to true");
   }
 }
 
@@ -131,6 +148,79 @@ void TestSettingsOverlayFiltersAndPreservesScopes() {
          "settings overlay rows should surface stored values and reset affordance state");
   Expect(it->detail.find("User") != std::string::npos,
          "settings overlay rows should preserve scope labels");
+}
+
+void TestSettingsOverlayScopeSelectableRows() {
+  // editor.line_endings is a built-in project-scoped setting, so its overlay row
+  // supports the per-row "This Project / Default" scope chip.
+  const auto row_for = [](const std::vector<std::pair<std::string, std::string>>& user,
+                          const std::vector<std::pair<std::string, std::string>>& project) {
+    SettingsOverlayService service;
+    service.OpenSettings();
+    service.RebuildSettingsRows(microide::workspace::AllSettingInfos(microide::plugin::PluginHost{}),
+                                user, project);
+    const auto it = std::find_if(service.SettingsRows().begin(), service.SettingsRows().end(),
+                                 [](const auto& row) { return row.id == "editor.line_endings"; });
+    Expect(it != service.SettingsRows().end(), "line_endings row should be present");
+    return *it;
+  };
+
+  // A user-level default with no project override reads as "Default" and shows the
+  // default value; the chip is available and no project override is recorded.
+  const auto defaulted = row_for({{"editor.line_endings", "crlf"}}, {});
+  Expect(defaulted.scope_selectable, "project-scoped built-in should be scope-selectable");
+  Expect(defaulted.has_user_default && !defaulted.project_override,
+         "user default present, project override absent");
+  Expect(defaulted.value == "crlf", "effective value should surface the user-level default");
+  Expect(defaulted.scope_label == "Default", "no project override reads as Default");
+  Expect(defaulted.resettable, "an active user default is resettable");
+
+  // A per-project override wins over the user default and reads as "Project".
+  const auto overridden =
+      row_for({{"editor.line_endings", "crlf"}}, {{"editor.line_endings", "lf"}});
+  Expect(overridden.project_override && overridden.has_user_default,
+         "both layers hold a value");
+  Expect(overridden.value == "lf", "project override should win over the user default");
+  Expect(overridden.scope_label == "Project", "a project override reads as Project");
+
+  // A user-scoped setting is never scope-selectable.
+  SettingsOverlayService service;
+  service.OpenSettings();
+  service.RebuildSettingsRows(microide::workspace::AllSettingInfos(microide::plugin::PluginHost{}),
+                              {}, {});
+  const auto status_it =
+      std::find_if(service.SettingsRows().begin(), service.SettingsRows().end(),
+                   [](const auto& row) { return row.id == "ui.show_status_bar"; });
+  Expect(status_it != service.SettingsRows().end(), "status-bar row present");
+  Expect(!status_it->scope_selectable, "user-scoped settings are not scope-selectable");
+}
+
+void TestSettingsOverlayStringRowsAreTextEditable() {
+  SettingsOverlayService service;
+  service.OpenSettings();
+  service.RebuildSettingsRows(microide::workspace::AllSettingInfos(microide::plugin::PluginHost{}),
+                              {}, {});
+  const auto it = std::find_if(service.SettingsRows().begin(), service.SettingsRows().end(),
+                               [](const auto& row) { return row.id == "editor.font_family"; });
+  Expect(it != service.SettingsRows().end(), "font_family row should be present");
+  Expect(it->control_kind == microide::workspace::SettingsControlKind::TextEdit,
+         "String settings should use the inline text-edit control");
+
+  // The value-edit session round-trips text and clears on cancel.
+  Expect(!service.EditingValue(), "no edit active initially");
+  service.BeginValueEdit("editor.font_family", "JetBrains Mono");
+  Expect(service.EditingValue() && service.EditingRowId() == "editor.font_family",
+         "BeginValueEdit activates editing for the row");
+  Expect(service.ValueEditText() == "JetBrains Mono", "editor seeds the initial text");
+  service.ValueEditor().SetText("Fira Code");
+  Expect(service.ValueEditText() == "Fira Code", "typing updates the edit text");
+  service.CancelValueEdit();
+  Expect(!service.EditingValue(), "CancelValueEdit ends the session");
+
+  // Closing the overlay must not strand an active edit.
+  service.BeginValueEdit("editor.font_family", "x");
+  service.Close();
+  Expect(!service.EditingValue(), "closing the overlay cancels any active edit");
 }
 
 void TestSettingsOverlayGroupsEditorEssentialsToggles() {
@@ -287,6 +377,8 @@ void TestSettingsOverlayRowControlMetadata() {
 void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceSettingsRegistry/IncludesPolishKeys",
           TestSettingsCatalogIncludesPolishKeys);
+  AddTest(tests, "WorkspaceSettingsRegistry/SaveDefaultsAndDedup",
+          TestSettingsCatalogSaveDefaultsAndDedup);
   AddTest(tests, "WorkspaceSettingsRegistry/DefaultsRoundTrip",
           TestSettingsCatalogDefaultsRoundTrip);
   AddTest(tests, "WorkspaceSettingsRegistry/EdgeValuesRoundTrip",
@@ -295,6 +387,10 @@ void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
           TestSettingsCatalogRejectsInvalidEnums);
   AddTest(tests, "WorkspaceSettingsOverlay/FiltersAndPreservesScopes",
           TestSettingsOverlayFiltersAndPreservesScopes);
+  AddTest(tests, "WorkspaceSettingsOverlay/ScopeSelectableRows",
+          TestSettingsOverlayScopeSelectableRows);
+  AddTest(tests, "WorkspaceSettingsOverlay/StringRowsAreTextEditable",
+          TestSettingsOverlayStringRowsAreTextEditable);
   AddTest(tests, "WorkspaceSettingsOverlay/GroupsEditorEssentialsToggles",
           TestSettingsOverlayGroupsEditorEssentialsToggles);
   AddTest(tests, "WorkspaceSettingsOverlay/CategoryLabelHelper",

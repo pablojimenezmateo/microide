@@ -689,6 +689,9 @@
   void RequestCloseTabs(std::vector<std::size_t> indices);
   void SyncActiveEditorTab();
   bool SaveTab(std::size_t index);
+  // Autosave dirty, titled editor tabs when editor.autosave selects the matching
+  // trigger (on_focus_change vs after_delay). Safe: never prompts, never clobbers.
+  void MaybeAutosaveDirtyTabs(bool on_focus_change);
   bool TabIsDirty(std::size_t index) const;
   std::string TabDisplayTitle(std::size_t index) const;
   std::string TabDisplayTitle(std::size_t group_index, std::size_t index) const;
@@ -1513,7 +1516,27 @@
   // shutdown — the transient path used by `--set`, cold-start spec settings, and
   // debug auto-enable so headless drives never clobber the user's saved config.
   bool SetSettingValue(std::string_view id, std::string value, bool persist = true);
+  // Write a project-scoped setting's value into the USER layer as a cross-project
+  // default. A per-project override (project layer) still wins over this default.
+  // For user-scoped settings this behaves like SetSettingValue.
+  bool SetSettingAsUserDefault(std::string_view id, std::string value, bool persist = true);
+  // Shared implementation for the two entry points above; as_user_default forces
+  // the write into the user layer even for a project-scoped setting.
+  bool WriteSettingValue(std::string_view id, std::string value, bool as_user_default,
+                         bool persist);
   bool ResetSettingValue(std::string_view id);
+  // Clear a setting's override from a specific layer (used by the overlay's
+  // per-row scope toggle: reset "This Project" vs "All Projects" independently).
+  bool ResetSettingInScope(std::string_view id, SettingScope scope);
+  // True when an overlay edit of a built-in project-scoped setting should land on
+  // the user-level default layer (a default exists and there is no per-project
+  // override) rather than pinning a per-project override.
+  bool SettingWritesToUserDefault(std::string_view id) const;
+  // Write a value to whichever layer the per-row scope target currently points at.
+  bool WriteSettingRespectingScope(std::string_view id, std::string value);
+  // Flip a project-scoped setting between "This Project" and "All Projects" by
+  // moving the current effective value between the project and user layers.
+  void ToggleSettingScope(std::string_view id);
   void RefreshSettingsOverlayCatalog();
   void OpenSettingsOverlay();
   void OpenHelpAboutOverlay();
@@ -1521,6 +1544,10 @@
   void RenderSettingsOverlay(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   bool HandleSettingsOverlayButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   void StepSetting(std::string_view id, bool forward);
+  // Inline String-value editing in the Settings overlay.
+  void BeginSettingValueEdit(std::string_view id);
+  void CommitSettingValueEdit();
+  void CancelSettingValueEdit();
   void TogglePluginEnabled(std::string_view plugin_id);
   void EnsureSettingsSelectionVisible();
   bool HandleStatusBarButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
@@ -1700,6 +1727,13 @@
   std::optional<SDL_FRect> CurrentTabSlideDirtyRect() const;
   void ResetCaretBlink();
   bool ShouldBlinkCaret() const;
+  // Caret-blink settings: whether the caret blinks at all (else it stays solid)
+  // and the blink half-period in milliseconds (clamped to 100..2000).
+  bool CaretBlinkEnabled() const;
+  Uint64 CaretBlinkIntervalMs() const;
+  // Resolved `terminal.scrollback_lines` (clamped). Applied to new terminals at
+  // creation and to existing terminals when the value changes.
+  std::size_t TerminalScrollbackLines() const;
   // True when ShouldBlinkCaret() AND the caret hasn't been idle past
   // kCaretBlinkIdleStopMs since the last ResetCaretBlink(). After that
   // window the caret freezes visible and no further blink wakes fire.
@@ -1847,6 +1881,8 @@
     std::optional<std::string> save_ensure_final_newline;
   };
   std::optional<LiveSettingsEditorSnapshot> last_live_settings_editor_snapshot_;
+  // Last terminal scrollback cap pushed to live sessions; -1 forces the first apply.
+  int last_applied_terminal_scrollback_ = -1;
   Uint32 git_blame_event_type_ = 0;
   Uint32 git_sidebar_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;

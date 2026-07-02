@@ -31,6 +31,7 @@ class TextInputCoordinator {
     std::function<void()> refresh_project_search;
     std::function<void()> reset_overlay_scroll;
     std::function<editor::SingleLineEditor*()> settings_query_editor;
+    std::function<editor::SingleLineEditor*()> settings_value_editor;
     std::function<void()> refresh_settings_overlay;
     std::function<editor::TextViewport*()> active_editable_viewport;
     std::function<CompareTabState*()> active_compare_tab;

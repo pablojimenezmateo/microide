@@ -28,6 +28,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   bool BatchesRuns() const override { return glyph_atlas_enabled_ && is_gpu_renderer_; }
   void SetPresentationScale(float scale_x, float scale_y) override;
   void SetFontPointSize(float points) override;
+  bool SetFontFamily(std::string_view family) override;
   float CharWidth() const override { return char_width_; }
   float LineHeight() const override { return line_height_; }
   TextClipPadding ClipPadding() const override { return clip_padding_; }
@@ -107,6 +108,15 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   void ApplyFontSizeAtCurrentScale();
   void RefreshMetrics();
   void ClearCache();
+  // Open `path` as the primary font, applying hinting/kerning; on success closes
+  // the previous primary font and adopts the new one. Returns false (leaving the
+  // current font untouched) when the path fails to open. Shared by Initialize and
+  // SetFontFamily so both go through the same setup.
+  bool OpenPrimaryFont(const std::filesystem::path& path);
+  // Resolve a font family name to a concrete file. Empty family -> LocateFontFile.
+  // Uses fontconfig when available (compile-time gated), else a cached scan of the
+  // standard font directories. Returns an empty path when nothing matches.
+  static std::filesystem::path ResolveFamilyToFile(std::string_view family);
   static std::filesystem::path LocateFontFile();
   static std::vector<std::filesystem::path> LocateFallbackFontFiles(
       const std::filesystem::path& primary_font);
@@ -138,6 +148,9 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   TTF_Font* font_ = nullptr;
   std::vector<TTF_Font*> fallback_fonts_;
   std::filesystem::path font_path_;
+  // The requested editor font family (empty = platform default). Retained so a
+  // later size / presentation-scale change re-resolves the same family.
+  std::string requested_font_family_;
   float char_width_ = 8.0f;
   float line_height_ = 14.0f;
   TextClipPadding clip_padding_{};

@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -49,6 +50,18 @@ struct PublishedDiagnostic {
            message == other.message;
   }
 };
+
+// Parse a `diagnostics.min_severity` token ("error"/"warning"/"info"/"hint");
+// unknown tokens fall back to Hint (show everything).
+DiagnosticSeverity ParseDiagnosticSeverity(std::string_view token);
+
+// Returns `in` unchanged when min_severity is Hint (the show-all default, zero
+// cost). Otherwise copies diagnostics at or above min_severity into `scratch` and
+// returns a span over it. Lives here (not a render TU) so the copy never counts as
+// render-hot-path string materialization.
+std::span<const PublishedDiagnostic> FilterDiagnosticsAtLeastSeverity(
+    std::span<const PublishedDiagnostic> in, DiagnosticSeverity min_severity,
+    std::vector<PublishedDiagnostic>& scratch);
 
 class DiagnosticsStore {
  public:

@@ -8,6 +8,36 @@
 
 namespace microide::editor {
 
+DiagnosticSeverity ParseDiagnosticSeverity(std::string_view token) {
+  if (token == "error") {
+    return DiagnosticSeverity::Error;
+  }
+  if (token == "warning") {
+    return DiagnosticSeverity::Warning;
+  }
+  if (token == "info") {
+    return DiagnosticSeverity::Info;
+  }
+  return DiagnosticSeverity::Hint;
+}
+
+std::span<const PublishedDiagnostic> FilterDiagnosticsAtLeastSeverity(
+    std::span<const PublishedDiagnostic> in, DiagnosticSeverity min_severity,
+    std::vector<PublishedDiagnostic>& scratch) {
+  // DiagnosticSeverity orders most-severe first (Error=0 .. Hint=3), so "at least
+  // min_severity" keeps entries whose value is <= min_severity's value.
+  if (min_severity == DiagnosticSeverity::Hint) {
+    return in;  // show everything: no filtering, no copy
+  }
+  scratch.clear();
+  for (const PublishedDiagnostic& diagnostic : in) {
+    if (static_cast<int>(diagnostic.severity) <= static_cast<int>(min_severity)) {
+      scratch.push_back(diagnostic);
+    }
+  }
+  return scratch;
+}
+
 namespace {
 
 int SeverityRank(DiagnosticSeverity severity) {

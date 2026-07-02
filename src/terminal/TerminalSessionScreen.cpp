@@ -435,7 +435,7 @@ void TerminalSession::ScrollRegionDownLocked(std::size_t top,
 
 void TerminalSession::TrimScrollbackLocked() {
   const std::size_t max_lines = use_alternate_screen_ ? std::max<std::size_t>(1, rows_)
-                                                      : kMaxScrollbackLines +
+                                                      : max_scrollback_lines_ +
                                                             std::max<std::size_t>(1, rows_);
   // Coalesce trims: only act once we are 25 % above the target, then trim all
   // the way down to `max_lines`. The previous implementation trimmed on every

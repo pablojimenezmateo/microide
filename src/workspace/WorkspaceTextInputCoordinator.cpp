@@ -91,6 +91,7 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
     case TextInputSurface::LaunchConfigPicker:
     case TextInputSurface::CommandPalette:
     case TextInputSurface::SettingsQuery:
+    case TextInputSurface::SettingsValueEdit:
       operations_.request_overlay_redraw();
       break;
     case TextInputSurface::Editor:
@@ -123,6 +124,8 @@ editor::SingleLineEditor* TextInputCoordinator::ActiveSingleLineTextState() {
       return &state_.file_finder.query_state();
     case TextInputSurface::SettingsQuery:
       return operations_.settings_query_editor ? operations_.settings_query_editor() : nullptr;
+    case TextInputSurface::SettingsValueEdit:
+      return operations_.settings_value_editor ? operations_.settings_value_editor() : nullptr;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
       return &state_.overlay.workflow.project_search.edit_buffer;
@@ -202,6 +205,10 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       } else {
         operations_.request_overlay_redraw();
       }
+      break;
+    case TextInputSurface::SettingsValueEdit:
+      // The inline value editor does not filter rows; just repaint the overlay.
+      operations_.request_overlay_redraw();
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
@@ -298,6 +305,7 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
     case TextInputSurface::LaunchConfigPicker:
     case TextInputSurface::CommandPalette:
     case TextInputSurface::SettingsQuery:
+    case TextInputSurface::SettingsValueEdit:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::DebugVariableEdit:

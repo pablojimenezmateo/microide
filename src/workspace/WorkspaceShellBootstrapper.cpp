@@ -221,6 +221,7 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               },
           .handle_window_mouse_leave = [shell]() { shell->ClearMouseHoverState(); },
           .force_cursor_reassert = [shell]() { shell->ForceCursorReassert(); },
+          .autosave_on_focus_lost = [shell]() { shell->MaybeAutosaveDirtyTabs(true); },
           .request_window_redraw = [shell]() { shell->RequestWindowRedraw(); },
           .handle_key_down =
               [shell](const SDL_KeyboardEvent& event) {

@@ -40,9 +40,9 @@ enum class UserConfigTag : std::uint16_t {
 
 enum class ProjectConfigTag : std::uint16_t {
   Schema = 1,
-  EditorTabSize = 2,
-  EditorIndentWidth = 3,
-  EditorSoftTabs = 4,
+  // Tags 2-4 (EditorTabSize/EditorIndentWidth/EditorSoftTabs) are retired: the
+  // canonical editor preferences now round-trip solely through the layered
+  // `Setting` records (tag 7). Old files carrying tags 2-4 are skipped on decode.
   ColorschemeName = 5,
   ProjectBaseColor = 6,
   Setting = 7,

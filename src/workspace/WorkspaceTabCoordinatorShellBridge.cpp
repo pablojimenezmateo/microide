@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "workspace/SettingFlags.h"
+
 #include <filesystem>
 #include <mutex>
 #include <optional>
@@ -119,6 +121,21 @@ bool WorkspaceShell::SaveTab(std::size_t index) {
   return MakeEditorTabService().Save(index);
 }
 
+void WorkspaceShell::MaybeAutosaveDirtyTabs(bool on_focus_change) {
+  const std::string mode = GetSettingValue("editor.autosave").value_or("off");
+  const bool trigger =
+      on_focus_change ? (mode == "on_focus_change") : (mode == "after_delay");
+  if (!trigger) {
+    return;
+  }
+  // TabCoordinator::Save refuses untitled buffers and surfaces the external-change
+  // banner on a disk conflict, so autosave never pops a dialog or clobbers a file
+  // changed on disk.
+  for (const std::size_t index : MakeEditorTabService().DirtyIndices()) {
+    SaveTab(index);
+  }
+}
+
 bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& path,
                                                   editor::TextViewport& viewport,
                                                   std::string* error_message) {
@@ -136,8 +153,10 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
   }
 
   const std::string filetype = editor::runtime_syntax::DetectFiletype(path, viewport.lines());
+  const bool format_on_save = SettingFlagEnabled(GetSettingValue("editor.format_on_save"), true);
   if (const FormatterSpec* formatter =
-          filetype.empty() ? nullptr : FindFormatter(formatter_registry_, filetype);
+          (format_on_save && !filetype.empty()) ? FindFormatter(formatter_registry_, filetype)
+                                                : nullptr;
       formatter != nullptr && !formatter->command.empty()) {
     // Save is synchronous from the UI's perspective, so the formatter has to complete before
     // we return. Running it inline avoids the misleading executor-post-then-wait pattern that

@@ -69,6 +69,10 @@ class KeyInputCoordinator {
     std::function<void(int)> settings_step_selected;
     std::function<void()> settings_toggle_or_activate_selected;
     std::function<void()> settings_reset_selected;
+    // Inline String-value editing in the Settings overlay.
+    std::function<bool()> settings_value_edit_active;
+    std::function<void()> settings_commit_value_edit;
+    std::function<void()> settings_cancel_value_edit;
     std::function<void()> close_sidebar;
     std::function<SidebarMode()> active_sidebar_mode;
     std::function<void()> activate_overlay_selection;

@@ -24,8 +24,8 @@ void TestUserLayerWinsOverProject() {
 
   store.SetProject("editor.theme", "dark");
   store.SetUser("editor.theme", "light");
-  Expect(ResolveOr(store, "editor.theme", "?") == "light",
-         "user layer should win over project layer");
+  Expect(ResolveOr(store, "editor.theme", "?") == "dark",
+         "project layer should win over the user-level default");
 
   // Project-only key still resolves.
   store.SetProject("project.only", "p");
@@ -42,17 +42,17 @@ void TestResetRestoresUnderlyingLayer() {
   store.BindUserLayer(&user);
   store.BindActiveProject(&project);
 
-  store.SetProject("debug.enabled", "true");
   store.SetUser("debug.enabled", "false");
-  Expect(ResolveOr(store, "debug.enabled", "?") == "false", "user override active");
+  store.SetProject("debug.enabled", "true");
+  Expect(ResolveOr(store, "debug.enabled", "?") == "true", "project override active");
 
-  // Dropping the user override should surface the project value again.
-  store.ResetUser("debug.enabled");
-  Expect(ResolveOr(store, "debug.enabled", "?") == "true",
-         "resetting the user override surfaces the project value");
-
-  // Dropping the project value too leaves the key unset.
+  // Dropping the project override should surface the user-level default again.
   store.ResetProject("debug.enabled");
+  Expect(ResolveOr(store, "debug.enabled", "?") == "false",
+         "resetting the project override surfaces the user-level default");
+
+  // Dropping the user value too leaves the key unset.
+  store.ResetUser("debug.enabled");
   Expect(store.Resolve("debug.enabled") == nullptr, "resetting both layers unsets the key");
 }
 

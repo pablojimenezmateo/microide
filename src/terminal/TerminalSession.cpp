@@ -65,12 +65,17 @@ void TerminalSession::SetWakeEventType(Uint32 event_type) {
   }
 }
 
-bool TerminalSession::Start(const std::filesystem::path& working_directory, std::string_view command) {
+bool TerminalSession::Start(const std::filesystem::path& working_directory, std::string_view command,
+                            std::string_view shell) {
   Stop();
+  const std::string shell_str(shell);
   {
     std::scoped_lock lock(mutex_);
     working_directory_ = working_directory;
-    default_launch_label_ = command.empty() ? ShellProgramName(DefaultShellPath()) : std::string(command);
+    default_launch_label_ =
+        command.empty()
+            ? ShellProgramName(shell_str.empty() ? DefaultShellPath() : shell_str)
+            : std::string(command);
     launch_label_ = default_launch_label_;
     lines_ = {TerminalLine{}};
     current_style_ = TerminalStyle{};
@@ -148,6 +153,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
   const auto result = backend->Start(platform::TerminalStartRequest{
                                          .working_directory = working_directory,
                                          .command = std::string(command),
+                                         .shell = shell_str,
                                          .rows = rows_,
                                          .columns = columns_,
                                      },
@@ -266,6 +272,17 @@ void TerminalSession::Stop() {
   if (lines_.empty()) {
     lines_.push_back(TerminalLine{});
   }
+  AdvanceSnapshotGenerationLocked();
+}
+
+void TerminalSession::SetMaxScrollbackLines(std::size_t max_lines) {
+  const std::size_t clamped = std::clamp<std::size_t>(max_lines, 200, 100000);
+  std::scoped_lock lock(mutex_);
+  if (max_scrollback_lines_ == clamped) {
+    return;
+  }
+  max_scrollback_lines_ = clamped;
+  TrimScrollbackLocked();
   AdvanceSnapshotGenerationLocked();
 }
 
