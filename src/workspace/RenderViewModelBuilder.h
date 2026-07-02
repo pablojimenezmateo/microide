@@ -106,14 +106,16 @@ struct SidebarSurfaceViewModel {
   ProjectWorkspaceState* project_state = nullptr;
 };
 
-// Snapshot of an in-flight bottom-panel tab drag so the render TU can draw the
-// ghost + insertion caret without reading interaction state directly.
+// Snapshot of an in-flight bottom-panel tab drag / slide so the render TU can
+// draw the floating ghost and apply the Chrome-like slide offsets without
+// reading interaction state directly.
 struct BottomPanelTabDragViewModel {
-  bool active = false;
+  bool active = false;         // active drag: source tab is lifted, ghost shown
   std::size_t source_index = 0;
-  std::size_t target_slot = 0;
   float pointer_x = 0.0f;
   float grab_offset_x = 0.0f;
+  bool sliding = false;        // slide animation targets this strip (drag or settle)
+  std::vector<float> offsets;  // per model-index x offset (empty when not sliding)
 };
 
 struct BottomPanelSurfaceViewModel {

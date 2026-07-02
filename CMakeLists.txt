@@ -352,6 +352,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/ReviewTabPlan.cpp
   src/workspace/StatusBarModelService.cpp
   src/workspace/TabStripService.cpp
+  src/workspace/TabStripAnimation.cpp
   src/workspace/WorkspaceTabStripChrome.cpp
   src/workspace/WorkspaceChromeMouseCoordinator.cpp
   src/workspace/WorkspaceCompareInteractionCoordinator.cpp
@@ -837,6 +838,7 @@ add_executable(microide_tests
   tests/Phase5Tests.cpp
   tests/SingleLineEditorTests.cpp
   tests/WheelAccumulatorTests.cpp
+  tests/TabStripAnimationTests.cpp
   tests/AllocationCounterTests.cpp
   tests/PerfBaselineTests.cpp
   tests/PerfHarnessIsolationTests.cpp

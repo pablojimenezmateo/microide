@@ -2672,6 +2672,83 @@ void TestWorkspaceShellEditorTabDragTargetSlotTracksPointer() {
          "release handled");
 }
 
+void TestWorkspaceShellEditorTabDragSeedsSlideAnimation() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  const std::filesystem::path file_b = root / "beta.cpp";
+  const std::filesystem::path file_c = root / "gamma.cpp";
+  WriteFile(file_a, "a\n");
+  WriteFile(file_b, "b\n");
+  WriteFile(file_c, "c\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b), "tab b opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_c), "tab c opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect source_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  Expect(SendMouseDown(shell, source_rect.x + source_rect.w * 0.5f,
+                       source_rect.y + source_rect.h * 0.5f, SDL_BUTTON_LEFT),
+         "press starts a drag on tab 0");
+
+  // Drag tab 0 rightward past tab 1's midpoint so tab 1 must slide left to fill
+  // the vacated slot.
+  const SDL_FRect third_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 2);
+  Expect(SendMouseMotion(shell, third_rect.x + 1.0f, third_rect.y + third_rect.h * 0.5f,
+                         SDL_BUTTON_LMASK),
+         "dragging across the strip is handled");
+
+  const auto& slide = WorkspaceShellTestAccess::TabSlide(shell);
+  Expect(slide.kind == microide::workspace::TabDragKind::Editor,
+         "an in-flight editor drag arms the editor tab-slide animation");
+  Expect(!slide.settling, "the slide is in its drag phase, not settling");
+  Expect(slide.target.size() == 3, "one slide target per model tab");
+  Expect(slide.target[1] < -1.0f,
+         "tab 1 targets a leftward offset to fill the dragged tab's vacated slot");
+
+  Expect(SendMouseUp(shell, third_rect.x + 1.0f, third_rect.y + third_rect.h * 0.5f,
+                     SDL_BUTTON_LEFT),
+         "release commits the reorder");
+
+  const auto& settle = WorkspaceShellTestAccess::TabSlide(shell);
+  Expect(settle.kind == microide::workspace::TabDragKind::Editor && settle.settling,
+         "release hands off to a settle glide that outlives the drag state");
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).kind == microide::workspace::TabDragKind::None,
+         "the drag state itself clears on release");
+}
+
+void TestWorkspaceShellEditorTabDragHomeStillGlides() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  const std::filesystem::path file_b = root / "beta.cpp";
+  WriteFile(file_a, "a\n");
+  WriteFile(file_b, "b\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b), "tab b opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect source_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  const float cx = source_rect.x + source_rect.w * 0.5f;
+  const float cy = source_rect.y + source_rect.h * 0.5f;
+  Expect(SendMouseDown(shell, cx, cy, SDL_BUTTON_LEFT), "press starts a drag");
+  // Move past the drag threshold but stay over the source tab (no reorder).
+  Expect(SendMouseMotion(shell, cx + 10.0f, cy, SDL_BUTTON_LMASK), "small drag is handled");
+  Expect(!WorkspaceShellTestAccess::TabDrag(shell).reordered,
+         "staying over the source slot marks no pending reorder");
+
+  Expect(SendMouseUp(shell, cx + 10.0f, cy, SDL_BUTTON_LEFT), "release handled");
+  const auto& settle = WorkspaceShellTestAccess::TabSlide(shell);
+  Expect(settle.settling && settle.kind == microide::workspace::TabDragKind::Editor,
+         "even a no-reorder drop glides the lifted tab back home instead of snapping");
+}
+
 void TestWorkspaceShellOutputTabReorderMovesActiveChannel() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetOutputChannelTabs(shell, {"build", "lint", "run"}, "build");
@@ -3438,6 +3515,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTabDragDefersCommitUntilRelease);
   AddTest(tests, "WorkspaceShell/EditorTabDragTargetSlotTracksPointer",
           TestWorkspaceShellEditorTabDragTargetSlotTracksPointer);
+  AddTest(tests, "WorkspaceShell/EditorTabDragSeedsSlideAnimation",
+          TestWorkspaceShellEditorTabDragSeedsSlideAnimation);
+  AddTest(tests, "WorkspaceShell/EditorTabDragHomeStillGlides",
+          TestWorkspaceShellEditorTabDragHomeStillGlides);
   AddTest(tests, "WorkspaceShell/OutputTabReorderMovesActiveChannel",
           TestWorkspaceShellOutputTabReorderMovesActiveChannel);
   AddTest(tests, "WorkspaceShell/ReorderActiveHelperMovesAndGuards",

@@ -1691,6 +1691,13 @@
       const std::vector<std::string>& before_lines,
       const std::vector<std::string>& after_lines);
   std::optional<Uint32> NextCaretBlinkDelayMs() const;
+  // Chrome-like tab-slide animation (WorkspaceShellRedraw.cpp). NextTabSlideDelayMs
+  // schedules ~60fps wakes while a strip is easing; AdvanceTabSlide steps the
+  // offsets on a scheduled wake and clears the state when the post-release settle
+  // finishes; CurrentTabSlideDirtyRect scopes the repaint to the animating strip.
+  std::optional<Uint32> NextTabSlideDelayMs() const;
+  bool AdvanceTabSlide();
+  std::optional<SDL_FRect> CurrentTabSlideDirtyRect() const;
   void ResetCaretBlink();
   bool ShouldBlinkCaret() const;
   // True when ShouldBlinkCaret() AND the caret hasn't been idle past

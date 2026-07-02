@@ -882,6 +882,8 @@ editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
 
 BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() const {
   const TabDragState& drag = context_.interaction_state.tab_drag;
+  const TabSlideState& slide = context_.interaction_state.tab_slide;
+  const bool sliding = slide.kind == TabDragKind::Terminal;
   return BottomPanelSurfaceViewModel{
       .content = context_.current_project_state.panel.content,
       .height = context_.current_project_state.panel.height,
@@ -893,9 +895,10 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
           BottomPanelTabDragViewModel{
               .active = drag.dragging && drag.kind == TabDragKind::Terminal,
               .source_index = drag.source_index,
-              .target_slot = drag.target_slot,
               .pointer_x = drag.pointer_x,
               .grab_offset_x = drag.grab_offset_x,
+              .sliding = sliding,
+              .offsets = sliding ? slide.current : std::vector<float>{},
           },
   };
 }

@@ -286,16 +286,29 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   };
 
   if (!visible_panel_tabs.empty()) {
+    const auto& panel_slide = panel_vm.tab_drag;
+    const auto panel_slide_dx = [&](std::size_t index) -> float {
+      return panel_slide.sliding && index < panel_slide.offsets.size() ? panel_slide.offsets[index]
+                                                                       : 0.0f;
+    };
     for (const VisibleStripTab& tab : visible_panel_tabs) {
-      DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.badge_text,
+      if (panel_slide.active && tab.index == panel_slide.source_index) {
+        continue;  // lifted; rendered as the floating ghost below
+      }
+      const float dx = panel_slide_dx(tab.index);
+      SDL_FRect rect = tab.rect;
+      SDL_FRect close_rect = tab.close_rect;
+      rect.x += dx;
+      close_rect.x += dx;
+      DrawStripTab(text_renderer_, renderer, theme_, rect, tab.display_title, tab.badge_text,
                    tab.badge_color, tab.show_badge, tab.active,
                    StripTabStyle{
                        .text_left_padding = 8.0f,
                        .close_right_reserve = 40.0f,
                        .accent_edge = StripAccentEdge::Top,
                    },
-                   panel_tab_palette, PointerOver(tab.rect));
-      draw_tab_close_button(tab.close_rect,
+                   panel_tab_palette, PointerOver(rect));
+      draw_tab_close_button(close_rect,
                             tab.active ? panel_tab_palette.active_glyph
                                        : panel_tab_palette.inactive_glyph,
                             panel_tab_palette.active_text);
@@ -328,7 +341,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
             Contains(panel_overflow.right_button, last_mouse_x_, last_mouse_y_));
     if (panel_vm.tab_drag.active) {
       DrawTabDragFeedback(text_renderer_, renderer, theme_, panel_header, visible_panel_tabs,
-                          panel_vm.tab_drag.source_index, panel_vm.tab_drag.target_slot,
+                          panel_vm.tab_drag.source_index,
                           panel_vm.tab_drag.pointer_x, panel_vm.tab_drag.grab_offset_x,
                           StripTabStyle{
                               .text_left_padding = 8.0f,

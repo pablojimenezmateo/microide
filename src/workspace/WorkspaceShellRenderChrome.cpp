@@ -50,6 +50,30 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   const auto tab_hovered = [&](const SDL_FRect& rect) {
     return last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_);
   };
+  // Chrome-like reorder: neighbor tabs render offset by the live slide animation,
+  // and the dragged tab is lifted out of the flow (drawn as the floating ghost by
+  // DrawTabDragFeedback) during an active drag. During the post-release settle
+  // there is no active drag, so the dropped tab renders in-flow and glides home.
+  const TabSlideState& tab_slide = context_.interaction_state.tab_slide;
+  const TabDragState& tab_drag = context_.interaction_state.tab_drag;
+  const auto slide_dx = [&](TabDragKind kind, std::size_t group_index, std::size_t index) -> float {
+    if (tab_slide.kind != kind) {
+      return 0.0f;
+    }
+    if (kind == TabDragKind::Editor && tab_slide.group_index != group_index) {
+      return 0.0f;
+    }
+    return index < tab_slide.current.size() ? tab_slide.current[index] : 0.0f;
+  };
+  const auto tab_lifted = [&](TabDragKind kind, std::size_t group_index, std::size_t index) -> bool {
+    if (!tab_drag.dragging || tab_drag.kind != kind) {
+      return false;
+    }
+    if (kind == TabDragKind::Editor && FocusedEditorGroupIndex() != group_index) {
+      return false;
+    }
+    return index == tab_drag.source_index;
+  };
 
   const auto visible_menu_items = ComputeVisibleMenuBarItems(layout.menu_bar);
   const auto window_buttons = ComputeVisibleWindowControlButtons(layout.menu_bar);
@@ -123,7 +147,15 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
 
   const auto visible_project_tabs = tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
   for (const VisibleStripTab& tab : visible_project_tabs) {
-    DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.badge_text,
+    if (tab_lifted(TabDragKind::Project, 0, tab.index)) {
+      continue;  // rendered as the floating ghost below
+    }
+    const float dx = slide_dx(TabDragKind::Project, 0, tab.index);
+    SDL_FRect rect = tab.rect;
+    SDL_FRect close_rect = tab.close_rect;
+    rect.x += dx;
+    close_rect.x += dx;
+    DrawStripTab(text_renderer_, renderer, theme_, rect, tab.display_title, tab.badge_text,
                  tab.badge_color, tab.show_badge, tab.active,
                  StripTabStyle{
                      .text_left_padding = 10.0f,
@@ -132,8 +164,8 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                      .close_right_reserve = 46.0f,
                      .accent_edge = StripAccentEdge::Top,
                  },
-                 chrome_tab_palette, tab_hovered(tab.rect));
-    draw_tab_close_button(tab.close_rect,
+                 chrome_tab_palette, tab_hovered(rect));
+    draw_tab_close_button(close_rect,
                           tab.active ? chrome_tab_palette.active_glyph
                                      : chrome_tab_palette.inactive_glyph,
                           tab.active ? chrome_tab_palette.active_text
@@ -156,7 +188,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   if (const TabDragState& drag = context_.interaction_state.tab_drag;
       drag.dragging && drag.kind == TabDragKind::Project) {
     DrawTabDragFeedback(text_renderer_, renderer, theme_, layout.project_tab_strip,
-                        visible_project_tabs, drag.source_index, drag.target_slot, drag.pointer_x,
+                        visible_project_tabs, drag.source_index, drag.pointer_x,
                         drag.grab_offset_x,
                         StripTabStyle{
                             .text_left_padding = 10.0f,
@@ -198,15 +230,23 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                    chrome_tab_palette);
     } else if (HasActiveProjectCatalogEntry()) {
       for (const VisibleStripTab& tab : visible_tabs) {
-        DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.badge_text,
+        if (tab_lifted(TabDragKind::Editor, gi, tab.index)) {
+          continue;  // rendered as the floating ghost below
+        }
+        const float dx = slide_dx(TabDragKind::Editor, gi, tab.index);
+        SDL_FRect rect = tab.rect;
+        SDL_FRect close_rect = tab.close_rect;
+        rect.x += dx;
+        close_rect.x += dx;
+        DrawStripTab(text_renderer_, renderer, theme_, rect, tab.display_title, tab.badge_text,
                      tab.badge_color, tab.show_badge, tab.active,
                      StripTabStyle{
                          .text_left_padding = 10.0f,
                          .close_right_reserve = 46.0f,
                          .accent_edge = StripAccentEdge::Top,
                      },
-                     chrome_tab_palette, tab_hovered(tab.rect));
-        draw_tab_close_button(tab.close_rect,
+                     chrome_tab_palette, tab_hovered(rect));
+        draw_tab_close_button(close_rect,
                               tab.active ? chrome_tab_palette.active_glyph
                                          : chrome_tab_palette.inactive_glyph,
                               tab.active ? chrome_tab_palette.active_text
@@ -227,7 +267,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
       if (const TabDragState& drag = context_.interaction_state.tab_drag;
           drag.dragging && drag.kind == TabDragKind::Editor && gi == focused_group_index) {
         DrawTabDragFeedback(text_renderer_, renderer, theme_, group_tab_strip, visible_tabs,
-                            drag.source_index, drag.target_slot, drag.pointer_x, drag.grab_offset_x,
+                            drag.source_index, drag.pointer_x, drag.grab_offset_x,
                             StripTabStyle{
                                 .text_left_padding = 10.0f,
                                 .close_right_reserve = 46.0f,

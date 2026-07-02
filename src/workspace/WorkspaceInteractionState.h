@@ -56,6 +56,22 @@ struct TabDragState {
   float grab_offset_x = 0.0f;       // press_x - dragged_tab.rect.x
 };
 
+// Chrome-like sliding reorder animation. While a tab drag is live, neighbor tabs
+// ease from their base x toward a "displaced" layout (dragged tab lifted out, a
+// gap opened at the insertion slot); on release the dropped tab glides from the
+// ghost position into its committed slot. Offsets are indexed by model tab index
+// and only the visible subset is filled. This outlives `tab_drag` so the
+// post-release settle can finish (the drag state clears on button-up but the
+// glide keeps running until every offset reaches 0).
+struct TabSlideState {
+  TabDragKind kind = TabDragKind::None;  // which strip animates; None = idle
+  std::size_t group_index = 0;           // editor group when kind == Editor
+  std::vector<float> current;            // per model-index x offset (rendered)
+  std::vector<float> target;             // per model-index x offset (goal)
+  Uint64 last_advance_ms = 0;            // SDL_GetTicks() of last ease step
+  bool settling = false;                 // post-release glide in progress
+};
+
 struct InteractionState {
   bool window_has_input_focus = true;
   bool mouse_selecting = false;
@@ -64,6 +80,7 @@ struct InteractionState {
   std::vector<std::size_t> drag_editor_split_path;
   std::size_t drag_editor_split_divider_index = 0;
   TabDragState tab_drag;
+  TabSlideState tab_slide;
   // Sub-tick wheel accumulators. High-resolution trackpads and touchpads emit
   // many SDL_EVENT_MOUSE_WHEEL events with fractional `y`/`x` deltas. The
   // legacy path used `event.wheel.integer_y` which rounds those to zero, so

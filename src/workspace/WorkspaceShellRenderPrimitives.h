@@ -868,18 +868,18 @@ inline void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer
   }
 }
 
-// Renders the insertion caret + floating ghost for an in-flight tab drag,
-// shared by every tab strip. `tabs` are the visible tabs (model-space); the
-// caret marks the gap at `target_slot` and the ghost is the tab whose index ==
-// `source_index`, offset to track under the pointer. No allocations: the ghost
-// reuses the visible tab's already-built title string_view.
+// Renders the floating "lifted" ghost for an in-flight tab drag, shared by every
+// tab strip. `tabs` are the visible tabs (model-space); the ghost is the tab
+// whose index == `source_index`, offset to track under the pointer. The
+// insertion point is shown by the gap the neighbor tabs slide open (Chrome-like),
+// so no caret is drawn here. No allocations: the ghost reuses the visible tab's
+// already-built title string_view.
 inline void DrawTabDragFeedback(const render::TextRenderer& text_renderer,
                                 SDL_Renderer* renderer,
                                 const render::Theme& theme,
                                 const SDL_FRect& strip,
                                 const std::vector<VisibleStripTab>& tabs,
                                 std::size_t source_index,
-                                std::size_t target_slot,
                                 float pointer_x,
                                 float grab_offset_x,
                                 const StripTabStyle& style,
@@ -887,23 +887,6 @@ inline void DrawTabDragFeedback(const render::TextRenderer& text_renderer,
   if (tabs.empty()) {
     return;
   }
-
-  // Insertion caret: the left edge of the tab at `target_slot`, or the trailing
-  // edge of the strip when dropping past the last visible tab.
-  float caret_x = tabs.back().rect.x + tabs.back().rect.w;
-  if (target_slot <= tabs.front().index) {
-    caret_x = tabs.front().rect.x;
-  } else {
-    for (const VisibleStripTab& tab : tabs) {
-      if (tab.index >= target_slot) {
-        caret_x = tab.rect.x;
-        break;
-      }
-    }
-  }
-  caret_x = std::clamp(caret_x, strip.x, strip.x + strip.w);
-  FillRect(renderer, MakeRect(caret_x - 1.0f, strip.y + 2.0f, 2.0f, std::max(2.0f, strip.h - 4.0f)),
-           theme.accent);
 
   // Floating ghost of the dragged tab (skipped when it scrolled off-screen).
   const VisibleStripTab* ghost = nullptr;

@@ -11,6 +11,7 @@
 #include "app/BackgroundTaskCounter.h"
 #include "compare/ComparePresentationModel.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/TabStripAnimation.h"
 #include "workspace/WorkspaceShellBootstrapper.h"
 
 namespace microide::workspace {
@@ -714,8 +715,87 @@ std::optional<WorkspaceShell::ChangedLineSpan> WorkspaceShell::ComputeChangedLin
   };
 }
 
+std::optional<Uint32> WorkspaceShell::NextTabSlideDelayMs() const {
+  const TabSlideState& slide = context_.interaction_state.tab_slide;
+  if (slide.kind == TabDragKind::None) {
+    return std::nullopt;
+  }
+  // During the post-release settle, keep waking until the animation clears itself
+  // (AdvanceTabSlide snaps the last sub-pixel and resets the state). Otherwise the
+  // final "land at rest" wake would never fire once motion falls below the snap
+  // threshold, stranding a sub-pixel offset and a non-None kind.
+  if (slide.settling) {
+    return static_cast<Uint32>(16);  // ~60 fps
+  }
+  // Mid-drag: only keep waking while something is actually in motion. A drag whose
+  // neighbors have settled (pointer held still) needs no wakes until the next
+  // motion event moves the target again.
+  if (!SlideOffsetsMoving(slide.current, slide.target)) {
+    return std::nullopt;
+  }
+  return static_cast<Uint32>(16);  // ~60 fps
+}
+
+bool WorkspaceShell::AdvanceTabSlide() {
+  TabSlideState& slide = context_.interaction_state.tab_slide;
+  if (slide.kind == TabDragKind::None) {
+    return false;
+  }
+  const Uint64 now = SDL_GetTicks();
+  const Uint64 raw_dt = now >= slide.last_advance_ms ? now - slide.last_advance_ms : 0;
+  // Cap the step so a long idle gap (animation had converged, then resumed)
+  // can't teleport tabs; it settles in one brisk step instead.
+  const float dt_ms = static_cast<float>(std::min<Uint64>(raw_dt, 100));
+  slide.last_advance_ms = now;
+  const bool moving = AdvanceSlideOffsets(slide.current, slide.target, dt_ms);
+  if (!moving) {
+    if (slide.settling) {
+      // Post-release glide finished: drop the animation so every tab renders at
+      // its base rect. Repaint once more to land cleanly at rest.
+      slide = TabSlideState{};
+      return true;
+    }
+    // Converged mid-drag with the pointer still: no repaint, no further wakes.
+    return false;
+  }
+  return true;
+}
+
+std::optional<SDL_FRect> WorkspaceShell::CurrentTabSlideDirtyRect() const {
+  const TabSlideState& slide = context_.interaction_state.tab_slide;
+  if (slide.kind == TabDragKind::None) {
+    return std::nullopt;
+  }
+  const auto layout = CurrentWorkspaceLayout();
+  if (!layout.has_value()) {
+    return std::nullopt;
+  }
+  switch (slide.kind) {
+    case TabDragKind::Project:
+      return layout->project_tab_strip;
+    case TabDragKind::Editor: {
+      const EditorGroupRectsLayout groups = ComputeEditorGroupRectsForState(*layout);
+      if (slide.group_index < groups.groups.size()) {
+        return groups.groups[slide.group_index].tab_strip;
+      }
+      return layout->tab_strip;
+    }
+    case TabDragKind::Terminal:
+      return MakeRect(layout->bottom_panel.x, layout->bottom_panel.y, layout->bottom_panel.w,
+                      kWorkspaceBottomPanelHeaderHeight);
+    case TabDragKind::None:
+      break;
+  }
+  return std::nullopt;
+}
+
 std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
   std::optional<Uint32> next_delay = NextCaretBlinkDelayMs();
+  if (const auto slide_delay = NextTabSlideDelayMs(); slide_delay.has_value()) {
+    if (!next_delay.has_value() || *slide_delay < *next_delay) {
+      next_delay = *slide_delay;
+    }
+  }
   if (const auto plugin_delay = plugin_runtime_.NextPollDelay(); plugin_delay.has_value()) {
     const Uint32 plugin_delay_ms =
         static_cast<Uint32>(std::max<std::int64_t>(0, plugin_delay->count()));
@@ -891,6 +971,20 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
             .rects = {},
         },
     };
+  }
+  // Step the Chrome-like tab-slide animation. Capture the dirty strip before
+  // advancing so the settle-end frame (which clears the state) still repaints
+  // the right region instead of falling back to a full redraw.
+  if (context_.interaction_state.tab_slide.kind != TabDragKind::None) {
+    const std::optional<SDL_FRect> slide_rect = CurrentTabSlideDirtyRect();
+    if (AdvanceTabSlide()) {
+      return EventResult{
+          .handled = true,
+          .redraw = slide_rect.has_value()
+                        ? RenderInvalidation{.full = false, .rects = {*slide_rect}}
+                        : RenderInvalidation{.full = true, .rects = {}},
+      };
+    }
   }
   return Bootstrapper(*this).BuildWakeController().HandleScheduledWake();
 }

@@ -58,6 +58,7 @@ class TabMouseCoordinator {
   TabMouseCoordinator(ProjectCatalogState& project_catalog,
                       ProjectWorkspaceState& current_project_state,
                       TabDragState& tab_drag_state,
+                      TabSlideState& tab_slide_state,
                       Operations operations);
 
   bool HandleButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
@@ -83,10 +84,18 @@ class TabMouseCoordinator {
   DragStrip ResolveBottomPanelDragStrip(const WorkspaceLayout& layout);
   void CommitDrag();
   void PersistReorderedTabs(TabDragKind kind);
+  // Recomputes the Chrome-like slide targets for the live pointer: neighbor tabs
+  // ease toward `d`'s displaced layout with a gap opened at `insertion_slot`.
+  void SeedSlideTargets(const DragStrip& d, std::size_t insertion_slot);
+  // Kicks off the post-release settle so the dropped tab glides from the ghost
+  // position into its committed slot. Call after CommitDrag(), before the drag
+  // state is cleared. Clears the slide animation when there was no live drag.
+  void SeedSettle();
 
   ProjectCatalogState& project_catalog_;
   ProjectWorkspaceState& state_;
   TabDragState& tab_drag_state_;
+  TabSlideState& tab_slide_state_;
   Operations operations_;
 };
 

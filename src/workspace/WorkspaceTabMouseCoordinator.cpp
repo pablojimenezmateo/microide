@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "workspace/TabStripAnimation.h"
 #include "workspace/TerminalPanelService.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceLayout.h"
@@ -57,10 +58,12 @@ std::size_t MoveTargetIndexForInsertion(std::size_t insertion_slot,
 TabMouseCoordinator::TabMouseCoordinator(ProjectCatalogState& project_catalog,
                                          ProjectWorkspaceState& current_project_state,
                                          TabDragState& tab_drag_state,
+                                         TabSlideState& tab_slide_state,
                                          Operations operations)
     : project_catalog_(project_catalog),
       state_(current_project_state),
       tab_drag_state_(tab_drag_state),
+      tab_slide_state_(tab_slide_state),
       operations_(std::move(operations)) {}
 
 bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
@@ -285,6 +288,7 @@ bool TabMouseCoordinator::HandleButtonUp(const SDL_Event& event) {
     return false;
   }
   CommitDrag();
+  SeedSettle();
   operations_.clear_tab_drag();
   return true;
 }
@@ -387,6 +391,7 @@ bool TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
   if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
     // Button released without a button-up event reaching us: commit what we have.
     CommitDrag();
+    SeedSettle();
     operations_.clear_tab_drag();
     return false;
   }
@@ -423,7 +428,94 @@ bool TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
   const std::size_t list_slot = clamped_model_slot - d.model_offset;
   const std::size_t target = MoveTargetIndexForInsertion(list_slot, d.active, d.count);
   tab_drag_state_.reordered = target != d.active;
+  SeedSlideTargets(d, clamped_model_slot);
   return true;
+}
+
+void TabMouseCoordinator::SeedSlideTargets(const DragStrip& d, std::size_t insertion_slot) {
+  // Offsets are indexed by absolute model index; only the visible subset moves.
+  const std::size_t total = d.model_offset + d.count;
+
+  std::vector<SlideTab> slide_tabs;
+  slide_tabs.reserve(d.tabs.size());
+  for (const auto& tab : d.tabs) {
+    slide_tabs.push_back(SlideTab{.index = tab.index, .x = tab.rect.x, .width = tab.rect.w});
+  }
+  const std::vector<float> target_xs = ComputeSlideTargetXs(
+      slide_tabs, tab_drag_state_.source_index, insertion_slot, tab_drag_state_.ghost_width,
+      /*gap=*/1.0f);
+
+  const bool fresh = tab_slide_state_.kind != tab_drag_state_.kind ||
+                     tab_slide_state_.settling || tab_slide_state_.current.size() != total;
+  if (fresh) {
+    tab_slide_state_.current.assign(total, 0.0f);
+    tab_slide_state_.last_advance_ms = SDL_GetTicks();
+  }
+  tab_slide_state_.kind = tab_drag_state_.kind;
+  tab_slide_state_.group_index = state_.focused_group_index;
+  tab_slide_state_.settling = false;
+  tab_slide_state_.target.assign(total, 0.0f);
+  for (std::size_t i = 0; i < slide_tabs.size(); ++i) {
+    const std::size_t idx = slide_tabs[i].index;
+    if (idx < total && idx != tab_drag_state_.source_index) {
+      tab_slide_state_.target[idx] = target_xs[i] - slide_tabs[i].x;
+    }
+  }
+
+  // Step the ease on the input thread too: while the pointer moves continuously,
+  // motion events arrive faster than the ~16ms scheduled wake, so the neighbors
+  // must advance here or they would only move once the pointer pauses.
+  const Uint64 now = SDL_GetTicks();
+  const Uint64 raw_dt =
+      now >= tab_slide_state_.last_advance_ms ? now - tab_slide_state_.last_advance_ms : 0;
+  const float dt_ms = static_cast<float>(std::min<Uint64>(raw_dt, 100));
+  AdvanceSlideOffsets(tab_slide_state_.current, tab_slide_state_.target, dt_ms);
+  tab_slide_state_.last_advance_ms = now;
+}
+
+void TabMouseCoordinator::SeedSettle() {
+  // No live drag (a plain click, or a sub-threshold press): nothing to glide.
+  if (!tab_drag_state_.dragging || tab_slide_state_.kind == TabDragKind::None) {
+    tab_slide_state_ = TabSlideState{};
+    return;
+  }
+
+  const TabDragKind kind = tab_drag_state_.kind;
+  const auto layout_state = operations_.current_workspace_layout();
+  if (!layout_state.has_value()) {
+    tab_slide_state_ = TabSlideState{};
+    return;
+  }
+  // Re-resolve against the post-reorder model so the dropped tab's new resting x
+  // is known; the dropped tab is the (still) active one in its kind's list.
+  const DragStrip d = ResolveDragStrip(*layout_state, kind);
+  if (!d.valid) {
+    tab_slide_state_ = TabSlideState{};
+    return;
+  }
+
+  const std::size_t total = d.model_offset + d.count;
+  const std::size_t dropped_index = d.model_offset + d.active;
+  const float ghost_x = std::clamp(tab_drag_state_.pointer_x - tab_drag_state_.grab_offset_x,
+                                   d.strip.x, d.strip.x + d.strip.w - tab_drag_state_.ghost_width);
+
+  // Neighbors already eased to their final (post-reorder) positions during the
+  // drag, so their resting offset is 0. Seed only the dropped tab to glide from
+  // the ghost position back into its slot.
+  tab_slide_state_.kind = kind;
+  tab_slide_state_.group_index = state_.focused_group_index;
+  tab_slide_state_.settling = true;
+  tab_slide_state_.target.assign(total, 0.0f);
+  tab_slide_state_.current.assign(total, 0.0f);
+  tab_slide_state_.last_advance_ms = SDL_GetTicks();
+  for (const auto& tab : d.tabs) {
+    if (tab.index == dropped_index) {
+      if (dropped_index < total) {
+        tab_slide_state_.current[dropped_index] = ghost_x - tab.rect.x;
+      }
+      break;
+    }
+  }
 }
 
 void TabMouseCoordinator::CommitDrag() {
@@ -518,6 +610,7 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
       context_.project_catalog,
       context_.current_project_state,
       context_.interaction_state.tab_drag,
+      context_.interaction_state.tab_slide,
       TabMouseCoordinator::Operations{
           .compute_visible_project_tabs =
               [this](const SDL_FRect& rect) { return tab_strip_chrome_.ComputeVisibleProjectTabs(rect); },
