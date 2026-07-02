@@ -18,6 +18,66 @@ fixed, and what still remains worth doing.
 Updated on 2026-07-01 with lazy per-definition syntax-rule compilation, removing the dominant
 ~75 ms startup cost and deleting the ineffective syntax-warmup thread.
 
+Updated on 2026-07-02 with compare/merge render per-row allocation elimination, a cached
+project-search sidebar status line, and the release binary switching to LTO.
+
+## Fixed 2026-07-02 (compare/merge render allocations + sidebar status cache)
+
+### Compare/merge surface render allocations (per visible row, per frame)
+
+Problem:
+
+- `WorkspaceShellCompareRender.cpp` / `WorkspaceShellMergeRender.cpp` (the compare/merge surface
+  render TUs) escaped every render-hot-path allocation lint because those rules select files by the
+  `WorkspaceShellRender*` filename prefix and these two did not match it. They accumulated the exact
+  per-row allocations the lint bans elsewhere: a fresh `editor::DecoratedTextRow` (3 vectors) built
+  per visible row per pane per frame; `TruncateToWidth` returning a `std::string` even when the text
+  already fit; and a per-row review-marker summary assembled with a copy plus a 4-way `+` concat.
+
+Implemented:
+
+- Reuse mutable scratch `DecoratedTextRow` members (`compare_left/right_scratch_row_`,
+  `merge_incoming/current_scratch_row_`) mirroring `EditorViewRenderer::scratch_row_`;
+  `BuildDecoratedRow` clears the vectors first, so capacity is retained across rows.
+- Add `TextRenderer::TruncateToWidthView` / `WorkspaceShell::TruncateLabelView`: the fits-case
+  returns the input view unchanged (zero alloc), the truncated case writes into a `thread_local`
+  scratch. Hot compare/merge label draws use the view variant.
+- Bake the review-marker prefix into `ComparePresentationRow::display_summary_text`, composed once
+  at presentation build and by `ApplyBranchReviewPresentationMarkers`.
+- Build the merge scrollbar-marker input vector only on cache miss; select the merge status line as
+  a `string_view`; draw the single-char diff marker via `string_view`.
+- Rename the two TUs to `WorkspaceShellRenderCompare.cpp` / `WorkspaceShellRenderMerge.cpp` so the
+  lint set covers them permanently, and add `CheckCompareMergeRenderUsesScratchRows` plus the
+  literal+ident concat ratchet to lock the wins in.
+
+Measured (same-machine A/B, deterministic p50 allocation counts, `perf-runner-v1`):
+
+- `merge_scroll_interleaved_hunks`: 334,736 → 308,158 allocations (−8%)
+- `compare_scroll_selection`: 319,482 → 295,185 allocations (−8%)
+- `compare_scroll_large_fixture`: 359,204 → 359,038 (flat — that scenario's allocation budget is
+  dominated by window syntax tokenization / the editable right pane, not the decorated-row path)
+
+No regressions. Wall-time rebaseline was deferred: the capture host was under heavy background load
+this session (all scenarios read ~2× their committed wall baselines uniformly, including scenarios
+that touch none of the changed code), so the deterministic allocation counts are the trustworthy
+signal and the committed wall baselines were left untouched pending a quiet-machine rebaseline.
+
+### Project-search sidebar status line (per frame while visible)
+
+Problem:
+
+- The Search sidebar's status/hint line was reassembled every frame from 5+
+  `JoinHintSegments`/`BuildCountStatus`/`BuildShownOfTotalStatus` calls (each allocating) whenever
+  the panel was visible, and search-progress wakes repaint it constantly.
+
+Implemented:
+
+- Compose it once in `RenderViewModelBuilder::BuildSidebarSurface` behind a thread-local cache keyed
+  on the inputs that change the text; expose `SidebarSurfaceViewModel::project_search_status_text`
+  (a view into the cache) and draw it via the allocation-free `TruncateLabelView`. The text is fully
+  determined by the key (it embeds neither the query nor the error string, only whether they are
+  empty), so a key hit is always a correct reuse.
+
 ## Fixed In This Pass
 
 ### Lazy per-definition syntax-rule compilation (startup)
