@@ -78,6 +78,34 @@ Implemented:
   determined by the key (it embeds neither the query nor the error string, only whether they are
   empty), so a key hit is always a correct reuse.
 
+### Release binary switched to LTO (`tools/release.sh`)
+
+Problem:
+
+- The perf harness — and therefore every committed wall/allocation baseline — measures a
+  RelWithDebInfo build with interprocedural optimization (LTO) enabled. The distributable, however,
+  was configured by `tools/release.sh` as a plain `-DCMAKE_BUILD_TYPE=Release` with **no** IPO, so
+  the shipped `.deb` was built with cross-TU inlining disabled. The binary users actually ran was
+  slower than the profile the project optimizes and reports numbers against; the hot editor/render
+  paths that depend on cross-TU inlining (e.g. `TextViewport` <-> `EditorViewRenderer`) never got
+  it in the shipped artifact.
+
+Implemented:
+
+- `tools/release.sh`'s Release configure now passes `-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON`, so
+  the shipped binary is built with the same LTO codegen the perf gate already validates. `CMakeLists`
+  downgrades gracefully when the toolchain lacks IPO and auto-skips `ld.lld` under LTO, so the change
+  is a no-op on toolchains that cannot honor it. Verified a Release+LTO configure/build links cleanly
+  with the workstation GCC and the binary reports the expected version; the release script's existing
+  ctest gate covers the resulting codegen.
+
+Measured:
+
+- No separate A/B was run for this change: it is a build-configuration alignment, not a source
+  optimization. The win is qualitative — the released artifact now matches the LTO codegen that all
+  committed perf baselines are measured under, closing the gap between "the profile we optimize" and
+  "the binary we ship." The known trade-off is a slower final link during the release build.
+
 ## Fixed In This Pass
 
 ### Lazy per-definition syntax-rule compilation (startup)
