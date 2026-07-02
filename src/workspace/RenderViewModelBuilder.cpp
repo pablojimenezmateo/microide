@@ -15,6 +15,7 @@
 #include "workspace/RecentsService.h"
 #include "workspace/StatusBarService.h"
 #include "workspace/WorkspaceCommandRegistry.h"
+#include "workspace/WorkspaceUiText.h"
 
 #include <algorithm>
 #include <array>
@@ -74,6 +75,90 @@ thread_local struct StickyScrollViewportCache {
 
 thread_local std::uint64_t g_sticky_scroll_hits = 0;
 thread_local std::uint64_t g_sticky_scroll_misses = 0;
+
+// Project-search sidebar status/hint line. Previously assembled per frame from
+// 5+ JoinHintSegments/BuildCountStatus calls while the search panel was visible
+// (and progress wakes repaint it constantly). Cache it keyed on the small set of
+// inputs that change the text and rebuild only on change; the render TU draws a
+// prebuilt std::string_view.
+struct ProjectSearchStatusKey {
+  bool editing = false;
+  ProjectSearchEditField edit_field = ProjectSearchEditField::Query;
+  bool error_empty = true;
+  bool running = false;
+  bool query_empty = true;
+  bool truncated = false;
+  bool can_replace_all = false;
+  std::size_t results_size = 0;
+  std::size_t searched_files = 0;
+  std::size_t total_files = 0;
+  std::size_t total_matches = 0;
+  bool operator==(const ProjectSearchStatusKey&) const = default;
+};
+
+thread_local struct ProjectSearchStatusCache {
+  bool valid = false;
+  ProjectSearchStatusKey key;
+  std::string text;
+} g_project_search_status_cache;
+
+std::string ComposeProjectSearchStatus(const ProjectSearchState& ps, bool can_replace_all) {
+  const std::string match_actions =
+      can_replace_all
+          ? JoinHintSegments({"/ query", "= replace", "r rerun", "R replace all", "c count all"})
+          : JoinHintSegments(
+                {"/ query", "= replace", "r rerun", "R literal mode required", "c count all"});
+  if (ps.editing) {
+    return ps.edit_field == ProjectSearchEditField::Query
+               ? JoinHintSegments({"Editing query", "Enter apply", "Esc cancel"})
+               : JoinHintSegments({"Editing replace", "Enter apply", "Esc cancel"});
+  }
+  if (!ps.error.empty()) {
+    return JoinHintSegments({"Error", "/ query", "= replace", "r rerun"});
+  }
+  if (ps.running) {
+    return BuildCountStatus("Searching ", ps.results.size(), " matches") +
+           BuildSearchProgressSuffix(ps.searched_files, ps.total_files);
+  }
+  if (ps.results.empty()) {
+    return ps.query.text().empty()
+               ? JoinHintSegments({"/ query", "= replace", "buttons change mode, case, hidden"})
+               : FormatEmptyState("matches") + "  |  " + match_actions;
+  }
+  if (ps.truncated) {
+    return ps.total_matches > ps.results.size()
+               ? BuildShownOfTotalStatus(ps.results.size(), ps.total_matches, "  |  " + match_actions)
+               : BuildCountStatus("Showing first ", ps.results.size(),
+                                  " matches  |  " + match_actions);
+  }
+  return BuildCountStatus("", ps.results.size(), " matches  |  " + match_actions);
+}
+
+std::string_view CachedProjectSearchStatus(const ProjectSearchState& ps) {
+  const bool can_replace_all =
+      ps.options.pattern_mode == project::ProjectSearchPatternMode::Literal &&
+      !ps.query.text().empty();
+  const ProjectSearchStatusKey key{
+      .editing = ps.editing,
+      .edit_field = ps.edit_field,
+      .error_empty = ps.error.empty(),
+      .running = ps.running,
+      .query_empty = ps.query.text().empty(),
+      .truncated = ps.truncated,
+      .can_replace_all = can_replace_all,
+      .results_size = ps.results.size(),
+      .searched_files = ps.searched_files,
+      .total_files = ps.total_files,
+      .total_matches = ps.total_matches,
+  };
+  auto& cache = g_project_search_status_cache;
+  if (!cache.valid || !(cache.key == key)) {
+    cache.text = ComposeProjectSearchStatus(ps, can_replace_all);
+    cache.key = key;
+    cache.valid = true;
+  }
+  return cache.text;
+}
 
 bool OccurrenceSeedCacheMatches(const editor::TextViewport& viewport,
                                 std::uintptr_t viewport_key,
@@ -472,6 +557,8 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
       replace_text.empty() ? kReplacePlaceholder : replace_text;
 
   const SidebarMode mode = SidebarModeFromViewId(context_.current_project_state.sidebar.view_id);
+  const std::string_view project_search_status_text =
+      mode == SidebarMode::Search ? CachedProjectSearchStatus(project_search) : std::string_view{};
   std::optional<GitSidebarViewModel> git_sidebar;
   std::vector<GitSidebarLine> git_sidebar_lines;
   // Building the git VM walks every changed/staged/untracked/outgoing entry and
@@ -499,6 +586,7 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
           context_.current_project_state.overlay.workflow.project_search.editing,
       .query_fallback_text = query_fallback_text,
       .replace_fallback_text = replace_fallback_text,
+      .project_search_status_text = project_search_status_text,
       .git_sidebar = std::move(git_sidebar),
       .git_sidebar_lines = std::move(git_sidebar_lines),
       .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),

@@ -95,6 +95,9 @@ struct SidebarSurfaceViewModel {
   // the view model. Avoids per-frame `std::string` allocations on every BuildSidebarSurface() call.
   std::string_view query_fallback_text;
   std::string_view replace_fallback_text;
+  // Prebuilt project-search status/hint line (empty unless mode == Search).
+  // Points into a builder-owned thread-local cache; consume within the frame.
+  std::string_view project_search_status_text;
   std::optional<GitSidebarViewModel> git_sidebar;
   // Flattened, render-ready git sidebar rows built once here (per frame) so the
   // render TU, hit-testing, and selection all consume one list instead of each

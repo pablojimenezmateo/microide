@@ -300,51 +300,13 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                        ProjectSearchHiddenButtonLabel(),
                        project_state.overlay.workflow.project_search.options.show_hidden);
 
-    const std::string match_actions =
-        ProjectSearchCanReplaceAll()
-            ? JoinHintSegments({"/ query", "= replace", "r rerun", "R replace all", "c count all"})
-            : JoinHintSegments(
-                  {"/ query", "= replace", "r rerun", "R literal mode required", "c count all"});
-    const std::string status_text =
-        project_state.overlay.workflow.project_search.editing
-            ? (project_state.overlay.workflow.project_search.edit_field ==
-                       ProjectSearchEditField::Query
-                   ? JoinHintSegments({"Editing query", "Enter apply", "Esc cancel"})
-                   : JoinHintSegments({"Editing replace", "Enter apply", "Esc cancel"}))
-            : !project_state.overlay.workflow.project_search.error.empty()
-                ? JoinHintSegments({"Error", "/ query", "= replace", "r rerun"})
-            : project_state.overlay.workflow.project_search.running
-                ? BuildCountStatus(
-                      "Searching ",
-                      project_state.overlay.workflow.project_search.results.size(),
-                      " matches") +
-                      BuildSearchProgressSuffix(
-                          project_state.overlay.workflow.project_search.searched_files,
-                          project_state.overlay.workflow.project_search.total_files)
-            : project_state.overlay.workflow.project_search.results.empty()
-                ? (project_state.overlay.workflow.project_search.query.text().empty()
-                       ? JoinHintSegments(
-                             {"/ query", "= replace", "buttons change mode, case, hidden"})
-                       : FormatEmptyState("matches") + "  |  " + match_actions)
-            : project_state.overlay.workflow.project_search.truncated
-                ? (project_state.overlay.workflow.project_search.total_matches >
-                           project_state.overlay.workflow.project_search.results.size()
-                       ? BuildShownOfTotalStatus(
-                             project_state.overlay.workflow.project_search.results.size(),
-                             project_state.overlay.workflow.project_search.total_matches,
-                             "  |  " + match_actions)
-                       : BuildCountStatus(
-                             "Showing first ",
-                             project_state.overlay.workflow.project_search.results.size(),
-                             " matches  |  " + match_actions))
-                : BuildCountStatus(
-                      "",
-                      project_state.overlay.workflow.project_search.results.size(),
-                      " matches  |  " + match_actions);
+    // The status/hint line is composed once (and cached) in
+    // RenderViewModelBuilder::BuildSidebarSurface; draw the prebuilt view.
     DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
                layout.sidebar.y + kProjectSearchStatusTop, theme_.text_muted,
                theme_.surface_background,
-               TruncateLabel(status_text, layout.sidebar.w - kSidebarInset * 2.0f));
+               TruncateLabelView(sidebar_vm.project_search_status_text,
+                                 layout.sidebar.w - kSidebarInset * 2.0f));
 
     const auto line_map = BuildProjectSearchLineMap();
     const auto list_layout = ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
