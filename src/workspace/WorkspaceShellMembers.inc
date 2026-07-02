@@ -97,10 +97,27 @@
   // Apply a cold-start control spec (set breakpoints, reveal files, optionally
   // start debugging). Public: invoked by Application right after Initialize.
   void ApplyControlSpec(const ControlSpec& spec);
+  // Hydrate this window's tabs from a detached-tab handoff session file, then
+  // delete the file. Public: invoked by Application right after Initialize when
+  // `--detach-handoff` was passed. Replaces the current project's editor tabs.
+  void ApplyDetachHandoff(const std::filesystem::path& handoff_path);
+  // Reattach: append the tabs from a handoff session file into the active editor
+  // group, delete the file, and raise the window. Invoked via the
+  // `accept-tab-handoff <file>` control command when another window drops a tab
+  // onto this one. Returns true when at least the file was read.
+  bool AcceptTabHandoff(const std::filesystem::path& handoff_path);
   // Force-start the control channel + stdout JSONL mirror when `--control` was
   // passed (startup_options_.control_stdout). No-op otherwise. Invoked by
   // Application right after Initialize, before the cold-start spec.
   void ForceStartControlChannel();
+  // Republish this window's global bounds into the control descriptor so other
+  // instances can hit-test a cross-window tab drop against it (detach/reattach).
+  // Invoked by Application on window show / move / resize. No-op when the control
+  // channel is not running.
+  void UpdateControlWindowGeometry();
+  // Ensure the control channel is running so this window is discoverable as a
+  // reattach drop target, and publish its geometry. Called when a detach happens.
+  void EnsureControlChannelForHandoff();
   // Apply the `--set <id> <value>` startup overrides transiently (persist=false).
   // Invoked by Application after Initialize.
   void ApplyStartupSettingOverrides();
@@ -593,6 +610,7 @@
                                     const std::filesystem::path& project_root);
   ProjectCatalogService MakeProjectCatalogService();
   PersistenceCoordinator MakePersistenceCoordinator();
+  WorkspaceDetachCoordinator MakeDetachCoordinator();
   MenuCoordinator MakeMenuCoordinator();
   CommandLineCoordinator MakeCommandLineCoordinator();
   PromptSurfaceService MakePromptSurfaceService();

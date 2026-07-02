@@ -233,6 +233,7 @@ set(MICROIDE_CORE_SOURCES
   src/platform/AsyncSubprocess.cpp
   src/platform/ControlSocketClient.cpp
   src/platform/ControlSocketServer.cpp
+  src/platform/DetachedProcess.cpp
   src/platform/FileIndexWatcher.cpp
   src/platform/FileWatcher.cpp
   src/platform/Filesystem.cpp
@@ -392,6 +393,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceTabActionExecutor.cpp
   src/workspace/EditorBlameOverlayService.cpp
   src/workspace/WorkspaceShellCursor.cpp
+  src/workspace/WorkspaceDetachCoordinator.cpp
   src/workspace/WorkspaceDiffTabCoordinator.cpp
   src/workspace/WorkspaceDirtyPromptCoordinator.cpp
   src/workspace/PromptSurfaceService.cpp
@@ -824,6 +826,7 @@ add_executable(microide_tests
   tests/WorkspaceShellProjectTests.cpp
   tests/WorkspaceShellSearchTests.cpp
   tests/WorkspaceShellSessionTests.cpp
+  tests/WorkspaceDetachCoordinatorTests.cpp
   tests/WorkspaceShellSourceControlTests.cpp
   tests/NotificationServiceTests.cpp
   tests/WorkspaceStatusBarTests.cpp

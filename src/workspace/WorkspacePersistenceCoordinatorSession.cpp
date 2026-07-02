@@ -163,16 +163,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
     return false;
   }
 
-  PersistedProjectSessionState persisted_session;
-  persisted_session.sidebar_visible = CurrentProjectState().sidebar.visible;
-  persisted_session.sidebar_width = CurrentProjectState().sidebar.width;
-  persisted_session.bottom_panel_height = CurrentProjectState().panel.height;
-  persisted_session.outgoing_base_choice = CurrentProjectState().sidebar.git.outgoing_base_choice;
-  persisted_session.focused_group_index = CurrentProjectState().focused_group_index;
-  persisted_session.right_pane_visible = CurrentProjectState().debug_pane.visible;
-  persisted_session.right_pane_width = CurrentProjectState().debug_pane.width;
-  persisted_session.right_pane_mode =
-      static_cast<std::uint8_t>(CurrentProjectState().debug_pane.mode);
+  PersistedProjectSessionState persisted_session = SessionDefaultsFromCurrentState();
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::ParseSessionFile");
     if (!operations_.persistence_service->LoadProjectSession(session_path, &persisted_session)) {
@@ -180,31 +171,42 @@ bool PersistenceCoordinator::RestoreSessionState() {
     }
   }
 
-  auto& state = CurrentProjectState();
-  {
-    util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::ResetState");
-    state.editor_groups.clear();
-    state.editor_groups.emplace_back();
-    state.focused_group_index = 0;
-    state.group_split_orientation = EditorSplitOrientation::None;
-    state.group_split_fraction = 0.5f;
-    state.overlay.visible = false;
-    state.overlay.workflow.compare_picker.matches.clear();
-    state.overlay.workflow.compare_picker.items.clear();
-    state.overlay.workflow.compare_picker.selected_index = 0;
-  }
-
   // Breakpoints + launch configs persist independently of tabs; restore them
-  // before any early return so they survive even an empty-tab project.
+  // before the tab rebuild so they survive even an empty-tab project.
   RestoreDebugState();
+  ApplyPersistedSessionState(persisted_session);
+  return true;
+}
 
-  {
-    util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::RebuildTabs");
-    // Rebuild one persisted tab into a runtime TabEntry. `should_eager_hydrate`
-    // controls whether an editor tab is opened immediately or left deferred;
-    // compare/merge tabs are always materialized fully.
-    auto rebuild_tab = [&](const PersistedEditorTabState& persisted_tab,
-                           bool should_eager_hydrate) -> std::optional<TabEntry> {
+bool PersistenceCoordinator::RestoreSessionFromFile(const std::filesystem::path& session_path) {
+  if (session_path.empty() || operations_.persistence_service == nullptr) {
+    return false;
+  }
+  PersistedProjectSessionState persisted_session = SessionDefaultsFromCurrentState();
+  if (!operations_.persistence_service->LoadProjectSession(session_path, &persisted_session)) {
+    return false;
+  }
+  ApplyPersistedSessionState(persisted_session);
+  return true;
+}
+
+PersistedProjectSessionState PersistenceCoordinator::SessionDefaultsFromCurrentState() const {
+  const ProjectWorkspaceState& state = CurrentProjectState();
+  PersistedProjectSessionState defaults;
+  defaults.sidebar_visible = state.sidebar.visible;
+  defaults.sidebar_width = state.sidebar.width;
+  defaults.bottom_panel_height = state.panel.height;
+  defaults.outgoing_base_choice = state.sidebar.git.outgoing_base_choice;
+  defaults.focused_group_index = state.focused_group_index;
+  defaults.right_pane_visible = state.debug_pane.visible;
+  defaults.right_pane_width = state.debug_pane.width;
+  defaults.right_pane_mode = static_cast<std::uint8_t>(state.debug_pane.mode);
+  return defaults;
+}
+
+std::optional<TabEntry> PersistenceCoordinator::RebuildPersistedTab(
+    const PersistedEditorTabState& persisted_tab, bool should_eager_hydrate) {
+  auto& state = CurrentProjectState();
     if (persisted_tab.kind == "compare") {
       std::filesystem::path compare_path = persisted_tab.compare_path;
       if (compare_path.is_relative()) {
@@ -425,8 +427,18 @@ bool PersistenceCoordinator::RestoreSessionState() {
       };
     }
     return restored_tab;
-    };  // rebuild_tab
+}
 
+void PersistenceCoordinator::ApplyPersistedSessionState(
+    const PersistedProjectSessionState& persisted_session) {
+  auto& state = CurrentProjectState();
+  state.overlay.visible = false;
+  state.overlay.workflow.compare_picker.matches.clear();
+  state.overlay.workflow.compare_picker.items.clear();
+  state.overlay.workflow.compare_picker.selected_index = 0;
+
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::ApplyPersistedSessionState::RebuildTabs");
     state.editor_groups.clear();
     for (const PersistedEditorGroupState& persisted_group : persisted_session.groups) {
       if (state.editor_groups.size() >= 2) {
@@ -438,7 +450,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
         const PersistedEditorTabState& persisted_tab = persisted_group.tabs[i];
         const bool is_active = i == persisted_group.active_tab_index;
         const bool should_eager_hydrate = is_active || persisted_tab.dirty_snapshot;
-        std::optional<TabEntry> tab = rebuild_tab(persisted_tab, should_eager_hydrate);
+        std::optional<TabEntry> tab = RebuildPersistedTab(persisted_tab, should_eager_hydrate);
         if (!tab.has_value()) {
           continue;
         }
@@ -519,11 +531,50 @@ bool PersistenceCoordinator::RestoreSessionState() {
     }
     state.surface.focus = state.sidebar.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
   }
+}
+
+bool PersistenceCoordinator::AppendTabsFromFile(const std::filesystem::path& session_path) {
+  if (session_path.empty() || operations_.persistence_service == nullptr) {
+    return false;
+  }
+  PersistedProjectSessionState persisted_session;
+  if (!operations_.persistence_service->LoadProjectSession(session_path, &persisted_session)) {
+    return false;
+  }
+  AppendTabsFromSession(persisted_session);
   return true;
+}
+
+void PersistenceCoordinator::AppendTabsFromSession(
+    const PersistedProjectSessionState& persisted_session) {
+  auto& state = CurrentProjectState();
+  EditorGroup& group = state.focused_group();
+  std::size_t new_active = group.active_tab_index;
+  bool appended = false;
+  for (const PersistedEditorGroupState& persisted_group : persisted_session.groups) {
+    for (const PersistedEditorTabState& persisted_tab : persisted_group.tabs) {
+      std::optional<TabEntry> tab =
+          RebuildPersistedTab(persisted_tab, /*should_eager_hydrate=*/true);
+      if (!tab.has_value()) {
+        continue;
+      }
+      new_active = group.open_tabs.size();
+      group.open_tabs.push_back(std::move(*tab));
+      appended = true;
+    }
+  }
+  if (appended) {
+    group.active_tab_index = new_active;
+  }
 }
 
 void PersistenceCoordinator::SaveSessionState() {
   if (CurrentProjectState().root.empty()) {
+    return;
+  }
+  // A detached editor-tab window shares the parent's project root; suppress its
+  // session write so it cannot clobber the parent window's saved session.
+  if (operations_.session_persist_enabled && !operations_.session_persist_enabled()) {
     return;
   }
 
@@ -534,6 +585,12 @@ void PersistenceCoordinator::SaveSessionState() {
     return;
   }
 
+  const PersistedProjectSessionState persisted_session = BuildPersistedProjectSession();
+  operations_.persistence_service->SaveProjectSession(session_path, persisted_session);
+  SaveDebugState();
+}
+
+PersistedProjectSessionState PersistenceCoordinator::BuildPersistedProjectSession() {
   auto& state = CurrentProjectState();
 
   PersistedProjectSessionState persisted_session;
@@ -592,8 +649,7 @@ void PersistenceCoordinator::SaveSessionState() {
         persisted_session.groups.empty() ? 0 : persisted_session.groups.size() - 1;
   }
 
-  operations_.persistence_service->SaveProjectSession(session_path, persisted_session);
-  SaveDebugState();
+  return persisted_session;
 }
 
 std::optional<PersistedEditorTabState>
@@ -706,6 +762,47 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
   persisted_tab.line_ending = persisted_viewport->line_ending();
   persisted_tab.buffer_lines = dirty_snapshot ? persisted_viewport->lines().Snapshot() : std::vector<std::string>{};
   return persisted_tab;
+}
+
+PersistedProjectSessionState PersistenceCoordinator::BuildSingleTabHandoff(std::size_t group_index,
+                                                                          std::size_t tab_index) {
+  PersistedProjectSessionState session;
+  const ProjectWorkspaceState& state = CurrentProjectState();
+  // Carry the layout defaults so the detached window is immediately usable.
+  session.sidebar_visible = state.sidebar.visible;
+  session.sidebar_width = state.sidebar.width;
+  session.bottom_panel_height = state.panel.height;
+  if (group_index >= state.editor_groups.size()) {
+    return session;
+  }
+  EditorGroup& group = CurrentProjectState().editor_groups[group_index];
+  if (tab_index >= group.open_tabs.size()) {
+    return session;
+  }
+  TabEntry& tab = group.open_tabs[tab_index];
+  std::optional<PersistedEditorTabState> persisted_tab;
+  if (tab.kind == TabEntry::Kind::Compare) {
+    persisted_tab = BuildPersistedCompareTabState(tab);
+  } else if (tab.kind == TabEntry::Kind::Merge) {
+    persisted_tab = BuildPersistedMergeTabState(tab);
+  } else {
+    persisted_tab = BuildPersistedEditorTabState(tab_index, tab);
+  }
+  if (persisted_tab.has_value()) {
+    PersistedEditorGroupState persisted_group;
+    persisted_group.active_tab_index = 0;
+    persisted_group.tabs.push_back(std::move(*persisted_tab));
+    session.groups.push_back(std::move(persisted_group));
+  }
+  return session;
+}
+
+bool PersistenceCoordinator::WriteHandoffFile(const std::filesystem::path& out_path,
+                                              const PersistedProjectSessionState& session) const {
+  if (operations_.persistence_service == nullptr || out_path.empty()) {
+    return false;
+  }
+  return operations_.persistence_service->SaveProjectSession(out_path, session);
 }
 
 }  // namespace microide::workspace

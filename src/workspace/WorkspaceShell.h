@@ -106,6 +106,7 @@ class WorkspaceActionContext;
 class PromptSurfaceService;
 class ProjectCatalogService;
 class PersistenceCoordinator;
+class WorkspaceDetachCoordinator;
 class CommandLineCoordinator;
 class MenuCoordinator;
 class KeyInputCoordinator;

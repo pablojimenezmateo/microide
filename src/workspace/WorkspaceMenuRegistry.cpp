@@ -220,6 +220,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::SplitEditorRight, "Split Right"),
       MenuItem(ActionId::SplitEditorDown, "Split Down"),
       MenuSeparator(),
+      MenuItem(ActionId::DetachTabToNewWindow, "Move to New Window"),
+      MenuSeparator(),
       MenuItem(ActionId::CloseActiveTab, "Close Tab"),
       MenuItem(ActionId::CloseAllTabs),
       MenuItem(ActionId::CloseOtherTabs),
@@ -232,6 +234,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   static const auto kProjectTabContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::ProjectCopyAbsolutePath, "Copy Absolute Path"),
       MenuSeparator(),
+      MenuItem(ActionId::DetachProjectToNewWindow, "Move to New Window"),
       MenuItem(ActionId::ProjectClose, "Close Project"),
   });
   static const auto kMenus = std::to_array<MenuSpec>({

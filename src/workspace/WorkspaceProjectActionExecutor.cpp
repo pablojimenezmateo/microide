@@ -49,6 +49,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteProject(
       }
       context_.RequestCloseProject(context_.ActiveProjectIndex());
       return DispatchResult::Handled;
+    case ActionId::DetachProjectToNewWindow:
+      if (!context_.HasActiveProject()) {
+        return reject("No active project");
+      }
+      if (!context_.DetachActiveProjectToNewWindow()) {
+        return reject("This project cannot be moved to a new window");
+      }
+      return DispatchResult::Handled;
     case ActionId::ProjectCopyAbsolutePath:
       if (!context_.HasProjectRoot()) {
         return reject("No active project");

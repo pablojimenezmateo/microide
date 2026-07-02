@@ -389,6 +389,13 @@ bool Application::Initialize() {
     shell_startup.project_path = explicit_project;
     shell_startup.control_stdout = startup_options_.control_stdout;
     shell_startup.setting_overrides = startup_options_.setting_overrides;
+    shell_startup.detach_handoff_path = startup_options_.detach_handoff_path;
+    if (startup_options_.detach_handoff_path.has_value()) {
+      // Editor-tab detach shares the parent's project root: suppress session
+      // persistence so the child never clobbers the parent's saved session. A
+      // project detach (--detach-owns-session) owns a distinct root and persists.
+      shell_startup.session_persist_enabled = startup_options_.detach_owns_session;
+    }
     workspace_shell_.SetStartupOptions(std::move(shell_startup));
 
     std::filesystem::path initial_project;
@@ -411,6 +418,10 @@ bool Application::Initialize() {
     if (control_spec.valid) {
       util::StartupTrace::Scope apply_spec_scope("WorkspaceShell::ApplyControlSpec");
       workspace_shell_.ApplyControlSpec(control_spec);
+    }
+    if (startup_options_.detach_handoff_path.has_value()) {
+      util::StartupTrace::Scope apply_handoff_scope("WorkspaceShell::ApplyDetachHandoff");
+      workspace_shell_.ApplyDetachHandoff(*startup_options_.detach_handoff_path);
     }
   }
   workspace_shell_.SetDialogWindow(window_);
@@ -503,6 +514,9 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
     case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
       presentation_state_dirty_ = true;
       UpdateRendererPresentation();
+      // Keep the control descriptor's window bounds fresh so cross-window tab
+      // drops (detach/reattach) can hit-test this window's current geometry.
+      workspace_shell_.UpdateControlWindowGeometry();
       return workspace::WorkspaceShell::EventResult{
           .handled = true,
           .redraw = workspace::WorkspaceShell::RenderInvalidation{
@@ -517,6 +531,7 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
       presentation_state_dirty_ = true;
       scene_texture_.NoteResizeEvent(SDL_GetTicksNS());
       UpdateRendererPresentation();
+      workspace_shell_.UpdateControlWindowGeometry();
       // A compositor-driven resize/restore/maximize can leave the displayed cursor
       // stale (e.g. the resize cursor lingering over a border) and may suppress the
       // motion events that keep the pointer position fresh; reseed from the live
@@ -535,6 +550,7 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
       // can sit stationary over the title bar, so reseed the live position and force
       // a reassert, scheduling a frame to consume it (geometry size is unchanged).
       ReseedPointerAndForceCursorReassert();
+      workspace_shell_.UpdateControlWindowGeometry();
       return workspace::WorkspaceShell::EventResult{
           .handled = true,
           .redraw = workspace::WorkspaceShell::RenderInvalidation{

@@ -85,6 +85,8 @@ PersistenceCoordinator WorkspaceShell::MakePersistenceCoordinator() {
           .ensure_active_project_visible = [this]() { tab_strip_chrome_.EnsureActiveProjectVisible(); },
           .debugger_enabled =
               [this]() { return SettingFlagEnabled(GetSettingValue("debug.enabled")); },
+          .session_persist_enabled =
+              [this]() { return startup_options_.session_persist_enabled; },
           .plugin_theme_names = [this]() { return theme_registry_.Names(); },
           .resolve_plugin_theme =
               [this](std::string_view id) { return theme_registry_.Resolve(id); },

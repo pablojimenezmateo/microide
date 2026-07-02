@@ -128,6 +128,10 @@ std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
     descriptor.socket = std::filesystem::path((*parsed)["socket"].AsString());
     descriptor.project_root = (*parsed)["project_root"].AsString();
     descriptor.project_hash = (*parsed)["project_hash"].AsString();
+    descriptor.win_x = static_cast<int>((*parsed)["win_x"].AsInt());
+    descriptor.win_y = static_cast<int>((*parsed)["win_y"].AsInt());
+    descriptor.win_w = static_cast<int>((*parsed)["win_w"].AsInt());
+    descriptor.win_h = static_cast<int>((*parsed)["win_h"].AsInt());
     descriptor.raw_json = std::move(contents);
     instances.push_back(std::move(descriptor));
   }
@@ -198,9 +202,26 @@ void ControlChannelService::WriteDescriptor() {
   descriptor["project_hash"] =
       util::JsonValue(project_root_.empty() ? std::string()
                                             : ProjectStateDirectoryName(project_root_));
+  descriptor["win_x"] = util::JsonValue(static_cast<std::int64_t>(win_x_));
+  descriptor["win_y"] = util::JsonValue(static_cast<std::int64_t>(win_y_));
+  descriptor["win_w"] = util::JsonValue(static_cast<std::int64_t>(win_w_));
+  descriptor["win_h"] = util::JsonValue(static_cast<std::int64_t>(win_h_));
   std::ofstream out(descriptor_path_, std::ios::trunc);
   if (out) {
     out << util::SerializeJson(util::JsonValue(std::move(descriptor)));
+  }
+}
+
+void ControlChannelService::SetWindowBounds(int x, int y, int w, int h) {
+  if (win_x_ == x && win_y_ == y && win_w_ == w && win_h_ == h) {
+    return;  // Unchanged: skip a redundant descriptor rewrite.
+  }
+  win_x_ = x;
+  win_y_ = y;
+  win_w_ = w;
+  win_h_ = h;
+  if (server_.IsRunning()) {
+    WriteDescriptor();
   }
 }
 

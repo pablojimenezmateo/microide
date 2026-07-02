@@ -19,6 +19,25 @@
   static void SaveWorkspaceSession(WorkspaceShell& shell) {
     shell.MakePersistenceCoordinator().SaveWorkspaceSession();
   }
+  // Detach/reattach handoff seams (mirror the real DetachCoordinator flow).
+  static bool WriteSingleTabHandoff(WorkspaceShell& shell, std::size_t group_index,
+                                    std::size_t tab_index, const std::filesystem::path& path) {
+    shell.SyncActiveEditorTab();
+    auto coordinator = shell.MakePersistenceCoordinator();
+    return coordinator.WriteHandoffFile(path,
+                                        coordinator.BuildSingleTabHandoff(group_index, tab_index));
+  }
+  static bool WriteProjectHandoff(WorkspaceShell& shell, const std::filesystem::path& path) {
+    shell.SyncActiveEditorTab();
+    auto coordinator = shell.MakePersistenceCoordinator();
+    return coordinator.WriteHandoffFile(path, coordinator.BuildPersistedProjectSession());
+  }
+  static bool RestoreSessionFromFile(WorkspaceShell& shell, const std::filesystem::path& path) {
+    return shell.MakePersistenceCoordinator().RestoreSessionFromFile(path);
+  }
+  static bool AppendTabsFromFile(WorkspaceShell& shell, const std::filesystem::path& path) {
+    return shell.MakePersistenceCoordinator().AppendTabsFromFile(path);
+  }
   static void SaveConfigState(WorkspaceShell& shell) {
     shell.MakePersistenceCoordinator().SaveConfigState();
   }

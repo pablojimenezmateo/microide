@@ -27,6 +27,13 @@ struct ControlInstanceDescriptor {
   std::filesystem::path socket;
   std::string project_root;
   std::string project_hash;
+  // Global (desktop-space) window bounds, republished on move/resize. Used to
+  // hit-test a cross-window tab drop against the receiving window (detach /
+  // reattach). All zero when the window geometry has not been published yet.
+  int win_x = 0;
+  int win_y = 0;
+  int win_w = 0;
+  int win_h = 0;
   std::string raw_json;  // descriptor line as written (backs `control-list`)
 };
 
@@ -94,6 +101,12 @@ class ControlChannelService {
   void Stop();
   bool IsRunning() const;
 
+  // Publish this window's global bounds into the discovery descriptor so other
+  // instances can hit-test a cross-window tab drop against it. Rewrites the
+  // descriptor immediately when the channel is running; otherwise the bounds are
+  // stored and emitted on the next Start()/WriteDescriptor(). Main thread only.
+  void SetWindowBounds(int x, int y, int w, int h);
+
   // Main thread: drain + dispatch queued inbound requests (control wake event).
   void ConsumeControlCallbacks();
 
@@ -144,6 +157,11 @@ class ControlChannelService {
   std::filesystem::path descriptor_path_;
   std::filesystem::path project_root_;
   bool stdout_mirror_ = false;
+  // Last-published global window bounds (mirrored into the descriptor).
+  int win_x_ = 0;
+  int win_y_ = 0;
+  int win_w_ = 0;
+  int win_h_ = 0;
 };
 
 }  // namespace microide::workspace

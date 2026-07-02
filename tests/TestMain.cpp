@@ -92,6 +92,7 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests);
 void RegisterEditorGroupStateTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests);
+void RegisterWorkspaceDetachCoordinatorTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests);
 void RegisterDebugPaneTests(std::vector<TestCase>& tests);
@@ -430,6 +431,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterWorkspaceShellProjectTests(tests);
   microide::tests::RegisterWorkspaceShellSearchTests(tests);
   microide::tests::RegisterWorkspaceShellSessionTests(tests);
+  microide::tests::RegisterWorkspaceDetachCoordinatorTests(tests);
   microide::tests::RegisterWorkspaceShellSourceControlTests(tests);
   microide::tests::RegisterWorkspaceShellTerminalTests(tests);
   microide::tests::RegisterGitServiceTests(tests);

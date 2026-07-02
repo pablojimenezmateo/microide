@@ -66,6 +66,12 @@ bool PersistenceCoordinator::RestoreWorkspaceSession() {
 }
 
 void PersistenceCoordinator::SaveWorkspaceSession() const {
+  // The workspace-session file is a single global record shared by every running
+  // instance; a detached (ephemeral) window must not overwrite the parent's list
+  // of open projects.
+  if (operations_.session_persist_enabled && !operations_.session_persist_enabled()) {
+    return;
+  }
   const std::filesystem::path session_path = WorkspaceSessionStatePath();
   if (session_path.empty() || operations_.persistence_service == nullptr) {
     return;

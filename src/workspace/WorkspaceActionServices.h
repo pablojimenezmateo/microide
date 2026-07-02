@@ -37,6 +37,12 @@ class WorkspaceActionContext {
     std::function<SidebarViewRequest(const std::vector<std::string>&)> parse_sidebar_view_request;
     std::function<bool(const std::filesystem::path&, bool, bool)> open_project;
     std::function<void(std::size_t)> request_close_project;
+    // Detach the active project / focused active tab into a new window (returns
+    // true when a detached window was launched).
+    std::function<bool()> detach_active_project_to_new_window;
+    std::function<bool()> detach_active_tab_to_new_window;
+    // Reattach: append tabs from a handoff session file into the active group.
+    std::function<bool(const std::filesystem::path&)> accept_tab_handoff;
     std::function<bool(std::size_t, bool)> switch_project;
     std::function<ProjectOpenPickerResult()> open_native_project_picker;
     std::function<SidebarMode()> active_sidebar_mode;
@@ -260,6 +266,11 @@ class WorkspaceActionContext {
   void RequestCloseProject(std::size_t index);
   bool SwitchProject(std::size_t index, bool log_feedback);
   ProjectOpenPickerResult OpenNativeProjectPicker();
+  // Detach the active project / the focused group's active tab into a new
+  // microide window. Return true when the detached window was launched.
+  bool DetachActiveProjectToNewWindow();
+  bool DetachActiveTabToNewWindow();
+  bool AcceptTabHandoff(const std::filesystem::path& handoff_path);
 
   bool SidebarVisible() const;
   bool SidebarTemporary() const;

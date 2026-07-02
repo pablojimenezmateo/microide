@@ -177,6 +177,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // session starts; Show Output no-ops gracefully without a live session).
       return SettingEnabled(operations_, "debug.enabled", false);
     case ActionId::CloseActiveTab:
+    case ActionId::DetachTabToNewWindow:
       return !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::CloseAllTabs:
       return !context_.current_project_state.focused_group().open_tabs.empty();
@@ -221,7 +222,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ReviewBranch:
     case ActionId::ReviewCommit:
     case ActionId::Open:
+    case ActionId::AcceptTabHandoff:
     case ActionId::ProjectClose:
+    case ActionId::DetachProjectToNewWindow:
     case ActionId::ProjectCopyAbsolutePath:
     case ActionId::ProjectSearch:
     case ActionId::Tab:

@@ -9,6 +9,7 @@
 #include "workspace/TabStripAnimation.h"
 #include "workspace/TerminalPanelService.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/WorkspaceDetachCoordinator.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
@@ -287,8 +288,41 @@ bool TabMouseCoordinator::HandleButtonUp(const SDL_Event& event) {
   if (event.button.button != SDL_BUTTON_LEFT || tab_drag_state_.kind == TabDragKind::None) {
     return false;
   }
+  if (MaybeHandleDragOut()) {
+    return true;
+  }
   CommitDrag();
   SeedSettle();
+  operations_.clear_tab_drag();
+  return true;
+}
+
+bool TabMouseCoordinator::MaybeHandleDragOut() {
+  // Only editor tabs detach by drag; the menu covers project detach. A drag that
+  // never crossed the start threshold is a plain click, not a detach.
+  if (!tab_drag_state_.dragging || tab_drag_state_.kind != TabDragKind::Editor ||
+      !operations_.current_window_global_bounds || !operations_.drop_active_tab_at_global) {
+    return false;
+  }
+  const SDL_Rect bounds = operations_.current_window_global_bounds();
+  if (bounds.w <= 0 || bounds.h <= 0) {
+    return false;
+  }
+  float gx = 0.0f;
+  float gy = 0.0f;
+  SDL_GetGlobalMouseState(&gx, &gy);
+  constexpr float kDragOutMargin = 12.0f;  // Slack so a drop just below the strip still reorders.
+  const bool outside = gx < static_cast<float>(bounds.x) - kDragOutMargin ||
+                       gx > static_cast<float>(bounds.x + bounds.w) + kDragOutMargin ||
+                       gy < static_cast<float>(bounds.y) - kDragOutMargin ||
+                       gy > static_cast<float>(bounds.y + bounds.h) + kDragOutMargin;
+  if (!outside) {
+    return false;
+  }
+  operations_.drop_active_tab_at_global(static_cast<int>(gx), static_cast<int>(gy));
+  // The tab is gone (or moved): drop the slide animation and end the drag without
+  // committing an in-strip reorder.
+  tab_slide_state_ = TabSlideState{};
   operations_.clear_tab_drag();
   return true;
 }
@@ -390,6 +424,9 @@ bool TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
   }
   if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
     // Button released without a button-up event reaching us: commit what we have.
+    if (MaybeHandleDragOut()) {
+      return false;
+    }
     CommitDrag();
     SeedSettle();
     operations_.clear_tab_drag();
@@ -698,6 +735,19 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
               },
           .focus_editor_group =
               [this](std::size_t group_index) { FocusEditorGroup(group_index); },
+          .current_window_global_bounds =
+              [this]() {
+                SDL_Rect bounds{};
+                if (dialog_window_ != nullptr) {
+                  SDL_GetWindowPosition(dialog_window_, &bounds.x, &bounds.y);
+                  SDL_GetWindowSize(dialog_window_, &bounds.w, &bounds.h);
+                }
+                return bounds;
+              },
+          .drop_active_tab_at_global =
+              [this](int global_x, int global_y) {
+                return MakeDetachCoordinator().DropActiveTabAtGlobal(global_x, global_y);
+              },
       });
 }
 

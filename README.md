@@ -252,8 +252,12 @@ serious work.
   and (for safe mode) workspace/session restore. These are recovery/trust aids, not a sandbox.
   Opening a repository still does not load plugin code from that repository; only user-installed
   plugins under `~/.config/microide/plugins/` run when plugins are enabled.
-- **Single-window only.** No detached OS windows. This is deliberate (see
-  `openspec/specs/product-vision/spec.md`), not a bug.
+- **One project workspace per OS window.** Each window is a single native window; a
+  tab or project can be *detached* into its own window (`detach-tab` / `detach-project`,
+  or drag a tab out of the strip), which launches a second microide process seeded with
+  a handoff of the tab's live state (unsaved edits included). Dragging a tab onto another
+  microide window reattaches it there. There is still no in-process split into multiple
+  OS windows.
 - **No native OS menu bar.** The menu bar is rendered by the app.
 - **Terminal escape coverage is "what real shells need," not exhaustive.** Programs that depend on
   uncommon DEC/xterm sequences may render incorrectly.
@@ -599,6 +603,9 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `split-down [path]`
 - `focus-other-group`
 - `close-group`
+- `detach-tab`
+- `detach-project`
+- `accept-tab-handoff <file>`
 - `jump-to-matching-bracket`
 - `toggle-line-comment`
 - `toggle-block-comment`

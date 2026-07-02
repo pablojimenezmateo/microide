@@ -1116,6 +1116,77 @@ void TestWorkspaceShellQuitShutdownPersistsDirtyEditorBuffers() {
          "workspace session restore after quit should keep the untitled editor dirty");
 }
 
+void TestWorkspaceDetachHandoffPreservesDirtyEditorTab() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha\nbeta\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  const std::filesystem::path handoff = temp_dir.path() / "handoff.session";
+
+  // Source window: open + dirty a file, then write a single-tab handoff payload.
+  {
+    WorkspaceShell shell;
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+           "detach handoff fixture should open the project");
+    WorkspaceShellTestAccess::OpenFile(shell, source);
+    auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+    editor.MoveCursorTo(1, 0);
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "dirty "),
+           "detach handoff fixture should dirty the editor");
+    editor.SetScrollLine(1);
+    Expect(WorkspaceShellTestAccess::WriteSingleTabHandoff(shell, 0, 0, handoff),
+           "single-tab handoff should be written");
+  }
+  Expect(std::filesystem::exists(handoff), "handoff file should exist on disk");
+
+  // Detached window: hydrate from the handoff, replacing its (empty) tab set.
+  {
+    WorkspaceShell child;
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(child, root, false, false),
+           "detached window should open the same project");
+    Expect(WorkspaceShellTestAccess::RestoreSessionFromFile(child, handoff),
+           "detached window should hydrate from the handoff file");
+    const auto& tabs = WorkspaceShellTestAccess::OpenTabs(child);
+    Expect(tabs.size() == 1, "detached window should hold exactly the handed-off tab");
+    WorkspaceShellTestAccess::ActivateTab(child, 0);
+    const auto& reopened = WorkspaceShellTestAccess::ActiveEditor(child);
+    Expect(reopened.path() == source.lexically_normal(),
+           "detached tab should keep the file path");
+    Expect(reopened.dirty(), "detached tab should preserve the dirty state");
+    Expect(reopened.lines().size() >= 2 && reopened.lines()[1] == "dirty beta",
+           "detached tab should preserve the unsaved buffer contents");
+    Expect(reopened.cursor_line() == 1 && reopened.cursor_column() == 6,
+           "detached tab should preserve the caret position");
+    Expect(reopened.scroll_line() == 1, "detached tab should preserve the scroll position");
+  }
+
+  // Reattach: appending the handoff into a window with an existing tab keeps both.
+  {
+    WorkspaceShell target;
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(target, root, false, false),
+           "reattach target should open the project");
+    const std::filesystem::path other = root / "other.txt";
+    WriteFile(other, "one\n");
+    WorkspaceShellTestAccess::OpenFile(target, other);
+    Expect(WorkspaceShellTestAccess::OpenTabs(target).size() == 1,
+           "reattach target should start with a single tab");
+    Expect(WorkspaceShellTestAccess::AppendTabsFromFile(target, handoff),
+           "reattach should append the handoff tab");
+    Expect(WorkspaceShellTestAccess::OpenTabs(target).size() == 2,
+           "reattach should add the tab without disturbing the existing one");
+  }
+}
+
 void TestWorkspaceShellReopenWorkingTreeComparisonRefreshesExistingTab() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -2113,6 +2184,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoredProjectTabBadgeColorsHydrateOnStartup);
   AddTest(tests, "WorkspaceShell/ShutdownPreservesDistinctWorkspaceProjectRoots",
           TestWorkspaceShellShutdownPreservesDistinctWorkspaceProjectRoots);
+  AddTest(tests, "WorkspaceShell/DetachHandoffPreservesDirtyEditorTab",
+          TestWorkspaceDetachHandoffPreservesDirtyEditorTab);
 }
 
 }  // namespace microide::tests

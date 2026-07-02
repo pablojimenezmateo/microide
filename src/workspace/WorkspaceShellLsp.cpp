@@ -11,6 +11,10 @@
 #include "workspace/ControlSpec.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceCommandLineCoordinator.h"
+#include "workspace/WorkspacePersistenceCoordinator.h"
+
+#include <filesystem>
+#include <system_error>
 
 // Thin forwarders to the host-owned protocol-client services so existing
 // render/menu/plugin call sites stay unchanged. The LSP glue lives in
@@ -182,6 +186,42 @@ void WorkspaceShell::ApplyControlSpec(const ControlSpec& spec) {
   }
 }
 
+void WorkspaceShell::ApplyDetachHandoff(const std::filesystem::path& handoff_path) {
+  if (handoff_path.empty()) {
+    return;
+  }
+  // Seed this window's tabs from the parent's handoff (replacing the empty
+  // welcome group Initialize produced for a skip-restore detach child), mirroring
+  // the finalize steps of a normal session restore.
+  if (MakePersistenceCoordinator().RestoreSessionFromFile(handoff_path)) {
+    ApplyEditorPreferencesToAllTabs();
+    ActivateCurrentTabAfterStateLoad();
+    RequestFullRedraw();
+  }
+  // Consume-once: the handoff file is transient scratch owned by this window.
+  std::error_code ec;
+  std::filesystem::remove(handoff_path, ec);
+}
+
+bool WorkspaceShell::AcceptTabHandoff(const std::filesystem::path& handoff_path) {
+  if (handoff_path.empty()) {
+    return false;
+  }
+  const bool appended = MakePersistenceCoordinator().AppendTabsFromFile(handoff_path);
+  if (appended) {
+    ApplyEditorPreferencesToAllTabs();
+    ActivateCurrentTabAfterStateLoad();
+    RequestFullRedraw();
+    if (dialog_window_ != nullptr) {
+      SDL_RaiseWindow(dialog_window_);
+    }
+  }
+  // Consume-once regardless of outcome: the sender relinquished ownership.
+  std::error_code ec;
+  std::filesystem::remove(handoff_path, ec);
+  return appended;
+}
+
 bool WorkspaceShell::EnsureDebuggerEnabledTransiently() {
   if (DebugEnabled()) {
     return false;
@@ -197,6 +237,33 @@ void WorkspaceShell::ForceStartControlChannel() {
   // the socket directly. Start() emits the `ready` handshake line.
   control_channel_service_.SetStdoutMirror(true);
   control_channel_service_.Start(context_.current_project_state.root);
+  UpdateControlWindowGeometry();
+}
+
+void WorkspaceShell::UpdateControlWindowGeometry() {
+  if (dialog_window_ == nullptr) {
+    return;
+  }
+  int x = 0;
+  int y = 0;
+  int w = 0;
+  int h = 0;
+  SDL_GetWindowPosition(dialog_window_, &x, &y);
+  SDL_GetWindowSize(dialog_window_, &w, &h);
+  control_channel_service_.SetWindowBounds(x, y, w, h);
+}
+
+void WorkspaceShell::EnsureControlChannelForHandoff() {
+  // A window that detaches a tab enters a multi-window session, so it must be
+  // discoverable as a reattach drop target even if `control.enabled` was off.
+  // Start the socket + descriptor (idempotent) and publish geometry. The setting
+  // is flipped transiently so a later MaybeStartControlChannel() does not tear the
+  // socket back down mid-session.
+  if (!control_channel_service_.IsRunning()) {
+    SetSettingValue("control.enabled", "true", /*persist=*/false);
+    control_channel_service_.Start(context_.current_project_state.root);
+  }
+  UpdateControlWindowGeometry();
 }
 
 void WorkspaceShell::MaybeStartControlChannel() {

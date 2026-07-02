@@ -53,6 +53,11 @@ class TabMouseCoordinator {
     // mouse path resolve which group's strip the pointer hit and focus it.
     std::function<std::vector<std::pair<std::size_t, SDL_FRect>>()> compute_editor_group_tab_strips;
     std::function<void(std::size_t)> focus_editor_group;
+    // Global (desktop-space) bounds of this window, and the cross-window drop
+    // handler. When an editor-tab drag is released outside the window, the tab is
+    // handed to the window under the pointer (reattach) or a new window (detach).
+    std::function<SDL_Rect()> current_window_global_bounds;
+    std::function<bool(int, int)> drop_active_tab_at_global;
   };
 
   TabMouseCoordinator(ProjectCatalogState& project_catalog,
@@ -83,6 +88,10 @@ class TabMouseCoordinator {
   DragStrip ResolveDragStrip(const WorkspaceLayout& layout, TabDragKind kind);
   DragStrip ResolveBottomPanelDragStrip(const WorkspaceLayout& layout);
   void CommitDrag();
+  // When an editor-tab drag is released with the pointer outside this window,
+  // route the tab to the cross-window drop handler (reattach/detach) and consume
+  // the release. Returns true when it handled the release (skip the reorder).
+  bool MaybeHandleDragOut();
   void PersistReorderedTabs(TabDragKind kind);
   // Recomputes the Chrome-like slide targets for the live pointer: neighbor tabs
   // ease toward `d`'s displaced layout with a gap opened at `insertion_slot`.

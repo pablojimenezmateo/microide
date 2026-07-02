@@ -9,6 +9,7 @@
 
 #include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceActionServices.h"
+#include "workspace/WorkspaceDetachCoordinator.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
@@ -329,6 +330,14 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
                 return OpenProjectTab(root, restore, log_feedback);
               },
           .request_close_project = [this](std::size_t index) { RequestCloseProject(index); },
+          .detach_active_project_to_new_window =
+              [this]() { return MakeDetachCoordinator().DetachActiveProject(); },
+          .detach_active_tab_to_new_window =
+              [this]() { return MakeDetachCoordinator().DetachActiveTab(); },
+          .accept_tab_handoff =
+              [this](const std::filesystem::path& handoff_path) {
+                return AcceptTabHandoff(handoff_path);
+              },
           .switch_project =
               [this](std::size_t index, bool log_feedback) {
                 return SwitchProject(index, log_feedback);

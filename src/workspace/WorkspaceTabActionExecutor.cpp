@@ -211,6 +211,23 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       context_.RequestCloseTabs(std::move(indices));
       return DispatchResult::Handled;
     }
+    case ActionId::DetachTabToNewWindow:
+      if (!context_.HasProjectRoot() || !context_.HasOpenTabs()) {
+        return reject("No tab to detach");
+      }
+      if (!context_.DetachActiveTabToNewWindow()) {
+        return reject("This tab cannot be moved to a new window");
+      }
+      return DispatchResult::Handled;
+    case ActionId::AcceptTabHandoff: {
+      if (args.empty() || args.front().empty()) {
+        return reject("accept-tab-handoff requires a file path");
+      }
+      if (!context_.AcceptTabHandoff(std::filesystem::path(args.front()))) {
+        return reject("Could not read tab handoff");
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::CopyRelativePath:
     case ActionId::CopyAbsolutePath: {
       if (!context_.HasProjectRoot()) {

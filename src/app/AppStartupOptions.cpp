@@ -48,6 +48,19 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
       result.options.control_stdout = true;
       continue;
     }
+    if (arg == "--detach-handoff") {
+      if (i + 1 >= argc || argv[i + 1] == nullptr) {
+        std::cerr << "--detach-handoff requires a file path\n";
+        result.exit_code = 2;
+        return result;
+      }
+      result.options.detach_handoff_path = std::filesystem::path(argv[++i]);
+      continue;
+    }
+    if (arg == "--detach-owns-session") {
+      result.options.detach_owns_session = true;
+      continue;
+    }
     if (arg == "--dap-log") {
       // Optional path argument: consume the next token only when it is not
       // itself a flag, mirroring how --control-spec validates its argument.
@@ -75,8 +88,9 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
     if (arg == "--help" || arg == "-h") {
       std::cerr << "usage: microide [--disable-plugins] [--safe-mode] [--control] "
                    "[--set <id> <value>]...\n"
-                   "                [--control-spec <file>] [--dap-log [path]] [--version] "
-                   "[project-path]\n"
+                   "                [--control-spec <file>] [--dap-log [path]] "
+                   "[--detach-handoff <file>]\n"
+                   "                [--detach-owns-session] [--version] [project-path]\n"
                    "       microide control-send [...]   send one command/query to an instance\n"
                    "       microide control-help         protocol + spec reference\n"
                    "       microide control-commands     list runnable command names\n"

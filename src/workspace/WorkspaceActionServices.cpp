@@ -79,6 +79,20 @@ ProjectOpenPickerResult WorkspaceActionContext::OpenNativeProjectPicker() {
   return operations_.open_native_project_picker();
 }
 
+bool WorkspaceActionContext::DetachActiveProjectToNewWindow() {
+  return operations_.detach_active_project_to_new_window &&
+         operations_.detach_active_project_to_new_window();
+}
+
+bool WorkspaceActionContext::DetachActiveTabToNewWindow() {
+  return operations_.detach_active_tab_to_new_window &&
+         operations_.detach_active_tab_to_new_window();
+}
+
+bool WorkspaceActionContext::AcceptTabHandoff(const std::filesystem::path& handoff_path) {
+  return operations_.accept_tab_handoff && operations_.accept_tab_handoff(handoff_path);
+}
+
 bool WorkspaceActionContext::SidebarVisible() const {
   return state_.sidebar.visible;
 }

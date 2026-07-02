@@ -28,6 +28,14 @@ struct AppStartupOptions {
   // /tmp/microide-dap.log) capturing every DAP message plus key debug-subsystem
   // decisions. Diagnostic only; see util::DebugTrace.
   std::optional<std::filesystem::path> dap_log_path;
+  // `--detach-handoff <file>`: seed this window's tabs from a handoff session
+  // file written by a parent window (the detach/reattach path), then delete it.
+  std::optional<std::filesystem::path> detach_handoff_path;
+  // `--detach-owns-session`: paired with --detach-handoff for a project detach.
+  // When set, this window persists its project session normally (it owns a
+  // distinct project root); when absent, session persistence is suppressed so an
+  // editor-tab detach on the parent's project cannot clobber the parent's session.
+  bool detach_owns_session = false;
   // The shipping binary fast-exits via std::quick_exit() at the end of
   // Shutdown() to skip destructor chains. Tests set this false so they can run
   // Initialize()/Shutdown() in-process and verify clean teardown under ASAN.

@@ -18,6 +18,10 @@ than comparative marketing claims.
 - **WHEN** a user opens any built-in workflow (editor, compare, merge, search, git, terminal)
 - **THEN** the workflow SHALL render inside the single MicroIDE window, reusing the menu bar, project tabs, file tabs, persistent sidebar, editor surface, and docked bottom panel, and SHALL NOT spawn detached OS windows or native OS menus
 
+#### Scenario: Detaching a tab launches a separate single-window instance
+- **WHEN** a user detaches an editor/compare/merge tab or a project into its own window (via the `detach-tab` / `detach-project` command, the tab context menu, or by dragging a tab out of the strip)
+- **THEN** MicroIDE SHALL launch a second MicroIDE process — each remaining a single-window shell — seeded with a handoff of the tab's live state (including unsaved edits), rather than opening a second OS window or floating panel inside one process; and dragging a tab onto another running MicroIDE window SHALL hand the tab to that instance (reattach)
+
 ### Requirement: Priority Order For Engineering Tradeoffs
 
 When MicroIDE engineering tradeoffs conflict, the project SHALL resolve them in the following order: (1) correctness, (2) speed, (3) low CPU usage, (4) low memory footprint, (5) architectural clarity, (6) compatibility only when explicitly required.
