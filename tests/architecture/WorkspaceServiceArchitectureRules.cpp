@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <fstream>
 #include <regex>
+#include <string>
+#include <string_view>
 
 namespace microide::tests::architecture {
 
@@ -341,6 +343,46 @@ RuleResult CheckEditorViewRendererUsesScratchRows(const std::filesystem::path& r
   return result;
 }
 
+RuleResult CheckCompareMergeRenderUsesScratchRows(const std::filesystem::path& repo_root) {
+  // The compare/merge surface render TUs build one DecoratedTextRow per visible
+  // row per pane per frame. Reusing mutable scratch members (cleared by
+  // BuildDecoratedRow before refill) keeps that path allocation-free; a fresh
+  // stack `DecoratedTextRow name;` per row is the regression this blocks.
+  RuleResult result;
+  result.label = "compare/merge render TUs must reuse scratch DecoratedTextRow members";
+  result.hard_fail = true;
+  struct Target {
+    std::filesystem::path path;
+    std::array<std::string_view, 2> scratch_members;
+  };
+  const std::array<Target, 2> targets = {
+      Target{repo_root / "src/workspace/WorkspaceShellRenderCompare.cpp",
+             {"compare_left_scratch_row_", "compare_right_scratch_row_"}},
+      Target{repo_root / "src/workspace/WorkspaceShellRenderMerge.cpp",
+             {"merge_incoming_scratch_row_", "merge_current_scratch_row_"}},
+  };
+  for (const auto& target : targets) {
+    if (!std::filesystem::exists(target.path)) {
+      continue;
+    }
+    const std::string text = ReadText(target.path);
+    AppendCodeMaskRegexViolations(
+        result, target.path, text,
+        std::regex(R"(\bDecoratedTextRow\s+[A-Za-z_][A-Za-z_0-9]*\s*;)"),
+        "do not declare a fresh DecoratedTextRow per row; bind the scratch member by reference");
+    for (const std::string_view member : target.scratch_members) {
+      if (text.find(member) == std::string::npos) {
+        result.violations.push_back(Violation{
+            .path = target.path,
+            .line = 1,
+            .message = "compare/merge render TU must consume its scratch DecoratedTextRow member",
+        });
+      }
+    }
+  }
+  return result;
+}
+
 // SceneTexturePresenter::Ensure must coalesce reallocation across resize
 // bursts. Without the resize-time check, dragging the window destroyed and
 // recreated the full-window render target on every WINDOW_RESIZED event.
@@ -534,15 +576,18 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
   const std::regex string_from_view_pattern(R"(std::string\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\.)");
 
   // single_char_pattern is enforced across every render TU. literal+ident
-  // concatenation is enforced only on the hot per-row editor render TUs
-  // (EditorViewRenderer/DecoratedTextGridRenderer), where it would allocate once
-  // per visible row at frame rate. The overlay/sidebar/hover paint surfaces also
-  // build prefix strings, but only once per visible-surface repaint (not per row
-  // at 60fps); routing those through the view model is a separate, larger
-  // refactor and is intentionally out of scope for this rule.
-  const std::array<std::filesystem::path, 2> hot_editor_render_files = {
+  // concatenation is enforced only on the hot per-row render TUs
+  // (EditorViewRenderer/DecoratedTextGridRenderer plus the compare/merge
+  // surface render TUs), where it would allocate once per visible row at frame
+  // rate. The overlay/sidebar/hover paint surfaces also build prefix strings,
+  // but only once per visible-surface repaint (not per row at 60fps); routing
+  // those through the view model is a separate, larger refactor and is
+  // intentionally out of scope for this rule.
+  const std::array<std::filesystem::path, 4> hot_editor_render_files = {
       repo_root / "src/editor/EditorViewRenderer.cpp",
       repo_root / "src/editor/DecoratedTextGridRenderer.cpp",
+      repo_root / "src/workspace/WorkspaceShellRenderCompare.cpp",
+      repo_root / "src/workspace/WorkspaceShellRenderMerge.cpp",
   };
 
   for (const auto& path : render_files) {

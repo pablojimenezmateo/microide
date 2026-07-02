@@ -172,6 +172,11 @@ The 2026-05-06 `codebase-cleanup-perf-and-debt` adds four further hard invariant
   route through `ProjectBackgroundExecutor` to keep shell-thread latency predictable.
 - Render translation units (`WorkspaceShellRender*.cpp`) must not materialize new strings in hot
   paths; string assembly belongs in `RenderViewModelBuilder` so per-frame rendering stays lean.
+  This includes the compare/merge surface render TUs `WorkspaceShellRenderCompare.cpp` and
+  `WorkspaceShellRenderMerge.cpp` — the `WorkspaceShellRender*` prefix is what places them under the
+  lint set, so do not rename them back to `*CompareRender`/`*MergeRender`. They reuse scratch
+  `DecoratedTextRow` members instead of a fresh per-row row and truncate hot labels through
+  `TruncateLabelView` (`CheckCompareMergeRenderUsesScratchRows`).
 - `TextViewport` non-const mutation paths must not copy `document_->lines` wholesale; undo and
   edit flows should capture only the affected ranges to avoid large-buffer copy regressions.
 

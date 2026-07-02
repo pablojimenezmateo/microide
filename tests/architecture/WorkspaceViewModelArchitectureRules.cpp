@@ -75,8 +75,8 @@ RuleResult CheckCompareRenderStructuralGate(const std::filesystem::path& repo_ro
       continue;
     }
     const std::string name = entry.path().filename().string();
-    const bool is_compare_render = name.starts_with("WorkspaceShellCompareRender");
-    const bool is_merge_render = name.starts_with("WorkspaceShellMergeRender");
+    const bool is_compare_render = name.starts_with("WorkspaceShellRenderCompare");
+    const bool is_merge_render = name.starts_with("WorkspaceShellRenderMerge");
     if (!is_compare_render && !is_merge_render) {
       continue;
     }

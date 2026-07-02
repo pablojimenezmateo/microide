@@ -43,6 +43,7 @@ std::vector<RuleResult> RunWorkspaceArchitectureRules(const std::filesystem::pat
   run(CheckSdlTtfBackendNoPerGlyphLoop);
   run(CheckDecoratedTextGridRendererBatchesFills);
   run(CheckEditorViewRendererUsesScratchRows);
+  run(CheckCompareMergeRenderUsesScratchRows);
   run(CheckApplicationCoalescesResize);
   run(CheckMouseWheelUsesFractionalAccumulator);
   run(CheckBottomPanelTerminalRectCache);

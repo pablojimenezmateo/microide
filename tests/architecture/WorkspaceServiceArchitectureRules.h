@@ -15,6 +15,7 @@ RuleResult CheckWorkspaceShellRenderFrameAvoidsEphemeralEditorViewModelStrings(c
 RuleResult CheckSdlTtfBackendNoPerGlyphLoop(const std::filesystem::path& repo_root);
 RuleResult CheckDecoratedTextGridRendererBatchesFills(const std::filesystem::path& repo_root);
 RuleResult CheckEditorViewRendererUsesScratchRows(const std::filesystem::path& repo_root);
+RuleResult CheckCompareMergeRenderUsesScratchRows(const std::filesystem::path& repo_root);
 RuleResult CheckApplicationCoalescesResize(const std::filesystem::path& repo_root);
 RuleResult CheckMouseWheelUsesFractionalAccumulator(const std::filesystem::path& repo_root);
 RuleResult CheckBottomPanelTerminalRectCache(const std::filesystem::path& repo_root);

@@ -347,7 +347,7 @@ set(MICROIDE_CORE_SOURCES
   src/util/WindowPresentation.cpp
   src/workspace/WorkspaceShellCompare.cpp
   src/workspace/WorkspaceShellCompareMerge.cpp
-  src/workspace/WorkspaceShellCompareRender.cpp
+  src/workspace/WorkspaceShellRenderCompare.cpp
   src/workspace/ReviewSessionCoordinator.cpp
   src/workspace/ReviewTabPlan.cpp
   src/workspace/StatusBarModelService.cpp
@@ -470,7 +470,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellPrompts.cpp
   src/workspace/WorkspaceShellMerge.cpp
   src/workspace/WorkspaceShellMergeState.cpp
-  src/workspace/WorkspaceShellMergeRender.cpp
+  src/workspace/WorkspaceShellRenderMerge.cpp
   src/workspace/NotificationService.cpp
   src/workspace/WorkspaceSidebarCoordinator.cpp
   src/workspace/SidebarService.cpp
