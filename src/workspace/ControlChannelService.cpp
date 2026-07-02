@@ -64,6 +64,19 @@ bool CommandTouchesDebugger(const std::string& command) {
   return verb.starts_with("breakpoint-") || verb.starts_with("debug-");
 }
 
+// True when `command`'s leading verb equals `verb` (bare or followed by args).
+// Used to allow the single cross-window handoff command through the otherwise
+// closed socket of a control-disabled window.
+bool CommandVerbIs(const std::string& command, std::string_view verb) {
+  const std::size_t start = command.find_first_not_of(" \t");
+  if (start == std::string::npos) {
+    return false;
+  }
+  const std::string_view rest(command.data() + start, command.size() - start);
+  return rest == verb || (rest.starts_with(verb) && rest.size() > verb.size() &&
+                          (rest[verb.size()] == ' ' || rest[verb.size()] == '\t'));
+}
+
 std::filesystem::path DescriptorPathForPid(int pid) {
   return RuntimeBaseDir() / "instances" / (std::to_string(pid) + ".json");
 }
@@ -160,31 +173,40 @@ void ControlChannelService::SetWakeEventType(std::uint32_t event_type) {
 }
 
 bool ControlChannelService::Start(const std::filesystem::path& project_root) {
-  if (server_.IsRunning()) {
-    return true;
-  }
   const int pid = CurrentProcessId();
-  const std::filesystem::path socket_path = SocketPathForPid(pid);
-  if (!server_.Start(socket_path)) {
-    return false;
+  const bool first_bind = !server_.IsRunning();
+  if (first_bind) {
+    const std::filesystem::path socket_path = SocketPathForPid(pid);
+    if (!server_.Start(socket_path)) {
+      return false;
+    }
+    server_.SetWakeEventType(wake_event_type_);
+    descriptor_path_ = DescriptorPathForPid(pid);
   }
-  server_.SetWakeEventType(wake_event_type_);
 
-  // Write the discovery descriptor so an external tool can locate this socket by
-  // project. One file per process, so no cross-process locking is needed.
-  descriptor_path_ = DescriptorPathForPid(pid);
-  project_root_ = project_root;
-  WriteDescriptor();
+  // Because every window binds this socket at startup (before its project has
+  // loaded) and the full surface may widen later, Start() is also the refresh
+  // point: (re)publish the discovery descriptor whenever the advertised project
+  // changes, so `control-list` and project-based discovery stay accurate.
+  const bool project_changed = project_root_ != project_root;
+  if (first_bind || project_changed) {
+    project_root_ = project_root;
+    WriteDescriptor();
+  }
 
   // Handshake line for the headless agent: announce pid + socket + project so the
-  // stream's first line tells a driver what it is attached to. Mirrored to stdout
-  // only (no clients are connected at bind time).
-  util::JsonObject ready;
-  ready["event"] = util::JsonValue(std::string("ready"));
-  ready["pid"] = util::JsonValue(static_cast<std::int64_t>(pid));
-  ready["socket"] = util::JsonValue(socket_path.generic_string());
-  ready["project_root"] = util::JsonValue(project_root.generic_string());
-  EmitJsonLine(SerializeControlEvent(util::JsonValue(std::move(ready))));
+  // stream's first line tells a driver what it is attached to. Emitted only to the
+  // stdout mirror, and only once the project is known — for `--control` the mirror
+  // is enabled just before the post-Initialize Start(realRoot), so the ready line
+  // leads the stream with the real project rather than the empty init-bind value.
+  if (stdout_mirror_ && (first_bind || project_changed)) {
+    util::JsonObject ready;
+    ready["event"] = util::JsonValue(std::string("ready"));
+    ready["pid"] = util::JsonValue(static_cast<std::int64_t>(pid));
+    ready["socket"] = util::JsonValue(SocketPathForPid(pid).generic_string());
+    ready["project_root"] = util::JsonValue(project_root.generic_string());
+    EmitJsonLine(SerializeControlEvent(util::JsonValue(std::move(ready))));
+  }
   return true;
 }
 
@@ -264,7 +286,17 @@ void ControlChannelService::ConsumeControlCallbacks() {
     const ControlRequest request = ParseControlRequest(message.line);
     ControlResponse response;
     response.id = request.id;
-    if (!request.valid) {
+    // Every window binds this socket so it can receive a tab dragged in from
+    // another window (reattach). When the full control surface is disabled
+    // (`control.enabled` off, not `--control`), only that handoff command is
+    // honored; all other commands and queries are refused.
+    const bool handoff_only_allowed =
+        request.valid && request.is_command() &&
+        CommandVerbIs(request.command, "accept-tab-handoff");
+    if (!full_access_ && !handoff_only_allowed) {
+      response.ok = false;
+      response.error = "control channel disabled (set control.enabled true)";
+    } else if (!request.valid) {
       response.ok = false;
       response.error = request.parse_error;
     } else if (request.is_command()) {

@@ -115,9 +115,6 @@
   // Invoked by Application on window show / move / resize. No-op when the control
   // channel is not running.
   void UpdateControlWindowGeometry();
-  // Ensure the control channel is running so this window is discoverable as a
-  // reattach drop target, and publish its geometry. Called when a detach happens.
-  void EnsureControlChannelForHandoff();
   // Apply the `--set <id> <value>` startup overrides transiently (persist=false).
   // Invoked by Application after Initialize.
   void ApplyStartupSettingOverrides();

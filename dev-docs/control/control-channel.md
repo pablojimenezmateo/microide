@@ -8,22 +8,28 @@ vocabulary, not a parallel control path.
 
 ## Entry points
 
-- **Headless `--control`** — `microide --control` force-starts the channel
-  (bypassing the `control.enabled` gate) *and* mirrors every response, event, and
-  cold-start `applied` line to **stdout as JSONL** (`WorkspaceShell::
-  ForceStartControlChannel` → `ControlChannelService::SetStdoutMirror`). This is
-  the entry point for an LLM/agent: it can drive the instance and observe results
-  from one stdout stream, with or without ever opening the socket. The real window
-  stays running and fully interactive. Because `--control` owns the channel
-  lifecycle for the whole run, a live settings change (e.g. a spec's `set-setting
-  debug.enabled true`) never tears the socket down — `MaybeStartControlChannel`
-  early-returns when `control_stdout` is set, so the advertised socket persists.
-- **Live channel** — a per-instance AF_UNIX socket. Gated on the
-  `control.enabled` setting (off by default); toggling it on starts the listener
-  immediately (no restart), because the SDL wake event is always registered and
-  only the listener is gated (`WorkspaceShell::MaybeStartControlChannel`). It can
-  also be started transiently with `microide --set control.enabled true` (the
-  override is never persisted — see below).
+- **Always-on socket, gated surface** — every window binds a per-instance
+  AF_UNIX socket at startup and publishes a discovery descriptor (pid, socket,
+  project, live window bounds), independent of `control.enabled`. This is what
+  makes any window a **reattach drop target** for a tab dragged in from another
+  window (`accept-tab-handoff`). The socket is never torn down mid-run.
+  `control.enabled` (and `--control`) do not gate *binding* — they gate the
+  **surface**: with the full surface off ("restricted" mode) the socket honors
+  only the `accept-tab-handoff` handoff command and refuses all other commands and
+  queries (`ControlChannelService::SetFullAccess`,
+  `WorkspaceShell::MaybeStartControlChannel`). Toggling `control.enabled` on widens
+  it to the full command/query surface immediately (no restart); toggling off
+  narrows it back without dropping the socket. It can also be widened transiently
+  with `microide --set control.enabled true` (the override is never persisted —
+  see below).
+- **Headless `--control`** — `microide --control` opens the full surface *and*
+  mirrors every response, event, and cold-start `applied` line to **stdout as
+  JSONL** (`WorkspaceShell::ForceStartControlChannel` →
+  `ControlChannelService::SetStdoutMirror` + `SetFullAccess`). This is the entry
+  point for an LLM/agent: it can drive the instance and observe results from one
+  stdout stream, with or without ever opening the socket. The real window stays
+  running and fully interactive; a live settings change (e.g. a spec's
+  `set-setting debug.enabled true`) never tears the socket down.
 - **Cold-start spec** — `microide --control-spec <file.json>` opens a project
   with breakpoints already set (and optionally settings applied, files revealed, a
   session started) before the window is interactive. The spec's `project` field

@@ -90,6 +90,14 @@ class ControlChannelService {
   void SetStdoutMirror(bool on) { stdout_mirror_ = on; }
   bool StdoutMirrorEnabled() const { return stdout_mirror_; }
 
+  // Gate the full command/query surface. Every window binds the socket (so it can
+  // receive a reattached tab), but only a full-access channel (`control.enabled`
+  // or `--control`) honors arbitrary commands and queries; otherwise only the
+  // `accept-tab-handoff` handoff command is accepted. Defaults to full access so
+  // the service is usable standalone (tests, headless); the shell restricts it.
+  void SetFullAccess(bool on) { full_access_ = on; }
+  bool FullAccessEnabled() const { return full_access_; }
+
   // Emit one already-serialized JSONL line to the stdout mirror (no-op when the
   // mirror is off or no sink is wired). Used for cold-start `applied` lines.
   void EmitJsonLine(const std::string& line) const;
@@ -157,6 +165,7 @@ class ControlChannelService {
   std::filesystem::path descriptor_path_;
   std::filesystem::path project_root_;
   bool stdout_mirror_ = false;
+  bool full_access_ = true;
   // Last-published global window bounds (mirrored into the descriptor).
   int win_x_ = 0;
   int win_y_ = 0;

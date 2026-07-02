@@ -230,12 +230,15 @@ bool WorkspaceShell::EnsureDebuggerEnabledTransiently() {
 }
 
 void WorkspaceShell::ForceStartControlChannel() {
-  if (!startup_options_.control_stdout) {
-    return;
+  // Runs once, right after Initialize, when the project root is finally known. The
+  // socket was already bound during Initialize (MaybeStartControlChannel) with an
+  // empty project; refresh the advertised project + geometry now for EVERY window.
+  // `--control` additionally opens the full command/query surface + stdout JSONL
+  // mirror, so the following Start() leads the stream with the ready handshake.
+  if (startup_options_.control_stdout) {
+    control_channel_service_.SetStdoutMirror(true);
+    control_channel_service_.SetFullAccess(true);
   }
-  // Bypass the `control.enabled` gate: turn on the stdout JSONL mirror and bind
-  // the socket directly. Start() emits the `ready` handshake line.
-  control_channel_service_.SetStdoutMirror(true);
   control_channel_service_.Start(context_.current_project_state.root);
   UpdateControlWindowGeometry();
 }
@@ -253,33 +256,16 @@ void WorkspaceShell::UpdateControlWindowGeometry() {
   control_channel_service_.SetWindowBounds(x, y, w, h);
 }
 
-void WorkspaceShell::EnsureControlChannelForHandoff() {
-  // A window that detaches a tab enters a multi-window session, so it must be
-  // discoverable as a reattach drop target even if `control.enabled` was off.
-  // Start the socket + descriptor (idempotent) and publish geometry. The setting
-  // is flipped transiently so a later MaybeStartControlChannel() does not tear the
-  // socket back down mid-session.
-  if (!control_channel_service_.IsRunning()) {
-    SetSettingValue("control.enabled", "true", /*persist=*/false);
-    control_channel_service_.Start(context_.current_project_state.root);
-  }
-  UpdateControlWindowGeometry();
-}
-
 void WorkspaceShell::MaybeStartControlChannel() {
-  // Headless `--control` force-starts the channel independently of the
-  // `control.enabled` setting (see ForceStartControlChannel). A live settings
-  // change — e.g. the cold-start spec's `set-setting debug.enabled true` — must
-  // never tear that socket down: doing so strands the headless driver, which
-  // owns the channel lifecycle for the whole run. Leave it running.
-  if (startup_options_.control_stdout) {
-    return;
-  }
-  if (SettingFlagEnabled(GetSettingValue("control.enabled"))) {
-    control_channel_service_.Start(context_.current_project_state.root);
-  } else {
-    control_channel_service_.Stop();
-  }
+  // Every window binds the control socket + publishes its discovery descriptor so
+  // it can always receive a tab dragged in from another window (reattach), with no
+  // opt-in. `control.enabled` (or `--control`) only widens the socket from
+  // handoff-only to the full command/query surface — it never tears the socket
+  // down (which previously stranded a headless driver on a live setting change).
+  control_channel_service_.SetFullAccess(
+      startup_options_.control_stdout || SettingFlagEnabled(GetSettingValue("control.enabled")));
+  control_channel_service_.Start(context_.current_project_state.root);
+  UpdateControlWindowGeometry();
 }
 
 bool WorkspaceShell::StartDebugging(const LaunchConfig& config, const std::string& cwd) {

@@ -387,6 +387,72 @@ void TestDebugCommandAutoEnablesDebugger() {
   std::filesystem::remove_all(runtime, ec);
 }
 
+// Restricted mode (control.enabled off): every window binds this socket so it can
+// receive a tab dragged in from another window, but only the accept-tab-handoff
+// command is honored — arbitrary commands and queries are refused.
+void TestRestrictedModeAllowsOnlyHandoff() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-restricted-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  std::filesystem::create_directories(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = "/tmp/proj";
+
+  std::string last_command;
+  microide::workspace::ControlChannelService service;
+  service.Configure(
+      context,
+      microide::workspace::ControlChannelService::Operations{
+          .execute_command_line =
+              [&last_command](const std::string& line) {
+                last_command = line;
+                return microide::workspace::ControlChannelService::CommandOutcome{.ok = true};
+              },
+      });
+  service.SetWakeEventType(0);
+  Expect(service.Start("/tmp/proj"), "control service should start");
+  service.SetFullAccess(false);  // control.enabled off: handoff-only.
+
+  const std::string socket_path =
+      (runtime / "microide" / (std::to_string(::getpid()) + ".sock")).string();
+  int fd = -1;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (fd < 0 && std::chrono::steady_clock::now() < deadline) {
+    fd = ConnectUnix(socket_path);
+    if (fd < 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  Expect(fd >= 0, "client should connect to the restricted socket");
+
+  const auto open_reply =
+      util::ParseJson(ExchangeLine(service, fd, R"({"id":1,"command":"open /tmp/proj/a.cpp"})"));
+  Expect(open_reply.has_value() && !(*open_reply)["ok"].AsBool(),
+         "restricted mode should refuse an arbitrary command");
+  Expect(last_command.empty(),
+         "a refused command must never reach execute_command_line");
+
+  const auto query_reply =
+      util::ParseJson(ExchangeLine(service, fd, R"({"id":2,"query":"tabs"})"));
+  Expect(query_reply.has_value() && !(*query_reply)["ok"].AsBool(),
+         "restricted mode should refuse queries");
+
+  const auto handoff_reply = util::ParseJson(
+      ExchangeLine(service, fd, R"({"id":3,"command":"accept-tab-handoff /tmp/h.session"})"));
+  Expect(handoff_reply.has_value() && (*handoff_reply)["ok"].AsBool(),
+         "restricted mode should allow accept-tab-handoff through");
+  Expect(last_command == "accept-tab-handoff /tmp/h.session",
+         "accept-tab-handoff should reach execute_command_line");
+
+  ::close(fd);
+  service.Stop();
+  std::filesystem::remove_all(runtime, ec);
+}
+
 #else
 
 void TestQueryAndCommandOverSocket() {}
@@ -394,6 +460,7 @@ void TestControlListFiltersDeadPids() {}
 void TestLaunchConfigsAndAdaptersOverSocket() {}
 void TestSocketSelfHealsAfterExternalDeletion() {}
 void TestDebugCommandAutoEnablesDebugger() {}
+void TestRestrictedModeAllowsOnlyHandoff() {}
 
 #endif
 
@@ -529,6 +596,8 @@ void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
           TestSocketSelfHealsAfterExternalDeletion);
   AddTest(tests, "ControlChannelService/DebugCommandAutoEnablesDebugger",
           TestDebugCommandAutoEnablesDebugger);
+  AddTest(tests, "ControlChannelService/RestrictedModeAllowsOnlyHandoff",
+          TestRestrictedModeAllowsOnlyHandoff);
 }
 
 }  // namespace microide::tests

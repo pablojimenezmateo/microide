@@ -55,10 +55,6 @@ class WorkspaceDetachCoordinator {
     // Close the focused group's active tab WITHOUT the dirty prompt -- its content
     // already moved into the handoff, so there is nothing to lose.
     std::function<void()> close_active_tab_discarding_dirty;
-    // Make this window discoverable as a reattach drop target (starts its control
-    // channel + publishes geometry). Called before a detach so the tab can later
-    // be dragged back into this window.
-    std::function<void()> ensure_discoverable;
   };
 
   explicit WorkspaceDetachCoordinator(Operations operations);

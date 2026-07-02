@@ -116,9 +116,6 @@ bool WorkspaceDetachCoordinator::DetachActiveTab() {
   if (handoff.groups.empty() || handoff.groups.front().tabs.empty()) {
     return false;  // Transient / empty tab: nothing detachable to hand off.
   }
-  if (operations_.ensure_discoverable) {
-    operations_.ensure_discoverable();
-  }
   if (!SpawnHandoffWindow(handoff, root, /*child_owns_session=*/false)) {
     return false;
   }
@@ -138,9 +135,6 @@ bool WorkspaceDetachCoordinator::DetachActiveProject() {
   // Even a project with no persistable tabs opens fine in the child (welcome
   // surface), so an empty-groups handoff is still a valid project detach.
   const PersistedProjectSessionState handoff = operations_.build_project_handoff();
-  if (operations_.ensure_discoverable) {
-    operations_.ensure_discoverable();
-  }
   if (!SpawnHandoffWindow(handoff, root, /*child_owns_session=*/true)) {
     return false;
   }
@@ -180,9 +174,6 @@ bool WorkspaceDetachCoordinator::DropActiveTabAtGlobal(int global_x, int global_
 
   // No window under the point (or the handoff send failed): detach into a fresh
   // window, exactly like the menu detach path.
-  if (operations_.ensure_discoverable) {
-    operations_.ensure_discoverable();
-  }
   if (!SpawnHandoffWindow(handoff, root, /*child_owns_session=*/false)) {
     return false;
   }
@@ -209,11 +200,9 @@ bool WorkspaceDetachCoordinator::SpawnHandoffWindow(const PersistedProjectSessio
   if (child_owns_session) {
     argv.push_back("--detach-owns-session");
   }
-  // Detached windows join a multi-window session: enable the control channel so
-  // the child is discoverable and can receive a tab dragged back into it.
-  argv.push_back("--set");
-  argv.push_back("control.enabled");
-  argv.push_back("true");
+  // No --set control.enabled needed: every window binds a handoff-capable socket
+  // by default (see WorkspaceShell::MaybeStartControlChannel), so the child is a
+  // reattach drop target the moment it opens.
   if (!platform::SpawnDetached(argv, project_root)) {
     std::error_code ec;
     std::filesystem::remove(handoff_path, ec);  // No child consumed it; clean up.
@@ -248,7 +237,6 @@ WorkspaceDetachCoordinator WorkspaceShell::MakeDetachCoordinator() {
           [this]() {
             CloseTab(context_.current_project_state.focused_group().active_tab_index);
           },
-      .ensure_discoverable = [this]() { EnsureControlChannelForHandoff(); },
   });
 }
 
