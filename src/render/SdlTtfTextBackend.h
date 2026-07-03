@@ -37,6 +37,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   float LineHeight() const override { return line_height_; }
   TextClipPadding ClipPadding() const override { return clip_padding_; }
   float MeasureWidth(std::string_view text) const override;
+  std::optional<float> TryMeasureFastWidth(std::string_view text) const override;
   void DrawString(SDL_Renderer* renderer,
                   float x,
                   float y,
@@ -100,6 +101,11 @@ class SdlTtfTextBackend final : public TextRendererBackend {
     SDL_Texture* texture = nullptr;
     int width = 0;
     int height = 0;
+    // True for a white ASCII coverage composite shared across every opaque
+    // colour: DrawString tints it via SDL_SetTextureColorMod at draw time. False
+    // for a colour-baked texture (translucent / non-ASCII) drawn without
+    // modulation. Keyed on text only when coverage, on (text, colour) otherwise.
+    bool coverage = false;
     std::list<CacheKey>::iterator order;
   };
 

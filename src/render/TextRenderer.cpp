@@ -3,6 +3,7 @@
 #include <SDL3/SDL_log.h>
 
 #include <algorithm>
+#include <optional>
 #include <vector>
 
 #include "render/DebugTextBackend.h"
@@ -108,6 +109,20 @@ float TextRenderer::MeasureWidth(std::string_view text) const {
 
   ++width_cache_queries_;
   util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheQueries);
+
+  // Bypass the width cache for text the backend can measure in O(1) (monospace
+  // ASCII). Hashing the string and allocating a cache entry to memoize one
+  // multiply costs more than recomputing it, and syntax-highlight segments vary
+  // too much to cache well. Count it as a hit: the query was served without the
+  // expensive shaping path or a new allocation.
+  if (backend_ != nullptr) {
+    if (const std::optional<float> fast = backend_->TryMeasureFastWidth(text)) {
+      ++width_cache_hits_;
+      util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheHits);
+      return *fast;
+    }
+  }
+
   const auto cached = width_cache_.find(text);
   if (cached != width_cache_.end()) {
     ++width_cache_hits_;

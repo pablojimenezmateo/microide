@@ -51,8 +51,18 @@ class AsciiGlyphAtlas {
   // `color` must be opaque (a == 255); the coverage alpha is preserved so the
   // result is identical to rendering the glyph directly at `color`. Returns
   // false if `ch` is uncovered, the colour is translucent, or rasterization
-  // fails.
+  // fails. Convenience for a single glyph; a same-colour run should use
+  // BeginTint + BlitGlyphInto to avoid re-setting the tint per glyph.
   bool BlitInto(SDL_Surface* dst, int dst_x, char ch, SDL_Color color);
+
+  // Batched tinting for a same-colour run. BeginTint sets the atlas surface's
+  // colour modulation once for `color` (must be opaque; returns false otherwise)
+  // and BlitGlyphInto then straight-copies each glyph without re-issuing the
+  // three per-glyph SDL surface-state calls. Together they are pixel-identical to
+  // calling BlitInto per glyph, but hoist the redundant state changes out of the
+  // loop that assembles a whole-string composite.
+  bool BeginTint(SDL_Color color);
+  bool BlitGlyphInto(SDL_Surface* dst, int dst_x, char ch);
 
   // --- GPU atlas support ---------------------------------------------------
   // The CPU coverage surface is also the source for a one-time GPU texture

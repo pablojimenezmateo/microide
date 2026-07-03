@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -20,6 +21,7 @@
 #endif
 
 #include "platform/RuntimePaths.h"
+#include "render/ColorMath.h"
 #include "render/PixelAlign.h"
 #include "render/RendererInfo.h"
 #include "util/PerformanceCounters.h"
@@ -45,6 +47,10 @@ constexpr std::size_t kMaxCacheEntries = 4096;
 // so the cache stays small and neither bound is hit.
 constexpr std::size_t kMaxCacheBytes = 48ull * 1024 * 1024;
 constexpr float kMinPresentationScale = 0.1f;
+// Canonical key colour for a shared white ASCII coverage composite. Opaque so it
+// never collides with a translucent same-text baked entry (which keys on its own
+// alpha), and white so a draw-time colour modulation reproduces any opaque tint.
+constexpr SDL_Color kCoverageColor{255, 255, 255, 255};
 }  // namespace
 
 std::size_t SdlTtfTextBackend::EntryByteCost(int width, int height) {
@@ -259,8 +265,8 @@ float SdlTtfTextBackend::MeasureWidth(std::string_view text) const {
     return 0.0f;
   }
 
-  if (CanUseFastAscii(text)) {
-    return static_cast<float>(text.size()) * char_width_;
+  if (const std::optional<float> fast = TryMeasureFastWidth(text)) {
+    return *fast;
   }
 
   int width = 0;
@@ -269,6 +275,15 @@ float SdlTtfTextBackend::MeasureWidth(std::string_view text) const {
     return static_cast<float>(width) / std::max(kMinPresentationScale, presentation_scale_x_);
   }
 
+  return static_cast<float>(text.size()) * char_width_;
+}
+
+std::optional<float> SdlTtfTextBackend::TryMeasureFastWidth(std::string_view text) const {
+  // Monospace ASCII (0x20..0x7E) advances by a uniform cell, so the width is the
+  // char count times the cell width — no per-glyph shaping and no allocation.
+  if (font_ == nullptr || text.empty() || !CanUseFastAscii(text)) {
+    return std::nullopt;
+  }
   return static_cast<float>(text.size()) * char_width_;
 }
 
@@ -284,6 +299,14 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
   CacheEntry* entry = ResolveEntry(text, color);
   if (entry == nullptr || entry->texture == nullptr) {
     return;
+  }
+
+  if (entry->coverage) {
+    // Shared white-coverage texture: tint to the requested opaque colour. For an
+    // opaque colour this reproduces a direct render exactly (255 * c / 255 == c);
+    // the coverage alpha rides in the texture and is untouched. Every draw sets
+    // this, so a colour never leaks from a prior draw of the same string.
+    SDL_SetTextureColorMod(entry->texture, color.r, color.g, color.b);
   }
 
   const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
@@ -373,6 +396,13 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
     return nullptr;
   }
 
+  // The whole string is one opaque colour, so set the atlas tint once and reuse
+  // it for every glyph instead of re-issuing three SDL surface-state calls per
+  // glyph inside the loop.
+  if (!ascii_atlas_->BeginTint(color)) {
+    SDL_DestroySurface(composite);
+    return nullptr;
+  }
   for (std::size_t index = 0; index < text.size(); ++index) {
     const char ch = text[index];
     if (ch == ' ') {
@@ -383,7 +413,7 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
     // the per-pixel alpha exactly. If a glyph is somehow uncovered, bail so
     // ResolveEntry falls back to the whole-string SDL_ttf render rather than
     // caching a composite with a missing glyph.
-    if (!ascii_atlas_->BlitInto(composite, dst_x, ch, color)) {
+    if (!ascii_atlas_->BlitGlyphInto(composite, dst_x, ch)) {
       SDL_DestroySurface(composite);
       return nullptr;
     }
@@ -934,19 +964,13 @@ std::size_t SdlTtfTextBackend::CacheKeyHash::operator()(const CacheKeyView& key)
   };
 
   std::size_t h = std::hash<std::string_view>{}(key.text);
-  const std::uint32_t packed_foreground =
-      (static_cast<std::uint32_t>(key.color.r) << 24) |
-      (static_cast<std::uint32_t>(key.color.g) << 16) |
-      (static_cast<std::uint32_t>(key.color.b) << 8) |
-      static_cast<std::uint32_t>(key.color.a);
-  h = mix(h, packed_foreground);
+  h = mix(h, PackColorRgba(key.color));
   return h;
 }
 
 bool SdlTtfTextBackend::CacheKeyEqual::operator()(const CacheKeyView& lhs,
                                                   const CacheKeyView& rhs) const noexcept {
-  return lhs.text == rhs.text && lhs.color.r == rhs.color.r && lhs.color.g == rhs.color.g &&
-         lhs.color.b == rhs.color.b && lhs.color.a == rhs.color.a;
+  return lhs.text == rhs.text && ColorsEqual(lhs.color, rhs.color);
 }
 
 bool SdlTtfTextBackend::EnsureGpuAtlas() {
@@ -1091,9 +1115,16 @@ void SdlTtfTextBackend::DrawRuns(SDL_Renderer* renderer, const TextRun* runs, st
 
 SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view text,
                                                                SDL_Color color) {
+  // Opaque ASCII renders through a colour-independent white coverage composite
+  // that every opaque colour shares (tinted at draw via SDL_SetTextureColorMod),
+  // so the cache holds one texture per string instead of one per (string,
+  // colour). Translucent / non-ASCII text keeps the colour-baked whole-string
+  // path keyed on (text, colour).
+  const bool want_coverage = color.a == 255 && CanUseFastAscii(text);
+  const SDL_Color lookup_color = want_coverage ? kCoverageColor : color;
   const CacheKeyView key_view{
       .text = text,
-      .color = color,
+      .color = lookup_color,
   };
   if (auto it = cache_.find(key_view); it != cache_.end()) {
     util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheHits);
@@ -1108,8 +1139,10 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
   // that the ASCII-spacing regressions depend on. Non-ASCII falls back to the
   // SDL_ttf whole-string blended path, which already handles shaped glyphs.
   SDL_Surface* surface = nullptr;
-  if (CanUseFastAscii(text)) {
-    surface = BuildAsciiCompositeSurface(text, color);
+  bool coverage = false;
+  if (want_coverage) {
+    surface = BuildAsciiCompositeSurface(text, kCoverageColor);
+    coverage = surface != nullptr;
   }
   if (surface == nullptr) {
     surface = TTF_RenderText_Blended(font_, text.data(), text.size(), color);
@@ -1129,11 +1162,14 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
   entry.texture = texture;
   entry.width = surface->w;
   entry.height = surface->h;
+  entry.coverage = coverage;
   SDL_DestroySurface(surface);
 
+  // A composite that unexpectedly failed and fell through to the baked path is
+  // stored under its true (text, colour) key, not the coverage key we looked up.
   CacheKey key{
       .text = std::string(text),
-      .color = color,
+      .color = coverage ? kCoverageColor : color,
   };
   const std::size_t entry_bytes = EntryByteCost(entry.width, entry.height);
   auto [map_it, inserted] = cache_.emplace(std::move(key), std::move(entry));

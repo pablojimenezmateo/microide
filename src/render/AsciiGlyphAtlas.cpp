@@ -136,8 +136,22 @@ bool AsciiGlyphAtlas::SlotRect(char ch, int* x, int* width, int* height) {
   return true;
 }
 
-bool AsciiGlyphAtlas::BlitInto(SDL_Surface* dst, int dst_x, char ch, SDL_Color color) {
-  if (atlas_ == nullptr || dst == nullptr || color.a != 255) {
+bool AsciiGlyphAtlas::BeginTint(SDL_Color color) {
+  if (atlas_ == nullptr || color.a != 255) {
+    return false;
+  }
+  // Modulate the white coverage by the requested colour and straight-copy it.
+  // For opaque colours this yields (color.rgb, coverage) — identical to
+  // rendering the glyph directly at `color`, since 255 * c / 255 == c. Set once
+  // per run; BlitGlyphInto reuses this state for every glyph.
+  SDL_SetSurfaceColorMod(atlas_, color.r, color.g, color.b);
+  SDL_SetSurfaceAlphaMod(atlas_, 255);
+  SDL_SetSurfaceBlendMode(atlas_, SDL_BLENDMODE_NONE);
+  return true;
+}
+
+bool AsciiGlyphAtlas::BlitGlyphInto(SDL_Surface* dst, int dst_x, char ch) {
+  if (atlas_ == nullptr || dst == nullptr) {
     return false;
   }
   const unsigned char uch = static_cast<unsigned char>(ch);
@@ -149,17 +163,16 @@ bool AsciiGlyphAtlas::BlitInto(SDL_Surface* dst, int dst_x, char ch, SDL_Color c
     return false;
   }
   const Slot& slot = slots_[index];
-
-  // Modulate the white coverage by the requested colour and straight-copy it.
-  // For opaque colours this yields (color.rgb, coverage) — identical to
-  // rendering the glyph directly at `color`, since 255 * c / 255 == c.
-  SDL_SetSurfaceColorMod(atlas_, color.r, color.g, color.b);
-  SDL_SetSurfaceAlphaMod(atlas_, 255);
-  SDL_SetSurfaceBlendMode(atlas_, SDL_BLENDMODE_NONE);
-
   SDL_Rect src{slot.x, 0, slot.w, slot.h};
   SDL_Rect dst_rect{dst_x, 0, slot.w, slot.h};
   return SDL_BlitSurface(atlas_, &src, dst, &dst_rect);
+}
+
+bool AsciiGlyphAtlas::BlitInto(SDL_Surface* dst, int dst_x, char ch, SDL_Color color) {
+  if (dst == nullptr || !BeginTint(color)) {
+    return false;
+  }
+  return BlitGlyphInto(dst, dst_x, ch);
 }
 
 }  // namespace microide::render

@@ -19,10 +19,6 @@ namespace microide::render {
 
 namespace {
 
-SDL_Color MakeColor(Uint8 r, Uint8 g, Uint8 b, Uint8 a = 0xff) {
-  return SDL_Color{r, g, b, a};
-}
-
 SDL_Color WithAlpha(SDL_Color color, Uint8 alpha) {
   color.a = alpha;
   return color;

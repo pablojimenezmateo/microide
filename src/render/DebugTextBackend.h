@@ -12,6 +12,11 @@ class DebugTextBackend final : public TextRendererBackend {
   float MeasureWidth(std::string_view text) const override {
     return static_cast<float>(text.size()) * kDebugCharWidth;
   }
+  // The debug backend is fixed-width, so every measurement is the O(1) product
+  // that MeasureWidth returns — no case ever needs the cache.
+  std::optional<float> TryMeasureFastWidth(std::string_view text) const override {
+    return static_cast<float>(text.size()) * kDebugCharWidth;
+  }
   void DrawString(SDL_Renderer* renderer,
                   float x,
                   float y,

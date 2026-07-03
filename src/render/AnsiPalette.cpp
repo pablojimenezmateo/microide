@@ -3,15 +3,9 @@
 #include <algorithm>
 #include <array>
 
+#include "render/ColorMath.h"
+
 namespace microide::render {
-
-namespace {
-
-constexpr SDL_Color MakeColor(Uint8 r, Uint8 g, Uint8 b, Uint8 a = 0xff) {
-  return SDL_Color{r, g, b, a};
-}
-
-}  // namespace
 
 SDL_Color BasicAnsiColor(int index, bool bright) {
   static constexpr std::array<SDL_Color, 8> kNormal = {

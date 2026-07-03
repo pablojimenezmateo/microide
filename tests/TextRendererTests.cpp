@@ -10,6 +10,7 @@
 #include "render/PixelAlign.h"
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
+#include "util/PerformanceCounters.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceContext.h"
 
@@ -551,6 +552,69 @@ void TestSdlTtfBlendedTextKeepsTransparentCorners() {
          "blended-corner regression should read bottom-right pixel");
   Expect(a == 0, "bottom-right blended text pixel should stay transparent");
   SDL_DestroySurface(pixels);
+}
+
+// Opaque ASCII text is cached as one colour-independent white coverage texture
+// that every colour shares (tinted at draw). Drawing the same string in two
+// different opaque colours must reuse that single texture (a cache hit, not a
+// second miss) while still painting each colour correctly.
+void TestSdlTtfAsciiCoverageTextureIsSharedAcrossColors() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(320, 120);
+  microide::render::TextRenderer renderer;
+  renderer.EnsureInitialized(canvas.renderer());
+  Expect(renderer.BackendName() == "sdl3_ttf",
+         "coverage-sharing test should exercise the SDL_ttf backend");
+
+  const SDL_Color background = SDL_Color{0, 0, 0, 255};
+  Expect(SDL_SetRenderDrawColor(canvas.renderer(), background.r, background.g, background.b,
+                                background.a),
+         "coverage-sharing test should set the canvas background");
+  Expect(SDL_RenderClear(canvas.renderer()), "coverage-sharing test should clear the canvas");
+
+  util::ResetPerformanceCounters();
+  renderer.DrawString(canvas.renderer(), 12.0f, 18.0f, SDL_Color{255, 0, 0, 255}, "abc");
+  const std::uint64_t misses_after_first =
+      util::ReadPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheMisses);
+  const std::uint64_t hits_after_first =
+      util::ReadPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheHits);
+  Expect(misses_after_first == 1 && hits_after_first == 0,
+         "the first draw of a new ASCII string should build one coverage texture (a miss)");
+
+  // A second opaque colour for the SAME string must hit the shared coverage
+  // texture, not allocate a second per-colour texture.
+  renderer.DrawString(canvas.renderer(), 12.0f, 44.0f, SDL_Color{0, 255, 0, 255}, "abc");
+  const std::uint64_t misses_after_second =
+      util::ReadPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheMisses);
+  const std::uint64_t hits_after_second =
+      util::ReadPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheHits);
+  Expect(misses_after_second == 1,
+         "a second colour of the same ASCII string must not allocate another texture");
+  Expect(hits_after_second == 1,
+         "the second colour must reuse the shared coverage texture as a cache hit");
+
+  // Both colours must actually paint (draw-time colour modulation is applied per
+  // draw, so the green draw is not left showing the red tint).
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "coverage-sharing test should read back the canvas");
+  std::size_t red_pixels = 0;
+  std::size_t green_pixels = 0;
+  for (int y = 0; y < pixels->h; ++y) {
+    for (int x = 0; x < pixels->w; ++x) {
+      Uint8 r = 0, g = 0, b = 0, a = 0;
+      Expect(SDL_ReadSurfacePixel(pixels, x, y, &r, &g, &b, &a),
+             "coverage-sharing test should read software pixels");
+      if (IsRedDominant(r, g, b, a)) {
+        ++red_pixels;
+      } else if (IsGreenDominant(r, g, b, a)) {
+        ++green_pixels;
+      }
+    }
+  }
+  SDL_DestroySurface(pixels);
+  Expect(red_pixels > 0, "the red draw must leave red-tinted glyph pixels");
+  Expect(green_pixels > 0,
+         "the green draw of the shared coverage texture must be tinted green, not red");
 }
 
 void TestSdlTtfAsciiGlyphsStayWithinLineBands() {
@@ -2175,6 +2239,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer SDL_ttf blended text keeps transparent corners",
           TestSdlTtfBlendedTextKeepsTransparentCorners);
+  AddTest(tests,
+          "TextRenderer SDL_ttf ASCII coverage texture is shared across colors",
+          TestSdlTtfAsciiCoverageTextureIsSharedAcrossColors);
   AddTest(tests,
           "AsciiGlyphAtlas tinted blit matches direct per-color rendering",
           TestAsciiGlyphAtlasMatchesPerColorRendering);

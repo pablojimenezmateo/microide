@@ -53,6 +53,16 @@ class TextRendererBackend {
   virtual float LineHeight() const = 0;
   virtual TextClipPadding ClipPadding() const { return {}; }
   virtual float MeasureWidth(std::string_view text) const = 0;
+  // Measure `text` in O(1) *without* allocating or invoking the font shaper, when
+  // the backend can (monospace ASCII resolves to `size * char_width`). Returns
+  // nullopt when `text` needs the full MeasureWidth path (proportional / shaped
+  // glyphs). TextRenderer uses this to skip its width cache for text that is
+  // cheaper to measure directly than to hash and memoize. The default returns
+  // nullopt so a backend that cannot measure cheaply keeps the cached path.
+  virtual std::optional<float> TryMeasureFastWidth(std::string_view text) const {
+    (void) text;
+    return std::nullopt;
+  }
   virtual void DrawString(SDL_Renderer* renderer,
                           float x,
                           float y,

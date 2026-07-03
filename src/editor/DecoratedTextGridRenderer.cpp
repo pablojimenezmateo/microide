@@ -7,15 +7,12 @@
 #include <span>
 #include <utility>
 
+#include "render/ColorMath.h"
 #include "util/StringUtil.h"
 
 namespace microide::editor {
 
 namespace {
-
-bool SameColor(SDL_Color a, SDL_Color b) noexcept {
-  return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
-}
 
 // Effective plugin foreground for a source byte column, if any text-style
 // decoration recolors it. Overrides for a line are few; a linear scan keeps the
@@ -117,18 +114,28 @@ void AppendVisibleSyntaxTextRuns(DecoratedTextRow& row,
     return SyntaxTokenColor(theme, token_kind_at(byte_offset), plain_color);
   };
 
+  const float char_width = text_renderer.CharWidth();
   float segment_x = x;
   for (std::size_t segment_start = 0; segment_start < window.text.size();) {
     const SDL_Color color = effective_color_at(segment_start);
     std::size_t segment_end = segment_start;
+    // Fold monospace-ASCII detection into the color-boundary walk that already
+    // visits every codepoint, so an all-ASCII segment can advance the run origin
+    // by cell_count * CharWidth() (identical to the backend's fast path) instead
+    // of paying a redundant MeasureWidth scan per segment.
+    bool segment_ascii = true;
     while (segment_end < window.text.size()) {
-      const std::size_t next =
-          segment_end + util::Utf8SequenceLength(window.text, segment_end);
+      const std::size_t codepoint_length = util::Utf8SequenceLength(window.text, segment_end);
+      const unsigned char lead = static_cast<unsigned char>(window.text[segment_end]);
+      if (codepoint_length != 1 || lead < 0x20 || lead > 0x7E) {
+        segment_ascii = false;
+      }
+      const std::size_t next = segment_end + codepoint_length;
       if (next >= window.text.size()) {
         segment_end = window.text.size();
         break;
       }
-      if (!SameColor(effective_color_at(next), color)) {
+      if (!render::ColorsEqual(effective_color_at(next), color)) {
         segment_end = next;
         break;
       }
@@ -143,7 +150,8 @@ void AppendVisibleSyntaxTextRuns(DecoratedTextRow& row,
         .color = color,
         .text = segment_text,
     });
-    segment_x += text_renderer.MeasureWidth(segment_text);
+    segment_x += segment_ascii ? static_cast<float>(segment_text.size()) * char_width
+                               : text_renderer.MeasureWidth(segment_text);
     segment_start = segment_end;
   }
 }
@@ -181,7 +189,7 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
 
     std::size_t segment_end = segment_start + 1;
     while (segment_end < visible_cells) {
-      if (!SameColor(effective_color_at(segment_end), color)) {
+      if (!render::ColorsEqual(effective_color_at(segment_end), color)) {
         break;
       }
       ++segment_end;
@@ -239,7 +247,7 @@ void RenderColorBatchedFills(SDL_Renderer* renderer,
     if (rect.w <= 0.0f || rect.h <= 0.0f) {
       continue;
     }
-    if (!batch_open || !SameColor(active_color, color)) {
+    if (!batch_open || !render::ColorsEqual(active_color, color)) {
       FlushFillRun(renderer, active_color, batch);
       active_color = color;
       batch_open = true;
