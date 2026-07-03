@@ -33,7 +33,16 @@ class SymlinkLoopGuard {
   // `root` bounds which symlink targets may be followed: a symlink resolving
   // outside the (canonicalized) root is skipped. An empty/uncanonicalizable root
   // disables the containment check (cycle detection still applies).
-  explicit SymlinkLoopGuard(const std::filesystem::path& root) {
+  //
+  // `enforce_containment` (default true) is the opt-out for the
+  // `project.follow_out_of_root_symlinks` user setting: when false the root is
+  // left unset so out-of-root symlink targets are followed (still cycle-guarded),
+  // restoring the pre-hardening behavior for monorepos / symlinked dependencies.
+  explicit SymlinkLoopGuard(const std::filesystem::path& root,
+                            bool enforce_containment = true) {
+    if (!enforce_containment) {
+      return;  // root_ stays empty -> containment disabled, cycle guard intact
+    }
     std::error_code error;
     const std::filesystem::path canonical_root = std::filesystem::canonical(root, error);
     if (!error) {
@@ -113,11 +122,14 @@ class SymlinkLoopGuard {
       return true;
     }
     const std::filesystem::path relative = real.lexically_relative(root_);
-    // Empty means unrelated trees; a leading ".." means the target climbs out.
+    // Empty means unrelated trees; a leading ".." *component* means the target
+    // climbs out. Compare the first component, not a raw string prefix, so an
+    // in-root directory whose name merely starts with ".." (e.g. "..build") is
+    // not misread as an escape.
     if (relative.empty()) {
       return false;
     }
-    return relative.native().rfind("..", 0) != 0;
+    return *relative.begin() != std::filesystem::path("..");
   }
 
   std::filesystem::path root_;

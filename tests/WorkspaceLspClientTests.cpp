@@ -724,6 +724,106 @@ void TestWorkspaceLspClientSemanticTokensStubRoundTrip() {
 
 }  // namespace
 
+// A single server response whose declared Content-Length exceeds the 64 MiB cap
+// must be skipped whole, not tear the session down: the stream has to resync so
+// later messages (here a diagnostics push) are still delivered.
+void TestWorkspaceLspClientSkipsOversizedFrameAndResyncs() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#else
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(
+      server_path,
+      std::string(R"py(import json
+import sys
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        write_message({
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": {"capabilities": {"textDocumentSync": 1}},
+        })
+        # A well-formed frame that is too large to buffer (just over 64 MiB),
+        # streamed in full so the client must drain and discard the whole body.
+        oversized = 64 * 1024 * 1024 + 1
+        sys.stdout.buffer.write(f"Content-Length: {oversized}\r\n\r\n".encode("ascii"))
+        sys.stdout.buffer.write(b"x" * oversized)
+        sys.stdout.buffer.flush()
+        # After the skipped frame the stream must resync and deliver this push.
+        write_message({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {
+                "uri": "file:///tmp/a.txt",
+                "diagnostics": [{
+                    "range": {"start": {"line": 0, "character": 0},
+                              "end": {"line": 0, "character": 1}},
+                    "message": "resynced",
+                    "severity": 1,
+                }],
+            },
+        })
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+
+  LspClient client;
+  bool got_resynced_diag = false;
+  client.SetDiagnosticsCallback(
+      [&](std::string /*uri*/, std::vector<LspClient::Diagnostic> diags) {
+        if (!diags.empty() && diags.front().message == "resynced") {
+          got_resynced_diag = true;
+        }
+      });
+  const bool started =
+      client.Start({"python3", server_path.string()}, "file:///tmp", "python");
+  Expect(started, "oversized-frame fixture should start");
+  Expect(WaitForLspReadinessState(client, LspClient::ReadinessSnapshot::State::Ready, 2000) ||
+             client.IsInitialized(),
+         "oversized-frame fixture should initialize");
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < deadline && !got_resynced_diag) {
+    client.DrainCallbacks();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(got_resynced_diag,
+         "client must skip the oversized frame, resync, and deliver the later diagnostic");
+  client.Shutdown();
+#endif
+}
+
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceLspClient/SemanticTokensStubRoundTrip",
           TestWorkspaceLspClientSemanticTokensStubRoundTrip);
@@ -747,6 +847,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientAnswersServerRequestsAndAdvertisesEnablers);
   AddTest(tests, "WorkspaceLspClient/LspManagerSharesOneSubprocessAcrossLanguageIds",
           TestLspManagerSharesOneSubprocessAcrossLanguageIds);
+  AddTest(tests, "WorkspaceLspClient/SkipsOversizedFrameAndResyncs",
+          TestWorkspaceLspClientSkipsOversizedFrameAndResyncs);
 }
 
 }  // namespace microide::tests

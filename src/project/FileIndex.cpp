@@ -104,7 +104,9 @@ void FileIndex::Refresh() {
 
   std::vector<ProjectFile> rebuilt;
   if (!root.empty()) {
-    const auto scanned = CollectProjectFiles(root, ProjectFileScanMode::IncludeHidden);
+    const auto scanned = CollectProjectFiles(
+        root, ProjectFileScanMode::IncludeHidden,
+        follow_out_of_root_symlinks_.load(std::memory_order_relaxed));
     rebuilt.reserve(scanned.size());
     for (const auto& relative_path : scanned) {
       rebuilt.push_back(BuildProjectFile(root, relative_path));

@@ -75,9 +75,19 @@ CommitOperationResult ExecuteGitCommit(const std::filesystem::path& repository_r
     arguments.emplace_back(std::string(body));
   }
 
-  const GitRepository::CommandResult command = repo.Execute(arguments, false);
+  // A commit can legitimately run a slow pre-commit hook, so use the generous
+  // write timeout rather than the short read cap.
+  const GitRepository::CommandResult command =
+      repo.Execute(arguments, false, internal::kGitWriteTimeoutMs);
   result.hook_output = command.output;
   util::TrimTrailingLineEndings(&result.hook_output);
+  if (command.timed_out) {
+    // A timeout is not an ordinary non-zero exit: report it as such instead of
+    // letting it fall through to a generic "Commit failed".
+    result.category = CommitOperationResultCategory::TimedOut;
+    result.detail = "Commit timed out and was aborted";
+    return result;
+  }
   result.category = ClassifyCommitFailure(command.exit_code, result.hook_output);
   if (result.category == CommitOperationResultCategory::Success) {
     result.detail.clear();

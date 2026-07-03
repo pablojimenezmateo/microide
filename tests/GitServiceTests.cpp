@@ -80,7 +80,7 @@ void TestGitCompareFixture() {
   WriteFile(new_file, ReadFile(head_dir / "src/new_panel.cpp"));
   CommitAll(repo_path, "head fixture", "head fixture");
 
-  const auto history = CollectGitFileHistory(repo_path, tracked_file);
+  const auto history = CollectGitFileHistory(repo_path, tracked_file).commits;
   Expect(history.size() == 2, "tracked file should have two commits in history");
   Expect(history[0].subject == "head fixture", "newest history entry subject mismatch");
   Expect(history[1].subject == "base fixture", "oldest history entry subject mismatch");
@@ -404,8 +404,11 @@ void TestGitRepositoryDirectApi() {
   Expect(repo.ToAbsolute("README.md") == repo_path / "README.md",
          "git repository wrapper should convert relative paths back to absolute ones");
 
-  const auto history = repo.GetFileHistory("README.md");
+  const auto history_result = repo.GetFileHistory("README.md");
+  const auto& history = history_result.commits;
   Expect(history.size() == 1, "git repository wrapper should return commit history");
+  Expect(!history_result.truncated,
+         "a short history must not be flagged as truncated");
   Expect(history[0].subject == "base fixture",
          "git repository wrapper should preserve commit subjects");
 
@@ -438,7 +441,7 @@ void TestGitRepositoryHandlesQuotedAndSpacedPaths() {
   Expect(*relative == std::filesystem::path("dir with spaces") / "quote's file.cpp",
          "git repository wrapper should preserve the exact relative path");
 
-  const auto history = repo.GetFileHistory(*relative);
+  const auto history = repo.GetFileHistory(*relative).commits;
   Expect(history.size() == 1, "quoted path history should be readable through git repository");
   Expect(history[0].subject == "Add weird path",
          "quoted path history should preserve commit metadata");
@@ -450,10 +453,12 @@ void TestGitRepositoryHandlesQuotedAndSpacedPaths() {
 }
 
 void TestGitPorcelainParserStatusV1() {
+  // Real `git status --porcelain=v1 -z` emits the rename destination first (in
+  // the code record) and the source path in the following NUL record.
   std::string output;
-  output += "R  old/name.cpp";
+  output += "R  src/renamed.cpp";
   output.push_back('\0');
-  output += "src/renamed.cpp";
+  output += "old/name.cpp";
   output.push_back('\0');
   output += " M src/nested/file.cpp";
   output.push_back('\0');
@@ -491,9 +496,9 @@ void TestGitPorcelainParserWorkingTreeEntries() {
   output.push_back('\0');
   output += "UU src/conflict.cpp";
   output.push_back('\0');
-  output += "R  old/path.cpp";
+  output += "R  src/renamed.cpp";
   output.push_back('\0');
-  output += "src/renamed.cpp";
+  output += "old/path.cpp";
   output.push_back('\0');
 
   const auto entries = GitPorcelainParser::ParseWorkingTreeEntries(output);
@@ -662,6 +667,36 @@ void TestGitPorcelainParserBoundsHostileStatus() {
   }
 }
 
+// A git invocation killed for exceeding its wall-clock timeout must report
+// timed_out (not a bare non-zero exit), so callers can distinguish a spurious
+// timeout from a real failure instead of showing a generic error.
+void TestGitCommandTimeoutReportsTimedOut() {
+#if defined(_WIN32)
+  return;  // POSIX sh hook + SIGKILL semantics
+#else
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  WriteFile(repo_path / "a.txt", "a1\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "first commit", "seed repo for timeout test");
+
+  // A pre-commit hook that sleeps far past the timeout makes `git commit` block
+  // deterministically.
+  const auto hook = repo_path / ".git" / "hooks" / "pre-commit";
+  WriteFile(hook, "#!/bin/sh\nsleep 30\n");
+  std::filesystem::permissions(hook, std::filesystem::perms::owner_all,
+                               std::filesystem::perm_options::add);
+
+  WriteFile(repo_path / "a.txt", "a2\n");
+  RunGitCommand(repo_path, {"add", "-A"});
+
+  const auto result = microide::project::internal::ReadGitCommandOutput(
+      repo_path, {"commit", "-m", "blocked"}, /*silence_stderr=*/false, /*timeout_ms=*/300);
+  Expect(result.timed_out, "a git commit blocked by a slow hook must report timed_out");
+  Expect(!result.success(), "a timed-out git command must not report success");
+#endif
+}
+
 }  // namespace
 
 void RegisterGitServiceTests(std::vector<TestCase>& tests) {
@@ -685,6 +720,7 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/PorcelainParserWorkingTreeEntries", TestGitPorcelainParserWorkingTreeEntries);
   AddTest(tests, "Git/PorcelainParserLog", TestGitPorcelainParserLog);
   AddTest(tests, "Git/StatusCodePrecedenceUnified", TestGitStatusCodePrecedenceIsUnified);
+  AddTest(tests, "Git/CommandTimeoutReportsTimedOut", TestGitCommandTimeoutReportsTimedOut);
 }
 
 }  // namespace microide::tests

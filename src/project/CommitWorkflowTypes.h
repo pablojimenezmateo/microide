@@ -56,6 +56,7 @@ enum class CommitOperationResultCategory {
   Conflict,
   AuthFailed,
   RepoLocked,
+  TimedOut,
   RefreshFailedAfterSuccess,
   UnknownError,
 };

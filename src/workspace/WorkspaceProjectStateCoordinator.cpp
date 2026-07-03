@@ -12,6 +12,7 @@
 #include "platform/AppDirectories.h"
 #include "app/BackgroundTaskCounter.h"
 #include "util/StartupTrace.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceProjectPresentation.h"
@@ -390,6 +391,12 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
 
   StopProjectSearch();
   context_.current_project_state.root = absolute_root.lexically_normal();
+  const bool follow_out_of_root_symlinks =
+      SettingFlagEnabled(GetSettingValue("project.follow_out_of_root_symlinks"), false);
+  context_.current_project_state.directory_tree.SetFollowOutOfRootSymlinks(
+      follow_out_of_root_symlinks);
+  context_.current_project_state.file_index.SetFollowOutOfRootSymlinks(
+      follow_out_of_root_symlinks);
   {
     util::StartupTrace::Scope tree_scope("DirectoryTree::SetRoot");
     if (!context_.current_project_state.directory_tree.SetRoot(context_.current_project_state.root)) {

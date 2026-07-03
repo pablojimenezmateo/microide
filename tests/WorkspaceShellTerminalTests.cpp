@@ -232,6 +232,17 @@ void TestWorkspaceShellTerminalOsc52CopiesToClipboard() {
   WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
   Expect(clipboard_text.empty(),
          "OSC 52 must not write the system clipboard by default (poisoning guard)");
+  // A blocked write must not be silent: surface a hint.
+  Expect(WorkspaceShellTestAccess::ActiveNotifications(shell).size() == 1,
+         "a blocked OSC 52 write should surface a hint");
+
+  // Every blocked write notifies (the toast service bounds/expires them).
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]52;c;Y29waWVkIGZyb20gdGVybQ==\x07");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  Expect(clipboard_text.empty(),
+         "OSC 52 stays blocked before opt-in");
+  Expect(WorkspaceShellTestAccess::ActiveNotifications(shell).size() == 2,
+         "each blocked OSC 52 write should surface its own hint");
 
   // Opt-in: enabling the setting routes OSC 52 text to the clipboard writer.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(

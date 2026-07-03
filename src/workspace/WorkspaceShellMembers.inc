@@ -1948,6 +1948,13 @@
   mutable bool project_tabs_hide_when_single_ = false;
   // Last terminal scrollback cap pushed to live sessions; -1 forces the first apply.
   int last_applied_terminal_scrollback_ = -1;
+  // Last-applied value of "project.follow_out_of_root_symlinks". Defaults to the
+  // setting default (false) so a live toggle re-scans the tree/index exactly once.
+  bool last_applied_follow_out_of_root_symlinks_ = false;
+  // Ceiling on the aggregate modified-content Replace-All buffers before writing.
+  // Above it the operation aborts (surfacing an error) rather than risk OOM. A
+  // member (not a local constant) so tests can lower it without a huge fixture.
+  std::size_t replace_all_aggregate_cap_bytes_ = 512ull * 1024 * 1024;
   Uint32 git_blame_event_type_ = 0;
   Uint32 git_sidebar_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;

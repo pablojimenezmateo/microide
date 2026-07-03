@@ -69,6 +69,58 @@ void TestScannerFollowsInProjectSymlink() {
 #endif
 }
 
+// Opting in (project.follow_out_of_root_symlinks = true) restores following an
+// out-of-root symlink target, for monorepos / symlinked dependencies. Cycle
+// detection still applies; only the containment guard is relaxed.
+void TestScannerFollowsRootEscapingSymlinkWhenOptedIn() {
+#if defined(_WIN32)
+  return;
+#else
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project = temp_dir.path() / "project";
+  const std::filesystem::path outside = temp_dir.path() / "outside";
+  std::filesystem::create_directories(project);
+  std::filesystem::create_directories(outside);
+  WriteFile(project / "inside.txt", "in");
+  WriteFile(outside / "shared.txt", "out");
+
+  std::error_code ec;
+  std::filesystem::create_directory_symlink(outside, project / "vendor", ec);
+  Expect(!ec, "symlink fixture should be created");
+
+  const auto files = CollectProjectFiles(project, ProjectFileScanMode::ExcludeHidden,
+                                         /*follow_out_of_root_symlinks=*/true);
+  Expect(ContainsName(files, "inside.txt"), "in-project files should still be indexed");
+  Expect(ContainsName(files, "shared.txt"),
+         "opting in should follow an out-of-root symlink target");
+#endif
+}
+
+// Regression: an in-root directory whose name begins with ".." (e.g. "..cache")
+// must not be misclassified as a root escape. The containment check compares the
+// first path *component*, not a raw string prefix.
+void TestScannerFollowsSymlinkToDotDotPrefixedInRootDir() {
+#if defined(_WIN32)
+  return;
+#else
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project = temp_dir.path() / "project";
+  const std::filesystem::path dotdot_dir = project / "..cache";
+  std::filesystem::create_directories(dotdot_dir);
+  WriteFile(dotdot_dir / "cached.txt", "c");
+
+  std::error_code ec;
+  std::filesystem::create_directory_symlink(dotdot_dir, project / "alias", ec);
+  Expect(!ec, "in-project '..'-prefixed symlink fixture should be created");
+
+  // Default containment (opt-in off): the target is in-root, so it must be
+  // followed despite the leading ".." in the directory name.
+  const auto files = CollectProjectFiles(project, ProjectFileScanMode::ExcludeHidden);
+  Expect(ContainsName(files, "cached.txt"),
+         "in-root '..'-prefixed directory content should be indexed");
+#endif
+}
+
 }  // namespace
 
 void RegisterProjectFileScannerTests(std::vector<TestCase>& tests) {
@@ -76,6 +128,10 @@ void RegisterProjectFileScannerTests(std::vector<TestCase>& tests) {
           TestScannerDoesNotFollowRootEscapingSymlink);
   AddTest(tests, "ProjectFileScanner/FollowsInProjectSymlink",
           TestScannerFollowsInProjectSymlink);
+  AddTest(tests, "ProjectFileScanner/FollowsRootEscapingSymlinkWhenOptedIn",
+          TestScannerFollowsRootEscapingSymlinkWhenOptedIn);
+  AddTest(tests, "ProjectFileScanner/FollowsSymlinkToDotDotPrefixedInRootDir",
+          TestScannerFollowsSymlinkToDotDotPrefixedInRootDir);
 }
 
 }  // namespace microide::tests

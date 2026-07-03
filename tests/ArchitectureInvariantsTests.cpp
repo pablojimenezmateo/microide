@@ -136,8 +136,12 @@ void TestArchitectureInvariants() {
              // allocation) so ProjectTabStripVisible re-resolves only on a settings-store revision
              // bump, keeping the per-mouse-move window-drag hit-test's uncached ComputeLayout off the
              // string-lookup path.
+             // 1644: +2 for the resilience-fix members: last_applied_follow_out_of_root_symlinks_
+             // (change-detect the project.follow_out_of_root_symlinks toggle so ApplyLiveSettings
+             // re-scans only when it flips) and replace_all_aggregate_cap_bytes_ (a test seam for the
+             // Replace-All buffer ceiling).
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1642);
+                                                     1644);
            });
 
   bool hard_failure = false;

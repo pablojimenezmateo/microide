@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "project/GitCommandUtil.h"
 #include "project/GitCompareService.h"
 #include "project/GitStatusService.h"
 
@@ -25,13 +26,20 @@ class GitRepository {
   struct CommandResult {
     int exit_code = -1;
     std::string output;
+    bool timed_out = false;
+    bool truncated = false;
     bool success() const { return exit_code == 0; }
   };
 
+  // `timeout_ms` bounds the invocation (see internal::kGitReadTimeoutMs /
+  // kGitWriteTimeoutMs). Read commands use the default; write/long ops (commit,
+  // apply) pass the generous write cap so a slow pre-commit hook is not killed.
   CommandResult Execute(std::initializer_list<std::string_view> arguments,
-                        bool silence_stderr = true) const;
+                        bool silence_stderr = true,
+                        int timeout_ms = internal::kGitReadTimeoutMs) const;
   CommandResult Execute(const std::vector<std::string>& arguments,
-                        bool silence_stderr = true) const;
+                        bool silence_stderr = true,
+                        int timeout_ms = internal::kGitReadTimeoutMs) const;
   bool ExecuteSucceeds(std::initializer_list<std::string_view> arguments,
                        bool silence_stderr = true) const;
   bool ExecuteSucceeds(const std::vector<std::string>& arguments,
@@ -39,7 +47,7 @@ class GitRepository {
 
   std::unordered_map<std::string, GitFileStatus> GetStatuses() const;
   std::vector<GitWorkingTreeEntry> GetWorkingTreeEntries() const;
-  std::vector<GitCommitEntry> GetFileHistory(const std::filesystem::path& relative_path) const;
+  GitFileHistoryResult GetFileHistory(const std::filesystem::path& relative_path) const;
   bool FileExistsAtRevision(const std::filesystem::path& relative_path,
                             std::string_view revision = "HEAD") const;
   std::optional<std::string> ReadFileAtRevision(const std::filesystem::path& relative_path,

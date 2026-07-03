@@ -103,8 +103,8 @@ std::optional<GitBranchReference> ResolveNamedBranchReference(const GitRepositor
 
 }  // namespace
 
-std::vector<GitCommitEntry> CollectGitFileHistory(const std::filesystem::path& root,
-                                                  const std::filesystem::path& absolute_path) {
+GitFileHistoryResult CollectGitFileHistory(const std::filesystem::path& root,
+                                           const std::filesystem::path& absolute_path) {
   const GitRepository repo(root);
   if (absolute_path.empty() || !repo.IsValid()) {
     return {};

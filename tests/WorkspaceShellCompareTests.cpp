@@ -517,7 +517,7 @@ void TestWorkspaceShellReadOnlyCompareRightPaneSupportsSelectAllAndCopy() {
   WriteFile(source, "head line\n");
   CommitAll(root, "head fixture", "head fixture");
 
-  const auto history = microide::project::CollectGitFileHistory(root, source);
+  const auto history = microide::project::CollectGitFileHistory(root, source).commits;
   Expect(history.size() == 2, "read-only compare fixture should have two commits");
 
   WorkspaceShell shell;
@@ -561,7 +561,7 @@ void TestWorkspaceShellReadOnlyCompareShortcutCopyUsesNavigableViewport() {
   WriteFile(source, "head line\n");
   CommitAll(root, "head fixture", "head fixture");
 
-  const auto history = microide::project::CollectGitFileHistory(root, source);
+  const auto history = microide::project::CollectGitFileHistory(root, source).commits;
   Expect(history.size() == 2, "compare shortcut fixture should have two commits");
 
   WorkspaceShell shell;

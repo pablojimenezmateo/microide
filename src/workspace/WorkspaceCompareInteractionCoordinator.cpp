@@ -88,9 +88,14 @@ bool CompareInteractionCoordinator::OpenPickerForPath(
   picker.context_label = picker.path.filename().string();
   picker.query.SetText("");
   picker.items.clear();
-  for (const auto& commit : project::CollectGitFileHistory(state_.root, picker.path)) {
+  const project::GitFileHistoryResult history =
+      project::CollectGitFileHistory(state_.root, picker.path);
+  for (const auto& commit : history.commits) {
     picker.items.push_back(MakeCommitPickerItem(commit));
   }
+  // Signal that older commits exist beyond the display cap rather than hiding the
+  // truncation silently.
+  picker.title = history.truncated ? "Compare against (latest 5000)" : "Compare against";
   RefreshPicker();
   if (picker.matches.empty()) {
     return false;

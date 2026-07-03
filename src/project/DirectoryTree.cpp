@@ -315,7 +315,8 @@ void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
       .children_materialized = true,
       .git_status = GitFileStatus::Clean,
   });
-  SymlinkLoopGuard loop_guard(root_);
+  SymlinkLoopGuard loop_guard(root_,
+                              /*enforce_containment=*/!follow_out_of_root_symlinks_);
   AppendDirectory(root_, 1, matcher, loop_guard);
 
   selected_index_ = 0;

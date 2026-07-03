@@ -377,6 +377,20 @@ void WorkspaceShell::ApplyLiveSettings() {
       layout_mode_service_.SetUserOverride(LayoutModeInputs::Override::Auto);
     }
   }
+  // Toggling out-of-root symlink following changes what the tree/index walk may
+  // descend into, so re-scan when it flips (only on actual change — a full
+  // rescan is too heavy to run every settings mutation).
+  if (const bool follow =
+          SettingFlagEnabled(GetSettingValue("project.follow_out_of_root_symlinks"), false);
+      follow != last_applied_follow_out_of_root_symlinks_) {
+    last_applied_follow_out_of_root_symlinks_ = follow;
+    context_.current_project_state.directory_tree.SetFollowOutOfRootSymlinks(follow);
+    context_.current_project_state.file_index.SetFollowOutOfRootSymlinks(follow);
+    context_.current_project_state.directory_tree.Refresh();
+    context_.current_project_state.file_index.Refresh();
+    context_.current_project_state.file_finder.InvalidateIndexCache();
+    RequestSidebarRedraw();
+  }
 
   LiveSettingsEditorSnapshot snapshot;
   snapshot.project_root = context_.current_project_state.root.lexically_normal();

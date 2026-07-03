@@ -37,6 +37,10 @@ class DirectoryTree {
  public:
   bool SetRoot(const std::filesystem::path& root);
   void Refresh();
+  // Mirrors the `project.follow_out_of_root_symlinks` user setting; consulted
+  // when the tree is rebuilt. Default false keeps the out-of-root containment
+  // guard active.
+  void SetFollowOutOfRootSymlinks(bool follow) { follow_out_of_root_symlinks_ = follow; }
   void RefreshGitStatuses();
   void ApplyGitStatuses(std::unordered_map<std::string, GitFileStatus> statuses);
   void MoveSelection(int delta);
@@ -87,6 +91,7 @@ class DirectoryTree {
   static std::string NormalizePathKey(const std::filesystem::path& path);
 
   std::filesystem::path root_;
+  bool follow_out_of_root_symlinks_ = false;
   std::vector<TreeEntry> entries_;
   std::uint64_t entries_revision_ = 0;
   std::unordered_map<std::string, GitFileStatus> git_statuses_;

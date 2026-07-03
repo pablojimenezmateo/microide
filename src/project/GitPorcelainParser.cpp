@@ -37,18 +37,17 @@ std::vector<ParsedStatusV1Entry> ParseStatusV1Entries(std::string_view output) {
     }
 
     const std::string_view code = entry.substr(0, 2);
-    std::string_view path = entry.substr(3);
+    const std::string_view path = entry.substr(3);
     if (path.empty()) {
       continue;
     }
 
-    // Rename/copy status codes are followed by the source path in the next
-    // NUL-delimited record; the destination path stays in `entry`.
+    // Rename/copy status codes emit two NUL-delimited records: git writes the
+    // destination first (in `entry`, right after the code) and the source path
+    // in the following record ("<code> <new>\0<old>"). Keep `path` pointing at
+    // the destination and consume the source record so it is not parsed as its
+    // own entry.
     if (StatusUsesTargetPath(code) && i + 1 < records.size()) {
-      const std::string_view target = records[i + 1];
-      if (!target.empty()) {
-        path = target;
-      }
       ++i;
     }
 

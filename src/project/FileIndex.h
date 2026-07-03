@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -55,6 +56,12 @@ class FileIndex {
                RootPopulationMode population_mode = RootPopulationMode::ScanNow);
   void Reset();
   void Refresh();
+  // Mirrors the `project.follow_out_of_root_symlinks` user setting; consulted by
+  // the full rescan in Refresh(). Default false keeps the out-of-root containment
+  // guard active.
+  void SetFollowOutOfRootSymlinks(bool follow) {
+    follow_out_of_root_symlinks_.store(follow, std::memory_order_relaxed);
+  }
   // Applies an index update batch. For the initial full-scan batch (the only
   // expensive case), `is_cancelled` is polled during the bulk rebuild; if it
   // returns true the rebuild aborts before committing, leaving the index
@@ -92,6 +99,7 @@ class FileIndex {
   void RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache) const;
 
   std::filesystem::path root_;
+  std::atomic<bool> follow_out_of_root_symlinks_{false};
   mutable std::shared_mutex files_mutex_;
   std::vector<ProjectFile> files_;
   std::uint64_t version_ = 0;

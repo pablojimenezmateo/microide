@@ -253,6 +253,13 @@
   static void ReplaceAllProjectSearchMatches(WorkspaceShell& shell) {
     shell.ReplaceAllProjectSearchMatches();
   }
+  static void SetReplaceAllAggregateCapBytes(WorkspaceShell& shell, std::size_t cap) {
+    shell.replace_all_aggregate_cap_bytes_ = cap;
+  }
+  static const std::vector<NotificationService::Notification>& ActiveNotifications(
+      const WorkspaceShell& shell) {
+    return shell.notification_service_.Active();
+  }
   static void EnsureTerminalTab(WorkspaceShell& shell) {
     if (shell.context_.current_project_state.terminal_tabs.empty()) {
       shell.context_.current_project_state.terminal_tabs.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());

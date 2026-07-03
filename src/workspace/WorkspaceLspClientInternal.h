@@ -138,6 +138,11 @@ struct LspClient::Impl {
   // the initialize response (e.g. clangd's early registerCapability / progress /
   // configuration requests) across that handoff.
   ReadBuf io_buf;
+  // Remaining body bytes to drain-and-discard for a frame whose declared
+  // Content-Length exceeded kMaxLspMessageBytes. Skipping the whole frame lets
+  // the parser resync to the next frame instead of reading body bytes as headers
+  // (which would desync the stream and tear the session down).
+  std::size_t skip_body_bytes_ = 0;
   std::thread io_thread;
   std::atomic<bool> stop_io{false};
   std::mutex wake_mutex;          // guards wake_pipe_ open/close/Wake (brief, non-blocking)
@@ -544,6 +549,16 @@ struct LspClient::Impl {
   std::optional<util::JsonValue> TryParseOneMessage(ReadBuf& buf) {
     static constexpr std::string_view kPrefix = "Content-Length: ";
 
+    // Draining the body of an oversized frame we chose to skip: consume what is
+    // buffered and stop until the rest arrives. The read loop keeps feeding bytes,
+    // so the frame is discarded a chunk at a time without the buffer ever growing.
+    if (skip_body_bytes_ > 0) {
+      const std::size_t drop = std::min<std::size_t>(skip_body_bytes_, buf.view().size());
+      buf.consume(drop);
+      skip_body_bytes_ -= drop;
+      return std::nullopt;
+    }
+
     const std::string_view v = buf.view();
     const auto nl = v.find('\n');
     if (nl == std::string_view::npos) return std::nullopt;
@@ -559,12 +574,16 @@ struct LspClient::Impl {
     const std::string_view len_sv = line.substr(kPrefix.size());
     int content_len = 0;
     const auto [ptr, ec] = std::from_chars(len_sv.data(), len_sv.data() + len_sv.size(), content_len);
-    if (ec != std::errc{} || content_len <= 0 ||
-        static_cast<std::size_t>(content_len) > kMaxLspMessageBytes) {
+    if (ec != std::errc{} || content_len <= 0) {
+      // Malformed/absurd length (an out-of-int-range value fails to parse here):
+      // drop the header line and try to resync on the next. The read-buffer cap
+      // remains the backstop if the stream never recovers.
       buf.consume(nl + 1);
       return std::nullopt;
     }
 
+    // Locate the end of the header block (the blank line). Headers are tiny, so
+    // waiting for the whole block never blocks on the (possibly huge) body.
     std::size_t body_start = nl + 1;
     while (body_start < v.size()) {
       const auto nl2 = v.find('\n', body_start);
@@ -573,6 +592,14 @@ struct LspClient::Impl {
       if (!hdr.empty() && hdr.back() == '\r') hdr.remove_suffix(1);
       body_start = nl2 + 1;
       if (hdr.empty()) break;
+    }
+
+    if (static_cast<std::size_t>(content_len) > kMaxLspMessageBytes) {
+      // Too large to buffer: skip the entire frame (headers + body) so the parser
+      // resyncs to the next frame instead of reading body bytes as headers.
+      buf.consume(body_start);
+      skip_body_bytes_ = static_cast<std::size_t>(content_len);
+      return std::nullopt;
     }
 
     if (v.size() - body_start < static_cast<std::size_t>(content_len)) {

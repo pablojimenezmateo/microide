@@ -169,8 +169,17 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
     terminal_tab->session.ConsumeWakeEvent();
     const std::optional<std::string> clipboard_text =
         terminal_tab->session.ConsumePendingClipboardText();
-    if (clipboard_text.has_value() && allow_osc52_clipboard) {
-      WriteClipboardText(*clipboard_text);
+    if (clipboard_text.has_value()) {
+      if (allow_osc52_clipboard) {
+        WriteClipboardText(*clipboard_text);
+      } else {
+        // Surface every blocked write so it is not a silent regression for users
+        // who rely on OSC 52 yank-to-clipboard (tmux/vim over SSH). The toast
+        // service coalesces/expires duplicates, so this cannot flood the UI.
+        Notify(NotificationService::Tone::Info,
+               "A terminal program tried to set the clipboard (OSC 52). Enable "
+               "\"Allow Terminal Clipboard Writes (OSC 52)\" in Settings to permit it.");
+      }
     }
   }
   ReapExitedTerminalTabs();

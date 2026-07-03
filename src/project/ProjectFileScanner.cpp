@@ -90,7 +90,8 @@ void CollectFiles(const std::filesystem::path& root,
 }  // namespace
 
 std::vector<std::filesystem::path> CollectProjectFiles(const std::filesystem::path& root,
-                                                       ProjectFileScanMode mode) {
+                                                       ProjectFileScanMode mode,
+                                                       bool follow_out_of_root_symlinks) {
   util::AddPerformanceCounter(util::PerfCounterId::ProjectFileScannerCollectProjectFilesCalls);
   std::error_code error;
   const std::filesystem::path absolute_root = std::filesystem::absolute(root, error);
@@ -103,7 +104,8 @@ std::vector<std::filesystem::path> CollectProjectFiles(const std::filesystem::pa
   matcher.SetRoot(absolute_root);
 
   std::vector<std::filesystem::path> files;
-  SymlinkLoopGuard loop_guard(absolute_root);
+  SymlinkLoopGuard loop_guard(absolute_root,
+                              /*enforce_containment=*/!follow_out_of_root_symlinks);
   std::size_t visited = 0;
   CollectFiles(absolute_root, absolute_root, matcher, mode, files, loop_guard, 1, visited);
   std::sort(files.begin(), files.end(), [](const auto& lhs, const auto& rhs) {

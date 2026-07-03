@@ -42,18 +42,22 @@ std::filesystem::path GitRepository::ToAbsolute(
 
 GitRepository::CommandResult GitRepository::Execute(
     std::initializer_list<std::string_view> arguments,
-    bool silence_stderr) const {
-  return Execute(OwnArguments(arguments), silence_stderr);
+    bool silence_stderr,
+    int timeout_ms) const {
+  return Execute(OwnArguments(arguments), silence_stderr, timeout_ms);
 }
 
 GitRepository::CommandResult GitRepository::Execute(
     const std::vector<std::string>& arguments,
-    bool silence_stderr) const {
-  const auto result =
-      gitutil::ReadGitCommandOutput(root_, std::vector<std::string>(arguments), silence_stderr);
+    bool silence_stderr,
+    int timeout_ms) const {
+  const auto result = gitutil::ReadGitCommandOutput(
+      root_, std::vector<std::string>(arguments), silence_stderr, timeout_ms);
   return CommandResult{
       .exit_code = result.exit_code,
       .output = result.output,
+      .timed_out = result.timed_out,
+      .truncated = result.truncated,
   };
 }
 
@@ -83,18 +87,26 @@ std::vector<GitWorkingTreeEntry> GitRepository::GetWorkingTreeEntries() const {
   return GitPorcelainParser::ParseWorkingTreeEntries(result.output);
 }
 
-std::vector<GitCommitEntry> GitRepository::GetFileHistory(
+GitFileHistoryResult GitRepository::GetFileHistory(
     const std::filesystem::path& relative_path) const {
   // Cap the walk: a file with an enormous history would otherwise stream every
-  // commit into one entry-per-line vector. 5000 is far more than any history view
-  // displays, so this bounds memory/parse without losing anything the UI shows.
-  const auto result = Execute({"log", "--follow", "--no-color", "-n", "5000",
+  // commit into one entry-per-line vector, an unbounded memory/parse cost. We ask
+  // for one past the cap so we can tell whether the history was actually longer
+  // and report `truncated`, rather than silently hiding older commits.
+  constexpr std::size_t kMaxFileHistoryCommits = 5000;
+  const auto result = Execute({"log", "--follow", "--no-color", "-n", "5001",
                                "--pretty=format:%H%x09%h%x09%an%x09%ar%x09%s", "--",
                                relative_path.generic_string()});
   if (!result.success()) {
     return {};
   }
-  return GitPorcelainParser::ParseLog(result.output);
+  GitFileHistoryResult history;
+  history.commits = GitPorcelainParser::ParseLog(result.output);
+  if (history.commits.size() > kMaxFileHistoryCommits) {
+    history.commits.resize(kMaxFileHistoryCommits);
+    history.truncated = true;
+  }
+  return history;
 }
 
 bool GitRepository::FileExistsAtRevision(const std::filesystem::path& relative_path,
@@ -108,7 +120,11 @@ std::optional<std::string> GitRepository::ReadFileAtRevision(
     std::string_view revision) const {
   const auto result =
       Execute({"show", std::string(revision) + ":" + relative_path.generic_string()});
-  if (!result.success()) {
+  // A `truncated` result means the blob exceeded the subprocess capture ceiling
+  // and git was killed (non-zero exit). Return the partial content so an enormous
+  // blob still shows (clipped) in compare/blob views rather than collapsing to a
+  // generic error the way a real failure (missing revision) does.
+  if (!result.success() && !result.truncated) {
     return std::nullopt;
   }
   return result.output;

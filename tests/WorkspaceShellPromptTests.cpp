@@ -475,7 +475,7 @@ void TestWorkspaceShellRenamePreservesBranchCompareSemantics() {
   WriteFile(source, "head line\n");
   CommitAll(root, "head fixture", "head fixture");
 
-  const auto history = microide::project::CollectGitFileHistory(root, source);
+  const auto history = microide::project::CollectGitFileHistory(root, source).commits;
   Expect(history.size() == 2, "branch compare fixture should have two commits");
 
   WorkspaceShell shell;

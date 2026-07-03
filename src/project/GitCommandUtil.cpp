@@ -7,15 +7,6 @@
 
 namespace microide::project::internal {
 
-namespace {
-// Backstop wall-clock cap on any single git invocation. Local read commands
-// (status, diff, blame, log, show) finish in well under a second; this only ever
-// trips on a genuinely stuck git — a credential/network stall or a filesystem
-// hang — so the shell (or its background git worker) is never held hostage
-// forever. Generous enough never to kill a legitimate local operation.
-constexpr int kGitCommandTimeoutMs = 60'000;
-}  // namespace
-
 bool HasGitMarker(const std::filesystem::path& root) {
   return !root.empty() && std::filesystem::exists(root / ".git");
 }
@@ -66,14 +57,16 @@ std::optional<std::string> ResolveHeadId(const std::filesystem::path& root) {
 
 CommandResult ReadGitCommandOutput(const std::filesystem::path& root,
                                    std::vector<std::string> arguments,
-                                   bool silence_stderr) {
-  return ReadGitCommandOutputWithStdin(root, std::move(arguments), {}, silence_stderr);
+                                   bool silence_stderr,
+                                   int timeout_ms) {
+  return ReadGitCommandOutputWithStdin(root, std::move(arguments), {}, silence_stderr, timeout_ms);
 }
 
 CommandResult ReadGitCommandOutputWithStdin(const std::filesystem::path& root,
                                             std::vector<std::string> arguments,
                                             std::string stdin_text,
-                                            bool silence_stderr) {
+                                            bool silence_stderr,
+                                            int timeout_ms) {
   std::vector<std::string> command;
   command.reserve(arguments.size() + 4);
   command.emplace_back("git");
@@ -91,7 +84,7 @@ CommandResult ReadGitCommandOutputWithStdin(const std::filesystem::path& root,
   options.capture_stderr = !silence_stderr;
   options.silence_stderr = silence_stderr;
   options.stdin_text = std::move(stdin_text);
-  options.timeout_ms = kGitCommandTimeoutMs;
+  options.timeout_ms = timeout_ms;
   const platform::SubprocessResult result = platform::RunSubprocess(command, options);
   std::string output = result.stdout_text;
   if (!silence_stderr && !result.stderr_text.empty()) {
@@ -103,6 +96,8 @@ CommandResult ReadGitCommandOutputWithStdin(const std::filesystem::path& root,
   return CommandResult{
       .exit_code = result.exit_code,
       .output = std::move(output),
+      .timed_out = result.timed_out,
+      .truncated = result.truncated,
   };
 }
 

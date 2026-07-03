@@ -36,9 +36,18 @@ GitPatchApplyOutcome RunGitApply(const std::filesystem::path& repository_root,
   }
   arguments.emplace_back("-");
 
+  // Applying a large patch can be slow, so use the generous write timeout rather
+  // than the short read cap.
   const auto result = gitutil::ReadGitCommandOutputWithStdin(
       repository_root, std::move(arguments), std::string(patch_text),
-      /*silence_stderr=*/false);
+      /*silence_stderr=*/false, gitutil::kGitWriteTimeoutMs);
+  if (result.timed_out) {
+    return GitPatchApplyOutcome{
+        .ok = false,
+        .exit_code = result.exit_code,
+        .output = "git apply timed out and was aborted",
+    };
+  }
   if (!result.success() && result.output.empty()) {
     return GitPatchApplyOutcome{
         .ok = false,

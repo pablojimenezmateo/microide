@@ -396,6 +396,24 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Terminal",
       },
       SettingSpec{
+          .id = "project.follow_out_of_root_symlinks",
+          .label = "Follow Out-of-Root Symlinks",
+          .description = "Follow directory symlinks whose target is outside the project root when "
+                         "building the file tree and search index. Off by default: an opened project "
+                         "is untrusted, and a symlink pointing at the whole filesystem (e.g. "
+                         "'link -> /') would otherwise make the walk index the host filesystem — a "
+                         "resource-exhaustion and information-disclosure risk. Enable for monorepos "
+                         "or projects that reach shared code through external symlinks.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = false,
+          .default_int = 0,
+          .default_float = 0.0f,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Workspace",
+      },
+      SettingSpec{
           .id = "editor.caret_blink.enabled",
           .label = "Caret Blink",
           .description = "Blink the text caret. When off, the caret stays solid (no idle wake-ups).",

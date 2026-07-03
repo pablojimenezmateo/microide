@@ -3083,6 +3083,35 @@ void TestWorkspaceShellProjectSearchUsesMaintainedIndexWithoutProjectScan() {
          "project search start/query refresh/replace-all after index readiness should not trigger project scans");
 }
 
+void TestWorkspaceShellReplaceAllAbortsWithFeedbackPastAggregateCap() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "needle needle\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "replace-all abort fixture should open the project");
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("notes.txt"), true,
+                              std::chrono::milliseconds(1000)),
+         "replace-all abort fixture should wait for file index initialization");
+
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "replace-all abort fixture should complete search");
+  Expect(!WorkspaceShellTestAccess::ProjectSearchResults(shell).empty(),
+         "replace-all abort fixture should find matches");
+
+  // Force the aggregate buffer ceiling to trip on the very first modified file.
+  WorkspaceShellTestAccess::SetReplaceAllAggregateCapBytes(shell, 1);
+  WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
+
+  Expect(!WorkspaceShellTestAccess::ProjectSearchError(shell).empty(),
+         "replace-all past the aggregate cap must surface an error, not fail silently");
+  Expect(ReadFile(source) == "needle needle\n",
+         "an aborted replace-all must not have written any file");
+}
+
 void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3399,6 +3428,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSearchUsesMaintainedIndexWithoutProjectScan);
   AddTest(tests, "WorkspaceShell/InjectedFileIndexBatchUpdatesFinderAndSearch",
           TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch);
+  AddTest(tests, "WorkspaceShell/ReplaceAllAbortsWithFeedbackPastAggregateCap",
+          TestWorkspaceShellReplaceAllAbortsWithFeedbackPastAggregateCap);
   AddTest(tests, "WorkspaceShell/UnknownCommandKeepsPromptOpenWithFeedback",
           TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback);
   AddTest(tests, "WorkspaceShell/CommandReportsMissingProjectInsteadOfSilentNoOp",

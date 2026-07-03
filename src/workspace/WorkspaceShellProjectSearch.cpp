@@ -355,6 +355,9 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
     return;
   }
 
+  // Clear any prior abort/search error so it does not linger past a fresh run.
+  context_.current_project_state.overlay.workflow.project_search.error.clear();
+
   const bool case_sensitive = ProjectSearchReplaceCaseSensitive();
   struct PendingProjectReplace {
     std::filesystem::path relative_path;
@@ -370,7 +373,7 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   // project with many large matching files would otherwise hold multiple GB of
   // new content at once -> OOM. Above the ceiling we abort the whole operation
   // (no writes), consistent with the other pre-commit abort paths here.
-  constexpr std::size_t kMaxAggregateReplaceBytes = 512ull * 1024 * 1024;
+  const std::size_t kMaxAggregateReplaceBytes = replace_all_aggregate_cap_bytes_;
   std::size_t aggregate_bytes = 0;
 
   const std::vector<std::filesystem::path> files = context_.current_project_state.file_index.SnapshotPaths(
@@ -402,7 +405,11 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
     aggregate_bytes += updated_content.size();
     if (aggregate_bytes > kMaxAggregateReplaceBytes) {
       // Too much modified content to buffer safely: abort without writing any
-      // file rather than risk exhausting memory mid-operation.
+      // file rather than risk exhausting memory mid-operation. Surface it so the
+      // user does not believe the replacement silently succeeded.
+      context_.current_project_state.overlay.workflow.project_search.error =
+          "Replace-all aborted: too much content to modify at once.";
+      RequestSidebarRedraw();
       return;
     }
     pending.push_back(PendingProjectReplace{

@@ -134,6 +134,9 @@ struct DapClient::Impl {
   // io_buf is filled by the initialize handshake and handed to the I/O thread,
   // preserving any events the adapter pushed right after the initialize response.
   DapReadBuf io_buf;
+  // Remaining body bytes to drain-and-discard for a frame whose declared
+  // Content-Length exceeded kMaxDapMessageBytes; see TryParseOneMessage.
+  std::size_t skip_body_bytes_ = 0;
   std::thread io_thread;
   std::atomic<bool> stop_io{false};
   std::mutex wake_mutex;
@@ -359,6 +362,16 @@ struct DapClient::Impl {
   std::optional<util::JsonValue> TryParseOneMessage(DapReadBuf& buf) {
     static constexpr std::string_view kPrefix = "Content-Length: ";
 
+    // Draining the body of an oversized frame we chose to skip: consume what is
+    // buffered and stop until the rest arrives, so the parser resyncs to the next
+    // frame instead of desyncing and tearing the session down.
+    if (skip_body_bytes_ > 0) {
+      const std::size_t drop = std::min<std::size_t>(skip_body_bytes_, buf.view().size());
+      buf.consume(drop);
+      skip_body_bytes_ -= drop;
+      return std::nullopt;
+    }
+
     const std::string_view v = buf.view();
     const auto nl = v.find('\n');
     if (nl == std::string_view::npos) {
@@ -376,8 +389,9 @@ struct DapClient::Impl {
     int content_len = 0;
     const auto [ptr, ec] =
         std::from_chars(len_sv.data(), len_sv.data() + len_sv.size(), content_len);
-    if (ec != std::errc{} || content_len <= 0 ||
-        static_cast<std::size_t>(content_len) > kMaxDapMessageBytes) {
+    if (ec != std::errc{} || content_len <= 0) {
+      // Malformed/absurd length: drop the header line and try to resync; the
+      // read-buffer cap remains the backstop if the stream never recovers.
       buf.consume(nl + 1);
       return std::nullopt;
     }
@@ -395,6 +409,13 @@ struct DapClient::Impl {
       if (hdr.empty()) {
         break;
       }
+    }
+    if (static_cast<std::size_t>(content_len) > kMaxDapMessageBytes) {
+      // Too large to buffer: skip the entire frame (headers + body) so the parser
+      // resyncs to the next frame instead of reading body bytes as headers.
+      buf.consume(body_start);
+      skip_body_bytes_ = static_cast<std::size_t>(content_len);
+      return std::nullopt;
     }
     if (v.size() - body_start < static_cast<std::size_t>(content_len)) {
       return std::nullopt;

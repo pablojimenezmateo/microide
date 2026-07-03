@@ -612,6 +612,14 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
     return true;
   }
 
+  // Enforce the per-group ceiling before touching disk: an already-open file
+  // reuses its tab via the dedup above, so a brand-new open past the cap is
+  // refused here — before the file read + indent detection below — so a flood of
+  // distinct paths cannot pay that I/O only to be rejected.
+  if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
+    return false;
+  }
+
   editor::TextViewport opened_view;
   {
     util::PerformanceTrace::Scope open_scope("TabCoordinator::OpenFileInNewTab::OpenFile");
@@ -622,10 +630,6 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   operations_.apply_editor_preferences(opened_view);
   operations_.apply_detected_indent_on_open(opened_view);
 
-  if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
-    return false;  // At the per-group ceiling; an already-open file still reuses
-                   // its tab above (dedup), only brand-new opens are refused.
-  }
   state_.focused_group().open_tabs.push_back(TabEntry{
       .kind = TabEntry::Kind::Editor,
       .path = normalized_path,
