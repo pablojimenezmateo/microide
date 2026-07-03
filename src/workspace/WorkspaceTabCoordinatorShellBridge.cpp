@@ -132,15 +132,18 @@ void WorkspaceShell::MaybeAutosaveDirtyTabs(bool on_focus_change) {
   }
   // TabCoordinator::Save refuses untitled buffers and surfaces the external-change
   // banner on a disk conflict, so autosave never pops a dialog or clobbers a file
-  // changed on disk.
+  // changed on disk. Suppress the synchronous format-on-save subprocess for the
+  // duration: an autosave (focus change / after delay) must not stall the UI thread
+  // on an external formatter — most visibly during window blur / alt-tab.
+  autosave_suppress_format_on_save_ = true;
   for (const std::size_t index : MakeEditorTabService().DirtyIndices()) {
     SaveTab(index);
   }
+  autosave_suppress_format_on_save_ = false;
 }
 
 Uint64 WorkspaceShell::AutosaveDelayMs() const {
-  const auto raw = GetSettingValue("editor.autosave.delay_ms");
-  const int parsed = raw.has_value() ? util::ParseInt(*raw).value_or(1000) : 1000;
+  const int parsed = util::ParseIntOr(GetSettingValue("editor.autosave.delay_ms"), 1000);
   return static_cast<Uint64>(std::clamp(parsed, 200, 60000));
 }
 
@@ -194,7 +197,10 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
   }
 
   const std::string filetype = editor::runtime_syntax::DetectFiletype(path, viewport.lines());
-  const bool format_on_save = SettingFlagEnabled(GetSettingValue("editor.format_on_save"), true);
+  // Autosave suppresses the formatter so a background write never blocks the UI thread
+  // on an external subprocess; explicit saves still format.
+  const bool format_on_save = !autosave_suppress_format_on_save_ &&
+                              SettingFlagEnabled(GetSettingValue("editor.format_on_save"), true);
   if (const FormatterSpec* formatter =
           (format_on_save && !filetype.empty()) ? FindFormatter(formatter_registry_, filetype)
                                                 : nullptr;

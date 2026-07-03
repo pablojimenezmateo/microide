@@ -230,10 +230,11 @@ bool PersistenceCoordinator::RestoreConfigState() {
   LoadBranchReviewStateFromPersisted(persisted_state.branch_review,
                                      &mutable_current.branch_review);
   // The project settings vector holds only explicit per-project overrides; the
-  // canonical editor preferences and colorscheme are materialized from the store
-  // (project override → user default → spec default) below. The legacy dedicated
-  // typed fields (editor_tab_size, colorscheme_name, ...) are still written for
-  // format stability but are no longer read here — materialization is authoritative.
+  // canonical editor preferences are materialized from the store (project override →
+  // user default → spec default) below. The colorscheme is the exception: it persists
+  // in its own typed field (colorscheme_name) and is applied explicitly after
+  // materialization, because its enum spec only validates "default" and real theme
+  // names never round-trip through the layered store.
   for (const auto& [id, value] : persisted_state.settings) {
     settings_layer::Upsert(mutable_current.settings, id, value);
   }

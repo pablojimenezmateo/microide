@@ -68,7 +68,8 @@ class EditorViewRenderer {
   static EditorViewMetrics ComputeMetrics(const render::TextRenderer& text_renderer,
                                           const TextViewport& viewport,
                                           const SDL_FRect& rect,
-                                          std::size_t sticky_scroll_rows = 0);
+                                          std::size_t sticky_scroll_rows = 0,
+                                          bool show_line_numbers = true);
 
   void Render(SDL_Renderer* renderer,
               const render::TextRenderer& text_renderer,

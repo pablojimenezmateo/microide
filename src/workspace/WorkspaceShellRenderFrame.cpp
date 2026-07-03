@@ -489,8 +489,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
 
       // An empty group renders the welcome home surface (recents + shortcuts).
       if (viewport->is_placeholder()) {
-        editor::EditorViewMetrics metrics =
-            editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect, 0);
+        editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+            text_renderer_, *viewport, pane.rect, 0, line_numbers_enabled);
         viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
         editor::FoldingModel* welcome_fold =
             fold_enabled ? EnsureGroupFoldingModelFresh(group) : nullptr;
@@ -503,7 +503,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             debug_execution);
         if (!tls_editor_surface_vm.sticky_lines.empty()) {
           metrics = editor::EditorViewRenderer::ComputeMetrics(
-              text_renderer_, *viewport, pane.rect, tls_editor_surface_vm.sticky_lines.size());
+              text_renderer_, *viewport, pane.rect, tls_editor_surface_vm.sticky_lines.size(),
+              line_numbers_enabled);
           viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
           editor_render_builder.BuildEditorViewModelInto(
               tls_editor_surface_vm, *viewport, metrics.visible_rows, welcome_fold,
@@ -521,8 +522,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         continue;
       }
 
-      editor::EditorViewMetrics metrics =
-          editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect, 0);
+      editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+          text_renderer_, *viewport, pane.rect, 0, line_numbers_enabled);
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
       editor::FoldingModel* group_folding_model =
           fold_enabled ? EnsureGroupFoldingModelFresh(group) : nullptr;
@@ -538,7 +539,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
           inset_flags, metrics.line_height);
       if (!tls_editor_surface_vm.sticky_lines.empty()) {
         metrics = editor::EditorViewRenderer::ComputeMetrics(
-            text_renderer_, *viewport, pane.rect, tls_editor_surface_vm.sticky_lines.size());
+            text_renderer_, *viewport, pane.rect, tls_editor_surface_vm.sticky_lines.size(),
+            line_numbers_enabled);
         viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
         editor_render_builder.BuildEditorViewModelInto(
             tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
@@ -552,7 +554,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
           (pane.active && blame_inline_enabled)
               ? editor_blame_overlay_service_.BuildEditorOverlay(
                     project_state.root, text_renderer_, git_blame_service_, *viewport,
-                    pane.rect, 520.0f, tls_editor_surface_vm.sticky_lines.size())
+                    pane.rect, 520.0f, tls_editor_surface_vm.sticky_lines.size(),
+                    line_numbers_enabled)
                       : std::nullopt;
       if (pane.active) {
         // When blame is disabled this clears any previously-visible overlay so

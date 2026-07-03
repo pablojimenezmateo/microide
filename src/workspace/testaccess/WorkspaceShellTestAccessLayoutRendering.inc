@@ -294,13 +294,14 @@
       if (pane.active) {
         return shell.editor_blame_overlay_service_.BuildEditorOverlay(
             shell.context_.current_project_state.root, shell.text_renderer_, shell.git_blame_service_,
-            *viewport, pane.rect, 520.0f, ActiveEditorStickyScrollRows(shell, *viewport, pane.rect));
+            *viewport, pane.rect, 520.0f, ActiveEditorStickyScrollRows(shell, *viewport, pane.rect),
+            shell.LineNumbersEnabled());
       }
     }
     return viewport->is_placeholder()
                ? shell.editor_blame_overlay_service_.BuildEditorOverlay(
                      shell.context_.current_project_state.root, shell.text_renderer_, shell.git_blame_service_,
-                     *viewport, layout.editor_surface, 520.0f, 0)
+                     *viewport, layout.editor_surface, 520.0f, 0, shell.LineNumbersEnabled())
                : std::nullopt;
   }
   static std::optional<microide::editor::EditorBlameOverlay> ActiveCompareBlameOverlay(
@@ -338,7 +339,7 @@
     auto& merge = ActiveMerge(shell);
     return shell.editor_blame_overlay_service_.BuildEditorOverlay(
         shell.context_.current_project_state.root, shell.text_renderer_, shell.git_blame_service_,
-        merge.result_viewport, ActiveMergeResultRect(shell), 280.0f, 0);
+        merge.result_viewport, ActiveMergeResultRect(shell), 280.0f, 0, shell.LineNumbersEnabled());
   }
   static void SetVisibleEditorBlameOverlay(
       WorkspaceShell& shell,

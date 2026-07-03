@@ -180,6 +180,11 @@ bool SdlTtfTextBackend::SetFontFamily(std::string_view family) {
   if (requested_font_family_ == family && font_ != nullptr) {
     return false;
   }
+  // Record the request up front so an unresolvable or unopenable family is
+  // remembered and the early-out above suppresses a full font re-lookup on every
+  // subsequent frame (ApplyLiveSettings / ApplyTerminalFontPreferences call this
+  // per frame). Failure paths keep the current font; only success rebuilds glyphs.
+  requested_font_family_ = std::string(family);
   const std::filesystem::path resolved = ResolveFamilyToFile(family);
   if (resolved.empty()) {
     // Keep the current font; an unresolved family must never brick text rendering.
@@ -189,8 +194,7 @@ bool SdlTtfTextBackend::SetFontFamily(std::string_view family) {
   }
   if (resolved == font_path_ && font_ != nullptr) {
     // Same underlying file (e.g. empty family resolving to the current default):
-    // record the request but nothing visually changed.
-    requested_font_family_ = std::string(family);
+    // the request is already recorded; nothing visually changed.
     return false;
   }
   if (!OpenPrimaryFont(resolved)) {
@@ -198,7 +202,6 @@ bool SdlTtfTextBackend::SetFontFamily(std::string_view family) {
             static_cast<int>(family.size()), family.data(), resolved.string().c_str());
     return false;
   }
-  requested_font_family_ = std::string(family);
   // Fallbacks are relative to the new primary; reload, then rebuild caches/metrics
   // for the new glyph shapes at the current size/scale.
   LoadFallbackFonts();

@@ -27,9 +27,8 @@ bool WorkspaceShell::CaretBlinkEnabled() const {
 }
 
 Uint64 WorkspaceShell::CaretBlinkIntervalMs() const {
-  const auto raw = GetSettingValue("editor.caret_blink.interval_ms");
-  const int parsed = raw.has_value() ? util::ParseInt(*raw).value_or(kCaretBlinkIntervalDefaultMs)
-                                     : static_cast<int>(kCaretBlinkIntervalDefaultMs);
+  const int parsed = util::ParseIntOr(GetSettingValue("editor.caret_blink.interval_ms"),
+                                      static_cast<int>(kCaretBlinkIntervalDefaultMs));
   return static_cast<Uint64>(std::clamp(parsed, 100, 2000));
 }
 

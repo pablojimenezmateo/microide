@@ -186,6 +186,13 @@ editor::FoldingModel* WorkspaceShell::EnsureFoldingModelFreshForTab(
 }
 
 void WorkspaceShell::ActivateTab(std::size_t index) {
+  // Leaving the current buffer for a different tab is a focus change, so flush dirty
+  // buffers before the switch (mirrors the window-blur autosave). MaybeAutosaveDirtyTabs
+  // is a no-op unless editor.autosave == on_focus_change, so the common case pays only
+  // one setting read.
+  if (index != context_.current_project_state.focused_group().active_tab_index) {
+    MaybeAutosaveDirtyTabs(true);
+  }
   MakeEditorTabService().Activate(index);
 }
 

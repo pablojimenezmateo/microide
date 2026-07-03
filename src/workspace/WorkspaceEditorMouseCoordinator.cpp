@@ -41,12 +41,13 @@ std::pair<editor::EditorViewMetrics, std::vector<std::size_t>> EditorPointerLayo
   ComputeStickyScrollLinesUncached(viewport, folding_model, sticky_active, sticky_max_depth,
                                    sticky_lines);
 
-  editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, editor_rect, 0);
+  const bool line_numbers = setting_enabled("editor.line_numbers", true);
+  editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+      text_renderer, viewport, editor_rect, 0, line_numbers);
   viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
   if (!sticky_lines.empty()) {
     metrics = editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, editor_rect,
-                                                         sticky_lines.size());
+                                                         sticky_lines.size(), line_numbers);
     viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
   }
   return {metrics, sticky_lines};
@@ -55,7 +56,8 @@ std::pair<editor::EditorViewMetrics, std::vector<std::size_t>> EditorPointerLayo
 std::optional<editor::EditorViewMetrics> FastEditorPointerMetricsFromViewportState(
     const editor::TextViewport& viewport,
     const SDL_FRect& editor_rect,
-    render::TextRenderer& text_renderer) {
+    render::TextRenderer& text_renderer,
+    bool show_line_numbers) {
   util::PerformanceTrace::Scope perf_scope("EditorMouseCoordinator::FastPointerMetrics");
   const float line_height = std::max(1.0f, text_renderer.LineHeight());
   const int max_total_rows =
@@ -68,8 +70,8 @@ std::optional<editor::EditorViewMetrics> FastEditorPointerMetricsFromViewportSta
   const std::size_t sticky_budget = static_cast<std::size_t>(std::max(0, max_total_rows - 1));
   const std::size_t sticky_rows =
       std::min(sticky_budget, static_cast<std::size_t>(max_total_rows) - visible_rows);
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, editor_rect, sticky_rows);
+  const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+      text_renderer, viewport, editor_rect, sticky_rows, show_line_numbers);
   if (metrics.visible_rows != viewport.visible_lines() ||
       metrics.visible_columns != viewport.visible_columns()) {
     return std::nullopt;
@@ -156,8 +158,12 @@ bool EditorMouseCoordinator::HandleGutterContextMenu(const SDL_Event& event,
   if (viewport == nullptr || viewport->path().empty()) {
     return false;
   }
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane_it->rect);
+  const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+      text_renderer_, *viewport, pane_it->rect, 0,
+      SettingFlagEnabled(operations_.get_setting_value
+                             ? operations_.get_setting_value("editor.line_numbers")
+                             : std::nullopt,
+                         true));
   const float gutter_left = pane_it->rect.x;
   const float fold_hit_left = pane_it->rect.x + metrics.gutter_width - 18.0f;
   if (event.button.y < metrics.first_line_y || event.button.x < gutter_left ||
@@ -439,7 +445,12 @@ bool EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
   }
   editor::EditorViewMetrics metrics{};
   if (const auto fast_metrics =
-          FastEditorPointerMetricsFromViewportState(*viewport, editor_rect, text_renderer_);
+          FastEditorPointerMetricsFromViewportState(
+              *viewport, editor_rect, text_renderer_,
+              SettingFlagEnabled(operations_.get_setting_value
+                                     ? operations_.get_setting_value("editor.line_numbers")
+                                     : std::nullopt,
+                                 true));
       fast_metrics.has_value()) {
     metrics = *fast_metrics;
   } else {
@@ -496,7 +507,12 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
 
   editor::EditorViewMetrics metrics{};
   if (const auto fast_metrics =
-          FastEditorPointerMetricsFromViewportState(*viewport, editor_rect, text_renderer_);
+          FastEditorPointerMetricsFromViewportState(
+              *viewport, editor_rect, text_renderer_,
+              SettingFlagEnabled(operations_.get_setting_value
+                                     ? operations_.get_setting_value("editor.line_numbers")
+                                     : std::nullopt,
+                                 true));
       fast_metrics.has_value()) {
     metrics = *fast_metrics;
   } else {

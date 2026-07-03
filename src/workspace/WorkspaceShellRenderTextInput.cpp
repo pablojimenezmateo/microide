@@ -248,7 +248,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
         return std::nullopt;
       }
       const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-          text_renderer_, *viewport, *active_editor_pane_rect);
+          text_renderer_, *viewport, *active_editor_pane_rect, 0, LineNumbersEnabled());
       const float cursor_x =
           metrics.text_x +
           static_cast<float>(viewport->cursor_visual_column() - viewport->horizontal_scroll()) *

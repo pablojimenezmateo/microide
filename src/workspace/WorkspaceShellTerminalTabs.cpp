@@ -8,8 +8,7 @@
 namespace microide::workspace {
 
 std::size_t WorkspaceShell::TerminalScrollbackLines() const {
-  const auto raw = GetSettingValue("terminal.scrollback_lines");
-  const int parsed = raw.has_value() ? util::ParseInt(*raw).value_or(2000) : 2000;
+  const int parsed = util::ParseIntOr(GetSettingValue("terminal.scrollback_lines"), 2000);
   return static_cast<std::size_t>(std::clamp(parsed, 200, 100000));
 }
 

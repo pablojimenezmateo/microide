@@ -625,8 +625,8 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
   if (viewport == nullptr) {
     return std::nullopt;
   }
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane_rect);
+  const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+      text_renderer_, *viewport, pane_rect, 0, LineNumbersEnabled());
   const std::size_t visible_start_row = viewport->scroll_line();
   const std::size_t visible_end_row = visible_start_row + metrics.visible_rows;
   const std::size_t start_row = viewport->VisualRowForLine(start_line);

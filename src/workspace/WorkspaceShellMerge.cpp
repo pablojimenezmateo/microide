@@ -219,8 +219,8 @@ WorkspaceShell::MergeResultInteractionLayout WorkspaceShell::BuildMergeResultInt
   const SDL_FRect result_rect = ComputeMergeResultViewportRect(
       rect, surface.center_x, surface.rows_y, surface.gutter_width, surface.center_width,
       surface.show_horizontal);
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, merge_tab.result_viewport, result_rect);
+  const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+      text_renderer_, merge_tab.result_viewport, result_rect, 0, LineNumbersEnabled());
   merge_tab.result_viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
   const VisibleLineRangeLayout lines = {
       .first_line_y = metrics.first_line_y,

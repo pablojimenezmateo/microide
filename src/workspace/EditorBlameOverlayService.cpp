@@ -38,13 +38,14 @@ std::string FormatBlameDate(std::int64_t author_time) {
 bool EditorBlameOverlayService::FitsPane(render::TextRenderer& text_renderer,
                                          const editor::TextViewport& viewport,
                                          const SDL_FRect& rect,
-                                         float minimum_pane_width) const {
+                                         float minimum_pane_width,
+                                         bool show_line_numbers) const {
   if (rect.w <= 0.0f || rect.h <= 0.0f || rect.w < minimum_pane_width) {
     return false;
   }
 
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect);
+  const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+      text_renderer, viewport, rect, 0, show_line_numbers);
   return metrics.visible_columns >= kMinimumCodeColumnsWithBlame;
 }
 
@@ -55,9 +56,10 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildEditor
     editor::TextViewport& viewport,
     const SDL_FRect& rect,
     float minimum_pane_width,
-    std::size_t sticky_scroll_rows) const {
+    std::size_t sticky_scroll_rows,
+    bool show_line_numbers) const {
   if (project_root.empty() || viewport.is_placeholder() || viewport.path().empty() || viewport.dirty() ||
-      !FitsPane(text_renderer, viewport, rect, minimum_pane_width)) {
+      !FitsPane(text_renderer, viewport, rect, minimum_pane_width, show_line_numbers)) {
     return std::nullopt;
   }
 
@@ -65,8 +67,8 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildEditor
     return std::nullopt;
   }
 
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect, sticky_scroll_rows);
+  const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+      text_renderer, viewport, rect, sticky_scroll_rows, show_line_numbers);
   viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
   const std::size_t visible_start_line = viewport.VisualRowLineIndex(viewport.scroll_line());
   // Inline blame only renders the caret +/- kCaretBlameRadius, so request just
@@ -153,7 +155,11 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildCompar
   }
   if (project_root.empty() || compare_tab.right_viewport.is_placeholder() ||
       compare_tab.right_viewport.path().empty() || compare_tab.right_viewport.dirty() ||
-      !FitsPane(text_renderer, compare_tab.right_viewport, layout.pane_rect, 320.0f)) {
+      // The compare surface renders its own gutter (WorkspaceShellRenderCompare),
+      // independent of the editor.line_numbers toggle, so this blame-fits heuristic
+      // keeps the line-number-reserved width regardless.
+      !FitsPane(text_renderer, compare_tab.right_viewport, layout.pane_rect, 320.0f,
+                /*show_line_numbers=*/true)) {
     return std::nullopt;
   }
 

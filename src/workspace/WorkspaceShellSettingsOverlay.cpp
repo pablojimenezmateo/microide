@@ -256,7 +256,6 @@ bool WorkspaceShell::WriteSettingValue(std::string_view id, std::string value,
   // A user-scoped setting already lives in the user layer; "set as default" only
   // changes where a project-scoped write lands (user layer instead of project).
   const bool write_user_layer = info->scope == SettingScope::User || as_user_default;
-  const bool is_canonical = IsCanonicalPreferenceId(id);
 
   // Track / untrack the transient marker before the value is moved-from. A later
   // persisting write of the same id promotes it back to durable storage.
@@ -275,17 +274,13 @@ bool WorkspaceShell::WriteSettingValue(std::string_view id, std::string value,
     settings_store_.SetUser(id, std::move(value));
     // Canonical preferences are materialized from the resolved layers so a new
     // user-level default takes effect on any project without a project override.
-    if (is_canonical) {
-      MakePersistenceCoordinator().MaterializeCanonicalPreferences();
-    }
+    ApplyCanonicalPreferenceSideEffects(id);
     if (persist) {
       MakePersistenceCoordinator().SaveUserConfig();
     }
   } else {
     settings_store_.SetProject(id, std::move(value));
-    if (is_canonical) {
-      MakePersistenceCoordinator().MaterializeCanonicalPreferences();
-    }
+    ApplyCanonicalPreferenceSideEffects(id);
     if (persist) {
       MakePersistenceCoordinator().SaveConfigState();
     }
@@ -416,10 +411,8 @@ bool WorkspaceShell::ResetSettingValue(std::string_view id) {
 }
 
 bool WorkspaceShell::ResetSettingInScope(std::string_view id, SettingScope scope) {
-  const auto info = FindSettingInfo(id, plugin_runtime_.Host());
-  if (!info.has_value()) {
-    return false;
-  }
+  // Callers (ResetSettingValue, ToggleSettingScope) already validate the id before
+  // delegating here, so no second catalog lookup is needed.
   // Drop the stored override from the chosen layer. Canonical preferences are then
   // re-materialized from the remaining layers (a project reset may surface a user
   // default; a user-default reset falls back to the spec default). Everything else
@@ -429,9 +422,7 @@ bool WorkspaceShell::ResetSettingInScope(std::string_view id, SettingScope scope
   } else {
     settings_store_.ResetProject(id);
   }
-  if (IsCanonicalPreferenceId(id)) {
-    MakePersistenceCoordinator().MaterializeCanonicalPreferences();
-  }
+  ApplyCanonicalPreferenceSideEffects(id);
   if (scope == SettingScope::User) {
     MakePersistenceCoordinator().SaveUserConfig();
   } else {
@@ -441,6 +432,27 @@ bool WorkspaceShell::ResetSettingInScope(std::string_view id, SettingScope scope
   MarkLayoutDirty();
   RequestWindowRedraw();
   return true;
+}
+
+void WorkspaceShell::ApplyCanonicalPreferenceSideEffects(std::string_view id) {
+  if (!IsCanonicalPreferenceId(id)) {
+    return;
+  }
+  auto coordinator = MakePersistenceCoordinator();
+  // Keep the editor-preferences cache aligned with the resolved (project →
+  // user-default → spec) value.
+  coordinator.MaterializeCanonicalPreferences();
+  // Colorscheme is materialized into the theme, not editor_preferences, so a
+  // write/reset must apply it explicitly to update the live theme (this happens
+  // before persistence so SaveConfigState records the newly-active name).
+  if (id == "editor.colorscheme") {
+    coordinator.ApplyColorscheme(GetSettingValue(id).value_or("default"),
+                                 /*persist=*/false, /*log_feedback=*/false);
+  }
+}
+
+bool WorkspaceShell::LineNumbersEnabled() const {
+  return SettingFlagEnabled(GetSettingValue("editor.line_numbers"), true);
 }
 
 bool WorkspaceShell::SettingWritesToUserDefault(std::string_view id) const {

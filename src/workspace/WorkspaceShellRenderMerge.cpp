@@ -107,8 +107,8 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildMergeTextInp
   const SDL_FRect result_rect = ComputeMergeResultViewportRect(
       editor_surface, surface_layout.center_x, surface_layout.rows_y, surface_layout.gutter_width,
       surface_layout.center_width, surface_layout.show_horizontal);
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, merge_tab->result_viewport, result_rect);
+  const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+      text_renderer_, merge_tab->result_viewport, result_rect, 0, LineNumbersEnabled());
   const MergeResultInteractionLayout interaction = MergeResultInteractionLayout{
       .rect = result_rect,
       .metrics = metrics,
@@ -453,7 +453,8 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       editor_blame_overlay_service_.BuildEditorOverlay(project_root,
                                                        text_renderer_, git_blame_service_,
                                                        merge_tab->result_viewport,
-                                                       interaction.result.rect, 280.0f, 0);
+                                                       interaction.result.rect, 280.0f, 0,
+                                                       LineNumbersEnabled());
   editor_blame_overlay_service_.SetVisibleOverlay(merge_blame_overlay);
   const auto* merge_diagnostics =
       !merge_tab->result_viewport.path().empty() && !merge_tab->result_viewport.dirty()
@@ -468,6 +469,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       merge_setting_enabled("editor.view.indent_guides.enabled", true);
   const bool render_whitespace_enabled =
       merge_setting_enabled("editor.view.render_whitespace", false);
+  const bool line_numbers_enabled = merge_setting_enabled("editor.line_numbers", true);
   editor_view_renderer_.Render(renderer, text_renderer_, theme_, merge_tab->result_viewport,
                                interaction.result.rect,
                                draw_caret, "", std::nullopt,
@@ -477,7 +479,11 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                    : std::span<const editor::PublishedDiagnostic>{},
                                nullptr,
                                bracket_match_highlight_enabled,
-                               indent_guides_enabled, render_whitespace_enabled);
+                               indent_guides_enabled, render_whitespace_enabled,
+                               /*folding_model=*/nullptr,
+                               /*welcome_view=*/nullptr,
+                               /*plugin_decorations=*/nullptr,
+                               line_numbers_enabled);
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
 

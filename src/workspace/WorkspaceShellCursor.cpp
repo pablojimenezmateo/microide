@@ -780,7 +780,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         layout.editor_surface, surface_layout.center_x, surface_layout.rows_y,
         surface_layout.gutter_width, surface_layout.center_width, surface_layout.show_horizontal);
     const editor::EditorViewMetrics result_metrics =
-        editor::EditorViewRenderer::ComputeMetrics(text_renderer_, merge_tab->result_viewport, result_rect);
+        editor::EditorViewRenderer::ComputeMetrics(text_renderer_, merge_tab->result_viewport,
+                                                   result_rect, 0, LineNumbersEnabled());
     const MergeInteractionLayout interaction = {
         .content_bottom = scroll_layout.content_rect.y + scroll_layout.content_rect.h,
         .result =
@@ -864,8 +865,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Text;
   }
 
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane_it->rect);
+  const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+      text_renderer_, *viewport, pane_it->rect, 0, LineNumbersEnabled());
   const auto scroll_layout = ComputeEditorScrollLayout(pane_it->rect, *viewport, metrics);
   if (scroll_layout.vertical_scrollbar.has_value() &&
       Contains(scroll_layout.vertical_scrollbar->track, x, y)) {

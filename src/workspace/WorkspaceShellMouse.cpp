@@ -342,8 +342,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         return false;
       }
 
-      const editor::EditorViewMetrics metrics =
-          editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane_it->rect);
+      const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+          text_renderer_, *viewport, pane_it->rect, 0, LineNumbersEnabled());
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
 
       const auto setting_on = [this](std::string_view id) {
@@ -589,8 +589,8 @@ std::optional<std::string> WorkspaceShell::AboveLensCommandAtPosition(float x, f
     if (viewport.is_placeholder() || viewport.path().empty() || viewport.dirty()) {
       return std::nullopt;
     }
-    const editor::EditorViewMetrics metrics =
-        editor::EditorViewRenderer::ComputeMetrics(text_renderer_, viewport, rect);
+    const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+        text_renderer_, viewport, rect, 0, LineNumbersEnabled());
     const editor::InsetGapOptions options{.inline_surfaces = inline_surfaces,
                                           .code_lens_above = true,
                                           .code_lens_height = metrics.line_height};

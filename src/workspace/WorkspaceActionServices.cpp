@@ -870,6 +870,10 @@ void WorkspaceActionContext::SetTabSize(std::size_t value) {
     operations_.set_setting_value("editor.tab_size", std::to_string(value));
     return;
   }
+  // Fallback for contexts without the setting chokepoint: record the override in the
+  // project layer too, so SaveConfigState (which persists state.settings, not the
+  // editor_preferences cache) does not drop the change on the next launch.
+  settings_layer::Upsert(state_.settings, "editor.tab_size", std::to_string(value));
   state_.editor_preferences.tab_size = value;
   operations_.apply_editor_preferences_to_all_tabs();
   operations_.save_config_state();
@@ -880,6 +884,7 @@ void WorkspaceActionContext::SetIndentWidth(std::size_t value) {
     operations_.set_setting_value("editor.indent_width", std::to_string(value));
     return;
   }
+  settings_layer::Upsert(state_.settings, "editor.indent_width", std::to_string(value));
   state_.editor_preferences.indent_width = value;
   operations_.apply_editor_preferences_to_all_tabs();
   operations_.save_config_state();
@@ -899,6 +904,7 @@ void WorkspaceActionContext::SetSoftTabs(bool enabled) {
     operations_.set_setting_value("editor.soft_tabs", enabled ? "true" : "false");
     return;
   }
+  settings_layer::Upsert(state_.settings, "editor.soft_tabs", enabled ? "true" : "false");
   state_.editor_preferences.soft_tabs = enabled;
   operations_.apply_editor_preferences_to_all_tabs();
   operations_.save_config_state();
@@ -912,6 +918,7 @@ void WorkspaceActionContext::SetSoftWrap(bool enabled) {
   if (operations_.set_setting_value) {
     operations_.set_setting_value("editor.wrap", enabled ? "word" : "off");
   } else {
+    settings_layer::Upsert(state_.settings, "editor.wrap", enabled ? "word" : "off");
     state_.editor_preferences.soft_wrap = enabled;
     operations_.apply_editor_preferences_to_all_tabs();
     operations_.save_config_state();

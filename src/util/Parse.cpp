@@ -73,4 +73,8 @@ std::optional<double> ParseDouble(std::string_view text) {
   return ParseRealExact<double>(text, std::strtod);
 }
 
+int ParseIntOr(const std::optional<std::string>& text, int fallback) {
+  return text.has_value() ? ParseInt(*text).value_or(fallback) : fallback;
+}
+
 }  // namespace microide::util

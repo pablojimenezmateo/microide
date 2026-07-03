@@ -113,8 +113,13 @@ void TestArchitectureInvariants() {
              // MaybeArmAutosaveTimer / NextAutosaveDelayMs) and the terminal's own font
              // (terminal_text_renderer_ + last-applied size, PanelTextRenderer /
              // ApplyTerminalFontPreferences) so terminal.font_size/font_family are live.
+             // 1626: +3 for the settings-review bug-fix batch: ApplyCanonicalPreferenceSideEffects
+             // (shared canonical materialize + live colorscheme apply on write/reset),
+             // LineNumbersEnabled (gutter-width parity across render/hit-test when
+             // editor.line_numbers is off), and autosave_suppress_format_on_save_ (skip the
+             // synchronous formatter during autosave so focus-loss/debounce never blocks the UI).
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1623);
+                                                     1626);
            });
 
   bool hard_failure = false;

@@ -1535,6 +1535,13 @@
   // Clear a setting's override from a specific layer (used by the overlay's
   // per-row scope toggle: reset "This Project" vs "All Projects" independently).
   bool ResetSettingInScope(std::string_view id, SettingScope scope);
+  // Re-materialize canonical editor preferences after a write/reset of a canonical
+  // id and, for the colorscheme, apply the resolved theme live (its enum value is
+  // materialized into the theme rather than the editor-preferences cache).
+  void ApplyCanonicalPreferenceSideEffects(std::string_view id);
+  // Resolved editor.line_numbers flag. Feeds ComputeMetrics so the gutter width used
+  // for hit-testing/cursor geometry matches what the editor render path draws.
+  bool LineNumbersEnabled() const;
   // True when an overlay edit of a built-in project-scoped setting should land on
   // the user-level default layer (a default exists and there is no per-project
   // override) rather than pinning a per-project override.
@@ -1945,6 +1952,11 @@
   Uint64 autosave_edit_epoch_ms_ = 0;
   std::uint64_t autosave_last_content_revision_ = 0;
   bool autosave_armed_ = false;
+  // Set only while MaybeAutosaveDirtyTabs is writing dirty buffers, so the shared save
+  // path skips the synchronous format-on-save subprocess. Autosave (focus change /
+  // after delay) must never block the UI thread on an external formatter — explicit
+  // saves (Ctrl+S) still format.
+  bool autosave_suppress_format_on_save_ = false;
   RenderInvalidation pending_render_invalidation_;
   int post_render_full_redraws_remaining_ = 0;
   CursorKind cursor_kind_ = CursorKind::Default;

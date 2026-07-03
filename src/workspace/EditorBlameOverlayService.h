@@ -31,7 +31,8 @@ class EditorBlameOverlayService {
   bool FitsPane(render::TextRenderer& text_renderer,
                 const editor::TextViewport& viewport,
                 const SDL_FRect& rect,
-                float minimum_pane_width) const;
+                float minimum_pane_width,
+                bool show_line_numbers) const;
 
   std::optional<editor::EditorBlameOverlay> BuildEditorOverlay(
       const std::filesystem::path& project_root,
@@ -40,7 +41,8 @@ class EditorBlameOverlayService {
       editor::TextViewport& viewport,
       const SDL_FRect& rect,
       float minimum_pane_width,
-      std::size_t sticky_scroll_rows) const;
+      std::size_t sticky_scroll_rows,
+      bool show_line_numbers) const;
 
   std::optional<editor::EditorBlameOverlay> BuildCompareOverlay(
       const std::filesystem::path& project_root,

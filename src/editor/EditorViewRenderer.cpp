@@ -68,7 +68,14 @@ void PushWhitespaceMarker(std::vector<DecoratedTextFill>& scratch, bool is_tab, 
   }
 }
 
-float ComputeGutterWidth(const render::TextRenderer& text_renderer, std::size_t line_count) {
+float ComputeGutterWidth(const render::TextRenderer& text_renderer, std::size_t line_count,
+                         bool show_line_numbers) {
+  if (!show_line_numbers) {
+    // No digits: reserve only the marker strip (diagnostic bar, breakpoint / execution
+    // marker) plus the right padding used by the fold control, so disabling line
+    // numbers actually reclaims the digit column instead of leaving it blank.
+    return kGutterLineNumberInset + kGutterRightPad;
+  }
   char buf[20];
   const auto [end, _] = std::to_chars(buf, buf + sizeof(buf), std::max<std::size_t>(1, line_count));
   // Digits begin after the reserved marker strip (kGutterLineNumberInset), so the
@@ -253,10 +260,11 @@ SDL_FRect FoldGutterMarkerRect(float gutter_x,
 EditorViewMetrics EditorViewRenderer::ComputeMetrics(const render::TextRenderer& text_renderer,
                                                      const TextViewport& viewport,
                                                      const SDL_FRect& rect,
-                                                     std::size_t sticky_scroll_rows) {
+                                                     std::size_t sticky_scroll_rows,
+                                                     bool show_line_numbers) {
   EditorViewMetrics metrics;
   const float char_width = std::max(1.0f, text_renderer.CharWidth());
-  metrics.gutter_width = ComputeGutterWidth(text_renderer, viewport.line_count());
+  metrics.gutter_width = ComputeGutterWidth(text_renderer, viewport.line_count(), show_line_numbers);
   metrics.text_x = rect.x + metrics.gutter_width + 12.0f;
   metrics.line_height = text_renderer.LineHeight();
   metrics.sticky_band_top_y = rect.y + 8.0f;
@@ -365,7 +373,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   const std::size_t sticky_row_count =
       view_model != nullptr ? view_model->sticky_lines.size() : 0;
   const EditorViewMetrics metrics =
-      ComputeMetrics(text_renderer, viewport, rect, sticky_row_count);
+      ComputeMetrics(text_renderer, viewport, rect, sticky_row_count, show_line_numbers);
   const SDL_FRect gutter = SDL_FRect{rect.x, rect.y, metrics.gutter_width, rect.h};
   SDL_SetRenderDrawColor(renderer, theme.gutter_background.r, theme.gutter_background.g,
                          theme.gutter_background.b, theme.gutter_background.a);

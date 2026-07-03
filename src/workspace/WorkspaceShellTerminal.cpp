@@ -175,19 +175,26 @@ const render::TextRenderer& WorkspaceShell::PanelTextRenderer() const {
 }
 
 void WorkspaceShell::ApplyTerminalFontPreferences() {
-  const auto raw_size = GetSettingValue("terminal.font_size");
-  const int size =
-      std::clamp(raw_size.has_value() ? util::ParseInt(*raw_size).value_or(13) : 13, 8, 32);
-  bool changed = (size != last_applied_terminal_font_size_);
-  last_applied_terminal_font_size_ = size;
-  terminal_text_renderer_.SetFontPointSize(static_cast<float>(size));
+  const int size = std::clamp(util::ParseIntOr(GetSettingValue("terminal.font_size"), 13), 8, 32);
+  bool changed = false;
+  // SetFontPointSize always drops the renderer's width cache, so calling it on
+  // an unchanged size would re-measure every glyph every frame the terminal is
+  // shown. Only touch it when the resolved size actually moved.
+  if (size != last_applied_terminal_font_size_) {
+    last_applied_terminal_font_size_ = size;
+    terminal_text_renderer_.SetFontPointSize(static_cast<float>(size));
+    changed = true;
+  }
   if (terminal_text_renderer_.SetFontFamily(
           GetSettingValue("terminal.font_family").value_or(""))) {
     changed = true;
   }
   if (changed) {
-    // Cell metrics moved: force a terminal re-grid (rows/cols) and repaint. ResizeTerminalToPanel
-    // recomputes off the new metrics next frame; the extra full redraws cover the reflow.
+    // Cell metrics moved: force a terminal re-grid (rows/cols) and repaint. A font
+    // change does not move the panel rect, so drop the cached rect to make the
+    // resize guard in PrepareFrameOnce re-run ResizeTerminalToPanel off the new
+    // metrics; the extra full redraws cover the reflow.
+    last_terminal_panel_rect_.reset();
     MarkLayoutDirty();
     post_render_full_redraws_remaining_ = std::max(post_render_full_redraws_remaining_, 2);
   }
