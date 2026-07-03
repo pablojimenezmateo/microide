@@ -444,13 +444,25 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       // The same right_text is queried for the selection fill and (potentially) the caret
       // visual column below. Build the boundary→visual column table once and reuse it instead
       // of re-walking the line per query.
+      // A whole-line boundary->visual map is 16 bytes/char. On a pathological
+      // megaline (a minified bundle, or a single-line multi-hundred-MB right
+      // side) building it per visible row would be an O(line) walk and an
+      // ~8 GB allocation. Past the cap, skip the map: selection fills and the
+      // caret fall back to the identity column mapping (as the left side already
+      // does when it passes no map), keeping compare rendering bounded.
+      constexpr std::size_t kMaxCompareVisualMapBytes = 1u << 20;  // 1 MiB
+      const bool right_map_allowed =
+          compare_row.right_text.size() <= kMaxCompareVisualMapBytes;
       std::optional<editor::TextLayout::LineVisualColumnMap> right_visual_map;
-      auto ensure_right_visual_map = [&]() -> const editor::TextLayout::LineVisualColumnMap& {
+      auto ensure_right_visual_map = [&]() -> const editor::TextLayout::LineVisualColumnMap* {
+        if (!right_map_allowed) {
+          return nullptr;
+        }
         if (!right_visual_map.has_value()) {
           right_visual_map.emplace(compare_row.right_text,
                                    compare_tab->right_viewport.tab_size());
         }
-        return *right_visual_map;
+        return &*right_visual_map;
       };
       std::array<editor::RowFillSpan, 1> right_column_fills;
       std::size_t right_column_fill_count = 0;
@@ -544,9 +556,12 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                 selected ? theme_.current_line_number : theme_.line_number,
                 FormatLineNumber(static_cast<std::size_t>(compare_row.right_line), line_number_buf));
       if (draw_compare_caret && right_line_index == compare_tab->right_viewport.cursor_line()) {
+        const editor::TextLayout::LineVisualColumnMap* caret_map = ensure_right_visual_map();
         const std::size_t caret_visual =
-            ensure_right_visual_map().VisualColumnFor(
-                compare_tab->right_viewport.cursor_column());
+            caret_map != nullptr
+                ? caret_map->VisualColumnFor(compare_tab->right_viewport.cursor_column())
+                : std::min(compare_tab->right_viewport.cursor_column(),
+                           compare_row.right_text.size());
         if (caret_visual >= compare_tab->horizontal_scroll &&
             caret_visual <= compare_tab->horizontal_scroll + surface.right_visible_columns) {
           DrawFilledRect(

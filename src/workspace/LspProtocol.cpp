@@ -1,6 +1,7 @@
 #include "workspace/LspProtocol.h"
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace microide::workspace::lsp_protocol {
@@ -76,7 +77,13 @@ std::vector<LspClient::Diagnostic> ParseDiagnostics(const JsonValue& array) {
   return diagnostics;
 }
 
-LspClient::DocumentSymbol ParseDocumentSymbol(const JsonValue& value) {
+// Bound recursion over the server-supplied `children` tree: a hostile/buggy
+// server could otherwise nest it deeply enough to overflow the stack. Past the
+// cap, keep the symbol but drop its deeper descendants (an outline that deep is
+// unusable anyway).
+constexpr int kMaxDocumentSymbolDepth = 64;
+
+LspClient::DocumentSymbol ParseDocumentSymbolAtDepth(const JsonValue& value, int depth) {
   LspClient::DocumentSymbol symbol;
   symbol.name = value["name"].AsString();
   symbol.detail = value["detail"].AsString();
@@ -90,10 +97,17 @@ LspClient::DocumentSymbol ParseDocumentSymbol(const JsonValue& value) {
     symbol.selection_range =
         value.HasKey("selectionRange") ? ParseRange(value["selectionRange"]) : symbol.range;
   }
+  if (depth >= kMaxDocumentSymbolDepth) {
+    return symbol;
+  }
   for (const auto& child : value["children"].AsArray()) {
-    symbol.children.push_back(ParseDocumentSymbol(child));
+    symbol.children.push_back(ParseDocumentSymbolAtDepth(child, depth + 1));
   }
   return symbol;
+}
+
+LspClient::DocumentSymbol ParseDocumentSymbol(const JsonValue& value) {
+  return ParseDocumentSymbolAtDepth(value, 0);
 }
 
 std::vector<LspClient::DocumentSymbol> ParseDocumentSymbols(const JsonValue& result) {
@@ -122,12 +136,15 @@ std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const JsonValue& r
   const auto& ints = data.AsArray();
   const std::size_t groups = ints.size() / 5;  // 5 ints per token; trailing partial ignored
   tokens.reserve(std::min(groups, max_tokens));
-  int line = 0;
-  int start_char = 0;
+  // Accumulate the delta-encoded positions in 64-bit so a server feeding large
+  // deltas cannot overflow a signed int (UB) as they sum across up to max_tokens
+  // entries; out-of-range results are then dropped as degenerate.
+  std::int64_t line = 0;
+  std::int64_t start_char = 0;
   for (std::size_t i = 0; i + 5 <= ints.size() && tokens.size() < max_tokens; i += 5) {
-    const int delta_line = static_cast<int>(ints[i].AsInt());
-    const int delta_start = static_cast<int>(ints[i + 1].AsInt());
-    const int length = static_cast<int>(ints[i + 2].AsInt());
+    const std::int64_t delta_line = ints[i].AsInt();
+    const std::int64_t delta_start = ints[i + 1].AsInt();
+    const std::int64_t length = ints[i + 2].AsInt();
     const int token_type = static_cast<int>(ints[i + 3].AsInt());
     if (delta_line > 0) {
       line += delta_line;
@@ -135,11 +152,15 @@ std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const JsonValue& r
     } else {
       start_char += delta_start;
     }
-    if (length <= 0 || line < 0 || start_char < 0) {
-      continue;  // skip degenerate tokens but keep decoding the rest
+    static constexpr std::int64_t kMaxCoord = std::numeric_limits<int>::max();
+    if (length <= 0 || length > kMaxCoord || line < 0 || line > kMaxCoord ||
+        start_char < 0 || start_char > kMaxCoord) {
+      continue;  // skip degenerate/out-of-range tokens but keep decoding the rest
     }
-    tokens.push_back(LspClient::SemanticToken{
-        .line = line, .start_char = start_char, .length = length, .token_type = token_type});
+    tokens.push_back(LspClient::SemanticToken{.line = static_cast<int>(line),
+                                              .start_char = static_cast<int>(start_char),
+                                              .length = static_cast<int>(length),
+                                              .token_type = token_type});
   }
   return tokens;
 }

@@ -19,6 +19,16 @@ namespace microide::workspace {
 
 namespace {
 
+// Plugin- and debug-hover resolution runs per mouse-move frame and walks the
+// hovered line to map screen-x -> text column. Past this length the line is
+// pathological (a minified bundle / a single-line multi-hundred-MB file), the
+// same class of input the syntax highlighter already refuses to tokenize. Skip
+// hover resolution rather than copy the whole line and walk it every frame; a
+// hover popup on such a line is useless anyway. Guarding here also removes the
+// former per-hover full-line LineVisualColumnMap allocation (~16 bytes/char),
+// which for a 512 MB line was an ~8 GB alloc on a single mouse-move -> OOM.
+constexpr std::size_t kMaxHoverResolveLineBytes = 1u << 20;  // 1 MiB
+
 // The debug-hover path runs on every mouse-move frame, so an unguarded trace
 // would flood the log. These dedupe on the reason's string-literal identity and
 // only emit when the furthest-reached gate changes, keeping the log readable
@@ -169,23 +179,24 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
     return std::nullopt;
   }
 
-  const std::string line_text(line);
-  if (line_text.empty()) {
+  if (line.empty() || line.size() > kMaxHoverResolveLineBytes) {
     return std::nullopt;
   }
+  const std::string_view line_text = line;
 
-  const editor::TextLayout::LineVisualColumnMap visual_map(line_text, tab_size);
-  const std::size_t line_visual_width = visual_map.LineVisualWidth();
   const float local_x = std::max(0.0f, x - interaction.text_x);
   const std::size_t visual_column =
       interaction.horizontal_scroll +
       static_cast<std::size_t>(std::floor(local_x / std::max(1.0f, interaction.char_width)));
-  if (visual_column >= line_visual_width) {
-    return std::nullopt;
-  }
-
+  // TextColumnForVisualColumn walks only up to the hovered visual column and
+  // returns line.size() once visual_column reaches/exceeds the line's visual
+  // width, so an off-the-end hover is rejected here without materializing a
+  // full-line visual-column map just to read its width.
   const std::size_t text_column =
       editor::TextLayout::TextColumnForVisualColumn(line_text, visual_column, tab_size);
+  if (text_column >= line_text.size()) {
+    return std::nullopt;
+  }
 
   // Serve from the async cache: hit -> popup; pending/failed -> nothing; miss ->
   // record a kickoff for the non-const UpdateEditorHover (no Lua runs on this hot
@@ -216,10 +227,12 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
     return std::nullopt;
   }
 
-  const std::size_t start_visual = visual_map.VisualColumnFor(text_column);
+  const std::size_t start_visual =
+      editor::TextLayout::VisualColumnForTextColumn(line_text, text_column, tab_size);
   const std::size_t end_visual =
       text_column < line_text.size()
-          ? visual_map.VisualColumnFor(editor::TextLayout::NextTextColumn(line_text, text_column))
+          ? editor::TextLayout::VisualColumnForTextColumn(
+                line_text, editor::TextLayout::NextTextColumn(line_text, text_column), tab_size)
           : start_visual + 1;
   const float line_y = TextGridLineY(interaction, line_index);
   const SDL_FRect anchor_rect =
@@ -541,31 +554,31 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
   if (!hovered_line.has_value() || *hovered_line >= viewport.lines().size()) {
     return std::nullopt;
   }
-  const std::string line_text(viewport.lines()[*hovered_line]);
-  if (line_text.empty()) {
+  const std::string_view line_text = viewport.lines()[*hovered_line];
+  if (line_text.empty() || line_text.size() > kMaxHoverResolveLineBytes) {
     return std::nullopt;
   }
 
   // Map the screen position to a text byte column (same geometry as the plugin
-  // hover path), then resolve the identifier under it.
-  const editor::TextLayout::LineVisualColumnMap visual_map(line_text, viewport.tab_size());
-  const std::size_t line_visual_width = visual_map.LineVisualWidth();
+  // hover path), then resolve the identifier under it. TextColumnForVisualColumn
+  // walks only to the hovered column and returns line.size() past the visual end,
+  // so no full-line visual-column map is materialized on this per-frame path.
   const float local_x = std::max(0.0f, x - interaction.text_x);
   const std::size_t visual_column =
       interaction.horizontal_scroll +
       static_cast<std::size_t>(std::floor(local_x / std::max(1.0f, interaction.char_width)));
-  if (visual_column >= line_visual_width) {
-    return std::nullopt;
-  }
   const std::size_t text_column =
       editor::TextLayout::TextColumnForVisualColumn(line_text, visual_column, viewport.tab_size());
+  if (text_column >= line_text.size()) {
+    return std::nullopt;
+  }
 
   const editor::TextLayout::ByteRange range =
       editor::TextLayout::IdentifierRangeAt(line_text, text_column);
   if (range.empty()) {
     return std::nullopt;
   }
-  std::string expression = line_text.substr(range.start, range.end - range.start);
+  std::string expression(line_text.substr(range.start, range.end - range.start));
 
   // Serve from the async cache: hit → popup; pending/failed → nothing; miss →
   // record the kickoff for the non-const UpdateEditorHover (no DAP I/O here).
@@ -587,8 +600,10 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
       return std::nullopt;
   }
 
-  const std::size_t start_visual = visual_map.VisualColumnFor(range.start);
-  const std::size_t end_visual = visual_map.VisualColumnFor(range.end);
+  const std::size_t start_visual =
+      editor::TextLayout::VisualColumnForTextColumn(line_text, range.start, viewport.tab_size());
+  const std::size_t end_visual =
+      editor::TextLayout::VisualColumnForTextColumn(line_text, range.end, viewport.tab_size());
   const float line_y = TextGridLineY(interaction, *hovered_line);
   const SDL_FRect anchor_rect = MakeRect(
       TextGridCursorX(interaction, start_visual), line_y + interaction.line_height - 2.0f,

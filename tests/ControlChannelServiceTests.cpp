@@ -244,6 +244,86 @@ void TestControlListFiltersDeadPids() {
   std::filesystem::remove_all(runtime, ec);
 }
 
+// Instance discovery reads attacker-droppable descriptor files (world-writable
+// on the /tmp fallback). A forged `socket` field must never redirect a driver's
+// connection: enumeration reconstructs the canonical socket path from the
+// validated pid and ignores the advertised value. A descriptor whose body pid
+// disagrees with its <pid>.json filename is rejected outright.
+void TestControlDiscoveryIgnoresForgedSocketAndPid() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-forge-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  const std::filesystem::path instances = runtime / "microide" / "instances";
+  std::filesystem::create_directories(instances, ec);
+  const int alive_pid = static_cast<int>(::getpid());
+
+  // (a) A live descriptor advertising a hostile socket path in its body.
+  {
+    std::ofstream out(instances / (std::to_string(alive_pid) + ".json"), std::ios::trunc);
+    out << R"({"pid":)" << alive_pid
+        << R"(,"socket":"/tmp/attacker-controlled.sock","project_root":"/p"})";
+  }
+  // (b) A descriptor whose filename claims a live pid but whose body pid disagrees
+  //     (forged) — filename is a *different* live pid so ProcessIsAlive passes.
+  const int other_alive_pid = static_cast<int>(::getppid());
+  if (other_alive_pid > 0 && other_alive_pid != alive_pid) {
+    std::ofstream out(instances / (std::to_string(other_alive_pid) + ".json"), std::ios::trunc);
+    out << R"({"pid":)" << (other_alive_pid + 1) << R"(,"socket":"/tmp/x.sock"})";
+  }
+
+  const auto instances_list = microide::workspace::EnumerateControlInstances();
+  const std::filesystem::path canonical =
+      runtime / "microide" / (std::to_string(alive_pid) + ".sock");
+  bool found_alive = false;
+  for (const auto& descriptor : instances_list) {
+    if (descriptor.pid == alive_pid) {
+      found_alive = true;
+      Expect(descriptor.socket == canonical,
+             "the advertised socket field must be ignored in favor of the canonical path");
+    }
+    Expect(descriptor.pid != other_alive_pid + 1,
+           "a descriptor whose body pid disagrees with its filename must be rejected");
+  }
+  Expect(found_alive, "the live, well-formed descriptor should still be discovered");
+
+  std::filesystem::remove_all(runtime, ec);
+}
+
+// An oversized descriptor file must be skipped before it is slurped, so a hostile
+// local process cannot OOM `control-list`/`control-send` with one giant file.
+void TestControlDiscoveryRejectsOversizedDescriptor() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-oversize-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  const std::filesystem::path instances = runtime / "microide" / "instances";
+  std::filesystem::create_directories(instances, ec);
+  const int alive_pid = static_cast<int>(::getpid());
+
+  // > 1 MiB body under a valid <pid>.json name.
+  {
+    std::ofstream out(instances / (std::to_string(alive_pid) + ".json"), std::ios::trunc);
+    const std::string chunk(64 * 1024, 'x');
+    for (int i = 0; i < 20; ++i) {  // ~1.25 MiB
+      out << chunk;
+    }
+  }
+
+  const auto instances_list = microide::workspace::EnumerateControlInstances();
+  for (const auto& descriptor : instances_list) {
+    Expect(descriptor.pid != alive_pid, "an oversized descriptor must not be enumerated");
+  }
+
+  std::filesystem::remove_all(runtime, ec);
+}
+
 // Self-heal: some environments delete $XDG_RUNTIME_DIR contents while a process
 // is still alive, silently severing the advertised socket. The I/O thread must
 // detect the missing socket on its idle poll and re-bind a fresh listener at the
@@ -394,6 +474,8 @@ void TestControlListFiltersDeadPids() {}
 void TestLaunchConfigsAndAdaptersOverSocket() {}
 void TestSocketSelfHealsAfterExternalDeletion() {}
 void TestDebugCommandAutoEnablesDebugger() {}
+void TestControlDiscoveryIgnoresForgedSocketAndPid() {}
+void TestControlDiscoveryRejectsOversizedDescriptor() {}
 
 #endif
 
@@ -529,6 +611,10 @@ void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
           TestSocketSelfHealsAfterExternalDeletion);
   AddTest(tests, "ControlChannelService/DebugCommandAutoEnablesDebugger",
           TestDebugCommandAutoEnablesDebugger);
+  AddTest(tests, "ControlChannelService/DiscoveryIgnoresForgedSocketAndPid",
+          TestControlDiscoveryIgnoresForgedSocketAndPid);
+  AddTest(tests, "ControlChannelService/DiscoveryRejectsOversizedDescriptor",
+          TestControlDiscoveryRejectsOversizedDescriptor);
 }
 
 }  // namespace microide::tests

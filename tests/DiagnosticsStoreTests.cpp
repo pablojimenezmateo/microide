@@ -265,9 +265,31 @@ void TestDiagnosticsSeverityFilter() {
          "min=error keeps only errors");
 }
 
+// A hostile/buggy language server can publish an unbounded number of
+// diagnostics for one file; the per-file list is scanned per visible row per
+// frame, so the store caps how many it retains to keep redraw bounded.
+void TestDiagnosticsStoreCapsPerFileCount() {
+  DiagnosticsStore store;
+  const std::filesystem::path path = "/tmp/project/huge.cpp";
+
+  std::vector<Diagnostic> flood;
+  flood.reserve(25000);
+  for (std::size_t i = 0; i < 25000; ++i) {
+    flood.push_back(MakeDiagnostic(i, 0, i, 1, DiagnosticSeverity::Warning, "x"));
+  }
+  Expect(store.ReplaceForOwnerFile("flood", path, std::move(flood)),
+         "a large diagnostic batch should still publish");
+
+  const auto* merged = store.FindByPath(path);
+  Expect(merged != nullptr, "the file should have diagnostics after a flood");
+  Expect(merged->size() <= 10000,
+         "stored diagnostics per file must be capped so per-row scans stay bounded");
+}
+
 }  // namespace
 
 void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "DiagnosticsStore/CapsPerFileCount", TestDiagnosticsStoreCapsPerFileCount);
   AddTest(tests, "DiagnosticsStore/SeverityFilter", TestDiagnosticsSeverityFilter);
   AddTest(tests, "DiagnosticsStore/MergesOwnersPerFile", TestDiagnosticsStoreMergesOwnersPerFile);
   AddTest(tests, "DiagnosticsStore/ClearsOwnersIndependently",

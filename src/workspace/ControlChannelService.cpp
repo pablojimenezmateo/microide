@@ -14,6 +14,7 @@
 #endif
 
 #include "platform/AppDirectories.h"
+#include "util/Parse.h"
 #include "workspace/ControlProtocol.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/DebugViewModel.h"
@@ -23,6 +24,15 @@
 namespace microide::workspace {
 
 namespace {
+
+// The instances directory is world-droppable on the /tmp fallback (when
+// $XDG_RUNTIME_DIR is unset), so every descriptor there is untrusted input to
+// `control-list`/`control-send` — the CLI path an external driver runs. Bound
+// both the per-descriptor slurp and the directory sweep so a hostile local
+// process can't OOM or hang the driver by dropping one giant file or a million
+// tiny ones.
+constexpr std::uintmax_t kMaxDescriptorFileBytes = 1u << 20;  // 1 MiB
+constexpr std::size_t kMaxControlInstances = 4096;
 
 int CurrentProcessId() {
 #if defined(__unix__) || defined(__APPLE__)
@@ -96,7 +106,25 @@ std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
   }
   for (const std::filesystem::directory_entry& entry :
        std::filesystem::directory_iterator(dir, ec)) {
+    // Bound the sweep: a million dropped files must not turn `control-list` into
+    // an unbounded loop / kill-storm / unbounded vector.
+    if (instances.size() >= kMaxControlInstances) {
+      break;
+    }
     if (entry.path().extension() != ".json") {
+      continue;
+    }
+    // The descriptor is named <pid>.json by DescriptorPathForPid. Trust only that
+    // filename for the pid — the file body is attacker-controllable. A file whose
+    // stem is not a positive integer is not one of ours.
+    const std::optional<int> filename_pid = util::ParseInt(entry.path().stem().string());
+    if (!filename_pid.has_value() || *filename_pid <= 0) {
+      continue;
+    }
+    // Refuse to slurp an oversized descriptor (OOM guard) before opening it.
+    std::error_code size_ec;
+    const std::uintmax_t file_bytes = entry.file_size(size_ec);
+    if (size_ec || file_bytes > kMaxDescriptorFileBytes) {
       continue;
     }
     std::ifstream in(entry.path());
@@ -115,7 +143,12 @@ std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
     if (!parsed.has_value() || !parsed->IsObject()) {
       continue;
     }
+    // The pid must match the filename — a descriptor claiming a different (living)
+    // pid is either stale or forged; don't let its body override the filename.
     const int pid = static_cast<int>((*parsed)["pid"].AsInt());
+    if (pid != *filename_pid) {
+      continue;
+    }
     // Drop (and prune) descriptors whose process is gone, e.g. after a crash or
     // SIGKILL that skipped the graceful teardown.
     if (!ProcessIsAlive(pid)) {
@@ -125,7 +158,13 @@ std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
     }
     ControlInstanceDescriptor descriptor;
     descriptor.pid = pid;
-    descriptor.socket = std::filesystem::path((*parsed)["socket"].AsString());
+    // Ignore the advertised `socket` field entirely: reconstruct the canonical
+    // path from the validated pid. The server only ever binds/rebinds
+    // SocketPathForPid(pid), so a legitimate descriptor always matches — and a
+    // forged `socket` field can never redirect a driver's connection to an
+    // attacker-controlled Unix socket (which would inject spoofed responses/events
+    // into the driver's stdout stream).
+    descriptor.socket = SocketPathForPid(pid);
     descriptor.project_root = (*parsed)["project_root"].AsString();
     descriptor.project_hash = (*parsed)["project_hash"].AsString();
     descriptor.raw_json = std::move(contents);

@@ -17,6 +17,15 @@ namespace microide::platform {
 
 #if defined(__unix__) || defined(__APPLE__)
 
+namespace {
+// A control response/event line is small (query results, debug state). Bound the
+// read buffer so a peer that streams bytes without ever sending a newline can't
+// grow it without limit — over a local Unix socket that is GB/s, so an unbounded
+// buffer would OOM the `control-send` process long before its --timeout elapses.
+// Mirrors the server's kMaxRequestLineBytes intent for the client direction.
+constexpr std::size_t kMaxResponseLineBytes = 16u << 20;  // 16 MiB
+}  // namespace
+
 ControlSocketClient::~ControlSocketClient() { Close(); }
 
 bool ControlSocketClient::Connect(const std::filesystem::path& socket_path) {
@@ -101,6 +110,12 @@ std::optional<std::string> ControlSocketClient::ReadLine(std::chrono::millisecon
     const ssize_t count = ::recv(fd_, chunk, sizeof(chunk), 0);
     if (count > 0) {
       read_buf_.append(chunk, static_cast<std::size_t>(count));
+      // No newline within the cap: a runaway / malicious peer. Abandon rather
+      // than let the buffer grow toward OOM.
+      if (read_buf_.size() > kMaxResponseLineBytes &&
+          read_buf_.find('\n') == std::string::npos) {
+        return std::nullopt;
+      }
       continue;
     }
     if (count == 0) {

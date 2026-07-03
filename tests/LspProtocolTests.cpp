@@ -128,6 +128,17 @@ void TestLspProtocolDecodesSemanticTokens() {
   Expect(codec::ParseSemanticTokensData(Json(R"({})")).empty(), "missing data => no tokens");
   Expect(codec::ParseSemanticTokensData(Json(R"({"data":[0,0,3]})")).empty(),
          "a partial 3-int group yields no tokens");
+
+  // Delta positions that would overflow a signed int when summed must be handled
+  // as saturating 64-bit arithmetic (no UB) and dropped as out-of-range, while
+  // earlier in-range tokens still decode. First token line=2e9 (in range);
+  // second adds 2e9 -> 4e9 > INT_MAX -> dropped.
+  const auto overflow = codec::ParseSemanticTokensData(
+      Json(R"({"data":[2000000000,0,3,0,0, 2000000000,0,3,0,0]})"));
+  Expect(overflow.size() == 1,
+         "an out-of-range accumulated line is dropped without overflowing int");
+  Expect(overflow[0].line == 2000000000,
+         "the in-range token decodes to its accumulated line");
 }
 
 }  // namespace

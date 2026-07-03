@@ -231,6 +231,18 @@ bool DiagnosticsStore::ReplaceForOwnerFile(std::string_view owner,
     return false;
   }
 
+  // A hostile/buggy language server can publish an unbounded number of
+  // diagnostics for one file. The per-file list is scanned linearly per visible
+  // row per frame (HighestDiagnosticSeverityForLine / AppendDiagnosticUnderlines),
+  // so an uncapped list turns every redraw into an O(rows * N) UI-thread freeze
+  // (and a large steady footprint). Cap the stored count: a file with more
+  // diagnostics than this is already unreadable, and the marker/underline render
+  // stays bounded regardless of what a server sends.
+  constexpr std::size_t kMaxDiagnosticsPerOwnerFile = 10000;
+  if (diagnostics.size() > kMaxDiagnosticsPerOwnerFile) {
+    diagnostics.resize(kMaxDiagnosticsPerOwnerFile);
+  }
+
   bool changed = false;
   auto& owner_entries = diagnostics_by_owner_[owner_key];
   if (diagnostics.empty()) {
