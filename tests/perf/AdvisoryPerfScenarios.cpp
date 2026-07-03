@@ -12,6 +12,7 @@
 #include <unistd.h>
 #endif
 
+#include "perf/AllocationCounter.h"
 #include "platform/Subprocess.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
@@ -392,6 +393,90 @@ void RunCompareScrollSelectionFixture(ScenarioContext& context) {
   });
 }
 
+// Advisory micro-benchmark for the ProjectTabStripVisible() settings-lookup cache.
+// The predicate runs inside the uncached CurrentWorkspaceLayout()/ComputeLayout on
+// the per-mouse-move window-drag hit-test path (WindowDragRegionContains). With a
+// single project open, the size()>1 short-circuit fails and every recompute used to
+// re-resolve "chrome.project_tabs.hide_when_single" through the GetSettingValue
+// if-chain + settings-store lookup. This scenario hammers both the raw predicate and
+// the full uncached layout recompute in the strip-visible and strip-hidden configs so
+// a before/after run isolates the per-call lookup cost. Advisory only (not gated, not
+// run by default) -- invoke with --scenario=project_tab_strip_layout_hittest.
+void RunProjectTabStripLayoutHittest(ScenarioContext& context) {
+  const std::filesystem::path project = "tests/perf/fixtures/large_project";
+  if (!context.Open(project)) {
+    throw std::runtime_error(
+        "project_tab_strip_layout_hittest: failed to open project fixture");
+  }
+  context.PumpFrames(3);
+
+  constexpr int kPredicateCalls = 200000;
+  constexpr int kLayoutRecomputes = 20000;
+
+  auto measure_config = [&](const char* config_label, const char* hide_value) {
+    context.SetSetting("chrome.project_tabs.hide_when_single", hide_value);
+    context.PumpFrames(1);
+    // Warm the per-revision cache resolve so the measured loops observe steady state.
+    volatile bool warm =
+        workspace::WorkspaceShell::TestAccess::ProjectTabStripVisible(context.Shell());
+    (void)warm;
+
+    // Raw predicate burst -- isolates exactly the cached lookup.
+    {
+      const AllocationSnapshot before = Allocations::Snapshot();
+      const auto start = std::chrono::steady_clock::now();
+      volatile int sink = 0;
+      for (int i = 0; i < kPredicateCalls; ++i) {
+        sink += workspace::WorkspaceShell::TestAccess::ProjectTabStripVisible(context.Shell())
+                    ? 1
+                    : 0;
+      }
+      const auto end = std::chrono::steady_clock::now();
+      const AllocationDelta delta = Allocations::DeltaSince(before);
+      const double ms = std::chrono::duration<double, std::milli>(end - start).count();
+      std::cerr << "[perf][project_tab_strip] predicate " << config_label
+                << " calls=" << kPredicateCalls << " wall_ms=" << ms
+                << " ns/call=" << (ms * 1e6 / kPredicateCalls)
+                << " allocations=" << delta.allocations
+                << " bytes=" << delta.bytes_allocated << "\n";
+      (void)sink;
+    }
+
+    // Full uncached layout recompute burst -- the real WindowDragRegionContains path.
+    {
+      const AllocationSnapshot before = Allocations::Snapshot();
+      const auto start = std::chrono::steady_clock::now();
+      volatile float sink = 0.0F;
+      for (int i = 0; i < kLayoutRecomputes; ++i) {
+        const workspace::WorkspaceLayout layout =
+            workspace::WorkspaceShell::TestAccess::CurrentLayout(context.Shell());
+        sink += layout.project_tab_strip.h;
+      }
+      const auto end = std::chrono::steady_clock::now();
+      const AllocationDelta delta = Allocations::DeltaSince(before);
+      const double ms = std::chrono::duration<double, std::milli>(end - start).count();
+      std::cerr << "[perf][project_tab_strip] layout    " << config_label
+                << " recomputes=" << kLayoutRecomputes << " wall_ms=" << ms
+                << " us/recompute=" << (ms * 1e3 / kLayoutRecomputes)
+                << " allocations=" << delta.allocations
+                << " bytes=" << delta.bytes_allocated << "\n";
+      (void)sink;
+    }
+  };
+
+  context.Measure("project_tab_strip.hittest", [&] {
+    measure_config("strip_visible", "false");  // single project, not hidden -> visible
+    measure_config("strip_hidden ", "true");   // single project, hidden when single
+  });
+}
+
+const ScenarioRegistration g_perf_project_tab_strip_layout_hittest({Scenario{
+    .name = "project_tab_strip_layout_hittest",
+    .smoke = false,
+    .baseline_gated = false,
+    .run_by_default = false,
+    .run = RunProjectTabStripLayoutHittest,
+}});
 const ScenarioRegistration g_perf_repo_open_rss_idle({Scenario{
     .name = "repo_open_rss_idle",
     .smoke = false,

@@ -77,6 +77,17 @@ void TestSettingsCatalogIncludesPolishKeys() {
   }
 }
 
+void TestSettingsCatalogProjectTabHideToggle() {
+  const SettingSpec* spec = FindBuiltinSettingSpec("chrome.project_tabs.hide_when_single");
+  Expect(spec != nullptr, "project-tab hide toggle should be registered");
+  Expect(spec->type == SettingType::Bool, "project-tab hide toggle is a boolean setting");
+  Expect(spec->scope == microide::workspace::SettingScope::User,
+         "project-tab hide toggle is a user-scoped preference");
+  const microide::workspace::SettingValue value = DefaultSettingValue(*spec);
+  const auto* on = std::get_if<bool>(&value);
+  Expect(on != nullptr && *on, "project-tab hide toggle defaults to on");
+}
+
 void TestSettingsCatalogSaveDefaultsAndDedup() {
   // The stale duplicate keys were removed in favor of the wired editor.save.* pair.
   Expect(FindBuiltinSettingSpec("editor.trim_trailing_whitespace") == nullptr,
@@ -456,6 +467,8 @@ void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
           TestSettingsCatalogIncludesPolishKeys);
   AddTest(tests, "WorkspaceSettingsRegistry/SaveDefaultsAndDedup",
           TestSettingsCatalogSaveDefaultsAndDedup);
+  AddTest(tests, "WorkspaceSettingsRegistry/ProjectTabHideToggle",
+          TestSettingsCatalogProjectTabHideToggle);
   AddTest(tests, "WorkspaceSettingsRegistry/DefaultsRoundTrip",
           TestSettingsCatalogDefaultsRoundTrip);
   AddTest(tests, "WorkspaceSettingsRegistry/EdgeValuesRoundTrip",

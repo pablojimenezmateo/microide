@@ -128,8 +128,16 @@ void TestArchitectureInvariants() {
              // genuine edit apart from a tab switch so a pending after-delay autosave survives the
              // switch) and last_applied_terminal_font_settings_revision_ (gate the per-frame terminal
              // font apply on the settings revision, keeping the steady-state path allocation-free).
+             // 1640: +1 for ProjectTabStripVisible (single-sources the "hide project tab strip when
+             // a single project is open" predicate across the 4 ComputeLayout call sites so render
+             // and hit-test agree on the strip's collapsed geometry).
+             // 1642: +2 for caching that predicate's settings lookup: project_tabs_hide_when_single_
+             // + its revision stamp memoize the string-keyed GetSettingValue (and its default-value
+             // allocation) so ProjectTabStripVisible re-resolves only on a settings-store revision
+             // bump, keeping the per-mouse-move window-drag hit-test's uncached ComputeLayout off the
+             // string-lookup path.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1639);
+                                                     1642);
            });
 
   bool hard_failure = false;

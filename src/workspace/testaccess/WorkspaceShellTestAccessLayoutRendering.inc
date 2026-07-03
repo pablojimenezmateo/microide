@@ -1,3 +1,6 @@
+  static bool ProjectTabStripVisible(WorkspaceShell& shell) {
+    return shell.ProjectTabStripVisible();
+  }
   static std::string ProjectTabBadgeText(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     for (const WorkspaceShell::VisibleStripTab& tab :

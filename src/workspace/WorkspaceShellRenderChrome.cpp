@@ -145,60 +145,65 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                            CurrentWindowChromeState().Expanded());
   }
 
-  const auto visible_project_tabs = tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
-  for (const VisibleStripTab& tab : visible_project_tabs) {
-    if (tab_lifted(TabDragKind::Project, 0, tab.index)) {
-      continue;  // rendered as the floating ghost below
+  // Skip all project-tab work when the strip is hidden (zero height): no tab measuring,
+  // overflow controls, or drag ghost.
+  if (layout.project_tab_strip.h > 0.0f) {
+    const auto visible_project_tabs =
+        tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
+    for (const VisibleStripTab& tab : visible_project_tabs) {
+      if (tab_lifted(TabDragKind::Project, 0, tab.index)) {
+        continue;  // rendered as the floating ghost below
+      }
+      const float dx = slide_dx(TabDragKind::Project, 0, tab.index);
+      SDL_FRect rect = tab.rect;
+      SDL_FRect close_rect = tab.close_rect;
+      rect.x += dx;
+      close_rect.x += dx;
+      DrawStripTab(text_renderer_, renderer, theme_, rect, tab.display_title, tab.badge_text,
+                   tab.badge_color, tab.show_badge, tab.active,
+                   StripTabStyle{
+                       .text_left_padding = 10.0f,
+                       .badge_size = 16.0f,
+                       .badge_gap = 8.0f,
+                       .close_right_reserve = 46.0f,
+                       .accent_edge = StripAccentEdge::Top,
+                   },
+                   chrome_tab_palette, tab_hovered(rect));
+      draw_tab_close_button(close_rect,
+                            tab.active ? chrome_tab_palette.active_glyph
+                                       : chrome_tab_palette.inactive_glyph,
+                            tab.active ? chrome_tab_palette.active_text
+                                       : chrome_tab_palette.inactive_text);
     }
-    const float dx = slide_dx(TabDragKind::Project, 0, tab.index);
-    SDL_FRect rect = tab.rect;
-    SDL_FRect close_rect = tab.close_rect;
-    rect.x += dx;
-    close_rect.x += dx;
-    DrawStripTab(text_renderer_, renderer, theme_, rect, tab.display_title, tab.badge_text,
-                 tab.badge_color, tab.show_badge, tab.active,
-                 StripTabStyle{
-                     .text_left_padding = 10.0f,
-                     .badge_size = 16.0f,
-                     .badge_gap = 8.0f,
-                     .close_right_reserve = 46.0f,
-                     .accent_edge = StripAccentEdge::Top,
-                 },
-                 chrome_tab_palette, tab_hovered(rect));
-    draw_tab_close_button(close_rect,
-                          tab.active ? chrome_tab_palette.active_glyph
-                                     : chrome_tab_palette.inactive_glyph,
-                          tab.active ? chrome_tab_palette.active_text
-                                     : chrome_tab_palette.inactive_text);
-  }
-  {
-    const auto project_overflow =
-        tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, visible_project_tabs);
-    DrawTabStripOverflowButton(text_renderer_, renderer, theme_, project_overflow.left_button,
-                               /*point_right=*/false, project_overflow.hidden_left,
-                               last_mouse_position_valid_ &&
-                                   Contains(project_overflow.left_button, last_mouse_x_,
-                                            last_mouse_y_));
-    DrawTabStripOverflowButton(text_renderer_, renderer, theme_, project_overflow.right_button,
-                               /*point_right=*/true, project_overflow.hidden_right,
-                               last_mouse_position_valid_ &&
-                                   Contains(project_overflow.right_button, last_mouse_x_,
-                                            last_mouse_y_));
-  }
-  if (const TabDragState& drag = context_.interaction_state.tab_drag;
-      drag.dragging && drag.kind == TabDragKind::Project) {
-    DrawTabDragFeedback(text_renderer_, renderer, theme_, layout.project_tab_strip,
-                        visible_project_tabs, drag.source_index, drag.pointer_x,
-                        drag.grab_offset_x,
-                        StripTabStyle{
-                            .text_left_padding = 10.0f,
-                            .badge_size = 16.0f,
-                            .badge_gap = 8.0f,
-                            .close_right_reserve = 46.0f,
-                            .accent_edge = StripAccentEdge::Top,
-                        },
-                        chrome_tab_palette);
-  }
+    {
+      const auto project_overflow =
+          tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, visible_project_tabs);
+      DrawTabStripOverflowButton(text_renderer_, renderer, theme_, project_overflow.left_button,
+                                 /*point_right=*/false, project_overflow.hidden_left,
+                                 last_mouse_position_valid_ &&
+                                     Contains(project_overflow.left_button, last_mouse_x_,
+                                              last_mouse_y_));
+      DrawTabStripOverflowButton(text_renderer_, renderer, theme_, project_overflow.right_button,
+                                 /*point_right=*/true, project_overflow.hidden_right,
+                                 last_mouse_position_valid_ &&
+                                     Contains(project_overflow.right_button, last_mouse_x_,
+                                              last_mouse_y_));
+    }
+    if (const TabDragState& drag = context_.interaction_state.tab_drag;
+        drag.dragging && drag.kind == TabDragKind::Project) {
+      DrawTabDragFeedback(text_renderer_, renderer, theme_, layout.project_tab_strip,
+                          visible_project_tabs, drag.source_index, drag.pointer_x,
+                          drag.grab_offset_x,
+                          StripTabStyle{
+                              .text_left_padding = 10.0f,
+                              .badge_size = 16.0f,
+                              .badge_gap = 8.0f,
+                              .close_right_reserve = 46.0f,
+                              .accent_edge = StripAccentEdge::Top,
+                          },
+                          chrome_tab_palette);
+    }
+  }  // project_tab_strip visible
 
   // Each editor group owns its own tab strip. For a single group this is the
   // global tab-strip band (filled in the frame pass); a stacked second group

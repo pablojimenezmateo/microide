@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 
+#include "workspace/SettingFlags.h"
 #include "workspace/TabReorder.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
@@ -174,6 +175,27 @@ void WorkspaceShell::RequestCloseProject(std::size_t index) {
 
 void WorkspaceShell::CloseProject(std::size_t index) {
   MakeProjectCatalogService().Close(index);
+  // Closing may drop the open-project count to <= 1, which can re-hide the strip when
+  // "chrome.project_tabs.hide_when_single" is on; the coordinator only requests a redraw,
+  // so mark layout dirty here to force a recompute (Open/Switch already do this).
+  MarkLayoutDirty();
+}
+
+bool WorkspaceShell::ProjectTabStripVisible() const {
+  if (context_.project_catalog.entries.size() > 1) {
+    return true;
+  }
+  // Resolve the hide-when-single flag at most once per settings-store revision.
+  // This runs inside the uncached ComputeLayout on the per-mouse-move window-drag
+  // hit-test path, so avoid the string-keyed lookup + default-value allocation on
+  // every recompute (mirrors the terminal-font revision gate).
+  const std::uint64_t settings_revision = settings_store_.Revision();
+  if (settings_revision != project_tabs_hide_when_single_revision_) {
+    project_tabs_hide_when_single_revision_ = settings_revision;
+    project_tabs_hide_when_single_ =
+        SettingFlagEnabled(GetSettingValue("chrome.project_tabs.hide_when_single"));
+  }
+  return !project_tabs_hide_when_single_;
 }
 
 }  // namespace microide::workspace

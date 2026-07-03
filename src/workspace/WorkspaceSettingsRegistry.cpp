@@ -401,6 +401,18 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Editor → View",
       },
       SettingSpec{
+          .id = "chrome.project_tabs.hide_when_single",
+          .label = "Hide Project Tabs When Single",
+          .description = "Hide the project tab strip while one project (or none) is open. "
+                         "On by default; the strip reappears when a second project opens.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Workspace",
+      },
+      SettingSpec{
           .id = "session.restore_on_launch",
           .label = "Restore Session on Launch",
           .description = "Reopen the previous projects, tabs, and layout when the app starts.",

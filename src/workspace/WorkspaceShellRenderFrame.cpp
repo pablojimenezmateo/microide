@@ -136,7 +136,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                            project_state.sidebar.width, project_state.panel.height,
                            layout_mode_service_.SnapshotInputs(),
                            layout_mode_service_.StatusBarVisible(),
-                           project_state.debug_pane.visible, project_state.debug_pane.width);
+                           project_state.debug_pane.visible, project_state.debug_pane.width,
+                           ProjectTabStripVisible());
     layout_mode_service_.SetCurrentMode(layout.layout_mode);
     ++prepare_frame_layout_compute_count_;
     layout_dirty_ = false;
@@ -246,13 +247,16 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer,
                           layout.menu_bar.y + layout.menu_bar.h - kWorkspaceDividerThickness,
                           layout.menu_bar.w, kWorkspaceDividerThickness),
                  theme_.border);
-  DrawFilledRect(renderer, layout.project_tab_strip, theme_.chrome_background);
-  DrawFilledRect(renderer,
-                 MakeRect(layout.project_tab_strip.x,
-                          layout.project_tab_strip.y + layout.project_tab_strip.h -
-                              kWorkspaceDividerThickness,
-                          layout.project_tab_strip.w, kWorkspaceDividerThickness),
-                 theme_.border);
+  // A zero-height strip (hidden when only one project is open) draws no band or divider.
+  if (layout.project_tab_strip.h > 0.0f) {
+    DrawFilledRect(renderer, layout.project_tab_strip, theme_.chrome_background);
+    DrawFilledRect(renderer,
+                   MakeRect(layout.project_tab_strip.x,
+                            layout.project_tab_strip.y + layout.project_tab_strip.h -
+                                kWorkspaceDividerThickness,
+                            layout.project_tab_strip.w, kWorkspaceDividerThickness),
+                   theme_.border);
+  }
   DrawFilledRect(renderer, layout.tab_strip, theme_.chrome_background);
   DrawFilledRect(renderer,
                  MakeRect(layout.tab_strip.x,
