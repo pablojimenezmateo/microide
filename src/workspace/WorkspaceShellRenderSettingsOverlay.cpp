@@ -275,18 +275,23 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
 
     text_renderer_.DrawStringOn(renderer, text_x, row.row_rect.y + 6.0f, theme_.text_primary,
                                 background, text_renderer_.TruncateToWidth(row.label, text_width));
-    if (!row.description.empty()) {
-      text_renderer_.DrawStringOn(renderer, text_x, row.row_rect.y + 6.0f + line_height,
-                                  theme_.text_muted, background,
-                                  text_renderer_.TruncateToWidth(row.description, text_width));
-    }
+    // The scope label ("User" / "Project" / "Default") sits at the right end of the
+    // description line. Draw it first and reserve its slot so the description truncates
+    // before it rather than painting over it (both previously ran to text_left).
+    float description_width = text_width;
     if (!row.scope_label.empty()) {
       const float scope_w = text_renderer_.MeasureWidth(row.scope_label);
       const float scope_x = text_left - 8.0f - scope_w;
       if (scope_x > text_x + 40.0f) {
         text_renderer_.DrawStringOn(renderer, scope_x, row.row_rect.y + 6.0f + line_height,
                                     theme_.text_disabled, background, row.scope_label);
+        description_width = std::max(40.0f, scope_x - 8.0f - text_x);
       }
+    }
+    if (!row.description.empty()) {
+      text_renderer_.DrawStringOn(renderer, text_x, row.row_rect.y + 6.0f + line_height,
+                                  theme_.text_muted, background,
+                                  text_renderer_.TruncateToWidth(row.description, description_width));
     }
 
     if (row.resettable) {
