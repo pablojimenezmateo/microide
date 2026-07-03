@@ -35,35 +35,6 @@ single generic. No persisted-format or plugin-API breaks.
   sidebar status wins; the maintainer workstation is now the designated
   `perf-runner-v1` host for authoritative rebaselines.
 
-## [2.6.0] - 2026-07-02
-
-A **performance & internals** release on top of 2.5.1. The compare/merge
-surfaces and sidebar shed per-frame work, the release binary now ships with
-LTO, and a broad refactor collapses the workspace provider registries behind a
-single generic. No persisted-format or plugin-API breaks.
-
-### Performance
-- Compare/merge rendering no longer allocates per visible row: both surfaces
-  render through reused scratch `DecoratedTextRow` members and truncate hot
-  labels allocation-free, and their render TUs are now under the render lint set
-  that enforces it.
-- Sidebar project-search status line is cached in the view model instead of
-  being rebuilt every frame.
-
-### Build
-- The release `.deb` now ships with LTO (`-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON`),
-  matching the LTO codegen the perf gate already measures.
-
-### Internal
-- Collapse seven per-kind workspace provider registries into a single generic
-  `ProviderRegistry<Spec>`.
-- Default `operator==` for the compare/merge hover state.
-
-### Performance baselines
-- Refresh committed perf baselines to reflect the compare/merge render and
-  sidebar status wins; the maintainer workstation is now the designated
-  `perf-runner-v1` host for authoritative rebaselines.
-
 ## [2.5.1] - 2026-07-01
 
 A **performance & internals** patch on top of 2.5.0. Startup and teardown get
