@@ -379,6 +379,23 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = {},
       },
       SettingSpec{
+          .id = "terminal.osc52_clipboard_write",
+          .label = "Allow Terminal Clipboard Writes (OSC 52)",
+          .description = "Let a program running in the terminal set the system clipboard via the "
+                         "OSC 52 escape sequence. Off by default: otherwise any program printing "
+                         "to the terminal could silently overwrite your clipboard (e.g. swapping a "
+                         "copied command for a malicious one). Enable only if you rely on remote "
+                         "yank-to-clipboard (tmux/vim over SSH).",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = false,
+          .default_int = 0,
+          .default_float = 0.0f,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Terminal",
+      },
+      SettingSpec{
           .id = "editor.caret_blink.enabled",
           .label = "Caret Blink",
           .description = "Blink the text caret. When off, the caret stays solid (no idle wake-ups).",

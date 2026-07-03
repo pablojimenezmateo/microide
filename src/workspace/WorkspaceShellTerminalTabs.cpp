@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "util/Parse.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/TabReorder.h"
 
 namespace microide::workspace {
@@ -155,6 +156,12 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   const bool panel_visible_before = BottomPanelVisible();
   const std::size_t tab_count_before = context_.current_project_state.terminal_tabs.size();
   const bool had_terminal_tabs = tab_count_before > 0;
+  // OSC 52 lets a program running in the terminal set the system clipboard. That
+  // is a silent poisoning vector (any output could swap a copied command for a
+  // malicious one), so honor it only when the user has opted in. The pending text
+  // is still drained either way so it can't accumulate.
+  const bool allow_osc52_clipboard =
+      SettingFlagEnabled(GetSettingValue("terminal.osc52_clipboard_write"), false);
   for (const auto& terminal_tab : context_.current_project_state.terminal_tabs) {
     if (terminal_tab == nullptr) {
       continue;
@@ -162,7 +169,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
     terminal_tab->session.ConsumeWakeEvent();
     const std::optional<std::string> clipboard_text =
         terminal_tab->session.ConsumePendingClipboardText();
-    if (clipboard_text.has_value()) {
+    if (clipboard_text.has_value() && allow_osc52_clipboard) {
       WriteClipboardText(*clipboard_text);
     }
   }

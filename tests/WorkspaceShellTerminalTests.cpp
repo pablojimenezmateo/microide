@@ -226,11 +226,21 @@ void TestWorkspaceShellTerminalOsc52CopiesToClipboard() {
         return true;
       });
 
+  // Default: OSC 52 clipboard writes are refused (silent-poisoning guard). The
+  // pending text is still drained, but the clipboard writer is never invoked.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b]52;c;Y29waWVkIGZyb20gdGVybQ==\x07");
   WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  Expect(clipboard_text.empty(),
+         "OSC 52 must not write the system clipboard by default (poisoning guard)");
 
+  // Opt-in: enabling the setting routes OSC 52 text to the clipboard writer.
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
+             shell, "set-setting terminal.osc52_clipboard_write true"),
+         "the OSC 52 opt-in setting should flip");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]52;c;Y29waWVkIGZyb20gdGVybQ==\x07");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
   Expect(clipboard_text == "copied from term",
-         "workspace terminal updates should route OSC 52 clipboard text into the clipboard writer");
+         "with the opt-in enabled, OSC 52 clipboard text reaches the clipboard writer");
 }
 
 void TestWorkspaceShellTerminalFocusModeTracksPanelFocus() {
