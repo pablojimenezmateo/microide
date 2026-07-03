@@ -1151,6 +1151,13 @@ std::string DetectFiletype(const std::filesystem::path& path) {
   return definition == nullptr ? std::string{} : definition->filetype;
 }
 
+// Above this byte length a line is not tokenized: running the syntax rules over
+// the whole line is O(line) work on the UI thread on every token-cache miss, so a
+// single enormous line (a minified bundle with no newline) would stall the shell.
+// Such lines render unhighlighted (all Plain) — the same threshold behavior
+// mature editors use to disable tokenization on very long lines.
+constexpr std::size_t kMaxHighlightLineBytes = 100000;
+
 HighlightedLine HighlightLine(std::string_view line,
                               const std::filesystem::path& path,
                               const SyntaxState& state,
@@ -1166,8 +1173,8 @@ HighlightedLine HighlightLine(std::string_view line,
   result.tokens.assign(line.size(), SyntaxTokenKind::Plain);
   result.end_state = SyntaxState{};
   result.end_state.definition_id = definition_id;
-  if (line.empty()) {
-    return result;
+  if (line.empty() || line.size() > kMaxHighlightLineBytes) {
+    return result;  // empty, or too long to tokenize affordably: leave Plain
   }
 
   // Resume the previous line's open-region stack only when the definition still
@@ -1189,8 +1196,8 @@ SyntaxState AdvanceState(std::string_view line,
                                : DetectDefinitionId(registry, path, nullptr, first_line);
   SyntaxState end_state{};
   end_state.definition_id = definition_id;
-  if (line.empty()) {
-    return end_state;
+  if (line.empty() || line.size() > kMaxHighlightLineBytes) {
+    return end_state;  // see kMaxHighlightLineBytes: skip scanning a huge line
   }
 
   std::vector<SyntaxTokenKind> no_tokens;

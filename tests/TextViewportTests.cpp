@@ -1461,6 +1461,58 @@ void TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories() {
          "plugin region syntax definitions should highlight string spans");
 }
 
+// A pathologically long line (a minified bundle with no newline) must not be
+// tokenized synchronously on the UI thread: highlighting scans the whole line
+// with the syntax rules, O(line) work on every token-cache miss. Over the length
+// cap the line renders unhighlighted (all Plain), while the exact
+// one-token-per-byte contract is preserved so downstream indexing stays safe.
+void TestSyntaxHighlightSkipsOverlongLine() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  ScopedRuntimeSyntaxRegistryReset syntax_reset;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path syntax_dir = temp_dir.path() / "syntax";
+  WriteFile(syntax_dir / "todo.lua",
+            R"(return {
+  filetype = "todo",
+  files = { "\\.todo$" },
+  rules = {
+    { pattern = "\\b(TODO|DONE)\\b", group = "keyword" }
+  }
+}
+)");
+  std::vector<std::string> loader_errors;
+  const auto definitions =
+      microide::editor::runtime_syntax::LoadDefinitionsFromDirectories({syntax_dir}, &loader_errors);
+  std::vector<std::string> reload_errors;
+  microide::editor::runtime_syntax::ReloadDefinitions(definitions, &reload_errors);
+
+  // Control: a short line with the keyword is highlighted, proving the definition
+  // works and that only length disables it below.
+  {
+    TextViewport shortv;
+    shortv.LoadContent("TODO here\n", "/tmp/short.todo");
+    const auto& tokens = shortv.HighlightedLineTokens(0);
+    Expect(std::any_of(tokens.begin(), tokens.end(),
+                       [](SyntaxTokenKind k) { return k == SyntaxTokenKind::Keyword; }),
+           "a short line with the keyword should highlight");
+  }
+
+  // A >100 KB line beginning with the keyword must NOT be tokenized: all Plain,
+  // one token per byte.
+  std::string huge = "TODO ";
+  huge.append(300000, 'x');
+  TextViewport bigv;
+  bigv.LoadContent(huge + "\n", "/tmp/big.todo");
+  const auto& tokens = bigv.HighlightedLineTokens(0);
+  Expect(tokens.size() == bigv.lines().front().size(),
+         "overlong line must still return one token per byte (contract preserved)");
+  Expect(std::all_of(tokens.begin(), tokens.end(),
+                     [](SyntaxTokenKind k) { return k == SyntaxTokenKind::Plain; }),
+         "an overlong line must be left unhighlighted (all Plain)");
+}
+
 void TestSyntaxHighlightNestedRegionResumesParentScope() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2391,6 +2443,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories);
   AddTest(tests, "TextViewport/SyntaxHighlightNestedRegionResumesParentScope",
           TestSyntaxHighlightNestedRegionResumesParentScope);
+  AddTest(tests, "TextViewport/SyntaxHighlightSkipsOverlongLine",
+          TestSyntaxHighlightSkipsOverlongLine);
   AddTest(tests, "TextViewport/RuntimeSyntaxLazyCompileIsThreadSafeForSameLanguage",
           TestRuntimeSyntaxLazyCompileIsThreadSafeForSameLanguage);
   AddTest(tests, "TextViewport/RuntimeSyntaxLazyCompileSurvivesReload",

@@ -44,11 +44,37 @@ void TestToolDownloaderFallsBackToShasumWhenSha256sumMissing() {
          "successful download should return the cached tool path");
 }
 
+// A tool_id containing path-traversal (or an absolute-ish component) must be
+// rejected so it can never read/write/probe outside the cache directory.
+void TestToolDownloaderRejectsTraversalToolId() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path cache_dir = temp_dir.path() / "cache";
+  // A file the traversal would target if the guard were missing.
+  const std::filesystem::path outside = temp_dir.path() / "secret.bin";
+  WriteFile(outside, "secret\n");
+
+  ToolDownloader downloader;
+  downloader.SetCacheDir(cache_dir);
+
+  for (const char* evil : {"../secret.bin", "..", ".", "sub/evil", "a\\b"}) {
+    Expect(!downloader.IsCached(evil), std::string("IsCached must reject unsafe id: ") + evil);
+    Expect(!downloader.GetCachedTool(evil).has_value(),
+           std::string("GetCachedTool must reject unsafe id: ") + evil);
+    Expect(!downloader.Download(evil, outside.string(), std::string(64, 'a')).has_value(),
+           std::string("Download must reject unsafe id: ") + evil);
+  }
+
+  // A well-formed id is still accepted by the cache lookups (absent -> not cached).
+  Expect(!downloader.IsCached("valid-tool"), "a safe but absent id is simply not cached");
+}
+
 }  // namespace
 
 void RegisterWorkspaceToolDownloaderTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceToolDownloader/FallsBackToShasumWhenSha256sumMissing",
           TestToolDownloaderFallsBackToShasumWhenSha256sumMissing);
+  AddTest(tests, "WorkspaceToolDownloader/RejectsTraversalToolId",
+          TestToolDownloaderRejectsTraversalToolId);
 }
 
 }  // namespace microide::tests

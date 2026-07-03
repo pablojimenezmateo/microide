@@ -123,7 +123,14 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
     bool no_newline_after = false;
   };
   std::vector<PatchBodyLine> body_lines;
-  body_lines.reserve(end_row - start_row + 2);
+  // Guard the size_t subtraction: if start_row > end_row (defensive — the compare
+  // engine maintains start_row <= end_row, but this hunk-index entry point lacks
+  // the explicit first>last guard its GenerateComparePatchForRows sibling has), the
+  // reserve would underflow to a near-SIZE_MAX request and throw. The loop below
+  // is already a no-op in that case.
+  if (end_row >= start_row) {
+    body_lines.reserve(end_row - start_row + 2);
+  }
   bool has_change = false;
   for (std::size_t row = start_row; row <= end_row; ++row) {
     const CompareRow& compare_row = model.rows[row];

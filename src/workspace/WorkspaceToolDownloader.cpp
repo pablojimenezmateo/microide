@@ -11,6 +11,19 @@ namespace microide::workspace {
 
 namespace {
 
+// A tool_id becomes a single path component under the cache dir (`cache_dir_ /
+// tool_id`). Reject anything that could escape that directory — path separators,
+// "."/"..", or a NUL — so a tool_id from an untrusted source (e.g. a plugin
+// manifest) can never drive an arbitrary-path read/write/remove via traversal.
+bool IsSafeToolId(std::string_view tool_id) {
+  if (tool_id.empty() || tool_id == "." || tool_id == "..") {
+    return false;
+  }
+  return tool_id.find('/') == std::string_view::npos &&
+         tool_id.find('\\') == std::string_view::npos &&
+         tool_id.find('\0') == std::string_view::npos;
+}
+
 std::optional<std::filesystem::path> ResolveToolSourcePath(const std::string& url) {
   static constexpr std::string_view kFileScheme = "file://";
   if (url.starts_with(kFileScheme)) {
@@ -122,7 +135,7 @@ void ToolDownloader::SetCacheDir(const std::filesystem::path& dir) { cache_dir_ 
 std::optional<std::filesystem::path> ToolDownloader::Download(const std::string& tool_id,
                                                                const std::string& url,
                                                                const std::string& expected_sha256) {
-  if (tool_id.empty()) {
+  if (!IsSafeToolId(tool_id)) {
     return std::nullopt;
   }
 
@@ -199,12 +212,18 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
 }
 
 bool ToolDownloader::IsCached(const std::string& tool_id) const {
+  if (!IsSafeToolId(tool_id)) {
+    return false;
+  }
   const auto cached = cache_dir_ / tool_id;
   return std::filesystem::exists(cached);
 }
 
 std::optional<std::filesystem::path> ToolDownloader::GetCachedTool(
     const std::string& tool_id) const {
+  if (!IsSafeToolId(tool_id)) {
+    return std::nullopt;
+  }
   const auto cached = cache_dir_ / tool_id;
   if (std::filesystem::exists(cached)) {
     return cached;

@@ -8,6 +8,7 @@
 
 #include "editor/DiagnosticsRender.h"
 #include "util/PerformanceTrace.h"
+#include "util/StringUtil.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceLayout.h"
 
@@ -16,6 +17,20 @@ namespace microide::workspace {
 using namespace detail;
 
 namespace {
+
+// Hover title/content come from an external language server or plugin and are
+// otherwise unbounded. The popup only ever shows a handful of lines, but the
+// layout path measures/normalizes/word-splits the WHOLE string on the UI thread,
+// several times per frame while the popup is considered. Truncate at ingestion so
+// a server returning megabytes of hover text cannot stall the shell. Trimmed back
+// to a UTF-8 boundary so a multibyte codepoint is never split.
+constexpr std::size_t kMaxHoverTextBytes = 8192;
+
+void TruncateHoverText(std::string& text) {
+  if (text.size() > kMaxHoverTextBytes) {
+    text.resize(util::PreviousUtf8Boundary(text, kMaxHoverTextBytes));
+  }
+}
 
 constexpr float kEditorHoverPopupPadding = 12.0f;
 constexpr float kEditorHoverPopupGap = 6.0f;
@@ -541,6 +556,10 @@ void WorkspaceShell::KickOffPluginHover(const std::filesystem::path& path, std::
           return;
         }
         if (ok) {
+          // Bound the untrusted server/plugin text before it reaches the
+          // per-frame measure/normalize/word-split path (see kMaxHoverTextBytes).
+          TruncateHoverText(result.title);
+          TruncateHoverText(result.content);
           plugin_hover_cache_.state = PluginHoverCache::State::Resolved;
           plugin_hover_cache_.result = std::move(result);
         } else {
