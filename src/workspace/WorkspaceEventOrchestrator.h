@@ -32,6 +32,7 @@ class WorkspaceEventDispatcher {
     std::function<void()> sync_terminal_focus;
     std::function<RenderInvalidation()> consume_pending_render_invalidation;
     std::function<void()> consume_pending_project_open_dialog_result;
+    std::function<void()> consume_pending_font_file_dialog_result;
     std::function<bool(bool)> reload_plugins_if_assets_changed;
     std::function<bool(Uint32)> plugin_runtime_consume_wake_event;
     std::function<bool(Uint32)> project_file_monitor_consume_wake_event;

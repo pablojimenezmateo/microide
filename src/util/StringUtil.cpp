@@ -321,6 +321,31 @@ bool IsAllAsciiDigits(std::string_view text) {
                      [](unsigned char c) { return c >= '0' && c <= '9'; });
 }
 
+bool ContainsCaseInsensitiveAscii(std::string_view haystack, std::string_view needle) {
+  if (needle.empty()) {
+    return true;
+  }
+  if (needle.size() > haystack.size()) {
+    return false;
+  }
+  const auto lower = [](char c) {
+    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  };
+  for (std::size_t i = 0; i + needle.size() <= haystack.size(); ++i) {
+    bool match = true;
+    for (std::size_t j = 0; j < needle.size(); ++j) {
+      if (lower(haystack[i + j]) != lower(needle[j])) {
+        match = false;
+        break;
+      }
+    }
+    if (match) {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::vector<std::string_view> SplitAsciiWhitespace(std::string_view text) {
   std::vector<std::string_view> parts;
   std::size_t index = 0;

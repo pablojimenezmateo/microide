@@ -85,6 +85,10 @@ bool TextRenderer::SetFontFamily(std::string_view family) {
   return true;
 }
 
+std::vector<std::string> TextRenderer::AvailableFontFamilies() const {
+  return backend_ != nullptr ? backend_->AvailableFontFamilies() : std::vector<std::string>{};
+}
+
 float TextRenderer::CharWidth() const {
   return backend_ != nullptr ? backend_->CharWidth() : 8.0f;
 }

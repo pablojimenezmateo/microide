@@ -72,6 +72,18 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     EnsureRedraw([this]() { RequestPromptRedraw(); });
     return true;
   }
+
+  // The Settings / Help-About overlay is modal. While it is open a plain hover can
+  // change the scope-chip tooltip (and, when editing a font row, the picker
+  // highlight), so repaint the overlay on motion. UpdateMouseCursor refreshes the
+  // last-mouse position the tooltip/hover render reads. Cheap: the overlay repaints
+  // wholesale and no underlying surface should react while it owns the screen.
+  if (settings_overlay_service_.Visible()) {
+    UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
+    EnsureRedraw([this]() { RequestOverlayRedraw(); });
+    return true;
+  }
+
   const bool previous_mouse_position_valid = last_mouse_position_valid_;
   const float previous_mouse_x = last_mouse_x_;
   const float previous_mouse_y = last_mouse_y_;

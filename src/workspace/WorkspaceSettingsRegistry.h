@@ -37,6 +37,10 @@ struct SettingSpec {
   // toggles into subsections. Format: "Group → Subsection" (Unicode arrow).
   // Empty when the setting belongs to no specific group (top-level list).
   std::string_view group;
+  // When true, the Settings overlay renders this String row as a font picker: a
+  // filterable list of installed families plus a "Choose file…" entry, instead of
+  // a bare text field. Only meaningful for SettingType::String.
+  bool suggests_fonts = false;
 };
 
 using SettingValue = std::variant<bool, int, float, std::string>;
@@ -72,6 +76,7 @@ struct SettingInfo {
   std::vector<std::string> enum_values;
   std::string plugin_id;  // empty for built-ins
   std::string group;       // see SettingSpec::group
+  bool suggests_fonts = false;  // see SettingSpec::suggests_fonts
 };
 
 std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host);

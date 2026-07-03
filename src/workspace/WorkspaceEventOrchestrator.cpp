@@ -50,7 +50,12 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       event.type == runtime_.project_open_dialog_event_type) {
     util::PerformanceTrace::Scope scope(
         "WorkspaceEventDispatcher::Handle::ProjectOpenDialogEvent");
+    // The native folder picker (project) and file picker (font) share this wake
+    // event; both consumes are idempotent no-ops when their result isn't ready.
     operations_.consume_pending_project_open_dialog_result();
+    if (operations_.consume_pending_font_file_dialog_result) {
+      operations_.consume_pending_font_file_dialog_result();
+    }
     return finish(true);
   }
   if (operations_.plugin_runtime_consume_wake_event(event.type)) {

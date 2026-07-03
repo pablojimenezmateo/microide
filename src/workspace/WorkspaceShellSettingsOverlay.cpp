@@ -328,6 +328,19 @@ void WorkspaceShell::ApplyLiveSettings() {
   // Start/stop the control channel when `control.enabled` is toggled at runtime.
   // The wake-event plumbing is already bound; only the listener is gated.
   MaybeStartControlChannel();
+
+  // Everything below derives purely from resolved settings (which include the
+  // active project layer, re-bound on project switch). The store bumps its
+  // revision on any mutation/reset/bind, so when it is unchanged since the last
+  // apply nothing here can have changed — skip the reads and idempotent re-applies
+  // entirely. This runs every prepared frame, so the fast path must stay allocation
+  // free.
+  const std::uint64_t settings_revision = settings_store_.Revision();
+  if (settings_revision == last_applied_settings_revision_) {
+    return;
+  }
+  last_applied_settings_revision_ = settings_revision;
+
   // Font family is renderer-global and not part of the per-tab editor snapshot,
   // so apply it here. ApplyLiveSettings runs every frame, so only relayout when
   // the typeface actually changed (SetFontFamily returns false when unchanged).
@@ -493,9 +506,55 @@ void WorkspaceShell::ToggleSettingScope(std::string_view id) {
   }
 }
 
+const std::vector<std::string>& WorkspaceShell::CachedFontFamilies() {
+  if (!font_families_cached_) {
+    cached_font_families_ = text_renderer_.AvailableFontFamilies();
+    font_families_cached_ = true;
+  }
+  return cached_font_families_;
+}
+
 void WorkspaceShell::BeginSettingValueEdit(std::string_view id) {
   settings_overlay_service_.SetFocusedPane(SettingsPane::Values);
-  settings_overlay_service_.BeginValueEdit(std::string(id), GetSettingValue(id).value_or(""));
+  const SettingSpec* spec = FindBuiltinSettingSpec(id);
+  if (spec != nullptr && spec->suggests_fonts) {
+    settings_overlay_service_.BeginFontValueEdit(std::string(id), CachedFontFamilies());
+  } else {
+    settings_overlay_service_.BeginValueEdit(std::string(id), GetSettingValue(id).value_or(""));
+  }
+  InvalidateCursorKindFingerprint();
+  RequestOverlayRedraw();
+}
+
+void WorkspaceShell::MoveSettingsFontPicker(int delta) {
+  if (!settings_overlay_service_.EditingFonts()) {
+    return;
+  }
+  settings_overlay_service_.MovePickerHighlight(delta);
+  InvalidateCursorKindFingerprint();
+  RequestOverlayRedraw();
+}
+
+void WorkspaceShell::ApplySettingsFontPickerIndex(int dropdown_index) {
+  if (!settings_overlay_service_.EditingFonts()) {
+    return;
+  }
+  const std::string id = settings_overlay_service_.EditingRowId();
+  if (dropdown_index == settings_overlay_service_.PickerChooseFileIndex()) {
+    settings_overlay_service_.CancelValueEdit();
+    OpenNativeFontFilePicker(id);  // writes + refreshes on completion
+    InvalidateCursorKindFingerprint();
+    RequestOverlayRedraw();
+    return;
+  }
+  const auto filtered = settings_overlay_service_.FilteredFontFamilies();
+  if (dropdown_index < 0 || dropdown_index >= static_cast<int>(filtered.size())) {
+    return;
+  }
+  const std::string value(filtered[dropdown_index]);
+  settings_overlay_service_.CancelValueEdit();
+  WriteSettingRespectingScope(id, value);
+  RefreshSettingsOverlayCatalog();
   InvalidateCursorKindFingerprint();
   RequestOverlayRedraw();
 }
@@ -505,6 +564,25 @@ void WorkspaceShell::CommitSettingValueEdit() {
     return;
   }
   const std::string id = settings_overlay_service_.EditingRowId();
+  if (settings_overlay_service_.EditingFonts()) {
+    const int highlight = settings_overlay_service_.PickerHighlight();
+    if (highlight >= 0) {
+      // A dropdown row is highlighted (a family or "Choose file…"): apply it.
+      ApplySettingsFontPickerIndex(highlight);
+      return;
+    }
+    // No highlight: commit typed text (fuzzy-resolved), or keep the current value
+    // when the search box is empty rather than clearing the font.
+    const std::string typed = settings_overlay_service_.ValueEditText();
+    settings_overlay_service_.CancelValueEdit();
+    if (!typed.empty()) {
+      WriteSettingRespectingScope(id, typed);
+    }
+    RefreshSettingsOverlayCatalog();
+    InvalidateCursorKindFingerprint();
+    RequestOverlayRedraw();
+    return;
+  }
   const std::string value = settings_overlay_service_.ValueEditText();
   settings_overlay_service_.CancelValueEdit();
   WriteSettingRespectingScope(id, value);
@@ -628,6 +706,22 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
   }
   if (vm.mode != SettingsOverlayMode::Settings) {
     return true;  // Help / About is read-only
+  }
+
+  // Font-picker dropdown: a click on an item applies it (a family, or "Choose
+  // file…" which launches the native picker); a click elsewhere inside the card is
+  // swallowed so the picker stays open. Clicks outside fall through to the cancel
+  // logic below.
+  if (left && vm.value_picker.visible) {
+    for (const SettingsPickerItemViewModel& item : vm.value_picker.items) {
+      if (Contains(item.rect, mx, my)) {
+        ApplySettingsFontPickerIndex(item.dropdown_index);
+        return true;
+      }
+    }
+    if (Contains(vm.value_picker.rect, mx, my)) {
+      return true;
+    }
   }
 
   // A click anywhere but inside the active inline value editor commits nothing and

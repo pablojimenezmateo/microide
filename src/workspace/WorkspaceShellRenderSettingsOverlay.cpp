@@ -229,6 +229,10 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
   const bool values_focused = vm.focused_pane == SettingsPane::Values;
   const float pane_bottom = vm.right_pane_rect.y + vm.right_pane_rect.h;
   const float line_height = text_renderer_.LineHeight();
+  // Scope-chip hover tooltip, captured during the row loop and drawn last so it
+  // overlays following rows and the scrollbar.
+  std::string_view hovered_scope_help;
+  SDL_FRect hovered_scope_rect{};
   // Clear the whole rows area first so switching to a category with fewer rows (e.g.
   // the single-row "Plugins" pane) does not leave the previous category's text behind.
   DrawFilledRect(renderer, vm.right_pane_rect, theme_.surface_background);
@@ -299,6 +303,11 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
       DrawCenteredTextOn(text_renderer_, renderer, row.scope_rect, scope_color,
                          theme_.chrome_background,
                          text_renderer_.TruncateToWidth(row.scope_text, row.scope_rect.w - 8.0f));
+      if (!row.scope_help.empty() && last_mouse_position_valid_ &&
+          Contains(row.scope_rect, last_mouse_x_, last_mouse_y_)) {
+        hovered_scope_help = row.scope_help;
+        hovered_scope_rect = row.scope_rect;
+      }
     }
 
     switch (control.kind) {
@@ -370,6 +379,45 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
     const bool dragging =
         context_.interaction_state.drag_target == DragTarget::SettingsScrollbar;
     DrawScrollbar(renderer, theme_, vm.scrollbar->track, vm.scrollbar->thumb, dragging);
+  }
+
+  if (!hovered_scope_help.empty()) {
+    const auto tooltip = BuildWrappedTooltipLayout(text_renderer_, hovered_scope_help,
+                                                   std::max(240.0f, vm.rect.w * 0.45f));
+    // Prefer below the chip; place above when below would overflow the overlay.
+    const float below_y = hovered_scope_rect.y + hovered_scope_rect.h + 6.0f;
+    const float above_y = hovered_scope_rect.y - 6.0f - tooltip.rect.h;
+    const float y = (below_y + tooltip.rect.h <= vm.rect.y + vm.rect.h - 6.0f || above_y < vm.rect.y)
+                        ? below_y
+                        : above_y;
+    const float x = std::clamp(hovered_scope_rect.x, vm.rect.x + 6.0f,
+                               vm.rect.x + vm.rect.w - tooltip.rect.w - 6.0f);
+    DrawWrappedTooltip(text_renderer_, renderer, theme_,
+                       MakeRect(x, y, tooltip.rect.w, tooltip.rect.h), tooltip.lines);
+  }
+
+  // Font-picker dropdown (drawn last so it overlays following rows).
+  if (vm.value_picker.visible) {
+    const SettingsPickerViewModel& picker = vm.value_picker;
+    DrawFilledRect(renderer, picker.rect, theme_.chrome_background);
+    DrawRect(renderer, picker.rect, theme_.accent);
+    for (const SettingsPickerItemViewModel& item : picker.items) {
+      const SDL_Color background =
+          item.highlighted ? theme_.selection_strong : theme_.chrome_background;
+      if (item.highlighted) {
+        DrawFilledRect(renderer, item.rect, background);
+      }
+      if (item.is_choose_file) {
+        // Separator above the pinned "Choose file…" footer.
+        DrawFilledRect(renderer, MakeRect(item.rect.x, item.rect.y, item.rect.w, 1.0f),
+                       theme_.border);
+      }
+      const SDL_Color foreground = item.is_choose_file ? theme_.accent : theme_.text_primary;
+      const float text_x = item.rect.x + 8.0f;
+      const float text_y = item.rect.y + (item.rect.h - line_height) * 0.5f;
+      text_renderer_.DrawStringOn(renderer, text_x, text_y, foreground, background,
+                                  text_renderer_.TruncateToWidth(item.text, item.rect.w - 16.0f));
+    }
   }
 }
 

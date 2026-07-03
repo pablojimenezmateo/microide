@@ -71,6 +71,7 @@ void SettingsOverlayService::Close() {
 
 void SettingsOverlayService::BeginValueEdit(std::string row_id, const std::string& initial_text) {
   editing_value_ = true;
+  editing_fonts_ = false;
   editing_row_id_ = std::move(row_id);
   value_editor_.SetText(initial_text);
   value_editor_.SelectAll();
@@ -78,11 +79,57 @@ void SettingsOverlayService::BeginValueEdit(std::string row_id, const std::strin
 
 void SettingsOverlayService::CancelValueEdit() {
   editing_value_ = false;
+  editing_fonts_ = false;
   editing_row_id_.clear();
   value_editor_.SetText("");
+  font_families_.clear();
+  picker_highlight_ = -1;
 }
 
 std::string SettingsOverlayService::ValueEditText() const { return value_editor_.text(); }
+
+void SettingsOverlayService::BeginFontValueEdit(std::string row_id,
+                                                std::vector<std::string> families) {
+  editing_value_ = true;
+  editing_fonts_ = true;
+  editing_row_id_ = std::move(row_id);
+  // Empty search field: the dropdown starts showing every family and narrows as
+  // the user types. Highlight starts at -1 so a stray Enter never commits a font.
+  value_editor_.SetText("");
+  font_families_ = std::move(families);
+  picker_highlight_ = -1;
+}
+
+std::vector<std::string_view> SettingsOverlayService::FilteredFontFamilies() const {
+  std::vector<std::string_view> out;
+  out.reserve(font_families_.size());
+  const std::string query = value_editor_.text();
+  for (const std::string& family : font_families_) {
+    if (query.empty() || util::ContainsCaseInsensitiveAscii(family, query)) {
+      out.emplace_back(family);
+    }
+  }
+  return out;
+}
+
+int SettingsOverlayService::PickerRowCount() const {
+  return static_cast<int>(FilteredFontFamilies().size()) + 1;
+}
+
+int SettingsOverlayService::PickerChooseFileIndex() const {
+  return static_cast<int>(FilteredFontFamilies().size());
+}
+
+void SettingsOverlayService::SetPickerHighlight(int index) {
+  const int max_index = PickerRowCount() - 1;  // the "Choose file…" entry
+  picker_highlight_ = std::clamp(index, -1, std::max(-1, max_index));
+}
+
+void SettingsOverlayService::MovePickerHighlight(int delta) {
+  SetPickerHighlight(picker_highlight_ + delta);
+}
+
+void SettingsOverlayService::ResetPickerHighlight() { picker_highlight_ = -1; }
 
 void SettingsOverlayService::SetScrollRow(int row) {
   scroll_row_ = std::max(0, row);
@@ -141,6 +188,7 @@ void SettingsOverlayService::RebuildSettingsRows(
     row.group = setting.group;
     row.type = setting.type;
     row.scope = setting.scope;
+    row.suggests_fonts = setting.suggests_fonts;
     switch (setting.type) {
       case SettingType::Bool:
         row.control_kind = SettingsControlKind::Checkbox;

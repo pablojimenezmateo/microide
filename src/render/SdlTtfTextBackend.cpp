@@ -417,13 +417,14 @@ std::filesystem::path SdlTtfTextBackend::LocateFontFile() {
 
 namespace {
 
-// Normalize a family/stem for fuzzy matching: lowercase, drop spaces, hyphens and
-// underscores so "JetBrains Mono" matches "JetBrainsMono-Regular".
+// Normalize a family/stem/extension for fuzzy matching: lowercase, drop spaces,
+// hyphens, underscores and dots so "JetBrains Mono" matches "JetBrainsMono-Regular"
+// and an extension like ".ttf" normalizes to "ttf" (not ".ttf").
 std::string NormalizeFontToken(std::string_view text) {
   std::string out;
   out.reserve(text.size());
   for (char c : text) {
-    if (c == ' ' || c == '-' || c == '_') {
+    if (c == ' ' || c == '-' || c == '_' || c == '.') {
       continue;
     }
     out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
@@ -431,7 +432,208 @@ std::string NormalizeFontToken(std::string_view text) {
   return out;
 }
 
+// True when `token` (already lowercased, no separators) is a weight/style word we
+// want to strip from a file stem to recover the family name for the picker list.
+bool IsFontStyleToken(std::string_view token) {
+  static constexpr std::array<std::string_view, 24> kStyles = {
+      "regular",    "bold",       "italic",    "oblique",   "bolditalic",
+      "light",      "medium",     "semibold",  "demibold",  "thin",
+      "black",      "heavy",      "book",      "roman",     "extralight",
+      "ultralight", "extrabold",  "ultrabold", "condensed", "semilight",
+      "retina",     "text",       "display",   "variablefont"};
+  return std::find(kStyles.begin(), kStyles.end(), token) != kStyles.end();
+}
+
+// Derive a human-facing family name from a font file stem for the picker list:
+// drop a trailing style token (after the last '-'/'_'), then split camelCase and
+// digit boundaries into words. The exact spelling is cosmetic — selection routes
+// back through ResolveFamilyToFile's fuzzy matcher, which ignores spacing/case.
+std::string FontDisplayNameFromStem(std::string_view stem) {
+  std::string base(stem);
+  // Drop variable-font axis tags like "[wght]" / "[wght,wdth]".
+  if (const std::size_t bracket = base.find('['); bracket != std::string::npos) {
+    base = base.substr(0, bracket);
+  }
+  while (!base.empty() && (base.back() == '-' || base.back() == '_' || base.back() == ' ')) {
+    base.pop_back();
+  }
+  if (const std::size_t sep = base.find_last_of("-_"); sep != std::string::npos) {
+    if (IsFontStyleToken(NormalizeFontToken(base.substr(sep + 1)))) {
+      base = base.substr(0, sep);
+    }
+  }
+  // Remaining '-'/'_' separators become spaces.
+  for (char& c : base) {
+    if (c == '-' || c == '_') {
+      c = ' ';
+    }
+  }
+  std::string out;
+  out.reserve(base.size() + 4);
+  for (std::size_t i = 0; i < base.size(); ++i) {
+    const char c = base[i];
+    if (i > 0 && c != ' ' && base[i - 1] != ' ') {
+      const unsigned char prev = static_cast<unsigned char>(base[i - 1]);
+      const unsigned char cur = static_cast<unsigned char>(c);
+      const bool camel = std::islower(prev) && std::isupper(cur);
+      const bool digit_edge = std::isalpha(prev) && std::isdigit(cur);
+      if (camel || digit_edge) {
+        out.push_back(' ');
+      }
+    }
+    out.push_back(c);
+  }
+  // Collapse any accidental double spaces from the substitutions above.
+  std::string collapsed;
+  collapsed.reserve(out.size());
+  bool prev_space = false;
+  for (char c : out) {
+    if (c == ' ') {
+      if (prev_space) {
+        continue;
+      }
+      prev_space = true;
+    } else {
+      prev_space = false;
+    }
+    collapsed.push_back(c);
+  }
+  return collapsed.empty() ? std::string(stem) : collapsed;
+}
+
 }  // namespace
+
+std::vector<std::filesystem::path> SdlTtfTextBackend::FontSearchRoots() {
+  // This scan is only the fallback for builds without fontconfig. To stay portable
+  // across distros we derive roots from the XDG base directories (which NixOS,
+  // Flatpak, Nix home-manager, Arch, Fedora, etc. all populate) rather than a fixed
+  // FHS list, then add well-known extras as belt-and-suspenders.
+  std::vector<std::filesystem::path> roots;
+  std::unordered_set<std::string> seen;
+  const auto add = [&](std::filesystem::path path) {
+    if (path.empty()) {
+      return;
+    }
+    if (seen.insert(path.string()).second) {
+      roots.push_back(std::move(path));
+    }
+  };
+
+  const char* home = SDL_getenv("HOME");
+
+  // 1. Per-user: $XDG_DATA_HOME/fonts (default ~/.local/share/fonts) + legacy ~/.fonts.
+  if (const char* xdg_data_home = SDL_getenv("XDG_DATA_HOME");
+      xdg_data_home != nullptr && xdg_data_home[0] != '\0') {
+    add(std::filesystem::path(xdg_data_home) / "fonts");
+  } else if (home != nullptr) {
+    add(std::filesystem::path(home) / ".local/share/fonts");
+  }
+  if (home != nullptr) {
+    add(std::filesystem::path(home) / ".fonts");
+    // Nix home-manager installs into the user profile.
+    add(std::filesystem::path(home) / ".nix-profile/share/fonts");
+  }
+
+  // 2. System: each $XDG_DATA_DIRS entry + "/fonts" (default /usr/local/share:/usr/share).
+  //    On NixOS this carries the current-system + profile store paths; on Flatpak
+  //    the runtime's /app + host paths.
+  const char* xdg_data_dirs = SDL_getenv("XDG_DATA_DIRS");
+  const std::string data_dirs =
+      (xdg_data_dirs != nullptr && xdg_data_dirs[0] != '\0') ? xdg_data_dirs
+                                                             : "/usr/local/share:/usr/share";
+  for (std::size_t start = 0; start <= data_dirs.size();) {
+    const std::size_t colon = data_dirs.find(':', start);
+    const std::size_t end = colon == std::string::npos ? data_dirs.size() : colon;
+    if (end > start) {
+      add(std::filesystem::path(data_dirs.substr(start, end - start)) / "fonts");
+    }
+    if (colon == std::string::npos) {
+      break;
+    }
+    start = colon + 1;
+  }
+
+  // 3. Well-known extras not always present in XDG_DATA_DIRS: the NixOS system
+  //    profile, the Flatpak host mount, and the FHS defaults (in case XDG is unset
+  //    or minimal in the environment we were launched from).
+  for (const char* extra : {"/run/current-system/sw/share/fonts",
+                            "/run/host/usr/share/fonts", "/usr/share/fonts",
+                            "/usr/local/share/fonts"}) {
+    add(extra);
+  }
+  return roots;
+}
+
+std::vector<std::string> SdlTtfTextBackend::AvailableFontFamilies() const {
+  std::vector<std::string> families;
+#if MICROIDE_HAS_FONTCONFIG
+  // Prefer fontconfig: it yields real family names (properly cased/spaced) and
+  // dedupes weights for us.
+  if (FcConfig* config = FcInitLoadConfigAndFonts()) {
+    FcPattern* pattern = FcPatternCreate();
+    FcObjectSet* object_set = FcObjectSetBuild(FC_FAMILY, nullptr);
+    if (pattern != nullptr && object_set != nullptr) {
+      if (FcFontSet* set = FcFontList(config, pattern, object_set)) {
+        families.reserve(static_cast<std::size_t>(set->nfont));
+        for (int i = 0; i < set->nfont; ++i) {
+          FcChar8* family = nullptr;
+          if (FcPatternGetString(set->fonts[i], FC_FAMILY, 0, &family) == FcResultMatch &&
+              family != nullptr) {
+            families.emplace_back(reinterpret_cast<const char*>(family));
+          }
+        }
+        FcFontSetDestroy(set);
+      }
+    }
+    if (object_set != nullptr) {
+      FcObjectSetDestroy(object_set);
+    }
+    if (pattern != nullptr) {
+      FcPatternDestroy(pattern);
+    }
+    FcConfigDestroy(config);
+  }
+#else
+  // Fallback: scan the standard font trees and derive family names from stems.
+  for (const std::filesystem::path& root : FontSearchRoots()) {
+    std::error_code ec;
+    if (!std::filesystem::exists(root, ec)) {
+      continue;
+    }
+    for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end && !ec;
+         it.increment(ec)) {
+      std::error_code file_ec;
+      if (!it->is_regular_file(file_ec)) {
+        continue;
+      }
+      const std::filesystem::path& path = it->path();
+      const std::string ext = NormalizeFontToken(path.extension().string());
+      if (ext != "ttf" && ext != "otf") {
+        continue;
+      }
+      std::string name = FontDisplayNameFromStem(path.stem().string());
+      if (!name.empty()) {
+        families.push_back(std::move(name));
+      }
+    }
+  }
+#endif
+  const auto ci_less = [](const std::string& a, const std::string& b) {
+    return std::lexicographical_compare(
+        a.begin(), a.end(), b.begin(), b.end(), [](unsigned char x, unsigned char y) {
+          return std::tolower(x) < std::tolower(y);
+        });
+  };
+  const auto ci_equal = [](const std::string& a, const std::string& b) {
+    return a.size() == b.size() &&
+           std::equal(a.begin(), a.end(), b.begin(), [](unsigned char x, unsigned char y) {
+             return std::tolower(x) == std::tolower(y);
+           });
+  };
+  std::sort(families.begin(), families.end(), ci_less);
+  families.erase(std::unique(families.begin(), families.end(), ci_equal), families.end());
+  return families;
+}
 
 std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view family) {
   if (family.empty()) {
@@ -475,13 +677,6 @@ std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view fa
   // Fallback: scan the standard font directories once per family (cheap: only on a
   // font-family setting change) and fuzzy-match the file stem. Prefer an exact
   // stem match, then a "<family>-regular" variant, then any containing match.
-  static const std::array<const char*, 5> kFontDirs = {
-      "/usr/share/fonts",
-      "/usr/local/share/fonts",
-      "/run/host/usr/share/fonts",
-      "/usr/share/fonts/truetype",
-      "/usr/share/fonts/opentype",
-  };
   const std::string needle = NormalizeFontToken(family);
   if (needle.empty()) {
     return LocateFontFile();
@@ -489,16 +684,7 @@ std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view fa
   std::filesystem::path exact;
   std::filesystem::path regular;
   std::filesystem::path contains;
-  const char* home = SDL_getenv("HOME");
-  std::vector<std::filesystem::path> roots;
-  if (home != nullptr) {
-    roots.emplace_back(std::filesystem::path(home) / ".local/share/fonts");
-    roots.emplace_back(std::filesystem::path(home) / ".fonts");
-  }
-  for (const char* dir : kFontDirs) {
-    roots.emplace_back(dir);
-  }
-  for (const std::filesystem::path& root : roots) {
+  for (const std::filesystem::path& root : FontSearchRoots()) {
     std::error_code ec;
     if (!std::filesystem::exists(root, ec)) {
       continue;
@@ -540,53 +726,73 @@ std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view fa
 
 std::vector<std::filesystem::path> SdlTtfTextBackend::LocateFallbackFontFiles(
     const std::filesystem::path& primary_font) {
-  static constexpr std::array<const char*, 6> kFallbackCandidates = {
-      "assets/fonts/JetBrainsMono-Regular.ttf",
-      "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf",
-      "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
-      "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-      "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-  };
+  // Broad-Unicode / symbol fallback fonts, resolved once and cached: the file set
+  // is session-stable, and LoadFallbackFonts runs on every font-family change, so
+  // re-resolving each time would add avoidable work. For each fallback we try a
+  // fast known Debian/Ubuntu path first (a cheap exists() check, no scan); only when
+  // that is absent (Arch, Fedora, NixOS, Flatpak, …) do we resolve the family by
+  // name via ResolveFamilyToFile (fontconfig when available, else the XDG scan), so
+  // symbol/CJK glyph fallback is portable rather than Debian-only.
+  static const std::vector<std::filesystem::path> kResolvedFallbacks = [] {
+    struct Fallback {
+      const char* family;
+      const char* debian_path;
+    };
+    static constexpr std::array<Fallback, 5> kFallbacks = {
+        Fallback{"Noto Sans Symbols",
+                 "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf"},
+        Fallback{"Noto Sans Symbols 2",
+                 "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf"},
+        Fallback{"Noto Sans", "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"},
+        Fallback{"DejaVu Sans", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"},
+        Fallback{"FreeSans", "/usr/share/fonts/truetype/freefont/FreeSans.ttf"},
+    };
+    std::vector<std::filesystem::path> resolved;
+    std::unordered_set<std::string> seen;
+    const auto push = [&](std::filesystem::path candidate) {
+      if (candidate.empty() || !std::filesystem::exists(candidate)) {
+        return;
+      }
+      std::error_code ec;
+      std::filesystem::path normalized = std::filesystem::weakly_canonical(candidate, ec);
+      if (ec) {
+        normalized = candidate.lexically_normal();
+      }
+      if (seen.insert(normalized.string()).second) {
+        resolved.push_back(std::move(normalized));
+      }
+    };
+    push(platform::ResolveBundledAssetPath("fonts/JetBrainsMono-Regular.ttf"));
+    for (const Fallback& fallback : kFallbacks) {
+      const std::filesystem::path debian(fallback.debian_path);
+      if (std::filesystem::exists(debian)) {
+        push(debian);  // fast path: no directory scan / fontconfig query
+      } else {
+        push(ResolveFamilyToFile(fallback.family));  // portable resolution
+      }
+    }
+    return resolved;
+  }();
 
-  std::vector<std::filesystem::path> candidates;
-  std::unordered_set<std::string> seen;
+  // Exclude the current primary (already the main font); return the rest in order.
   std::filesystem::path primary_resolved;
   if (!primary_font.empty()) {
-    std::error_code primary_error;
-    const std::filesystem::path normalized_primary =
-        std::filesystem::weakly_canonical(primary_font, primary_error);
-    primary_resolved =
-        primary_error ? primary_font.lexically_normal() : normalized_primary;
+    std::error_code ec;
+    const std::filesystem::path normalized = std::filesystem::weakly_canonical(primary_font, ec);
+    primary_resolved = ec ? primary_font.lexically_normal() : normalized;
   }
-  const auto add_candidate = [&](const std::filesystem::path& candidate) {
-    if (candidate.empty() || !std::filesystem::exists(candidate)) {
-      return;
+  std::vector<std::filesystem::path> candidates;
+  candidates.reserve(kResolvedFallbacks.size());
+  for (const std::filesystem::path& path : kResolvedFallbacks) {
+    if (!primary_resolved.empty() && path == primary_resolved) {
+      continue;
     }
-    std::error_code candidate_error;
-    const std::filesystem::path normalized =
-        std::filesystem::weakly_canonical(candidate, candidate_error);
-    const std::filesystem::path resolved =
-        candidate_error ? candidate.lexically_normal() : normalized;
-    if (!primary_resolved.empty() && resolved == primary_resolved) {
-      return;
-    }
-    const std::string key = resolved.string();
-    if (!seen.insert(key).second) {
-      return;
-    }
-    candidates.push_back(resolved);
-  };
-
-  add_candidate(platform::ResolveBundledAssetPath("fonts/JetBrainsMono-Regular.ttf"));
-
-  for (const char* candidate : kFallbackCandidates) {
-    add_candidate(candidate);
+    candidates.push_back(path);
   }
   return candidates;
 }
 
-void SdlTtfTextBackend::CloseFonts() {
+void SdlTtfTextBackend::CloseFallbackFonts() {
   if (font_ != nullptr) {
     TTF_ClearFallbackFonts(font_);
   }
@@ -596,6 +802,10 @@ void SdlTtfTextBackend::CloseFonts() {
     }
   }
   fallback_fonts_.clear();
+}
+
+void SdlTtfTextBackend::CloseFonts() {
+  CloseFallbackFonts();
   if (font_ != nullptr) {
     TTF_CloseFont(font_);
     font_ = nullptr;
@@ -606,6 +816,10 @@ void SdlTtfTextBackend::LoadFallbackFonts() {
   if (font_ == nullptr) {
     return;
   }
+  // Free any fallbacks registered against a previous primary before opening a new
+  // set; otherwise repeated family switches leak TTF_Font handles and grow the
+  // vector unbounded.
+  CloseFallbackFonts();
 
   for (const auto& fallback_path : LocateFallbackFontFiles(font_path_)) {
     TTF_Font* fallback_font = TTF_OpenFont(fallback_path.string().c_str(), font_point_size_);

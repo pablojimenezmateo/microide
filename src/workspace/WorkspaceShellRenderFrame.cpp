@@ -86,6 +86,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   util::PerformanceTrace::Scope trace_scope("WorkspaceShell::PrepareFrameOnce");
   util::AddPerformanceCounter(util::PerfCounterId::FramePrepareCalls);
   ConsumePendingProjectOpenDialogResult();
+  ConsumePendingFontFileDialogResult();
   ConsumeProjectSearchUpdates();
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
   // The terminal renderer is only needed (and only pays for its glyph atlas) once a

@@ -147,6 +147,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_string = {},
           .enum_values = {},
           .group = {},
+          .suggests_fonts = true,
       },
       SettingSpec{
           .id = "editor.font_size",
@@ -266,19 +267,6 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = {},
       },
       SettingSpec{
-          .id = "ui.resize_handle_size",
-          .label = "Resize Handle Size",
-          .description = "Compact / Regular / Large resize-handle visual size.",
-          .type = SettingType::Enum,
-          .scope = SettingScope::User,
-          .default_bool = false,
-          .default_int = 0,
-          .default_float = 0.0f,
-          .default_string = "regular",
-          .enum_values = kHandleSizeValues,
-          .group = {},
-      },
-      SettingSpec{
           .id = "ui.show_status_bar",
           .label = "Show Status Bar",
           .description = "Display the bottom status bar.",
@@ -377,6 +365,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_string = {},
           .enum_values = {},
           .group = {},
+          .suggests_fonts = true,
       },
       SettingSpec{
           .id = "terminal.scrollback_lines",
@@ -870,6 +859,7 @@ std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host) 
     info.scope = spec.scope;
     info.default_value = DefaultSettingValue(spec);
     info.group = std::string(spec.group);
+    info.suggests_fonts = spec.suggests_fonts;
     for (const SettingEnumValue& ev : spec.enum_values) {
       info.enum_values.emplace_back(ev.value);
     }

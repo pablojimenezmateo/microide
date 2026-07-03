@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <filesystem>
+#include <iterator>
 #include <string>
 
 namespace microide::workspace {
@@ -105,6 +106,90 @@ void WorkspaceShell::ConsumePendingProjectOpenDialogResult() {
   }
 
   OpenProjectTab(pending.selected_path, true, true);
+}
+
+void WorkspaceShell::OpenNativeFontFilePicker(std::string setting_id) {
+  if (font_file_dialog_state_.active) {
+    return;
+  }
+  font_file_dialog_state_.active = true;
+  font_file_dialog_state_.target_setting_id = setting_id;
+
+  if (font_file_dialog_state_.launcher) {
+    if (!font_file_dialog_state_.launcher(*this, setting_id)) {
+      font_file_dialog_state_.active = false;
+    }
+    return;
+  }
+
+  static constexpr SDL_DialogFileFilter kFontFilters[] = {
+      {"Fonts (TTF, OTF)", "ttf;otf"},
+      {"All files", "*"},
+  };
+  SDL_ClearError();
+  SDL_ShowOpenFileDialog(&WorkspaceShell::OnFontFileDialogComplete, this, dialog_window_,
+                         kFontFilters, static_cast<int>(std::size(kFontFilters)),
+                         /*default_location=*/nullptr, /*allow_many=*/false);
+  const std::string dialog_error = SDL_GetError();
+  if (!dialog_error.empty()) {
+    font_file_dialog_state_.active = false;
+  }
+}
+
+void SDLCALL WorkspaceShell::OnFontFileDialogComplete(void* userdata, const char* const* filelist,
+                                                      int /*filter*/) {
+  auto* shell = static_cast<WorkspaceShell*>(userdata);
+  if (shell == nullptr) {
+    return;
+  }
+
+  PendingFontFileDialogResult pending;
+  pending.ready = true;
+  pending.target_setting_id = shell->font_file_dialog_state_.target_setting_id;
+  if (filelist == nullptr) {
+    pending.error_message = SDL_GetError();
+  } else if (filelist[0] == nullptr) {
+    pending.cancelled = true;
+  } else {
+    pending.selected_path = std::filesystem::path(filelist[0]).lexically_normal();
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(shell->font_file_dialog_state_.mutex);
+    shell->font_file_dialog_state_.pending_result = std::move(pending);
+  }
+
+  // Reuse the project-dialog wake event: both dialog consumers run off it and are
+  // idempotent no-ops when their own result isn't ready.
+  if (shell->project_open_dialog_event_type_ != 0) {
+    SDL_Event event{};
+    event.type = shell->project_open_dialog_event_type_;
+    SDL_PushEvent(&event);
+  }
+}
+
+void WorkspaceShell::ConsumePendingFontFileDialogResult() {
+  PendingFontFileDialogResult pending;
+  {
+    std::lock_guard<std::mutex> lock(font_file_dialog_state_.mutex);
+    if (!font_file_dialog_state_.pending_result.ready) {
+      return;
+    }
+    pending = std::move(font_file_dialog_state_.pending_result);
+    font_file_dialog_state_.pending_result = PendingFontFileDialogResult{};
+  }
+
+  font_file_dialog_state_.active = false;
+  // Whatever the outcome, close any open picker/value edit so focus never strands.
+  CancelSettingValueEdit();
+  if (!pending.error_message.empty() || pending.cancelled ||
+      pending.selected_path.empty() || pending.target_setting_id.empty()) {
+    return;
+  }
+
+  WriteSettingRespectingScope(pending.target_setting_id, pending.selected_path.string());
+  RefreshSettingsOverlayCatalog();
+  RequestOverlayRedraw();
 }
 
 }  // namespace microide::workspace

@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "render/TextRendererBackend.h"
 
@@ -37,6 +38,10 @@ class TextRenderer {
   // setting; empty restores the platform default). Returns true when the font
   // actually changed. Forwards to the backend and invalidates the width cache.
   bool SetFontFamily(std::string_view family);
+  // Enumerate installed font families for the settings font picker. Forwards to
+  // the active backend (empty on the debug-text fallback). This scans the system,
+  // so callers should cache the result rather than calling it per frame.
+  std::vector<std::string> AvailableFontFamilies() const;
   float CharWidth() const;
   float LineHeight() const;
   TextClipPadding ClipPadding() const;

@@ -29,6 +29,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   void SetPresentationScale(float scale_x, float scale_y) override;
   void SetFontPointSize(float points) override;
   bool SetFontFamily(std::string_view family) override;
+  std::vector<std::string> AvailableFontFamilies() const override;
   float CharWidth() const override { return char_width_; }
   float LineHeight() const override { return line_height_; }
   TextClipPadding ClipPadding() const override { return clip_padding_; }
@@ -118,9 +119,17 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // standard font directories. Returns an empty path when nothing matches.
   static std::filesystem::path ResolveFamilyToFile(std::string_view family);
   static std::filesystem::path LocateFontFile();
+  // Standard font directories searched for family resolution and enumeration
+  // (user font dirs first, then the system trees). Shared by ResolveFamilyToFile
+  // and AvailableFontFamilies so the scan-root list lives in one place.
+  static std::vector<std::filesystem::path> FontSearchRoots();
   static std::vector<std::filesystem::path> LocateFallbackFontFiles(
       const std::filesystem::path& primary_font);
   void CloseFonts();
+  // Clear and free just the fallback fonts (unregistering them from the primary
+  // first). Called before reloading fallbacks on a family switch so the previous
+  // set is freed rather than leaked, and by CloseFonts during teardown.
+  void CloseFallbackFonts();
   void LoadFallbackFonts();
   bool CanUseFastAscii(std::string_view text) const;
   void EnsureAsciiAtlas();

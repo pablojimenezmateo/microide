@@ -1196,6 +1196,8 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   const int first = scroll;
   const int last = std::min(total, scroll + vm.visible_rows);
   vm.rows.reserve(static_cast<std::size_t>(std::max(0, last - first)));
+  SDL_FRect editing_value_rect{};
+  bool has_editing_row = false;
   for (int i = first; i < last; ++i) {
     const SettingsOverlayRow& row = *cat_rows[static_cast<std::size_t>(i)];
     SettingsRowViewModel rvm;
@@ -1272,10 +1274,78 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
       const bool target_project = row.project_override || !row.has_user_default;
       rvm.scope_is_project = target_project;
       rvm.scope_text = target_project ? "Project" : "Default";
+      // Explain what the chip does and which way clicking it will flip the value.
+      rvm.scope_help =
+          target_project
+              ? "Saved for this project only, overriding your user default. "
+                "Click to make it your user-wide default instead."
+              : "Following your user-wide default. "
+                "Click to override it for this project only.";
       rvm.scope_rect =
           MakeRect(leftmost - kSettingsControlGap - kSettingsScopeW, cy, kSettingsScopeW, kSettingsBtnH);
     }
+    if (rvm.control.editing) {
+      editing_value_rect = rvm.control.value_rect;
+      has_editing_row = true;
+    }
     vm.rows.push_back(rvm);
+  }
+
+  // Font-picker dropdown: a windowed list of matching installed families plus a
+  // pinned "Choose file…" entry, anchored to the editing row's value box.
+  if (service.EditingFonts() && has_editing_row) {
+    const std::vector<std::string_view> filtered = service.FilteredFontFamilies();
+    const int family_count = static_cast<int>(filtered.size());
+    const int highlight = service.PickerHighlight();
+    const int choose_file_index = service.PickerChooseFileIndex();
+    constexpr int kMaxVisibleFamilies = 8;
+    constexpr float kPickerRowH = 22.0f;
+    constexpr float kPickerPad = 3.0f;
+
+    int start = 0;
+    if (family_count > kMaxVisibleFamilies && highlight >= kMaxVisibleFamilies) {
+      start = std::min(highlight - kMaxVisibleFamilies + 1, family_count - kMaxVisibleFamilies);
+    }
+    start = std::clamp(start, 0, std::max(0, family_count - kMaxVisibleFamilies));
+    const int end = std::min(family_count, start + kMaxVisibleFamilies);
+    const int visible_family_rows = end - start;
+    const int total_rows = visible_family_rows + 1;  // + "Choose file…" footer
+
+    const float card_w = std::max(editing_value_rect.w, 220.0f);
+    const float card_h = static_cast<float>(total_rows) * kPickerRowH + kPickerPad * 2.0f;
+    // Prefer below the field; flip above when it would overflow the overlay bottom.
+    const float below_y = editing_value_rect.y + editing_value_rect.h + 2.0f;
+    const float above_y = editing_value_rect.y - 2.0f - card_h;
+    const float card_y =
+        (below_y + card_h <= vm.rect.y + vm.rect.h - 4.0f || above_y < vm.rect.y) ? below_y
+                                                                                  : above_y;
+    const float card_x = std::clamp(editing_value_rect.x, vm.rect.x + 4.0f,
+                                    vm.rect.x + vm.rect.w - card_w - 4.0f);
+
+    SettingsPickerViewModel& picker = vm.value_picker;
+    picker.visible = true;
+    picker.rect = MakeRect(card_x, card_y, card_w, card_h);
+    picker.more_above = start > 0;
+    picker.more_below = end < family_count;
+    picker.items.reserve(static_cast<std::size_t>(total_rows));
+    float item_y = card_y + kPickerPad;
+    for (int i = start; i < end; ++i) {
+      picker.items.push_back(SettingsPickerItemViewModel{
+          .text = filtered[static_cast<std::size_t>(i)],
+          .rect = MakeRect(card_x, item_y, card_w, kPickerRowH),
+          .highlighted = i == highlight,
+          .is_choose_file = false,
+          .dropdown_index = i,
+      });
+      item_y += kPickerRowH;
+    }
+    picker.items.push_back(SettingsPickerItemViewModel{
+        .text = "Choose file…",
+        .rect = MakeRect(card_x, item_y, card_w, kPickerRowH),
+        .highlighted = highlight == choose_file_index,
+        .is_choose_file = true,
+        .dropdown_index = choose_file_index,
+    });
   }
   return vm;
 }

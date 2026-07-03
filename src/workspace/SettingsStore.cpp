@@ -45,6 +45,7 @@ void SettingsStore::BindActiveProject(SettingsLayer* project) {
 }
 
 void SettingsStore::Reindex() {
+  ++revision_;
   resolved_.clear();
   // User layer first (the cross-project default), then the active project layer
   // overwrites it: a per-project override wins over the user-level default. This

@@ -209,10 +209,31 @@ struct SettingsRowViewModel {
   SDL_FRect reset_rect{};  // reset affordance; w == 0 when not resettable
   SDL_FRect scope_rect{};  // "This Project / Default" scope chip; w == 0 when absent
   std::string_view scope_text;    // "Project" or "Default" (the active write target)
+  std::string_view scope_help;    // hover tooltip explaining the scope chip
   bool scope_is_project = false;  // true when a per-project override is active
   int row_in_category = 0;
   bool selected = false;
   bool resettable = false;
+};
+
+// One row of the font-picker dropdown: a filtered family or the "Choose file…"
+// entry. `dropdown_index` is the value passed to ApplySettingsFontPickerIndex.
+struct SettingsPickerItemViewModel {
+  std::string_view text;
+  SDL_FRect rect{};
+  bool highlighted = false;
+  bool is_choose_file = false;
+  int dropdown_index = -1;
+};
+
+// Dropdown shown below a font-family row while it is being edited: a windowed list
+// of matching installed families plus a pinned "Choose file…" entry.
+struct SettingsPickerViewModel {
+  bool visible = false;
+  SDL_FRect rect{};  // whole dropdown card
+  std::vector<SettingsPickerItemViewModel> items;
+  bool more_above = false;
+  bool more_below = false;
 };
 
 struct SettingsOverlayViewModel {
@@ -235,6 +256,7 @@ struct SettingsOverlayViewModel {
   std::vector<SettingsCategoryViewModel> categories;
   std::vector<SettingsRowViewModel> rows;  // rows of the selected category only
   std::vector<HelpAboutRow> help_rows;     // unchanged Help/About path
+  SettingsPickerViewModel value_picker;    // font dropdown (visible while editing)
 };
 
 class RenderViewModelBuilder {

@@ -670,6 +670,52 @@ void TestSdlTtfSetFontFamilyResilientToUnresolved() {
          "empty family resolves to the current default and reports no change");
 }
 
+// Repeatedly switching families must not leak fallback fonts (each switch reloads
+// the fallback chain). We can't read the private fallback vector here, so this
+// exercises many swaps and asserts the backend stays functional; ASAN/LSAN in the
+// sanitizer presets catches the actual TTF_Font handle leak this guards against.
+void TestSdlTtfRepeatedFontFamilySwapsStayFunctional() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(320, 160);
+  microide::render::TextRenderer renderer;
+  renderer.EnsureInitialized(canvas.renderer());
+  Expect(renderer.BackendName() == "sdl3_ttf",
+         "font-family swap test should exercise the SDL_ttf backend");
+
+  const std::vector<std::string> families = renderer.AvailableFontFamilies();
+  // Cycle through resolvable families (falling back to a couple of common ones
+  // when enumeration is empty) plus the default several times over.
+  std::vector<std::string> cycle = {"", "DejaVu Sans Mono", "Liberation Mono", ""};
+  for (std::size_t i = 0; i < families.size() && i < 6; ++i) {
+    cycle.push_back(families[i]);
+  }
+  for (int round = 0; round < 4; ++round) {
+    for (const std::string& family : cycle) {
+      renderer.SetFontFamily(family);
+      Expect(renderer.CharWidth() > 0.0f,
+             "metrics stay valid across repeated font-family swaps");
+      Expect(renderer.MeasureWidth("Mg") > 0.0f,
+             "text rendering stays functional across repeated font-family swaps");
+    }
+  }
+  renderer.SetFontFamily("");  // restore default
+}
+
+// AvailableFontFamilies must be callable and return well-formed entries (no crash,
+// no empty strings). It may be empty on a bare CI image with no system fonts.
+void TestSdlTtfAvailableFontFamiliesWellFormed() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(320, 160);
+  microide::render::TextRenderer renderer;
+  renderer.EnsureInitialized(canvas.renderer());
+  Expect(renderer.BackendName() == "sdl3_ttf",
+         "font enumeration test should exercise the SDL_ttf backend");
+  const std::vector<std::string> families = renderer.AvailableFontFamilies();
+  for (const std::string& family : families) {
+    Expect(!family.empty(), "enumerated font families must be non-empty names");
+  }
+}
+
 #endif
 
 void TestDecoratedTextGridRendererPaintsRowFillAndUnderline() {
@@ -2085,6 +2131,12 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer SDL_ttf SetFontFamily resilient to unresolved family",
           TestSdlTtfSetFontFamilyResilientToUnresolved);
+  AddTest(tests,
+          "TextRenderer SDL_ttf repeated font-family swaps stay functional",
+          TestSdlTtfRepeatedFontFamilySwapsStayFunctional);
+  AddTest(tests,
+          "TextRenderer SDL_ttf AvailableFontFamilies well-formed",
+          TestSdlTtfAvailableFontFamiliesWellFormed);
   AddTest(tests,
           "TextRenderer SDL_ttf ASCII prefix glyph stays fixed when appending matches",
           TestSdlTtfAsciiPrefixGlyphStaysFixedWhenAppendingMatches);

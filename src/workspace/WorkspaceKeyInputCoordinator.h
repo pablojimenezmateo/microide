@@ -73,6 +73,11 @@ class KeyInputCoordinator {
     std::function<bool()> settings_value_edit_active;
     std::function<void()> settings_commit_value_edit;
     std::function<void()> settings_cancel_value_edit;
+    // Font-picker specialization of value editing: Up/Down move the dropdown
+    // highlight; typing (any other key) re-filters and resets the highlight.
+    std::function<bool()> settings_value_edit_is_picker;
+    std::function<void(int)> settings_picker_move;
+    std::function<void()> settings_picker_reset_highlight;
     std::function<void()> close_sidebar;
     std::function<SidebarMode()> active_sidebar_mode;
     std::function<void()> activate_overlay_selection;

@@ -588,6 +588,14 @@
                                                   const char* const* filelist,
                                                   int filter);
   void ConsumePendingProjectOpenDialogResult();
+  // Native "Choose font file…" picker for a font-family setting row. Async: mirrors
+  // the project picker (result staged under a mutex, consumed on the shared dialog
+  // wake event + frame prep). On success writes the chosen .ttf/.otf path into the
+  // launching setting id (ResolveFamilyToFile accepts explicit file paths).
+  void OpenNativeFontFilePicker(std::string setting_id);
+  static void SDLCALL OnFontFileDialogComplete(void* userdata, const char* const* filelist,
+                                               int filter);
+  void ConsumePendingFontFileDialogResult();
   bool SetProjectRoot(const std::filesystem::path& project_root);
   static bool ConfigureProjectState(ProjectWorkspaceState& state,
                                     const std::filesystem::path& project_root);
@@ -1562,6 +1570,13 @@
   void BeginSettingValueEdit(std::string_view id);
   void CommitSettingValueEdit();
   void CancelSettingValueEdit();
+  // Move the font-picker highlight (Up/Down) while a font row is being edited.
+  void MoveSettingsFontPicker(int delta);
+  // Apply the font-picker row at `dropdown_index` (a filtered family, or the
+  // "Choose file…" entry which launches the native picker). Used by mouse clicks.
+  void ApplySettingsFontPickerIndex(int dropdown_index);
+  // Lazily enumerated installed font families for the picker.
+  const std::vector<std::string>& CachedFontFamilies();
   void TogglePluginEnabled(std::string_view plugin_id);
   void EnsureSettingsSelectionVisible();
   bool HandleStatusBarButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
@@ -1909,6 +1924,12 @@
     std::optional<std::string> save_ensure_final_newline;
   };
   std::optional<LiveSettingsEditorSnapshot> last_live_settings_editor_snapshot_;
+  // Settings-store revision last consumed by ApplyLiveSettings. The store bumps
+  // its revision on every mutation/reset/layer-bind (project switch, config load),
+  // so the settings-derived block runs only when something resolvable changed —
+  // steady-state ApplyLiveSettings is then a single integer compare. The max
+  // sentinel forces the first apply (real revisions start at 1).
+  std::uint64_t last_applied_settings_revision_ = std::numeric_limits<std::uint64_t>::max();
   // Last terminal scrollback cap pushed to live sessions; -1 forces the first apply.
   int last_applied_terminal_scrollback_ = -1;
   Uint32 git_blame_event_type_ = 0;
@@ -1937,6 +1958,11 @@
   std::function<bool(const std::filesystem::path&)> file_manager_opener_;
   SDL_Window* dialog_window_ = nullptr;
   ProjectDialogState project_dialog_state_;
+  FontFileDialogState font_file_dialog_state_;
+  // Installed font families for the settings font picker, enumerated lazily on the
+  // first picker open (scanning the system is not cheap) and reused thereafter.
+  std::vector<std::string> cached_font_families_;
+  bool font_families_cached_ = false;
   bool quit_requested_ = false;
   WorkspaceStartupOptions startup_options_;
   std::vector<std::string> available_colorscheme_names_;

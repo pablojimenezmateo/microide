@@ -4,7 +4,9 @@
 
 #include <cstddef>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace microide::render {
 
@@ -44,6 +46,9 @@ class TextRendererBackend {
     (void) family;
     return false;
   }
+  // Enumerate the font families installed on the system, for the settings font
+  // picker. Default empty: the debug-text fallback has no real fonts to list.
+  virtual std::vector<std::string> AvailableFontFamilies() const { return {}; }
   virtual float CharWidth() const = 0;
   virtual float LineHeight() const = 0;
   virtual TextClipPadding ClipPadding() const { return {}; }

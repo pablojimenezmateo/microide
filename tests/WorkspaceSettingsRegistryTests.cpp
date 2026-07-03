@@ -22,7 +22,7 @@ using microide::workspace::SettingsOverlayService;
 using microide::workspace::SettingSpec;
 using microide::workspace::SettingType;
 
-constexpr std::array<std::string_view, 16> kNewSettingIds = {
+constexpr std::array<std::string_view, 15> kNewSettingIds = {
     "editor.font_family",
     "editor.font_size",
     "editor.line_endings",
@@ -33,7 +33,6 @@ constexpr std::array<std::string_view, 16> kNewSettingIds = {
     "ui.layout_mode",
     "ui.layout_compact_breakpoint_px",
     "ui.scrollbar_size",
-    "ui.resize_handle_size",
     "ui.show_status_bar",
     "terminal.shell",
     "terminal.font_size",
@@ -225,6 +224,45 @@ void TestSettingsOverlayStringRowsAreTextEditable() {
   Expect(!service.EditingValue(), "closing the overlay cancels any active edit");
 }
 
+void TestSettingsOverlayFontPickerFiltersAndSelects() {
+  SettingsOverlayService service;
+  service.OpenSettings();
+  const std::vector<std::string> families = {"DejaVu Sans Mono", "Fira Code", "JetBrains Mono",
+                                             "Noto Sans Mono"};
+  service.BeginFontValueEdit("editor.font_family", families);
+  Expect(service.EditingValue() && service.EditingFonts(),
+         "BeginFontValueEdit activates a font picker edit");
+  Expect(service.ValueEditText().empty(), "the font picker opens with an empty search box");
+
+  // Empty query lists every family; a trailing row is the "Choose file…" entry.
+  Expect(service.FilteredFontFamilies().size() == families.size(),
+         "an empty query lists all families");
+  Expect(service.PickerRowCount() == static_cast<int>(families.size()) + 1,
+         "row count includes the Choose file… entry");
+  Expect(service.PickerChooseFileIndex() == static_cast<int>(families.size()),
+         "Choose file… is the last dropdown row");
+  Expect(service.PickerHighlight() == -1,
+         "highlight starts unset so a stray Enter never commits a font");
+
+  // Filtering is case-insensitive substring.
+  service.ValueEditor().SetText("mono");
+  Expect(service.FilteredFontFamilies().size() == 3,
+         "'mono' matches the three *Mono families");
+
+  // Highlight navigation clamps to [-1, ChooseFile].
+  service.SetPickerHighlight(0);
+  Expect(service.PickerHighlight() == 0, "highlight can land on the first family");
+  service.MovePickerHighlight(100);
+  Expect(service.PickerHighlight() == service.PickerChooseFileIndex(),
+         "highlight clamps up to the Choose file… entry");
+  service.MovePickerHighlight(-100);
+  Expect(service.PickerHighlight() == -1, "highlight clamps down to the search-only state");
+
+  service.CancelValueEdit();
+  Expect(!service.EditingFonts() && !service.EditingValue(),
+         "cancel clears the font picker session");
+}
+
 void TestSettingsOverlayGroupsEditorEssentialsToggles() {
   SettingsOverlayService service;
   service.OpenSettings();
@@ -393,6 +431,8 @@ void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
           TestSettingsOverlayScopeSelectableRows);
   AddTest(tests, "WorkspaceSettingsOverlay/StringRowsAreTextEditable",
           TestSettingsOverlayStringRowsAreTextEditable);
+  AddTest(tests, "WorkspaceSettingsOverlay/FontPickerFiltersAndSelects",
+          TestSettingsOverlayFontPickerFiltersAndSelects);
   AddTest(tests, "WorkspaceSettingsOverlay/GroupsEditorEssentialsToggles",
           TestSettingsOverlayGroupsEditorEssentialsToggles);
   AddTest(tests, "WorkspaceSettingsOverlay/CategoryLabelHelper",

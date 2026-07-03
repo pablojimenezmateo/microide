@@ -172,6 +172,8 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               [shell]() { return shell->ConsumePendingRenderInvalidation(); },
           .consume_pending_project_open_dialog_result =
               [shell]() { shell->ConsumePendingProjectOpenDialogResult(); },
+          .consume_pending_font_file_dialog_result =
+              [shell]() { shell->ConsumePendingFontFileDialogResult(); },
           .reload_plugins_if_assets_changed =
               [shell](bool force_check) {
                 return shell->ReloadPluginsIfPluginAssetsChanged(force_check);

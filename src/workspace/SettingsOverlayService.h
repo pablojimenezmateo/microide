@@ -57,6 +57,7 @@ struct SettingsOverlayRow {
   bool scope_selectable = false;
   bool project_override = false;  // the project layer holds an explicit override
   bool has_user_default = false;  // the user layer holds a cross-project default
+  bool suggests_fonts = false;    // String row rendered as a font picker
 };
 
 struct HelpAboutRow {
@@ -94,6 +95,26 @@ class SettingsOverlayService {
   void CancelValueEdit();
   // The current editor text, for the host to commit through SetSettingValue.
   std::string ValueEditText() const;
+
+  // --- Font picker (a specialization of value editing for font-family rows) ---
+  // Begins a font value edit: an empty search field (value_editor_) plus a
+  // dropdown of the supplied installed families. Typing filters; the host commits
+  // the highlighted family / typed text / "Choose file…" entry.
+  void BeginFontValueEdit(std::string row_id, std::vector<std::string> families);
+  bool EditingFonts() const { return editing_fonts_; }
+  // Families matching the current search text (case-insensitive substring, all when
+  // empty). Views point into the service-owned family list, valid until the next
+  // edit begins.
+  std::vector<std::string_view> FilteredFontFamilies() const;
+  // Dropdown rows are the filtered families followed by one "Choose file…" entry.
+  int PickerRowCount() const;          // filtered families + 1
+  int PickerChooseFileIndex() const;   // == filtered family count
+  // Active dropdown selection: -1 = search-only (commit types text), [0..F-1] =
+  // a family, F = the "Choose file…" entry.
+  int PickerHighlight() const { return picker_highlight_; }
+  void SetPickerHighlight(int index);
+  void MovePickerHighlight(int delta);
+  void ResetPickerHighlight();
 
   void RebuildSettingsRows(const std::vector<SettingInfo>& settings,
                            const std::vector<std::pair<std::string, std::string>>& user_settings,
@@ -138,7 +159,10 @@ class SettingsOverlayService {
   editor::SingleLineEditor query_editor_;
   editor::SingleLineEditor value_editor_;
   bool editing_value_ = false;
+  bool editing_fonts_ = false;
   std::string editing_row_id_;
+  std::vector<std::string> font_families_;
+  int picker_highlight_ = -1;
   std::vector<SettingsOverlayRow> settings_rows_;
   std::vector<HelpAboutRow> help_rows_;
   std::vector<std::string> categories_;

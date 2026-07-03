@@ -216,6 +216,65 @@ inline void DrawTooltip(const render::TextRenderer& text_renderer,
                              render::CardBackground(theme, render::CardStyle::Tooltip), text);
 }
 
+struct WrappedTooltipLayout {
+  SDL_FRect rect{};
+  std::vector<std::string> lines;
+};
+
+// Multi-line variant of BuildTooltipLayout: greedy word-wrap on spaces to a card
+// no wider than max_width, sized to the wrapped line count. Use for longer help
+// text (e.g. the settings scope chip) that a single-line tooltip would truncate.
+inline WrappedTooltipLayout BuildWrappedTooltipLayout(const render::TextRenderer& text_renderer,
+                                                      std::string_view label,
+                                                      float max_width,
+                                                      float min_width = 200.0f) {
+  const float card_max = std::max(min_width, max_width);
+  const float content_max = card_max - 16.0f;
+  std::vector<std::string> lines;
+  float widest = 0.0f;
+  const auto emit = [&](std::string_view s) {
+    lines.emplace_back(s);
+    widest = std::max(widest, text_renderer.MeasureWidth(s));
+  };
+  std::size_t line_start = 0;
+  std::size_t line_end = 0;
+  std::size_t word_start = 0;
+  while (word_start < label.size()) {
+    const std::size_t space = label.find(' ', word_start);
+    const std::size_t word_end = space == std::string_view::npos ? label.size() : space;
+    const std::string_view candidate = label.substr(line_start, word_end - line_start);
+    if (line_start != word_start && text_renderer.MeasureWidth(candidate) > content_max) {
+      emit(label.substr(line_start, line_end - line_start));
+      line_start = word_start;
+    }
+    line_end = word_end;
+    word_start = space == std::string_view::npos ? label.size() : space + 1;
+  }
+  emit(label.substr(line_start, label.size() - line_start));
+  const float width = std::clamp(widest + 16.0f, min_width, card_max);
+  const float height = static_cast<float>(std::max<std::size_t>(1, lines.size())) *
+                           text_renderer.LineHeight() +
+                       10.0f;
+  return WrappedTooltipLayout{
+      .rect = SDL_FRect{0.0f, 0.0f, width, height},
+      .lines = std::move(lines),
+  };
+}
+
+inline void DrawWrappedTooltip(const render::TextRenderer& text_renderer,
+                               SDL_Renderer* renderer,
+                               const render::Theme& theme,
+                               const SDL_FRect& rect,
+                               const std::vector<std::string>& lines) {
+  render::DrawCardFrame(renderer, theme, rect, render::CardStyle::Tooltip);
+  const SDL_Color background = render::CardBackground(theme, render::CardStyle::Tooltip);
+  float y = rect.y + 5.0f;
+  for (const std::string& line : lines) {
+    text_renderer.DrawStringOn(renderer, rect.x + 8.0f, y, theme.text_primary, background, line);
+    y += text_renderer.LineHeight();
+  }
+}
+
 inline std::string_view DiagnosticSeverityLabel(editor::DiagnosticSeverity severity) {
   switch (severity) {
     case editor::DiagnosticSeverity::Error:

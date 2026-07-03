@@ -68,12 +68,21 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     // An active inline String-value edit owns the keyboard: Enter commits, Escape
     // cancels the edit (not the overlay), everything else types into the editor.
     if (operations_.settings_value_edit_active && operations_.settings_value_edit_active()) {
+      const bool picker = operations_.settings_value_edit_is_picker &&
+                          operations_.settings_value_edit_is_picker();
       if (event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER) {
         operations_.settings_commit_value_edit();
       } else if (event.key == SDLK_ESCAPE) {
         operations_.settings_cancel_value_edit();
+      } else if (picker && (event.key == SDLK_DOWN || event.key == SDLK_UP)) {
+        operations_.settings_picker_move(event.key == SDLK_DOWN ? 1 : -1);
       } else {
         operations_.text_input_handle_single_line_key_down(event, modifiers);
+        // Typing re-filters the family list; drop the stale highlight so a
+        // follow-up Enter commits the typed text rather than an offset row.
+        if (picker && operations_.settings_picker_reset_highlight) {
+          operations_.settings_picker_reset_highlight();
+        }
       }
       overlay_redraw();
       return true;
@@ -741,6 +750,11 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               [this]() { return settings_overlay_service_.EditingValue(); },
           .settings_commit_value_edit = [this]() { CommitSettingValueEdit(); },
           .settings_cancel_value_edit = [this]() { CancelSettingValueEdit(); },
+          .settings_value_edit_is_picker =
+              [this]() { return settings_overlay_service_.EditingFonts(); },
+          .settings_picker_move = [this](int delta) { MoveSettingsFontPicker(delta); },
+          .settings_picker_reset_highlight =
+              [this]() { settings_overlay_service_.ResetPickerHighlight(); },
           .close_sidebar = [this]() { CloseSidebar(); },
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .activate_overlay_selection =

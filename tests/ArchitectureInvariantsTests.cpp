@@ -118,8 +118,14 @@ void TestArchitectureInvariants() {
              // LineNumbersEnabled (gutter-width parity across render/hit-test when
              // editor.line_numbers is off), and autosave_suppress_format_on_save_ (skip the
              // synchronous formatter during autosave so focus-loss/debounce never blocks the UI).
+             // 1637: +11 for the font-selection overhaul: the native "Choose font file…" picker
+             // (OpenNativeFontFilePicker / OnFontFileDialogComplete / ConsumePendingFontFileDialogResult
+             // + FontFileDialogState), the installed-font combobox (MoveSettingsFontPicker /
+             // ApplySettingsFontPickerIndex / CachedFontFamilies + the lazily cached family list),
+             // and last_applied_settings_revision_ (gates ApplyLiveSettings to a single compare
+             // when no setting changed).
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1626);
+                                                     1637);
            });
 
   bool hard_failure = false;

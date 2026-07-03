@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -52,6 +53,11 @@ class SettingsStore {
   // persistence restore paths clear + refill them with canonical side effects).
   void Reindex();
 
+  // Monotonic counter bumped on every mutation, reset, and layer bind (all route
+  // through Reindex). Lets per-frame consumers (ApplyLiveSettings) skip redundant
+  // work when nothing resolvable changed since the last apply.
+  std::uint64_t Revision() const { return revision_; }
+
   // Raw scope-specific lookups for the settings overlay (user-vs-project label).
   const std::string* FindInUserLayer(std::string_view id) const;
   const std::string* FindInProjectLayer(std::string_view id) const;
@@ -67,6 +73,7 @@ class SettingsStore {
   SettingsLayer* user_ = nullptr;
   SettingsLayer* project_ = nullptr;
   std::unordered_map<std::string, std::string, TransparentHash, std::equal_to<>> resolved_;
+  std::uint64_t revision_ = 0;
 };
 
 }  // namespace microide::workspace

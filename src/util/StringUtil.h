@@ -57,6 +57,9 @@ void ToLowerAsciiInto(std::string_view text, std::string& out);
 // True if `text` contains any ASCII uppercase letter. Used by smart-case search
 // to decide whether a query should match case-sensitively.
 bool QueryHasUppercaseAscii(std::string_view text);
+// True when `haystack` contains `needle` as a case-insensitive (ASCII) substring.
+// An empty needle matches. Allocation-free.
+bool ContainsCaseInsensitiveAscii(std::string_view haystack, std::string_view needle);
 // True if `text` is non-empty and every byte is an ASCII digit ('0'..'9').
 bool IsAllAsciiDigits(std::string_view text);
 // Split `text` on runs of ASCII whitespace, returning views into `text`.
