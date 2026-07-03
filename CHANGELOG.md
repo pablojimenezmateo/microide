@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.6.2] - 2026-07-03
+
+A small **workspace-chrome** release on top of 2.6.1. The project tab strip
+now hides itself while a single project (or none) is open, so the common
+single-project workspace gains a row of vertical space; the strip reappears
+the moment a second project opens. No persisted-format or plugin-API breaks.
+
+### Workspace chrome
+- New `chrome.project_tabs.hide_when_single` user setting (**on by default**):
+  with one project or none open, the project tab strip collapses to a
+  zero-height rect that suppresses both its render and its hit-testing.
+- `ComputeLayout` gains a `project_tab_strip_visible` input so the render and
+  hit-test paths agree on the collapsed geometry, and the render-chrome path
+  skips all tab measuring, overflow controls, and drag-ghost work when the
+  strip is hidden.
+
+### Performance
+- Cache the `ProjectTabStripVisible()` predicate: it runs inside the uncached
+  `ComputeLayout` on the per-mouse-move window-drag hit-test path, so the
+  settings lookup is now memoized and re-resolved only on a settings-store
+  revision bump. On `perf-runner-v1` the predicate drops ~21 ns → ~0.8 ns per
+  call and the full uncached layout recompute ~51 ns → ~31 ns per hit-test,
+  allocation-neutral. Adds an advisory `project_tab_strip_layout_hittest`
+  micro-benchmark as a regression guard.
+
 ## [2.6.1] - 2026-07-03
 
 A **font-picker polish** release on top of 2.6.0. The installed-font
