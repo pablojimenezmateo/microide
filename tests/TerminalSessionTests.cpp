@@ -1046,6 +1046,22 @@ void TestTerminalSessionOverflowCsiParamDoesNotCrash() {
   Expect(found_x, "an overflowing CSI parameter should clamp and still render following text");
 }
 
+// Resilience: ECH (`CSI Ps X`) with a large parameter must not grow the row far
+// past the terminal width. Before the clamp, `CSI 65535 X` resized a row to
+// ~65535 cells, and repeated across the scrollback that is a huge memory
+// amplification driven purely by terminal output.
+void TestTerminalSessionEraseCharsClampsToWidth() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  // Home the cursor, then erase a pathologically large character count.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;1H\x1b[65535X");
+  const auto lines = session.SnapshotLines();
+  Expect(!lines.empty(), "session should retain rows after ECH");
+  Expect(lines[0].cells.size() <= 80,
+         "CSI Ps X must clamp the erased range to the terminal width, not balloon the row");
+}
+
 void TestTerminalSessionMouseRoutingRequiresTrackingMode() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -1247,6 +1263,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionUnterminatedEscapeRecovers);
   AddTest(tests, "TerminalSession/OverflowCsiParamDoesNotCrash",
           TestTerminalSessionOverflowCsiParamDoesNotCrash);
+  AddTest(tests, "TerminalSession/EraseCharsClampsToWidth",
+          TestTerminalSessionEraseCharsClampsToWidth);
   AddTest(tests, "TerminalSession/MouseRoutingRequiresTrackingMode",
           TestTerminalSessionMouseRoutingRequiresTrackingMode);
   AddTest(tests, "TerminalSession/ResizeClampsCursorAndPreservesBuffer",

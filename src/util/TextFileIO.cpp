@@ -20,6 +20,11 @@ std::optional<std::string> ReadTextFile(const std::filesystem::path& path) {
   if (size < 0) {
     return std::nullopt;
   }
+  // Refuse pathologically large files before allocating: a multi-GB or sparse
+  // file would otherwise force a single huge allocation and an uncaught bad_alloc.
+  if (static_cast<std::uintmax_t>(size) > kMaxTextFileBytes) {
+    return std::nullopt;
+  }
   file.seekg(0, std::ios::beg);
 
   std::string content(static_cast<std::size_t>(size), '\0');
@@ -40,6 +45,11 @@ bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out) 
   file.seekg(0, std::ios::end);
   const std::streamoff size = file.tellg();
   if (size < 0) {
+    return false;
+  }
+  // Skip files too large to buffer (same OOM guard as ReadTextFile); an oversized
+  // file is simply not searched rather than crashing the search worker.
+  if (static_cast<std::uintmax_t>(size) > kMaxTextFileBytes) {
     return false;
   }
   file.seekg(0, std::ios::beg);

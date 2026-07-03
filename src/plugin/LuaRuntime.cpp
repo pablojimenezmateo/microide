@@ -2,6 +2,8 @@
 
 #if MICROIDE_HAS_LUA_PLUGINS
 #include <chrono>
+#include <cstddef>
+#include <cstdlib>
 #include <string>
 
 #include "plugin/LuaError.h"
@@ -17,13 +19,22 @@ namespace {
 // watchdog adds negligible overhead to normal plugin execution (speed first).
 constexpr int kHookInstructionBatch = 100000;
 
+// Per-plugin-state heap ceiling. Generous enough for real plugin work, but far
+// below what it takes to OOM the host, so a plugin allocating without bound gets
+// a clean Lua "not enough memory" error (caught by the enclosing PCall) instead
+// of taking the process down.
+constexpr std::size_t kLuaMemoryLimitBytes = 256ull * 1024 * 1024;
+
 }  // namespace
 #endif
 
 std::unique_ptr<LuaRuntime> LuaRuntime::Create(std::string* error_message) {
 #if MICROIDE_HAS_LUA_PLUGINS
   auto runtime = std::unique_ptr<LuaRuntime>(new LuaRuntime());
-  runtime->state_ = luaL_newstate();
+  // Bounded allocator: the budget lives in the runtime (destroyed after the
+  // destructor's lua_close), so it is valid for the whole state lifetime.
+  runtime->memory_budget_.limit = kLuaMemoryLimitBytes;
+  runtime->state_ = lua_newstate(&LuaRuntime::BoundedAlloc, &runtime->memory_budget_);
   if (runtime->state_ == nullptr) {
     if (error_message != nullptr) {
       *error_message = "failed to create Lua state";
@@ -65,6 +76,35 @@ LuaRuntime::~LuaRuntime() {
 }
 
 #if MICROIDE_HAS_LUA_PLUGINS
+// Custom lua_Alloc enforcing kLuaMemoryLimitBytes. Denies (returns nullptr) any
+// growth that would push the state past its budget; Lua turns that into a
+// recoverable memory error. Per the Lua manual, when `ptr` is null `osize` is a
+// type tag rather than a real size, so the old size counts as 0 for accounting.
+void* LuaRuntime::BoundedAlloc(void* ud, void* ptr, std::size_t osize, std::size_t nsize) {
+  auto* budget = static_cast<LuaRuntime::MemoryBudget*>(ud);
+  const std::size_t old_size = (ptr == nullptr) ? 0 : osize;
+
+  if (nsize == 0) {
+    std::free(ptr);
+    budget->used = (budget->used >= old_size) ? budget->used - old_size : 0;
+    return nullptr;
+  }
+
+  if (nsize > old_size) {
+    const std::size_t growth = nsize - old_size;
+    if (budget->used + growth > budget->limit) {
+      return nullptr;  // deny: over budget -> Lua raises "not enough memory"
+    }
+  }
+
+  void* new_ptr = std::realloc(ptr, nsize);
+  if (new_ptr == nullptr) {
+    return nullptr;  // real allocation failure; leave accounting unchanged
+  }
+  budget->used = budget->used - old_size + nsize;
+  return new_ptr;
+}
+
 // Count hooks fire only at Lua bytecode boundaries, never inside a C interop
 // function, so when we raise here no C++ std::string / vector / path local is
 // live on the native stack and the longjmp (caught by the enclosing lua_pcall)

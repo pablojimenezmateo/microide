@@ -85,7 +85,10 @@ std::vector<GitWorkingTreeEntry> GitRepository::GetWorkingTreeEntries() const {
 
 std::vector<GitCommitEntry> GitRepository::GetFileHistory(
     const std::filesystem::path& relative_path) const {
-  const auto result = Execute({"log", "--follow", "--no-color",
+  // Cap the walk: a file with an enormous history would otherwise stream every
+  // commit into one entry-per-line vector. 5000 is far more than any history view
+  // displays, so this bounds memory/parse without losing anything the UI shows.
+  const auto result = Execute({"log", "--follow", "--no-color", "-n", "5000",
                                "--pretty=format:%H%x09%h%x09%an%x09%ar%x09%s", "--",
                                relative_path.generic_string()});
   if (!result.success()) {

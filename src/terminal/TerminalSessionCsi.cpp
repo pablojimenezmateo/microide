@@ -184,10 +184,18 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       }
       return;
     }
-    case 'X': {
+    case 'X': {  // ECH — erase characters.
       const std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
       EnsureCursorLineExistsLocked();
-      ClearLineRangeLocked(lines_[cursor_row_], cursor_column_, cursor_column_ + count);
+      // Clamp the erase range to the terminal width (or the current line length
+      // when the width is unset) so a large parameter like `CSI 65535 X` cannot
+      // grow the row far past `columns_` — the `@`-insert path clamps the same
+      // way. Without this a single escape balloons a row to ~64K cells, and
+      // repeated across the scrollback that is a multi-hundred-MB amplification.
+      const std::size_t max_end =
+          columns_ > 0 ? columns_ : lines_[cursor_row_].cells.size();
+      const std::size_t erase_end = std::min(cursor_column_ + count, max_end);
+      ClearLineRangeLocked(lines_[cursor_row_], cursor_column_, erase_end);
       return;
     }
     case '@': {

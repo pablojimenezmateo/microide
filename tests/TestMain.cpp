@@ -106,6 +106,8 @@ void RegisterPhase3Tests(std::vector<TestCase>& tests);
 void RegisterPhase4Tests(std::vector<TestCase>& tests);
 void RegisterPhase5Tests(std::vector<TestCase>& tests);
 void RegisterParseTests(std::vector<TestCase>& tests);
+void RegisterJsonValueTests(std::vector<TestCase>& tests);
+void RegisterTextFileIOTests(std::vector<TestCase>& tests);
 void RegisterControlSocketServerTests(std::vector<TestCase>& tests);
 void RegisterControlClientTests(std::vector<TestCase>& tests);
 void RegisterControlProtocolTests(std::vector<TestCase>& tests);
@@ -382,6 +384,8 @@ int main(int argc, char** argv) {
   microide::tests::RegisterPluginSurfaceCoverageTests(tests);
   microide::tests::RegisterPluginThreadTests(tests);
   microide::tests::RegisterParseTests(tests);
+  microide::tests::RegisterJsonValueTests(tests);
+  microide::tests::RegisterTextFileIOTests(tests);
   microide::tests::RegisterControlSocketServerTests(tests);
   microide::tests::RegisterControlClientTests(tests);
   microide::tests::RegisterControlProtocolTests(tests);

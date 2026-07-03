@@ -16,6 +16,16 @@
 
 namespace microide::util {
 
+// Caps applied to every match so a user- or plugin-supplied pattern with
+// catastrophic backtracking (e.g. `(a+)+$`) cannot spin near PCRE2's ~10M default
+// ceiling on every line across every file and worker thread (a real hang/DoS).
+// A pathological pattern blows past these exponentially, so it fails fast with
+// PCRE2_ERROR_MATCHLIMIT/DEPTHLIMIT; legitimate patterns finish far below them.
+// match_limit bounds total match steps (honored by the interpreter and JIT);
+// depth_limit bounds backtracking/recursion depth (and thus native stack use).
+inline constexpr std::uint32_t kRegexMatchLimit = 1'000'000;
+inline constexpr std::uint32_t kRegexDepthLimit = 10'000;
+
 struct RegexMatchRange {
   std::size_t start = 0;
   std::size_t end = 0;
@@ -91,6 +101,16 @@ class CompiledRegex {
         }
       }
       code_ = std::shared_ptr<pcre2_code>(code, pcre2_code_free);
+
+      // Match context carrying the backtracking caps. It is not modified by
+      // pcre2_match, so a single shared instance is safe to use concurrently from
+      // the search worker threads. If creation fails we fall back to nullptr
+      // (PCRE2's built-in defaults) rather than refusing to match.
+      if (pcre2_match_context* mctx = pcre2_match_context_create(nullptr); mctx != nullptr) {
+        pcre2_set_match_limit(mctx, kRegexMatchLimit);
+        pcre2_set_depth_limit(mctx, kRegexDepthLimit);
+        match_context_ = std::shared_ptr<pcre2_match_context>(mctx, pcre2_match_context_free);
+      }
     } else if (!error_prefix_.empty()) {
       error_ = BuildRegexErrorMessage(error_prefix_, error_code, error_offset);
     }
@@ -112,7 +132,7 @@ class CompiledRegex {
       return PCRE2_ERROR_BADOPTION;
     }
     return pcre2_match(code_.get(), reinterpret_cast<PCRE2_SPTR>(text.data()), text.size(), offset,
-                       options, match_data.get(), nullptr);
+                       options, match_data.get(), match_context_.get());
   }
 
   bool CaptureRange(const RegexMatchData& match_data,
@@ -134,6 +154,7 @@ class CompiledRegex {
 
  private:
   std::shared_ptr<pcre2_code> code_;
+  std::shared_ptr<pcre2_match_context> match_context_;
   std::string error_prefix_;
   std::string error_;
 };

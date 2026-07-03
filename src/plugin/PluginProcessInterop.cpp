@@ -19,6 +19,13 @@ namespace {
 using path_interop::ContainPath;
 using path_interop::ResolveRuntimePath;
 
+// Backstop wall-clock cap on a plugin-spawned subprocess. A hung child (a tool
+// waiting on input, a stuck network call) would otherwise block the plugin worker
+// thread forever, stalling every subsequent plugin task behind it. Generous
+// enough for normal formatters/linters; run_async is the path for genuinely
+// long-lived work, and it too gets this backstop rather than an unbounded wait.
+constexpr int kPluginProcessTimeoutMs = 120'000;
+
 // Native form of the `process.run` arguments. Holds every heap-backed object the
 // call needs so the parse step can fail without leaving such an object alive on
 // the stack when the caller raises a Lua error (a C longjmp — see LuaError.h).
@@ -191,6 +198,7 @@ int LuaProcessRun(lua_State* state, const PluginFsContext& fs) {
                            .environment_overrides = std::move(parsed.environment_overrides),
                            .capture_stdout = true,
                            .capture_stderr = true,
+                           .timeout_ms = kPluginProcessTimeoutMs,
                            .sandbox = MakeSandbox(fs),
                        });
       lua_createtable(state, 0, 4);
@@ -240,6 +248,7 @@ int LuaProcessRunAsync(lua_State* state, const PluginFsContext& fs) {
                            .environment_overrides = std::move(parsed.environment_overrides),
                            .capture_stdout = true,
                            .capture_stderr = true,
+                           .timeout_ms = kPluginProcessTimeoutMs,
                            .sandbox = MakeSandbox(fs),
                        });
       lua_pushvalue(state, 3);

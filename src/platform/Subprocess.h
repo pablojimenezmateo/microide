@@ -37,6 +37,10 @@ struct SubprocessResult {
   std::string stderr_text;
   // Set when the run exceeded SubprocessOptions::timeout_ms and was killed.
   bool timed_out = false;
+  // Set when captured stdout/stderr hit the per-stream capture ceiling and the
+  // child was torn down. The captured text is truncated at the ceiling; callers
+  // that must not act on partial output should check this.
+  bool truncated = false;
 
   bool success() const { return exit_code == 0; }
 };

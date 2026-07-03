@@ -7,6 +7,14 @@
 
 namespace microide::project::internal {
 
+namespace {
+// Backstop wall-clock cap on any single git invocation. Local read commands
+// (status, diff, blame, log, show) finish in well under a second; this only ever
+// trips on a genuinely stuck git — a credential/network stall or a filesystem
+// hang — so the shell (or its background git worker) is never held hostage
+// forever. Generous enough never to kill a legitimate local operation.
+constexpr int kGitCommandTimeoutMs = 60'000;
+}  // namespace
 
 bool HasGitMarker(const std::filesystem::path& root) {
   return !root.empty() && std::filesystem::exists(root / ".git");
@@ -83,6 +91,7 @@ CommandResult ReadGitCommandOutputWithStdin(const std::filesystem::path& root,
   options.capture_stderr = !silence_stderr;
   options.silence_stderr = silence_stderr;
   options.stdin_text = std::move(stdin_text);
+  options.timeout_ms = kGitCommandTimeoutMs;
   const platform::SubprocessResult result = platform::RunSubprocess(command, options);
   std::string output = result.stdout_text;
   if (!silence_stderr && !result.stderr_text.empty()) {

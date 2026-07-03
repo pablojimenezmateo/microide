@@ -25,6 +25,13 @@ namespace microide::platform {
 
 namespace {
 
+// Per-stream ceiling on captured stdout/stderr. Without it a child that emits
+// gigabytes (a pathological `git show` of a huge blob, a plugin tool flooding
+// stdout) grows the capture string until the host OOM-aborts. At the ceiling the
+// stream is truncated and the child is torn down. 128 MiB is far above any
+// legitimate git/tool output an IDE consumes.
+constexpr std::size_t kMaxCaptureBytes = 128ull * 1024 * 1024;
+
 #if defined(__unix__) || defined(__APPLE__)
 
 class UniqueFd {
@@ -96,31 +103,41 @@ void SetNonBlocking(int fd) {
 }
 
 // Drains a (non-blocking) readable pipe into `output`. Stops on EOF (closing
-// the fd) or once the kernel buffer is exhausted (EAGAIN); never blocks.
-void DrainReadyPipe(UniqueFd* fd, std::string* output) {
+// the fd) or once the kernel buffer is exhausted (EAGAIN); never blocks. Returns
+// true if `output` reached `max_bytes` (the caller stops pumping and reaps the
+// child); when capped it appends only up to the ceiling.
+bool DrainReadyPipe(UniqueFd* fd, std::string* output, std::size_t max_bytes) {
   if (fd == nullptr || !fd->IsValid() || output == nullptr) {
-    return;
+    return false;
   }
 
   std::array<char, 4096> buffer{};
   while (true) {
+    if (output->size() >= max_bytes) {
+      return true;  // capture ceiling reached before this read
+    }
     const ssize_t bytes_read = read(fd->Get(), buffer.data(), buffer.size());
     if (bytes_read > 0) {
-      output->append(buffer.data(), static_cast<std::size_t>(bytes_read));
+      const std::size_t room = max_bytes - output->size();
+      const std::size_t take = std::min(room, static_cast<std::size_t>(bytes_read));
+      output->append(buffer.data(), take);
+      if (take < static_cast<std::size_t>(bytes_read)) {
+        return true;  // capture ceiling reached mid-read; discard the rest
+      }
       continue;
     }
     if (bytes_read == 0) {
       fd->Reset();
-      return;
+      return false;
     }
     if (errno == EINTR) {
       continue;
     }
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      return;
+      return false;
     }
     fd->Reset();
-    return;
+    return false;
   }
 }
 
@@ -140,7 +157,8 @@ bool PumpChildIo(UniqueFd* stdin_fd,
                  std::string* stdout_text,
                  UniqueFd* stderr_fd,
                  std::string* stderr_text,
-                 int timeout_ms) {
+                 int timeout_ms,
+                 bool* out_truncated) {
   using Clock = std::chrono::steady_clock;
   const bool bounded = timeout_ms > 0;
   const Clock::time_point deadline =
@@ -207,11 +225,17 @@ bool PumpChildIo(UniqueFd* stdin_fd,
 
     if (stdout_index >= 0 &&
         (poll_fds[stdout_index].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
-      DrainReadyPipe(stdout_fd, stdout_text);
+      if (DrainReadyPipe(stdout_fd, stdout_text, kMaxCaptureBytes)) {
+        if (out_truncated != nullptr) *out_truncated = true;
+        return false;  // capture ceiling hit: stop and let the caller tear down
+      }
     }
     if (stderr_index >= 0 &&
         (poll_fds[stderr_index].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
-      DrainReadyPipe(stderr_fd, stderr_text);
+      if (DrainReadyPipe(stderr_fd, stderr_text, kMaxCaptureBytes)) {
+        if (out_truncated != nullptr) *out_truncated = true;
+        return false;
+      }
     }
     if (stdin_index >= 0 &&
         (poll_fds[stdin_index].revents & (POLLOUT | POLLERR | POLLHUP)) != 0) {
@@ -403,7 +427,11 @@ void DrainPipeToString(HANDLE handle, std::string* output) {
   DWORD bytes_read = 0;
   while (ReadFile(handle, buffer.data(), static_cast<DWORD>(buffer.size()), &bytes_read, nullptr) &&
          bytes_read > 0) {
-    output->append(buffer.data(), static_cast<std::size_t>(bytes_read));
+    if (output->size() >= kMaxCaptureBytes) {
+      break;  // capture ceiling reached: stop growing the buffer (see kMaxCaptureBytes)
+    }
+    const std::size_t room = kMaxCaptureBytes - output->size();
+    output->append(buffer.data(), std::min(room, static_cast<std::size_t>(bytes_read)));
   }
 }
 
@@ -492,20 +520,22 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
   stderr_pipe[1].Reset();
   stdin_pipe[0].Reset();
 
+  bool output_truncated = false;
   const bool timed_out =
       PumpChildIo(&stdin_pipe[1], options.stdin_text,
                   options.capture_stdout ? &stdout_pipe[0] : nullptr, &result.stdout_text,
                   options.capture_stderr ? &stderr_pipe[0] : nullptr, &result.stderr_text,
-                  options.timeout_ms);
+                  options.timeout_ms, &output_truncated);
   stdin_pipe[1].Reset();
   stdout_pipe[0].Reset();
   stderr_pipe[0].Reset();
 
-  if (timed_out) {
-    // Deadline exceeded: kill the child so the (synchronous) caller is not held
-    // hostage by a hung or pathologically slow process, then reap it below to
-    // avoid a zombie.
-    result.timed_out = true;
+  if (timed_out || output_truncated) {
+    // Deadline exceeded or capture ceiling hit: kill the child so the
+    // (synchronous) caller is not held hostage by a hung, pathologically slow, or
+    // firehose process, then reap it below to avoid a zombie.
+    result.timed_out = timed_out;
+    result.truncated = output_truncated;
     kill(pid, SIGKILL);
   }
 

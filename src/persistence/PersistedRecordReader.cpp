@@ -13,6 +13,12 @@
 namespace microide::persistence {
 namespace {
 
+// Upper bound on a persisted-state file we will read into memory. Project/session/
+// config records are small (KB–MB); a file above this is corrupt or hostile, so
+// we refuse it before allocating rather than risk an uncaught bad_alloc on a
+// multi-GB file. The CRC gate downstream would reject the content anyway.
+constexpr std::uintmax_t kMaxPersistedFileBytes = 256ull * 1024 * 1024;
+
 void SetError(PersistedRecordReaderError* error, PersistedRecordReaderError value) {
   if (error != nullptr) {
     *error = value;
@@ -36,6 +42,10 @@ bool ReadAllBytes(const std::filesystem::path& path,
   file.seekg(0, std::ios::end);
   const std::streamoff size = file.tellg();
   if (size < 0) {
+    SetError(error, PersistedRecordReaderError::ReadFailed);
+    return false;
+  }
+  if (static_cast<std::uintmax_t>(size) > kMaxPersistedFileBytes) {
     SetError(error, PersistedRecordReaderError::ReadFailed);
     return false;
   }

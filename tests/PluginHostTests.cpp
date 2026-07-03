@@ -568,6 +568,45 @@ void TestPluginHostWatchdogAbortsRunawayCall() {
 #endif
 }
 
+// A plugin that allocates without bound must hit the per-state memory ceiling and
+// fail with a recoverable Lua memory error, rather than OOMing the whole host.
+void TestPluginHostMemoryBudgetAbortsRunawayAllocation() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#else
+  std::string create_error;
+  std::unique_ptr<microide::plugin::LuaRuntime> runtime =
+      microide::plugin::LuaRuntime::Create(&create_error);
+  Expect(runtime != nullptr, "LuaRuntime should be creatable for the memory-budget test");
+
+  // Give the call ample time so the memory ceiling — not the watchdog — is what
+  // stops it.
+  runtime->set_call_budget(std::chrono::seconds(30));
+  lua_State* state = runtime->state();
+
+  // A single ~300 MiB allocation exceeds the per-state budget (256 MiB) and must
+  // be denied, surfacing as a Lua "not enough memory" error.
+  Expect(luaL_loadstring(state,
+                         "local s = string.rep('x', 300 * 1024 * 1024) return #s") == LUA_OK,
+         "allocation chunk should compile");
+  std::string alloc_error;
+  const bool result = runtime->PCall(0, 1, &alloc_error);
+  lua_settop(state, 0);
+
+  Expect(!result, "an over-budget allocation should fail, not OOM the host");
+  Expect(alloc_error.find("memory") != std::string::npos,
+         "the failure should be reported as a Lua memory error");
+
+  // The runtime must stay usable after a rejected allocation (the state was
+  // unwound cleanly, and the denied bytes were never charged to the budget).
+  Expect(luaL_loadstring(state, "return 1 + 1") == LUA_OK, "recovery chunk should compile");
+  std::string recover_error;
+  Expect(runtime->PCall(0, 1, &recover_error),
+         "the runtime should still execute after a rejected allocation");
+  lua_settop(state, 0);
+#endif
+}
+
 void TestPluginHostPluginsUseIsolatedLuaStates() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2804,6 +2843,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostPluginsUseIsolatedLuaStates);
   AddTest(tests, "PluginHost/WatchdogAbortsRunawayCall",
           TestPluginHostWatchdogAbortsRunawayCall);
+  AddTest(tests, "PluginHost/MemoryBudgetAbortsRunawayAllocation",
+          TestPluginHostMemoryBudgetAbortsRunawayAllocation);
   AddTest(tests, "PluginHost/Phase2Apis", TestPluginHostPhase2Apis);
   AddTest(tests, "PluginHost/Phase2StatusApis", TestPluginHostPhase2StatusApis);
   AddTest(tests, "PluginHost/Phase3DiagnosticsApis", TestPluginHostPhase3DiagnosticsApis);

@@ -327,6 +327,33 @@ void TestSubprocessTimeoutKillsHungChild() {
          "timeout should return promptly after the deadline, not wait for the child to exit");
 }
 
+// A child that floods stdout without end must not grow the capture buffer until
+// the host OOMs. The capture ceiling truncates the stream, marks the result
+// truncated, and tears the child down promptly instead of reading forever.
+void TestSubprocessCaptureCapTruncatesFirehose() {
+  microide::platform::IgnoreBrokenPipeSignal();
+  const auto start = std::chrono::steady_clock::now();
+  // `yes` streams "y\n" indefinitely; without a cap this call would never return
+  // and would exhaust memory.
+  const auto result = RunSubprocess({"yes"}, SubprocessOptions{
+                                                 .cwd = {},
+                                                 .stdin_text = {},
+                                                 .environment_overrides = {},
+                                                 .capture_stdout = true,
+                                                 .capture_stderr = true,
+                                                 .silence_stderr = false,
+                                             });
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+  Expect(result.truncated, "an endless firehose child should report truncated capture");
+  // Bounded at the ceiling (128 MiB): well above 64 MiB, never gigabytes.
+  Expect(result.stdout_text.size() >= 64ull * 1024 * 1024,
+         "capture should fill up to the ceiling before truncating");
+  Expect(result.stdout_text.size() <= 129ull * 1024 * 1024,
+         "capture must not exceed the ceiling");
+  Expect(elapsed.count() < 15000, "a firehose child should be torn down promptly, not read forever");
+}
+
 // A finite timeout must not falsely trip on a command that finishes well within
 // it: the bound only catches genuine hangs.
 void TestSubprocessTimeoutDoesNotTripFastCommand() {
@@ -396,6 +423,8 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Subprocess/LargeStdinDoesNotDeadlock",
           TestSubprocessLargeStdinDoesNotDeadlock);
   AddTest(tests, "Subprocess/TimeoutKillsHungChild", TestSubprocessTimeoutKillsHungChild);
+  AddTest(tests, "Subprocess/CaptureCapTruncatesFirehose",
+          TestSubprocessCaptureCapTruncatesFirehose);
   AddTest(tests, "Subprocess/TimeoutDoesNotTripFastCommand",
           TestSubprocessTimeoutDoesNotTripFastCommand);
 #endif

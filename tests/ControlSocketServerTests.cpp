@@ -14,6 +14,9 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
 #endif
 
 namespace microide::tests {
@@ -43,7 +46,10 @@ int ConnectUnix(const std::filesystem::path& path) {
 
 bool WriteAll(int fd, std::string_view data) {
   while (!data.empty()) {
-    const ssize_t written = ::send(fd, data.data(), data.size(), 0);
+    // MSG_NOSIGNAL: the server may shed us mid-write (oversized-line / flood
+    // resilience tests), and a raw send() would otherwise raise SIGPIPE and kill
+    // the test process instead of returning an error.
+    const ssize_t written = ::send(fd, data.data(), data.size(), MSG_NOSIGNAL);
     if (written <= 0) {
       return false;
     }
@@ -206,6 +212,60 @@ void TestOpenConnectionHandlesMultipleRequests() {
   server.Stop();
 }
 
+// Resilience: a hostile local client that streams bytes with no newline must not
+// grow the server's per-connection read buffer without bound (memory exhaustion).
+// Once the unframed line passes the per-request ceiling the connection is shed.
+void TestOversizedUnterminatedLineIsShed() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
+  ControlSocketServer server;
+  Expect(server.Start(socket_path), "server should start");
+
+  const int client = ConnectUnix(socket_path);
+  Expect(client >= 0, "client should connect");
+  Expect(WaitForConnectionCount(server, 1, 2s), "server should accept the connection");
+
+  // Stream ~4 MiB with no newline. WriteAll may fail partway once the server
+  // sheds us mid-stream (EPIPE) — that is the expected outcome, so ignore it.
+  const std::string flood(4u * 1024 * 1024, 'x');
+  (void)WriteAll(client, flood);
+
+  Expect(WaitForConnectionCount(server, 0, 3s),
+         "an oversized unterminated line should shed the connection, not OOM");
+
+  ::close(client);
+  server.Stop();
+}
+
+// Resilience: a client that floods complete request lines faster than the host
+// drains them must not grow the shared inbound queue without bound. This test
+// deliberately never drains (never calls TakeInbound), so the queue fills to its
+// cap and the offending connection is shed.
+void TestInboundQueueFloodIsShed() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
+  ControlSocketServer server;
+  Expect(server.Start(socket_path), "server should start");
+
+  const int client = ConnectUnix(socket_path);
+  Expect(client >= 0, "client should connect");
+  Expect(WaitForConnectionCount(server, 1, 2s), "server should accept the connection");
+
+  // Far more small complete lines than the inbound-queue cap, none drained.
+  std::string flood;
+  flood.reserve(20000 * 3);
+  for (int i = 0; i < 20000; ++i) {
+    flood += "{}\n";
+  }
+  (void)WriteAll(client, flood);
+
+  Expect(WaitForConnectionCount(server, 0, 3s),
+         "an undrained request flood should shed the connection, not grow the queue");
+
+  ::close(client);
+  server.Stop();
+}
+
 #endif  // POSIX
 
 }  // namespace
@@ -220,6 +280,10 @@ void RegisterControlSocketServerTests(std::vector<TestCase>& tests) {
           TestUnansweredRequestReapsAfterGrace);
   AddTest(tests, "ControlSocketServer/OpenConnectionHandlesMultipleRequests",
           TestOpenConnectionHandlesMultipleRequests);
+  AddTest(tests, "ControlSocketServer/OversizedUnterminatedLineIsShed",
+          TestOversizedUnterminatedLineIsShed);
+  AddTest(tests, "ControlSocketServer/InboundQueueFloodIsShed",
+          TestInboundQueueFloodIsShed);
 #else
   (void)tests;
 #endif

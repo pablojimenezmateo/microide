@@ -793,6 +793,8 @@ add_executable(microide_tests
   tests/PluginSurfaceCoverageTests.cpp
   tests/PluginThreadTests.cpp
   tests/ParseTests.cpp
+  tests/JsonValueTests.cpp
+  tests/TextFileIOTests.cpp
   tests/ArchitectureInvariantsTests.cpp
   tests/architecture/ArchitectureFileScanner.cpp
   tests/architecture/ArchitectureRuleHelpers.cpp
@@ -948,6 +950,17 @@ if(MICROIDE_FUZZ)
     tests/fuzz/GitBlameParserFuzz.cpp
   )
   microide_configure_fuzz_target(GitBlameParserFuzz)
+
+  # The JSON parser behind every control-channel sink (--control-spec, socket
+  # requests, instance descriptors) and DAP/LSP decoding. Exercises the recursion
+  # depth guard against deeply nested payloads.
+  add_executable(JsonValueParseFuzz
+    src/util/JsonValue.cpp
+    src/util/Parse.cpp
+    src/util/StringUtil.cpp
+    tests/fuzz/JsonValueParseFuzz.cpp
+  )
+  microide_configure_fuzz_target(JsonValueParseFuzz)
 
   add_executable(TerminalCsiParserFuzz
     src/util/Parse.cpp

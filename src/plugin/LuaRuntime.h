@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <string>
 
@@ -47,6 +48,22 @@ class LuaRuntime {
 
 #if MICROIDE_HAS_LUA_PLUGINS
   static void TimeoutHook(lua_State* state, lua_Debug* ar);
+
+  // Custom lua_Alloc enforcing the per-state heap ceiling (see the .cpp). Denies
+  // any growth past the budget so a runaway plugin gets a recoverable Lua memory
+  // error instead of OOMing the host.
+  static void* BoundedAlloc(void* ud, void* ptr, std::size_t osize, std::size_t nsize);
+
+  // Per-state heap accounting for the custom allocator. Bounds how much memory a
+  // single plugin can hold so a hostile or buggy plugin (`("x"):rep(2^40)`,
+  // unbounded table growth) cannot OOM the whole host process. Lives as long as
+  // state_ — lua_close in the destructor body still frees through the allocator,
+  // and this member outlives that call.
+  struct MemoryBudget {
+    std::size_t used = 0;
+    std::size_t limit = 0;
+  };
+  MemoryBudget memory_budget_;
 
   lua_State* state_ = nullptr;
   // Generous hang guard, not a stutter guard: the goal is "never freeze forever",

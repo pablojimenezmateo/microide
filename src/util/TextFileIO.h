@@ -8,6 +8,14 @@
 
 namespace microide::util {
 
+// Upper bound on a single text file we will slurp into memory. The whole file is
+// buffered at once (and the CRLF path transiently doubles it), so without a cap a
+// multi-gigabyte or crafted-sparse file forces one enormous allocation and an
+// uncaught std::bad_alloc / OOM. Files above this are refused with a defined
+// failure (nullopt / false) rather than crashing the process. 512 MiB is far
+// above any realistic source file while still bounding the allocation.
+inline constexpr std::uintmax_t kMaxTextFileBytes = 512ull * 1024 * 1024;
+
 std::optional<std::string> ReadTextFile(const std::filesystem::path& path);
 bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text);
 

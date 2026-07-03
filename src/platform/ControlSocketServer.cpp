@@ -36,6 +36,19 @@ namespace {
 // never leak the fd forever.
 constexpr int kLingerGraceMs = 2000;
 
+// A single control request (command or query line) is small — a few hundred
+// bytes at most. This ceiling bounds the unframed read buffer so a hostile local
+// client streaming bytes with no newline cannot grow it without limit (OOM). A
+// peer that exceeds it is shed. 1 MiB is far above any legitimate request.
+constexpr std::size_t kMaxRequestLineBytes = 1u << 20;
+
+// Upper bound on requests accepted from all connections but not yet drained by
+// the main thread. The main thread swaps the whole queue out on every control
+// wake, so this only fills if a client floods complete lines faster than the
+// host drains them; at the cap we shed the offending connection rather than let
+// the queue grow without limit.
+constexpr std::size_t kMaxInboundQueued = 4096;
+
 void SetNonBlocking(int fd) {
   const int flags = ::fcntl(fd, F_GETFL, 0);
   if (flags >= 0) {
@@ -106,9 +119,12 @@ struct ControlSocketServer::Impl {
 
   // Split the connection's read buffer into complete lines, enqueue each as an
   // inbound message, and request a main-thread wake. Runs on the I/O thread.
-  void IngestReadBuffer(Connection& conn) {
+  // Returns false when the shared inbound queue is saturated (the caller sheds
+  // the connection); the buffer is still advanced past the lines it consumed.
+  bool IngestReadBuffer(Connection& conn) {
     std::size_t start = 0;
     bool produced = false;
+    bool queue_overflow = false;
     while (true) {
       const std::size_t newline = conn.read_buf.find('\n', start);
       if (newline == std::string::npos) {
@@ -120,8 +136,12 @@ struct ControlSocketServer::Impl {
       }
       start = newline + 1;
       if (!line.empty()) {
-        conn.in_flight.fetch_add(1, std::memory_order_release);
         std::lock_guard<std::mutex> lock(inbound_mutex);
+        if (inbound.size() >= kMaxInboundQueued) {
+          queue_overflow = true;
+          break;
+        }
+        conn.in_flight.fetch_add(1, std::memory_order_release);
         inbound.push_back(ControlInboundMessage{conn.id, std::move(line)});
         produced = true;
       }
@@ -132,6 +152,7 @@ struct ControlSocketServer::Impl {
     if (produced) {
       PushWakeEvent();
     }
+    return !queue_overflow;
   }
 
   // Best-effort non-blocking flush of a connection's pending writes. Runs on the
@@ -222,7 +243,18 @@ struct ControlSocketServer::Impl {
             }
             break;
           }
-          IngestReadBuffer(*conn);
+          if (!IngestReadBuffer(*conn)) {
+            // Inbound queue saturated: the peer is flooding requests faster than
+            // the host can drain them. Shed it rather than grow the queue.
+            hard_drop = true;
+          }
+          // The residual buffer holds only the incomplete trailing line (every
+          // complete line was consumed above). If that single unterminated line
+          // has grown past the per-request ceiling, the peer is streaming bytes
+          // with no newline to exhaust memory — drop it.
+          if (conn->read_buf.size() > kMaxRequestLineBytes) {
+            hard_drop = true;
+          }
         }
         if ((revents & POLLHUP) != 0 && conn->read_buf.empty()) {
           conn->read_closed = true;

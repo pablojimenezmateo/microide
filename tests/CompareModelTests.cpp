@@ -862,9 +862,44 @@ void TestCompareIgnoreWhitespaceInteriorHunkLine() {
          "without ignore_whitespace the interior line stays Modified");
 }
 
+// Resilience: a modified row with a very long line on either side must not run
+// the O(n) per-codepoint/token intra-line diff (a UI-thread memory spike on a
+// minified or binary blob). Instead the whole line is marked changed. Sharing a
+// prefix/suffix forces the row to align as Modified (not delete+add), so the
+// guard — not the aligner — is what produces the full-line span.
+void TestCompareLongLineSkipsIntralineRefinement() {
+  const std::string middle_left(300000, 'a');
+  const std::string middle_right(300000, 'b');
+  const std::string left = "PREFIX" + middle_left + "SUFFIX\n";
+  const std::string right = "PREFIX" + middle_right + "SUFFIX\n";
+
+  const CompareModel model = BuildCompareModel(left, right);
+
+  const CompareRow* modified = nullptr;
+  for (const auto& row : model.rows) {
+    if (row.kind == CompareRowKind::Modified) {
+      modified = &row;
+      break;
+    }
+  }
+  Expect(modified != nullptr, "the long differing line should align as a Modified row");
+  // The fallback marks the entire line changed on each side (a single full-width
+  // span), rather than the narrow interior span fine-grained diffing would emit.
+  Expect(modified->left_changed_spans.size() == 1 &&
+             modified->left_changed_spans[0].start == 0 &&
+             modified->left_changed_spans[0].end == modified->left_text.size(),
+         "an over-long modified line should mark the whole left side changed");
+  Expect(modified->right_changed_spans.size() == 1 &&
+             modified->right_changed_spans[0].start == 0 &&
+             modified->right_changed_spans[0].end == modified->right_text.size(),
+         "an over-long modified line should mark the whole right side changed");
+}
+
 }  // namespace
 
 void RegisterCompareModelTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Compare/LongLineSkipsIntralineRefinement",
+          TestCompareLongLineSkipsIntralineRefinement);
   AddTest(tests, "Compare/IgnoreWhitespacePreservesRightText",
           TestCompareIgnoreWhitespacePreservesRightText);
   AddTest(tests, "Compare/IgnoreWhitespaceInteriorHunkLine",

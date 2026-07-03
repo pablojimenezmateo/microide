@@ -42,9 +42,27 @@ bool JsonValue::HasKey(std::string_view key) const {
 
 namespace {
 
+// Bounds recursion so a hostile deeply-nested payload (e.g. `[[[[...]]]]` from a
+// control-spec file, a socket request line, or an instance descriptor) cannot
+// overflow the native stack. Control/DAP/LSP messages nest only a handful of
+// levels, so this ceiling never trips on legitimate input.
+constexpr int kMaxParseDepth = 200;
+
 struct Parser {
   std::string_view src;
   std::size_t pos = 0;
+  int depth = 0;
+
+  // RAII depth counter: incremented on entry to each array/object, decremented
+  // on scope exit regardless of which early return fires.
+  struct DepthGuard {
+    Parser& parser;
+    bool within_limit;
+    explicit DepthGuard(Parser& p) : parser(p), within_limit(++p.depth <= kMaxParseDepth) {}
+    ~DepthGuard() { --parser.depth; }
+    DepthGuard(const DepthGuard&) = delete;
+    DepthGuard& operator=(const DepthGuard&) = delete;
+  };
 
   char Peek() const { return pos < src.size() ? src[pos] : '\0'; }
   char Advance() { return pos < src.size() ? src[pos++] : '\0'; }
@@ -167,6 +185,8 @@ struct Parser {
   }
 
   std::optional<JsonValue> ParseArray() {
+    DepthGuard guard(*this);
+    if (!guard.within_limit) return std::nullopt;
     if (!Expect('[')) return std::nullopt;
     JsonArray arr;
     SkipWhitespace();
@@ -182,6 +202,8 @@ struct Parser {
   }
 
   std::optional<JsonValue> ParseObject() {
+    DepthGuard guard(*this);
+    if (!guard.within_limit) return std::nullopt;
     if (!Expect('{')) return std::nullopt;
     JsonObject obj;
     SkipWhitespace();
@@ -243,7 +265,11 @@ void AppendEscaped(std::string& out, const std::string& s) {
   out += '"';
 }
 
-void AppendValue(std::string& out, const JsonValue& val) {
+void AppendValue(std::string& out, const JsonValue& val, int depth = 0) {
+  // Mirror the parser's recursion ceiling so serializing a pathologically deep
+  // value (however it was constructed) cannot overflow the stack. Past the limit
+  // we emit null rather than recurse — serialization has no error channel.
+  if (depth > kMaxParseDepth) { out += "null"; return; }
   if (val.IsNull()) { out += "null"; return; }
   if (val.IsBool()) { out += val.AsBool() ? "true" : "false"; return; }
   if (val.IsInt()) {
@@ -266,7 +292,7 @@ void AppendValue(std::string& out, const JsonValue& val) {
     for (const auto& elem : val.AsArray()) {
       if (!first) out += ',';
       first = false;
-      AppendValue(out, elem);
+      AppendValue(out, elem, depth + 1);
     }
     out += ']';
     return;
@@ -279,7 +305,7 @@ void AppendValue(std::string& out, const JsonValue& val) {
       first = false;
       AppendEscaped(out, k);
       out += ':';
-      AppendValue(out, v);
+      AppendValue(out, v, depth + 1);
     }
     out += '}';
   }

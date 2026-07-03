@@ -22,6 +22,14 @@ constexpr std::size_t kMaxLineLcsMatrixCells = 250'000;
 constexpr std::size_t kMaxHunkAlignmentMatrixCells = 65'536;
 constexpr std::size_t kMaxIntralineLcsMatrixCells = 65'536;
 
+// Above this per-side byte length we skip intra-line span refinement for a
+// modified row and mark the whole line changed. The intra-line helpers allocate
+// O(n) codepoint-offset and token vectors per line; on a single very long line (a
+// minified bundle or a binary blob from `git show`) that is a hundreds-of-MB
+// spike on the UI thread. Character-level highlighting on such a line is not
+// meaningful anyway, so the whole-line fallback loses nothing a user would see.
+constexpr std::size_t kMaxIntralineTextBytes = 64 * 1024;
+
 enum class LineTokenKind {
   Word,
   Whitespace,
@@ -684,6 +692,20 @@ void PopulateChangedSpans(CompareRow& row, CompareBuildProfile* profile) {
   }
 
   if (row.kind == CompareRowKind::Added) {
+    if (!row.right_text.empty()) {
+      row.right_changed_spans.push_back(CompareTextSpan{0, row.right_text.size()});
+    }
+    return;
+  }
+
+  // Guard: a very long line on either side would make the per-codepoint/token
+  // intra-line diff allocate proportional scratch and stall the UI thread. Fall
+  // back to marking the entire line changed on both sides.
+  if (row.left_text.size() > kMaxIntralineTextBytes ||
+      row.right_text.size() > kMaxIntralineTextBytes) {
+    if (!row.left_text.empty()) {
+      row.left_changed_spans.push_back(CompareTextSpan{0, row.left_text.size()});
+    }
     if (!row.right_text.empty()) {
       row.right_changed_spans.push_back(CompareTextSpan{0, row.right_text.size()});
     }
