@@ -1411,6 +1411,10 @@
   void ConsumeTerminalSessionUpdates();
   void ReapExitedTerminalTabs();
   bool BottomPanelVisible() const;
+  // Whether the project tab strip is laid out this frame. Hidden only when the
+  // "chrome.project_tabs.hide_when_single" setting is on and at most one project is
+  // open; a zero-height strip rect then suppresses its render and hit-testing.
+  bool ProjectTabStripVisible() const;
   bool BottomPanelShowsTerminal() const;
   bool BottomPanelShowsOutput() const;
   // The renderer whose metrics drive the current bottom-panel content: the dedicated
@@ -1934,6 +1938,14 @@
   // steady-state ApplyLiveSettings is then a single integer compare. The max
   // sentinel forces the first apply (real revisions start at 1).
   std::uint64_t last_applied_settings_revision_ = std::numeric_limits<std::uint64_t>::max();
+  // Cached resolution of "chrome.project_tabs.hide_when_single" for
+  // ProjectTabStripVisible(). That predicate runs inside the uncached ComputeLayout
+  // on the per-mouse-move window-drag hit-test path, so the string-keyed
+  // GetSettingValue lookup (plus its default-value allocation) is memoized and
+  // re-resolved only when the settings-store revision changes. The max sentinel
+  // forces the first resolve.
+  mutable std::uint64_t project_tabs_hide_when_single_revision_ = std::numeric_limits<std::uint64_t>::max();
+  mutable bool project_tabs_hide_when_single_ = false;
   // Last terminal scrollback cap pushed to live sessions; -1 forces the first apply.
   int last_applied_terminal_scrollback_ = -1;
   Uint32 git_blame_event_type_ = 0;

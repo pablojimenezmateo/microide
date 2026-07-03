@@ -266,7 +266,8 @@ WorkspaceRootView WorkspaceShell::Bootstrapper::BuildRootView() const {
                                      shell->layout_mode_service_.SnapshotInputs(),
                                      shell->layout_mode_service_.StatusBarVisible(),
                                      shell->context_.current_project_state.debug_pane.visible,
-                                     shell->context_.current_project_state.debug_pane.width);
+                                     shell->context_.current_project_state.debug_pane.width,
+                                     shell->ProjectTabStripVisible());
               },
           .reset_visible_editor_blame_overlay =
               [shell]() { shell->editor_blame_overlay_service_.ClearVisibleOverlay(); },

@@ -104,7 +104,8 @@ bool WorkspaceShell::WindowDragRegionContains(float x, float y) const {
                     layout_mode_service_.SnapshotInputs(),
                     layout_mode_service_.StatusBarVisible(),
                     context_.current_project_state.debug_pane.visible,
-                    context_.current_project_state.debug_pane.width);
+                    context_.current_project_state.debug_pane.width,
+                    ProjectTabStripVisible());
   if (!Contains(layout.menu_bar, x, y)) {
     return false;
   }

@@ -14,7 +14,15 @@ namespace microide::workspace {
 
 class WorkspaceProjectFileMonitor::ProjectTraversalFilter {
  public:
-  explicit ProjectTraversalFilter(std::filesystem::path root) : root_(std::move(root)) {
+  explicit ProjectTraversalFilter(std::filesystem::path root)
+      : root_(std::move(root).lexically_normal()) {
+    // A trailing separator leaves path::filename() empty, so `path("/a/b/") != path("/a/b")`.
+    // Ancestor walks (parent_path() never yields a trailing separator) would then never
+    // compare equal to a trailing-slash root and would recurse past it up to "/", looping
+    // forever there. Strip it so MatcherForParentDirectory terminates at the project root.
+    if (!root_.has_filename() && root_.has_parent_path()) {
+      root_ = root_.parent_path();
+    }
     root_matcher_.SetRoot(root_);
   }
 
@@ -77,7 +85,9 @@ class WorkspaceProjectFileMonitor::ProjectTraversalFilter {
   }
 
   const project::IgnoreMatcher& MatcherForParentDirectory(const std::filesystem::path& directory) {
-    if (directory.empty() || directory == root_) {
+    // Terminate at the project root (normal case) or, defensively, at the filesystem root
+    // ("/", which has no relative path) so a root/path mismatch can never recurse forever.
+    if (directory.empty() || directory == root_ || !directory.has_relative_path()) {
       return root_matcher_;
     }
 

@@ -289,7 +289,8 @@ WorkspaceLayout ComputeLayout(float window_width,
                               LayoutModeInputs layout_mode_inputs = {},
                               bool reserve_status_bar = false,
                               bool right_pane_visible = false,
-                              float right_pane_width = 0.0f);
+                              float right_pane_width = 0.0f,
+                              bool project_tab_strip_visible = true);
 std::optional<EditorSplitAxisLayout> ComputeEditorSplitAxisLayout(
     const SDL_FRect& rect,
     bool vertical,

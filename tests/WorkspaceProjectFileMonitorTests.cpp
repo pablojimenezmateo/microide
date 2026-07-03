@@ -80,6 +80,30 @@ void TestProjectFileMonitorPollFallsBackToSynchronousWhenNoPoster() {
   Expect(monitor.PollForChanges(), "synchronous fallback should still detect changes");
 }
 
+// A project root passed with a trailing separator (e.g. ".../proj/") must not send the
+// per-directory ignore-matcher walk into unbounded recursion. A trailing slash leaves
+// path::filename() empty so the root never string-equals the (separator-free) ancestors
+// produced by parent_path(), which previously recursed past the root up to "/" forever
+// and overflowed the stack. Regression for that crash: the walk must terminate and still
+// detect changes.
+void TestProjectFileMonitorTrailingSlashRootTerminates() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "proj";
+  WriteFile(root / "nested" / "a.txt", "1\n");
+  // Root WITH a trailing separator — the shape that used to recurse forever.
+  const std::filesystem::path root_with_slash(root.generic_string() + "/");
+
+  WorkspaceProjectFileMonitor monitor;
+  monitor.SetPollInterval(std::chrono::milliseconds::zero());
+  monitor.SetProjectRoot(root_with_slash);  // synchronous arm walks the tree here
+
+  Expect(!monitor.PollForChanges(), "monitor should start clean with a trailing-slash root");
+  WriteFile(root / "nested" / "b.txt", "new\n");
+  monitor.PollForChanges();  // synchronous walk detects and flags the change
+  Expect(monitor.PollForChanges(),
+         "a trailing-slash root must still detect changes without runaway recursion");
+}
+
 void TestProjectFileMonitorLargeTreeDegradesAndNotifiesOnce() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "big";
@@ -107,6 +131,8 @@ void RegisterWorkspaceProjectFileMonitorTests(std::vector<TestCase>& tests) {
           TestProjectFileMonitorPollRunsOffThreadAndDeliversChange);
   AddTest(tests, "WorkspaceProjectFileMonitor/PollFallsBackToSynchronousWhenNoPoster",
           TestProjectFileMonitorPollFallsBackToSynchronousWhenNoPoster);
+  AddTest(tests, "WorkspaceProjectFileMonitor/TrailingSlashRootTerminates",
+          TestProjectFileMonitorTrailingSlashRootTerminates);
   AddTest(tests, "WorkspaceProjectFileMonitor/LargeTreeDegradesAndNotifiesOnce",
           TestProjectFileMonitorLargeTreeDegradesAndNotifiesOnce);
 }

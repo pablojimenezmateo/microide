@@ -973,6 +973,32 @@ void TestWorkspaceSharedRightPaneLayout() {
          "resize handle exists when the pane is visible");
 }
 
+void TestWorkspaceSharedProjectTabStripVisibility() {
+  // Strip shown by default: it reserves 32px below the 25px menu bar, so the editor
+  // tab strip and content start below both bands.
+  const auto shown = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f);
+  Expect(shown.project_tab_strip.h == 32.0f, "project tab strip reserves 32px when visible");
+  Expect(shown.tab_strip.y == 25.0f + 32.0f,
+         "editor tab strip sits below the menu bar and the project tab strip");
+
+  // Hidden: the strip collapses to zero height (keeping its y at the menu-bar bottom),
+  // and everything below reclaims the 32px.
+  const auto hidden = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f,
+                                    microide::workspace::LayoutModeInputs{}, false, false, 0.0f,
+                                    /*project_tab_strip_visible=*/false);
+  Expect(hidden.project_tab_strip.h == 0.0f, "hidden project tab strip has zero height");
+  Expect(hidden.project_tab_strip.y == 25.0f,
+         "hidden strip keeps its y at the menu-bar bottom so hit-tests reject naturally");
+  Expect(hidden.tab_strip.y == 25.0f,
+         "editor tab strip moves up to the menu bar when the project strip is hidden");
+  Expect(std::abs((shown.content.y - hidden.content.y) - 32.0f) < 0.001f,
+         "hiding the strip lifts the content region up by the strip height");
+  Expect(hidden.content.h == shown.content.h + 32.0f,
+         "content gains the reclaimed strip height");
+  Expect(hidden.tab_strip.h == shown.tab_strip.h,
+         "the editor tab strip height is unaffected by hiding the project strip");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
@@ -1015,6 +1041,8 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/CompareCollapsedContextBlockRect",
           TestWorkspaceSharedCompareCollapsedContextBlockRect);
   AddTest(tests, "WorkspaceShared/RightPaneLayout", TestWorkspaceSharedRightPaneLayout);
+  AddTest(tests, "WorkspaceShared/ProjectTabStripVisibility",
+          TestWorkspaceSharedProjectTabStripVisibility);
 }
 
 }  // namespace microide::tests

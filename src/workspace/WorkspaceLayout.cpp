@@ -53,7 +53,8 @@ WorkspaceLayout ComputeLayout(float window_width,
                               LayoutModeInputs layout_mode_inputs,
                               bool reserve_status_bar,
                               bool right_pane_visible,
-                              float right_pane_width) {
+                              float right_pane_width,
+                              bool project_tab_strip_visible) {
   const LayoutMode layout_mode = ResolveLayoutMode(window_width, layout_mode_inputs);
   const float resolved_bottom_panel_height = bottom_panel_visible ? bottom_panel_height : 0.0f;
   const float resolved_sidebar_width = sidebar_visible ? sidebar_width : 0.0f;
@@ -70,11 +71,15 @@ WorkspaceLayout ComputeLayout(float window_width,
   layout.layout_mode = layout_mode;
   layout.full = MakeRect(0.0f, 0.0f, window_width, window_height);
   layout.menu_bar = MakeRect(0.0f, 0.0f, window_width, kMenuBarHeight);
+  // The strip collapses to zero height (but keeps its y) when hidden, so every render
+  // and hit-test path that reads the rect suppresses naturally.
+  const float project_tab_strip_height =
+      project_tab_strip_visible ? kProjectTabStripHeight : 0.0f;
   layout.project_tab_strip =
-      MakeRect(0.0f, kMenuBarHeight, window_width, kProjectTabStripHeight);
+      MakeRect(0.0f, kMenuBarHeight, window_width, project_tab_strip_height);
   layout.tab_strip =
-      MakeRect(0.0f, kMenuBarHeight + kProjectTabStripHeight, window_width, kTabStripHeight);
-  const float content_top = kMenuBarHeight + kProjectTabStripHeight + kTabStripHeight;
+      MakeRect(0.0f, kMenuBarHeight + project_tab_strip_height, window_width, kTabStripHeight);
+  const float content_top = kMenuBarHeight + project_tab_strip_height + kTabStripHeight;
   const float content_bottom_reserved = resolved_bottom_panel_height + status_bar_height;
   layout.bottom_panel =
       MakeRect(0.0f, window_height - content_bottom_reserved, window_width,
