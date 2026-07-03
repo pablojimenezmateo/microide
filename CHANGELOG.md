@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.6.3] - 2026-07-04
+
+A **resilience-hardening** release on top of 2.6.2. It lands a multi-round
+white-box pentest sweep: adversarial and pathological inputs across the
+terminal, editor, compare/merge, git, filesystem-watch, LSP/DAP, and plugin
+surfaces are now bounded by allocation caps, recursion-depth guards, and
+list-length limits so malformed or hostile data degrades gracefully instead
+of exhausting memory or stalling a thread. Changes are purely defensive —
+no persisted-format or plugin-API breaks, and no user-visible workflow
+changes beyond one new opt-in terminal-clipboard setting.
+
+### Security / resilience hardening
+- Terminal: cap allocation-driving CSI operations (`L`/`X`/`@`, cursor moves)
+  and cursor-down to screen/width bounds; guard the CSI parser against
+  oversized parameters; strip embedded `ESC[201~` end-markers from bracketed
+  paste to close a paste-injection vector.
+- OSC 52 terminal clipboard writes are now gated behind a new opt-in setting
+  (**off by default**), so a remote program can no longer silently overwrite
+  the system clipboard.
+- Editor: bound per-gesture caret spans and enforce a byte budget on the undo
+  history so pathological edits can't grow it without limit.
+- Compare/merge: skip intra-line span refinement past a 64 KiB line budget and
+  cap the anchored-fallback diff recursion at depth 256 with a correct coarse
+  fallback.
+- Git: cap git-status entry counts and other parser outputs; add a symlink-loop
+  guard for tree traversal; bound patch generation against oversized inputs.
+- Filesystem watch: bound the FileIndexWatcher inotify watch count (with clean
+  partial-tree degradation) and cap filesystem-event floods.
+- LSP/DAP/plugin/console: cap protocol and UI list lengths so a flooding peer
+  or plugin can't overwhelm the host; bound plugin registration counts.
+- Render: truncate over-long text to a bounded length before surface sizing to
+  cap a render-thread allocation, and validate display-list Text-op offsets
+  unconditionally.
+
+### Performance
+- git-diff backend deep pass: reduce parse allocations (NUL-delimited split
+  helper replacing `std::stringstream`), tighten the recompute gate, and fix
+  patch-generation paths.
+
+### Fixes
+- Balance the background-task counter on a synchronous git sidebar refresh so
+  the in-flight task count no longer leaks.
+- Walk back over-aggressive caps from the hardening rounds where an earlier
+  ceiling clipped legitimate input (code-review follow-up).
+
+### Testing
+- Extensive new regression coverage for the caps and guards above, plus new
+  fuzz harnesses and seed corpora for JSON parsing, search-regex
+  (catastrophic-backtracking seeds), and the terminal CSI parser.
+
 ## [2.6.2] - 2026-07-03
 
 A small **workspace-chrome** release on top of 2.6.1. The project tab strip
