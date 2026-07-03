@@ -263,6 +263,43 @@ void TestSettingsOverlayFontPickerFiltersAndSelects() {
          "cancel clears the font picker session");
 }
 
+void TestSettingsOverlayFontPickerScrollWindow() {
+  SettingsOverlayService service;
+  service.OpenSettings();
+  // More families than fit in one window so the dropdown must scroll.
+  const int total = SettingsOverlayService::kPickerVisibleFamilies + 6;
+  std::vector<std::string> families;
+  for (int i = 0; i < total; ++i) {
+    families.push_back("Family " + std::string(1, static_cast<char>('A' + i)));
+  }
+  service.BeginFontValueEdit("editor.font_family", families);
+  Expect(service.PickerScroll() == 0, "picker opens scrolled to the top");
+
+  // Scroll offset clamps to [0, total - visible].
+  const int max_top = total - SettingsOverlayService::kPickerVisibleFamilies;
+  service.SetPickerScroll(1000);
+  Expect(service.PickerScroll() == max_top, "scroll clamps to the last full window");
+  service.SetPickerScroll(-5);
+  Expect(service.PickerScroll() == 0, "scroll clamps at the top");
+
+  // Keyboard highlight keeps itself inside the visible window.
+  service.SetPickerHighlight(0);
+  Expect(service.PickerScroll() == 0, "highlighting the first family keeps scroll at top");
+  service.SetPickerHighlight(total - 1);  // last family
+  Expect(service.PickerHighlight() == total - 1, "highlight lands on the last family");
+  Expect(service.PickerScroll() == max_top,
+         "highlighting the last family scrolls it into view");
+  Expect(service.PickerHighlight() >= service.PickerScroll() &&
+             service.PickerHighlight() <
+                 service.PickerScroll() + SettingsOverlayService::kPickerVisibleFamilies,
+         "the highlighted family sits within the visible window");
+
+  // Re-filtering (a keystroke resets the highlight) snaps the window back to the top.
+  service.ValueEditor().SetText("Family");  // still matches all, but resets state
+  service.ResetPickerHighlight();
+  Expect(service.PickerScroll() == 0, "re-filtering resets the scroll to the top");
+}
+
 void TestSettingsOverlayGroupsEditorEssentialsToggles() {
   SettingsOverlayService service;
   service.OpenSettings();
@@ -433,6 +470,8 @@ void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
           TestSettingsOverlayStringRowsAreTextEditable);
   AddTest(tests, "WorkspaceSettingsOverlay/FontPickerFiltersAndSelects",
           TestSettingsOverlayFontPickerFiltersAndSelects);
+  AddTest(tests, "WorkspaceSettingsOverlay/FontPickerScrollWindow",
+          TestSettingsOverlayFontPickerScrollWindow);
   AddTest(tests, "WorkspaceSettingsOverlay/GroupsEditorEssentialsToggles",
           TestSettingsOverlayGroupsEditorEssentialsToggles);
   AddTest(tests, "WorkspaceSettingsOverlay/CategoryLabelHelper",

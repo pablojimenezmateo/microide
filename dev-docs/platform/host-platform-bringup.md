@@ -9,7 +9,7 @@ supported host; see [linux-build.md](linux-build.md) for the full dependency and
 
 ```bash
 sudo apt-get install -y cmake ninja-build pkg-config libsdl3-dev libsdl3-ttf-dev \
-  libpcre2-dev
+  libpcre2-dev libfontconfig-dev
 cmake -S . -B build -G Ninja -DMICROIDE_ENABLE_LUA_PLUGINS=OFF
 cmake --build build --target microide microide_tests -j8
 ```

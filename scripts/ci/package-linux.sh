@@ -2,8 +2,8 @@
 # Bundles the Linux microide build into dist/microide-linux/ with a private
 # lib/ directory containing the from-source SDL3 libraries. The binary's
 # rpath is rewritten to $ORIGIN/lib so it loads them without LD_LIBRARY_PATH.
-# System-stable deps (glibc, libstdc++, libfreetype, libharfbuzz, X11/Wayland)
-# stay external and rely on the user's distro.
+# System-stable deps (glibc, libstdc++, libfreetype, libharfbuzz, libfontconfig,
+# X11/Wayland) stay external and rely on the user's distro.
 
 set -euo pipefail
 

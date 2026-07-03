@@ -25,6 +25,7 @@
 
 #if MICROIDE_HAS_SDL3_TTF
 #include <SDL3_ttf/SDL_ttf.h>
+#include "render/SdlTtfTextBackend.h"
 #endif
 
 namespace microide::tests {
@@ -714,6 +715,34 @@ void TestSdlTtfAvailableFontFamiliesWellFormed() {
   for (const std::string& family : families) {
     Expect(!family.empty(), "enumerated font families must be non-empty names");
   }
+}
+
+// The no-fontconfig fallback derives family names from file stems. Weight/style
+// variants (including abbreviated and concatenated tails) must collapse to a single
+// family so the picker does not list "C 059" and "C 059 Bd Ita" as separate fonts.
+void TestSdlTtfFontDisplayNameCollapsesWeightVariants() {
+  using microide::render::SdlTtfTextBackend;
+  const auto name = [](std::string_view stem) {
+    return SdlTtfTextBackend::FontDisplayNameFromStemForTesting(stem);
+  };
+
+  // URW base35 variants all reduce to the same family (this was the reported bug).
+  Expect(name("C059-Roman") == "C 059", "C059-Roman should map to 'C 059'");
+  Expect(name("C059-Bold") == "C 059", "C059-Bold should map to 'C 059'");
+  Expect(name("C059-Italic") == "C 059", "C059-Italic should map to 'C 059'");
+  Expect(name("C059-BdIta") == "C 059", "C059-BdIta (abbrev) should map to 'C 059'");
+
+  // DejaVu concatenated tails.
+  Expect(name("DejaVuSansMono") == "Deja Vu Sans Mono", "base DejaVu stem splits camelCase");
+  Expect(name("DejaVuSansMono-Bold") == "Deja Vu Sans Mono", "-Bold tail stripped");
+  Expect(name("DejaVuSansMono-BoldOblique") == "Deja Vu Sans Mono",
+         "concatenated BoldOblique tail stripped");
+
+  // Multiple separated style tails.
+  Expect(name("SomeFont-Bold-Italic") == "Some Font", "multiple separated style tails stripped");
+
+  // A non-style trailing word is preserved (not everything after a '-' is a weight).
+  Expect(name("Source-Code") == "Source Code", "non-style tail kept");
 }
 
 #endif
@@ -2137,6 +2166,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer SDL_ttf AvailableFontFamilies well-formed",
           TestSdlTtfAvailableFontFamiliesWellFormed);
+  AddTest(tests,
+          "TextRenderer SDL_ttf font display name collapses weight variants",
+          TestSdlTtfFontDisplayNameCollapsesWeightVariants);
   AddTest(tests,
           "TextRenderer SDL_ttf ASCII prefix glyph stays fixed when appending matches",
           TestSdlTtfAsciiPrefixGlyphStaysFixedWhenAppendingMatches);

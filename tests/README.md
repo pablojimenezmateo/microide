@@ -30,7 +30,7 @@ sudo apt install -y \
   lua5.4 liblua5.4-dev \
   xvfb xauth x11-utils mesa-utils \
   libasound2-dev libpulse-dev libaudio-dev libjack-dev libsndio-dev \
-  libfribidi-dev libthai-dev \
+  libfribidi-dev libthai-dev libfontconfig-dev \
   libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
   libxi-dev libxss-dev libxtst-dev libxinerama-dev \
   libxkbcommon-dev libxkbcommon-x11-dev \

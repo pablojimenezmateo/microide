@@ -245,6 +245,7 @@ struct SettingsPickerViewModel {
   std::vector<SettingsPickerItemViewModel> items;
   bool more_above = false;
   bool more_below = false;
+  std::optional<ScrollbarGeometry> scrollbar;  // present when the family list overflows
 };
 
 struct SettingsOverlayViewModel {

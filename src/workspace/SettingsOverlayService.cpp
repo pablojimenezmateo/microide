@@ -98,6 +98,7 @@ void SettingsOverlayService::BeginFontValueEdit(std::string row_id,
   value_editor_.SetText("");
   font_families_ = std::move(families);
   picker_highlight_ = -1;
+  picker_scroll_ = 0;
 }
 
 std::vector<std::string_view> SettingsOverlayService::FilteredFontFamilies() const {
@@ -121,15 +122,35 @@ int SettingsOverlayService::PickerChooseFileIndex() const {
 }
 
 void SettingsOverlayService::SetPickerHighlight(int index) {
-  const int max_index = PickerRowCount() - 1;  // the "Choose file…" entry
+  const int family_count = static_cast<int>(FilteredFontFamilies().size());
+  const int max_index = family_count;  // the pinned "Choose file…" entry
   picker_highlight_ = std::clamp(index, -1, std::max(-1, max_index));
+  // Keep a highlighted family row inside the scrolling window. The "Choose file…"
+  // footer (index == family_count) is pinned and always drawn, so it needs none.
+  if (picker_highlight_ >= 0 && picker_highlight_ < family_count) {
+    if (picker_highlight_ < picker_scroll_) {
+      picker_scroll_ = picker_highlight_;
+    } else if (picker_highlight_ >= picker_scroll_ + kPickerVisibleFamilies) {
+      picker_scroll_ = picker_highlight_ - kPickerVisibleFamilies + 1;
+    }
+  }
+  SetPickerScroll(picker_scroll_);  // re-clamp against the current filtered count
 }
 
 void SettingsOverlayService::MovePickerHighlight(int delta) {
   SetPickerHighlight(picker_highlight_ + delta);
 }
 
-void SettingsOverlayService::ResetPickerHighlight() { picker_highlight_ = -1; }
+void SettingsOverlayService::ResetPickerHighlight() {
+  picker_highlight_ = -1;
+  picker_scroll_ = 0;
+}
+
+void SettingsOverlayService::SetPickerScroll(int top) {
+  const int family_count = static_cast<int>(FilteredFontFamilies().size());
+  const int max_top = std::max(0, family_count - kPickerVisibleFamilies);
+  picker_scroll_ = std::clamp(top, 0, max_top);
+}
 
 void SettingsOverlayService::SetScrollRow(int row) {
   scroll_row_ = std::max(0, row);

@@ -434,14 +434,71 @@ std::string NormalizeFontToken(std::string_view text) {
 
 // True when `token` (already lowercased, no separators) is a weight/style word we
 // want to strip from a file stem to recover the family name for the picker list.
+// Includes the common short forms and concatenations that vendors bake into file
+// stems (e.g. URW's "BdIta", DejaVu's "BoldOblique") so weight variants collapse
+// to a single family entry instead of appearing as duplicates.
 bool IsFontStyleToken(std::string_view token) {
-  static constexpr std::array<std::string_view, 24> kStyles = {
-      "regular",    "bold",       "italic",    "oblique",   "bolditalic",
-      "light",      "medium",     "semibold",  "demibold",  "thin",
-      "black",      "heavy",      "book",      "roman",     "extralight",
-      "ultralight", "extrabold",  "ultrabold", "condensed", "semilight",
-      "retina",     "text",       "display",   "variablefont"};
-  return std::find(kStyles.begin(), kStyles.end(), token) != kStyles.end();
+  static constexpr std::string_view kStyles[] = {
+      // Full words.
+      "regular", "bold", "italic", "oblique", "bolditalic", "boldoblique",
+      "light", "medium", "semibold", "demibold", "thin", "black", "heavy",
+      "book", "roman", "extralight", "ultralight", "extrabold", "ultrabold",
+      "condensed", "semicondensed", "extracondensed", "expanded", "extended",
+      "semilight", "semibolditalic", "retina", "text", "display", "variablefont",
+      "hairline", "narrow", "wide",
+      // Short forms / abbreviations used in file stems.
+      "reg", "rg", "bd", "it", "ita", "ital", "obl", "obli", "md", "lt", "blk",
+      "sb", "demi", "semibd", "demibd", "xbd", "extbd", "ultbd", "ultlt", "cond",
+      "cn", "nrw", "extd"};
+  return std::find(std::begin(kStyles), std::end(kStyles), token) != std::end(kStyles);
+}
+
+// Split a segment into sub-words at camelCase and alpha→digit boundaries (the same
+// breaks FontDisplayNameFromStem uses for display), lowercased and separator-free
+// so each piece can be matched against IsFontStyleToken.
+std::vector<std::string> StyleSubWords(std::string_view segment) {
+  std::vector<std::string> words;
+  std::string current;
+  const auto flush = [&] {
+    if (!current.empty()) {
+      words.push_back(current);
+      current.clear();
+    }
+  };
+  for (std::size_t i = 0; i < segment.size(); ++i) {
+    const char raw = segment[i];
+    if (raw == ' ' || raw == '-' || raw == '_' || raw == '.') {
+      flush();
+      continue;
+    }
+    if (!current.empty() && i > 0) {
+      const unsigned char prev = static_cast<unsigned char>(segment[i - 1]);
+      const unsigned char cur = static_cast<unsigned char>(raw);
+      const bool camel = std::islower(prev) && std::isupper(cur);
+      const bool digit_edge = std::isalpha(prev) && std::isdigit(cur);
+      if (camel || digit_edge) {
+        flush();
+      }
+    }
+    current.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(raw))));
+  }
+  flush();
+  return words;
+}
+
+// True when every sub-word of `segment` is a style/weight token, so the whole
+// trailing segment can be dropped to recover the family name.
+bool SegmentIsAllStyleTokens(std::string_view segment) {
+  const std::vector<std::string> words = StyleSubWords(segment);
+  if (words.empty()) {
+    return false;
+  }
+  for (const std::string& word : words) {
+    if (!IsFontStyleToken(word)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // Derive a human-facing family name from a font file stem for the picker list:
@@ -457,9 +514,18 @@ std::string FontDisplayNameFromStem(std::string_view stem) {
   while (!base.empty() && (base.back() == '-' || base.back() == '_' || base.back() == ' ')) {
     base.pop_back();
   }
-  if (const std::size_t sep = base.find_last_of("-_"); sep != std::string::npos) {
-    if (IsFontStyleToken(NormalizeFontToken(base.substr(sep + 1)))) {
-      base = base.substr(0, sep);
+  // Iteratively drop a trailing style segment (after the last '-'/'_') when every
+  // sub-word in it is a style token. Looping handles multiple separated tails like
+  // "Font-Bold-Italic"; the sub-word split handles abbreviated/concatenated tails
+  // like "BdIta" or "BoldOblique" so all weight variants map to one family name.
+  for (;;) {
+    const std::size_t sep = base.find_last_of("-_");
+    if (sep == std::string::npos || !SegmentIsAllStyleTokens(base.substr(sep + 1))) {
+      break;
+    }
+    base = base.substr(0, sep);
+    while (!base.empty() && (base.back() == '-' || base.back() == '_' || base.back() == ' ')) {
+      base.pop_back();
     }
   }
   // Remaining '-'/'_' separators become spaces.
@@ -635,6 +701,10 @@ std::vector<std::string> SdlTtfTextBackend::AvailableFontFamilies() const {
   return families;
 }
 
+std::string SdlTtfTextBackend::FontDisplayNameFromStemForTesting(std::string_view stem) {
+  return FontDisplayNameFromStem(stem);
+}
+
 std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view family) {
   if (family.empty()) {
     return LocateFontFile();
@@ -659,9 +729,31 @@ std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view fa
       FcDefaultSubstitute(pattern);
       FcResult match_result = FcResultNoMatch;
       if (FcPattern* matched = FcFontMatch(config, pattern, &match_result)) {
-        FcChar8* file = nullptr;
-        if (FcPatternGetString(matched, FC_FILE, 0, &file) == FcResultMatch && file != nullptr) {
-          result = std::filesystem::path(reinterpret_cast<const char*>(file));
+        // FcFontMatch always returns *some* font — its configured default when the
+        // requested family is unknown. Only accept the match when the matched font
+        // actually advertises the requested family (fontconfig alias substitution
+        // adds legitimate aliases like Arial→Liberation to the pattern), so a
+        // garbage family stays unresolved (a no-op that keeps the current font)
+        // instead of silently switching to the system default.
+        const std::string needle = NormalizeFontToken(family);
+        bool family_matches = false;
+        for (int i = 0; !family_matches && !needle.empty(); ++i) {
+          FcChar8* candidate = nullptr;
+          if (FcPatternGetString(matched, FC_FAMILY, i, &candidate) != FcResultMatch ||
+              candidate == nullptr) {
+            break;
+          }
+          const std::string cand =
+              NormalizeFontToken(reinterpret_cast<const char*>(candidate));
+          family_matches = cand == needle || cand.find(needle) != std::string::npos ||
+                           needle.find(cand) != std::string::npos;
+        }
+        if (family_matches) {
+          FcChar8* file = nullptr;
+          if (FcPatternGetString(matched, FC_FILE, 0, &file) == FcResultMatch &&
+              file != nullptr) {
+            result = std::filesystem::path(reinterpret_cast<const char*>(file));
+          }
         }
         FcPatternDestroy(matched);
       }

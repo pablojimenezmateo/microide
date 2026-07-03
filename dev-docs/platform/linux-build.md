@@ -38,7 +38,7 @@ links the system `libXcursor`, which already searches `/usr/share/icons`.
 
 ```bash
 sudo apt-get install -y cmake ninja-build pkg-config libsdl3-dev libsdl3-ttf-dev \
-  libpcre2-dev
+  libpcre2-dev libfontconfig-dev
 cmake -S . -B build -G Ninja
 cmake --build build --target microide microide_tests -j8
 ```

@@ -67,6 +67,11 @@ struct HelpAboutRow {
 
 class SettingsOverlayService {
  public:
+  // Number of family rows the font-picker dropdown shows at once; the list scrolls
+  // (wheel / scrollbar / keyboard keep-visible) when more families match. Single
+  // source of truth shared with the view-model builder's picker window.
+  static constexpr int kPickerVisibleFamilies = 10;
+
   void OpenSettings();
   void OpenHelpAbout();
   void Close();
@@ -115,6 +120,10 @@ class SettingsOverlayService {
   void SetPickerHighlight(int index);
   void MovePickerHighlight(int delta);
   void ResetPickerHighlight();
+  // Index of the topmost visible family row in the scrolling dropdown window.
+  // The wheel and scrollbar drive it directly; keyboard highlight keeps it in view.
+  int PickerScroll() const { return picker_scroll_; }
+  void SetPickerScroll(int top);
 
   void RebuildSettingsRows(const std::vector<SettingInfo>& settings,
                            const std::vector<std::pair<std::string, std::string>>& user_settings,
@@ -163,6 +172,7 @@ class SettingsOverlayService {
   std::string editing_row_id_;
   std::vector<std::string> font_families_;
   int picker_highlight_ = -1;
+  int picker_scroll_ = 0;
   std::vector<SettingsOverlayRow> settings_rows_;
   std::vector<HelpAboutRow> help_rows_;
   std::vector<std::string> categories_;
