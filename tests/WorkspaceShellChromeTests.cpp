@@ -1610,6 +1610,47 @@ void TestWorkspaceShellPartialRedrawWithoutCompareTabSkipsCompareSurfaceRender()
          "partial redraw with no compare tab active should not call RenderCompareSurface");
 }
 
+// Regression: the Settings font-family row draws its stored value through
+// TruncateToWidth, which returns an *owned* std::string. Binding that temporary to a
+// std::string_view (instead of a std::string) dangled the buffer before DrawStringOn
+// ran, so the row painted freed heap — corrupted text that shifted as mouse-move
+// redraws churned memory. Render the overlay with a heap-length font value so ASAN
+// faults if the lifetime bug returns; a name longer than the SSO buffer forces a
+// heap allocation for a deterministic use-after-free rather than a stack read.
+void TestWorkspaceShellSettingsFontRowRendersStoredValueWithoutDanglingView() {
+  EnsureDummySdlVideo();
+
+  static constexpr int kCanvasWidth = 1280;
+  static constexpr int kCanvasHeight = 800;
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "file.txt";
+  WriteFile(source, "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  // Long enough to force a heap allocation for the value string (so the old bug is
+  // a deterministic heap-use-after-free under ASAN, not a stack read), yet short
+  // enough to fit the 180px value box uncut — TruncateToWidth then heap-copies the
+  // whole value, and the dangling view painted that freed heap.
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "editor.font_family",
+                                                            "HeapFontName1234"),
+         "the font-family String setting should accept an arbitrary value");
+  WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
+  // Isolate the font-family row so it is guaranteed on-screen (unfiltered it scrolls
+  // below the visible window) and therefore actually exercises the render branch.
+  WorkspaceShellTestAccess::SetSettingsOverlayQueryAndRefresh(shell, "font family");
+
+  SoftwareCanvas canvas(kCanvasWidth, kCanvasHeight);
+  // Two frames: a mouse-move redraw re-churns the heap, which is what made the stale
+  // view visibly change frame-to-frame. Both must render cleanly under ASAN.
+  shell.Render(canvas.renderer(), kCanvasWidth, kCanvasHeight);
+  shell.Render(canvas.renderer(), kCanvasWidth, kCanvasHeight);
+}
+
 void TestWorkspaceShellNewlineInsertionRequestsEditorPartialRedraw() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2300,6 +2341,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender);
   AddTest(tests, "WorkspaceShell/PartialRedrawWithoutCompareTabSkipsCompareSurfaceRender",
           TestWorkspaceShellPartialRedrawWithoutCompareTabSkipsCompareSurfaceRender);
+  AddTest(tests, "WorkspaceShell/SettingsFontRowRendersStoredValueWithoutDanglingView",
+          TestWorkspaceShellSettingsFontRowRendersStoredValueWithoutDanglingView);
   AddTest(tests, "WorkspaceShell/NewlineInsertionRequestsEditorPartialRedraw",
           TestWorkspaceShellNewlineInsertionRequestsEditorPartialRedraw);
   AddTest(tests, "WorkspaceShell/WrappedTypingReturnsFocusedPaneInvalidation",

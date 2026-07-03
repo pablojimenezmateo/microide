@@ -344,9 +344,13 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
         const float text_x = control.value_rect.x + 6.0f;
         const float text_y = control.value_rect.y + (control.value_rect.h - line_height) * 0.5f;
         const float avail = control.value_rect.w - 12.0f;
-        const std::string_view shown =
+        // TruncateToWidth returns an owned std::string; bind it to a std::string
+        // (not a std::string_view) so the value survives to the DrawStringOn below.
+        // A view here would dangle the moment the temporary is destroyed, painting
+        // freed heap — visible as corrupted text that shifts as redraws churn memory.
+        const std::string shown =
             control.display_value.empty() && !control.editing
-                ? std::string_view("(default)")
+                ? std::string("(default)")
                 : text_renderer_.TruncateToWidth(control.display_value, avail);
         const SDL_Color text_color =
             control.display_value.empty() && !control.editing ? theme_.text_disabled

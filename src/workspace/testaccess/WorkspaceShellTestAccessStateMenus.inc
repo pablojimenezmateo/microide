@@ -566,6 +566,10 @@
   static void SetSettingsOverlayCategory(WorkspaceShell& shell, int category) {
     shell.settings_overlay_service_.SetSelectedCategory(category);
   }
+  static void SetSettingsOverlayQueryAndRefresh(WorkspaceShell& shell, std::string query) {
+    shell.settings_overlay_service_.SetQuery(std::move(query));
+    shell.RefreshSettingsOverlayCatalog();
+  }
   static void SetTransientDragTargetSidebarDivider(WorkspaceShell& shell) {
     shell.context_.interaction_state.drag_target = WorkspaceShell::DragTarget::SidebarDivider;
   }
