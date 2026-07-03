@@ -141,7 +141,13 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       EraseInLineLocked(params.empty() ? 0 : params.front());
       return;
     case 'L': {
-      const std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
+      std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
+      // Inserting more blank lines than the screen height shifts the rest off and
+      // is trimmed anyway, so clamp: `CSI 65535 L` must not transiently balloon
+      // the line deque with 65535 empty lines before TrimScrollbackLocked runs.
+      if (rows_ > 0) {
+        count = std::min(count, rows_);
+      }
       EnsureCursorLineExistsLocked();
       if (use_alternate_screen_) {
         const std::size_t scroll_region_top = ActiveScrollRegionTopLocked();
@@ -199,10 +205,16 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       return;
     }
     case '@': {
-      const std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
+      std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
       EnsureCursorLineExistsLocked();
       auto& line = lines_[cursor_row_];
       ResizeLineLocked(line, cursor_column_);
+      // The row is resized back to columns_ immediately below, so inserting more
+      // than columns_ cells is wasted; clamp so `CSI 65535 @` can't churn a
+      // 65535-cell insert + memmove before the down-resize.
+      if (columns_ > 0) {
+        count = std::min(count, columns_);
+      }
       line.cells.insert(line.cells.begin() + static_cast<std::ptrdiff_t>(cursor_column_), count,
                         MakeAsciiTerminalCell(' ', current_style_));
       if (columns_ > 0 && line.cells.size() > columns_) {

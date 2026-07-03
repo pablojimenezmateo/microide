@@ -1062,6 +1062,33 @@ void TestTerminalSessionEraseCharsClampsToWidth() {
          "CSI Ps X must clamp the erased range to the terminal width, not balloon the row");
 }
 
+// Resilience: ICH (`CSI Ps @`) inserts blank cells before the row is resized back
+// to the terminal width, so a huge parameter must be clamped or it churns a
+// 65535-cell insert/memmove per escape.
+void TestTerminalSessionInsertCharsClampsToWidth() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;1H\x1b[65535@");
+  const auto lines = session.SnapshotLines();
+  Expect(!lines.empty(), "session should retain rows after ICH");
+  Expect(lines[0].cells.size() <= 80,
+         "CSI Ps @ must clamp the inserted cell count to the terminal width");
+}
+
+// Resilience: IL (`CSI Ps L`) inserts blank lines; a huge parameter must not
+// transiently balloon the line deque to tens of thousands of entries before the
+// scrollback trim.
+void TestTerminalSessionInsertLinesClampsToHeight() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;1H\x1b[65535L");
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() <= 100,
+         "CSI Ps L must clamp the inserted line count to the screen height, not 65535");
+}
+
 void TestTerminalSessionMouseRoutingRequiresTrackingMode() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -1265,6 +1292,10 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionOverflowCsiParamDoesNotCrash);
   AddTest(tests, "TerminalSession/EraseCharsClampsToWidth",
           TestTerminalSessionEraseCharsClampsToWidth);
+  AddTest(tests, "TerminalSession/InsertCharsClampsToWidth",
+          TestTerminalSessionInsertCharsClampsToWidth);
+  AddTest(tests, "TerminalSession/InsertLinesClampsToHeight",
+          TestTerminalSessionInsertLinesClampsToHeight);
   AddTest(tests, "TerminalSession/MouseRoutingRequiresTrackingMode",
           TestTerminalSessionMouseRoutingRequiresTrackingMode);
   AddTest(tests, "TerminalSession/ResizeClampsCursorAndPreservesBuffer",

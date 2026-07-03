@@ -26,7 +26,16 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
         std::vector<CompletionItem> items;
         const auto& result = resp["result"];
         const auto& arr = result.IsArray() ? result.AsArray() : result["items"].AsArray();
+        // Cap the item count: this list is materialized twice (here and in the
+        // AssistService session) on the main thread on every keystroke that
+        // triggers completion, so a server returning a huge list would stall the
+        // UI. The overlay is windowed and a human never scrolls past a few
+        // thousand candidates.
+        constexpr std::size_t kMaxCompletionItems = 5000;
         for (const auto& item : arr) {
+          if (items.size() >= kMaxCompletionItems) {
+            break;
+          }
           CompletionItem ci;
           ci.label = item["label"].AsString();
           ci.kind = item["kind"].AsInt(1);

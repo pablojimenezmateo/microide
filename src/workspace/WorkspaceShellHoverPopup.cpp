@@ -304,6 +304,16 @@ std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_vi
     return lines;
   }
 
+  // Bound the input before any full-length pass (the normalize copy, MeasureWidth,
+  // and the word tokenize below). Every hover string funnels through here — plugin
+  // title/content, a diagnostic message, a DAP evaluate value, blame, signature —
+  // and a language server / debug adapter can make any of them megabytes. The
+  // popup only ever renders a few wrapped lines, so a UTF-8-boundary-clamped prefix
+  // is sufficient and keeps this off the per-frame O(n) attacker-length path.
+  if (text.size() > kMaxHoverTextBytes) {
+    text = text.substr(0, util::PreviousUtf8Boundary(text, kMaxHoverTextBytes));
+  }
+
   const std::string normalized = NormalizeHoverPopupText(text);
   if (normalized.empty()) {
     return lines;
