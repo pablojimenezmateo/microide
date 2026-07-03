@@ -1,5 +1,7 @@
 #include "workspace/DapProtocol.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <utility>
 
 namespace microide::workspace::dap_protocol {
@@ -297,9 +299,16 @@ DapStackFrame ParseStackFrame(const JsonValue& value) {
 std::vector<DapStackFrame> ParseStackFrames(const JsonValue& body) {
   std::vector<DapStackFrame> frames;
   const auto& array = body["stackFrames"].AsArray();
-  frames.reserve(array.size());
-  for (const auto& item : array) {
-    frames.push_back(ParseStackFrame(item));
+  // Cap frame count. A hostile/buggy adapter can ignore our `levels` request cap
+  // and return a 64 MiB array of frames; each frame is materialized into a
+  // filesystem::path + display strings on the main thread (BuildExecutionView),
+  // so an uncapped array is a UI-thread stall + heap spike. 10000 frames is far
+  // beyond any real call stack a human would page through.
+  constexpr std::size_t kMaxStackFrames = 10000;
+  const std::size_t count = std::min(array.size(), kMaxStackFrames);
+  frames.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    frames.push_back(ParseStackFrame(array[i]));
   }
   return frames;
 }

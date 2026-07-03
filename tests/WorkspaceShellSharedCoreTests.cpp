@@ -242,6 +242,26 @@ void TestWorkspaceOutputChannelsRemoveChannel() {
   Expect(channels.Channels().size() == 1, "removing an unknown channel is a no-op");
 }
 
+// A chatty or hostile LSP / debug adapter / plugin can stream output forever;
+// each entry retains a heap string plus a parsed cache, so the per-channel
+// entry vectors must be bounded (drop-oldest) instead of growing without limit.
+void TestWorkspaceOutputChannelsCapsEntries() {
+  WorkspaceOutputChannels channels;
+  constexpr std::size_t kFlood = 200000;
+  for (std::size_t i = 0; i < kFlood; ++i) {
+    channels.AppendLine("lsp.log", "LSP Log", "line");
+  }
+  const std::vector<std::string>* entries = channels.Entries("lsp.log");
+  Expect(entries != nullptr, "flooded channel still exists");
+  // Cap is 100000; the coalesced trim allows up to +25% headroom before trimming.
+  Expect(entries->size() <= 125001,
+         "output channel entries must be bounded, not grow with a flood");
+  // parsed_entries are trimmed in lockstep: the last-appended entry is still
+  // readable at the final index.
+  Expect(channels.ParsedEntryAt("lsp.log", entries->size() - 1) != nullptr,
+         "the newest parsed entry stays indexable after trimming");
+}
+
 void TestWorkspaceSharedCommandCompletionHelpers() {
   const std::vector<CommandCompletionCandidate> candidates = {
       {"compare", true},
@@ -544,6 +564,8 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
           TestWorkspaceOutputChannelsParseAndCacheContextSnippets);
   AddTest(tests, "WorkspaceShared/OutputChannelsRemoveChannel",
           TestWorkspaceOutputChannelsRemoveChannel);
+  AddTest(tests, "WorkspaceShared/OutputChannelsCapsEntries",
+          TestWorkspaceOutputChannelsCapsEntries);
   AddTest(tests, "WorkspaceShared/CommandCompletionHelpers",
           TestWorkspaceSharedCommandCompletionHelpers);
   AddTest(tests, "Workspace/CommandRegistry", TestWorkspaceCommandRegistry);

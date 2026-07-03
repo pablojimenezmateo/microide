@@ -335,10 +335,28 @@ void TestDapProtocolDecodeRobustness() {
   Expect(codec::ParseVariables(Json(deep)).size() == 200, "200-item variables body decodes fully");
 }
 
+// A hostile/buggy adapter can ignore the `levels` request cap and return an
+// enormous stackFrames array; each frame is materialized into a filesystem::path
+// + display strings on the main thread. ParseStackFrames must cap the count so a
+// giant array can't stall the UI thread or spike the heap.
+void TestDapProtocolStackFramesAreCapped() {
+  std::string body = "{\"stackFrames\":[";
+  constexpr int kFrames = 50000;
+  for (int i = 0; i < kFrames; ++i) {
+    if (i != 0) body += ',';
+    body += R"({"id":0,"name":"f","line":1,"column":1})";
+  }
+  body += "]}";
+  const auto frames = codec::ParseStackFrames(Json(body));
+  Expect(frames.size() <= 10000,
+         "stackFrames must be capped, not materialized 1:1 from a hostile array");
+}
+
 }  // namespace
 
 void RegisterDapProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DapProtocol/DecodeRobustness", TestDapProtocolDecodeRobustness);
+  AddTest(tests, "DapProtocol/StackFramesAreCapped", TestDapProtocolStackFramesAreCapped);
   AddTest(tests, "DapProtocol/EncodesRequestEnvelope", TestDapProtocolEncodesRequestEnvelope);
   AddTest(tests, "DapProtocol/EncodesResponseEnvelope", TestDapProtocolEncodesResponseEnvelope);
   AddTest(tests, "DapProtocol/ParsesResponse", TestDapProtocolParsesResponse);

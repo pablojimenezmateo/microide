@@ -344,7 +344,9 @@ void DebugSession::RequestStackTrace(const dap_protocol::DapStoppedEvent& stop) 
     return;
   }
   client_->SendRequestAsync(
-      "stackTrace", dap_protocol::MakeStackTraceArguments(stop.thread_id, 0, 0),
+      // Bound the levels requested (0 == "all frames"); a cooperative adapter then
+      // caps transfer, and ParseStackFrames caps again for hostile adapters.
+      "stackTrace", dap_protocol::MakeStackTraceArguments(stop.thread_id, 0, 10000),
       [this, stop](const dap_protocol::DapResponse& response) {
         if (!response.success) {
           return;

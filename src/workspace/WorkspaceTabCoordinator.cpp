@@ -553,6 +553,9 @@ bool TabCoordinator::OpenUntitled() {
   if (state_.root.empty()) {
     return false;
   }
+  if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
+    return false;  // Refuse a `tab`-command flood; see kMaxOpenTabsPerGroup.
+  }
 
   editor::TextViewport untitled_view;
   untitled_view.SetUntitledBuffer();
@@ -619,6 +622,10 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   operations_.apply_editor_preferences(opened_view);
   operations_.apply_detected_indent_on_open(opened_view);
 
+  if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
+    return false;  // At the per-group ceiling; an already-open file still reuses
+                   // its tab above (dedup), only brand-new opens are refused.
+  }
   state_.focused_group().open_tabs.push_back(TabEntry{
       .kind = TabEntry::Kind::Editor,
       .path = normalized_path,
@@ -664,6 +671,9 @@ bool TabCoordinator::OpenVirtualDocumentInNewTab(const std::filesystem::path& vi
   operations_.apply_editor_preferences(viewport);
   operations_.apply_detected_indent_on_open(viewport);
 
+  if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
+    return false;  // At the per-group ceiling; see kMaxOpenTabsPerGroup.
+  }
   state_.focused_group().open_tabs.push_back(TabEntry{
       .kind = TabEntry::Kind::Editor,
       .path = virtual_path,

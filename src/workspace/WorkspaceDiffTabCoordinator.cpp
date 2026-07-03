@@ -142,6 +142,9 @@ void DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
     return;
   }
 
+  if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
+    return;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
+  }
   operations_.sync_active_editor_tab();
   state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
   TabEntry& opened = state_.focused_group().open_tabs.back();
@@ -191,6 +194,9 @@ bool DiffTabCoordinator::OpenMergeEditor(const std::filesystem::path& base_path,
     return false;
   }
 
+  if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
+    return false;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
+  }
   operations_.sync_active_editor_tab();
   state_.focused_group().open_tabs.push_back(std::move(*merge_tab));
   ActivateMergeTab(state_.focused_group().open_tabs.size() - 1);
@@ -231,6 +237,9 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(const std::filesystem::path& 
   compare_tab->compare->staging_view =
       compare::InferWorkingTreeStagingView(left_ref, compare_tab->compare->right_ref);
 
+  if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
+    return false;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
+  }
   operations_.sync_active_editor_tab();
   state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
   ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, false);
@@ -284,6 +293,9 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(const std::filesystem::path& p
         static_cast<std::size_t>(current - compare_tab->compare->review_files.begin());
   }
 
+  if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
+    return false;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
+  }
   operations_.sync_active_editor_tab();
   state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
   ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, false);
@@ -334,6 +346,9 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path)
     return true;
   }
 
+  if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
+    return false;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
+  }
   state_.focused_group().open_tabs.push_back(std::move(*merge_tab));
   ActivateMergeTab(state_.focused_group().open_tabs.size() - 1);
   NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);

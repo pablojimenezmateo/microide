@@ -183,7 +183,18 @@ void TerminalSession::MoveCursorLocked(std::size_t row, std::size_t column) {
     const std::size_t min_row = origin_mode_ ? ActiveScrollRegionTopLocked() : 0;
     cursor_row_ = std::clamp(row, min_row, max_row);
   } else {
-    cursor_row_ = row;
+    // Primary screen: the cursor may descend into scrollback, but an absolute /
+    // additive move (CUP, CUD `CSI B`, CNL `CSI E`, VPA) must not balloon the
+    // line deque past the scrollback ceiling before the end-of-chunk trim runs.
+    // Without this clamp a stream of `\x1b[65535B` accumulates into `cursor_row_`
+    // (a persistent member) and `EnsureCursorLineExistsLocked` resizes `lines_`
+    // to tens of millions of entries within one 4 KiB read — an OOM/crash on the
+    // reader thread. `max_scrollback_lines_ + rows_` is exactly what
+    // TrimScrollbackLocked would collapse the deque to anyway, so clamping here
+    // never clips legitimately reachable content. Mirrors the `CSI L` clamp.
+    const std::size_t primary_max_row =
+        max_scrollback_lines_ + std::max<std::size_t>(1, rows_);
+    cursor_row_ = std::min(row, primary_max_row);
   }
   cursor_column_ =
       columns_ > 0 ? std::min(column, columns_ - 1) : column;

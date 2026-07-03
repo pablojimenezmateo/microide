@@ -3141,6 +3141,28 @@ void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
          "injected delete batch should remove entries from project search");
 }
 
+// A hostile control client can issue `tab` (open untitled) in a tight loop. Each
+// untitled tab retains a full editor viewport and grows every O(open_tabs) layout
+// / dirty-scan / tab-strip pass, so the per-group tab count must be bounded rather
+// than growing without limit toward OOM + UI-thread DoS.
+void TestWorkspaceShellUntitledTabFloodIsBounded() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "src" / "main.cpp", "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "project fixture should open");
+
+  const std::size_t flood = microide::workspace::kMaxOpenTabsPerGroup + 200;
+  for (std::size_t i = 0; i < flood; ++i) {
+    RunCommandLine(shell, "tab");
+  }
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() <=
+             microide::workspace::kMaxOpenTabsPerGroup,
+         "untitled-tab flood must be bounded by the per-group tab ceiling");
+}
+
 }  // namespace
 
 void TestWorkspaceShellEditorGroupSplitFocusCloseSemantics() {
@@ -3337,6 +3359,8 @@ void TestWorkspaceShellOpenBufferViewCountsAcrossGroups() {
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/OpenBufferViewCountsAcrossGroups",
           TestWorkspaceShellOpenBufferViewCountsAcrossGroups);
+  AddTest(tests, "WorkspaceShell/UntitledTabFloodIsBounded",
+          TestWorkspaceShellUntitledTabFloodIsBounded);
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuUsesNativePickerSelection",
           TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection);
   AddTest(tests, "WorkspaceShell/ProjectOpenCommandUsesNativePickerAtActiveProjectRoot",

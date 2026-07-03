@@ -457,8 +457,15 @@ void WorkspaceShell::AppendDebugConsoleOutput(int session_id, const std::string&
   // Split on newlines so each console line is its own channel entry. A trailing
   // newline (common in adapter output) does not produce a spurious blank entry.
   const std::string& text = output.output;
+  // Cap lines materialized from a single output event. A DAP message body can be
+  // up to 64 MiB (WorkspaceDapClientInternal kMaxDapMessageBytes); one all-newline
+  // event would otherwise fan out into ~64 M AppendLine calls on the UI thread —
+  // a multi-second freeze (and heap churn) from one hostile message. The channel
+  // itself is also entry-capped, so lines beyond the cap would be trimmed anyway.
+  constexpr std::size_t kMaxLinesPerOutputEvent = 100000;
   std::size_t start = 0;
-  while (start < text.size()) {
+  std::size_t emitted = 0;
+  while (start < text.size() && emitted < kMaxLinesPerOutputEvent) {
     const std::size_t newline = text.find('\n', start);
     if (newline == std::string::npos) {
       output_channels_.AppendLine(channel_id, channel_label, text.substr(start));
@@ -466,6 +473,7 @@ void WorkspaceShell::AppendDebugConsoleOutput(int session_id, const std::string&
     }
     output_channels_.AppendLine(channel_id, channel_label, text.substr(start, newline - start));
     start = newline + 1;
+    ++emitted;
   }
 }
 

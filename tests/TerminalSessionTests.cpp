@@ -5,6 +5,7 @@
 #include "terminal/TerminalBase64.h"
 #include "terminal/TerminalCsiParser.h"
 #include "terminal/TerminalMouseEncoder.h"
+#include "util/PerformanceCounters.h"
 
 #include <chrono>
 #include <string_view>
@@ -1103,6 +1104,30 @@ void TestTerminalSessionInsertLinesClampsToHeight() {
          "CSI Ps L must clamp the inserted line count to the screen height, not 65535");
 }
 
+// A hostile program can emit additive cursor-down escapes (`CSI B` / `CSI E`) in
+// the primary screen; without a clamp each `\x1b[65535B` grows `cursor_row_` and
+// resizes the line deque to tens of millions of entries before the end-of-chunk
+// scrollback trim — an OOM/crash on the reader thread. The post-append line count
+// can't observe the transient balloon (trim collapses it), so assert on the
+// scrollback-lines-allocated perf counter instead.
+void TestTerminalSessionCursorDownClampsPrimaryScreen() {
+  microide::util::ResetPerformanceCounters();
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[65535B");
+  const std::uint64_t allocated = microide::util::ReadPerformanceCounter(
+      microide::util::PerfCounterId::TerminalScrollbackLinesAllocated);
+  // With the clamp, growth is bounded to ~max_scrollback_lines_ + rows_ (~2024);
+  // without it, one escape would allocate 65536 lines. Use a generous ceiling.
+  Expect(allocated < 10000,
+         "CSI B cursor-down must clamp cursor_row_ to the scrollback ceiling, "
+         "not balloon the line deque to the escape parameter");
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() < 10000,
+         "primary-screen line deque must stay bounded after a huge CSI B");
+}
+
 void TestTerminalSessionMouseRoutingRequiresTrackingMode() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -1312,6 +1337,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionInsertCharsClampsToWidth);
   AddTest(tests, "TerminalSession/InsertLinesClampsToHeight",
           TestTerminalSessionInsertLinesClampsToHeight);
+  AddTest(tests, "TerminalSession/CursorDownClampsPrimaryScreen",
+          TestTerminalSessionCursorDownClampsPrimaryScreen);
   AddTest(tests, "TerminalSession/MouseRoutingRequiresTrackingMode",
           TestTerminalSessionMouseRoutingRequiresTrackingMode);
   AddTest(tests, "TerminalSession/ResizeClampsCursorAndPreservesBuffer",

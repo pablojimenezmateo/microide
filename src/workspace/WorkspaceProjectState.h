@@ -364,6 +364,14 @@ struct FileIconRenderCache {
   }
 };
 
+// Upper bound on tabs in a single editor group. Guards the interactive /
+// control-driven open paths (the `tab` command, file/compare/merge opens) against
+// a flood that would OOM the heap and drag down every O(open_tabs) layout, dirty
+// scan, and tab-strip render pass. Set well beyond any human workflow; a hostile
+// control client issuing `tab` in a tight loop hits this instead of growing
+// without bound. Session restore is exempt (it replays trusted persisted state).
+inline constexpr std::size_t kMaxOpenTabsPerGroup = 512;
+
 // A single editor group: its own tab strip (open_tabs + active index + scroll)
 // and its own home/placeholder surface. The editor area holds 1 or 2 groups
 // arranged side-by-side or stacked (see `ProjectWorkspaceState::editor_groups`).

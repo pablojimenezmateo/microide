@@ -9,6 +9,12 @@
 
 namespace microide::workspace {
 
+namespace {
+// Per-channel retained-entry ceiling. A long-running debug/LSP session or a
+// hostile adapter would otherwise grow entries/parsed_entries without bound.
+constexpr std::size_t kMaxChannelEntries = 100000;
+}  // namespace
+
 std::optional<OutputReference> ParseOutputReference(std::string_view text) {
   const std::size_t column_delimiter = text.rfind(':');
   if (column_delimiter == std::string_view::npos || column_delimiter == 0) {
@@ -113,6 +119,20 @@ void WorkspaceOutputChannels::AppendLine(std::string_view id, std::string_view l
   auto& channel = channels_.find(id)->second;
   channel.parsed_entries.push_back(BuildParsedEntry(line, &channel.current_reference_path));
   channel.entries.push_back(std::move(line));
+
+  // Bound retained history: a chatty or hostile LSP / debug adapter / plugin can
+  // stream output forever, and each entry retains a heap string plus a parsed
+  // cache. Drop oldest, coalesced (only trim once 25 % over the cap, then down to
+  // the cap) so the common append stays O(1) rather than erase-front per line.
+  // entries and parsed_entries are kept in lockstep — renderers index them by the
+  // same position, so both are trimmed together.
+  if (channel.entries.size() > kMaxChannelEntries + kMaxChannelEntries / 4) {
+    const std::size_t drop = channel.entries.size() - kMaxChannelEntries;
+    channel.entries.erase(channel.entries.begin(),
+                          channel.entries.begin() + static_cast<std::ptrdiff_t>(drop));
+    channel.parsed_entries.erase(channel.parsed_entries.begin(),
+                                 channel.parsed_entries.begin() + static_cast<std::ptrdiff_t>(drop));
+  }
 }
 
 const std::vector<WorkspaceOutputChannels::ChannelInfo>& WorkspaceOutputChannels::Channels() const {
