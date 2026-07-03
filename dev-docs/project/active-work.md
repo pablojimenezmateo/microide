@@ -1,8 +1,11 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-07-03 (v2.6.0 shipped — settings & tabs cycle: full settings overhaul with
-live-applied values and set-as-default, installed-font picker with native file dialog + portable
-font resolution, autosave-delay + terminal-font settings, and Chrome-like sliding tab reordering.
+Reviewed on 2026-07-03 (v2.6.1 shipped — font-picker polish on top of 2.6.0: scrollable
+font-family dropdown with real scrollbar + mouse-wheel, weight/style-deduped family names,
+fontconfig enabled by default, and a `ResolveFamilyToFile` correctness fix. Prior: v2.6.0
+settings & tabs cycle — full settings overhaul with live-applied values and set-as-default,
+installed-font picker with native file dialog + portable font resolution, autosave-delay +
+terminal-font settings, and Chrome-like sliding tab reordering.
 Prior: v2.5.x performance & internals cycle — allocation-free compare/merge + sidebar render, LTO
 `.deb`, lazy syntax-rule compilation, `ProviderRegistry<Spec>`; v2.4.0 performance & correctness
 cycle — piece-tree document model, GPU-gated glyph atlas, first-class debugger, `--version` flag).
