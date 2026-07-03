@@ -1,8 +1,11 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-06-29 (v2.4.0 shipped — performance & correctness cycle: allocation-free
-editor/render/terminal hot paths, piece-tree document model, GPU-gated glyph atlas, debugger
-surfaced as first-class, plus a `--version` CLI flag. Prior: v2.3.0 plugin rendering surface).
+Reviewed on 2026-07-03 (v2.6.0 shipped — settings & tabs cycle: full settings overhaul with
+live-applied values and set-as-default, installed-font picker with native file dialog + portable
+font resolution, autosave-delay + terminal-font settings, and Chrome-like sliding tab reordering.
+Prior: v2.5.x performance & internals cycle — allocation-free compare/merge + sidebar render, LTO
+`.deb`, lazy syntax-rule compilation, `ProviderRegistry<Spec>`; v2.4.0 performance & correctness
+cycle — piece-tree document model, GPU-gated glyph atlas, first-class debugger, `--version` flag).
 
 This is the single source of truth for:
 
