@@ -351,14 +351,25 @@ struct FileIndexWatcher::Impl {
                                                  IN_MOVE_SELF | IN_MOVED_FROM | IN_MOVED_TO |
                                                  IN_CLOSE_WRITE | IN_ATTRIB;
 
-  // Add a single inotify watch for `dir` if it's not skipped. Returns false on ENOSPC.
-  // Sets `out_added` to true if a new watch was registered (root-skipped or already-present
-  // entries return true with out_added=false).
+  // Own watch-count ceiling, independent of the kernel's per-user inotify limit.
+  // A deep/wide tree — or an attacker rapidly creating nested directories, each
+  // of which re-enters AddWatchRecursive on the watcher thread — would otherwise
+  // grow wd_to_path (and the kernel watch table) without bound. Past the cap we
+  // degrade to tracking a partial tree, reusing the same graceful path as ENOSPC.
+  static constexpr std::size_t kMaxIndexWatchEntries = 100000;
+
+  // Add a single inotify watch for `dir` if it's not skipped. Returns false on ENOSPC
+  // or when our own watch budget is exhausted. Sets `out_added` to true if a new watch
+  // was registered (root-skipped or already-present entries return true with
+  // out_added=false).
   bool AddSingleWatch(const std::filesystem::path& dir,
                       const project::IgnoreMatcher* matcher, bool& out_added) {
     out_added = false;
     if (ShouldSkipWatchedDirectory(dir, root, matcher)) {
       return true;
+    }
+    if (wd_to_path.size() >= kMaxIndexWatchEntries) {
+      return false;  // budget exhausted -> partial-tree degradation
     }
     const int wd = inotify_add_watch(inotify_fd, dir.c_str(), kInotifyMask);
     if (wd < 0) {
@@ -401,6 +412,9 @@ struct FileIndexWatcher::Impl {
       }
       if (!std::filesystem::is_directory(status)) {
         continue;
+      }
+      if (wd_to_path.size() >= kMaxIndexWatchEntries) {
+        return false;  // budget exhausted -> partial-tree degradation
       }
       const std::filesystem::path subdir = it->path().lexically_normal();
       const int sub_wd = inotify_add_watch(inotify_fd, subdir.c_str(), kInotifyMask);
