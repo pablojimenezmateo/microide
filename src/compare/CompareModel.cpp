@@ -909,7 +909,8 @@ void AppendAnchoredFallbackOps(std::span<const std::string_view> left_lines,
                                std::size_t right_begin,
                                std::size_t right_end,
                                const CompareBuildOptions& options,
-                               std::vector<DiffOp>& ops) {
+                               std::vector<DiffOp>& ops,
+                               std::size_t depth) {
   while (left_begin < left_end && right_begin < right_end &&
          LinesEqualForDiff(left_lines[left_begin], right_lines[right_begin], options)) {
     ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[left_begin], right_lines[right_begin]});
@@ -955,6 +956,20 @@ void AppendAnchoredFallbackOps(std::span<const std::string_view> left_lines,
     return;
   }
 
+  // Depth guard: in the worst case (e.g. N unique lines present in reversed order
+  // on the two sides) the anchor recursion peels a single line per level, so an
+  // adversarial merge/compare input from an untrusted repo could recurse ~N deep
+  // -> stack overflow, plus O(N^2) CPU rebuilding the anchor map at each level.
+  // Past the cap, emit the remaining middle as a coarse delete+insert (a correct,
+  // just less-minimal, diff) instead of recursing further.
+  constexpr std::size_t kMaxAnchoredFallbackDepth = 256;
+  if (depth >= kMaxAnchoredFallbackDepth) {
+    AppendDeleteOps(left_lines, left_begin, left_suffix, ops);
+    AppendInsertOps(right_lines, right_begin, right_suffix, ops);
+    AppendEqualPairs(left_lines, left_suffix, left_end, right_lines, right_suffix, ops);
+    return;
+  }
+
   const std::vector<std::pair<std::size_t, std::size_t>> anchors =
       BuildUniqueLineAnchors(left_lines, left_begin, left_suffix, right_lines, right_begin,
                              right_suffix);
@@ -969,13 +984,13 @@ void AppendAnchoredFallbackOps(std::span<const std::string_view> left_lines,
   std::size_t segment_right_begin = right_begin;
   for (const auto& [anchor_left, anchor_right] : anchors) {
     AppendAnchoredFallbackOps(left_lines, segment_left_begin, anchor_left, right_lines,
-                              segment_right_begin, anchor_right, options, ops);
+                              segment_right_begin, anchor_right, options, ops, depth + 1);
     ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[anchor_left], right_lines[anchor_right]});
     segment_left_begin = anchor_left + 1;
     segment_right_begin = anchor_right + 1;
   }
   AppendAnchoredFallbackOps(left_lines, segment_left_begin, left_suffix, right_lines,
-                            segment_right_begin, right_suffix, options, ops);
+                            segment_right_begin, right_suffix, options, ops, depth + 1);
   AppendEqualPairs(left_lines, left_suffix, left_end, right_lines, right_suffix, ops);
 }
 
@@ -985,7 +1000,7 @@ std::vector<DiffOp> BuildAnchoredFallbackOps(std::span<const std::string_view> l
   std::vector<DiffOp> ops;
   ops.reserve(left_lines.size() + right_lines.size());
   AppendAnchoredFallbackOps(left_lines, 0, left_lines.size(), right_lines, 0, right_lines.size(),
-                            options, ops);
+                            options, ops, 0);
   return ops;
 }
 

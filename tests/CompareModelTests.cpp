@@ -681,6 +681,27 @@ void TestCompareIntralineFallbackCoversChangedRegion() {
   }
 }
 
+// Adversarial: N unique lines present in reversed order on the two sides. Before
+// the depth guard, the anchored fallback peeled one line per recursion level and
+// recursed ~N deep -> stack overflow (and O(N^2) CPU). This must complete quickly
+// and produce a valid, fully-covering model instead.
+void TestCompareReversedUniqueLinesStayBounded() {
+  constexpr int kLines = 4000;  // 4000*4000 cells >> the exact-LCS cap -> fallback
+  std::string left;
+  std::string right;
+  for (int i = 0; i < kLines; ++i) {
+    left += "u" + std::to_string(i) + '\n';
+    right += "u" + std::to_string(kLines - 1 - i) + '\n';
+  }
+
+  const auto model = BuildCompareModel(left, right);
+  // Every source line must be represented on some row (no crash, no truncation of
+  // coverage); the exact row cardinality depends on the coarse pairing but must be
+  // at least the larger side.
+  Expect(model.rows.size() >= static_cast<std::size_t>(kLines),
+         "reversed-unique compare should cover all lines without overflowing the stack");
+}
+
 void TestCompareLargeInputsUseBoundedFallback() {
   std::string left = "header\n";
   std::string right = "header\n";
@@ -924,6 +945,8 @@ void RegisterCompareModelTests(std::vector<TestCase>& tests) {
           TestCompareIntralineFallbackCoversChangedRegion);
   AddTest(tests, "Compare/LargeInputsUseBoundedFallback",
           TestCompareLargeInputsUseBoundedFallback);
+  AddTest(tests, "Compare/ReversedUniqueLinesStayBounded",
+          TestCompareReversedUniqueLinesStayBounded);
   AddTest(tests, "Compare/LargePaddedAssignmentPrefixStaysUnchanged",
           TestCompareLargePaddedAssignmentPrefixStaysUnchanged);
   AddTest(tests, "Compare/LargeIdenticalInputsStayUnchanged",

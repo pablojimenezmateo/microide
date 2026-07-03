@@ -246,6 +246,15 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     return SearchCompletion{.error = "Failed to index project files"};
   }
 
+  // Reject a pathologically long query before compiling it: a giant pasted
+  // pattern would drive a large one-shot PCRE2 compile (or, for literal mode, a
+  // full-query lower-casing) with no upside — no real search pattern is anywhere
+  // near this long.
+  constexpr std::size_t kMaxSearchPatternBytes = 1u << 16;  // 64 KiB
+  if (query.size() > kMaxSearchPatternBytes) {
+    return SearchCompletion{.error = "Project search pattern is too long"};
+  }
+
   std::optional<util::CompiledRegex> regex_pattern;
   std::unique_ptr<PreparedLiteralQuery> literal_query;
 

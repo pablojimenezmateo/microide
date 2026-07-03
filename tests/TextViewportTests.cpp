@@ -2290,7 +2290,52 @@ void TestTextViewportLoadLinesMatchesSerializeRoundTrip() {
 
 }  // namespace
 
+// The undo history caps total bytes, not just entry count: a handful of
+// large-range edits (each copying a big line range into before/after_lines) must
+// not accumulate into a multi-GB history. Continuous eviction keeps peak memory
+// near the budget, so pushing many large entries leaves far fewer than the
+// 128-entry count cap alive.
+void TestUndoHistoryEnforcesByteBudget() {
+  microide::editor::TextViewportUndoHistory history;
+  // ~4 MiB per entry; the 256 MiB byte budget admits ~64 of these — well under the
+  // 128-entry count cap, so a survivor count below 128 proves the byte cap acted.
+  for (int i = 0; i < 200; ++i) {
+    microide::editor::TextViewportUndoHistory::Entry entry;
+    entry.after_lines.push_back(std::string(4u * 1024 * 1024, 'x'));
+    history.PushUndo(std::move(entry));
+  }
+
+  std::size_t survivors = 0;
+  while (history.CanUndo()) {
+    history.PopUndo();
+    ++survivors;
+  }
+  Expect(survivors > 0, "at least the most recent large edit stays undoable");
+  Expect(survivors < 128,
+         "the byte budget must evict below the entry-count cap for large entries");
+}
+
+// A column/box select across a very tall document must not allocate one caret per
+// line without bound (a single-gesture OOM/hang). The caret set is capped.
+void TestTextViewportColumnCaretsAreCapped() {
+  microide::editor::TextViewport viewport;
+  std::string content;
+  for (int i = 0; i < 40000; ++i) {
+    content += "x\n";
+  }
+  viewport.LoadContent(content, "/tmp/tall.txt");
+
+  viewport.PlaceColumnCaretsBetweenLines(0, 39000, 0);
+  Expect(viewport.secondary_carets().size() <= 10000,
+         "a column select over tens of thousands of lines must cap the caret count");
+  Expect(!viewport.secondary_carets().empty(),
+         "a column select should still place some carets");
+}
+
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextViewport/ColumnCaretsAreCapped", TestTextViewportColumnCaretsAreCapped);
+  AddTest(tests, "TextViewport/UndoHistoryEnforcesByteBudget",
+          TestUndoHistoryEnforcesByteBudget);
   AddTest(tests, "TextViewport/LoadLinesMatchesSerializeRoundTrip",
           TestTextViewportLoadLinesMatchesSerializeRoundTrip);
   AddTest(tests, "TextViewport/FastLoadMatchesCrlfDecode",

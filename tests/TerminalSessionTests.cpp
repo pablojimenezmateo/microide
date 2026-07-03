@@ -172,6 +172,20 @@ void TestTerminalSessionPasteUsesBracketedPasteWhenEnabled() {
          "terminal paste should wrap clipboard text when bracketed paste mode is enabled");
 }
 
+// A poisoned clipboard containing the bracketed-paste end marker must not be able
+// to close paste mode early and inject the trailing bytes as typed input.
+void TestTerminalSessionPasteStripsEmbeddedEndMarker() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2004h");
+
+  session.PasteText("safe\x1b[201~rm -rf ~\n");
+
+  // The embedded end marker is dropped; the payload stays inside the paste guard.
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[200~saferm -rf ~\n\x1b[201~",
+         "an embedded end marker must be stripped so paste mode can't be escaped");
+}
+
 void TestTerminalSessionPasteFallsBackToRawBytesWhenDisabled() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -1187,6 +1201,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionDeleteLineRespectsScrollRegion);
   AddTest(tests, "TerminalSession/PasteBracketedMode",
           TestTerminalSessionPasteUsesBracketedPasteWhenEnabled);
+  AddTest(tests, "TerminalSession/PasteStripsEmbeddedEndMarker",
+          TestTerminalSessionPasteStripsEmbeddedEndMarker);
   AddTest(tests, "TerminalSession/PasteRawMode",
           TestTerminalSessionPasteFallsBackToRawBytesWhenDisabled);
   AddTest(tests, "TerminalSession/ApplicationCursorKeysSs3Mode",

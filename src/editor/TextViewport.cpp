@@ -485,8 +485,22 @@ void TextViewport::PlaceColumnCaretsBetweenLines(std::size_t anchor_line,
     return;
   }
 
-  const std::size_t lo = std::min(anchor_line, target_line);
-  const std::size_t hi = std::max(anchor_line, target_line);
+  std::size_t lo = std::min(anchor_line, target_line);
+  std::size_t hi = std::max(anchor_line, target_line);
+
+  // Cap the caret span. A column/box-select gesture across a multi-million-line
+  // file would otherwise allocate one caret per line (and every later multi-caret
+  // edit becomes O(N) per keystroke) — a single-gesture OOM/hang. Keep the window
+  // nearest the drag target, where the user is actually working. A real column
+  // edit spans a modest number of lines.
+  constexpr std::size_t kMaxColumnCarets = 10000;
+  if (hi - lo + 1 > kMaxColumnCarets) {
+    if (target_line >= hi) {
+      lo = hi - (kMaxColumnCarets - 1);
+    } else {
+      hi = lo + (kMaxColumnCarets - 1);
+    }
+  }
 
   ClearSecondaryCarets();
   ClearSelection();

@@ -1091,6 +1091,17 @@ void SdlTtfTextBackend::DrawRuns(SDL_Renderer* renderer, const TextRun* runs, st
 
 SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view text,
                                                                SDL_Color color) {
+  // Bound the rendered text length. The surface/texture built below is sized to
+  // text.size() * cell_width (BuildAsciiCompositeSurface, or the whole-string
+  // TTF_RenderText_Blended fallback), so a single caller passing a megabyte string
+  // — e.g. a plugin display-list Text op, whose arena cap allows up to ~1 MiB in
+  // one op — would allocate a multi-hundred-MB-to-GB surface on the render thread.
+  // The editor's own text is already sliced to the visible columns; anything past
+  // this width is off-screen. Truncate so the allocation stays bounded.
+  constexpr std::size_t kMaxRenderTextChars = 8192;
+  if (text.size() > kMaxRenderTextChars) {
+    text = text.substr(0, kMaxRenderTextChars);
+  }
   const CacheKeyView key_view{
       .text = text,
       .color = color,

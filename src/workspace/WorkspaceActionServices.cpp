@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "util/PerformanceTrace.h"
+#include "util/StringUtil.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceLayout.h"
@@ -793,8 +794,17 @@ void WorkspaceActionContext::CutSelection() {
 }
 
 void WorkspaceActionContext::PasteClipboard() {
-  if (const std::optional<std::string> clipboard_text = operations_.read_clipboard_text();
+  if (std::optional<std::string> clipboard_text = operations_.read_clipboard_text();
       clipboard_text.has_value()) {
+    // Cap a pathologically large paste before it is normalized, line-split (one
+    // std::string per line), inserted, and stored in the undo history. A
+    // multi-hundred-MB Ctrl+V would otherwise amplify into a multi-GB transient
+    // and undo entry -> OOM from a single gesture. 64 MiB is far beyond any
+    // interactive paste.
+    constexpr std::size_t kMaxPasteBytes = 64u << 20;
+    if (clipboard_text->size() > kMaxPasteBytes) {
+      clipboard_text->resize(util::PreviousUtf8Boundary(*clipboard_text, kMaxPasteBytes));
+    }
     if (state_.surface.focus == FocusTarget::Panel && operations_.active_terminal_tab() != nullptr) {
       operations_.paste_clipboard_into_terminal();
       return;

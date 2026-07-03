@@ -8,6 +8,43 @@
 
 namespace microide::editor {
 
+namespace {
+
+std::size_t EntryContentBytes(const TextViewportUndoHistory::Entry& entry) {
+  std::size_t bytes = 0;
+  for (const std::string& line : entry.before_lines) {
+    bytes += line.size() + 1;
+  }
+  for (const std::string& line : entry.after_lines) {
+    bytes += line.size() + 1;
+  }
+  return bytes;
+}
+
+}  // namespace
+
+void TextViewportUndoHistory::AppendUndoEntry(Entry entry) {
+  entry.byte_size = EntryContentBytes(entry);
+  undo_stack_.push_back(std::move(entry));
+  EnforceHistoryBudget();
+}
+
+void TextViewportUndoHistory::EnforceHistoryBudget() {
+  while (undo_stack_.size() > kMaxHistoryEntries) {
+    undo_stack_.pop_front();
+  }
+  std::size_t total = 0;
+  for (const Entry& entry : undo_stack_) {
+    total += entry.byte_size;
+  }
+  // Keep at least the most recent entry even if it alone exceeds the budget —
+  // dropping it would silently discard the just-made edit's undo.
+  while (undo_stack_.size() > 1 && total > kMaxHistoryBytes) {
+    total -= undo_stack_.front().byte_size;
+    undo_stack_.pop_front();
+  }
+}
+
 void TextViewportUndoHistory::BeginGroup(ViewState before_state) {
   UndoGroupFrame frame;
   frame.state = std::move(before_state);
@@ -22,10 +59,7 @@ void TextViewportUndoHistory::RecordEntry(Entry entry,
     if (hint.kind != CoalesceKind::None && TryCoalesceWithTop(entry, hint)) {
       return;
     }
-    undo_stack_.push_back(std::move(entry));
-    if (undo_stack_.size() > kMaxHistoryEntries) {
-      undo_stack_.pop_front();
-    }
+    AppendUndoEntry(std::move(entry));
     active_run_kind_ = hint.kind;
     active_run_last_space_ = hint.changed_is_space;
     return;
@@ -82,17 +116,16 @@ bool TextViewportUndoHistory::TryCoalesceWithTop(const Entry& next, CoalesceHint
   merged->before_state = top.before_state;
   merged->after_state = next.after_state;
   top = std::move(*merged);
+  top.byte_size = EntryContentBytes(top);
   active_run_last_space_ = hint.changed_is_space;
+  EnforceHistoryBudget();
   return true;
 }
 
 void TextViewportUndoHistory::RecordEntryDirect(Entry entry) {
   redo_stack_.clear();
   EndCoalesceRun();
-  undo_stack_.push_back(std::move(entry));
-  if (undo_stack_.size() > kMaxHistoryEntries) {
-    undo_stack_.pop_front();
-  }
+  AppendUndoEntry(std::move(entry));
 }
 
 std::optional<TextViewportUndoHistory::Entry>
@@ -138,10 +171,7 @@ TextViewportUndoHistory::Entry TextViewportUndoHistory::PopRedo() {
 
 void TextViewportUndoHistory::PushUndo(Entry entry) {
   EndCoalesceRun();
-  undo_stack_.push_back(std::move(entry));
-  if (undo_stack_.size() > kMaxHistoryEntries) {
-    undo_stack_.pop_front();
-  }
+  AppendUndoEntry(std::move(entry));
 }
 
 void TextViewportUndoHistory::PushRedo(Entry entry) {

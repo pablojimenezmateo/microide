@@ -66,6 +66,9 @@ class TextViewportUndoHistory {
     std::vector<std::string> after_lines;
     ViewState before_state;
     ViewState after_state;
+    // Cached content byte size, stamped when the entry enters the undo stack so
+    // the byte-budget trim stays O(entries). Meaningful only while stacked.
+    std::size_t byte_size = 0;
   };
 
   // Grouping ------------------------------------------------------------
@@ -128,8 +131,17 @@ class TextViewportUndoHistory {
   // on success; false means the caller should push `next` as a fresh entry.
   bool TryCoalesceWithTop(const Entry& next, CoalesceHint hint);
   void EndCoalesceRun() { active_run_kind_ = CoalesceKind::None; }
+  // Push onto the undo stack, stamping byte_size, then enforce both the entry-count
+  // and total-byte budgets (evicting oldest). All undo pushes route through here.
+  void AppendUndoEntry(Entry entry);
+  void EnforceHistoryBudget();
 
   static constexpr std::size_t kMaxHistoryEntries = 128;
+  // Total-byte ceiling across all undo entries. The 128-entry count cap does not
+  // bound bytes: a single select-all replace/sort on a large document copies the
+  // whole range into before_lines+after_lines, so 128 such entries could hold many
+  // GB. Evict oldest entries past this budget (always keeping at least one).
+  static constexpr std::size_t kMaxHistoryBytes = 256u << 20;  // 256 MiB
 
   std::deque<Entry> undo_stack_;
   std::deque<Entry> redo_stack_;

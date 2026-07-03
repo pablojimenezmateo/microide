@@ -73,10 +73,24 @@ inline std::string FormatTerminalPasteBytes(bool bracketed_paste_mode, std::stri
     return std::string(text);
   }
 
+  // Neutralize any embedded end marker in the pasted text: otherwise a poisoned
+  // clipboard containing `ESC[201~<payload>` would terminate paste mode early and
+  // deliver <payload> to the shell as if typed — the exact injection bracketed
+  // paste exists to prevent. Drop the marker (as xterm does) and keep the rest.
+  static constexpr std::string_view kEndMarker = "\x1b[201~";
   std::string bytes;
   bytes.reserve(text.size() + 12);
   bytes.append("\x1b[200~");
-  bytes.append(text);
+  std::size_t pos = 0;
+  while (true) {
+    const std::size_t hit = text.find(kEndMarker, pos);
+    if (hit == std::string_view::npos) {
+      bytes.append(text.substr(pos));
+      break;
+    }
+    bytes.append(text.substr(pos, hit - pos));
+    pos = hit + kEndMarker.size();
+  }
   bytes.append("\x1b[201~");
   return bytes;
 }
