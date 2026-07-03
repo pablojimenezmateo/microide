@@ -1299,19 +1299,50 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     if (rvm.scope_rect.w > 0.0f) {
       text_left = std::min(text_left, rvm.scope_rect.x);
     }
-    float description_width = std::max(40.0f, text_left - 8.0f - text_x);
+    const float full_description_width = std::max(40.0f, text_left - 8.0f - text_x);
+    float first_line_width = full_description_width;
     if (!rvm.scope_label.empty()) {
       const float scope_w = text_renderer.MeasureWidth(rvm.scope_label);
       const float scope_x = text_left - 8.0f - scope_w;
       if (scope_x > text_x + 40.0f) {
         rvm.scope_label_x = scope_x;
-        description_width = std::max(40.0f, scope_x - 8.0f - text_x);
+        first_line_width = std::max(40.0f, scope_x - 8.0f - text_x);
       }
     }
     if (!rvm.description.empty()) {
-      text_renderer.ForEachWrappedLine(
-          rvm.description, description_width,
-          [&](std::string_view wrapped) { rvm.description_lines.push_back(wrapped); });
+      if (first_line_width >= full_description_width - 0.5f) {
+        // No scope-label reservation in effect: wrap every line at the full width.
+        text_renderer.ForEachWrappedLine(
+            rvm.description, full_description_width,
+            [&](std::string_view wrapped) { rvm.description_lines.push_back(wrapped); });
+      } else {
+        // The dim scope label sits only on the first line, so wrap just the first
+        // line at the reduced width to clear it, then wrap the remainder at the full
+        // width — continuation lines have no label above them and need not be
+        // narrowed (fewer wrapped lines -> shorter rows -> more settings on screen).
+        std::string_view remainder = rvm.description;
+        bool first_emitted = false;
+        text_renderer.ForEachWrappedLine(
+            rvm.description, first_line_width, [&](std::string_view wrapped) {
+              if (first_emitted) {
+                return;
+              }
+              first_emitted = true;
+              rvm.description_lines.push_back(wrapped);
+              const std::size_t consumed =
+                  static_cast<std::size_t>(wrapped.data() - rvm.description.data()) +
+                  wrapped.size();
+              remainder = rvm.description.substr(std::min(consumed, rvm.description.size()));
+            });
+        while (!remainder.empty() && remainder.front() == ' ') {
+          remainder.remove_prefix(1);
+        }
+        if (!remainder.empty()) {
+          text_renderer.ForEachWrappedLine(
+              remainder, full_description_width,
+              [&](std::string_view wrapped) { rvm.description_lines.push_back(wrapped); });
+        }
+      }
     }
 
     const float row_h = row_height_for(rvm.description_lines.size());
@@ -1383,7 +1414,10 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     const std::vector<std::string_view> filtered = service.FilteredFontFamilies();
     const int family_count = static_cast<int>(filtered.size());
     const int highlight = service.PickerHighlight();
-    const int choose_file_index = service.PickerChooseFileIndex();
+    // "Choose file…" is pinned after the families, so its index is the family count.
+    // Use the already-computed `filtered` rather than PickerChooseFileIndex(), which
+    // re-runs the whole FilteredFontFamilies() filter every frame the picker is open.
+    const int choose_file_index = family_count;
     constexpr int kMaxVisibleFamilies = 8;
     constexpr float kPickerRowH = 22.0f;
     constexpr float kPickerPad = 3.0f;

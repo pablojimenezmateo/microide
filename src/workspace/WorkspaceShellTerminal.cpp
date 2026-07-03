@@ -175,6 +175,16 @@ const render::TextRenderer& WorkspaceShell::PanelTextRenderer() const {
 }
 
 void WorkspaceShell::ApplyTerminalFontPreferences() {
+  // Runs every prepared frame a terminal is shown. terminal.font_* only change on a
+  // cold settings mutation (the store bumps its revision on any change), so skip the
+  // GetSettingValue allocations + SetFontFamily entirely when nothing has changed
+  // since the last apply — mirroring ApplyLiveSettings' allocation-free fast path.
+  const std::uint64_t settings_revision = settings_store_.Revision();
+  if (settings_revision == last_applied_terminal_font_settings_revision_) {
+    return;
+  }
+  last_applied_terminal_font_settings_revision_ = settings_revision;
+
   const int size = std::clamp(util::ParseIntOr(GetSettingValue("terminal.font_size"), 13), 8, 32);
   bool changed = false;
   // SetFontPointSize always drops the renderer's width cache, so calling it on

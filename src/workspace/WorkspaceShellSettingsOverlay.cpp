@@ -435,6 +435,17 @@ bool WorkspaceShell::ResetSettingInScope(std::string_view id, SettingScope scope
   } else {
     settings_store_.ResetProject(id);
   }
+  // ui.scale takes live effect only on the write path (ApplyUiScale); neither
+  // MaterializeCanonicalPreferences nor ApplyLiveSettings touches ui_scale_, so a
+  // bare reset would drop the stored value yet leave the UI rendered at the old
+  // zoom. Re-apply the now-resolved scale (a remaining override or the spec
+  // default) so the reset reverts the live scale immediately.
+  if (id == "ui.scale") {
+    if (const auto parsed = util::ParseFloat(GetSettingValue("ui.scale").value_or("1.0"));
+        parsed.has_value()) {
+      MakePersistenceCoordinator().ApplyUiScale(*parsed, /*persist=*/false, /*log_feedback=*/false);
+    }
+  }
   ApplyCanonicalPreferenceSideEffects(id);
   if (scope == SettingScope::User) {
     MakePersistenceCoordinator().SaveUserConfig();

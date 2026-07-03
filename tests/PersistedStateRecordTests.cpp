@@ -547,7 +547,95 @@ void TestPersistedStateMruRecordRequiresSchema() {
          "mru decode should fail when the schema record is missing");
 }
 
+void TestPersistedStateProjectConfigMigratesLegacyEditorPrefTags() {
+  // Retired typed tags 2 (EditorTabSize, U32) / 3 (EditorIndentWidth, U32) /
+  // 4 (EditorSoftTabs, Bool) predate the layered `Setting` records. A config that
+  // carried indentation ONLY in these tags must migrate the values into the settings
+  // layer on decode instead of silently reverting to the spec default.
+  PersistedProjectConfigState base{
+      .colorscheme_name = {},
+      .project_base_color = std::nullopt,
+      .settings = {},
+      .sidebar_policies = {},
+      .commit_draft = std::nullopt,
+      .branch_review = {},
+  };
+  std::vector<std::byte> encoded;
+  Expect(EncodeProjectConfigRecord(base, &encoded),
+         "legacy-tag base project config should encode");
+
+  std::vector<std::byte> payload;
+  microide::persistence::PrimitiveWriter writer(&payload);
+  Expect(writer.WriteU32(8), "legacy tab-size payload should encode");
+  Expect(microide::persistence::AppendTaggedRecord(2, payload, &encoded),
+         "legacy EditorTabSize tag should append");
+  payload.clear();
+  writer = microide::persistence::PrimitiveWriter(&payload);
+  Expect(writer.WriteU32(3), "legacy indent-width payload should encode");
+  Expect(microide::persistence::AppendTaggedRecord(3, payload, &encoded),
+         "legacy EditorIndentWidth tag should append");
+  payload.clear();
+  writer = microide::persistence::PrimitiveWriter(&payload);
+  Expect(writer.WriteBool(true), "legacy soft-tabs payload should encode");
+  Expect(microide::persistence::AppendTaggedRecord(4, payload, &encoded),
+         "legacy EditorSoftTabs tag should append");
+
+  PersistedProjectConfigState decoded;
+  Expect(DecodeProjectConfigRecord(encoded, &decoded),
+         "project config with legacy editor-pref tags should decode");
+  const auto find = [&](std::string_view id) -> const std::string* {
+    for (const auto& [key, value] : decoded.settings) {
+      if (key == id) {
+        return &value;
+      }
+    }
+    return nullptr;
+  };
+  const std::string* tab_size = find("editor.tab_size");
+  const std::string* indent_width = find("editor.indent_width");
+  const std::string* soft_tabs = find("editor.soft_tabs");
+  Expect(tab_size != nullptr && *tab_size == "8",
+         "legacy EditorTabSize should migrate into editor.tab_size");
+  Expect(indent_width != nullptr && *indent_width == "3",
+         "legacy EditorIndentWidth should migrate into editor.indent_width");
+  Expect(soft_tabs != nullptr && *soft_tabs == "true",
+         "legacy EditorSoftTabs should migrate into editor.soft_tabs");
+
+  // A modern `Setting` record for the same id wins: the legacy tag must not clobber it.
+  PersistedProjectConfigState with_setting{
+      .colorscheme_name = {},
+      .project_base_color = std::nullopt,
+      .settings = {{"editor.tab_size", "2"}},
+      .sidebar_policies = {},
+      .commit_draft = std::nullopt,
+      .branch_review = {},
+  };
+  std::vector<std::byte> encoded_with_setting;
+  Expect(EncodeProjectConfigRecord(with_setting, &encoded_with_setting),
+         "project config with modern setting should encode");
+  payload.clear();
+  writer = microide::persistence::PrimitiveWriter(&payload);
+  Expect(writer.WriteU32(8), "legacy tab-size payload should encode");
+  Expect(microide::persistence::AppendTaggedRecord(2, payload, &encoded_with_setting),
+         "legacy EditorTabSize tag should append after modern setting");
+  PersistedProjectConfigState decoded_with_setting;
+  Expect(DecodeProjectConfigRecord(encoded_with_setting, &decoded_with_setting),
+         "project config with both should decode");
+  int tab_size_entries = 0;
+  const std::string* resolved_tab_size = nullptr;
+  for (const auto& [key, value] : decoded_with_setting.settings) {
+    if (key == "editor.tab_size") {
+      ++tab_size_entries;
+      resolved_tab_size = &value;
+    }
+  }
+  Expect(tab_size_entries == 1 && resolved_tab_size != nullptr && *resolved_tab_size == "2",
+         "a modern editor.tab_size setting should win over the legacy tag");
+}
+
 void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PersistedStateRecord/ProjectConfigMigratesLegacyEditorPrefTags",
+          TestPersistedStateProjectConfigMigratesLegacyEditorPrefTags);
   AddTest(tests, "PersistedStateRecord/MruRoundTrip", TestPersistedStateMruRecordRoundTrip);
   AddTest(tests, "PersistedStateRecord/MruRequiresSchema",
           TestPersistedStateMruRecordRequiresSchema);

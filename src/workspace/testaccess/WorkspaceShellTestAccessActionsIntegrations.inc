@@ -162,6 +162,8 @@
   static void OpenCommandPalette(WorkspaceShell& shell) { shell.OpenCommandPalette(); }
   static bool SaveTab(WorkspaceShell& shell, std::size_t index) { return shell.SaveTab(index); }
   static void ActivateTab(WorkspaceShell& shell, std::size_t index) { shell.ActivateTab(index); }
+  static void MaybeArmAutosaveTimer(WorkspaceShell& shell) { shell.MaybeArmAutosaveTimer(); }
+  static bool AutosaveArmed(const WorkspaceShell& shell) { return shell.autosave_armed_; }
   static bool SelectTreePath(WorkspaceShell& shell, const std::filesystem::path& path) {
     return shell.context_.current_project_state.directory_tree.SelectPath(path);
   }

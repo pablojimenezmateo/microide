@@ -1806,6 +1806,10 @@
   // the shared bottom-panel layout helpers branch to it via PanelTextRenderer().
   render::TextRenderer terminal_text_renderer_;
   int last_applied_terminal_font_size_ = -1;
+  // Settings-store revision at the last ApplyTerminalFontPreferences apply. The
+  // function runs every prepared frame a terminal is shown; gating on the revision
+  // keeps the steady-state path allocation-free (no per-frame GetSettingValue).
+  std::uint64_t last_applied_terminal_font_settings_revision_ = std::numeric_limits<std::uint64_t>::max();
   editor::EditorViewRenderer editor_view_renderer_;
   WorkspaceContext context_;
   // Single owner of settings resolution + mutation. Binds non-owning pointers to
@@ -1977,6 +1981,11 @@
   // buffer settles rather than mid-keystroke.
   Uint64 autosave_edit_epoch_ms_ = 0;
   std::uint64_t autosave_last_content_revision_ = 0;
+  // Identity of the viewport `autosave_last_content_revision_` was sampled from.
+  // content_revision() is per-viewport, so this lets MaybeArmAutosaveTimer tell a
+  // genuine edit apart from a tab switch (which re-baselines the sample rather than
+  // resetting the debounce or disarming a pending flush).
+  const editor::TextViewport* autosave_last_viewport_ = nullptr;
   bool autosave_armed_ = false;
   // Set only while MaybeAutosaveDirtyTabs is writing dirty buffers, so the shared save
   // path skips the synchronous format-on-save subprocess. Autosave (focus change /

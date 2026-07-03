@@ -146,9 +146,46 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
   }
   *state = PersistedProjectConfigState{};
   bool seen_schema = false;
-  return ParseRecordStream<ProjectConfigTag>(
+  // Legacy typed editor-preference tags 2-4 (EditorTabSize/EditorIndentWidth/
+  // EditorSoftTabs) were retired from encode; the canonical prefs now round-trip
+  // through layered `Setting` records (tag 7). A project config written before that
+  // migration carries these prefs ONLY in the typed tags, so capture them here and
+  // fold them into the settings layer below — otherwise those files silently revert
+  // to the spec default indentation on load.
+  std::optional<std::size_t> legacy_tab_size;
+  std::optional<std::size_t> legacy_indent_width;
+  std::optional<bool> legacy_soft_tabs;
+  const bool parsed = ParseRecordStream<ProjectConfigTag>(
              input, [&](ProjectConfigTag tag, std::span<const std::byte> payload) {
                PrimitiveReader reader(payload);
+               switch (static_cast<std::uint16_t>(tag)) {
+                 case 2: {  // retired ProjectConfigTag::EditorTabSize
+                   std::size_t value = 0;
+                   if (!ReadSize(reader, &value) || reader.remaining() != 0) {
+                     return false;
+                   }
+                   legacy_tab_size = value;
+                   return true;
+                 }
+                 case 3: {  // retired ProjectConfigTag::EditorIndentWidth
+                   std::size_t value = 0;
+                   if (!ReadSize(reader, &value) || reader.remaining() != 0) {
+                     return false;
+                   }
+                   legacy_indent_width = value;
+                   return true;
+                 }
+                 case 4: {  // retired ProjectConfigTag::EditorSoftTabs
+                   bool value = false;
+                   if (!reader.ReadBool(&value) || reader.remaining() != 0) {
+                     return false;
+                   }
+                   legacy_soft_tabs = value;
+                   return true;
+                 }
+                 default:
+                   break;
+               }
                switch (tag) {
                  case ProjectConfigTag::Schema: {
                    std::uint32_t schema = 0;
@@ -203,8 +240,27 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
                 }
                }
                return true;
-             }) &&
-         seen_schema;
+             });
+  if (!parsed || !seen_schema) {
+    return false;
+  }
+  // Fold the captured legacy typed prefs into the settings layer, but only when a
+  // modern `Setting` record does not already carry the same id — a newer file that
+  // has both must let the layered record win.
+  const auto has_setting = [&](std::string_view id) {
+    return std::any_of(state->settings.begin(), state->settings.end(),
+                       [id](const auto& kv) { return kv.first == id; });
+  };
+  if (legacy_tab_size.has_value() && !has_setting("editor.tab_size")) {
+    state->settings.emplace_back("editor.tab_size", std::to_string(*legacy_tab_size));
+  }
+  if (legacy_indent_width.has_value() && !has_setting("editor.indent_width")) {
+    state->settings.emplace_back("editor.indent_width", std::to_string(*legacy_indent_width));
+  }
+  if (legacy_soft_tabs.has_value() && !has_setting("editor.soft_tabs")) {
+    state->settings.emplace_back("editor.soft_tabs", *legacy_soft_tabs ? "true" : "false");
+  }
+  return true;
 }
 
 }  // namespace microide::workspace

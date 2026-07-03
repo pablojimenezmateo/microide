@@ -43,6 +43,32 @@ std::vector<SidebarViewPolicy> RuntimeSidebarPolicies(
   return runtime;
 }
 
+// One-time migration for project configs written by builds that auto-persisted the
+// resolved canonical editor preferences into EVERY project's settings vector on save
+// (the old SyncCanonicalProjectSettings). Now that a per-project override wins over
+// the user-level default, such an auto-synced entry left at the spec default would
+// silently shadow the "set as default" feature. Drop canonical editor entries whose
+// value equals the spec default so user defaults take effect; genuine non-default
+// per-project overrides are preserved untouched. The cleaned layer is rewritten by
+// the next SaveConfigState, so this self-heals after one load.
+void DropDefaultValuedCanonicalOverrides(
+    std::vector<std::pair<std::string, std::string>>& settings) {
+  for (std::string_view id : {"editor.tab_size", "editor.indent_width", "editor.font_size",
+                              "editor.soft_tabs", "editor.wrap"}) {
+    const SettingSpec* spec = FindBuiltinSettingSpec(id);
+    const std::string* stored = settings_layer::Find(settings, id);
+    if (spec == nullptr || stored == nullptr) {
+      continue;
+    }
+    const auto parsed = ParseSettingValue(*spec, *stored);
+    if (!parsed.has_value() ||
+        SerializeSettingValue(*parsed) != SerializeSettingValue(DefaultSettingValue(*spec))) {
+      continue;  // Absent, unparseable, or a genuine non-default override: keep it.
+    }
+    settings_layer::Erase(settings, id);
+  }
+}
+
 }  // namespace
 
 void PersistenceCoordinator::MaterializeCanonicalPreferences() {
@@ -238,6 +264,9 @@ bool PersistenceCoordinator::RestoreConfigState() {
   for (const auto& [id, value] : persisted_state.settings) {
     settings_layer::Upsert(mutable_current.settings, id, value);
   }
+  // Strip auto-synced default-valued canonical editor entries left by older builds
+  // so they can no longer shadow the user-level "set as default" (see helper).
+  DropDefaultValuedCanonicalOverrides(mutable_current.settings);
   // The project layer was reloaded in place; rebuild the store's resolved index
   // before materializing so the resolved values reflect the loaded overrides.
   settings_store_.Reindex();

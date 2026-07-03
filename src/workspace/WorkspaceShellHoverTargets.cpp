@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "editor/DiagnosticsRender.h"
+#include "editor/DiagnosticsStore.h"
 #include "editor/EolDecorationLayout.h"
 #include "editor/TextLayout.h"
 #include "util/DebugTrace.h"
@@ -264,6 +265,22 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
   }
   const WorkspaceLayout layout = *layout_state;
 
+  // The editor render filters diagnostics by diagnostics.min_severity before
+  // painting (WorkspaceShellRenderFrame). Apply the same filter here so hover
+  // targets never exist for a diagnostic the user hid — otherwise an unpainted
+  // diagnostic would still pop a card and its invisible span would intercept the
+  // pointer. "hint" (the default) shows all, so the filter returns the span
+  // untouched (zero cost). One reused scratch is safe: each filtered span is
+  // consumed by its hit-test before the next filter call.
+  const editor::DiagnosticSeverity diagnostics_min_severity =
+      editor::ParseDiagnosticSeverity(GetSettingValue("diagnostics.min_severity").value_or("hint"));
+  static thread_local std::vector<editor::PublishedDiagnostic> tls_hover_filtered_diagnostics;
+  const auto visible_diagnostics =
+      [&](std::span<const editor::PublishedDiagnostic> in) {
+        return editor::FilterDiagnosticsAtLeastSeverity(in, diagnostics_min_severity,
+                                                        tls_hover_filtered_diagnostics);
+      };
+
   if (ActiveTabIsCompare()) {
     const CompareTabState* compare_tab = ActiveCompareTab();
     if (compare_tab == nullptr || !compare_tab->right_editable ||
@@ -271,11 +288,13 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
       return std::nullopt;
     }
 
-    const auto* diagnostics =
+    const auto* diagnostics_all =
         hover_targets_vm.diagnostics_store->FindByPathKey(compare_tab->right_viewport.path_key());
-    if (diagnostics == nullptr || diagnostics->empty()) {
+    if (diagnostics_all == nullptr || diagnostics_all->empty()) {
       return std::nullopt;
     }
+    const std::span<const editor::PublishedDiagnostic> diagnostics =
+        visible_diagnostics(std::span<const editor::PublishedDiagnostic>(*diagnostics_all));
 
     const CompareSurfaceLayout surface =
         ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
@@ -306,7 +325,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
         surface.rows_y +
         static_cast<float>(*model_row - static_cast<std::size_t>(std::max(0, compare_tab->scroll_row))) *
             surface.line_height;
-    for (const editor::PublishedDiagnostic& diagnostic : *diagnostics) {
+    for (const editor::PublishedDiagnostic& diagnostic : diagnostics) {
       const auto rect = editor::DiagnosticUnderlineRect(
           text_renderer_, interaction.text_x, line_y, surface.line_height, row.right_text,
           line_index, compare_tab->horizontal_scroll, surface.right_visible_columns,
@@ -349,7 +368,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
         merge_tab->result_viewport,
         BuildEditorInteractionLayout(text_renderer_, merge_tab->result_viewport, result_rect,
                                      LineNumbersEnabled()),
-        std::span<const editor::PublishedDiagnostic>(*diagnostics), x, y);
+        visible_diagnostics(std::span<const editor::PublishedDiagnostic>(*diagnostics)), x, y);
   }
 
   if (!ActiveTabIsEditor()) {
@@ -365,7 +384,8 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
                      *active_viewport,
                      BuildEditorInteractionLayout(text_renderer_, *active_viewport,
                                                   layout.editor_surface, LineNumbersEnabled()),
-                     std::span<const editor::PublishedDiagnostic>(*diagnostics), x, y)
+                     visible_diagnostics(std::span<const editor::PublishedDiagnostic>(*diagnostics)),
+                     x, y)
                : std::nullopt;
   }
 
@@ -382,7 +402,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
 
     if (const auto target = DiagnosticHoverTargetForViewport(
             *viewport, BuildEditorInteractionLayout(text_renderer_, *viewport, pane.rect, LineNumbersEnabled()),
-            std::span<const editor::PublishedDiagnostic>(*diagnostics), x, y);
+            visible_diagnostics(std::span<const editor::PublishedDiagnostic>(*diagnostics)), x, y);
         target.has_value()) {
       return target;
     }

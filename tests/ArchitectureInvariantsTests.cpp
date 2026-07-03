@@ -124,8 +124,12 @@ void TestArchitectureInvariants() {
              // ApplySettingsFontPickerIndex / CachedFontFamilies + the lazily cached family list),
              // and last_applied_settings_revision_ (gates ApplyLiveSettings to a single compare
              // when no setting changed).
+             // 1639: +2 for the settings-review bug-fix batch: autosave_last_viewport_ (tell a
+             // genuine edit apart from a tab switch so a pending after-delay autosave survives the
+             // switch) and last_applied_terminal_font_settings_revision_ (gate the per-frame terminal
+             // font apply on the settings revision, keeping the steady-state path allocation-free).
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1637);
+                                                     1639);
            });
 
   bool hard_failure = false;

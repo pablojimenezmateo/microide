@@ -2022,9 +2022,53 @@ void TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit() {
          "group 0 should restore its independent scroll position");
 }
 
+void TestWorkspaceShellAfterDelayAutosaveSurvivesTabSwitch() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  WriteFile(file_a, "alpha\n");
+  WriteFile(file_b, "beta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);  // tab 0
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);  // tab 1 (active)
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 2, "both files should open as tabs");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.autosave", "after_delay"),
+         "after_delay autosave should be settable");
+
+  // Focus tab A and let the autosave sampler baseline it (mirrors the per-input-batch
+  // MaybeArmAutosaveTimer call the event loop makes before the first edit).
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  WorkspaceShellTestAccess::MaybeArmAutosaveTimer(shell);
+  Expect(!WorkspaceShellTestAccess::AutosaveArmed(shell),
+         "no edit yet -> the after_delay autosave timer should be idle");
+
+  // Edit A so it becomes dirty, then re-sample to arm the debounce.
+  auto& editor_a = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor_a.MoveCursorTo(0, 0);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "x"), "editing tab A should be accepted");
+  WorkspaceShellTestAccess::MaybeArmAutosaveTimer(shell);
+  Expect(WorkspaceShellTestAccess::AutosaveArmed(shell),
+         "editing a dirty path-backed buffer should arm the after_delay autosave");
+
+  // Switch to the clean tab B before the debounce elapses and re-sample. Tab A's
+  // pending autosave must survive the switch: content_revision() is per-viewport, so
+  // sampling B used to look like an edit and disarm A's flush, silently dropping its
+  // unsaved edits until an unrelated edit re-armed.
+  WorkspaceShellTestAccess::ActivateTab(shell, 1);
+  WorkspaceShellTestAccess::MaybeArmAutosaveTimer(shell);
+  Expect(WorkspaceShellTestAccess::AutosaveArmed(shell),
+         "switching to a clean tab must not disarm tab A's pending after_delay autosave");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/AfterDelayAutosaveSurvivesTabSwitch",
+          TestWorkspaceShellAfterDelayAutosaveSurvivesTabSwitch);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesEditorGroupSplit",
           TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesBranchCompareState",
