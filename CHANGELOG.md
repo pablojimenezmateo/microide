@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.6.1] - 2026-07-03
+
+A **font-picker polish** release on top of 2.6.0. The installed-font
+dropdown becomes properly scrollable, collapses weight/style variants into
+single family names, and enables fontconfig by default so enumeration and
+resolution use real system font families. No persisted-format or plugin-API
+breaks.
+
+### Settings / Font picker
+- The font-family dropdown (editor + terminal) is now scrollable: explicit
+  scroll offset with clamping, a real scrollbar when the list overflows, and
+  mouse-wheel routing when the pointer is over the dropdown.
+- Font enumeration deduplicates weight/style variants into one family name.
+- fontconfig is enabled by default in the canonical build environments, so
+  installed fonts are listed with real, weight-deduped family names.
+
+### Fixes
+- Harden the no-fontconfig fallback to strip trailing style tails (including
+  abbreviations/concatenations like `BdIta`, `BoldOblique`) so variants
+  collapse to their family.
+- Fix `ResolveFamilyToFile`: `FcFontMatch` always returns a default font, so a
+  garbage family silently switched to it; only accept a match whose font
+  advertises the requested family, keeping unresolved families a no-op.
+
 ## [2.6.0] - 2026-07-03
 
 A **settings & tabs** release on top of 2.5.2. The settings surface is
