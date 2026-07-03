@@ -4,6 +4,7 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <functional>
 #include <limits>
 
 #include "editor/SyntaxHighlighter.h"
@@ -18,6 +19,24 @@ namespace microide::workspace {
 namespace {
 
 constexpr float kCompareDividerHitWidth = 12.0f;
+
+std::size_t HashCombine(std::size_t seed, std::size_t value) {
+  return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+}
+
+// Fingerprint of the inputs BuildCompareModel derives from. Includes both content
+// lengths alongside their hashes so a hash collision cannot alias two differently
+// sized buffers, and folds in the build options (ignore-whitespace changes the
+// model with no content change).
+std::size_t ComputeCompareDerivedFingerprint(std::string_view left, std::string_view right,
+                                             const compare::CompareBuildOptions& options) {
+  std::size_t fingerprint = std::hash<std::string_view>{}(left);
+  fingerprint = HashCombine(fingerprint, std::hash<std::string_view>{}(right));
+  fingerprint = HashCombine(fingerprint, left.size());
+  fingerprint = HashCombine(fingerprint, right.size());
+  fingerprint = HashCombine(fingerprint, options.ignore_whitespace ? 1u : 0u);
+  return fingerprint;
+}
 
 std::size_t CompareMaxVisualColumns(const compare::CompareModel& model) {
   std::size_t max_columns = 0;
@@ -435,9 +454,23 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
   const std::string right_content =
       util::SerializeLines(compare_tab.right_viewport.lines().Snapshot(),
                            compare_tab.right_viewport.line_ending());
-  compare_tab.model =
-      compare::BuildCompareModel(compare_tab.left_content, right_content, compare_tab.build_options);
-  ++compare_tab.model_revision;
+  // The model, syntax state, and per-row token buffers derive purely from the
+  // two content buffers and the build options. This refresh fires from ~10 call
+  // sites (key input, mouse, focus, plugin refresh, external change), many of
+  // which leave the compared content untouched, so recompute that block only when
+  // the content actually changed. The review/presentation markers below depend on
+  // external git + branch-review state and always refresh.
+  const std::size_t fingerprint = ComputeCompareDerivedFingerprint(
+      compare_tab.left_content, right_content, compare_tab.build_options);
+  const bool content_changed =
+      !compare_tab.derived_fingerprint_valid || compare_tab.derived_fingerprint != fingerprint;
+  if (content_changed) {
+    compare_tab.model = compare::BuildCompareModel(compare_tab.left_content, right_content,
+                                                   compare_tab.build_options);
+    ++compare_tab.model_revision;
+    compare_tab.derived_fingerprint = fingerprint;
+    compare_tab.derived_fingerprint_valid = true;
+  }
   CompareTabReviewRefreshInput review_input{
       .repository_root = context_.current_project_state.root,
       .git_entry = std::nullopt,
@@ -449,20 +482,24 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
   ApplyBranchReviewPresentationMarkers(compare_tab,
                                        context_.current_project_state.branch_review);
   RefreshCompareReviewHeader(compare_tab);
-  const auto left_lines = SplitSyntaxLines(compare_tab.left_content);
-  compare_tab.left_initial_syntax_state =
-      editor::SyntaxHighlighter::InitialState(compare_tab.path, left_lines);
-  // Reuse the right buffer's cached snapshot instead of re-splitting the string
-  // we just serialized from it; Snapshot() is memoized, so this is a cache hit.
-  compare_tab.right_initial_syntax_state = editor::SyntaxHighlighter::InitialState(
-      compare_tab.path, compare_tab.right_viewport.lines().Snapshot());
-  compare_tab.left_current_syntax_state = compare_tab.left_initial_syntax_state;
-  compare_tab.right_current_syntax_state = compare_tab.right_initial_syntax_state;
-  compare_tab.left_tokens_by_row.assign(compare_tab.model.rows.size(), {});
-  compare_tab.right_tokens_by_row.assign(compare_tab.model.rows.size(), {});
-  compare_tab.syntax_rows_tokenized = 0;
-  compare_tab.syntax_highlighting_enabled = true;
-  compare_tab.max_visual_columns = CompareMaxVisualColumns(compare_tab.model);
+  if (content_changed) {
+    const auto left_lines = SplitSyntaxLines(compare_tab.left_content);
+    compare_tab.left_initial_syntax_state =
+        editor::SyntaxHighlighter::InitialState(compare_tab.path, left_lines);
+    // Reuse the right buffer's cached snapshot instead of re-splitting the string
+    // we just serialized from it; Snapshot() is memoized, so this is a cache hit.
+    compare_tab.right_initial_syntax_state = editor::SyntaxHighlighter::InitialState(
+        compare_tab.path, compare_tab.right_viewport.lines().Snapshot());
+    compare_tab.left_current_syntax_state = compare_tab.left_initial_syntax_state;
+    compare_tab.right_current_syntax_state = compare_tab.right_initial_syntax_state;
+    compare_tab.left_tokens_by_row.assign(compare_tab.model.rows.size(), {});
+    compare_tab.right_tokens_by_row.assign(compare_tab.model.rows.size(), {});
+    compare_tab.syntax_rows_tokenized = 0;
+    compare_tab.syntax_highlighting_enabled = true;
+    compare_tab.max_visual_columns = CompareMaxVisualColumns(compare_tab.model);
+  }
+  // Review/presentation markers may have changed even when content did not, so
+  // rebuild the scrollbar overlay cache lazily regardless.
   compare_tab.scrollbar_marker_cache_valid = false;
   compare_tab.scrollbar_marker_cache.clear();
   const std::size_t presentation_rows = CompareTabPresentationRowCount(compare_tab);

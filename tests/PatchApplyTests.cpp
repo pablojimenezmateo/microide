@@ -260,6 +260,110 @@ void TestPatchUnstageSelectedLinesWithStagedAndUnstagedChanges() {
          "unrelated unstaged worktree edits should remain");
 }
 
+void TestPatchStageNewFileUsesDevNull() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  std::filesystem::create_directories(repo_path);
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "seed.txt", "seed\n");
+  CommitAll(repo_path, "base", "base");
+
+  // An untracked file diffs empty-vs-content; staging its hunk must create the
+  // file in the index via a `/dev/null` patch.
+  const auto file_path = repo_path / "created.txt";
+  WriteFile(file_path, "alpha\nbeta\n");
+  const CompareModel model = BuildCompareModel("", "alpha\nbeta\n");
+  const auto patch = GenerateComparePatch(model, "created.txt", 0);
+  Expect(patch.has_value(), "new-file patch should be generated");
+  Expect(patch->find("--- /dev/null") != std::string::npos,
+         "new-file patch old side must be /dev/null");
+  Expect(patch->find("@@ -0,0 +1,2 @@") != std::string::npos,
+         "new-file hunk header must use a zero-length old range");
+
+  PatchApplyRequest request{
+      .operation = PatchOperationKind::StageHunk,
+      .target{.repository_root = repo_path,
+              .relative_path = std::filesystem::path("created.txt"),
+              .hunk = std::nullopt,
+              .line_selection = std::nullopt},
+      .model = model,
+  };
+  const auto result = ApplyPatchRequest(request, *patch);
+  Expect(result.category == PatchApplyResultCategory::Success,
+         "new-file patch should apply to the index");
+  GitRepository repo(repo_path);
+  const auto staged = repo.Execute({"show", ":created.txt"});
+  Expect(staged.success() && staged.output == "alpha\nbeta\n",
+         "staged new file must match the worktree content");
+}
+
+void TestPatchStageDeletedFileUsesDevNull() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  std::filesystem::create_directories(repo_path);
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "doomed.txt", "gamma\ndelta\n");
+  CommitAll(repo_path, "base", "base");
+
+  const CompareModel model = BuildCompareModel("gamma\ndelta\n", "");
+  const auto patch = GenerateComparePatch(model, "doomed.txt", 0);
+  Expect(patch.has_value(), "deleted-file patch should be generated");
+  Expect(patch->find("+++ /dev/null") != std::string::npos,
+         "deleted-file patch new side must be /dev/null");
+  Expect(patch->find("@@ -1,2 +0,0 @@") != std::string::npos,
+         "deleted-file hunk header must use a zero-length new range");
+
+  PatchApplyRequest request{
+      .operation = PatchOperationKind::StageHunk,
+      .target{.repository_root = repo_path,
+              .relative_path = std::filesystem::path("doomed.txt"),
+              .hunk = std::nullopt,
+              .line_selection = std::nullopt},
+      .model = model,
+  };
+  const auto result = ApplyPatchRequest(request, *patch);
+  Expect(result.category == PatchApplyResultCategory::Success,
+         "deleted-file patch should apply to the index");
+  GitRepository repo(repo_path);
+  const auto staged = repo.Execute({"show", ":doomed.txt"});
+  Expect(!staged.success(), "deleted file must be gone from the index");
+}
+
+void TestPatchStagePreservesMissingFinalNewline() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  std::filesystem::create_directories(repo_path);
+  InitializeGitRepo(repo_path);
+  const auto file_path = repo_path / "nonl.txt";
+  WriteFile(file_path, "a\nb\nc");  // no trailing newline
+  CommitAll(repo_path, "base", "base");
+  WriteFile(file_path, "a\nb\nC");  // edit last line, still no trailing newline
+
+  const CompareModel model = BuildCompareModel("a\nb\nc", "a\nb\nC");
+  Expect(model.left_final_newline_missing && model.right_final_newline_missing,
+         "both sides should be flagged as missing a final newline");
+  const auto patch = GenerateComparePatch(model, "nonl.txt", 0);
+  Expect(patch.has_value(), "no-newline patch should be generated");
+  Expect(patch->find("\\ No newline at end of file") != std::string::npos,
+         "patch must carry git's no-newline marker");
+
+  PatchApplyRequest request{
+      .operation = PatchOperationKind::StageHunk,
+      .target{.repository_root = repo_path,
+              .relative_path = std::filesystem::path("nonl.txt"),
+              .hunk = std::nullopt,
+              .line_selection = std::nullopt},
+      .model = model,
+  };
+  const auto result = ApplyPatchRequest(request, *patch);
+  Expect(result.category == PatchApplyResultCategory::Success,
+         "no-newline patch should apply to the index");
+  GitRepository repo(repo_path);
+  const auto staged = repo.Execute({"show", ":nonl.txt"});
+  Expect(staged.success() && staged.output == "a\nb\nC",
+         "staged blob must preserve the missing final newline (no added '\\n')");
+}
+
 }  // namespace
 
 void TestPatchGeneratorUtf8Paths() {
@@ -294,6 +398,10 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
   tests.push_back({"PatchApply/CrlfContextLines", TestPatchGeneratorCrlfContextLines});
   tests.push_back({"PatchApply/UnstageMixedIndexWorktree",
                    TestPatchUnstageSelectedLinesWithStagedAndUnstagedChanges});
+  tests.push_back({"PatchApply/StageNewFileDevNull", TestPatchStageNewFileUsesDevNull});
+  tests.push_back({"PatchApply/StageDeletedFileDevNull", TestPatchStageDeletedFileUsesDevNull});
+  tests.push_back({"PatchApply/PreserveMissingFinalNewline",
+                   TestPatchStagePreservesMissingFinalNewline});
 }
 
 }  // namespace microide::tests

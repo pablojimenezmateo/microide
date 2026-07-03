@@ -596,6 +596,37 @@ void TestBuildGitStatusMapFolderPriorityIsSingleSourced() {
          "folder aggregation must not depend on working-tree entry order");
 }
 
+void TestGitStatusCodePrecedenceIsUnified() {
+  // v1 and v2 porcelain mappers share one change-code core so they cannot drift:
+  // Deleted > Added(A|C) > Modified(M|R|T) > Clean.
+  Expect(GitPorcelainParser::StatusFromChangeCodeChars("D ") == GitFileStatus::Deleted,
+         "D maps to Deleted");
+  Expect(GitPorcelainParser::StatusFromChangeCodeChars(" D") == GitFileStatus::Deleted,
+         "trailing D maps to Deleted");
+  Expect(GitPorcelainParser::StatusFromChangeCodeChars("A ") == GitFileStatus::Added,
+         "A maps to Added");
+  Expect(GitPorcelainParser::StatusFromChangeCodeChars("C ") == GitFileStatus::Added,
+         "status C (copy) maps to Added");
+  Expect(GitPorcelainParser::StatusFromChangeCodeChars("M ") == GitFileStatus::Modified,
+         "M maps to Modified");
+  Expect(GitPorcelainParser::StatusFromChangeCodeChars("R ") == GitFileStatus::Modified,
+         "R maps to Modified");
+  Expect(GitPorcelainParser::StatusFromChangeCodeChars("T ") == GitFileStatus::Modified,
+         "T maps to Modified");
+  Expect(GitPorcelainParser::StatusFromChangeCodeChars("AD") == GitFileStatus::Deleted,
+         "Deleted takes precedence over Added");
+  Expect(GitPorcelainParser::StatusFromChangeCodeChars("  ") == GitFileStatus::Clean,
+         "no change code maps to Clean");
+  // The v1 full mapper classifies untracked and conflicted states before the core.
+  Expect(GitPorcelainParser::StatusFromPorcelainCode("??") == GitFileStatus::Untracked,
+         "?? maps to Untracked");
+  Expect(GitPorcelainParser::StatusFromPorcelainCode("UU") == GitFileStatus::Conflicted,
+         "UU maps to Conflicted");
+  // Diff codes deliberately differ: there C (copy) is Modified, not Added.
+  Expect(GitPorcelainParser::StatusFromDiffCode('C') == GitFileStatus::Modified,
+         "diff-code C maps to Modified, distinct from status C");
+}
+
 }  // namespace
 
 void RegisterGitServiceTests(std::vector<TestCase>& tests) {
@@ -616,6 +647,7 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/PorcelainParserStatusV1", TestGitPorcelainParserStatusV1);
   AddTest(tests, "Git/PorcelainParserWorkingTreeEntries", TestGitPorcelainParserWorkingTreeEntries);
   AddTest(tests, "Git/PorcelainParserLog", TestGitPorcelainParserLog);
+  AddTest(tests, "Git/StatusCodePrecedenceUnified", TestGitStatusCodePrecedenceIsUnified);
 }
 
 }  // namespace microide::tests

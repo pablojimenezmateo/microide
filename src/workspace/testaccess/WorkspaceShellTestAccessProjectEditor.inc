@@ -123,6 +123,9 @@
   static WorkspaceShell::CompareTabState& ActiveCompare(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].compare.value();
   }
+  static void RefreshActiveCompareDerivedState(WorkspaceShell& shell) {
+    shell.RefreshCompareTabDerivedState(ActiveCompare(shell));
+  }
   static WorkspaceShell::MergeTabState& ActiveMerge(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge.value();
   }

@@ -943,6 +943,7 @@ if(MICROIDE_FUZZ)
 
   add_executable(GitBlameParserFuzz
     src/util/Parse.cpp
+    src/util/StringUtil.cpp
     src/project/GitBlameParser.cpp
     tests/fuzz/GitBlameParserFuzz.cpp
   )

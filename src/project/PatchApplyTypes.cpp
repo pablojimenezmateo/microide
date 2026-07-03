@@ -18,16 +18,6 @@ bool PatchOperationAppliesToIndex(const PatchOperationKind operation) {
   return false;
 }
 
-bool PatchOperationAppliesToWorktree(const PatchOperationKind operation) {
-  switch (operation) {
-    case PatchOperationKind::DiscardHunk:
-    case PatchOperationKind::DiscardSelectedLines:
-      return true;
-    default:
-      return false;
-  }
-}
-
 bool PatchOperationReversesPatch(const PatchOperationKind operation) {
   switch (operation) {
     case PatchOperationKind::UnstageFile:
@@ -39,11 +29,6 @@ bool PatchOperationReversesPatch(const PatchOperationKind operation) {
     default:
       return false;
   }
-}
-
-PatchApplySurface PatchOperationApplySurface(const PatchOperationKind operation) {
-  return PatchOperationAppliesToWorktree(operation) ? PatchApplySurface::Worktree
-                                                    : PatchApplySurface::Index;
 }
 
 GitOperationResultCategory MapPatchResultToGitCategory(const PatchApplyResultCategory category) {

@@ -79,6 +79,12 @@ struct CompareTabState {
   std::size_t syntax_rows_tokenized = 0;
   bool syntax_highlighting_enabled = true;
   std::uint64_t model_revision = 0;
+  // Fingerprint of the (left_content, right_content, build_options) the model was
+  // last built from. Lets RefreshCompareTabDerivedState skip the expensive model
+  // + syntax + tokenization rebuild when a refresh fires (mouse, focus, plugin,
+  // external change) without the compared content having actually changed.
+  std::size_t derived_fingerprint = 0;
+  bool derived_fingerprint_valid = false;
   bool model_stale = false;
   bool model_refreshing = false;
   std::optional<CompareHoverState> hover_state;

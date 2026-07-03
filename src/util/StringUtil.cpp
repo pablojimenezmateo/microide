@@ -365,6 +365,21 @@ std::vector<std::string_view> SplitAsciiWhitespace(std::string_view text) {
   return parts;
 }
 
+std::vector<std::string_view> SplitNulDelimited(std::string_view text) {
+  std::vector<std::string_view> records;
+  std::size_t offset = 0;
+  while (offset < text.size()) {
+    const std::size_t nul = text.find('\0', offset);
+    if (nul == std::string_view::npos) {
+      records.push_back(text.substr(offset));
+      break;
+    }
+    records.push_back(text.substr(offset, nul - offset));
+    offset = nul + 1;
+  }
+  return records;
+}
+
 std::string CollapseAsciiWhitespace(std::string_view text) {
   std::string collapsed;
   collapsed.reserve(text.size());

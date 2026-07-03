@@ -1078,6 +1078,13 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
   CompareModel& model = result.model;
   CompareBuildProfile& profile = result.profile;
 
+  // A non-empty buffer that does not end in '\n' lacks a trailing newline; the
+  // patch generator uses this to emit `\ No newline at end of file`.
+  model.left_final_newline_missing = !left.empty() && left.back() != '\n';
+  model.right_final_newline_missing = !right.empty() && right.back() != '\n';
+  model.left_empty = left.empty();
+  model.right_empty = right.empty();
+
   const Clock::time_point total_start = Clock::now();
 
   const Clock::time_point split_start = Clock::now();

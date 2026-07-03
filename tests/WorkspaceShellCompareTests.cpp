@@ -1152,6 +1152,46 @@ void TestWorkspaceShellCommitPickerDismissesAfterOpeningCompare() {
          "selecting a commit should open and focus the comparison tab");
 }
 
+void TestWorkspaceShellCompareRecomputeGate() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare gate fixture", "compare gate fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+
+  // A refresh with no content change must reuse the existing model.
+  const std::uint64_t baseline_revision = compare.model_revision;
+  WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
+  WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
+  Expect(compare.model_revision == baseline_revision,
+         "no-op refreshes must not rebuild the compare model");
+
+  // A left-content change must rebuild exactly once.
+  compare.left_content = "int gamma() {\n  return 3;\n}\n";
+  WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
+  Expect(compare.model_revision == baseline_revision + 1,
+         "changed content must rebuild the compare model once");
+  const std::uint64_t after_content = compare.model_revision;
+  WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
+  Expect(compare.model_revision == after_content,
+         "refresh after a rebuild with unchanged content must not rebuild again");
+
+  // Toggling a build option changes the model without a content change.
+  compare.build_options.ignore_whitespace = !compare.build_options.ignore_whitespace;
+  WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
+  Expect(compare.model_revision == after_content + 1,
+         "toggling ignore-whitespace must rebuild the compare model");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
@@ -1201,6 +1241,7 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareAndMergePaneMinimaPreserveVisibleColumns);
   AddTest(tests, "WorkspaceShell/MergeToolbarLayoutClearsPaneHeaders",
           TestWorkspaceShellMergeToolbarLayoutClearsPaneHeaders);
+  AddTest(tests, "WorkspaceShell/CompareRecomputeGate", TestWorkspaceShellCompareRecomputeGate);
   AddTest(tests, "WorkspaceShell/CommitPickerDismissesAfterOpeningCompare",
           TestWorkspaceShellCommitPickerDismissesAfterOpeningCompare);
 }

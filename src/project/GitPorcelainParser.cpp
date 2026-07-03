@@ -3,7 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
-#include <sstream>
+
+#include "util/StringUtil.h"
 
 namespace microide::project {
 
@@ -28,13 +29,9 @@ bool StatusUsesTargetPath(std::string_view code) {
 std::vector<ParsedStatusV1Entry> ParseStatusV1Entries(std::string_view output) {
   std::vector<ParsedStatusV1Entry> entries;
 
-  std::size_t offset = 0;
-  while (offset < output.size()) {
-    const std::size_t end = output.find('\0', offset);
-    const std::size_t current_end = end == std::string_view::npos ? output.size() : end;
-    const std::string_view entry = output.substr(offset, current_end - offset);
-    offset = current_end == output.size() ? output.size() : current_end + 1;
-
+  const std::vector<std::string_view> records = util::SplitNulDelimited(output);
+  for (std::size_t i = 0; i < records.size(); ++i) {
+    const std::string_view entry = records[i];
     if (entry.size() < 4) {
       continue;
     }
@@ -45,15 +42,14 @@ std::vector<ParsedStatusV1Entry> ParseStatusV1Entries(std::string_view output) {
       continue;
     }
 
-    if (StatusUsesTargetPath(code) && offset < output.size()) {
-      const std::size_t target_end = output.find('\0', offset);
-      const std::size_t resolved_end =
-          target_end == std::string_view::npos ? output.size() : target_end;
-      const std::string_view target = output.substr(offset, resolved_end - offset);
+    // Rename/copy status codes are followed by the source path in the next
+    // NUL-delimited record; the destination path stays in `entry`.
+    if (StatusUsesTargetPath(code) && i + 1 < records.size()) {
+      const std::string_view target = records[i + 1];
       if (!target.empty()) {
         path = target;
       }
-      offset = resolved_end == output.size() ? output.size() : resolved_end + 1;
+      ++i;
     }
 
     const bool conflicted = IsConflictedStatus(code);
@@ -70,6 +66,19 @@ std::vector<ParsedStatusV1Entry> ParseStatusV1Entries(std::string_view output) {
 
 }  // namespace
 
+GitFileStatus GitPorcelainParser::StatusFromChangeCodeChars(std::string_view code) {
+  if (code.find('D') != std::string_view::npos) {
+    return GitFileStatus::Deleted;
+  }
+  if (code.find('A') != std::string_view::npos || code.find('C') != std::string_view::npos) {
+    return GitFileStatus::Added;
+  }
+  if (code.find_first_of("MRT") != std::string_view::npos) {
+    return GitFileStatus::Modified;
+  }
+  return GitFileStatus::Clean;
+}
+
 GitFileStatus GitPorcelainParser::StatusFromPorcelainCode(std::string_view code) {
   if (code == "??" || code == "?? ") {
     return GitFileStatus::Untracked;
@@ -77,16 +86,8 @@ GitFileStatus GitPorcelainParser::StatusFromPorcelainCode(std::string_view code)
   if (IsConflictedStatus(code)) {
     return GitFileStatus::Conflicted;
   }
-  if (code.find('D') != std::string_view::npos) {
-    return GitFileStatus::Deleted;
-  }
-  if (code.find('A') != std::string_view::npos || code.find('C') != std::string_view::npos) {
-    return GitFileStatus::Added;
-  }
-  if (code.find_first_of("MRTU") != std::string_view::npos) {
-    return GitFileStatus::Modified;
-  }
-  return GitFileStatus::Clean;
+  // Conflict ('U') codes are handled above, so the ordinary precedence suffices.
+  return StatusFromChangeCodeChars(code);
 }
 
 GitFileStatus GitPorcelainParser::StatusFromDiffCode(char code) {
@@ -193,9 +194,13 @@ std::vector<GitCommitEntry> GitPorcelainParser::ParseLog(std::string_view output
   // Expected line layout (tab-separated, subject last so it may contain tabs):
   //   <hash>\t<short_hash>\t<author>\t<relative_date>\t<subject>
   std::vector<GitCommitEntry> commits;
-  std::istringstream stream(std::string{output});
-  std::string line;
-  while (std::getline(stream, line)) {
+  std::size_t line_start = 0;
+  while (line_start < output.size()) {
+    const std::size_t newline = output.find('\n', line_start);
+    const std::string_view line =
+        output.substr(line_start, (newline == std::string_view::npos ? output.size() : newline) -
+                                       line_start);
+    line_start = newline == std::string_view::npos ? output.size() : newline + 1;
     if (line.empty()) {
       continue;
     }
@@ -204,7 +209,7 @@ std::vector<GitCommitEntry> GitPorcelainParser::ParseLog(std::string_view output
     bool well_formed = true;
     for (std::size_t i = 0; i < tabs.size(); ++i) {
       const std::size_t pos = line.find('\t', search);
-      if (pos == std::string::npos) {
+      if (pos == std::string_view::npos) {
         well_formed = false;
         break;
       }
@@ -215,11 +220,11 @@ std::vector<GitCommitEntry> GitPorcelainParser::ParseLog(std::string_view output
       continue;
     }
     commits.push_back(GitCommitEntry{
-        .hash = line.substr(0, tabs[0]),
-        .short_hash = line.substr(tabs[0] + 1, tabs[1] - tabs[0] - 1),
-        .subject = line.substr(tabs[3] + 1),
-        .author = line.substr(tabs[1] + 1, tabs[2] - tabs[1] - 1),
-        .relative_date = line.substr(tabs[2] + 1, tabs[3] - tabs[2] - 1),
+        .hash = std::string(line.substr(0, tabs[0])),
+        .short_hash = std::string(line.substr(tabs[0] + 1, tabs[1] - tabs[0] - 1)),
+        .subject = std::string(line.substr(tabs[3] + 1)),
+        .author = std::string(line.substr(tabs[1] + 1, tabs[2] - tabs[1] - 1)),
+        .relative_date = std::string(line.substr(tabs[2] + 1, tabs[3] - tabs[2] - 1)),
     });
   }
   return commits;

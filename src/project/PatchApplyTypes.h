@@ -23,11 +23,6 @@ enum class PatchOperationKind {
   DiscardSelectedLines,
 };
 
-enum class PatchApplySurface {
-  Index,
-  Worktree,
-};
-
 enum class PatchApplyResultCategory {
   Success,
   Cancelled,
@@ -78,9 +73,7 @@ struct PatchApplyResult {
 };
 
 bool PatchOperationAppliesToIndex(PatchOperationKind operation);
-bool PatchOperationAppliesToWorktree(PatchOperationKind operation);
 bool PatchOperationReversesPatch(PatchOperationKind operation);
-PatchApplySurface PatchOperationApplySurface(PatchOperationKind operation);
 GitOperationResultCategory MapPatchResultToGitCategory(PatchApplyResultCategory category);
 const char* PatchApplyResultCategoryLabel(PatchApplyResultCategory category);
 

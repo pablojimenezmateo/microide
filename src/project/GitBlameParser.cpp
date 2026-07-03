@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "util/Parse.h"
+#include "util/StringUtil.h"
 
 namespace microide::project {
 namespace {
@@ -31,27 +32,6 @@ struct CommitMetadata {
   std::int64_t author_time = 0;
   bool boundary = false;
 };
-
-std::vector<std::string_view> SplitFields(std::string_view line) {
-  std::vector<std::string_view> fields;
-  std::size_t offset = 0;
-  while (offset < line.size()) {
-    while (offset < line.size() && line[offset] == ' ') {
-      ++offset;
-    }
-    if (offset >= line.size()) {
-      break;
-    }
-    const std::size_t end = line.find(' ', offset);
-    if (end == std::string_view::npos) {
-      fields.push_back(line.substr(offset));
-      break;
-    }
-    fields.push_back(line.substr(offset, end - offset));
-    offset = end + 1;
-  }
-  return fields;
-}
 
 }  // namespace
 
@@ -80,7 +60,7 @@ std::vector<GitBlameAttribution> ParseGitBlameIncrementalOutput(std::string_view
     }
 
     if (IsHexCommitPrefix(line)) {
-      const std::vector<std::string_view> fields = SplitFields(line);
+      const std::vector<std::string_view> fields = util::SplitAsciiWhitespace(line);
       if (fields.size() < 4) {
         continue;
       }

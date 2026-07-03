@@ -43,6 +43,18 @@ struct CompareHunk {
 struct CompareModel {
   std::vector<CompareRow> rows;
   std::vector<CompareHunk> hunks;
+  // True when the corresponding source buffer was non-empty and did NOT end with
+  // a newline. Lets the patch generator emit git's `\ No newline at end of file`
+  // marker so staging/discarding a hunk that touches the final line does not
+  // silently add a trailing newline.
+  bool left_final_newline_missing = false;
+  bool right_final_newline_missing = false;
+  // True when the corresponding source buffer was empty. Distinguishes a
+  // whole-file add (left empty) or delete (right empty) — which the diff can't
+  // otherwise tell from a hunk that merely happens to be all additions/deletions
+  // — so the patch generator can emit `/dev/null` headers.
+  bool left_empty = false;
+  bool right_empty = false;
 };
 
 struct CompareBuildProfile {

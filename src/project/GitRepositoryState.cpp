@@ -2,6 +2,7 @@
 
 #include <sstream>
 
+#include "project/GitPorcelainParser.h"
 #include "util/StringUtil.h"
 
 namespace microide::project {
@@ -89,16 +90,7 @@ GitFileStatus StatusFromPorcelainV2XY(std::string_view xy, bool conflicted) {
   if (xy == "??") {
     return GitFileStatus::Untracked;
   }
-  if (xy.find('D') != std::string_view::npos) {
-    return GitFileStatus::Deleted;
-  }
-  if (xy.find('A') != std::string_view::npos || xy.find('C') != std::string_view::npos) {
-    return GitFileStatus::Added;
-  }
-  if (xy.find_first_of("MRT") != std::string_view::npos) {
-    return GitFileStatus::Modified;
-  }
-  return GitFileStatus::Clean;
+  return GitPorcelainParser::StatusFromChangeCodeChars(xy);
 }
 
 }  // namespace microide::project

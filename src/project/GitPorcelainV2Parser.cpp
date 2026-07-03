@@ -1,7 +1,6 @@
 #include "project/GitPorcelainV2Parser.h"
 
 #include <charconv>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -9,42 +8,11 @@
 using std::string_view_literals::operator""sv;
 
 #include "project/GitPorcelainParser.h"
+#include "util/StringUtil.h"
 
 namespace microide::project {
 
 namespace {
-
-std::vector<std::string_view> SplitNulDelimitedRecords(std::string_view output) {
-  std::vector<std::string_view> records;
-  std::size_t offset = 0;
-  while (offset < output.size()) {
-    const std::size_t end = output.find('\0', offset);
-    const std::size_t current_end = end == std::string_view::npos ? output.size() : end;
-    if (current_end > offset) {
-      records.push_back(output.substr(offset, current_end - offset));
-    }
-    offset = current_end == output.size() ? output.size() : current_end + 1;
-  }
-  return records;
-}
-
-std::vector<std::string_view> SplitSpaces(std::string_view text) {
-  std::vector<std::string_view> parts;
-  std::size_t offset = 0;
-  while (offset < text.size()) {
-    while (offset < text.size() && text[offset] == ' ') {
-      ++offset;
-    }
-    if (offset >= text.size()) {
-      break;
-    }
-    const std::size_t end = text.find(' ', offset);
-    const std::size_t current_end = end == std::string_view::npos ? text.size() : end;
-    parts.push_back(text.substr(offset, current_end - offset));
-    offset = current_end == text.size() ? text.size() : current_end + 1;
-  }
-  return parts;
-}
 
 std::string_view PathAfterLeadingTokens(std::string_view body, std::size_t token_count) {
   std::size_t offset = 0;
@@ -141,7 +109,8 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
   };
   state.repo_available = true;
 
-  const std::vector<std::string_view> records = SplitNulDelimitedRecords(output);
+  const std::vector<std::string_view> records = util::SplitNulDelimited(output);
+  state.entries.reserve(records.size());
   for (std::size_t index = 0; index < records.size(); ++index) {
     const std::string_view record = records[index];
     if (record.empty()) {
@@ -175,14 +144,17 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
 
     const char kind = record[0];
     const std::string_view body = record.substr(2);
-    const auto fields = SplitSpaces(body);
-    if (fields.empty()) {
+    // Only the leading XY status field is consumed here; extract it directly
+    // instead of splitting the whole body into a throwaway vector per entry.
+    const std::size_t xy_end = body.find(' ');
+    const std::string_view xy =
+        body.substr(0, xy_end == std::string_view::npos ? body.size() : xy_end);
+    if (xy.empty()) {
       continue;
     }
 
     switch (kind) {
       case '1': {
-        const std::string_view xy = fields[0];
         const std::string_view path = PathAfterLeadingTokens(body, 7);
         if (path.empty()) {
           break;
@@ -193,7 +165,6 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
         break;
       }
       case '2': {
-        const std::string_view xy = fields[0];
         const std::string_view path = PathAfterLeadingTokens(body, 8);
         if (path.empty()) {
           break;
@@ -213,7 +184,6 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
         break;
       }
       case 'u': {
-        const std::string_view xy = fields[0];
         // Porcelain v2 unmerged: XY sub m1 m2 m3 mW h1 h2 h3 <path>
         const std::string_view path = PathAfterLeadingTokens(body, 9);
         if (path.empty()) {

@@ -66,6 +66,11 @@ bool IsAllAsciiDigits(std::string_view text);
 // Leading/trailing whitespace produces no empty tokens. The returned views are
 // valid only for the lifetime of `text`.
 std::vector<std::string_view> SplitAsciiWhitespace(std::string_view text);
+// Split `text` on NUL bytes into records, returning views into `text`. Empty
+// records (adjacent NULs) ARE preserved so positional `-z` git output stays
+// aligned; a single terminating NUL yields no trailing empty record. Views are
+// valid only for the lifetime of `text`.
+std::vector<std::string_view> SplitNulDelimited(std::string_view text);
 // Replace each run of ASCII whitespace with a single space. Leading whitespace
 // is dropped; trailing whitespace, if any, is also dropped.
 std::string CollapseAsciiWhitespace(std::string_view text);

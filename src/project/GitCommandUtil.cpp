@@ -56,18 +56,6 @@ std::optional<std::string> ResolveHeadId(const std::filesystem::path& root) {
   return head_id.empty() ? std::nullopt : std::make_optional(std::move(head_id));
 }
 
-CommandResult ReadCommandOutput(const std::vector<std::string>& command, bool silence_stderr) {
-  platform::SubprocessOptions options;
-  options.capture_stdout = true;
-  options.capture_stderr = !silence_stderr;
-  options.silence_stderr = silence_stderr;
-  const platform::SubprocessResult result = platform::RunSubprocess(command, options);
-  return CommandResult{
-      .exit_code = result.exit_code,
-      .output = result.stdout_text,
-  };
-}
-
 CommandResult ReadGitCommandOutput(const std::filesystem::path& root,
                                    std::vector<std::string> arguments,
                                    bool silence_stderr) {
@@ -107,10 +95,6 @@ CommandResult ReadGitCommandOutputWithStdin(const std::filesystem::path& root,
       .exit_code = result.exit_code,
       .output = std::move(output),
   };
-}
-
-bool CommandSucceeds(const std::vector<std::string>& command, bool silence_stderr) {
-  return ReadCommandOutput(command, silence_stderr).success();
 }
 
 bool GitCommandSucceeds(const std::filesystem::path& root,

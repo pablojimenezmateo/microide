@@ -13,16 +13,15 @@ namespace {
 using compare::CompareRow;
 using compare::CompareRowKind;
 
-std::string NormalizePatchLineText(std::string text) {
-  while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
-    text.pop_back();
-  }
-  return text;
+// CompareRow line text never carries a trailing newline (SplitLineViews strips
+// endings), so patch lines are emitted verbatim with a single terminator.
+void AppendPatchLine(std::ostringstream& stream, char prefix, std::string_view text) {
+  stream << prefix << text << '\n';
 }
 
-void AppendPatchLine(std::ostringstream& stream, char prefix, const std::string& text) {
-  stream << prefix << NormalizePatchLineText(text) << '\n';
-}
+// git's exact marker (leading backslash-space) after a line whose source file
+// lacks a trailing newline.
+constexpr std::string_view kNoNewlineMarker = "\\ No newline at end of file\n";
 
 std::size_t ExpandRangeStart(const compare::CompareModel& model,
                              std::size_t start_row,
@@ -90,9 +89,38 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
   start_row = ExpandRangeStart(model, start_row, options.context_lines);
   end_row = ExpandRangeEnd(model, end_row, options.context_lines);
 
+  // Whole-file add/delete need `/dev/null` headers and a zero-length range on the
+  // empty side, otherwise `git apply --check` rejects staging the first hunk of a
+  // created/removed file. The diff alone can't distinguish "new file" from "a hunk
+  // that is all additions" (an empty source buffer becomes one phantom empty
+  // line), so the model records the raw emptiness of each side.
+  const bool is_new_file = model.left_empty && !model.right_empty;
+  const bool is_deleted_file = !model.left_empty && model.right_empty;
+
+  // Highest line number present on each side, used to place the
+  // `\ No newline at end of file` marker after the file's final line. (A file
+  // ending in a newline has a trailing phantom empty line here, but in that case
+  // *_final_newline_missing is false, so the marker is never emitted.)
+  int last_left_line = 0;
+  int last_right_line = 0;
+  for (const CompareRow& row : model.rows) {
+    last_left_line = std::max(last_left_line, row.left_line);
+    last_right_line = std::max(last_right_line, row.right_line);
+  }
+
+  // The last line of a side needs a `\ No newline at end of file` marker when
+  // that source buffer had no trailing newline.
+  const auto left_no_newline = [&](int left_line) {
+    return left_line == last_left_line && model.left_final_newline_missing;
+  };
+  const auto right_no_newline = [&](int right_line) {
+    return right_line == last_right_line && model.right_final_newline_missing;
+  };
+
   struct PatchBodyLine {
     char prefix = ' ';
-    std::string text;
+    std::string_view text;
+    bool no_newline_after = false;
   };
   std::vector<PatchBodyLine> body_lines;
   body_lines.reserve(end_row - start_row + 2);
@@ -101,28 +129,35 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
     const CompareRow& compare_row = model.rows[row];
     switch (compare_row.kind) {
       case CompareRowKind::Unchanged: {
-        const std::string context_text = NormalizePatchLineText(
-            compare_row.left_text.empty() ? compare_row.right_text : compare_row.left_text);
+        const std::string_view context_text =
+            compare_row.left_text.empty() ? std::string_view(compare_row.right_text)
+                                          : std::string_view(compare_row.left_text);
         const bool real_blank_line = context_text.empty() && compare_row.left_line > 0 &&
                                      compare_row.right_line > 0 &&
                                      compare_row.left_line == compare_row.right_line;
         if (context_text.empty() && !real_blank_line) {
           break;
         }
-        body_lines.push_back(PatchBodyLine{' ', context_text});
+        body_lines.push_back(PatchBodyLine{' ', context_text,
+                                           left_no_newline(compare_row.left_line) ||
+                                               right_no_newline(compare_row.right_line)});
         break;
       }
       case CompareRowKind::Deleted:
-        body_lines.push_back(PatchBodyLine{'-', compare_row.left_text});
+        body_lines.push_back(
+            PatchBodyLine{'-', compare_row.left_text, left_no_newline(compare_row.left_line)});
         has_change = true;
         break;
       case CompareRowKind::Added:
-        body_lines.push_back(PatchBodyLine{'+', compare_row.right_text});
+        body_lines.push_back(
+            PatchBodyLine{'+', compare_row.right_text, right_no_newline(compare_row.right_line)});
         has_change = true;
         break;
       case CompareRowKind::Modified:
-        body_lines.push_back(PatchBodyLine{'-', compare_row.left_text});
-        body_lines.push_back(PatchBodyLine{'+', compare_row.right_text});
+        body_lines.push_back(
+            PatchBodyLine{'-', compare_row.left_text, left_no_newline(compare_row.left_line)});
+        body_lines.push_back(
+            PatchBodyLine{'+', compare_row.right_text, right_no_newline(compare_row.right_line)});
         has_change = true;
         break;
     }
@@ -130,6 +165,16 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
 
   if (!has_change) {
     return std::nullopt;
+  }
+
+  // A whole-file add/delete patch must contain only the created (`+`) or removed
+  // (`-`) side; the phantom empty line that represents the empty buffer would
+  // otherwise emit a spurious context/deletion line that contradicts the
+  // `-0,0` / `+0,0` range.
+  if (is_new_file) {
+    std::erase_if(body_lines, [](const PatchBodyLine& line) { return line.prefix != '+'; });
+  } else if (is_deleted_file) {
+    std::erase_if(body_lines, [](const PatchBodyLine& line) { return line.prefix != '-'; });
   }
 
   int old_count = 0;
@@ -143,20 +188,37 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
     }
   }
 
-  const int old_start = FirstPatchLineNumber(model, start_row, end_row, false);
-  const int new_start = FirstPatchLineNumber(model, start_row, end_row, true);
+  const int old_range_start = is_new_file ? 0 : FirstPatchLineNumber(model, start_row, end_row, false);
+  const int new_range_start =
+      is_deleted_file ? 0 : FirstPatchLineNumber(model, start_row, end_row, true);
+  const int old_range_count = is_new_file ? 0 : std::max(old_count, 1);
+  const int new_range_count = is_deleted_file ? 0 : std::max(new_count, 1);
+
   std::ostringstream body;
   for (const PatchBodyLine& line : body_lines) {
     AppendPatchLine(body, line.prefix, line.text);
+    if (line.no_newline_after) {
+      body << kNoNewlineMarker;
+    }
   }
   const std::string path = relative_path.generic_string();
 
   std::ostringstream stream;
   stream << "diff --git a/" << path << " b/" << path << '\n';
-  stream << "--- a/" << path << '\n';
-  stream << "+++ b/" << path << '\n';
-  stream << "@@ -" << old_start << ',' << std::max(old_count, 1) << " +"
-         << new_start << ',' << std::max(new_count, 1) << " @@\n";
+  if (is_new_file) {
+    stream << "new file mode 100644\n";
+    stream << "--- /dev/null\n";
+    stream << "+++ b/" << path << '\n';
+  } else if (is_deleted_file) {
+    stream << "deleted file mode 100644\n";
+    stream << "--- a/" << path << '\n';
+    stream << "+++ /dev/null\n";
+  } else {
+    stream << "--- a/" << path << '\n';
+    stream << "+++ b/" << path << '\n';
+  }
+  stream << "@@ -" << old_range_start << ',' << old_range_count << " +" << new_range_start << ','
+         << new_range_count << " @@\n";
   stream << body.str();
   return stream.str();
 }

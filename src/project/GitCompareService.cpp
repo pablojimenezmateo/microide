@@ -4,7 +4,6 @@
 #include <array>
 #include <filesystem>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -12,18 +11,11 @@
 #include "project/GitCommandUtil.h"
 #include "project/GitPorcelainParser.h"
 #include "project/GitRepository.h"
+#include "util/StringUtil.h"
 
 namespace microide::project {
 
 namespace {
-
-std::string TrimTrailingWhitespace(std::string text) {
-  while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ' ||
-                           text.back() == '\t')) {
-    text.pop_back();
-  }
-  return text;
-}
 
 std::string ShortRefLabel(std::string_view ref) {
   if (ref.empty()) {
@@ -44,7 +36,7 @@ std::string ShortRefLabel(std::string_view ref) {
 std::optional<std::string> ReadTrimmedGitValue(const GitRepository& repo,
                                                std::initializer_list<std::string_view> arguments) {
   const auto result = repo.Execute(arguments);
-  const std::string value = TrimTrailingWhitespace(result.output);
+  const std::string value = util::TrimAsciiWhitespace(result.output);
   if (!result.success() || value.empty()) {
     return std::nullopt;
   }
@@ -146,10 +138,7 @@ std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& 
   }
 
   std::vector<GitBranchReference> branches;
-  std::istringstream stream(result.output);
-  std::string line;
-  while (std::getline(stream, line)) {
-    const std::string ref = TrimTrailingWhitespace(line);
+  for (const std::string_view ref : util::SplitLineViews(result.output)) {
     if (ref.empty()) {
       continue;
     }
@@ -217,7 +206,7 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
 
   const auto origin_head_result =
       repo.Execute({"symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"});
-  const std::string origin_head = TrimTrailingWhitespace(origin_head_result.output);
+  const std::string origin_head = util::TrimAsciiWhitespace(origin_head_result.output);
   if (origin_head_result.success() && !origin_head.empty()) {
     return GitBranchReference{
         .ref = origin_head,
@@ -240,7 +229,7 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
 
   const auto upstream_result =
       repo.Execute({"rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"});
-  const std::string upstream = TrimTrailingWhitespace(upstream_result.output);
+  const std::string upstream = util::TrimAsciiWhitespace(upstream_result.output);
   if (upstream_result.success() && !upstream.empty()) {
     return GitBranchReference{
         .ref = upstream,
@@ -253,38 +242,23 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
 
 std::vector<GitBranchFileEntry> ParseGitBranchDiffNameStatusZ(std::string_view output) {
   std::vector<GitBranchFileEntry> entries;
-  std::size_t pos = 0;
-  const auto next_token = [&](std::string_view& token) -> bool {
-    if (pos >= output.size()) {
-      return false;
-    }
-    const std::size_t nul = output.find('\0', pos);
-    if (nul == std::string_view::npos) {
-      token = output.substr(pos);
-      pos = output.size();
-      return !token.empty();
-    }
-    token = output.substr(pos, nul - pos);
-    pos = nul + 1;
-    return true;
-  };
-
-  std::string_view status_token;
-  while (next_token(status_token)) {
+  const std::vector<std::string_view> tokens = util::SplitNulDelimited(output);
+  for (std::size_t i = 0; i < tokens.size();) {
+    const std::string_view status_token = tokens[i++];
     if (status_token.empty()) {
       continue;
     }
-    const char code = status_token.front();
-    std::string_view path_token;
-    if (!next_token(path_token)) {
+    if (i >= tokens.size()) {
       break;
     }
+    const char code = status_token.front();
+    std::string_view path_token = tokens[i++];
     // Rename/copy records carry the old path then the new path; report the new one.
-    if (code == 'R' || code == 'C') {
-      std::string_view new_path;
-      if (next_token(new_path) && !new_path.empty()) {
-        path_token = new_path;
+    if ((code == 'R' || code == 'C') && i < tokens.size()) {
+      if (!tokens[i].empty()) {
+        path_token = tokens[i];
       }
+      ++i;
     }
     if (path_token.empty()) {
       continue;
@@ -355,9 +329,7 @@ std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::files
   }
 
   std::vector<std::filesystem::path> paths;
-  std::istringstream stream(result.output);
-  std::string line;
-  while (std::getline(stream, line)) {
+  for (const std::string_view line : util::SplitLineViews(result.output)) {
     if (line.empty()) {
       continue;
     }
