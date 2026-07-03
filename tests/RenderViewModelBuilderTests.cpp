@@ -483,7 +483,59 @@ void TestSettingsOverlayWrapsLongDescriptions() {
   }
 }
 
+// The font-picker dropdown windows a long family list; when it overflows the visible
+// window the builder must emit scrollbar geometry (drawn by the render pass) and the
+// scroll offset must control which slice of families becomes item view models.
+void TestSettingsOverlayFontPickerBuildsScrollbarOnOverflow() {
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+  TextRenderer text_renderer;
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
+                                    LayoutModeInputs{}, true);
+
+  SettingsOverlayService service;
+  service.OpenSettings();
+  SettingsOverlayRow font_row;
+  font_row.id = "editor.font_family";
+  font_row.label = "Font Family";
+  font_row.description = "Editor font family.";
+  font_row.control_kind = microide::workspace::SettingsControlKind::TextEdit;
+  font_row.editable = true;
+  font_row.suggests_fonts = true;
+  service.RebuildSettingsRows({}, {}, {}, {font_row});
+  service.SetSelectedCategory(0);
+
+  const int total = SettingsOverlayService::kPickerVisibleFamilies + 5;
+  std::vector<std::string> families;
+  for (int i = 0; i < total; ++i) {
+    families.push_back("Family " + std::string(1, static_cast<char>('A' + i)));
+  }
+  service.BeginFontValueEdit("editor.font_family", families);
+
+  const auto vm = builder.BuildSettingsOverlay(layout, service, text_renderer);
+  Expect(vm.value_picker.visible, "the font picker should be visible while editing a font row");
+  Expect(vm.value_picker.scrollbar.has_value(),
+         "an overflowing family list should build a picker scrollbar");
+  // Window shows kPickerVisibleFamilies rows + the pinned "Choose file…" footer.
+  Expect(vm.value_picker.items.size() ==
+             static_cast<std::size_t>(SettingsOverlayService::kPickerVisibleFamilies) + 1,
+         "the picker draws one window of families plus the Choose file… footer");
+  Expect(vm.value_picker.items.front().text == "Family A",
+         "at scroll 0 the window starts at the first family");
+
+  // Scrolling advances the visible slice and keeps the scrollbar present.
+  service.SetPickerScroll(3);
+  const auto scrolled = builder.BuildSettingsOverlay(layout, service, text_renderer);
+  Expect(scrolled.value_picker.scrollbar.has_value(), "scrollbar persists while scrolled");
+  Expect(scrolled.value_picker.items.front().text == "Family D",
+         "a scroll offset of 3 starts the window at the fourth family");
+  Expect(scrolled.value_picker.more_above && scrolled.value_picker.more_below,
+         "a mid-list window reports families both above and below");
+}
+
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFontPickerBuildsScrollbarOnOverflow",
+          TestSettingsOverlayFontPickerBuildsScrollbarOnOverflow);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayWrapsLongDescriptions",
           TestSettingsOverlayWrapsLongDescriptions);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewIsRegistrySourcedWithRecents",

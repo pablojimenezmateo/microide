@@ -657,9 +657,19 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
         // the render pass, which publishes its bound into settings_overlay_max_scroll_row_.
         int max_scroll = settings_overlay_max_scroll_row_;
         if (settings_overlay_service_.Mode() == SettingsOverlayMode::Settings) {
-          max_scroll = RenderViewModelBuilder(context_)
-                           .BuildSettingsOverlay(layout, settings_overlay_service_, text_renderer_)
-                           .max_scroll;
+          const SettingsOverlayViewModel vm =
+              RenderViewModelBuilder(context_)
+                  .BuildSettingsOverlay(layout, settings_overlay_service_, text_renderer_);
+          // While the font picker is open, the wheel scrolls the dropdown when the
+          // pointer is over it, leaving the rows beneath untouched.
+          if (vm.value_picker.visible &&
+              Contains(vm.value_picker.rect, event.wheel.mouse_x, event.wheel.mouse_y)) {
+            settings_overlay_service_.SetPickerScroll(
+                settings_overlay_service_.PickerScroll() - vertical_ticks);
+            EnsureRedraw([this]() { RequestOverlayRedraw(); });
+            return true;
+          }
+          max_scroll = vm.max_scroll;
         }
         settings_overlay_service_.SetScrollRow(
             std::clamp(settings_overlay_service_.ScrollRow() - vertical_ticks, 0, max_scroll));

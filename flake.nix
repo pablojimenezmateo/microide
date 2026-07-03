@@ -47,6 +47,11 @@
             pkgs.sdl3-ttf
             pkgs.pcre2
             pkgs.lua5_4
+            # fontconfig gives the font-family picker real, weight-deduped family
+            # names. CMake auto-detects it via pkg-config (soft dependency: absent
+            # → filesystem-scan fallback), so make it explicit here rather than
+            # relying on it appearing transitively in the SDL3/freetype closure.
+            pkgs.fontconfig
           ];
 
           microide = pkgs.stdenv.mkDerivation {
@@ -141,6 +146,7 @@
               pkgs.sdl3-ttf
               pkgs.pcre2
               pkgs.lua5_4
+              pkgs.fontconfig
             ];
           };
         });
@@ -152,6 +158,7 @@
             pkgs.sdl3-ttf
             pkgs.pcre2
             pkgs.lua5_4
+            pkgs.fontconfig
           ];
         in
         {

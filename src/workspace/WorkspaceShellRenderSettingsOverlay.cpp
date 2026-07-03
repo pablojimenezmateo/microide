@@ -403,6 +403,9 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
       text_renderer_.DrawStringOn(renderer, text_x, text_y, foreground, background,
                                   text_renderer_.TruncateToWidth(item.text, item.rect.w - 16.0f));
     }
+    if (picker.scrollbar.has_value()) {
+      DrawScrollbar(renderer, theme_, picker.scrollbar->track, picker.scrollbar->thumb, false);
+    }
   }
 }
 

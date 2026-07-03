@@ -30,6 +30,9 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   void SetFontPointSize(float points) override;
   bool SetFontFamily(std::string_view family) override;
   std::vector<std::string> AvailableFontFamilies() const override;
+  // Test seam: derive the picker's display family name from a font file stem the
+  // way the no-fontconfig fallback does (strips weight/style tails, splits words).
+  static std::string FontDisplayNameFromStemForTesting(std::string_view stem);
   float CharWidth() const override { return char_width_; }
   float LineHeight() const override { return line_height_; }
   TextClipPadding ClipPadding() const override { return clip_padding_; }

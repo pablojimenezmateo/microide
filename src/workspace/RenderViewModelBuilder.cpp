@@ -1418,15 +1418,14 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     // Use the already-computed `filtered` rather than PickerChooseFileIndex(), which
     // re-runs the whole FilteredFontFamilies() filter every frame the picker is open.
     const int choose_file_index = family_count;
-    constexpr int kMaxVisibleFamilies = 8;
+    constexpr int kMaxVisibleFamilies = SettingsOverlayService::kPickerVisibleFamilies;
     constexpr float kPickerRowH = 22.0f;
     constexpr float kPickerPad = 3.0f;
 
-    int start = 0;
-    if (family_count > kMaxVisibleFamilies && highlight >= kMaxVisibleFamilies) {
-      start = std::min(highlight - kMaxVisibleFamilies + 1, family_count - kMaxVisibleFamilies);
-    }
-    start = std::clamp(start, 0, std::max(0, family_count - kMaxVisibleFamilies));
+    // The scroll offset is owned by the service (driven by wheel / scrollbar, kept
+    // in view by keyboard nav); the window is just a clamped slice from it.
+    const int start =
+        std::clamp(service.PickerScroll(), 0, std::max(0, family_count - kMaxVisibleFamilies));
     const int end = std::min(family_count, start + kMaxVisibleFamilies);
     const int visible_family_rows = end - start;
     const int total_rows = visible_family_rows + 1;  // + "Choose file…" footer
@@ -1447,6 +1446,15 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     picker.rect = MakeRect(card_x, card_y, card_w, card_h);
     picker.more_above = start > 0;
     picker.more_below = end < family_count;
+    if (family_count > kMaxVisibleFamilies) {
+      // Scrollbar spans just the family-rows region (above the pinned footer).
+      const SDL_FRect families_rect = MakeRect(
+          card_x, card_y + kPickerPad, card_w,
+          static_cast<float>(visible_family_rows) * kPickerRowH);
+      picker.scrollbar = MakeVerticalScrollbarGeometry(
+          families_rect, static_cast<float>(family_count),
+          static_cast<float>(kMaxVisibleFamilies), static_cast<float>(start), false);
+    }
     picker.items.reserve(static_cast<std::size_t>(total_rows));
     float item_y = card_y + kPickerPad;
     for (int i = start; i < end; ++i) {
