@@ -65,6 +65,30 @@ void TestProjectChangeCoalescerMergesBursts() {
   Expect(ready->generation == 1, "coalescer should assign a monotonic generation id");
 }
 
+// A file-change flood (thousands of distinct paths) must not grow the pending
+// list without bound or make the merge O(N^2). Past the cap the coalescer
+// collapses to a single full-tree rescan and stops tracking individual paths.
+void TestProjectChangeCoalescerCollapsesFloodToRescan() {
+  project::ProjectChangeCoalescer coalescer;
+  project::ProjectChangeBatch flood;
+  for (int i = 0; i < 20000; ++i) {
+    const std::string name = "gen/file_" + std::to_string(i) + ".o";
+    flood.file_changes.push_back(project::ProjectFileChange{
+        .kind = project::ProjectFileChangeKind::Created,
+        .relative_path = std::filesystem::path(name),
+        .absolute_path = std::filesystem::path("/tmp/" + name),
+    });
+  }
+  coalescer.Ingest(std::move(flood));
+
+  const std::optional<project::ProjectChangeBatch> ready = coalescer.ConsumeReady();
+  Expect(ready.has_value(), "the flood should still produce a ready batch");
+  Expect(ready->tree_rescan_requested,
+         "an over-cap flood must collapse to a full-tree rescan");
+  Expect(ready->file_changes.size() <= 1024,
+         "pending file changes must stay bounded under a flood");
+}
+
 void TestProjectChangeCoalescerSuppressesStaleGeneration() {
   project::ProjectChangeCoalescer coalescer;
   project::ProjectChangeBatch batch;
@@ -112,6 +136,8 @@ void TestGitRepositoryMetadataTrackerDetectsHeadChanges() {
 void RegisterProjectChangeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ProjectChange/NormalizerMapsIndexUpdates", TestProjectChangeNormalizerMapsIndexUpdates);
   AddTest(tests, "ProjectChange/CoalescerMergesBursts", TestProjectChangeCoalescerMergesBursts);
+  AddTest(tests, "ProjectChange/CoalescerCollapsesFloodToRescan",
+          TestProjectChangeCoalescerCollapsesFloodToRescan);
   AddTest(tests, "ProjectChange/CoalescerGeneration", TestProjectChangeCoalescerSuppressesStaleGeneration);
   AddTest(tests, "ProjectChange/GitMetadataHeadChange", TestGitRepositoryMetadataTrackerDetectsHeadChanges);
 }

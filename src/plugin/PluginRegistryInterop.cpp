@@ -11,6 +11,26 @@ namespace {
 
 using lua_interop::IsValidIdentifier;
 
+// Per-kind ceiling on plugin contributions. Registration is setup-only, but a
+// plugin's setup() can loop `ctx.commands.add(...)` (or any register verb)
+// without bound; each accepted entry stores a host-side C++ struct + strings that
+// the Lua per-state memory cap does not count, so an unbounded loop amplifies
+// host RSS far past the intended plugin envelope. Mirrors the decoration-interop
+// kMaxEntriesPerKind cap. Self-correcting: the count is the live container size,
+// which drops when the plugin's contributions are torn down.
+constexpr std::size_t kMaxPluginContributionsPerKind = 100000;
+
+template <typename Container>
+bool ContributionLimitReached(const Container* container, std::string* error_message) {
+  if (container != nullptr && container->size() >= kMaxPluginContributionsPerKind) {
+    if (error_message != nullptr) {
+      *error_message = "plugin contribution limit reached";
+    }
+    return true;
+  }
+  return false;
+}
+
 void RebuildCommandNamesImpl(
     const std::unordered_map<std::string, runtime_types::PluginCommand>& commands,
     std::vector<std::string>* command_names) {
@@ -74,6 +94,9 @@ bool RegisterCommand(lua_State* state,
     }
     return false;
   }
+  if (ContributionLimitReached(commands, error_message)) {
+    return false;
+  }
   if (!IsValidIdentifier(command_name)) {
     if (error_message != nullptr) {
       *error_message = "invalid command name: " + std::string(command_name);
@@ -118,6 +141,9 @@ bool RegisterSidebar(lua_State* state,
     if (error_message != nullptr) {
       *error_message = "plugin sidebar registry is unavailable";
     }
+    return false;
+  }
+  if (ContributionLimitReached(sidebars, error_message)) {
     return false;
   }
   lua_getfield(state, table_index, "id");
@@ -230,6 +256,9 @@ bool RegisterHoverProvider(lua_State* state,
     }
     return false;
   }
+  if (ContributionLimitReached(hovers, error_message)) {
+    return false;
+  }
   const int absolute_index = lua_absindex(state, table_index);
   lua_getfield(state, absolute_index, "id");
   if (!lua_isstring(state, -1)) {
@@ -290,6 +319,9 @@ bool RegisterMenuEntry(const runtime_types::PluginInstance* plugin,
     }
     return false;
   }
+  if (ContributionLimitReached(menu_entries, error_message)) {
+    return false;
+  }
   if (!IsValidIdentifier(contributed.id.substr(plugin->id.size() + 1))) {
     if (error_message != nullptr) {
       *error_message = "invalid menu entry id: " + contributed.id;
@@ -324,6 +356,9 @@ bool RegisterKeybinding(const runtime_types::PluginInstance* plugin,
     }
     return false;
   }
+  if (ContributionLimitReached(keybindings, error_message)) {
+    return false;
+  }
   if (!IsValidIdentifier(contributed.id.substr(plugin->id.size() + 1))) {
     if (error_message != nullptr) {
       *error_message = "invalid keybinding id: " + contributed.id;
@@ -356,6 +391,9 @@ bool RegisterSetting(const runtime_types::PluginInstance* plugin,
     if (error_message != nullptr) {
       *error_message = "setting registry is unavailable";
     }
+    return false;
+  }
+  if (ContributionLimitReached(settings, error_message)) {
     return false;
   }
   static const char* const kValidTypes[] = {"bool", "int", "float", "string", "enum"};
@@ -406,6 +444,9 @@ bool RegisterStatusItem(
     if (error_message != nullptr) {
       *error_message = "status item registry is unavailable";
     }
+    return false;
+  }
+  if (ContributionLimitReached(status_items, error_message)) {
     return false;
   }
   if (!IsValidIdentifier(contributed.id.substr(plugin->id.size() + 1))) {

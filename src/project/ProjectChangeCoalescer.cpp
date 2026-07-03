@@ -9,6 +9,16 @@ bool SameRelativePath(const std::filesystem::path& lhs, const std::filesystem::p
   return lhs.lexically_normal() == rhs.lexically_normal();
 }
 
+// Cap on distinct pending file changes before the coalescer collapses to a single
+// full-tree rescan. A file-change flood (a build writing thousands of files, a
+// `git checkout` of a huge tree, or a deliberate flood) would otherwise grow the
+// pending list without bound and make MergeFileChange O(N^2) — a linear scan with
+// two path normalizations per comparison — on the watcher thread. A rescan
+// supersedes the individual changes and re-reads the tree, so past this cap it is
+// both cheaper and bounded. The first kMaxPendingFileChanges changes keep their
+// per-file handling (open-buffer reloads, diagnostics clearing).
+constexpr std::size_t kMaxPendingFileChanges = 1024;
+
 }  // namespace
 
 void ProjectChangeCoalescer::Reset() {
@@ -58,6 +68,15 @@ std::uint64_t ProjectChangeCoalescer::CurrentGeneration() const {
 }
 
 void ProjectChangeCoalescer::MergeFileChange(ProjectFileChange change) {
+  // Past the cap, collapse to a full-tree rescan and stop tracking individual
+  // paths. This is the O(1) short-circuit that keeps a flood from turning the
+  // scan below into O(N^2) on the watcher thread and from growing pending_
+  // without bound. The rescan (already handled downstream) supersedes the
+  // dropped changes; the first kMaxPendingFileChanges keep per-file handling.
+  if (pending_.file_changes.size() >= kMaxPendingFileChanges) {
+    pending_.tree_rescan_requested = true;
+    return;
+  }
   auto existing = std::find_if(pending_.file_changes.begin(), pending_.file_changes.end(),
                                [&](const ProjectFileChange& candidate) {
                                  return SameRelativePath(candidate.relative_path,
