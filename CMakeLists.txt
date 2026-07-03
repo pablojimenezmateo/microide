@@ -794,6 +794,7 @@ add_executable(microide_tests
   tests/PluginThreadTests.cpp
   tests/ParseTests.cpp
   tests/JsonValueTests.cpp
+  tests/ProjectFileScannerTests.cpp
   tests/TextFileIOTests.cpp
   tests/ArchitectureInvariantsTests.cpp
   tests/architecture/ArchitectureFileScanner.cpp

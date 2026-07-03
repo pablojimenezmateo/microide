@@ -41,6 +41,33 @@ void TestTextOpOutOfBoundsFails() {
   Expect(!error.empty(), "rejection should report a reason");
 }
 
+// An empty (count == 0) text op with an out-of-range offset must still be
+// rejected: replay forms `text_arena.data() + data_offset`, and a past-the-end
+// offset is UB (invalid pointer formation) even though the zero-length view is
+// never dereferenced. Validation is the sole gate replay trusts.
+void TestEmptyTextOpOutOfBoundsOffsetFails() {
+  PluginDisplayList list;
+  list.text_arena = "abc";
+  list.ops.push_back(DisplayOp{.op = DrawOp::Text, .data_offset = 9999, .data_count = 0});
+  std::string error;
+  Expect(!ValidateDisplayList(list, &error),
+         "an empty text op with an out-of-range offset must be rejected");
+  Expect(!error.empty(), "rejection should report a reason");
+}
+
+// A zero-length text op whose offset is exactly at the arena end is legal (a
+// one-past-the-end pointer with zero length is well-defined).
+void TestEmptyTextOpAtArenaEndPasses() {
+  PluginDisplayList list;
+  list.content_width = 1;
+  list.content_height = 1;
+  list.text_arena = "abc";
+  list.ops.push_back(DisplayOp{.op = DrawOp::Text, .data_offset = 3, .data_count = 0});
+  std::string error;
+  Expect(ValidateDisplayList(list, &error),
+         "an empty text op at the arena end should validate");
+}
+
 void TestPolylineNeedsTwoPoints() {
   PluginDisplayList list;
   list.point_arena.push_back(SDL_FPoint{0, 0});
@@ -108,6 +135,10 @@ void TestHashIsStableAndSensitive() {
 void RegisterPluginDisplayListTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginDisplayList/ValidListPasses", TestValidListPasses);
   AddTest(tests, "PluginDisplayList/TextOpOutOfBoundsFails", TestTextOpOutOfBoundsFails);
+  AddTest(tests, "PluginDisplayList/EmptyTextOpOutOfBoundsOffsetFails",
+          TestEmptyTextOpOutOfBoundsOffsetFails);
+  AddTest(tests, "PluginDisplayList/EmptyTextOpAtArenaEndPasses",
+          TestEmptyTextOpAtArenaEndPasses);
   AddTest(tests, "PluginDisplayList/PolylineNeedsTwoPoints", TestPolylineNeedsTwoPoints);
   AddTest(tests, "PluginDisplayList/PolylineOutOfBoundsFails", TestPolylineOutOfBoundsFails);
   AddTest(tests, "PluginDisplayList/ImageOpOutOfBoundsFails", TestImageOpOutOfBoundsFails);

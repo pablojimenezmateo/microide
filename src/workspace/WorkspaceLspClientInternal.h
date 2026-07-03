@@ -72,6 +72,16 @@ constexpr std::chrono::milliseconds kLspRequestTimeout{30000};
 // the send-failure path; the timeout sweep clears anything already pending.
 constexpr std::size_t kMaxQueuedMessages = 50000;
 
+// Language servers are external, possibly-buggy or hostile processes. Bound a
+// single decoded message body and, with slack, the whole read-accumulation
+// buffer. Without this, a server can declare a near-INT_MAX Content-Length, or
+// stream bytes that never frame a message (no newline / an undelivered body), and
+// the accumulation buffer grows without limit -> OOM. A body over the message cap
+// is rejected; a read buffer past the buffer cap tears the (already-broken)
+// session down. 64 MiB dwarfs any real LSP message.
+constexpr std::size_t kMaxLspMessageBytes = 64ull * 1024 * 1024;
+constexpr std::size_t kMaxLspReadBufferBytes = kMaxLspMessageBytes + (1ull * 1024 * 1024);
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -451,53 +461,6 @@ struct LspClient::Impl {
     proc.Shutdown(timeout_ms);
   }
 
-  std::optional<util::JsonValue> ReadJsonRpcBlocking(ReadBuf& buf, int timeout_ms) {
-    while (true) {
-      const std::string_view v = buf.view();
-      const auto nl = v.find('\n');
-      if (nl == std::string_view::npos) {
-        auto chunk = proc.Read(4096, timeout_ms);
-        if (!chunk || chunk->empty()) return std::nullopt;
-        buf.append(*chunk);
-        continue;
-      }
-      std::string_view line = v.substr(0, nl);
-      if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
-      buf.consume(nl + 1);
-
-      static constexpr std::string_view kPrefix = "Content-Length: ";
-      if (line.substr(0, kPrefix.size()) != kPrefix) continue;
-
-      const std::string_view len_sv = line.substr(kPrefix.size());
-      int content_len = 0;
-      const auto [ptr, ec] = std::from_chars(len_sv.data(), len_sv.data() + len_sv.size(), content_len);
-      if (ec != std::errc{} || content_len <= 0) return std::nullopt;
-
-      while (true) {
-        const std::string_view v2 = buf.view();
-        const auto nl2 = v2.find('\n');
-        if (nl2 == std::string_view::npos) {
-          auto chunk = proc.Read(4096, timeout_ms);
-          if (!chunk || chunk->empty()) return std::nullopt;
-          buf.append(*chunk);
-          continue;
-        }
-        buf.consume(nl2 + 1);
-        break;
-      }
-
-      while (buf.view().size() < static_cast<std::size_t>(content_len)) {
-        auto chunk = proc.Read(4096, timeout_ms);
-        if (!chunk || chunk->empty()) return std::nullopt;
-        buf.append(*chunk);
-      }
-      const std::string_view body = buf.view().substr(0, content_len);
-      const auto result = util::ParseJson(body);
-      buf.consume(content_len);
-      return result;
-    }
-  }
-
   // Wait until stdout has data/EOF or an outbound wake arrives. Returns true when
   // stdout should be read. On POSIX this is a single poll() over stdout + the wake
   // pipe, so an idle server makes no fixed-cadence wakeups; elsewhere it degrades
@@ -564,6 +527,9 @@ struct LspClient::Impl {
       auto chunk = proc.Read(4096, read_timeout);
       if (!chunk) break;  // EOF / fatal read error
       if (!chunk->empty()) io_buf.append(*chunk);
+      if (io_buf.view().size() > kMaxLspReadBufferBytes) {
+        break;  // runaway server (no valid frame): tear the session down
+      }
     }
     ParseBufferedMessages();
     DrainOutbound();  // final flush (e.g. an exit notification queued during stop)
@@ -593,7 +559,8 @@ struct LspClient::Impl {
     const std::string_view len_sv = line.substr(kPrefix.size());
     int content_len = 0;
     const auto [ptr, ec] = std::from_chars(len_sv.data(), len_sv.data() + len_sv.size(), content_len);
-    if (ec != std::errc{} || content_len <= 0) {
+    if (ec != std::errc{} || content_len <= 0 ||
+        static_cast<std::size_t>(content_len) > kMaxLspMessageBytes) {
       buf.consume(nl + 1);
       return std::nullopt;
     }
@@ -987,6 +954,7 @@ struct LspClient::Impl {
           auto chunk = proc.Read(4096, 500);
           if (!chunk) break;
           if (!chunk->empty()) buf.append(*chunk);
+          if (buf.view().size() > kMaxLspReadBufferBytes) break;  // runaway server
           continue;
         }
         const auto& resp = *resp_opt;

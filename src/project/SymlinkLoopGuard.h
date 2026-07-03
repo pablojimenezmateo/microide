@@ -20,8 +20,27 @@ namespace microide::project {
 //
 // Non-symlink directories enter unconditionally and record nothing — they
 // cannot start a cycle, so the common case pays no canonicalization cost.
+//
+// When constructed with a project root, the guard additionally refuses to follow
+// any directory symlink whose canonical target escapes that root. The opened
+// project is untrusted: a symlink such as `project/evil -> /` is not a cycle, so
+// without this the walk would descend into and index the entire host filesystem
+// — a resource-exhaustion DoS and an information-disclosure/traversal escape.
 class SymlinkLoopGuard {
  public:
+  SymlinkLoopGuard() = default;
+
+  // `root` bounds which symlink targets may be followed: a symlink resolving
+  // outside the (canonicalized) root is skipped. An empty/uncanonicalizable root
+  // disables the containment check (cycle detection still applies).
+  explicit SymlinkLoopGuard(const std::filesystem::path& root) {
+    std::error_code error;
+    const std::filesystem::path canonical_root = std::filesystem::canonical(root, error);
+    if (!error) {
+      root_ = canonical_root;
+    }
+  }
+
   // RAII record of a successful entry. While alive, the entered symlink target
   // (if any) stays on the branch; destruction removes it so sibling branches
   // can legitimately follow a symlink to the same real directory.
@@ -74,6 +93,10 @@ class SymlinkLoopGuard {
       // Broken or inaccessible symlink target: do not follow.
       return Scope{};
     }
+    if (!WithinRoot(real)) {
+      // Target escapes the project root: refuse (see class comment).
+      return Scope{};
+    }
     std::string key = real.generic_string();
     if (!followed_.insert(key).second) {
       // Target already on the current branch: following it would cycle.
@@ -83,6 +106,21 @@ class SymlinkLoopGuard {
   }
 
  private:
+  // True when `real` is the root itself or lies underneath it. With no root set,
+  // containment is not enforced (returns true) so cycle detection alone governs.
+  bool WithinRoot(const std::filesystem::path& real) const {
+    if (root_.empty()) {
+      return true;
+    }
+    const std::filesystem::path relative = real.lexically_relative(root_);
+    // Empty means unrelated trees; a leading ".." means the target climbs out.
+    if (relative.empty()) {
+      return false;
+    }
+    return relative.native().rfind("..", 0) != 0;
+  }
+
+  std::filesystem::path root_;
   std::unordered_set<std::string> followed_;
 };
 

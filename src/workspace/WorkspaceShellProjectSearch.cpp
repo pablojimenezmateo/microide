@@ -365,6 +365,14 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
 
   std::vector<PendingProjectReplace> pending;
 
+  // Replace-all validates all target files (no dirty open tab) before committing
+  // any write, so it must buffer the modified contents. Bound that aggregate: a
+  // project with many large matching files would otherwise hold multiple GB of
+  // new content at once -> OOM. Above the ceiling we abort the whole operation
+  // (no writes), consistent with the other pre-commit abort paths here.
+  constexpr std::size_t kMaxAggregateReplaceBytes = 512ull * 1024 * 1024;
+  std::size_t aggregate_bytes = 0;
+
   const std::vector<std::filesystem::path> files = context_.current_project_state.file_index.SnapshotPaths(
       context_.current_project_state.overlay.workflow.project_search.options.show_hidden
           ? project::ProjectFileScanMode::IncludeHidden
@@ -390,6 +398,12 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
           context_.current_project_state.focused_group().open_tabs[i].path.lexically_normal() == normalized_absolute && TabIsDirty(i)) {
         return;
       }
+    }
+    aggregate_bytes += updated_content.size();
+    if (aggregate_bytes > kMaxAggregateReplaceBytes) {
+      // Too much modified content to buffer safely: abort without writing any
+      // file rather than risk exhausting memory mid-operation.
+      return;
     }
     pending.push_back(PendingProjectReplace{
         .relative_path = relative_path,

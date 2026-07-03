@@ -13,6 +13,12 @@ namespace microide::platform {
 // degrades to "too large" mode instead of melting a core. See FileWatcher.cpp.
 inline constexpr std::size_t kTreeTraversalEntryBudget = 50000;
 
+// Upper bound on recursion depth for hand-rolled recursive tree walks (project
+// file scan, directory-tree expansion). Bounds native-stack use so a
+// pathologically deep directory tree cannot overflow the stack. Real projects
+// nest far below this.
+inline constexpr int kMaxTreeWalkDepth = 512;
+
 enum class PathType {
   Missing,
   RegularFile,

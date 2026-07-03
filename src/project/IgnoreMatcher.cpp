@@ -130,6 +130,17 @@ void IgnoreMatcher::LoadIgnoreFile(const std::filesystem::path& path) {
     return;
   }
 
+  // Skip an absurdly large ignore file rather than allocate/parse it: a real
+  // .gitignore is KB-scale, so a multi-MB one (or a single multi-GB line with no
+  // newline, which getline would buffer whole) is hostile/degenerate. 4 MiB is
+  // far above any legitimate ignore file.
+  constexpr std::uintmax_t kMaxIgnoreFileBytes = 4ull * 1024 * 1024;
+  std::error_code size_error;
+  const std::uintmax_t file_bytes = std::filesystem::file_size(path, size_error);
+  if (!size_error && file_bytes > kMaxIgnoreFileBytes) {
+    return;
+  }
+
   std::ifstream input(path);
   if (!input) {
     return;

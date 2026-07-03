@@ -5,6 +5,7 @@
 #include <system_error>
 #include <utility>
 
+#include "platform/Filesystem.h"
 #include "project/GitStatusService.h"
 #include "project/IgnoreMatcher.h"
 #include "project/SymlinkLoopGuard.h"
@@ -314,7 +315,7 @@ void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
       .children_materialized = true,
       .git_status = GitFileStatus::Clean,
   });
-  SymlinkLoopGuard loop_guard;
+  SymlinkLoopGuard loop_guard(root_);
   AppendDirectory(root_, 1, matcher, loop_guard);
 
   selected_index_ = 0;
@@ -331,6 +332,9 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
                                     const IgnoreMatcher& matcher,
                                     SymlinkLoopGuard& loop_guard) {
   util::PerformanceTrace::Scope perf_scope("DirectoryTree::AppendDirectory");
+  if (depth > platform::kMaxTreeWalkDepth) {
+    return;  // bound native-stack recursion on a pathologically deep tree
+  }
   if (directory != root_ && !IsExpanded(directory)) {
     return;
   }

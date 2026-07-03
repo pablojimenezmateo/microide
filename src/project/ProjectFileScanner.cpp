@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <system_error>
 
+#include "platform/Filesystem.h"
 #include "project/IgnoreMatcher.h"
 #include "project/SymlinkLoopGuard.h"
 #include "util/PerformanceCounters.h"
@@ -21,13 +22,22 @@ void CollectFiles(const std::filesystem::path& root,
                   const IgnoreMatcher& matcher,
                   ProjectFileScanMode mode,
                   std::vector<std::filesystem::path>& files,
-                  SymlinkLoopGuard& loop_guard) {
+                  SymlinkLoopGuard& loop_guard,
+                  int depth,
+                  std::size_t& visited) {
+  if (depth > platform::kMaxTreeWalkDepth) {
+    return;  // too deep: stop descending rather than risk a stack overflow
+  }
   std::error_code error;
   std::filesystem::directory_iterator iterator(
       directory, std::filesystem::directory_options::skip_permission_denied, error);
   std::filesystem::directory_iterator end;
 
   while (!error && iterator != end) {
+    if (visited >= platform::kTreeTraversalEntryBudget) {
+      return;  // entry budget exhausted: stop indexing an unaffordably large tree
+    }
+    ++visited;
     const std::filesystem::path path = iterator->path();
     const bool is_directory = iterator->is_directory();
 
@@ -59,7 +69,7 @@ void CollectFiles(const std::filesystem::path& root,
       const bool is_symlink = iterator->is_symlink(link_error);
       const SymlinkLoopGuard::Scope scope = loop_guard.TryEnter(path, is_symlink && !link_error);
       if (scope.entered()) {
-        CollectFiles(root, path, child_matcher, mode, files, loop_guard);
+        CollectFiles(root, path, child_matcher, mode, files, loop_guard, depth + 1, visited);
       }
       ++iterator;
       continue;
@@ -93,8 +103,9 @@ std::vector<std::filesystem::path> CollectProjectFiles(const std::filesystem::pa
   matcher.SetRoot(absolute_root);
 
   std::vector<std::filesystem::path> files;
-  SymlinkLoopGuard loop_guard;
-  CollectFiles(absolute_root, absolute_root, matcher, mode, files, loop_guard);
+  SymlinkLoopGuard loop_guard(absolute_root);
+  std::size_t visited = 0;
+  CollectFiles(absolute_root, absolute_root, matcher, mode, files, loop_guard, 1, visited);
   std::sort(files.begin(), files.end(), [](const auto& lhs, const auto& rhs) {
     return lhs.native() < rhs.native();
   });

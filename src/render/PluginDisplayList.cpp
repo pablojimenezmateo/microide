@@ -40,16 +40,18 @@ bool ValidateDisplayList(const PluginDisplayList& list, std::string* error) {
   int clip_depth = 0;
   for (const DisplayOp& op : list.ops) {
     switch (op.op) {
-      case DrawOp::Text:
-        // Empty (count == 0) is allowed; otherwise the slice must fit the arena.
-        if (op.data_count != 0) {
-          const std::uint64_t end =
-              static_cast<std::uint64_t>(op.data_offset) + op.data_count;
-          if (end > list.text_arena.size()) {
-            return fail("display list text op references outside the text arena");
-          }
+      case DrawOp::Text: {
+        // The slice must fit the arena. Even an empty (count == 0) op must have an
+        // in-bounds offset: replay forms `text_arena.data() + data_offset`, and a
+        // past-the-end offset is UB (invalid pointer formation) regardless of
+        // count. Validation is the sole gate replay trusts, so it must hold here.
+        const std::uint64_t end =
+            static_cast<std::uint64_t>(op.data_offset) + op.data_count;
+        if (end > list.text_arena.size()) {
+          return fail("display list text op references outside the text arena");
         }
         break;
+      }
       case DrawOp::Polyline: {
         if (op.data_count < 2) {
           return fail("display list polyline op needs at least two points");

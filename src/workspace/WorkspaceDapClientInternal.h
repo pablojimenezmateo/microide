@@ -60,6 +60,14 @@ inline std::chrono::milliseconds RequestTimeoutFor(const std::string& command) {
 // via the send-failure path; the timeout sweep clears anything already pending.
 constexpr std::size_t kMaxQueuedMessages = 50000;
 
+// Debug adapters are external, possibly-buggy or hostile processes. Bound a
+// single decoded message body and, with slack, the whole read-accumulation
+// buffer, so an adapter cannot declare a near-INT_MAX Content-Length or stream
+// unframed bytes to grow the buffer without limit (OOM). A body over the message
+// cap is rejected; a read buffer past the buffer cap tears the session down.
+constexpr std::size_t kMaxDapMessageBytes = 64ull * 1024 * 1024;
+constexpr std::size_t kMaxDapReadBufferBytes = kMaxDapMessageBytes + (1ull * 1024 * 1024);
+
 bool DapLifecycleTraceEnabled() {
   static const bool enabled = []() {
     const char* value = std::getenv("MICROIDE_TRACE_DAP_LIFECYCLE");
@@ -368,7 +376,8 @@ struct DapClient::Impl {
     int content_len = 0;
     const auto [ptr, ec] =
         std::from_chars(len_sv.data(), len_sv.data() + len_sv.size(), content_len);
-    if (ec != std::errc{} || content_len <= 0) {
+    if (ec != std::errc{} || content_len <= 0 ||
+        static_cast<std::size_t>(content_len) > kMaxDapMessageBytes) {
       buf.consume(nl + 1);
       return std::nullopt;
     }
@@ -459,6 +468,9 @@ struct DapClient::Impl {
       }
       if (!chunk->empty()) {
         io_buf.append(*chunk);
+      }
+      if (io_buf.view().size() > kMaxDapReadBufferBytes) {
+        break;  // runaway adapter (no valid frame): tear the session down
       }
     }
     ParseBufferedMessages();
@@ -681,6 +693,9 @@ struct DapClient::Impl {
         }
         if (!chunk->empty()) {
           buf.append(*chunk);
+        }
+        if (buf.view().size() > kMaxDapReadBufferBytes) {
+          break;  // runaway adapter
         }
         continue;
       }
