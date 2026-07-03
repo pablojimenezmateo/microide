@@ -22,6 +22,10 @@
 #include <string_view>
 #include <vector>
 
+namespace microide::render {
+class TextRenderer;
+}  // namespace microide::render
+
 namespace microide::workspace {
 
 /// Parses user/project `editor.fold.sticky_scroll.max_depth` setting (stored as string): 1..8.
@@ -202,6 +206,13 @@ struct SettingsRowViewModel {
   std::string_view id;               // view into service-owned setting id
   std::string_view label;            // view into service-owned row strings
   std::string_view description;
+  // Description word-wrapped to the row's text column (views into `description`,
+  // itself a view into the frame-stable service-owned string). Empty when the row
+  // has no description. The row grows in height to fit every line.
+  std::vector<std::string_view> description_lines;
+  // X for the right-aligned scope label on the first description line; < 0 when it
+  // is absent or does not fit (the builder owns this placement so render is dumb).
+  float scope_label_x = -1.0f;
   std::string_view scope_label;      // "User" / "Project"
   std::string_view group_subheader;  // full group path; non-empty only on first row of a sub-group
   SettingsControlViewModel control;
@@ -312,7 +323,8 @@ class RenderViewModelBuilder {
   editor::WelcomeViewModel BuildWelcomeView(const class RecentsService& recents) const;
   SettingsOverlayViewModel BuildSettingsOverlay(
       const WorkspaceLayout& layout,
-      const class SettingsOverlayService& service) const;
+      const class SettingsOverlayService& service,
+      const render::TextRenderer& text_renderer) const;
 
   // Thread-local caches (render thread): unit tests reset between cases.
   static void ResetStickyScrollCacheForTesting();

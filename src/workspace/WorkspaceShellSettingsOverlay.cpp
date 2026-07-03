@@ -647,16 +647,34 @@ void WorkspaceShell::EnsureSettingsSelectionVisible() {
   if (!layout_state.has_value()) {
     return;
   }
-  const SettingsOverlayViewModel vm =
-      RenderViewModelBuilder(context_).BuildSettingsOverlay(*layout_state, settings_overlay_service_);
   const int selected = settings_overlay_service_.SelectedRow();
-  int scroll = settings_overlay_service_.ScrollRow();
-  if (selected < scroll) {
-    scroll = selected;
-  } else if (selected >= scroll + vm.visible_rows) {
-    scroll = selected - vm.visible_rows + 1;
+  // Scroll up so the selection is never above the viewport.
+  if (selected < settings_overlay_service_.ScrollRow()) {
+    settings_overlay_service_.SetScrollRow(selected);
   }
-  settings_overlay_service_.SetScrollRow(std::clamp(scroll, 0, vm.max_scroll));
+  // Rows are variable-height, so step the scroll down until the selected row's
+  // bottom is inside the pane. The builder positions every row exactly, so each
+  // check is precise; the loop is bounded and runs only on keyboard navigation.
+  for (int guard = 0; guard <= 512; ++guard) {
+    const SettingsOverlayViewModel vm = RenderViewModelBuilder(context_).BuildSettingsOverlay(
+        *layout_state, settings_overlay_service_, text_renderer_);
+    const float pane_bottom = vm.right_pane_rect.y + vm.right_pane_rect.h;
+    const SettingsRowViewModel* row = nullptr;
+    for (const SettingsRowViewModel& candidate : vm.rows) {
+      if (candidate.row_in_category == selected) {
+        row = &candidate;
+        break;
+      }
+    }
+    if (row == nullptr) {
+      break;
+    }
+    const bool below = row->row_rect.y + row->row_rect.h > pane_bottom + 0.5f;
+    if (!below || vm.scroll_row >= vm.max_scroll) {
+      break;
+    }
+    settings_overlay_service_.SetScrollRow(vm.scroll_row + 1);
+  }
 }
 
 void WorkspaceShell::OpenSettingsOverlay() {
@@ -689,7 +707,8 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
   }
 
   const SettingsOverlayViewModel vm =
-      RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_);
+      RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_,
+                                                            text_renderer_);
   const float mx = event.button.x;
   const float my = event.button.y;
 

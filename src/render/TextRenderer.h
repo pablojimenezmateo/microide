@@ -53,6 +53,32 @@ class TextRenderer {
   // into a thread-local scratch that is overwritten by the NEXT call on the same
   // thread. Consume the view immediately (draw it before truncating again).
   std::string_view TruncateToWidthView(std::string_view text, float max_width) const;
+  // Greedy word-wrap on spaces: invokes `emit(line)` for each wrapped line,
+  // where every `line` is a view into the original `text` (no allocation).
+  // A single word wider than `max_width` is emitted on its own line unbroken.
+  // Header-inline so callers pay no indirection; measurement uses the cached
+  // MeasureWidth. Shared by the settings/help overlays and any wrapped label.
+  template <class Emit>
+  void ForEachWrappedLine(std::string_view text, float max_width, Emit&& emit) const {
+    if (text.empty()) {
+      return;
+    }
+    std::size_t line_start = 0;
+    std::size_t line_end = 0;
+    std::size_t word_start = 0;
+    while (word_start < text.size()) {
+      const std::size_t space = text.find(' ', word_start);
+      const std::size_t word_end = space == std::string_view::npos ? text.size() : space;
+      const std::string_view candidate = text.substr(line_start, word_end - line_start);
+      if (line_start != word_start && MeasureWidth(candidate) > max_width) {
+        emit(text.substr(line_start, line_end - line_start));
+        line_start = word_start;
+      }
+      line_end = word_end;
+      word_start = space == std::string_view::npos ? text.size() : space + 1;
+    }
+    emit(text.substr(line_start, text.size() - line_start));
+  }
   TextRendererCacheStats CacheStats() const;
   void ResetCacheStats() const;
 

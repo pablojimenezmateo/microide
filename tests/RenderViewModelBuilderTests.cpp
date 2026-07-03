@@ -4,6 +4,7 @@
 #include "editor/EditorViewModel.h"
 #include "editor/TextViewport.h"
 #include "editor/WelcomeView.h"
+#include "render/TextRenderer.h"
 #include "workspace/DebugViewModel.h"
 #include "workspace/RecentsService.h"
 #include "workspace/RenderViewModelBuilder.h"
@@ -27,8 +28,11 @@ using microide::workspace::ComputeLayout;
 using microide::workspace::LayoutMode;
 using microide::workspace::LayoutModeInputs;
 using microide::workspace::RecentsService;
+using microide::render::TextRenderer;
 using microide::workspace::RenderViewModelBuilder;
+using microide::workspace::SettingsOverlayRow;
 using microide::workspace::SettingsOverlayService;
+using microide::workspace::SettingsRowViewModel;
 using microide::workspace::StatusBarService;
 using microide::workspace::WorkspaceContext;
 
@@ -70,7 +74,9 @@ void TestBuilderConstructsAllSurfaceViewModels() {
          "BuildHoverTargets should reference the workspace diagnostics store");
 
   SettingsOverlayService settings_service;
-  const auto settings_vm = builder.BuildSettingsOverlay(layout, settings_service);
+  TextRenderer settings_text_renderer;
+  const auto settings_vm =
+      builder.BuildSettingsOverlay(layout, settings_service, settings_text_renderer);
   Expect(!settings_vm.visible,
          "BuildSettingsOverlay should report invisible when the service is closed");
 }
@@ -413,7 +419,73 @@ void TestComputeWelcomeLayoutProducesHitRegions() {
 
 }  // namespace
 
+void TestSettingsOverlayWrapsLongDescriptions() {
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+  // No-backend TextRenderer: deterministic 8px/char, 14px line-height.
+  TextRenderer text_renderer;
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
+                                    LayoutModeInputs{}, true);
+
+  SettingsOverlayService service;
+  service.OpenSettings();
+  std::vector<SettingsOverlayRow> rows;
+  SettingsOverlayRow short_row;
+  short_row.id = "test.short";
+  short_row.label = "Short";
+  short_row.description = "Tiny.";
+  rows.push_back(short_row);
+  SettingsOverlayRow long_row;
+  long_row.id = "test.long";
+  long_row.label = "Long";
+  long_row.description =
+      "This is a deliberately long help description that must wrap across several "
+      "lines so the full text stays readable instead of being clipped with an "
+      "ellipsis at the right edge of the settings row.";
+  rows.push_back(long_row);
+  service.RebuildSettingsRows({}, {}, {}, rows);
+  service.SetSelectedCategory(0);
+
+  const auto vm = builder.BuildSettingsOverlay(layout, service, text_renderer);
+  Expect(vm.visible, "settings overlay should be visible after OpenSettings");
+  Expect(vm.rows.size() >= 2, "both injected rows should be built into the view model");
+
+  const SettingsRowViewModel* short_vm = nullptr;
+  const SettingsRowViewModel* long_vm = nullptr;
+  for (const SettingsRowViewModel& row : vm.rows) {
+    if (row.id == "test.short") {
+      short_vm = &row;
+    } else if (row.id == "test.long") {
+      long_vm = &row;
+    }
+  }
+  Expect(short_vm != nullptr && long_vm != nullptr,
+         "both the short and long rows should appear in the view model");
+  Expect(long_vm->description_lines.size() > 1,
+         "a long description should word-wrap to multiple visible lines");
+  Expect(short_vm->description_lines.size() == 1,
+         "a short description should occupy a single line");
+  Expect(long_vm->row_rect.h > short_vm->row_rect.h,
+         "the wrapped row should be taller than a single-line row");
+
+  // Rows stack by their variable heights without overlapping.
+  const SettingsRowViewModel& first = vm.rows.front();
+  const SettingsRowViewModel& second = vm.rows[1];
+  Expect(second.row_rect.y >= first.row_rect.y + first.row_rect.h - 0.5f,
+         "consecutive rows must not overlap under variable-height stacking");
+
+  // Wrapped lines are views into the row's own description string (no per-line copies).
+  for (std::string_view line : long_vm->description_lines) {
+    const bool inside = line.data() >= long_vm->description.data() &&
+                        line.data() + line.size() <=
+                            long_vm->description.data() + long_vm->description.size();
+    Expect(inside, "each wrapped line must be a view into the row description");
+  }
+}
+
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RenderViewModelBuilder/SettingsOverlayWrapsLongDescriptions",
+          TestSettingsOverlayWrapsLongDescriptions);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewIsRegistrySourcedWithRecents",
           TestBuilderWelcomeViewIsRegistrySourcedWithRecents);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewPrunesMissingRecents",

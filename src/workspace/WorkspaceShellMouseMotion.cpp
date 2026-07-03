@@ -54,7 +54,8 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     if (settings_overlay_service_.Visible() &&
         settings_overlay_service_.Mode() == SettingsOverlayMode::Settings) {
       const SettingsOverlayViewModel vm =
-          RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_);
+          RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_,
+                                                                text_renderer_);
       if (vm.scrollbar.has_value()) {
         settings_overlay_service_.SetScrollRow(std::clamp(
             static_cast<int>(std::lround(ScrollUnitsForPointer(
@@ -651,13 +652,13 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     if (vertical_ticks != 0) {
       const SDL_FRect overlay_rect = ComputeSettingsOverlaySurfaceRect(layout.editor_area);
       if (Contains(overlay_rect, event.wheel.mouse_x, event.wheel.mouse_y)) {
-        // Settings rows are fixed-height, so the view model resolves the exact max
-        // scroll; Help/About rows vary, so its bound is published from the render
-        // pass into settings_overlay_max_scroll_row_.
+        // Settings rows measure their own (variable) height in the builder, so the
+        // view model resolves the exact max scroll; Help/About rows are wrapped in
+        // the render pass, which publishes its bound into settings_overlay_max_scroll_row_.
         int max_scroll = settings_overlay_max_scroll_row_;
         if (settings_overlay_service_.Mode() == SettingsOverlayMode::Settings) {
           max_scroll = RenderViewModelBuilder(context_)
-                           .BuildSettingsOverlay(layout, settings_overlay_service_)
+                           .BuildSettingsOverlay(layout, settings_overlay_service_, text_renderer_)
                            .max_scroll;
         }
         settings_overlay_service_.SetScrollRow(

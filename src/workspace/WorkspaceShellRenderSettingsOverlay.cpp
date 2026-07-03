@@ -73,30 +73,9 @@ int RenderHelpAboutRows(SDL_Renderer* renderer, const SettingsOverlayViewModel& 
   const float detail_x = content_x + label_col + column_gap;
   const float detail_width = std::max(40.0f, content_right - detail_x);
 
-  const auto for_each_wrapped_line = [&](std::string_view text, float max_width,
-                                         const auto& emit_line) {
-    if (text.empty()) {
-      return;
-    }
-    std::size_t line_start = 0;
-    std::size_t line_end = 0;
-    std::size_t word_start = 0;
-    while (word_start < text.size()) {
-      const std::size_t space = text.find(' ', word_start);
-      const std::size_t word_end = space == std::string_view::npos ? text.size() : space;
-      const std::string_view candidate = text.substr(line_start, word_end - line_start);
-      if (line_start != word_start && text_renderer.MeasureWidth(candidate) > max_width) {
-        emit_line(text.substr(line_start, line_end - line_start));
-        line_start = word_start;
-      }
-      line_end = word_end;
-      word_start = space == std::string_view::npos ? text.size() : space + 1;
-    }
-    emit_line(text.substr(line_start, text.size() - line_start));
-  };
   const auto help_entry_height = [&](std::string_view detail) {
     int lines = 0;
-    for_each_wrapped_line(detail, detail_width, [&](std::string_view) { ++lines; });
+    text_renderer.ForEachWrappedLine(detail, detail_width, [&](std::string_view) { ++lines; });
     return static_cast<float>(std::max(1, lines)) * line_height + help_entry_gap;
   };
 
@@ -130,7 +109,7 @@ int RenderHelpAboutRows(SDL_Renderer* renderer, const SettingsOverlayViewModel& 
     text_renderer.DrawStringOn(renderer, content_x, y, theme.text_primary, theme.surface_background,
                                label_text);
     float detail_y = y;
-    for_each_wrapped_line(row.detail, detail_width, [&](std::string_view line) {
+    text_renderer.ForEachWrappedLine(row.detail, detail_width, [&](std::string_view line) {
       if (detail_y + line_height <= list_bottom) {
         text_renderer.DrawStringOn(renderer, detail_x, detail_y, theme.text_muted,
                                    theme.surface_background, line);
@@ -158,7 +137,8 @@ int RenderHelpAboutRows(SDL_Renderer* renderer, const SettingsOverlayViewModel& 
 void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
                                            const WorkspaceLayout& layout) const {
   const SettingsOverlayViewModel vm =
-      RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_);
+      RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_,
+                                                            text_renderer_);
   if (!vm.visible) {
     return;
   }
@@ -275,23 +255,19 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
 
     text_renderer_.DrawStringOn(renderer, text_x, row.row_rect.y + 6.0f, theme_.text_primary,
                                 background, text_renderer_.TruncateToWidth(row.label, text_width));
-    // The scope label ("User" / "Project" / "Default") sits at the right end of the
-    // description line. Draw it first and reserve its slot so the description truncates
-    // before it rather than painting over it (both previously ran to text_left).
-    float description_width = text_width;
-    if (!row.scope_label.empty()) {
-      const float scope_w = text_renderer_.MeasureWidth(row.scope_label);
-      const float scope_x = text_left - 8.0f - scope_w;
-      if (scope_x > text_x + 40.0f) {
-        text_renderer_.DrawStringOn(renderer, scope_x, row.row_rect.y + 6.0f + line_height,
-                                    theme_.text_disabled, background, row.scope_label);
-        description_width = std::max(40.0f, scope_x - 8.0f - text_x);
-      }
+    // The dim scope label ("User" / "Project") sits at the right end of the first
+    // description line; the builder resolved its x (< 0 when absent or it did not fit).
+    const float desc_top = row.row_rect.y + 6.0f + line_height;
+    if (row.scope_label_x >= 0.0f && !row.scope_label.empty()) {
+      text_renderer_.DrawStringOn(renderer, row.scope_label_x, desc_top, theme_.text_disabled,
+                                  background, row.scope_label);
     }
-    if (!row.description.empty()) {
-      text_renderer_.DrawStringOn(renderer, text_x, row.row_rect.y + 6.0f + line_height,
-                                  theme_.text_muted, background,
-                                  text_renderer_.TruncateToWidth(row.description, description_width));
+    // Full help text, word-wrapped by the builder so every line is visible and the
+    // row was sized to fit them all.
+    float desc_y = desc_top;
+    for (std::string_view desc_line : row.description_lines) {
+      text_renderer_.DrawStringOn(renderer, text_x, desc_y, theme_.text_muted, background, desc_line);
+      desc_y += line_height;
     }
 
     if (row.resettable) {

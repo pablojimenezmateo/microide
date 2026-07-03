@@ -7,6 +7,7 @@
 #include "editor/EditorInsetLayout.h"
 #include "editor/FoldingModel.h"
 #include "editor/PluginSurfaceStore.h"
+#include "render/TextRenderer.h"
 #include "util/Parse.h"
 #include "util/PathMatch.h"
 #include "util/PerformanceCounters.h"
@@ -1101,13 +1102,17 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
 
 namespace {
 
-// Settings two-pane metrics. All control geometry uses fixed slots so the view
-// model can be built without a text renderer (the builder cannot measure text).
+// Settings two-pane metrics. Control geometry uses fixed slots; the description
+// column is word-wrapped, so BuildSettingsOverlay takes a TextRenderer to measure
+// text and size each row to fit its full (wrapped) help description.
 constexpr float kSettingsPad = 12.0f;
 constexpr float kSettingsHeaderH = 38.0f;
 constexpr float kSettingsFilterH = 26.0f;
 constexpr float kSettingsCatRowH = 28.0f;
-constexpr float kSettingsValueRowH = 46.0f;
+// Value rows are variable-height: a fixed head band (title + controls) plus one
+// line per wrapped description line, so the full help text is always visible.
+constexpr float kSettingsRowPadTop = 6.0f;     // title baseline offset from row top
+constexpr float kSettingsRowPadBottom = 8.0f;  // gap below the last description line
 constexpr float kSettingsScrollbarMargin = 14.0f;
 constexpr float kSettingsBtnW = 24.0f;
 constexpr float kSettingsBtnH = 22.0f;
@@ -1127,7 +1132,8 @@ bool SettingBoolIsOn(std::string_view value) {
 
 SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     const WorkspaceLayout& layout,
-    const SettingsOverlayService& service) const {
+    const SettingsOverlayService& service,
+    const render::TextRenderer& text_renderer) const {
   SettingsOverlayViewModel vm;
   vm.visible = service.Visible();
   vm.mode = service.Mode();
@@ -1174,7 +1180,7 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     vm.categories.push_back(cat);
   }
 
-  // Right pane: rows of the selected category, fixed height, scrolled.
+  // Right pane: rows of the selected category, variable-height, whole-row scrolled.
   std::vector<const SettingsOverlayRow*> cat_rows;
   for (int i = 0;; ++i) {
     const SettingsOverlayRow* row = service.RowAtVisibleIndex(service.SelectedCategory(), i);
@@ -1184,21 +1190,28 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     cat_rows.push_back(row);
   }
   const int total = static_cast<int>(cat_rows.size());
-  vm.visible_rows = std::max(1, static_cast<int>(content_height / kSettingsValueRowH));
-  vm.max_scroll = std::max(0, total - vm.visible_rows);
-  const int scroll = std::clamp(vm.scroll_row, 0, vm.max_scroll);
-  vm.scroll_row = scroll;
-  if (vm.max_scroll > 0) {
-    vm.scrollbar = MakeVerticalScrollbarGeometry(
-        vm.right_pane_rect, static_cast<float>(total), static_cast<float>(vm.visible_rows),
-        static_cast<float>(scroll), false);
-  }
-  const int first = scroll;
-  const int last = std::min(total, scroll + vm.visible_rows);
-  vm.rows.reserve(static_cast<std::size_t>(std::max(0, last - first)));
-  SDL_FRect editing_value_rect{};
-  bool has_editing_row = false;
-  for (int i = first; i < last; ++i) {
+
+  // A row is a fixed head band (title + right-aligned controls) plus one line per
+  // wrapped description line. N>=1 keeps description-less rows at the previous
+  // single-line height, so their layout is unchanged.
+  const float line_height = text_renderer.LineHeight();
+  const float head_band = kSettingsRowPadTop + 2.0f * line_height + kSettingsRowPadBottom;
+  const auto row_height_for = [&](std::size_t desc_lines) {
+    const float n = static_cast<float>(std::max<std::size_t>(1, desc_lines));
+    return kSettingsRowPadTop + line_height + n * line_height + kSettingsRowPadBottom;
+  };
+  const float row_w = vm.right_pane_rect.w - kSettingsScrollbarMargin;
+  const float content_right = vm.right_pane_rect.x + row_w - kSettingsPad;
+
+  // Build every row at its natural (unscrolled) position, wrapping the description
+  // to the row's text column so heights are exact; the scroll offset is applied
+  // afterwards. Controls/title/scope center in the fixed head band (anchored to the
+  // row top) so they stay aligned with the title however tall the description is.
+  vm.rows.reserve(static_cast<std::size_t>(total));
+  std::vector<float> heights;
+  heights.reserve(static_cast<std::size_t>(total));
+  float natural_y = vm.right_pane_rect.y;
+  for (int i = 0; i < total; ++i) {
     const SettingsOverlayRow& row = *cat_rows[static_cast<std::size_t>(i)];
     SettingsRowViewModel rvm;
     rvm.id = row.id;
@@ -1209,15 +1222,8 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     rvm.selected = i == service.SelectedRow();
     rvm.resettable = row.resettable;
 
-    const float row_y =
-        vm.right_pane_rect.y + static_cast<float>(i - scroll) * kSettingsValueRowH;
-    rvm.row_rect = MakeRect(vm.right_pane_rect.x,
-                            row_y,
-                            vm.right_pane_rect.w - kSettingsScrollbarMargin,
-                            kSettingsValueRowH);
-
-    const float content_right = rvm.row_rect.x + rvm.row_rect.w - kSettingsPad;
-    const float cy = rvm.row_rect.y + (kSettingsValueRowH - kSettingsBtnH) * 0.5f;
+    rvm.row_rect = MakeRect(vm.right_pane_rect.x, natural_y, row_w, head_band);
+    const float cy = natural_y + (head_band - kSettingsBtnH) * 0.5f;
     float leftmost = content_right;
 
     SettingsControlViewModel& control = rvm.control;
@@ -1225,7 +1231,7 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     control.display_value = row.value_display;
     switch (row.control_kind) {
       case SettingsControlKind::Checkbox: {
-        const float box_y = rvm.row_rect.y + (kSettingsValueRowH - kSettingsCheckBox) * 0.5f;
+        const float box_y = natural_y + (head_band - kSettingsCheckBox) * 0.5f;
         control.checkbox_rect =
             MakeRect(content_right - kSettingsCheckBox, box_y, kSettingsCheckBox, kSettingsCheckBox);
         control.checkbox_on = SettingBoolIsOn(row.value);
@@ -1284,11 +1290,91 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
       rvm.scope_rect =
           MakeRect(leftmost - kSettingsControlGap - kSettingsScopeW, cy, kSettingsScopeW, kSettingsBtnH);
     }
+
+    // Description column: everything left of the controls (and the scope chip, if
+    // present). The dim scope label ("User"/"Project") is right-aligned on the
+    // first description line; reserve its slot so wrapped text never runs under it.
+    const float text_x = rvm.row_rect.x + kSettingsPad;
+    float text_left = leftmost;
+    if (rvm.scope_rect.w > 0.0f) {
+      text_left = std::min(text_left, rvm.scope_rect.x);
+    }
+    float description_width = std::max(40.0f, text_left - 8.0f - text_x);
+    if (!rvm.scope_label.empty()) {
+      const float scope_w = text_renderer.MeasureWidth(rvm.scope_label);
+      const float scope_x = text_left - 8.0f - scope_w;
+      if (scope_x > text_x + 40.0f) {
+        rvm.scope_label_x = scope_x;
+        description_width = std::max(40.0f, scope_x - 8.0f - text_x);
+      }
+    }
+    if (!rvm.description.empty()) {
+      text_renderer.ForEachWrappedLine(
+          rvm.description, description_width,
+          [&](std::string_view wrapped) { rvm.description_lines.push_back(wrapped); });
+    }
+
+    const float row_h = row_height_for(rvm.description_lines.size());
+    rvm.row_rect.h = row_h;
+    heights.push_back(row_h);
+    natural_y += row_h;
+    vm.rows.push_back(std::move(rvm));
+  }
+
+  // Scroll model: whole-row index. max_scroll is the largest first-row index that
+  // still fills the pane to the bottom (trailing-fit accumulation), and the pixel
+  // offset for the chosen scroll shifts every built row up into place.
+  int fit_from_bottom = 0;
+  float acc = 0.0f;
+  for (int i = total - 1; i >= 0; --i) {
+    acc += heights[static_cast<std::size_t>(i)];
+    if (acc > content_height) {
+      break;
+    }
+    ++fit_from_bottom;
+  }
+  vm.max_scroll = std::clamp(total - fit_from_bottom, 0, std::max(0, total - 1));
+  const int scroll = std::clamp(vm.scroll_row, 0, vm.max_scroll);
+  vm.scroll_row = scroll;
+
+  float scroll_offset = 0.0f;
+  for (int i = 0; i < scroll; ++i) {
+    scroll_offset += heights[static_cast<std::size_t>(i)];
+  }
+  SDL_FRect editing_value_rect{};
+  bool has_editing_row = false;
+  for (SettingsRowViewModel& rvm : vm.rows) {
+    if (scroll_offset != 0.0f) {
+      rvm.row_rect.y -= scroll_offset;
+      rvm.reset_rect.y -= scroll_offset;
+      rvm.scope_rect.y -= scroll_offset;
+      rvm.control.checkbox_rect.y -= scroll_offset;
+      rvm.control.dec_rect.y -= scroll_offset;
+      rvm.control.inc_rect.y -= scroll_offset;
+      rvm.control.value_rect.y -= scroll_offset;
+    }
     if (rvm.control.editing) {
       editing_value_rect = rvm.control.value_rect;
       has_editing_row = true;
     }
-    vm.rows.push_back(rvm);
+  }
+
+  // Fully-visible row count from the current scroll drives keyboard keep-visible.
+  float visible_y = vm.right_pane_rect.y;
+  int visible = 0;
+  for (int i = scroll; i < total; ++i) {
+    const float bottom = visible_y + heights[static_cast<std::size_t>(i)];
+    if (bottom > content_bottom + 0.5f) {
+      break;
+    }
+    ++visible;
+    visible_y = bottom;
+  }
+  vm.visible_rows = std::max(1, visible);
+  if (vm.max_scroll > 0) {
+    vm.scrollbar = MakeVerticalScrollbarGeometry(
+        vm.right_pane_rect, static_cast<float>(total), static_cast<float>(vm.visible_rows),
+        static_cast<float>(scroll), false);
   }
 
   // Font-picker dropdown: a windowed list of matching installed families plus a
