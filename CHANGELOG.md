@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.6.0] - 2026-07-03
+
+A **settings & tabs** release on top of 2.5.2. The settings surface is
+overhauled end to end, gains an installed-font picker, and tabs now reorder
+with a Chrome-like sliding animation. No persisted-format or plugin-API breaks.
+
+### Settings
+- Full settings overhaul: previously inert settings are wired to live
+  behavior, string values are editable inline, and settings can be saved as
+  the default.
+- Installed-font picker backed by a native file dialog, with portable font
+  resolution.
+- Two high-value deferred settings wired: autosave delay and terminal font.
+- Setting descriptions wrap instead of being clipped with an ellipsis.
+
+### Editor / Tabs
+- Chrome-like sliding tab reordering.
+
+### Fixes
+- Fix a use-after-free where the font-family value painted freed heap memory.
+- Stop the row description overlapping the scope label in the settings list.
+- Live-apply font, theme, terminal, autosave, and gutter settings; resolve the
+  settings-review and high-effort code-review findings on the overhaul.
+
 ## [2.5.2] - 2026-07-02
 
 A **performance & internals** release on top of 2.5.1. The compare/merge
