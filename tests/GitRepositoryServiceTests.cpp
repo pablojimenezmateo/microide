@@ -1,6 +1,7 @@
 #include "GitMergeConflictFixtures.h"
 #include "TestSupport.h"
 
+#include <algorithm>
 #include <atomic>
 #include <thread>
 #include <type_traits>
@@ -123,6 +124,38 @@ void TestRefreshSurfacesMergeConflictsInSidebar() {
          "conflicted file should not be duplicated in Outgoing");
 }
 
+void TestSyncRefreshBalancesBackgroundTaskCount() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "tracked.txt", "before\n");
+  CommitAll(repo_path, "base", "base");
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService service(executor);
+  int counter = 0;
+  int min_counter = 0;
+  GitRepositoryService::WakeCallbacks callbacks;
+  callbacks.increment_background_task_count = [&]() { ++counter; };
+  callbacks.decrement_background_task_count_and_wake = [&]() {
+    --counter;
+    min_counter = std::min(min_counter, counter);
+  };
+  service.SetWakeCallbacks(std::move(callbacks));
+
+  // A synchronous refresh publishes via PublishSnapshot, which decrements the
+  // background-task counter as the tail of the async flow. Without a matching
+  // increment on this path, repeated refreshes drove the shared counter negative
+  // and tripped its underflow assert (crashing the perf harness). Each refresh
+  // must leave the counter balanced and it must never go negative.
+  for (int i = 0; i < 5; ++i) {
+    service.RunRefreshSynchronouslyForTesting(repo_path, GitSidebarRefreshScope::Full,
+                                              OutgoingBaseChoice{}, false);
+    Expect(counter == 0, "each synchronous refresh must balance the background-task counter");
+  }
+  Expect(min_counter >= 0, "the background-task counter must never go negative");
+}
+
 }  // namespace
 
 void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
@@ -132,6 +165,8 @@ void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
           TestCurrentStateReadsRemainConsistentDuringRefresh);
   AddTest(tests, "GitRepositoryService/RefreshSurfacesMergeConflictsInSidebar",
           TestRefreshSurfacesMergeConflictsInSidebar);
+  AddTest(tests, "GitRepositoryService/SyncRefreshBalancesBackgroundTaskCount",
+          TestSyncRefreshBalancesBackgroundTaskCount);
 }
 
 }  // namespace microide::tests

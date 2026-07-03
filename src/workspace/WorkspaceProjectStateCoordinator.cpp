@@ -109,8 +109,13 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
   file_index_initial_build_in_flight_.store(true, std::memory_order_release);
   if (!file_index_watcher_->Watch(context_.current_project_state.root)) {
     file_index_watcher_.reset();
-    file_index_initial_build_in_flight_.store(false, std::memory_order_release);
-    app::DecrementBackgroundTaskCountAndWake();
+    // Guard the decrement with the same exchange used by the batch callback and
+    // StopFileIndexWatcher: if the initial-build batch already fired and consumed
+    // the in-flight flag, it already decremented, so decrementing again here would
+    // underflow the background-task counter.
+    if (file_index_initial_build_in_flight_.exchange(false, std::memory_order_acq_rel)) {
+      app::DecrementBackgroundTaskCountAndWake();
+    }
     project_background_executor_.PostLatest(
         "project-file-monitor-arm",
         [this]() { project_file_monitor_.ArmPendingWatch(); });

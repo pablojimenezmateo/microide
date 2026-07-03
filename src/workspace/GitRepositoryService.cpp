@@ -379,6 +379,14 @@ void GitRepositoryService::RunRefreshSynchronouslyForTesting(
     current_state_ = repository_state;
   }
   GitSidebarState::RefreshSnapshot snapshot = BuildSidebarSnapshot(repository_state, request);
+  // PublishSnapshot decrements the background-task counter as the tail of the
+  // asynchronous refresh flow (ScheduleRefresh's increment balances it). This
+  // synchronous path bypasses ScheduleRefresh, so it must supply the matching
+  // increment itself, otherwise repeated synchronous refreshes drive the global
+  // counter negative and trip its underflow assert.
+  if (wake_callbacks_.increment_background_task_count != nullptr) {
+    wake_callbacks_.increment_background_task_count();
+  }
   PublishSnapshot(std::move(snapshot), request.generation);
 }
 
