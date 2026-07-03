@@ -627,9 +627,46 @@ void TestGitStatusCodePrecedenceIsUnified() {
          "diff-code C maps to Modified, distinct from status C");
 }
 
+// A hostile repo can emit `git status` output with millions of records and/or a
+// single pathologically deep path. The status parser must cap the entry count
+// (bounds the downstream UI-thread sort + heap) and cap ancestor-badge depth
+// (the folder-badge walk was quadratic in path length → OOM).
+void TestGitPorcelainParserBoundsHostileStatus() {
+  // Entry-count cap: 60000 untracked records collapse to <= the 50000 cap.
+  {
+    std::string output;
+    for (int i = 0; i < 60000; ++i) {
+      output += "?? f";
+      output += std::to_string(i);
+      output += ".txt";
+      output.push_back('\0');
+    }
+    const auto statuses = GitPorcelainParser::ParseStatusV1(output);
+    Expect(statuses.size() <= 50000,
+           "status parser must cap the number of entries from a hostile repo");
+  }
+  // Ancestor-badge depth cap: one very deep path must not create a map key per
+  // ancestor level (previously O(depth) allocations → quadratic OOM).
+  {
+    std::unordered_map<std::string, GitFileStatus> statuses;
+    std::string deep;
+    for (int i = 0; i < 5000; ++i) {
+      deep += "d/";
+    }
+    deep += "leaf.txt";
+    GitPorcelainParser::RecordGitStatus(statuses, std::filesystem::path(deep),
+                                        GitFileStatus::Modified);
+    // Leaf + at most kMaxBadgeAncestorDepth (64) ancestor keys, not ~5000.
+    Expect(statuses.size() <= 66,
+           "ancestor-badge propagation must be depth-capped for a deep path");
+  }
+}
+
 }  // namespace
 
 void RegisterGitServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Git/PorcelainParserBoundsHostileStatus",
+          TestGitPorcelainParserBoundsHostileStatus);
   AddTest(tests, "Git/BuildStatusMapFolderPriorityIsSingleSourced",
           TestBuildGitStatusMapFolderPriorityIsSingleSourced);
   AddTest(tests, "Git/BranchDiffNameStatusZParser", TestGitBranchDiffNameStatusZParser);

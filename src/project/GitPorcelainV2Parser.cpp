@@ -1,5 +1,6 @@
 #include "project/GitPorcelainV2Parser.h"
 
+#include <algorithm>
 #include <charconv>
 #include <string>
 #include <string_view>
@@ -110,8 +111,11 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
   state.repo_available = true;
 
   const std::vector<std::string_view> records = util::SplitNulDelimited(output);
-  state.entries.reserve(records.size());
-  for (std::size_t index = 0; index < records.size(); ++index) {
+  // Cap entries (and the reserve) against a hostile repo's millions of records;
+  // see kMaxGitStatusEntries. Extra records past the cap are dropped.
+  state.entries.reserve(std::min(records.size(), kMaxGitStatusEntries));
+  for (std::size_t index = 0;
+       index < records.size() && state.entries.size() < kMaxGitStatusEntries; ++index) {
     const std::string_view record = records[index];
     if (record.empty()) {
       continue;

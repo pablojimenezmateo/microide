@@ -62,6 +62,15 @@ bool PluginSurfaceStore::ReplaceForOwnerSurface(std::string_view owner,
   if (existing != surfaces.end() && existing->second == content) {
     return false;  // identical republish: no-op
   }
+  // Cap distinct surfaces per owner. A hostile plugin publishing a fresh
+  // surface_id in a loop would otherwise grow the store without bound (each
+  // SurfaceContent holds a heap display list, outside the Lua memory cap since
+  // PublishSurface moves it host-side) AND make every publish O(all surfaces)
+  // via RebuildAnchorIndex — an O(N^2) UI-thread hang. Updates to existing ids
+  // are always allowed; only brand-new ids past the cap are refused.
+  if (existing == surfaces.end() && surfaces.size() >= kMaxSurfacesPerOwner) {
+    return false;
+  }
   surfaces[id_key] = std::move(content);
   RebuildAnchorIndex();
   ++revision_;

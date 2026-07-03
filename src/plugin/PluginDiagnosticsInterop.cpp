@@ -167,7 +167,12 @@ bool PublishDiagnostics(lua_State* state,
   }
 
   const int absolute_index = lua_absindex(state, diagnostics_index);
-  const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, absolute_index));
+  // Clamp against a sparse-border table making lua_rawlen overstate the length;
+  // matches the DiagnosticsStore per-file cap so nothing beyond it survives anyway.
+  constexpr lua_Integer kMaxPluginDiagnostics = 10000;
+  const lua_Integer count =
+      std::min<lua_Integer>(static_cast<lua_Integer>(lua_rawlen(state, absolute_index)),
+                            kMaxPluginDiagnostics);
   std::vector<editor::Diagnostic> diagnostics;
   diagnostics.reserve(static_cast<std::size_t>(count));
   for (lua_Integer i = 1; i <= count; ++i) {

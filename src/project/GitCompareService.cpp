@@ -17,6 +17,13 @@ namespace microide::project {
 
 namespace {
 
+// Upper bound on entries collected from an untrusted repo's ref / diff output
+// (branch picker, changed-file lists feeding CompareModel). A hostile repo with
+// millions of refs or a commit touching millions of files would otherwise
+// materialize + sort them all on the UI thread. Bounded only by the 128 MiB
+// capture cap otherwise, which is far too large for these list surfaces.
+constexpr std::size_t kMaxGitCollectionEntries = 50000;
+
 std::string ShortRefLabel(std::string_view ref) {
   if (ref.empty()) {
     return {};
@@ -139,6 +146,9 @@ std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& 
 
   std::vector<GitBranchReference> branches;
   for (const std::string_view ref : util::SplitLineViews(result.output)) {
+    if (branches.size() >= kMaxGitCollectionEntries) {
+      break;
+    }
     if (ref.empty()) {
       continue;
     }
@@ -243,7 +253,7 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
 std::vector<GitBranchFileEntry> ParseGitBranchDiffNameStatusZ(std::string_view output) {
   std::vector<GitBranchFileEntry> entries;
   const std::vector<std::string_view> tokens = util::SplitNulDelimited(output);
-  for (std::size_t i = 0; i < tokens.size();) {
+  for (std::size_t i = 0; i < tokens.size() && entries.size() < kMaxGitCollectionEntries;) {
     const std::string_view status_token = tokens[i++];
     if (status_token.empty()) {
       continue;
@@ -330,6 +340,9 @@ std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::files
 
   std::vector<std::filesystem::path> paths;
   for (const std::string_view line : util::SplitLineViews(result.output)) {
+    if (paths.size() >= kMaxGitCollectionEntries) {
+      break;
+    }
     if (line.empty()) {
       continue;
     }

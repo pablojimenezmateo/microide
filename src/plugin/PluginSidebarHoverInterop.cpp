@@ -144,7 +144,12 @@ bool SnapshotSidebarProvider(
     return false;
   }
 
-  const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(provider.state, -1));
+  // Clamp against a sparse-border table making lua_rawlen overstate the length
+  // (and a genuinely absurd item count): bound both the reserve and the loop.
+  constexpr lua_Integer kMaxSidebarItems = 100000;
+  const lua_Integer count =
+      std::min<lua_Integer>(static_cast<lua_Integer>(lua_rawlen(provider.state, -1)),
+                            kMaxSidebarItems);
   items->reserve(static_cast<std::size_t>(count));
   for (lua_Integer i = 1; i <= count; ++i) {
     lua_rawgeti(provider.state, -1, i);

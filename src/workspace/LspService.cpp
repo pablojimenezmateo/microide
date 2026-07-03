@@ -393,7 +393,13 @@ void LspService::PublishLspSemanticTokens(ProjectWorkspaceState& state, std::str
     editor::TextStyleDecoration style;
     style.line = static_cast<std::uint32_t>(token.line);
     style.start_column = static_cast<std::uint32_t>(token.start_char);
-    style.end_column = static_cast<std::uint32_t>(token.start_char + token.length);
+    // ParseSemanticTokensData bounds line/start_char/length to [0, INT_MAX]
+    // individually, but their sum can still overflow a signed int here. Compute
+    // in int64 and clamp so `end_column` never wraps to a garbage value (UB).
+    const std::int64_t end_column =
+        std::min<std::int64_t>(static_cast<std::int64_t>(token.start_char) + token.length,
+                               std::numeric_limits<std::uint32_t>::max());
+    style.end_column = static_cast<std::uint32_t>(end_column);
     style.foreground = editor::SyntaxTokenColor(*theme_, kind, plain);  // a!=0 => recolor
     data.text_styles.push_back(style);
   }

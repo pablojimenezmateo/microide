@@ -92,6 +92,29 @@ void TestRevisionBumps() {
   Expect(store.revision() != before, "a publish bumps the revision");
 }
 
+// A hostile plugin publishing a fresh surface_id in a loop must not grow the
+// store without bound (host-side heap OOM outside the Lua memory cap, plus an
+// O(surfaces) RebuildAnchorIndex on every publish → O(N^2) UI-thread hang).
+// New ids past the per-owner cap are refused; existing ids keep updating.
+void TestPerOwnerSurfaceCountIsBounded() {
+  PluginSurfaceStore store;
+  bool refused_a_new_id = false;
+  for (int i = 0; i < 9000; ++i) {
+    const bool changed = store.ReplaceForOwnerSurface(
+        "plug", "s" + std::to_string(i), RasterSurface(static_cast<std::uint64_t>(i + 1),
+                                                       SurfacePreviewSlot::None));
+    if (!changed) {
+      refused_a_new_id = true;
+    }
+  }
+  Expect(refused_a_new_id, "a fresh surface_id past the per-owner cap must be refused");
+  // Updating an already-stored id still works at the cap.
+  Expect(store.Find("plug", "s0") != nullptr, "an early surface stays stored at the cap");
+  Expect(store.ReplaceForOwnerSurface("plug", "s0",
+                                      RasterSurface(999999, SurfacePreviewSlot::None)),
+         "updating an existing surface still works at the cap");
+}
+
 }  // namespace
 
 void RegisterPluginSurfaceStoreTests(std::vector<TestCase>& tests) {
@@ -101,6 +124,8 @@ void RegisterPluginSurfaceStoreTests(std::vector<TestCase>& tests) {
           TestPreviewSurfacesSortedAndToggle);
   AddTest(tests, "PluginSurfaceStore/AnchoredIndexSortedByLine", TestAnchoredIndexSortedByLine);
   AddTest(tests, "PluginSurfaceStore/RevisionBumps", TestRevisionBumps);
+  AddTest(tests, "PluginSurfaceStore/PerOwnerSurfaceCountIsBounded",
+          TestPerOwnerSurfaceCountIsBounded);
 }
 
 }  // namespace microide::tests

@@ -10,6 +10,15 @@
 
 namespace microide::project {
 
+// Upper bound on git-status entries materialized from one `git status` capture.
+// A hostile repo with millions of untracked/changed files would otherwise
+// reserve+parse them all and hand the list to a UI-thread N·logN sort with
+// per-comparison path normalization — a multi-minute freeze + heap spike. The
+// 128 MiB subprocess-capture cap does not bound the entry count (a `?? f\0`
+// record is ~5 bytes → ~25M entries). A changed-file list past this is unusable
+// as a sidebar anyway; extra records are dropped. Shared by the v1 and v2 parsers.
+inline constexpr std::size_t kMaxGitStatusEntries = 50000;
+
 class GitPorcelainParser {
  public:
   static GitFileStatus StatusFromPorcelainCode(std::string_view code);

@@ -47,7 +47,11 @@ const char* ParseProcessRunArgs(lua_State* state,
   if (lua_type(state, 1) != LUA_TTABLE) {
     return "process argv must be a table";
   }
-  const lua_Integer argc = static_cast<lua_Integer>(lua_rawlen(state, 1));
+  // Clamp against a sparse-border table making lua_rawlen overstate the length
+  // (no real command needs thousands of argv entries): bound reserve and loop.
+  constexpr lua_Integer kMaxProcessArgv = 4096;
+  const lua_Integer argc =
+      std::min<lua_Integer>(static_cast<lua_Integer>(lua_rawlen(state, 1)), kMaxProcessArgv);
   out->argv.reserve(static_cast<std::size_t>(argc));
   for (lua_Integer i = 1; i <= argc; ++i) {
     lua_rawgeti(state, 1, i);

@@ -30,7 +30,7 @@ std::vector<ParsedStatusV1Entry> ParseStatusV1Entries(std::string_view output) {
   std::vector<ParsedStatusV1Entry> entries;
 
   const std::vector<std::string_view> records = util::SplitNulDelimited(output);
-  for (std::size_t i = 0; i < records.size(); ++i) {
+  for (std::size_t i = 0; i < records.size() && entries.size() < kMaxGitStatusEntries; ++i) {
     const std::string_view entry = records[i];
     if (entry.size() < 4) {
       continue;
@@ -143,10 +143,17 @@ void GitPorcelainParser::RecordGitStatus(std::unordered_map<std::string, GitFile
     slot = CombineGitStatus(slot, status);
   }
 
+  // Cap ancestor-badge propagation depth. A hostile repo can contain a single
+  // pathologically deep path (`a/a/.../x`); walking every ancestor and retaining
+  // a map key per level is O(depth) string allocations per entry — quadratic in
+  // path length, an OOM. Folder badges beyond a modest depth are not usefully
+  // visible anyway. `relative_path` is already normalized, so each parent_path
+  // stays normalized without the (previously per-step) lexically_normal() call.
+  constexpr int kMaxBadgeAncestorDepth = 64;
   std::filesystem::path dir = relative_path.parent_path();
-  while (!dir.empty() && dir != ".") {
-    const std::string key = dir.lexically_normal().generic_string();
-    GitFileStatus& slot = statuses[key];
+  for (int depth = 0; depth < kMaxBadgeAncestorDepth && !dir.empty() && dir != ".";
+       ++depth) {
+    GitFileStatus& slot = statuses[dir.generic_string()];
     slot = CombineGitStatus(slot, status);
     const auto next = dir.parent_path();
     if (next == dir) {

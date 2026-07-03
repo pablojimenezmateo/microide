@@ -41,13 +41,24 @@ LspClient::Location ParseLocation(const JsonValue& value) {
   return location;
 }
 
+// Cap the number of entries materialized from a server array. LSP messages are
+// bounded to 64 MiB (kMaxLspMessageBytes), but a minimal location/diagnostic/
+// symbol object is only a few dozen bytes of JSON, so a hostile/buggy server can
+// still pack ~1M entries into one message — each materialized into strings +
+// ranges and built into a picker/outline on the UI thread. These caps sit far
+// above any usable list; past them the extra entries are dropped, not parsed.
+constexpr std::size_t kMaxLspLocations = 50000;
+constexpr std::size_t kMaxLspDiagnostics = 10000;  // matches DiagnosticsStore cap
+constexpr std::size_t kMaxLspSymbolNodes = 100000;  // total across the symbol tree
+
 std::vector<LspClient::Location> ParseLocations(const JsonValue& result) {
   std::vector<LspClient::Location> locations;
   if (result.IsArray()) {
     const auto& array = result.AsArray();
-    locations.reserve(array.size());
-    for (const auto& item : array) {
-      locations.push_back(ParseLocation(item));
+    const std::size_t count = std::min(array.size(), kMaxLspLocations);
+    locations.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+      locations.push_back(ParseLocation(array[i]));
     }
   } else if (result.HasKey("uri") || result.HasKey("targetUri")) {
     locations.push_back(ParseLocation(result));
@@ -70,9 +81,10 @@ std::vector<LspClient::Diagnostic> ParseDiagnostics(const JsonValue& array) {
     return diagnostics;
   }
   const auto& items = array.AsArray();
-  diagnostics.reserve(items.size());
-  for (const auto& item : items) {
-    diagnostics.push_back(ParseDiagnostic(item));
+  const std::size_t count = std::min(items.size(), kMaxLspDiagnostics);
+  diagnostics.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    diagnostics.push_back(ParseDiagnostic(items[i]));
   }
   return diagnostics;
 }
@@ -83,7 +95,11 @@ std::vector<LspClient::Diagnostic> ParseDiagnostics(const JsonValue& array) {
 // unusable anyway).
 constexpr int kMaxDocumentSymbolDepth = 64;
 
-LspClient::DocumentSymbol ParseDocumentSymbolAtDepth(const JsonValue& value, int depth) {
+// `remaining` is a shared total-node budget: a server can stay under the depth
+// cap yet pack millions of siblings/children into the tree, so bound the total
+// count of materialized nodes across the whole recursion, not just the depth.
+LspClient::DocumentSymbol ParseDocumentSymbolAtDepth(const JsonValue& value, int depth,
+                                                     std::size_t& remaining) {
   LspClient::DocumentSymbol symbol;
   symbol.name = value["name"].AsString();
   symbol.detail = value["detail"].AsString();
@@ -101,13 +117,18 @@ LspClient::DocumentSymbol ParseDocumentSymbolAtDepth(const JsonValue& value, int
     return symbol;
   }
   for (const auto& child : value["children"].AsArray()) {
-    symbol.children.push_back(ParseDocumentSymbolAtDepth(child, depth + 1));
+    if (remaining == 0) {
+      break;
+    }
+    --remaining;
+    symbol.children.push_back(ParseDocumentSymbolAtDepth(child, depth + 1, remaining));
   }
   return symbol;
 }
 
 LspClient::DocumentSymbol ParseDocumentSymbol(const JsonValue& value) {
-  return ParseDocumentSymbolAtDepth(value, 0);
+  std::size_t remaining = kMaxLspSymbolNodes;
+  return ParseDocumentSymbolAtDepth(value, 0, remaining);
 }
 
 std::vector<LspClient::DocumentSymbol> ParseDocumentSymbols(const JsonValue& result) {
@@ -116,9 +137,12 @@ std::vector<LspClient::DocumentSymbol> ParseDocumentSymbols(const JsonValue& res
     return symbols;
   }
   const auto& items = result.AsArray();
-  symbols.reserve(items.size());
-  for (const auto& item : items) {
-    symbols.push_back(ParseDocumentSymbol(item));
+  std::size_t remaining = kMaxLspSymbolNodes;
+  const std::size_t count = std::min(items.size(), remaining);
+  symbols.reserve(count);
+  for (std::size_t i = 0; i < count && remaining > 0; ++i) {
+    --remaining;
+    symbols.push_back(ParseDocumentSymbolAtDepth(items[i], 0, remaining));
   }
   return symbols;
 }

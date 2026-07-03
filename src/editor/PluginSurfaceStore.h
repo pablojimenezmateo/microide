@@ -126,6 +126,13 @@ class PluginSurfaceStore {
   static std::string PathKey(const std::filesystem::path& path);
   void RebuildAnchorIndex();
 
+  // Upper bound on distinct surface_ids a single plugin (owner) may hold. Bounds
+  // both host-side memory (each surface owns a heap display list) and the
+  // O(surfaces) RebuildAnchorIndex cost paid on every publish. Well beyond any
+  // real plugin's surface count; a flood of fresh ids hits this instead of
+  // growing without bound. See ReplaceForOwnerSurface.
+  static constexpr std::size_t kMaxSurfacesPerOwner = 8192;
+
   using SurfaceMap = std::unordered_map<std::string, SurfaceContent,
                                         util::TransparentStringHash, std::equal_to<>>;
 

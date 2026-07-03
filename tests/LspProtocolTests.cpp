@@ -141,9 +141,50 @@ void TestLspProtocolDecodesSemanticTokens() {
          "the in-range token decodes to its accumulated line");
 }
 
+// A hostile/buggy language server can pack ~1M minimal entries into one 64 MiB
+// message; each parse path materializes strings + ranges and builds a picker /
+// outline / diagnostics list on the UI thread. The parsers must cap the count.
+void TestLspProtocolParseCapsBoundHostileArrays() {
+  // Locations (references/definition picker).
+  {
+    std::string body = "[";
+    for (int i = 0; i < 60000; ++i) {
+      if (i != 0) body += ',';
+      body += R"({"uri":"file:///a","range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}}})";
+    }
+    body += "]";
+    Expect(codec::ParseLocations(Json(body)).size() <= 50000,
+           "ParseLocations must cap a hostile locations array");
+  }
+  // Diagnostics.
+  {
+    std::string body = "[";
+    for (int i = 0; i < 20000; ++i) {
+      if (i != 0) body += ',';
+      body += R"({"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"message":"x"})";
+    }
+    body += "]";
+    Expect(codec::ParseDiagnostics(Json(body)).size() <= 10000,
+           "ParseDiagnostics must cap a hostile diagnostics array");
+  }
+  // Document symbols: a flat sibling flood stays under the total-node budget.
+  {
+    std::string body = "[";
+    for (int i = 0; i < 120000; ++i) {
+      if (i != 0) body += ',';
+      body += R"({"name":"s","kind":1,"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}}})";
+    }
+    body += "]";
+    Expect(codec::ParseDocumentSymbols(Json(body)).size() <= 100000,
+           "ParseDocumentSymbols must cap a hostile symbol sibling flood");
+  }
+}
+
 }  // namespace
 
 void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "LspProtocol/ParseCapsBoundHostileArrays",
+          TestLspProtocolParseCapsBoundHostileArrays);
   AddTest(tests, "LspProtocol/DecodesSemanticTokens", TestLspProtocolDecodesSemanticTokens);
   AddTest(tests, "LspProtocol/ParsesPositionAndRange", TestLspProtocolParsesPositionAndRange);
   AddTest(tests, "LspProtocol/ParsesLocations", TestLspProtocolParsesLocationsArrayAndSingleAndLink);

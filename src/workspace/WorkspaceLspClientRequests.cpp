@@ -1,5 +1,8 @@
 #include "workspace/WorkspaceLspClient.h"
 
+#include <algorithm>
+#include <cstddef>
+
 #include "workspace/LspProtocol.h"
 #include "workspace/WorkspaceLspClientInternal.h"
 
@@ -64,7 +67,16 @@ void LspClient::RequestCodeActionAsync(std::string uri, Range range, CodeActionC
       [cb = std::move(callback)](util::JsonValue resp) {
         if (!resp.HasKey("result") || !resp["result"].IsArray()) { cb(std::nullopt); return; }
         std::vector<CodeAction> actions;
-        for (const auto& action : resp["result"].AsArray()) {
+        // Cap the code-action list: a hostile server can pack a huge array into
+        // one 64 MiB message; each action (with a copied arguments array) is
+        // re-materialized into a session item on the UI thread. Mirrors the
+        // completion 5000 cap. A usable lightbulb menu never approaches this.
+        constexpr std::size_t kMaxCodeActions = 5000;
+        const auto& result_array = resp["result"].AsArray();
+        const std::size_t action_count = std::min(result_array.size(), kMaxCodeActions);
+        actions.reserve(action_count);
+        for (std::size_t i = 0; i < action_count; ++i) {
+          const auto& action = result_array[i];
           CodeAction ca;
           ca.title = action["title"].AsString();
           if (action["command"].IsString()) {

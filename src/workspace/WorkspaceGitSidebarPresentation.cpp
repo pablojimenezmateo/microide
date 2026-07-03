@@ -153,12 +153,22 @@ std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
       }
       const std::filesystem::path normalized = row->relative_path.lexically_normal();
       GitSidebarTreeNode* node = &root;
+      // Cap tree depth. A hostile repo can contain a pathologically deep path;
+      // descending one node per segment builds a chain that then overflows the
+      // stack in the recursive EmitGitSidebarTreeLines. Beyond the cap the file
+      // is grouped at the capped depth (a shallow display for absurd paths).
+      constexpr int kMaxGitSidebarTreeDepth = 64;
+      int depth = 0;
       for (const std::string& segment : ParentPathSegments(normalized)) {
+        if (depth >= kMaxGitSidebarTreeDepth) {
+          break;
+        }
         GitSidebarTreeNode& child = node->directories[segment];
         if (child.path.empty()) {
           child.path = node->path / segment;
         }
         node = &child;
+        ++depth;
       }
       node->files.push_back(row);
     }
