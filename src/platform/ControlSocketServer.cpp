@@ -49,6 +49,12 @@ constexpr std::size_t kMaxRequestLineBytes = 1u << 20;
 // the queue grow without limit.
 constexpr std::size_t kMaxInboundQueued = 4096;
 
+// Bound idle connected clients. The control channel is intended for a handful of
+// local tools/watchers, not hundreds of persistent sockets; without a cap, a
+// local process can open idle AF_UNIX connections and grow the connection map
+// and poll set without sending a byte.
+constexpr std::size_t kMaxConnections = 128;
+
 void SetNonBlocking(int fd) {
   const int flags = ::fcntl(fd, F_GETFL, 0);
   if (flags >= 0) {
@@ -352,6 +358,10 @@ struct ControlSocketServer::Impl {
       conn->fd = client_fd;
       {
         std::lock_guard<std::mutex> lock(conn_mutex);
+        if (connections.size() >= kMaxConnections) {
+          ::close(client_fd);
+          continue;
+        }
         conn->id = next_conn_id++;
         connections.emplace(conn->id, conn);
       }

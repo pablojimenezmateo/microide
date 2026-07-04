@@ -266,6 +266,40 @@ void TestInboundQueueFloodIsShed() {
   server.Stop();
 }
 
+// Resilience: idle local clients that connect and never send data must not grow
+// the server's connection map / poll set without bound.
+void TestIdleConnectionFloodIsCapped() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
+  ControlSocketServer server;
+  Expect(server.Start(socket_path), "server should start");
+
+  std::vector<int> clients;
+  for (int i = 0; i < 180; ++i) {
+    const int client = ConnectUnix(socket_path);
+    if (client >= 0) {
+      clients.push_back(client);
+    }
+  }
+
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  while (std::chrono::steady_clock::now() < deadline && server.ConnectionCount() < 128) {
+    std::this_thread::sleep_for(5ms);
+  }
+  // Give the I/O thread a short window to accept and shed any excess sockets.
+  std::this_thread::sleep_for(100ms);
+
+  Expect(server.ConnectionCount() <= 128,
+         "idle connection floods must be capped so the poll set stays bounded");
+
+  for (int client : clients) {
+    ::close(client);
+  }
+  Expect(WaitForConnectionCount(server, 0, 3s),
+         "closing flood clients should reap every accepted connection");
+  server.Stop();
+}
+
 #endif  // POSIX
 
 }  // namespace
@@ -284,6 +318,8 @@ void RegisterControlSocketServerTests(std::vector<TestCase>& tests) {
           TestOversizedUnterminatedLineIsShed);
   AddTest(tests, "ControlSocketServer/InboundQueueFloodIsShed",
           TestInboundQueueFloodIsShed);
+  AddTest(tests, "ControlSocketServer/IdleConnectionFloodIsCapped",
+          TestIdleConnectionFloodIsCapped);
 #else
   (void)tests;
 #endif
