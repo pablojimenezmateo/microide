@@ -1,5 +1,6 @@
 #include "project/GitBlameService.h"
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -74,7 +75,14 @@ std::vector<GitBlameAttribution> ParseGitBlameIncrementalOutput(std::string_view
         continue;
       }
       current_result_line = *parsed_result - 1;
-      current_line_count = *parsed_count;
+      // Defense-in-depth: the caller always bounds the blame `-L` window (≤512
+      // lines), so git self-limits this count. But the field is attacker-tunable
+      // (a compromised/buggy git, or a future unbounded caller), and downstream
+      // GitBlameService inserts one map entry per line in [result_line,
+      // result_line + line_count). Clamp so an absurd count cannot drive an
+      // unbounded map growth (OOM). 1M is orders of magnitude past any real hunk.
+      constexpr std::size_t kMaxAttributionLineCount = 1'000'000;
+      current_line_count = std::min<std::size_t>(*parsed_count, kMaxAttributionLineCount);
       current_metadata = commit_metadata[current_commit];
       in_entry = true;
       continue;

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <limits>
 #include <utility>
 
 namespace microide::editor {
@@ -53,8 +54,16 @@ void PieceTree::RebuildFromOriginal() {
   add_.clear();
   add_newlines_.clear();
   original_newlines_.clear();
-  for (std::uint32_t i = 0; i < original_.size(); ++i) {
-    if (original_[i] == '\n') original_newlines_.push_back(i);
+  // Piece offsets and lengths are 32-bit. The editor caps file loads far below
+  // this (kMaxTextFileBytes = 512 MiB), but guard here too so PieceTree stays
+  // self-defending: without this, a >=4 GiB buffer (a future cap change or a
+  // non-file caller) would wrap the loop counter into an infinite loop and
+  // silently truncate the length cast below.
+  if (original_.size() > std::numeric_limits<std::uint32_t>::max()) {
+    original_.clear();
+  }
+  for (std::size_t i = 0; i < original_.size(); ++i) {
+    if (original_[i] == '\n') original_newlines_.push_back(static_cast<std::uint32_t>(i));
   }
   nodes_.resize(1);  // keep only the sentinel
   free_list_.clear();

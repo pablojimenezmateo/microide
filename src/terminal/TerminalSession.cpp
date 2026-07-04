@@ -121,6 +121,10 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
               AppendOutputLocked(output);
               wake = ConsumeWakeDecisionLocked();
             }
+            // Flush query replies (DSR/DA/etc.) generated during parsing after
+            // releasing mutex_, so the blocking PTY write() never runs under the
+            // lock on this reader thread.
+            FlushPendingReply();
             if (wake) {
               PushWakeEvent();
             }
@@ -170,6 +174,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
       AppendOutputLocked(result.initial_output);
     }
   }
+  FlushPendingReply();
   PushWakeEvent();
   return result.started;
 }
@@ -541,11 +546,14 @@ std::optional<std::string> TerminalSession::ConsumePendingClipboardText() {
 }
 
 void TerminalSession::SendFocusEvent(bool focused) {
-  std::scoped_lock lock(mutex_);
-  if (!focus_event_mode_) {
-    return;
+  {
+    std::scoped_lock lock(mutex_);
+    if (!focus_event_mode_) {
+      return;
+    }
+    SendBytesLocked(focused ? "\x1b[I" : "\x1b[O");
   }
-  SendBytesLocked(focused ? "\x1b[I" : "\x1b[O");
+  FlushPendingReply();
 }
 
 void TerminalSession::AdvanceSnapshotGenerationLocked() {

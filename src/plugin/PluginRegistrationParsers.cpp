@@ -526,7 +526,10 @@ bool ReadPairArrayField(lua_State* state,
     lua_pop(state, 1);
     return false;
   }
-  for (lua_Integer i = 1;; ++i) {
+  // Cap the drain so a plugin returning an unbounded/huge sequence cannot grow
+  // this vector without limit and hang/OOM the host.
+  constexpr lua_Integer kMaxPairArrayItems = 100000;
+  for (lua_Integer i = 1; i <= kMaxPairArrayItems; ++i) {
     lua_geti(state, -1, i);
     if (lua_isnil(state, -1)) {
       lua_pop(state, 1);

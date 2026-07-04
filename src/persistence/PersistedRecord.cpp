@@ -1,6 +1,7 @@
 #include "persistence/PersistedRecord.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 
@@ -259,6 +260,13 @@ bool PrimitiveReader::ReadF32(float* value) {
     return false;
   }
   std::memcpy(value, &encoded, sizeof(encoded));
+  // A forged file can encode NaN/Inf here. Consumers guard with std::clamp, but
+  // std::clamp(NaN, lo, hi) returns NaN, which then flows into layout arithmetic
+  // and static_cast<int>(NaN) (undefined behavior). Neutralize it at the source:
+  // 0 is brought into range by every downstream clamp/default.
+  if (!std::isfinite(*value)) {
+    *value = 0.0f;
+  }
   return true;
 }
 

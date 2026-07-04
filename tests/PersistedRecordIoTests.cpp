@@ -4,6 +4,7 @@
 #include "persistence/PersistedRecordReader.h"
 #include "persistence/PersistedRecordWriter.h"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -190,9 +191,40 @@ void TestPersistedRecordReaderRejectsUnsupportedVersionEvenWithValidCrc() {
          "read should report unsupported version");
 }
 
+void TestPrimitiveReaderSanitizesNonFiniteF32() {
+  // A forged file can encode NaN/Inf in an F32 field. std::clamp(NaN, lo, hi)
+  // returns NaN, which later reaches static_cast<int>(NaN) in layout math (UB).
+  // ReadF32 must neutralize non-finite payloads at the source.
+  const std::uint32_t kNonFinite[] = {
+      0x7FC00000u,  // quiet NaN
+      0x7F800000u,  // +Inf
+      0xFF800000u,  // -Inf
+  };
+  for (const std::uint32_t bits : kNonFinite) {
+    std::vector<std::byte> payload;
+    microide::persistence::PrimitiveWriter writer(&payload);
+    Expect(writer.WriteU32(bits), "raw non-finite F32 bits should encode");
+    microide::persistence::PrimitiveReader reader(payload);
+    float value = 1.0f;
+    Expect(reader.ReadF32(&value), "ReadF32 should still succeed on non-finite input");
+    Expect(std::isfinite(value), "ReadF32 must sanitize NaN/Inf to a finite value");
+  }
+
+  // A finite value round-trips unchanged.
+  std::vector<std::byte> finite_payload;
+  microide::persistence::PrimitiveWriter finite_writer(&finite_payload);
+  Expect(finite_writer.WriteF32(288.0f), "finite F32 should encode");
+  microide::persistence::PrimitiveReader finite_reader(finite_payload);
+  float finite_value = 0.0f;
+  Expect(finite_reader.ReadF32(&finite_value), "finite F32 should decode");
+  Expect(finite_value == 288.0f, "finite F32 must round-trip unchanged");
+}
+
 }  // namespace
 
 void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PersistedRecordIo/PrimitiveReaderSanitizesNonFiniteF32",
+          TestPrimitiveReaderSanitizesNonFiniteF32);
   AddTest(tests, "PersistedRecordIo/WriterRoundTripsWithAtomicBackupFlow",
           TestPersistedRecordWriterRoundTripsWithAtomicBackupFlow);
   AddTest(tests, "PersistedRecordIo/ReaderFallsBackToBackupOnCorruption",

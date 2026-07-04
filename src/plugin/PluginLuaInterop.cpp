@@ -122,8 +122,12 @@ std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
     lua_pop(state, 1);
     return std::nullopt;
   }
+  // Cap the drain so a plugin returning an accidentally-huge (or, via a metatable
+  // __index, effectively unbounded) sequence cannot grow this vector without
+  // bound and hang/OOM the host. 100000 is far beyond any real string-array field.
+  constexpr lua_Integer kMaxLuaStringArrayItems = 100000;
   std::vector<std::string> values;
-  for (lua_Integer i = 1;; ++i) {
+  for (lua_Integer i = 1; i <= kMaxLuaStringArrayItems; ++i) {
     lua_geti(state, -1, i);
     if (lua_isnil(state, -1)) {
       lua_pop(state, 1);

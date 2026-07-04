@@ -11,15 +11,36 @@ void TerminalSession::SendBytesLocked(std::string_view bytes) {
     return;
   }
 
-  if (UsePlaceholderTerminalsForTesting() && (!backend_ || !backend_->running())) {
-    test_sent_bytes_.append(bytes);
+  // Buffer the reply rather than writing it here. SendBytesLocked runs under
+  // mutex_ — on the reader thread via AppendOutputLocked for query replies
+  // (DSR/DA/DECRQM/color/kitty), and on the UI thread for focus events. A direct
+  // backend_->Write is a blocking write() to the PTY master, so a child that
+  // floods queries (e.g. `\033[6n` in a loop) without draining its own stdin
+  // would fill the input buffer and park the reader thread inside write() while
+  // holding mutex_, freezing every UI-thread snapshot/cursor call. Instead
+  // accumulate here and flush via FlushPendingReply() once the lock is released.
+  // Cap the buffer so the flood cannot grow it without bound (also bounds the
+  // DECRQM one-reply-per-mode amplification).
+  constexpr std::size_t kMaxPendingReplyBytes = 64 * 1024;
+  if (pending_reply_.size() >= kMaxPendingReplyBytes) {
     return;
   }
+  const std::size_t room = kMaxPendingReplyBytes - pending_reply_.size();
+  pending_reply_.append(bytes.substr(0, room));
+}
 
-  if (!backend_) {
-    return;
+void TerminalSession::FlushPendingReply() {
+  std::string bytes;
+  {
+    std::scoped_lock lock(mutex_);
+    if (pending_reply_.empty()) {
+      return;
+    }
+    bytes.swap(pending_reply_);
   }
-  backend_->Write(bytes);
+  // SendBytes performs the blocking PTY write() without holding mutex_ (and
+  // routes to test_sent_bytes_ in placeholder test mode).
+  SendBytes(bytes);
 }
 
 void TerminalSession::SendKey(Key key) {

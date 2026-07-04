@@ -168,10 +168,25 @@ void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string ne
         WorkspaceEdit edit;
         const auto& result = resp["result"];
         if (result.HasKey("changes")) {
+          // Cap the total files and edits materialized on the main thread. A
+          // hostile/buggy server can pack a sub-64 MiB rename result with
+          // thousands of files each carrying a huge edit array (or one file with
+          // millions of edits), each edit becoming a Range + newText string here.
+          // These ceilings are far beyond any real rename's footprint.
+          constexpr std::size_t kMaxRenameFiles = 10000;
+          constexpr std::size_t kMaxRenameEditsTotal = 200000;
+          std::size_t total_edits = 0;
           for (const auto& [file_uri, edits_val] : result["changes"].AsObject()) {
+            if (edit.changes.size() >= kMaxRenameFiles || total_edits >= kMaxRenameEditsTotal) {
+              break;
+            }
             auto& file_edits = edit.changes[file_uri];
             for (const auto& e : edits_val.AsArray()) {
+              if (total_edits >= kMaxRenameEditsTotal) {
+                break;
+              }
               file_edits.emplace_back(lsp_protocol::ParseRange(e["range"]), e["newText"].AsString());
+              ++total_edits;
             }
           }
         }

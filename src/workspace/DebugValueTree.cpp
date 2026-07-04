@@ -1,6 +1,7 @@
 #include "workspace/DebugValueTree.h"
 
 #include <algorithm>
+#include <limits>
 #include <string_view>
 #include <utility>
 
@@ -327,7 +328,14 @@ std::vector<DebugValueTree::ChildFetch> DebugValueTree::ApplyVariables(
     // The adapter's reported child-count (paging stops precisely; a reported 0
     // means an empty container). Only trusted when actually reported — otherwise
     // the fetch falls back to a bounded page.
-    node.total_count = variable.indexed_variables + variable.named_variables;
+    // Sum in 64-bit with negatives clamped: both fields are ints truncated from
+    // the adapter's JSON int64, so an int+int here would overflow (UB) and a
+    // negative would corrupt the paging math (total_count - loaded_count).
+    const long long child_total =
+        std::max<long long>(0, variable.indexed_variables) +
+        std::max<long long>(0, variable.named_variables);
+    node.total_count = static_cast<int>(
+        std::min<long long>(child_total, std::numeric_limits<int>::max()));
     node.total_known = variable.count_reported;
     const std::uint32_t child_id = AddNode(std::move(node));
     new_child_ids.push_back(child_id);

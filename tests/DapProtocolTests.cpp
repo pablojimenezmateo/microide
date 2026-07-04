@@ -352,11 +352,45 @@ void TestDapProtocolStackFramesAreCapped() {
          "stackFrames must be capped, not materialized 1:1 from a hostile array");
 }
 
+void TestDapProtocolListsAreCapped() {
+  // A hostile/buggy adapter can pack millions of tiny objects into a sub-64 MiB
+  // frame; each list parser must clamp like ParseStackFrames rather than
+  // materialize the array 1:1 on the main thread.
+  constexpr int kEntries = 50000;
+  const auto build = [](std::string_view key, std::string_view entry) {
+    std::string body = "{\"";
+    body += key;
+    body += "\":[";
+    for (int i = 0; i < kEntries; ++i) {
+      if (i != 0) body += ',';
+      body += entry;
+    }
+    body += "]}";
+    return body;
+  };
+
+  const auto variables =
+      codec::ParseVariables(Json(build("variables", R"({"name":"a","value":"1"})")));
+  Expect(variables.size() <= 10000, "variables must be capped");
+
+  const auto scopes =
+      codec::ParseScopes(Json(build("scopes", R"({"name":"s","variablesReference":1})")));
+  Expect(scopes.size() <= 10000, "scopes must be capped");
+
+  const auto threads = codec::ParseThreads(Json(build("threads", R"({"id":1,"name":"t"})")));
+  Expect(threads.size() <= 10000, "threads must be capped");
+
+  const auto breakpoints =
+      codec::ParseBreakpoints(Json(build("breakpoints", R"({"id":1,"verified":true,"line":1})")));
+  Expect(breakpoints.size() <= 10000, "breakpoints must be capped");
+}
+
 }  // namespace
 
 void RegisterDapProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DapProtocol/DecodeRobustness", TestDapProtocolDecodeRobustness);
   AddTest(tests, "DapProtocol/StackFramesAreCapped", TestDapProtocolStackFramesAreCapped);
+  AddTest(tests, "DapProtocol/ListsAreCapped", TestDapProtocolListsAreCapped);
   AddTest(tests, "DapProtocol/EncodesRequestEnvelope", TestDapProtocolEncodesRequestEnvelope);
   AddTest(tests, "DapProtocol/EncodesResponseEnvelope", TestDapProtocolEncodesResponseEnvelope);
   AddTest(tests, "DapProtocol/ParsesResponse", TestDapProtocolParsesResponse);

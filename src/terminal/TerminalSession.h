@@ -210,6 +210,7 @@ class TerminalSession {
   std::size_t NextTabStopLocked(std::size_t column) const;
   std::size_t PreviousTabStopLocked(std::size_t column) const;
   void SendBytesLocked(std::string_view bytes);
+  void FlushPendingReply();
   void EnsureCursorLineExistsLocked();
   void AdvanceCursorRowLocked(bool wrapped_from_previous = false);
   void MoveCursorLocked(std::size_t row, std::size_t column);
@@ -301,6 +302,13 @@ class TerminalSession {
   // test mode). Always present so the core ABI is identical for the production
   // and test binaries; never read in production.
   std::string test_sent_bytes_;
+
+  // Replies to terminal queries (DSR/DA/DECRQM/color/focus) are accumulated here
+  // under mutex_ by SendBytesLocked and flushed by FlushPendingReply() after the
+  // lock is released, so the reader thread never blocks inside a PTY write()
+  // while holding mutex_. Capped so a query-flooding, non-draining child cannot
+  // grow it without bound.
+  std::string pending_reply_;
 
   friend struct ::microide::tests::TerminalSessionTestAccess;
 };

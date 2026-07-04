@@ -114,6 +114,25 @@ void TestPorcelainV2ConflictClassification() {
          "UU should classify as both modified");
 }
 
+void TestPorcelainV2ShortRecordDoesNotThrow() {
+  // A truncated/adversarial `git status --porcelain=v2 -z` stream — e.g. a repo
+  // with millions of entries whose final record is clipped to a single byte by
+  // the 128 MiB capture cap — must not throw std::out_of_range from substr(2)
+  // (which would propagate off the background worker and abort the process).
+  std::string output = "1";  // one-byte record, no trailing NUL
+  const auto state = GitPorcelainV2Parser::Parse(output, "/repo", 1, 0);
+  Expect(state.entries.empty(), "one-byte record should be skipped, not parsed");
+
+  // A valid entry followed by a one-byte trailing record: the good entry parses,
+  // the short record is skipped without throwing.
+  std::string mixed = "1 M. N... 100644 100644 100644 abc def README.md";
+  mixed.push_back('\0');
+  mixed.append("2");  // clipped trailing record
+  const auto mixed_state = GitPorcelainV2Parser::Parse(mixed, "/repo", 1, 0);
+  Expect(mixed_state.entries.size() == 1,
+         "valid entry should parse while the short trailing record is skipped");
+}
+
 void TestRefreshFailureClassification() {
   Expect(microide::project::ClassifyGitRefreshFailure(
              128, "fatal: not a git repository (or any of the parent directories)") ==
@@ -134,6 +153,8 @@ void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
           TestPorcelainV2RenamePathWithSpaces);
   AddTest(tests, "GitRepositoryState/PorcelainV2ConflictClassification",
           TestPorcelainV2ConflictClassification);
+  AddTest(tests, "GitRepositoryState/PorcelainV2ShortRecordDoesNotThrow",
+          TestPorcelainV2ShortRecordDoesNotThrow);
   AddTest(tests, "GitRepositoryState/RefreshFailureClassification",
           TestRefreshFailureClassification);
 }

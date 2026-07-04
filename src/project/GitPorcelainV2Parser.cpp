@@ -146,6 +146,14 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
       continue;
     }
 
+    // A well-formed changed/untracked record is `<kind><space><XY>...`, so it is
+    // at least 2 bytes. A shorter record (e.g. a single byte left by the 128 MiB
+    // capture truncation on a repo with millions of entries) would make substr(2)
+    // throw std::out_of_range, which propagates off the background worker thread
+    // and aborts the process. Guard it like the v1 parser's `< 4` check.
+    if (record.size() < 2) {
+      continue;
+    }
     const char kind = record[0];
     const std::string_view body = record.substr(2);
     // Only the leading XY status field is consumed here; extract it directly

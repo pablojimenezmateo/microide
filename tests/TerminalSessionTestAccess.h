@@ -64,8 +64,13 @@ struct TerminalSessionTestAccess {
   }
 
   static void AppendOutput(microide::terminal::TerminalSession& session, std::string_view data) {
-    std::scoped_lock lock(session.mutex_);
-    session.AppendOutputLocked(data);
+    {
+      std::scoped_lock lock(session.mutex_);
+      session.AppendOutputLocked(data);
+    }
+    // Mirror the production reader thread: query replies are buffered under the
+    // lock and flushed once it is released.
+    session.FlushPendingReply();
   }
 
   static void SetLaunchLabel(microide::terminal::TerminalSession& session, std::string_view label) {
