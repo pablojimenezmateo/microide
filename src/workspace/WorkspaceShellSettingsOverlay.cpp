@@ -206,19 +206,35 @@ std::string NextSettingValue(const SettingSpec& spec,
         value = WrapSteppedInt(value, 1, 16, 1, direction);
       } else if (spec.id == "editor.font_size" || spec.id == "terminal.font_size") {
         value = WrapSteppedInt(value, 8, 32, 1, direction);
+      } else if (spec.id == "terminal.scrollback_lines") {
+        value = WrapSteppedInt(value, 200, 100000, 1000, direction);
+      } else if (spec.id == "editor.caret_blink.interval_ms") {
+        value = WrapSteppedInt(value, 100, 2000, 50, direction);
+      } else if (spec.id == "editor.autosave.delay_ms") {
+        value = WrapSteppedInt(value, 200, 60000, 250, direction);
+      } else if (spec.id == "editor.fold.sticky_scroll.max_depth") {
+        value = WrapSteppedInt(value, 1, 8, 1, direction);
       } else {
+        // Fallback for any future Int setting without an explicit range. The real
+        // per-setting ranges above must stay in sync with each consumer's clamp;
+        // this default±20 window is a safety net, not a correct range.
         value = WrapSteppedInt(value, spec.default_int - 20, spec.default_int + 20, 1, direction);
       }
       return std::to_string(value);
     }
     case SettingType::Float: {
+      // ui.scale is the only Float setting. Step by the 0.25 preset spacing and
+      // wrap across the full [kMinUiScale, kMaxUiScale] = [0.75, 3.0] range so the
+      // overlay stepper reaches the same maximum as the dedicated ui-scale command
+      // (the old 0.1 step capped at 2.0, leaving 2.25..3.0 unreachable here and
+      // producing off-preset values).
       const auto parsed = util::ParseFloat(current);
-      float value =
-          parsed.value_or(spec.default_float) + (direction == SettingStepDirection::Forward ? 0.1f : -0.1f);
-      if (value > 2.0f) {
+      float value = parsed.value_or(spec.default_float) +
+                    (direction == SettingStepDirection::Forward ? 0.25f : -0.25f);
+      if (value > 3.0f) {
         value = 0.75f;
       } else if (value < 0.75f) {
-        value = 2.0f;
+        value = 3.0f;
       }
       return SerializeSettingValue(value);
     }
