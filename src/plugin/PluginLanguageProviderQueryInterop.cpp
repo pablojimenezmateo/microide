@@ -57,17 +57,24 @@ void ReadSymbolArray(lua_State* state,
   if (depth > kMaxSymbolDepth || *total >= kMaxSymbolNodes) {
     return;
   }
-  for (lua_Integer i = 1;; ++i) {
-    lua_geti(state, -1, i);
-    if (lua_isnil(state, -1)) {
+  // Each descent keeps the current element table and its "children" table live on
+  // the Lua stack; reserve headroom before recursing. The harvest runs after PCall
+  // disarmed the count-hook watchdog and there is no other lua_checkstack in this
+  // path, so a deeply nested symbol tree would otherwise overrun the stack top.
+  if (!lua_checkstack(state, 4)) {
+    return;
+  }
+  // Bound the harvest with lua_rawlen and read entries with lua_rawgeti, mirroring
+  // the sibling completion/code-action harvests: the result table arrives after
+  // PCall cleared the count-hook, so the previous unbounded for(;;) + metamethod-
+  // invoking lua_geti over an adversarial __index/__len would spin this worker
+  // thread forever (and could longjmp past the native frame).
+  const int array_index = lua_absindex(state, -1);
+  const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, array_index));
+  for (lua_Integer i = 1; i <= count && *total < kMaxSymbolNodes; ++i) {
+    lua_rawgeti(state, array_index, i);
+    if (!lua_istable(state, -1)) {
       lua_pop(state, 1);
-      break;
-    }
-    if (!lua_istable(state, -1) || *total >= kMaxSymbolNodes) {
-      lua_pop(state, 1);
-      if (*total >= kMaxSymbolNodes) {
-        break;
-      }
       continue;
     }
     PluginHost::DocumentSymbolNode node;

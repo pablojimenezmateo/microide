@@ -569,6 +569,23 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const int scroll_row = list_layout.scroll_row;
     project_state.sidebar.scroll_row = scroll_row;
 
+    // Resolve each git entry's row view model once into an entry_index-keyed
+    // table (O(total_git_rows)), replacing the previous O(visible x total_rows)
+    // nested section/row scan performed for every rendered row. entry_index is
+    // validated < entries.size() below, so the table is sized to match.
+    std::vector<const GitSidebarRowViewModel*> row_vm_by_entry;
+    if (sidebar_vm.git_sidebar.has_value()) {
+      row_vm_by_entry.assign(project_state.sidebar.git.entries.size(), nullptr);
+      for (const GitSidebarSectionViewModel& section : sidebar_vm.git_sidebar->sections) {
+        for (const GitSidebarRowViewModel& candidate : section.rows) {
+          if (candidate.entry_index >= 0 &&
+              static_cast<std::size_t>(candidate.entry_index) < row_vm_by_entry.size()) {
+            row_vm_by_entry[static_cast<std::size_t>(candidate.entry_index)] = &candidate;
+          }
+        }
+      }
+    }
+
     // Reused across rows so the per-row primary label keeps its capacity instead
     // of allocating (twice, when a review marker prefixes it) each iteration.
     std::string primary_label;
@@ -646,20 +663,10 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       }
 
       const auto& entry = project_state.sidebar.git.entries[static_cast<std::size_t>(line.entry_index)];
-      const GitSidebarRowViewModel* row_vm = nullptr;
-      if (sidebar_vm.git_sidebar.has_value()) {
-        for (const GitSidebarSectionViewModel& section : sidebar_vm.git_sidebar->sections) {
-          for (const GitSidebarRowViewModel& candidate : section.rows) {
-            if (candidate.entry_index == line.entry_index) {
-              row_vm = &candidate;
-              break;
-            }
-          }
-          if (row_vm != nullptr) {
-            break;
-          }
-        }
-      }
+      const GitSidebarRowViewModel* row_vm =
+          static_cast<std::size_t>(line.entry_index) < row_vm_by_entry.size()
+              ? row_vm_by_entry[static_cast<std::size_t>(line.entry_index)]
+              : nullptr;
       const bool selected =
           static_cast<std::size_t>(line.entry_index) == project_state.sidebar.git.selected_index;
       const bool emphasized = selected || PointerOver(row_rect);

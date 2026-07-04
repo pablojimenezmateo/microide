@@ -851,6 +851,51 @@ return ide.plugin({
          "unmatched language should yield no plugin definitions");
 }
 
+void TestPluginDocumentSymbolsBoundedAgainstAdversarialArray() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  // Regression: the document-symbol harvest ran an unbounded for(;;) with a
+  // metamethod-invoking lua_geti, so a returned array whose __index yields a
+  // non-nil value for every integer key would spin the worker thread forever.
+  // The harvest now bounds by lua_rawlen + lua_rawgeti, so a real two-element
+  // array wrapped in such a metatable must terminate and return exactly the
+  // two real entries.
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  WriteFile(plugins_dir / "sym" / "init.lua", R"lua(
+local ide = require("microide")
+return ide.plugin({
+  id = "sym",
+  setup = function(ctx)
+    ctx.document_symbols.add({
+      id = "adversarial", language_id = "lua",
+      provide = function(_)
+        local real = {
+          { name = "Alpha", kind = "class", line = 1, column = 1 },
+          { name = "Beta", kind = "function", line = 2, column = 1 },
+        }
+        -- __index returns a fresh nameless table for every out-of-range key, so a
+        -- naive lua_geti walk would never hit nil.
+        return setmetatable(real, { __index = function() return {} end })
+      end,
+    })
+  end,
+})
+)lua");
+
+  PluginHost host;
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+  const std::filesystem::path file = temp.path() / "project" / "src" / "main.lua";
+
+  std::string error;
+  const auto symbols = host.QueryDocumentSymbols("lua", file, &error);
+  Expect(symbols.size() == 2, "harvest must stop at the array length, not the metatable");
+  Expect(symbols.front().name == "Alpha" && symbols.back().name == "Beta",
+         "harvest should return exactly the real array entries");
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -973,6 +1018,8 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SettingsRegistry/GetCallback", TestPluginSettingsGetCallback);
   AddTest(tests, "SidebarRegistry/PluginTreeToggle", TestPluginTreeSidebarToggle);
   AddTest(tests, "LanguageProviders/PluginQueries", TestPluginLanguageProviders);
+  AddTest(tests, "LanguageProviders/DocumentSymbolsBoundedAgainstAdversarialArray",
+          TestPluginDocumentSymbolsBoundedAgainstAdversarialArray);
   AddTest(tests, "SurfaceRegistry/PluginPublish", TestPluginSurfacePublish);
 }
 

@@ -282,13 +282,20 @@ struct ControlSocketServer::Impl {
             conn->linger_deadline = std::chrono::steady_clock::now() +
                                     std::chrono::milliseconds(kLingerGraceMs);
           }
+          // Sample in_flight BEFORE write_buf. SendLine appends the reply to
+          // write_buf and only THEN decrements in_flight (release), so observing
+          // in_flight <= 0 here (acquire) guarantees any just-queued reply is
+          // already visible to the write_buf read below. The reverse order has a
+          // TOCTOU hole: read empty write_buf, SendLine appends + decrements, read
+          // in_flight == 0 -> reap while a reply sits unsent (the client, which
+          // half-closed its write side, then sees EOF instead of its answer).
+          const bool no_in_flight = conn->in_flight.load(std::memory_order_acquire) <= 0;
           bool write_pending = false;
           {
             std::lock_guard<std::mutex> lock(conn->out_mutex);
             write_pending = !conn->write_buf.empty();
           }
-          const bool drained =
-              !write_pending && conn->in_flight.load(std::memory_order_acquire) <= 0;
+          const bool drained = no_in_flight && !write_pending;
           const bool expired = std::chrono::steady_clock::now() >= conn->linger_deadline;
           if (drained || expired) {
             RemoveConnection(conn->id);
