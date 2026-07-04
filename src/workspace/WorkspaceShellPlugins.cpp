@@ -11,6 +11,7 @@
 #include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
+#include "workspace/FileUri.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
@@ -860,7 +861,11 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
     PublishLspDiagnostics(*project, std::move(uri), std::move(diagnostics));
   });
   EnsureLspDocumentOpen(*viewport, *client, language_id);
-  client->DidSave("file://" + normalized_path.generic_string());
+  // Must match the percent-encoded URI the document was opened under
+  // (EnsureLspDocumentOpen -> FileUriForPath); a hand-built "file://" + raw path
+  // desyncs for any path with a space/non-ASCII/reserved byte, so the server sees
+  // didSave for a URI it never opened.
+  client->DidSave(FileUriForPath(normalized_path));
 }
 
 void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
@@ -892,7 +897,10 @@ void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
   if (client == nullptr) {
     return;
   }
-  const std::string uri = "file://" + normalized_path.generic_string();
+  // Percent-encoded to match the open URI (FileUriForPath); a raw "file://" +
+  // path never matches HasOpenDocument for special-char paths, so didClose would
+  // be skipped and the server would leak the document (and its diagnostics).
+  const std::string uri = FileUriForPath(normalized_path);
   if (client->HasOpenDocument(uri)) {
     client->DidClose(uri);
   }

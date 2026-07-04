@@ -1246,6 +1246,31 @@ void TestDebugVariablesLocalsOpenByDefault() {
          "a new session reopens Locals by default");
 }
 
+// A hostile/buggy adapter can report named+indexed variable counts that overflow
+// int when summed. ApplyScopes must sum in 64-bit and clamp (mirroring
+// ApplyVariables); a bare int+int is signed-overflow UB (UBSAN traps on the old
+// code) and a wrapped-negative total corrupts the paging math.
+void TestDebugVariablesScopeCountDoesNotOverflow() {
+  DebugVariablesModel model;
+  model.BeginFrame(1);
+  // named + indexed = 4e9, well past INT_MAX (~2.147e9).
+  const std::vector<codec::DapScope> scopes = {
+      codec::DapScope{.name = "Locals",
+                      .variables_reference = 1000,
+                      .named_variables = 2'000'000'000,
+                      .indexed_variables = 2'000'000'000,
+                      .count_reported = true},
+  };
+  const std::vector<DebugValueTree::ChildFetch> fetches = model.ApplyScopes(scopes);
+  // Locals is open by default and issues exactly one bounded child fetch whose
+  // page count stays positive despite the huge (clamped) total.
+  Expect(fetches.size() == 1 && fetches[0].reference == 1000,
+         "a huge-count scope still issues one bounded child fetch");
+  Expect(fetches[0].count >= 0, "the bounded page count must not be negative");
+  Expect(model.Rows()[0].display_name == "Locals",
+         "the scope row is produced without overflow UB");
+}
+
 // Value-kind classification (drives render coloring) and the synthetic
 // "loading…" placeholder shown while a node's children are in flight.
 void TestDebugVariablesValueKindAndPlaceholder() {
@@ -2688,6 +2713,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/VariablesModelTreeBehavior", TestDebugVariablesModelTreeBehavior);
   AddTest(tests, "DebugService/VariablesLocalsOpenByDefault",
           TestDebugVariablesLocalsOpenByDefault);
+  AddTest(tests, "DebugService/VariablesScopeCountDoesNotOverflow",
+          TestDebugVariablesScopeCountDoesNotOverflow);
   AddTest(tests, "DebugService/VariablesValueKindAndPlaceholder",
           TestDebugVariablesValueKindAndPlaceholder);
   AddTest(tests, "DebugService/VariablesPagingAndErrors", TestDebugVariablesPagingAndErrors);

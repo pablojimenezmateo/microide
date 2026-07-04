@@ -128,7 +128,12 @@ struct LspClient::Impl {
   platform::AsyncSubprocess proc;
   std::mutex mutex;
   std::mutex send_mutex;   // guards the outbound/deferred queues
-  std::mutex write_mutex;  // serializes every proc.Write so stdin is never written by two threads
+  // Serializes every proc.Write so stdin is never written by two threads. A
+  // timed_mutex so the shutdown path can bound its acquisition: the io_thread can
+  // hold this across a proc.Write that blocks indefinitely on a wedged-but-alive
+  // server, and the shutdown's force-kill (which unblocks that write) must not be
+  // gated behind acquiring this lock.
+  std::timed_mutex write_mutex;
 
   // Single I/O thread state. One thread per server reads stdout and writes stdin;
   // it blocks in poll() over stdout + a self-pipe wakeup, so it makes no
@@ -340,11 +345,23 @@ struct LspClient::Impl {
     }
   }
 
-  bool SendMessageImmediate(const util::JsonValue& msg, bool allow_during_shutdown = false) {
+  // lock_timeout > 0 bounds how long we wait for write_mutex before giving up:
+  // used only by the shutdown path so a stuck io_thread write cannot wedge
+  // teardown. Returns false on lock timeout (as well as on a failed write); the
+  // shutdown caller treats both as "graceful send failed" and force-kills.
+  bool SendMessageImmediate(const util::JsonValue& msg, bool allow_during_shutdown = false,
+                            std::chrono::milliseconds lock_timeout = std::chrono::milliseconds::zero()) {
     if (!allow_during_shutdown && shutting_down.load(std::memory_order_acquire)) {
       return false;
     }
     const std::string serialized = SerializeMessage(msg);
+    if (lock_timeout > std::chrono::milliseconds::zero()) {
+      std::unique_lock wlock(write_mutex, std::defer_lock);
+      if (!wlock.try_lock_for(lock_timeout)) {
+        return false;  // io_thread stuck writing to a wedged server; caller force-kills
+      }
+      return proc.Write(serialized);
+    }
     std::lock_guard wlock(write_mutex);
     return proc.Write(serialized);
   }
@@ -388,7 +405,11 @@ struct LspClient::Impl {
     if (test_stub_mode.load(std::memory_order_acquire)) {
       return true;
     }
-    if (!proc.IsRunning()) {
+    // Refuse once the io_thread has stopped draining. A server that closes its
+    // stdout but stays alive makes IoMain exit on EOF while proc.IsRunning() stays
+    // true; without the stop_io check we would keep queuing requests no thread will
+    // ever send or time out, so their callbacks (and on_send_failure) never fire.
+    if (stop_io.load(std::memory_order_acquire) || !proc.IsRunning()) {
       return false;
     }
     outbound_messages.push_back(QueuedMessage{
@@ -544,6 +565,12 @@ struct LspClient::Impl {
     if (!shutting_down.load(std::memory_order_acquire)) {
       FailPendingRequests(/*only_expired=*/false);
     }
+    // The io_thread is exiting (EOF / fatal read / runaway buffer). Signal that no
+    // thread is draining outbound anymore so the send path refuses further requests
+    // instead of stranding them — covers a server that closed stdout but is still
+    // alive, where proc.IsRunning() alone would keep accepting sends. DoInitialize
+    // resets this to false before spawning a fresh io_thread on restart.
+    stop_io.store(true, std::memory_order_release);
   }
 
   std::optional<util::JsonValue> TryParseOneMessage(ReadBuf& buf) {
@@ -1173,8 +1200,13 @@ struct LspClient::Impl {
       shutdown_request_id = next_id++;
       shutdown_id = shutdown_request_id;
     }
+    // Bounded lock acquisition: if the io_thread is stuck in a proc.Write to a
+    // wedged-but-alive server (holding write_mutex), this returns false quickly
+    // rather than blocking teardown forever, and we fall through to the force-kill
+    // below — which unblocks that write so io_thread can be joined.
     const bool sent_shutdown =
-        SendMessageImmediate(MakeRequest(shutdown_id, "shutdown", JsonValue(JsonObject{})), true);
+        SendMessageImmediate(MakeRequest(shutdown_id, "shutdown", JsonValue(JsonObject{})), true,
+                             std::chrono::milliseconds(1000));
     TraceLspLifecycle(language_id, proc.pid(), "shutdown-request",
                       sent_shutdown ? "sent" : "send-failed");
     if (sent_shutdown) {
@@ -1187,7 +1219,10 @@ struct LspClient::Impl {
                         got_shutdown_response ? "received" : "timeout");
     }
     if (proc.IsRunning()) {
-      (void)SendMessageImmediate(MakeNotification("exit", JsonValue(JsonObject{})), true);
+      // Also bounded: never block teardown behind a stuck write. If it times out,
+      // CloseStdin + the force-kill below still tear the server down.
+      (void)SendMessageImmediate(MakeNotification("exit", JsonValue(JsonObject{})), true,
+                                 std::chrono::milliseconds(1000));
       TraceLspLifecycle(language_id, proc.pid(), "exit-notification", "sent");
       proc.CloseStdin();
       TraceLspLifecycle(language_id, proc.pid(), "stdin", "closed");

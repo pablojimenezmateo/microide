@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "util/JsonValue.h"
+#include "workspace/FileUri.h"
 #include "workspace/WorkspaceLspClient.h"
 #include "workspace/WorkspaceLspManager.h"
 
@@ -722,6 +723,29 @@ void TestWorkspaceLspClientSemanticTokensStubRoundTrip() {
          "the delivered token preserves its fields");
 }
 
+// didOpen/didSave/didClose must all address a document under the SAME URI. That
+// URI is percent-encoded (FileUriForPath), so a path with a space or non-ASCII
+// byte must encode consistently and round-trip back — otherwise a hand-built raw
+// "file://" + path used on the save/close side would silently mismatch the open
+// URI and leak the document server-side.
+void TestFileUriEncodesSpecialCharsAndRoundTrips() {
+  const std::filesystem::path spaced = "/home/user/My Project/main file.cpp";
+  const std::string uri = microide::workspace::FileUriForPath(spaced);
+  Expect(uri.find("file://") == 0, "encoded URI keeps the file scheme");
+  Expect(uri.find(' ') == std::string::npos, "spaces must be percent-encoded, not literal");
+  Expect(uri.find("%20") != std::string::npos, "a space encodes as %20");
+  const auto decoded = microide::workspace::PathFromFileUri(uri);
+  Expect(decoded.has_value() && decoded->lexically_normal() == spaced.lexically_normal(),
+         "the encoded URI must round-trip back to the original path");
+
+  const std::filesystem::path accented = "/home/user/café/résumé.txt";
+  const std::string accented_uri = microide::workspace::FileUriForPath(accented);
+  const auto accented_decoded = microide::workspace::PathFromFileUri(accented_uri);
+  Expect(accented_decoded.has_value() &&
+             accented_decoded->lexically_normal() == accented.lexically_normal(),
+         "non-ASCII paths must round-trip through the file URI");
+}
+
 }  // namespace
 
 // A single server response whose declared Content-Length exceeds the 64 MiB cap
@@ -825,6 +849,8 @@ while True:
 }
 
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceLspClient/FileUriEncodesSpecialCharsAndRoundTrips",
+          TestFileUriEncodesSpecialCharsAndRoundTrips);
   AddTest(tests, "WorkspaceLspClient/SemanticTokensStubRoundTrip",
           TestWorkspaceLspClientSemanticTokensStubRoundTrip);
   AddTest(tests, "WorkspaceLspClient/ShutdownDoesNotRaceInitialization",
