@@ -586,6 +586,10 @@ class PluginHost {
     bool cursor_move = false;
     bool selection_change = false;
     bool buffer_close = false;
+    // Lifecycle interest is consulted only at open/save/close dispatch time, not
+    // by the per-keystroke tracker, so it is deliberately excluded from any().
+    bool buffer_open = false;
+    bool buffer_save = false;
     bool any() const {
       return buffer_change || cursor_move || selection_change || buffer_close;
     }

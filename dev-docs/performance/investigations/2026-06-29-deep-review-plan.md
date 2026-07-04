@@ -20,6 +20,52 @@ that survived skeptical re-reading. Where no committed perf scenario covers a pa
 
 ---
 
+## Update 2026-07-04 — re-audit + measured follow-up (perf-runner-v1)
+
+Re-audited every remaining ☐ item against live code and measured the tempting ones on this host.
+Most of the "remaining speed" list had already shipped in **v2.5.1** (the multi-caret / path-dedup
+speed pass). Current status:
+
+- ✅ **A1** (multi-caret one-pass rebuild) — shipped: `TextViewport::SetSecondaryCarets` is a single
+  clamp/sort/dedup pass; the O(k²·log k) `AddSecondaryCaret` loop is gone.
+- ✅ **A2** (compare `lines_equal` pre-scan) — removed and documented at `CompareModel.cpp` ~:1134.
+- ✅ **A4-dedup** (LSP URI once/keystroke) — `EnsureLspDocumentOpen(precomputed_uri)`; computed once
+  in `SyncLspForActiveEditableLastChange`.
+- ✅ **B-Dirty** (`TextViewport::LoadLines`) — exists; session restore loads the split snapshot straight in.
+- ✅ **C-PieceTree** (single-pass extractors) — `ToVector`/`SliceLines` delegate to one pruned treap
+  walk (`ExtractLineRange`).
+- ✅ **B-DapPoll** — already relaxed 16→64 ms with a documented rationale (`WorkspaceShellRedraw.cpp`).
+  Accept as-is; the plan's ~250 ms was a judgment call, 64 ms is the shipped judgment.
+- ✅ **B-PluginEvt** — **shipped 2026-07-04.** Added `buffer_open`/`buffer_save` interest flags
+  (excluded from `any()`; consulted only at lifecycle-dispatch time) and gated all three
+  `OnBuffer{Open,Save,Close}` sites so no `CaptureSnapshot()` + worker task fires with no subscriber.
+  Test: `PluginHost/BufferLifecycleInterestGate`.
+- ~ **B-Fanout** — the O(doc_lines)-per-caret rebuild is already gone (per-caret invalidation is now
+  `start_line`-anchored/incremental). Only a marginal "defer to one post-loop invalidation" remainder
+  is left; not worth the parity risk without a multi-caret profile flagging it.
+- ✗ **B-Hist** (single-line `BuildRangeHistoryEntry` fast path) — **implemented, measured, reverted.**
+  `perf-compare` on typing/multi-caret/edit scenarios showed **zero allocation delta and wall within
+  the 2σ noise band** (the dominant per-edit allocations are highlight/view-model, not the history
+  entry). Not worth the extra branch. Do not re-attempt without a scenario that isolates it.
+- ☐ **B-Body** (persistence reader body deep-copy + `AppendRecord` throwaway vector) — still open;
+  medium/structural, touches the persisted-record read/write layer. Startup-path allocation only.
+
+Also measured and **rejected** in this pass: a **width-cache ASCII fast path**
+(`TextRenderer::MeasureWidth` → `backend->FastMonospaceWidth`, skipping the `unordered_map<string,float>`
+for printable ASCII). The render hot path does ~400 `MeasureWidth`/frame in compare/merge scroll, but
+the small hot map's hit cost ≈ the ASCII-scan cost, and adding a virtual call before the cache lookup
+is a slight pessimization for non-ASCII. `perf-compare` across the compare/merge/editor scroll
+scenarios: all deltas within 2σ noise. Reverted.
+
+**Environment note:** this pass had **no CPU sampler** (`perf_event_paranoid=4`, no passwordless sudo,
+no valgrind), so hotspot localization relied on `perf_counters` + `perf-compare` wall/alloc deltas
+rather than flamegraphs. The ranking confirms the top interactive scenarios (compare/merge scroll
+bursts, ~4.5 ms/frame, low-alloc) are **render-bound under the software renderer** (cached-glyph
+texture blitting) with no cheap CPU win available. See `performance-findings.md` → "2026-07-04
+measurement pass".
+
+---
+
 ## Shipped in this pass (mechanical / behavior-preserving)
 
 ### ✅ A3. Hoist a reusable DP scratch buffer in hunk-alignment similarity

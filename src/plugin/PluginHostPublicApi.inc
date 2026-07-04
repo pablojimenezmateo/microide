@@ -113,7 +113,8 @@ void PluginHost::Shutdown() {
 }
 
 void PluginHost::OnBufferOpen(const std::filesystem::path& path) {
-  if (!impl_->enabled() || path.empty()) {
+  if (!impl_->enabled() || path.empty() ||
+      !impl_->published_.editor_event_interests.buffer_open) {
     return;
   }
 
@@ -130,7 +131,8 @@ void PluginHost::OnBufferOpen(const std::filesystem::path& path) {
 }
 
 void PluginHost::OnBufferSave(const std::filesystem::path& path) {
-  if (!impl_->enabled() || path.empty()) {
+  if (!impl_->enabled() || path.empty() ||
+      !impl_->published_.editor_event_interests.buffer_save) {
     return;
   }
 
@@ -249,7 +251,8 @@ void PluginHost::OnSelectionChange(const std::filesystem::path& path,
 }
 
 void PluginHost::OnBufferClose(const std::filesystem::path& path) {
-  if (!impl_->enabled() || path.empty()) {
+  if (!impl_->enabled() || path.empty() ||
+      !impl_->published_.editor_event_interests.buffer_close) {
     return;
   }
 #if MICROIDE_HAS_LUA_PLUGINS

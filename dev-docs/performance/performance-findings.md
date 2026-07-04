@@ -21,6 +21,63 @@ Updated on 2026-07-01 with lazy per-definition syntax-rule compilation, removing
 Updated on 2026-07-02 with compare/merge render per-row allocation elimination, a cached
 project-search sidebar status line, and the release binary switching to LTO.
 
+Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin buffer-lifecycle
+subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
+top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
+
+## 2026-07-04 measurement pass (perf-runner-v1)
+
+Full-suite ranking (10 iters, software renderer) plus targeted `perf-compare` runs. No hardware
+CPU sampler was available in this environment (`perf_event_paranoid=4`, no passwordless sudo, no
+valgrind), so localization used `perf_counters` + `perf-compare` wall/alloc deltas, not flamegraphs.
+
+What the ranking showed:
+
+- Rank scenarios by their **measured interactive phase** (not total `wall_ms`, which is dominated by
+  50k-line file-open setup). The top interactive costs are the compare/merge scroll bursts
+  (`compare_scroll_selection`, `merge_accept_hunk_interleaved`, `merge_scroll_interleaved_hunks`,
+  `merge_scroll_large_fixture`, `compare_scroll_large_fixture`) at ~4.5 ms/frame, **low-allocation
+  (6–8k)** → CPU/render-bound, not malloc-bound.
+- These frames spend their time in cached-glyph **texture blitting** under the software renderer
+  (~350–560 `text_texture_cache_hits`/frame at ~99% hit) plus ~400 `MeasureWidth`/frame (also ~99%
+  cache hit). Both are already cached; there is **no cheap CPU win** on these paths. The GPU-gated
+  batched glyph atlas (shipped 2026-06-28) is the real lever here but is disabled under the software
+  renderer the gate pins.
+- `editor_scroll_only_no_content_bump` is a guard test — it asserts scrolling bumps zero
+  content/syntax/layout revisions and passes; its 50k `invalidate_derived_caches_lines` are all
+  file-open setup outside the measured scroll window (not a scroll-path regression).
+- `compare_scroll_selection` is bimodal across iterations (≈550 ms vs ≈1300 ms) — a stateful/noisy
+  outlier, not a clean per-op signal.
+
+Shipped:
+
+- **Plugin buffer-lifecycle subscriber gate** (`PluginHost::OnBuffer{Open,Save,Close}`): added
+  `buffer_open`/`buffer_save` interest flags (computed in `ComputeEditorEventInterests`, excluded
+  from `any()` since they are consulted only at lifecycle-dispatch time) and short-circuited all
+  three dispatch sites before `CaptureSnapshot()` + worker-task post when no loaded plugin
+  subscribes. Avoids a snapshot + thread handoff per file open/save/close in the common
+  plugins-loaded-but-not-subscribing configuration. Behavioral, not isolated by any harness
+  scenario (the harness runs with an empty plugin config); guarded by
+  `PluginHost/BufferLifecycleInterestGate`.
+
+Measured and rejected (kept here so they are not re-attempted blind):
+
+- **Single-line `BuildRangeHistoryEntry` fast path** (deep-review-plan "B-Hist"): correct and
+  byte-identical, but `perf-compare` on typing/multi-caret/edit scenarios showed **zero allocation
+  delta and wall within the 2σ noise band** — the per-edit allocations that dominate are
+  highlight/view-model, not the history entry. Reverted; not worth the extra branch.
+- **Width-cache ASCII fast path** (`TextRenderer::MeasureWidth` → a new backend
+  `FastMonospaceWidth`, bypassing the `unordered_map<string,float>` for printable ASCII): the small
+  hot map's hit cost ≈ the ASCII-scan cost, and inserting a virtual call before every lookup is a
+  slight pessimization for non-ASCII. `perf-compare` across the compare/merge/editor scroll
+  scenarios: all deltas within 2σ noise. Reverted.
+
+Still open (documented, not attempted this pass):
+
+- **Persistence record-body deep-copy** (deep-review-plan "B-Body"): `PersistedRecordReader`
+  copies the whole record body that consumers only span-read, and `AppendRecord` allocates a
+  throwaway per-field vector. Medium/structural, startup-path allocation only.
+
 ## Fixed 2026-07-02 (compare/merge render allocations + sidebar status cache)
 
 ### Compare/merge surface render allocations (per visible row, per frame)

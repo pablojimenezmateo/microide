@@ -2816,7 +2816,64 @@ return ide.plugin({
 
 }  // namespace
 
+// Regression for the buffer-lifecycle interest gate: open/save/close events must
+// short-circuit before CaptureSnapshot + worker-task dispatch when no loaded
+// plugin subscribes, and the interest flags must reflect exactly which callbacks
+// are declared. buffer_open/buffer_save are deliberately excluded from any() --
+// only the per-keystroke tracker consults any(); lifecycle events dispatch
+// directly from OnBuffer{Open,Save,Close}.
+void TestPluginHostBufferLifecycleInterestGate() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.cpp";
+  WriteFile(project_root / "README.md", "interest gate fixture\n");
+  WriteFile(source, "int main() { return 0; }\n");
+
+  // Subscribes ONLY to on_buffer_save -- no open/close/change callbacks.
+  WritePluginInit(
+      global_plugins, "save-only",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "lifecycle.save_only",
+  on_buffer_save = function(ctx, buffer) ctx.log("saved") end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "save-only fixture should load");
+
+  const PluginHost::EditorEventInterest interest = host.EditorEventInterests();
+  Expect(interest.buffer_save, "declaring on_buffer_save sets buffer_save interest");
+  Expect(!interest.buffer_open, "no on_buffer_open leaves buffer_open interest clear");
+  Expect(!interest.buffer_close, "no on_buffer_close leaves buffer_close interest clear");
+  Expect(!interest.any(),
+         "lifecycle-only interest stays out of any() (per-keystroke tracker gate)");
+
+  // Open with no open-subscriber must not dispatch (no message emitted).
+  const std::size_t messages_after_reload = host.Messages().size();
+  host.OnBufferOpen(source);
+  Expect(host.Messages().size() == messages_after_reload,
+         "OnBufferOpen must not dispatch when no plugin subscribes to buffer_open");
+
+  // Save still dispatches to its subscriber (gate must not over-suppress).
+  host.OnBufferSave(source);
+  Expect(std::any_of(host.Messages().begin(), host.Messages().end(),
+                     [](const std::string& entry) {
+                       return entry == "lifecycle.save_only: saved";
+                     }),
+         "OnBufferSave must dispatch to a buffer_save subscriber");
+}
+
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PluginHost/BufferLifecycleInterestGate",
+          TestPluginHostBufferLifecycleInterestGate);
   AddTest(tests, "PluginHost/FilesystemSandbox", TestPluginHostFilesystemSandbox);
   AddTest(tests, "PluginHost/LanguageServerSandboxResolved",
           TestPluginHostLanguageServerSandboxResolved);

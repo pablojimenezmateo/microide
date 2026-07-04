@@ -524,6 +524,8 @@ struct PluginHost::Impl {
       interest.cursor_move |= plugin.on_cursor_move_ref != LUA_NOREF;
       interest.selection_change |= plugin.on_selection_change_ref != LUA_NOREF;
       interest.buffer_close |= plugin.on_buffer_close_ref != LUA_NOREF;
+      interest.buffer_open |= plugin.on_buffer_open_ref != LUA_NOREF;
+      interest.buffer_save |= plugin.on_buffer_save_ref != LUA_NOREF;
     }
 #endif
     return interest;
