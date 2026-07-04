@@ -358,6 +358,7 @@ set(MICROIDE_CORE_SOURCES
   src/util/WindowPresentation.cpp
   src/workspace/WorkspaceShellCompare.cpp
   src/workspace/WorkspaceShellCompareMerge.cpp
+  src/workspace/CompareVisibleLayoutCache.cpp
   src/workspace/WorkspaceShellRenderCompare.cpp
   src/workspace/ReviewSessionCoordinator.cpp
   src/workspace/ReviewTabPlan.cpp

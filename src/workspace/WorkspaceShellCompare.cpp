@@ -468,6 +468,9 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
     compare_tab.model = compare::BuildCompareModel(compare_tab.left_content, right_content,
                                                    compare_tab.build_options);
     ++compare_tab.model_revision;
+    compare_tab.visible_layout_cache_model_revision = compare_tab.model_revision;
+    compare_tab.visible_layout_cache.clear();
+    compare_tab.visible_layout_cache_index.clear();
     compare_tab.derived_fingerprint = fingerprint;
     compare_tab.derived_fingerprint_valid = true;
   }

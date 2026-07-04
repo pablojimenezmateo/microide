@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "compare/CompareModel.h"
@@ -15,6 +16,7 @@
 #include "compare/MergeModel.h"
 #include "editor/FoldingModel.h"
 #include "editor/SnippetEngine.h"
+#include "editor/TextLayout.h"
 #include "editor/TextViewport.h"
 #include "terminal/TerminalSession.h"
 #include "workspace/WorkspaceLayout.h"
@@ -44,6 +46,36 @@ struct CompareHoverState {
 struct CompareReviewHeaderState {
   std::string summary_line;
   std::string action_hint_line;
+};
+
+struct CompareVisibleLayoutCacheEntry {
+  std::size_t model_row = 0;
+  std::size_t horizontal_scroll = 0;
+  std::size_t visible_columns = 0;
+  std::size_t tab_size = 0;
+  bool right_side = false;
+  editor::LayoutLine layout;
+};
+
+struct CompareVisibleLayoutCacheKey {
+  std::size_t model_row = 0;
+  std::size_t horizontal_scroll = 0;
+  std::size_t visible_columns = 0;
+  std::size_t tab_size = 0;
+  bool right_side = false;
+
+  bool operator==(const CompareVisibleLayoutCacheKey&) const = default;
+};
+
+struct CompareVisibleLayoutCacheKeyHash {
+  std::size_t operator()(const CompareVisibleLayoutCacheKey& key) const noexcept {
+    std::size_t h = key.model_row;
+    h ^= key.horizontal_scroll * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
+    h ^= key.visible_columns * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
+    h ^= key.tab_size * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
+    h ^= static_cast<std::size_t>(key.right_side) + 0x9e3779b9ULL + (h << 6) + (h >> 2);
+    return h;
+  }
 };
 
 struct CompareTabState {
@@ -76,6 +108,11 @@ struct CompareTabState {
   editor::TextViewport right_viewport;
   std::vector<std::vector<editor::SyntaxTokenKind>> left_tokens_by_row;
   std::vector<std::vector<editor::SyntaxTokenKind>> right_tokens_by_row;
+  std::uint64_t visible_layout_cache_model_revision = 0;
+  std::vector<CompareVisibleLayoutCacheEntry> visible_layout_cache;
+  std::unordered_map<CompareVisibleLayoutCacheKey, std::size_t,
+                     CompareVisibleLayoutCacheKeyHash>
+      visible_layout_cache_index;
   std::size_t syntax_rows_tokenized = 0;
   bool syntax_highlighting_enabled = true;
   std::uint64_t model_revision = 0;

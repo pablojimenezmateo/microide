@@ -837,6 +837,45 @@ void TestWorkspaceShellCompareRenderPaintsDiagnosticGutterMarkers() {
   SDL_DestroySurface(pixels);
 }
 
+void TestWorkspaceShellCompareRenderReusesVisibleLayoutCache() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "same\tline\nold\tline\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare layout cache fixture", "compare layout cache fixture");
+  WriteFile(source, "same\tline\nnew\tline\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare layout cache fixture should open");
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.visible_layout_cache.empty(),
+         "compare visible-layout cache should start empty before first render");
+
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  const std::size_t warmed_cache_size = compare.visible_layout_cache.size();
+  Expect(warmed_cache_size >= 2,
+         "first compare render should warm visible layouts for rendered panes");
+
+  shell.Render(canvas.renderer(), 1280, 720);
+  Expect(compare.visible_layout_cache.size() == warmed_cache_size,
+         "stable compare frames should reuse cached visible layouts instead of appending more");
+
+  compare.left_content = "same\tline\nolder\tline\n";
+  WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
+  Expect(compare.visible_layout_cache.empty(),
+         "compare visible-layout cache should clear when the compare model changes");
+}
+
 void TestWorkspaceShellCompareBlameLoadsForWorkingTreePane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1223,6 +1262,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareSelectionStepInvalidatesRowBand);
   AddTest(tests, "WorkspaceShell/CompareRenderPaintsDiagnosticGutterMarkers",
           TestWorkspaceShellCompareRenderPaintsDiagnosticGutterMarkers);
+  AddTest(tests, "WorkspaceShell/CompareRenderReusesVisibleLayoutCache",
+          TestWorkspaceShellCompareRenderReusesVisibleLayoutCache);
   AddTest(tests, "WorkspaceShell/CompareBlameLoadsForWorkingTreePane",
           TestWorkspaceShellCompareBlameLoadsForWorkingTreePane);
   AddTest(tests, "WorkspaceShell/MergeBlameLoadsForResultPane",

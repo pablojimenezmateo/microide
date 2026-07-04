@@ -17,6 +17,7 @@
 #include "util/PerformanceTrace.h"
 #include "workspace/CompareMergeRender.h"
 #include "workspace/CompareTabReview.h"
+#include "workspace/CompareVisibleLayoutCache.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 
@@ -157,6 +158,10 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   const std::size_t visible_end_row =
       visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)) + 64;
   PopulateCompareSyntaxTokensForWindow(*compare_tab, visible_start_row, visible_end_row);
+  PrepareCompareVisibleLayoutsForWindow(
+      *compare_tab, visible_start_row,
+      visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)),
+      surface.left_visible_columns, surface.right_visible_columns);
   const TextGridInteractionLayout right_interaction =
       BuildCompareRightInteractionLayout(surface, *compare_tab);
   const std::optional<editor::SelectionRange> right_selection =
@@ -222,19 +227,6 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   text_renderer_.DrawString(renderer, surface.right_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
                             TruncateLabelView(compare_tab->right_label, surface.right_width - 8.0f));
-
-  // Reused across rows so each side's cell-grid layout (tab-expanded text) is built
-  // into a buffer that keeps its capacity, matching EditorViewRenderer's scratch.
-  // Rendering the panes on the same fixed grid the caret/selection/diagnostics use
-  // keeps the editable right pane internally aligned (its text was previously drawn
-  // proportionally while the caret used the grid) and keeps both panes aligned with
-  // each other on tab-indented lines.
-  editor::LayoutLine left_layout_scratch;
-  editor::LayoutLine right_layout_scratch;
-  // Skip the grid layout for a pathological megaline (same ceiling as the visual
-  // map below); past it a pane falls back to the proportional MeasureWidth path.
-  constexpr std::size_t kMaxCompareLayoutBytes = 1u << 20;  // 1 MiB
-  const std::size_t compare_layout_tab_size = compare_tab->right_viewport.tab_size();
 
   for (int row = 0; row < surface.visible_rows; ++row) {
     const int presentation_index = compare_tab->scroll_row + row;
@@ -441,12 +433,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       left_input.changed_span_color = compare_row.kind == compare::CompareRowKind::Deleted
                                           ? theme_.diff_deleted
                                           : theme_.diff_modified;
-      if (compare_row.left_text.size() <= kMaxCompareLayoutBytes) {
-        left_layout_scratch = editor::TextLayout::BuildVisibleLine(
-            compare_row.left_text, compare_tab->horizontal_scroll, surface.left_visible_columns,
-            compare_layout_tab_size);
-        left_input.layout = &left_layout_scratch;
-      }
+      left_input.layout =
+          CompareVisibleLayoutForRow(*compare_tab, model_index, false, surface.left_visible_columns);
       left_input.text_renderer = &text_renderer_;
       left_input.theme = &theme_;
       editor::DecoratedTextRow& left_row = compare_left_scratch_row_;
@@ -548,12 +536,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       right_input.changed_span_color = compare_row.kind == compare::CompareRowKind::Added
                                            ? theme_.diff_added
                                            : theme_.diff_modified;
-      if (compare_row.right_text.size() <= kMaxCompareLayoutBytes) {
-        right_layout_scratch = editor::TextLayout::BuildVisibleLine(
-            compare_row.right_text, compare_tab->horizontal_scroll, surface.right_visible_columns,
-            compare_layout_tab_size);
-        right_input.layout = &right_layout_scratch;
-      }
+      right_input.layout =
+          CompareVisibleLayoutForRow(*compare_tab, model_index, true, surface.right_visible_columns);
       if (right_diagnostics != nullptr) {
         right_input.diagnostics =
             std::span<const editor::PublishedDiagnostic>(*right_diagnostics);
