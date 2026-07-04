@@ -383,6 +383,14 @@ void TestDapProtocolListsAreCapped() {
   const auto breakpoints =
       codec::ParseBreakpoints(Json(build("breakpoints", R"({"id":1,"verified":true,"line":1})")));
   Expect(breakpoints.size() <= 10000, "breakpoints must be capped");
+
+  const auto caps =
+      codec::ParseCapabilities(Json(build("exceptionBreakpointFilters",
+                                          R"({"filter":"f","label":"Filter"})")));
+  Expect(caps.exception_filters.size() <= 10000, "exception filters must be capped");
+
+  const auto stopped = codec::ParseStoppedEvent(Json(build("hitBreakpointIds", "1")));
+  Expect(stopped.hit_breakpoint_ids.size() <= 10000, "hit breakpoint ids must be capped");
 }
 
 }  // namespace

@@ -21,6 +21,8 @@ int AsInt(const JsonValue& value, int fallback = 0) {
 // Parse* field extractions (the field assignment at the call site copies once).
 const std::string& AsString(const JsonValue& value) { return value.AsString(); }
 
+constexpr std::size_t kMaxDapListEntries = 10000;
+
 }  // namespace
 
 JsonValue MakeSetBreakpointsArguments(const std::string& source_path,
@@ -211,7 +213,11 @@ DapCapabilities ParseCapabilities(const JsonValue& body) {
   caps.supports_restart_request = body["supportsRestartRequest"].AsBool(false);
   caps.supports_step_back = body["supportsStepBack"].AsBool(false);
   caps.supports_exception_filter_options = body["supportsExceptionFilterOptions"].AsBool(false);
-  for (const JsonValue& item : body["exceptionBreakpointFilters"].AsArray()) {
+  const auto& filters = body["exceptionBreakpointFilters"].AsArray();
+  const std::size_t filter_count = std::min(filters.size(), kMaxDapListEntries);
+  caps.exception_filters.reserve(filter_count);
+  for (std::size_t i = 0; i < filter_count; ++i) {
+    const JsonValue& item = filters[i];
     DapExceptionFilter filter;
     filter.filter = AsString(item["filter"]);
     if (filter.filter.empty()) {
@@ -282,8 +288,7 @@ std::vector<DapThread> ParseThreads(const JsonValue& body) {
   // entries into a sub-64 MiB frame; each becomes strings materialized on the
   // main thread (and threads feed a UI picker). 10000 is far beyond any real
   // process's thread count.
-  constexpr std::size_t kMaxThreads = 10000;
-  const std::size_t count = std::min(array.size(), kMaxThreads);
+  const std::size_t count = std::min(array.size(), kMaxDapListEntries);
   threads.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
     threads.push_back(ParseThread(array[i]));
@@ -310,8 +315,7 @@ std::vector<DapStackFrame> ParseStackFrames(const JsonValue& body) {
   // filesystem::path + display strings on the main thread (BuildExecutionView),
   // so an uncapped array is a UI-thread stall + heap spike. 10000 frames is far
   // beyond any real call stack a human would page through.
-  constexpr std::size_t kMaxStackFrames = 10000;
-  const std::size_t count = std::min(array.size(), kMaxStackFrames);
+  const std::size_t count = std::min(array.size(), kMaxDapListEntries);
   frames.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
     frames.push_back(ParseStackFrame(array[i]));
@@ -335,8 +339,7 @@ std::vector<DapScope> ParseScopes(const JsonValue& body) {
   std::vector<DapScope> scopes;
   const auto& array = body["scopes"].AsArray();
   // Cap like ParseStackFrames; a frame has only a handful of real scopes.
-  constexpr std::size_t kMaxScopes = 10000;
-  const std::size_t count = std::min(array.size(), kMaxScopes);
+  const std::size_t count = std::min(array.size(), kMaxDapListEntries);
   scopes.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
     scopes.push_back(ParseScope(array[i]));
@@ -365,8 +368,7 @@ std::vector<DapVariable> ParseVariables(const JsonValue& body) {
   // hint, so an uncapped reply packs millions of tiny objects into a sub-64 MiB
   // frame, each becoming four strings on the main thread plus a tree Node
   // downstream. 10000 is far beyond what a user pages through in one node.
-  constexpr std::size_t kMaxVariables = 10000;
-  const std::size_t count = std::min(array.size(), kMaxVariables);
+  const std::size_t count = std::min(array.size(), kMaxDapListEntries);
   variables.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
     variables.push_back(ParseVariable(array[i]));
@@ -394,8 +396,7 @@ std::vector<DapBreakpoint> ParseBreakpoints(const JsonValue& body) {
   const auto& array = body["breakpoints"].AsArray();
   // Cap like ParseStackFrames; a setBreakpoints reply mirrors the breakpoints we
   // sent, so a flood beyond this is adversarial.
-  constexpr std::size_t kMaxBreakpoints = 10000;
-  const std::size_t count = std::min(array.size(), kMaxBreakpoints);
+  const std::size_t count = std::min(array.size(), kMaxDapListEntries);
   breakpoints.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
     breakpoints.push_back(ParseBreakpoint(array[i]));
@@ -410,8 +411,11 @@ DapStoppedEvent ParseStoppedEvent(const JsonValue& body) {
   event.text = AsString(body["text"]);
   event.thread_id = AsInt(body["threadId"]);
   event.all_threads_stopped = body["allThreadsStopped"].AsBool(false);
-  for (const auto& id : body["hitBreakpointIds"].AsArray()) {
-    event.hit_breakpoint_ids.push_back(AsInt(id));
+  const auto& hit_ids = body["hitBreakpointIds"].AsArray();
+  const std::size_t hit_count = std::min(hit_ids.size(), kMaxDapListEntries);
+  event.hit_breakpoint_ids.reserve(hit_count);
+  for (std::size_t i = 0; i < hit_count; ++i) {
+    event.hit_breakpoint_ids.push_back(AsInt(hit_ids[i]));
   }
   return event;
 }
