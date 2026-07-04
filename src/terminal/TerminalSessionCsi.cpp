@@ -223,15 +223,19 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       return;
     }
     case 'I': {  // CHT — cursor forward tabulation.
-      const int count = CsiParamOrDefault(params, 0, 1);
-      for (int i = 0; i < count; ++i) {
+      const std::size_t count =
+          std::min<std::size_t>(static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)),
+                                std::max<std::size_t>(1, columns_));
+      for (std::size_t i = 0; i < count; ++i) {
         cursor_column_ = NextTabStopLocked(cursor_column_);
       }
       return;
     }
     case 'Z': {  // CBT — cursor backward tabulation.
-      const int count = CsiParamOrDefault(params, 0, 1);
-      for (int i = 0; i < count; ++i) {
+      const std::size_t count =
+          std::min<std::size_t>(static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)),
+                                std::max<std::size_t>(1, columns_));
+      for (std::size_t i = 0; i < count; ++i) {
         cursor_column_ = PreviousTabStopLocked(cursor_column_);
       }
       return;

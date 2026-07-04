@@ -1091,6 +1091,22 @@ void TestTerminalSessionInsertCharsClampsToWidth() {
          "CSI Ps @ must clamp the inserted cell count to the terminal width");
 }
 
+// Resilience: CHT/CBT (`CSI Ps I` / `CSI Ps Z`) used to loop once per parameter
+// even after the cursor had saturated at the terminal edge. Clamp the repeated
+// tab-stop walk to the screen width.
+void TestTerminalSessionTabulationClampsToWidth() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;1H\x1b[65535I");
+  Expect(session.cursor_column() == 79,
+         "CSI Ps I should saturate at the last column without work proportional to Ps");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[65535Z");
+  Expect(session.cursor_column() == 0,
+         "CSI Ps Z should saturate at column zero without work proportional to Ps");
+}
+
 // Resilience: IL (`CSI Ps L`) inserts blank lines; a huge parameter must not
 // transiently balloon the line deque to tens of thousands of entries before the
 // scrollback trim.
@@ -1335,6 +1351,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionEraseCharsClampsToWidth);
   AddTest(tests, "TerminalSession/InsertCharsClampsToWidth",
           TestTerminalSessionInsertCharsClampsToWidth);
+  AddTest(tests, "TerminalSession/TabulationClampsToWidth",
+          TestTerminalSessionTabulationClampsToWidth);
   AddTest(tests, "TerminalSession/InsertLinesClampsToHeight",
           TestTerminalSessionInsertLinesClampsToHeight);
   AddTest(tests, "TerminalSession/CursorDownClampsPrimaryScreen",
