@@ -4,6 +4,7 @@
 #include "editor/DecoratedTextGridRenderer.h"
 #include "editor/EditorViewRenderer.h"
 #include "editor/FoldingModel.h"
+#include "editor/GutterMetrics.h"
 #include "editor/TextViewport.h"
 #include "platform/RuntimePaths.h"
 #include "render/AsciiGlyphAtlas.h"
@@ -1305,6 +1306,59 @@ void TestEditorViewRendererPaintsDiagnosticGutterMarkers() {
   SDL_DestroySurface(pixels);
 }
 
+void TestEditorViewRendererFoldGutterColumnClearsWideLineNumbers() {
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+
+  const SDL_FRect rect{12.0f, 0.0f, 260.0f, 120.0f};
+  for (const std::size_t line_count : {99u, 100u, 9999u, 10000u}) {
+    std::string content;
+    content.reserve(line_count * 2);
+    for (std::size_t i = 0; i < line_count; ++i) {
+      if (i > 0) {
+        content.push_back('\n');
+      }
+      content.push_back('x');
+    }
+
+    microide::editor::TextViewport viewport;
+    viewport.LoadContent(content, "/tmp/editor-fold-gutter-wide-lines.cpp");
+
+    const microide::editor::EditorViewMetrics metrics =
+        microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect);
+    const SDL_FRect marker = microide::editor::FoldGutterMarkerRect(
+        rect.x, metrics.gutter_width, metrics.first_line_y, metrics.line_height);
+    const std::string widest_number = std::to_string(std::max<std::size_t>(1, line_count));
+    const float number_left = rect.x + microide::editor::kGutterLineNumberInset;
+    const float number_right = number_left + text_renderer.MeasureWidth(widest_number);
+    const float hit_left =
+        microide::editor::kGutterFoldHitLeft(rect.x, metrics.gutter_width);
+    const float marker_right = marker.x + marker.w;
+    const float gutter_right = rect.x + metrics.gutter_width;
+
+    Expect(hit_left >= number_right - 0.01f,
+           "fold gutter hit target should not overlap the widest line number");
+    Expect(marker.x >= number_right + microide::editor::kGutterFoldGap - 0.01f,
+           "fold gutter marker should clear the widest line number");
+    Expect(marker_right <= gutter_right - microide::editor::kGutterFoldRightPad + 0.01f,
+           "fold gutter marker should stay inside the reserved gutter column");
+  }
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("x\n", "/tmp/editor-fold-gutter-no-line-numbers.cpp");
+  const microide::editor::EditorViewMetrics metrics =
+      microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect, 0,
+                                                           false);
+  const SDL_FRect marker = microide::editor::FoldGutterMarkerRect(
+      rect.x, metrics.gutter_width, metrics.first_line_y, metrics.line_height);
+  Expect(metrics.gutter_width >=
+             microide::editor::kGutterLineNumberInset +
+                 microide::editor::kGutterFoldColumnWidth - 0.01f,
+         "line-number-disabled gutter should still reserve marker and fold columns");
+  Expect(marker.x >= rect.x + microide::editor::kGutterLineNumberInset - 0.01f,
+         "fold marker should remain clear of the marker strip when line numbers are hidden");
+}
+
 void TestEditorViewRendererPaintsFoldGutterMarkers() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(220, 72);
@@ -2086,6 +2140,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer editor view paints diagnostic gutter markers",
           TestEditorViewRendererPaintsDiagnosticGutterMarkers);
+  AddTest(tests,
+          "TextRenderer editor view fold gutter column clears wide line numbers",
+          TestEditorViewRendererFoldGutterColumnClearsWideLineNumbers);
   AddTest(tests,
           "TextRenderer editor view paints fold gutter markers",
           TestEditorViewRendererPaintsFoldGutterMarkers);

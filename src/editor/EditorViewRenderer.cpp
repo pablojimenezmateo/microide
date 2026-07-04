@@ -72,16 +72,18 @@ float ComputeGutterWidth(const render::TextRenderer& text_renderer, std::size_t 
                          bool show_line_numbers) {
   if (!show_line_numbers) {
     // No digits: reserve only the marker strip (diagnostic bar, breakpoint / execution
-    // marker) plus the right padding used by the fold control, so disabling line
+    // marker) plus the dedicated fold column, so disabling line
     // numbers actually reclaims the digit column instead of leaving it blank.
-    return kGutterLineNumberInset + kGutterRightPad;
+    return kGutterLineNumberInset + kGutterFoldColumnWidth;
   }
   char buf[20];
   const auto [end, _] = std::to_chars(buf, buf + sizeof(buf), std::max<std::size_t>(1, line_count));
   // Digits begin after the reserved marker strip (kGutterLineNumberInset), so the
   // gutter must be wide enough for both the markers and the widest line number.
   const float digits_width = text_renderer.MeasureWidth(std::string_view{buf, end});
-  return std::max(56.0f, kGutterLineNumberInset + digits_width + kGutterRightPad);
+  return std::max(56.0f,
+                  kGutterLineNumberInset + digits_width + kGutterFoldGap +
+                      kGutterFoldColumnWidth);
 }
 
 // Draws the single fold control: a small square button with a `+` glyph when
@@ -250,11 +252,12 @@ SDL_FRect FoldGutterMarkerRect(float gutter_x,
                                float gutter_width,
                                float row_y,
                                float line_height) {
-  constexpr float kMarkerSize = 8.0f;
-  return SDL_FRect{gutter_x + gutter_width - 14.0f,
-                   row_y + std::max(1.0f, std::floor((line_height - kMarkerSize) * 0.5f)),
-                   kMarkerSize,
-                   kMarkerSize};
+  return SDL_FRect{gutter_x + gutter_width - kGutterFoldRightPad - kGutterFoldMarkerSize,
+                   row_y +
+                       std::max(1.0f,
+                                std::floor((line_height - kGutterFoldMarkerSize) * 0.5f)),
+                   kGutterFoldMarkerSize,
+                   kGutterFoldMarkerSize};
 }
 
 EditorViewMetrics EditorViewRenderer::ComputeMetrics(const render::TextRenderer& text_renderer,
@@ -574,7 +577,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
             std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),
                           line_index + 1);
         text_renderer.DrawStringOn(
-            renderer, gutter.x + 10.0f, y,
+            renderer, gutter.x + kGutterLineNumberInset, y,
             selected ? theme.current_line_number : theme.line_number,
             selected ? theme.row_highlight : theme.gutter_background,
             std::string_view{line_number_buf, end_sticky});

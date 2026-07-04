@@ -9,6 +9,7 @@
 #include "editor/EditorInsetLayout.h"
 #include "editor/EditorRowYLayout.h"
 #include "editor/EditorViewRenderer.h"
+#include "editor/GutterMetrics.h"
 #include "editor/PluginSurfaceStore.h"
 #include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
@@ -165,7 +166,7 @@ bool EditorMouseCoordinator::HandleGutterContextMenu(const SDL_Event& event,
                              : std::nullopt,
                          true));
   const float gutter_left = pane_it->rect.x;
-  const float fold_hit_left = pane_it->rect.x + metrics.gutter_width - 18.0f;
+  const float fold_hit_left = editor::kGutterFoldHitLeft(pane_it->rect.x, metrics.gutter_width);
   if (event.button.y < metrics.first_line_y || event.button.x < gutter_left ||
       event.button.x >= fold_hit_left) {
     return false;
@@ -299,7 +300,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                   : std::nullopt;
     if (SettingFlagEnabled(fold_setting, /*default_value=*/true)) {
       const float gutter_right = editor_rect.x + metrics.gutter_width;
-      const float fold_hit_left = gutter_right - 18.0f;
+      const float fold_hit_left = editor::kGutterFoldHitLeft(editor_rect.x, metrics.gutter_width);
       if (event.button.x >= fold_hit_left && event.button.x < gutter_right) {
         const std::size_t visual_row =
             viewport->scroll_line() +
@@ -334,7 +335,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                    : std::nullopt;
     if (SettingFlagEnabled(debug_setting)) {
       const float gutter_left = editor_rect.x;
-      const float fold_hit_left = editor_rect.x + metrics.gutter_width - 18.0f;
+      const float fold_hit_left = editor::kGutterFoldHitLeft(editor_rect.x, metrics.gutter_width);
       if (event.button.x >= gutter_left && event.button.x < fold_hit_left) {
         const std::size_t visual_row =
             viewport->scroll_line() +
