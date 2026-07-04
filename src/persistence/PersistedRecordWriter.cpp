@@ -3,7 +3,12 @@
 #include "persistence/PersistedRecord.h"
 #include "util/DurableFile.h"
 
+#include <unistd.h>
+
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
+#include <string>
 #include <system_error>
 #include <vector>
 
@@ -20,7 +25,20 @@ void SetError(PersistedRecordWriterError* error, PersistedRecordWriterError valu
 }
 
 std::filesystem::path TemporaryPathFor(const std::filesystem::path& path) {
-  return path.string() + ".tmp";
+  // Per-process, per-write unique staging name. A fixed shared ".tmp" lets two
+  // instances writing the same shared record (user config, workspace session)
+  // corrupt each other: one process's durable write opens the temp with O_TRUNC
+  // and zeroes the other's in-flight bytes, and a cross-rename can restore a stale
+  // backup over a just-committed file. A unique suffix keeps each writer's staging
+  // file private up to the final atomic rename, so concurrent writers degrade to
+  // harmless last-writer-wins instead of producing a truncated/partial file.
+  static std::atomic<std::uint64_t> counter{0};
+  const std::uint64_t seq = counter.fetch_add(1, std::memory_order_relaxed);
+  std::string suffix = ".tmp.";
+  suffix += std::to_string(static_cast<long long>(::getpid()));
+  suffix += '.';
+  suffix += std::to_string(seq);
+  return path.string() + suffix;
 }
 
 bool FileExists(const std::filesystem::path& path) {

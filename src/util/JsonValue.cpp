@@ -127,8 +127,15 @@ struct Parser {
       return JsonValue(*parsed);
     }
     const auto parsed = ParseInt64(tok);
-    if (!parsed.has_value()) return std::nullopt;
-    return JsonValue(*parsed);
+    if (parsed.has_value()) return JsonValue(*parsed);
+    // A syntactically valid JSON integer literal that overflows int64 (e.g. a
+    // uint64-range handle/id/address emitted by a DAP adapter or LSP server) must
+    // not abort the entire message parse — that would silently drop the whole
+    // response and stall the outstanding request. Fall back to a lossy double so
+    // the surrounding value still resolves.
+    const auto as_double = ParseDouble(tok);
+    if (!as_double.has_value()) return std::nullopt;
+    return JsonValue(*as_double);
   }
 
   std::optional<JsonValue> ParseString() {
@@ -175,6 +182,12 @@ struct Parser {
             if (lo < 0xDC00 || lo > 0xDFFF) return std::nullopt;
             cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
           }
+          // A lone low surrogate (0xDC00–0xDFFF) never followed a high surrogate
+          // above, so it is not a valid scalar value. Emitting it would produce
+          // invalid UTF-8 (a CESU-8 ED B0 80 sequence) and poison every consumer
+          // that assumes host strings satisfy util::IsValidUtf8. Reject it, matching
+          // the lone-high-surrogate rejection above.
+          if (cp >= 0xDC00 && cp <= 0xDFFF) return std::nullopt;
           AppendUtf8(result, static_cast<char32_t>(cp));
           break;
         }
@@ -277,8 +290,14 @@ void AppendValue(std::string& out, const JsonValue& val, int depth = 0) {
     return;
   }
   if (val.IsDouble()) {
+    const double d = val.AsDouble();
+    // A non-finite double has no JSON representation; emitting the bare token
+    // `nan`/`inf` would produce output this very parser (and any strict peer)
+    // rejects, and serialization has no error channel to report it. Emit `null`,
+    // matching JSON.stringify convention, so a stray NaN cannot corrupt a message.
+    if (!std::isfinite(d)) { out += "null"; return; }
     char buf[32];
-    snprintf(buf, sizeof(buf), "%.17g", val.AsDouble());
+    snprintf(buf, sizeof(buf), "%.17g", d);
     out += buf;
     return;
   }

@@ -1,7 +1,10 @@
 #include "TestSupport.h"
 
 #include "util/JsonValue.h"
+#include "util/StringUtil.h"
 
+#include <cmath>
+#include <limits>
 #include <string>
 
 namespace microide::tests {
@@ -69,6 +72,44 @@ void TestSerializeRoundTripsModestNesting() {
   Expect(SerializeJson(*parsed) == payload, "round-trip should preserve structure");
 }
 
+// An integer literal that overflows int64 (a realistic uint64-range id/handle/
+// address from a DAP adapter or LSP server) must not abort the entire message
+// parse; it falls back to a lossy double so the surrounding value still resolves.
+void TestOutOfRangeIntegerFallsBackToDouble() {
+  const auto parsed = ParseJson("{\"id\":9223372036854775808}");  // 2^63
+  Expect(parsed.has_value(), "uint64-range integer must not reject the whole document");
+  const JsonValue& id = (*parsed)["id"];
+  Expect(id.IsDouble(), "over-range integer should decode as a double");
+  Expect(id.AsDouble() > 9.2e18, "double fallback should preserve rough magnitude");
+}
+
+// A lone low surrogate must be rejected, not emitted as invalid (CESU-8) UTF-8.
+// This mirrors the parser's existing rejection of a lone high surrogate and keeps
+// every host string satisfying the valid-UTF-8 invariant.
+void TestLoneLowSurrogateRejected() {
+  Expect(!ParseJson("\"\\udc00\"").has_value(),
+         "lone low surrogate should be rejected as a parse error");
+  Expect(!ParseJson("\"\\ud800\"").has_value(),
+         "lone high surrogate should stay rejected");
+  // A well-formed surrogate pair must still decode and stay valid UTF-8.
+  const auto pair = ParseJson("\"\\ud83d\\ude00\"");  // U+1F600
+  Expect(pair.has_value() && pair->IsString(), "valid surrogate pair should parse");
+  Expect(microide::util::IsValidUtf8(pair->AsString()),
+         "decoded surrogate pair must be valid UTF-8");
+}
+
+// A non-finite double has no JSON form; the serializer emits null rather than the
+// bare token nan/inf that this parser (and any strict peer) would reject.
+void TestNonFiniteDoubleSerializesAsNull() {
+  const JsonValue nan_value{std::numeric_limits<double>::quiet_NaN()};
+  const JsonValue inf_value{std::numeric_limits<double>::infinity()};
+  Expect(SerializeJson(nan_value) == "null", "NaN should serialize as null");
+  Expect(SerializeJson(inf_value) == "null", "infinity should serialize as null");
+  // And the emitted text must round-trip back through the parser.
+  Expect(ParseJson(SerializeJson(nan_value)).has_value(),
+         "serialized non-finite output must be parseable");
+}
+
 }  // namespace
 
 void RegisterJsonValueTests(std::vector<TestCase>& tests) {
@@ -77,6 +118,11 @@ void RegisterJsonValueTests(std::vector<TestCase>& tests) {
   AddTest(tests, "JsonValue/ModestNestingStillParses", TestModestNestingStillParses);
   AddTest(tests, "JsonValue/SerializeRoundTripsModestNesting",
           TestSerializeRoundTripsModestNesting);
+  AddTest(tests, "JsonValue/OutOfRangeIntegerFallsBackToDouble",
+          TestOutOfRangeIntegerFallsBackToDouble);
+  AddTest(tests, "JsonValue/LoneLowSurrogateRejected", TestLoneLowSurrogateRejected);
+  AddTest(tests, "JsonValue/NonFiniteDoubleSerializesAsNull",
+          TestNonFiniteDoubleSerializesAsNull);
 }
 
 }  // namespace microide::tests

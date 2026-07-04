@@ -48,6 +48,22 @@ void TestParseFloatParsesFiniteValuesAndRejectsInvalidInput() {
          "parse float should reject non-finite values");
 }
 
+void TestParseRealAcceptsSubnormalsAndRejectsOverflow() {
+  // Gradual underflow to a representable subnormal sets errno==ERANGE but yields a
+  // finite value that must be accepted, not dropped.
+  const auto tiny = microide::util::ParseDouble("1e-310");
+  Expect(tiny.has_value() && *tiny > 0.0 && *tiny < 1e-300,
+         "parse double should accept subnormal magnitudes");
+  const auto tiny_float = microide::util::ParseFloat("1e-40");
+  Expect(tiny_float.has_value() && *tiny_float > 0.0f,
+         "parse float should accept subnormal magnitudes");
+  // Overflow yields ±HUGE_VAL (non-finite) and must still be rejected.
+  Expect(!microide::util::ParseDouble("1e400").has_value(),
+         "parse double should reject overflow to infinity");
+  Expect(!microide::util::ParseFloat("1e400").has_value(),
+         "parse float should reject overflow to infinity");
+}
+
 }  // namespace
 
 void RegisterParseTests(std::vector<TestCase>& tests) {
@@ -59,6 +75,8 @@ void RegisterParseTests(std::vector<TestCase>& tests) {
           TestParseSizeRejectsNegativeOverflowAndWhitespace);
   AddTest(tests, "Parse/FloatParsesFiniteValuesAndRejectsInvalidInput",
           TestParseFloatParsesFiniteValuesAndRejectsInvalidInput);
+  AddTest(tests, "Parse/RealAcceptsSubnormalsAndRejectsOverflow",
+          TestParseRealAcceptsSubnormalsAndRejectsOverflow);
 }
 
 }  // namespace microide::tests

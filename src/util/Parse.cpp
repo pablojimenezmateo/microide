@@ -39,12 +39,14 @@ std::optional<T> ParseRealExact(std::string_view text, Convert convert) {
   errno = 0;
   char* end = nullptr;
   const T value = convert(buffer.c_str(), &end);
-  if (errno != 0) {
-    return std::nullopt;
-  }
   if (end != buffer.c_str() + buffer.size()) {
     return std::nullopt;
   }
+  // strto* reports out-of-range via errno==ERANGE, but that covers two distinct
+  // cases: overflow yields ±HUGE_VAL (rejected by the finiteness check below) and
+  // underflow yields a representable subnormal or zero, which is a valid result we
+  // must accept. Gating purely on errno would wrongly reject legitimate tiny
+  // magnitudes (e.g. "1e-40"), so rely on finiteness rather than errno.
   if (!std::isfinite(value)) {
     return std::nullopt;
   }
