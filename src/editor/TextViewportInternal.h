@@ -97,11 +97,24 @@ struct ReplacementShape {
 };
 
 inline ReplacementShape ComputeReplacementShape(std::string_view replacement) {
+  // Must mirror util::NormalizeLineEndings, which every edit path (e.g.
+  // BuildRangeHistoryEntry) applies to the replacement before splitting it into
+  // lines: a lone '\r' and a '\r\n' each become a single newline. Counting only
+  // literal '\n' would undercount line breaks for pasted lone-CR / reversed
+  // content, desyncing the multi-caret remap so higher carets land on the wrong
+  // line.
   ReplacementShape shape;
-  for (const char ch : replacement) {
+  for (std::size_t i = 0; i < replacement.size(); ++i) {
+    const char ch = replacement[i];
     if (ch == '\n') {
       ++shape.inserted_newlines;
       shape.last_segment_cols = 0;
+    } else if (ch == '\r') {
+      ++shape.inserted_newlines;
+      shape.last_segment_cols = 0;
+      if (i + 1 < replacement.size() && replacement[i + 1] == '\n') {
+        ++i;  // consume the paired '\n' so "\r\n" counts as one newline
+      }
     } else {
       ++shape.last_segment_cols;
     }

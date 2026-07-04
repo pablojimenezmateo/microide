@@ -67,6 +67,30 @@ void TestMultiCaretSplitBracesAtEveryCaret() {
          "undo should atomically restore both original lines");
 }
 
+// Pasting text with a lone '\r' (or a reversed "\n\r") at multiple carets: the
+// buffer edit normalizes line endings (lone '\r' -> '\n'), so the caret-remap
+// shape must count that '\r' as a newline. Otherwise a higher caret is stranded
+// one line above the text it actually moved to.
+void TestMultiCaretPasteWithLoneCarriageReturnRemapsCarets() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefgh", "/tmp/mc-lone-cr.txt");
+  viewport.MoveCursorTo(0, 2);            // primary caret
+  viewport.SetSecondaryCarets({{0, 5}});  // secondary caret (higher position)
+
+  viewport.InsertText("X\rY");  // normalizes to "X\nY" -> one extra line per caret
+
+  Expect(viewport.lines().size() == 3,
+         "the lone CR should insert a real line break at each caret");
+  Expect(viewport.lines()[0] == "abX" && viewport.lines()[1] == "YcdeX" &&
+             viewport.lines()[2] == "Yfgh",
+         "both carets should paste the normalized two-line text");
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 1,
+         "the primary caret lands after its pasted 'Y'");
+  Expect(viewport.secondary_carets().size() == 1 &&
+             viewport.secondary_carets().front() == TextPosition{2, 1},
+         "the secondary caret follows its pasted text down to the third line");
+}
+
 // A caret not between a matching pair must fall back to a plain newline +
 // auto-indent while its sibling caret still splits its braces, all in one step.
 void TestMultiCaretSplitBracesMixedWithPlainNewline() {
@@ -383,6 +407,8 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestMultiCaretBackspaceShiftsSameLineCarets);
   AddTest(tests, "EditorMultiCaret/MultiCaretSplitBracesAtEveryCaret",
           TestMultiCaretSplitBracesAtEveryCaret);
+  AddTest(tests, "EditorMultiCaret/MultiCaretPasteWithLoneCarriageReturnRemapsCarets",
+          TestMultiCaretPasteWithLoneCarriageReturnRemapsCarets);
   AddTest(tests, "EditorMultiCaret/MultiCaretSplitBracesMixedWithPlainNewline",
           TestMultiCaretSplitBracesMixedWithPlainNewline);
   AddTest(tests, "EditorMultiCaret/SetSecondaryCaretsClampCollapseDedupeAndPrimaryDrop",
