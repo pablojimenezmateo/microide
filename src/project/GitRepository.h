@@ -64,6 +64,12 @@ class GitRepository {
   bool DiscardAll() const;
 
  private:
+  // If `dest_relative` is the destination of a currently-staged rename/copy,
+  // returns the source path; otherwise nullopt. Lets Unstage/Discard operate on
+  // both sides of a rename instead of orphaning the source's staged deletion.
+  std::optional<std::filesystem::path> StagedRenameSource(
+      const std::filesystem::path& dest_relative) const;
+
   std::filesystem::path root_;
 };
 

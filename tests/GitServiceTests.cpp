@@ -388,6 +388,54 @@ void TestGitBulkStageAndDiscard() {
          "git discard all should remove untracked files");
 }
 
+void TestGitDiscardStagedRenameRestoresSource() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+  const auto old_file = repo_path / "old.txt";
+  WriteFile(old_file, "original content\nline2\n");
+  CommitAll(repo_path, "base", "base");
+
+  // Stage a rename (surfaced as a single Staged entry keyed on the destination).
+  Expect(RunGitCommand(repo_path, {"mv", "old.txt", "new.txt"}) == 0,
+         "git mv should stage a rename");
+
+  GitRepository repo(repo_path);
+  Expect(repo.Discard("new.txt"), "discarding a staged rename should succeed");
+
+  // Regression: the destination-only discard previously removed `new` and orphaned
+  // `old`'s staged deletion, destroying the original content. The source must be
+  // restored and the destination removed, leaving a clean tree.
+  Expect(std::filesystem::exists(old_file),
+         "discarding a staged rename must restore the source file");
+  Expect(ReadFile(old_file) == "original content\nline2\n",
+         "the restored source must retain its original content");
+  Expect(!std::filesystem::exists(repo_path / "new.txt"),
+         "discarding a staged rename must remove the destination");
+  Expect(CollectGitWorkingTreeEntries(repo_path).empty(),
+         "discarding a staged rename must leave a clean working tree");
+}
+
+void TestGitUnstageStagedRenameResetsBothSides() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "old.txt", "original content\n");
+  CommitAll(repo_path, "base", "base");
+  Expect(RunGitCommand(repo_path, {"mv", "old.txt", "new.txt"}) == 0, "git mv should stage a rename");
+
+  GitRepository repo(repo_path);
+  Expect(repo.Unstage("new.txt"), "unstaging a staged rename should succeed");
+
+  // Unstaging must reset both sides to HEAD: nothing left staged (the source's
+  // staged deletion is no longer orphaned), and the renamed file stays in the tree.
+  for (const auto& entry : CollectGitWorkingTreeEntries(repo_path)) {
+    Expect(!entry.staged, "unstaging a rename must leave nothing staged");
+  }
+  Expect(std::filesystem::exists(repo_path / "new.txt"),
+         "unstage keeps the renamed file in the working tree");
+}
+
 void TestGitRepositoryDirectApi() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -713,6 +761,8 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/ResolvePrBaseReferenceFromGhMergeBase",
           TestGitResolvePrBaseReferenceFromGhMergeBase);
   AddTest(tests, "Git/BulkStageAndDiscard", TestGitBulkStageAndDiscard);
+  AddTest(tests, "Git/DiscardStagedRenameRestoresSource", TestGitDiscardStagedRenameRestoresSource);
+  AddTest(tests, "Git/UnstageStagedRenameResetsBothSides", TestGitUnstageStagedRenameResetsBothSides);
   AddTest(tests, "Git/RepositoryDirectApi", TestGitRepositoryDirectApi);
   AddTest(tests, "Git/RepositoryHandlesQuotedAndSpacedPaths",
           TestGitRepositoryHandlesQuotedAndSpacedPaths);

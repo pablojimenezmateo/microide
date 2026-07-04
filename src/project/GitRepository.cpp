@@ -2,6 +2,7 @@
 
 #include "project/GitCommandUtil.h"
 #include "project/GitPorcelainParser.h"
+#include "util/StringUtil.h"
 
 namespace microide::project {
 
@@ -153,7 +154,42 @@ bool GitRepository::Stage(const std::filesystem::path& relative_path) const {
   return ExecuteSucceeds({"add", "--", relative_path.generic_string()});
 }
 
+std::optional<std::filesystem::path> GitRepository::StagedRenameSource(
+    const std::filesystem::path& dest_relative) const {
+  const std::string dest = dest_relative.generic_string();
+  // `-z` name-status: non-rename records are <status>\0<path>\0; rename/copy
+  // records are R<score>\0<source>\0<dest>\0. -M asks git to detect renames.
+  const auto result = Execute({"diff", "--cached", "--name-status", "-M", "-z"});
+  if (!result.success()) {
+    return std::nullopt;
+  }
+  const std::vector<std::string_view> records = util::SplitNulDelimited(result.output);
+  for (std::size_t i = 0; i + 1 < records.size();) {
+    const std::string_view status = records[i];
+    if (status.empty()) {
+      ++i;
+      continue;
+    }
+    if ((status[0] == 'R' || status[0] == 'C') && i + 2 < records.size()) {
+      if (records[i + 2] == dest) {
+        return std::filesystem::path(records[i + 1]);
+      }
+      i += 3;
+    } else {
+      i += 2;
+    }
+  }
+  return std::nullopt;
+}
+
 bool GitRepository::Unstage(const std::filesystem::path& relative_path) const {
+  if (const auto rename_source = StagedRenameSource(relative_path); rename_source.has_value()) {
+    // Unstaging a staged rename must reset BOTH sides to HEAD, else the source's
+    // staged deletion is orphaned (left staged with the file already gone).
+    return ExecuteSucceeds(std::vector<std::string>{
+        "restore", "--staged", "--", rename_source->generic_string(),
+        relative_path.generic_string()});
+  }
   if (FileExistsAtRevision(relative_path)) {
     return ExecuteSucceeds({"restore", "--staged", "--", relative_path.generic_string()});
   }
@@ -161,6 +197,15 @@ bool GitRepository::Unstage(const std::filesystem::path& relative_path) const {
 }
 
 bool GitRepository::Discard(const std::filesystem::path& relative_path) const {
+  if (const auto rename_source = StagedRenameSource(relative_path); rename_source.has_value()) {
+    // Discarding a staged rename restores the source (content + tracking) and
+    // removes the destination in one operation, fully undoing the rename. Without
+    // this the source's staged deletion is left behind and its content is lost —
+    // the destination-only path below would delete `new` and orphan `old`.
+    return ExecuteSucceeds(std::vector<std::string>{
+        "restore", "--source=HEAD", "--staged", "--worktree", "--",
+        rename_source->generic_string(), relative_path.generic_string()});
+  }
   if (FileExistsAtRevision(relative_path)) {
     return ExecuteSucceeds(
         {"restore", "--source=HEAD", "--staged", "--worktree", "--",
