@@ -142,12 +142,21 @@ struct Parser {
     if (!Expect('"')) return std::nullopt;
     std::string result;
     while (pos < src.size()) {
-      const char c = Advance();
-      if (c == '"') return JsonValue(std::move(result));
-      if (c != '\\') {
-        result += c;
-        continue;
+      // Bulk-copy the run of ordinary bytes up to the next quote or backslash in a
+      // single append instead of byte-by-byte; escape-free strings (nearly all of
+      // them on the LSP/DAP inbound hot path) then cost one memcpy rather than N
+      // single-byte operator+= calls.
+      const std::size_t run_start = pos;
+      while (pos < src.size() && src[pos] != '"' && src[pos] != '\\') {
+        ++pos;
       }
+      if (pos > run_start) {
+        result.append(src.data() + run_start, pos - run_start);
+      }
+      if (pos >= src.size()) break;  // no closing quote before end of input
+      const char c = src[pos++];
+      if (c == '"') return JsonValue(std::move(result));
+      // c is a backslash: decode the escape sequence.
       if (pos >= src.size()) return std::nullopt;
       const char esc = Advance();
       switch (esc) {
@@ -256,7 +265,23 @@ namespace {
 
 void AppendEscaped(std::string& out, const std::string& s) {
   out += '"';
-  for (const char c : s) {
+  const std::size_t n = s.size();
+  std::size_t i = 0;
+  while (i < n) {
+    // Bulk-append the run of bytes that need no escaping (>= 0x20, not '"' or '\')
+    // in one shot instead of byte-by-byte; the overwhelming majority of every
+    // outgoing string copies verbatim.
+    const std::size_t run_start = i;
+    while (i < n) {
+      const unsigned char uc = static_cast<unsigned char>(s[i]);
+      if (uc == '"' || uc == '\\' || uc < 0x20) break;
+      ++i;
+    }
+    if (i > run_start) {
+      out.append(s.data() + run_start, i - run_start);
+    }
+    if (i >= n) break;
+    const char c = s[i++];
     switch (c) {
       case '"': out += "\\\""; break;
       case '\\': out += "\\\\"; break;
@@ -265,14 +290,11 @@ void AppendEscaped(std::string& out, const std::string& s) {
       case '\n': out += "\\n"; break;
       case '\r': out += "\\r"; break;
       case '\t': out += "\\t"; break;
-      default:
-        if (static_cast<unsigned char>(c) < 0x20) {
-          char buf[7];
-          snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-          out += buf;
-        } else {
-          out += c;
-        }
+      default: {
+        char buf[7];
+        snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
+        out += buf;
+      }
     }
   }
   out += '"';
@@ -286,7 +308,12 @@ void AppendValue(std::string& out, const JsonValue& val, int depth = 0) {
   if (val.IsNull()) { out += "null"; return; }
   if (val.IsBool()) { out += val.AsBool() ? "true" : "false"; return; }
   if (val.IsInt()) {
-    out += std::to_string(val.AsInt());
+    // to_chars into a stack buffer avoids the throwaway heap std::string that
+    // std::to_string allocates for every integer serialized.
+    char buf[24];
+    const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), val.AsInt());
+    (void)ec;  // int64 always fits in 24 bytes
+    out.append(buf, static_cast<std::size_t>(ptr - buf));
     return;
   }
   if (val.IsDouble()) {

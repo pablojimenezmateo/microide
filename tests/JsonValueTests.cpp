@@ -98,6 +98,35 @@ void TestLoneLowSurrogateRejected() {
          "decoded surrogate pair must be valid UTF-8");
 }
 
+// The parse and serialize fast paths bulk-copy escape-free runs and drop into the
+// escape switch only at boundaries; exercise strings that mix long clean runs with
+// every escape kind, control chars, and unicode to prove the boundaries are exact.
+void TestStringEscapeRunsRoundTrip() {
+  // Build a value carrying an escape-heavy string, serialize it, parse it back, and
+  // confirm the decoded bytes are identical.
+  const std::string original =
+      std::string("plain text run \"quote\" and \\backslash\\ then\n\ttabs\r\n") +
+      std::string("\x01\x1f control ") + "unicode: \xE2\x9C\x93 end";
+  microide::util::JsonObject obj;
+  obj["s"] = JsonValue(original);
+  const std::string serialized = SerializeJson(JsonValue(std::move(obj)));
+  const auto reparsed = ParseJson(serialized);
+  Expect(reparsed.has_value(), "escape-heavy string should round-trip through serialize+parse");
+  Expect((*reparsed)["s"].AsString() == original,
+         "decoded string bytes must exactly match the original");
+
+  // Direct parse of a literal covering an escape at the very start, adjacent
+  // escapes, and a trailing clean run.
+  const auto direct = ParseJson("\"\\t\\\\\\\"mid\\n\\/end\"");
+  Expect(direct.has_value() && direct->IsString(), "adjacent escapes should parse");
+  Expect(direct->AsString() == std::string("\t\\\"mid\n/end"),
+         "adjacent-escape decoding must be exact");
+
+  // An empty string and a string that is a single escape.
+  Expect(ParseJson("\"\"")->AsString().empty(), "empty string should decode to empty");
+  Expect(ParseJson("\"\\n\"")->AsString() == "\n", "single-escape string should decode");
+}
+
 // A non-finite double has no JSON form; the serializer emits null rather than the
 // bare token nan/inf that this parser (and any strict peer) would reject.
 void TestNonFiniteDoubleSerializesAsNull() {
@@ -121,6 +150,7 @@ void RegisterJsonValueTests(std::vector<TestCase>& tests) {
   AddTest(tests, "JsonValue/OutOfRangeIntegerFallsBackToDouble",
           TestOutOfRangeIntegerFallsBackToDouble);
   AddTest(tests, "JsonValue/LoneLowSurrogateRejected", TestLoneLowSurrogateRejected);
+  AddTest(tests, "JsonValue/StringEscapeRunsRoundTrip", TestStringEscapeRunsRoundTrip);
   AddTest(tests, "JsonValue/NonFiniteDoubleSerializesAsNull",
           TestNonFiniteDoubleSerializesAsNull);
 }
