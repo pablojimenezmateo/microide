@@ -13,6 +13,22 @@ namespace {
 // Per-channel retained-entry ceiling. A long-running debug/LSP session or a
 // hostile adapter would otherwise grow entries/parsed_entries without bound.
 constexpr std::size_t kMaxChannelEntries = 100000;
+
+// Per-line and per-channel byte ceilings. The entry cap alone still allows a
+// stream of large-but-valid adapter/plugin output lines to retain many GiB over
+// time. Keep the newest output, truncate individual pathological lines, and
+// coalesce byte-budget trims the same way as entry-count trims.
+constexpr std::size_t kMaxChannelLineBytes = 1u << 20;      // 1 MiB
+constexpr std::size_t kMaxChannelRetainedBytes = 16u << 20;  // 16 MiB
+
+void TruncateOutputLine(std::string& line) {
+  if (line.size() <= kMaxChannelLineBytes) {
+    return;
+  }
+  static constexpr std::string_view kSuffix = "... [truncated]";
+  line.resize(kMaxChannelLineBytes - kSuffix.size());
+  line.append(kSuffix);
+}
 }  // namespace
 
 std::optional<OutputReference> ParseOutputReference(std::string_view text) {
@@ -117,6 +133,8 @@ void WorkspaceOutputChannels::AppendLine(std::string_view id, std::string_view l
 
   EnsureChannel(id, label);
   auto& channel = channels_.find(id)->second;
+  TruncateOutputLine(line);
+  channel.retained_bytes += line.size();
   channel.parsed_entries.push_back(BuildParsedEntry(line, &channel.current_reference_path));
   channel.entries.push_back(std::move(line));
 
@@ -126,8 +144,26 @@ void WorkspaceOutputChannels::AppendLine(std::string_view id, std::string_view l
   // the cap) so the common append stays O(1) rather than erase-front per line.
   // entries and parsed_entries are kept in lockstep — renderers index them by the
   // same position, so both are trimmed together.
-  if (channel.entries.size() > kMaxChannelEntries + kMaxChannelEntries / 4) {
-    const std::size_t drop = channel.entries.size() - kMaxChannelEntries;
+  const std::size_t entry_high_watermark = kMaxChannelEntries + kMaxChannelEntries / 4;
+  const std::size_t byte_high_watermark =
+      kMaxChannelRetainedBytes + kMaxChannelRetainedBytes / 4;
+  if (channel.entries.size() > entry_high_watermark ||
+      channel.retained_bytes > byte_high_watermark) {
+    std::size_t drop = channel.entries.size() > kMaxChannelEntries
+                           ? channel.entries.size() - kMaxChannelEntries
+                           : 0;
+    std::size_t projected_bytes = channel.retained_bytes;
+    for (std::size_t i = 0; i < drop; ++i) {
+      projected_bytes -= channel.entries[i].size();
+    }
+    while (drop < channel.entries.size() &&
+           projected_bytes > kMaxChannelRetainedBytes) {
+      projected_bytes -= channel.entries[drop].size();
+      ++drop;
+    }
+    for (std::size_t i = 0; i < drop; ++i) {
+      channel.retained_bytes -= channel.entries[i].size();
+    }
     channel.entries.erase(channel.entries.begin(),
                           channel.entries.begin() + static_cast<std::ptrdiff_t>(drop));
     channel.parsed_entries.erase(channel.parsed_entries.begin(),
@@ -194,6 +230,7 @@ void WorkspaceOutputChannels::Clear(std::string_view id) {
   }
   it->second.entries.clear();
   it->second.parsed_entries.clear();
+  it->second.retained_bytes = 0;
   it->second.current_reference_path.reset();
 }
 

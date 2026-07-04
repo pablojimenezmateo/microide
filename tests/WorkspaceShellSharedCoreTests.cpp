@@ -262,6 +262,37 @@ void TestWorkspaceOutputChannelsCapsEntries() {
          "the newest parsed entry stays indexable after trimming");
 }
 
+void TestWorkspaceOutputChannelsCapLargeLineBytes() {
+  WorkspaceOutputChannels channels;
+  channels.AppendLine("debug.console.1", "Debug", std::string(2u * 1024 * 1024, 'x'));
+
+  const std::vector<std::string>* entries = channels.Entries("debug.console.1");
+  Expect(entries != nullptr && entries->size() == 1, "large-line channel should retain one entry");
+  Expect(entries->front().size() <= 1024u * 1024u,
+         "one huge output line must be truncated before retention");
+  Expect(entries->front().find("[truncated]") != std::string::npos,
+         "truncated output should carry a visible marker");
+}
+
+void TestWorkspaceOutputChannelsCapRetainedBytes() {
+  WorkspaceOutputChannels channels;
+  constexpr std::size_t kLineBytes = 256u * 1024u;
+  for (int i = 0; i < 100; ++i) {
+    channels.AppendLine("plugins.log", "Plugin Log", std::string(kLineBytes, 'p'));
+  }
+
+  const std::vector<std::string>* entries = channels.Entries("plugins.log");
+  Expect(entries != nullptr && !entries->empty(), "byte-capped channel should retain newest rows");
+  std::size_t retained = 0;
+  for (const std::string& entry : *entries) {
+    retained += entry.size();
+  }
+  Expect(retained <= 20u * 1024u * 1024u,
+         "output channel retained bytes must stay near the byte budget");
+  Expect(channels.ParsedEntryAt("plugins.log", entries->size() - 1) != nullptr,
+         "byte-budget trimming should keep parsed entries in lockstep");
+}
+
 void TestWorkspaceSharedCommandCompletionHelpers() {
   const std::vector<CommandCompletionCandidate> candidates = {
       {"compare", true},
@@ -566,6 +597,10 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
           TestWorkspaceOutputChannelsRemoveChannel);
   AddTest(tests, "WorkspaceShared/OutputChannelsCapsEntries",
           TestWorkspaceOutputChannelsCapsEntries);
+  AddTest(tests, "WorkspaceShared/OutputChannelsCapLargeLineBytes",
+          TestWorkspaceOutputChannelsCapLargeLineBytes);
+  AddTest(tests, "WorkspaceShared/OutputChannelsCapRetainedBytes",
+          TestWorkspaceOutputChannelsCapRetainedBytes);
   AddTest(tests, "WorkspaceShared/CommandCompletionHelpers",
           TestWorkspaceSharedCommandCompletionHelpers);
   AddTest(tests, "Workspace/CommandRegistry", TestWorkspaceCommandRegistry);

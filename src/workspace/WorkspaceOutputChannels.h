@@ -50,6 +50,7 @@ class WorkspaceOutputChannels {
     std::string label;
     std::vector<std::string> entries;
     std::vector<ParsedEntry> parsed_entries;
+    std::size_t retained_bytes = 0;
     std::optional<std::filesystem::path> current_reference_path;
   };
 
