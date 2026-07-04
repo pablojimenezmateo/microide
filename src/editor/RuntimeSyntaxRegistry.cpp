@@ -1174,6 +1174,14 @@ HighlightedLine HighlightLine(std::string_view line,
   result.end_state = SyntaxState{};
   result.end_state.definition_id = definition_id;
   if (line.empty() || line.size() > kMaxHighlightLineBytes) {
+    // Carry the incoming open-region stack forward instead of dropping it. An
+    // empty line contains no delimiter, and a line too long to scan is far more
+    // likely to sit inside a region than to open/close one — resetting to top
+    // level here would resume the rest of the file as code, so e.g. a blank line
+    // inside a block comment / multi-line string mis-highlights everything after.
+    if (state.definition_id == definition_id && state.region_depth > 0) {
+      result.end_state = state;  // definition_id already matches
+    }
     return result;  // empty, or too long to tokenize affordably: leave Plain
   }
 
@@ -1197,6 +1205,12 @@ SyntaxState AdvanceState(std::string_view line,
   SyntaxState end_state{};
   end_state.definition_id = definition_id;
   if (line.empty() || line.size() > kMaxHighlightLineBytes) {
+    // Carry the incoming open-region stack forward (see HighlightLine): a blank or
+    // over-long line must not reset a multi-line region to top level, which would
+    // mis-highlight the remainder of the file.
+    if (state.definition_id == definition_id && state.region_depth > 0) {
+      end_state = state;  // definition_id already matches
+    }
     return end_state;  // see kMaxHighlightLineBytes: skip scanning a huge line
   }
 

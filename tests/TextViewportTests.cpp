@@ -1342,6 +1342,30 @@ void TestRuntimeSyntaxDetectFiletypeDisambiguatesCppHeader() {
          "C++ headers should still resolve to the C++ syntax definition");
 }
 
+void TestRuntimeSyntaxCarriesRegionAcrossBlankLine() {
+  namespace rs = microide::editor::runtime_syntax;
+  const std::filesystem::path path = "/tmp/region.c";
+  const std::string opener = "int x; /* start of a block comment";
+
+  // The opener leaves an unterminated block comment open (region depth > 0).
+  microide::editor::SyntaxState opened = rs::AdvanceState(opener, path, {}, opener);
+  Expect(opened.region_depth > 0, "an unterminated block comment opens a region");
+
+  // Regression: a blank line inside the comment must carry the open region
+  // forward, not reset to top level (which would resume the rest of the file as
+  // code and mis-highlight everything after the blank line).
+  const microide::editor::SyntaxState after_blank = rs::AdvanceState("", path, opened, opener);
+  Expect(after_blank.region_depth == opened.region_depth,
+         "a blank line inside a block comment must preserve the open region");
+  Expect(after_blank.definition_id == opened.definition_id,
+         "the definition id is preserved across a blank line");
+
+  // The next line still resumes inside the comment and its */ closes it.
+  const microide::editor::SyntaxState after_close =
+      rs::AdvanceState("still inside */", path, after_blank, opener);
+  Expect(after_close.region_depth == 0, "the closing */ ends the carried region");
+}
+
 void TestRuntimeSyntaxDetectFiletypeDisambiguatesObjectiveCSource() {
   const std::vector<std::string> lines = {
       "#import <Foundation/Foundation.h>",
@@ -2514,6 +2538,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeDisambiguatesCppHeader",
           TestRuntimeSyntaxDetectFiletypeDisambiguatesCppHeader);
+  AddTest(tests, "TextViewport/RuntimeSyntaxCarriesRegionAcrossBlankLine",
+          TestRuntimeSyntaxCarriesRegionAcrossBlankLine);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeDisambiguatesObjectiveCSource",
           TestRuntimeSyntaxDetectFiletypeDisambiguatesObjectiveCSource);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeKeepsCMakeLists",
