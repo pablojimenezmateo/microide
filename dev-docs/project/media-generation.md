@@ -37,9 +37,10 @@ Files live in `tools/capture-media/`:
   small C++ git repo with pinned author/dates, a compiled `-g` binary for the
   debugger, and a divergent branch engineered to conflict for the merge scene.
 - **`capture-shots.sh`** — one fresh instance per scene → the five PNGs.
-- **`record-hero.sh`** — one instance, an ffmpeg `x11grab` capture, and a
-  choreographed tour (editor → live `git merge` conflict → debugger → diff →
-  control channel), then encodes MP4 + WebM + poster.
+- **`record-hero.sh`** — one instance, seven short ffmpeg `x11grab` clips, and a
+  stitched hero trailer (editor → search → terminal → diff → merge → debugger →
+  control channel). The post-process step preserves the full frame, adds
+  bottom-right labels, concatenates the beats, and encodes MP4 + WebM + poster.
 
 ### Why these tools
 
@@ -48,7 +49,9 @@ The app has **no built-in screenshot/export**. The control channel
 deterministically (`open`, `review-branch`, `review-conflicts`, `breakpoint-set`,
 `debug-run --wait stopped`, `colorscheme`, …); xdotool supplies the live typing
 and the few keystrokes with no control verb (e.g. `Ctrl+W`); ffmpeg + ImageMagick
-do the encoding. Capture geometry defaults to the app's native 1440×900.
+do the encoding. Capture geometry defaults to the app's native 1440×900. The
+hero trailer uses only ffmpeg filters that ship with the normal dependency set
+(`scale`, `drawtext`, `concat`) and records with the X11 mouse cursor hidden.
 
 ## Scene map
 
@@ -59,6 +62,28 @@ do the encoding. Capture geometry defaults to the app's native 1440×900.
 | `shot-git-diff.png`  | Working-tree diff  | `review-branch` after a scripted edit |
 | `shot-git-merge.png` | Three-way merge    | `git merge` (conflict) + `review-conflicts` |
 | `shot-dap.png`       | Debugger paused    | `breakpoint-set` + `debug-run --type gdb --wait stopped` + `debug-pane-variables` |
+
+## Hero trailer
+
+`record-hero.sh` keeps the public output contract unchanged
+(`hero-demo.{mp4,webm}` + `hero-poster.png`) but generates the video as a
+roughly 36 second full-frame trailer rather than a passive unlabeled recording.
+
+| Beat | Target length | What it shows |
+|------|---------------|---------------|
+| Editor | 4.8s | Larger generated source file with visible scrolling |
+| Search | 4.0s | Project search results across the fixture workspace |
+| Terminal | 4.4s | PTY-backed terminal running the fixture binary |
+| Diff | 5.4s | Rich scheduler rewrite shown in the working-tree diff |
+| Merge | 5.6s | Real `git merge` conflict opened in the merge surface |
+| Debugger | 6.6s | DAP breakpoint hit, variables visible, step commands |
+| Control channel | 5.2s | External `control-send` commands and JSONL replies |
+
+The final encode uses H.264 CRF 19 for MP4 and VP9 CRF 30 for WebM so UI text
+stays legible in the hero slot. `hero-poster.png` is extracted from the debugger
+beat, which gives the page a mid-action still before playback starts.
+The larger-file beat is generated inside the throwaway fixture repository, not
+checked into the real project tree.
 
 ## Dependencies
 
@@ -76,6 +101,9 @@ sudo apt install xvfb ffmpeg imagemagick xdotool gdb
 - **Leftover Xvfb on `:99`** — a crashed run can leave it. Clear with
   `for p in $(pgrep -x Xvfb); do kill "$p"; done; rm -f /tmp/.X99-lock`. Do **not**
   `pkill -f Xvfb`: `-f` can match an unrelated wrapper process.
+- **`/tmp/.X11-unix` owner is not root** — Xvfb may fail before SDL starts with
+  `Owner of /tmp/.X11-unix should be set to root`. Repair the socket directory:
+  `sudo chown root:root /tmp/.X11-unix && sudo chmod 1777 /tmp/.X11-unix`.
 - **Empty `adapters` / no debugger** — the `gdb-dap` plugin wasn't seeded; confirm
   `plugins/gdb-dap/` exists (lib.sh copies it into the isolated config).
 - **A beat misfires in the hero video** — timing is sleep-based; just re-run.

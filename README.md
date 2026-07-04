@@ -1,8 +1,9 @@
 # microide
 
-A native, low-footprint C++/SDL3 desktop IDE focused on built-in editor, diff, merge, git,
-search, and terminal workflows. Single-window, keyboard-first, and does not require a GPU (it uses
-one when available to speed up text, and runs fully on a software renderer otherwise).
+A **100% vibecoded**, native, low-footprint C++/SDL3 desktop IDE focused on built-in editor,
+diff, merge, git, search, and terminal workflows. Single-window, keyboard-first, and does not
+require a GPU (it uses one when available to speed up text, and runs fully on a software renderer
+otherwise).
 
 [![microide — native C++/SDL3 IDE](docs/media/hero-poster.png)](https://pablojimenezmateo.github.io/microide/)
 

@@ -23,9 +23,9 @@ or your real microide config. Full details + the scene list:
 | `shot-git-diff.png`  | Side-by-side working-tree diff               | `capture-shots.sh` |
 | `shot-git-merge.png` | Three-way merge conflict view                | `capture-shots.sh` |
 | `shot-dap.png`       | Debugger paused on a breakpoint              | `capture-shots.sh` |
-| `hero-demo.mp4`      | Hero walkthrough — H.264/MP4 (primary source) | `record-hero.sh` |
-| `hero-demo.webm`     | Hero walkthrough — VP9/WebM (smaller source)  | `record-hero.sh` |
-| `hero-poster.png`    | Still shown before the video plays            | `record-hero.sh` |
+| `hero-demo.mp4`      | Labeled hero trailer — H.264/MP4 (primary source) | `record-hero.sh` |
+| `hero-demo.webm`     | Labeled hero trailer — VP9/WebM (smaller source)  | `record-hero.sh` |
+| `hero-poster.png`    | Mid-action still shown before the video plays     | `record-hero.sh` |
 | `og.png`             | *(optional)* 1200×630 social preview — add by hand | — |
 
 ## Regenerate on any UI change

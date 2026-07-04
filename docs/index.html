@@ -109,6 +109,13 @@
     .hero h1 { font-size: clamp(38px, 6vw, 64px); letter-spacing: -.02em; margin-bottom: 16px; }
     .hero .sub { color: var(--muted); font-size: clamp(18px, 2.4vw, 22px); max-width: 56ch; margin-bottom: 28px; }
     .hero .sub strong { color: var(--text); font-weight: 600; }
+    .hero-proof {
+      display: inline-flex; align-items: center; gap: 10px;
+      font-family: var(--mono); font-size: 13px; font-weight: 700;
+      color: var(--accent-2); border: 1px solid rgba(126,231,135,.55);
+      background: rgba(126,231,135,.08); border-radius: 999px;
+      padding: 6px 12px; margin: 0 0 18px;
+    }
 
     .cta-row { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 40px; }
     .btn {
@@ -142,6 +149,7 @@
       border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
       background: var(--bg-soft); box-shadow: 0 18px 60px rgba(0,0,0,.45);
     }
+    .hero-video { margin: 34px 0 0; }
     .video-chrome {
       display: flex; align-items: center; gap: 8px;
       padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface);
@@ -155,6 +163,7 @@
       color: var(--muted); font-family: var(--mono); font-size: 14px; text-align: center; padding: 24px;
     }
     figcaption { color: var(--muted); font-size: 14px; text-align: center; margin-top: 12px; }
+    .hero .vibe-banner { margin-top: 28px; }
 
     /* ---- Pillars ---- */
     .grid { display: grid; gap: 18px; }
@@ -280,6 +289,7 @@
         </nav>
       </div>
 
+      <p class="hero-proof"><strong>100% vibecoded</strong> — every source file, test, and doc was written by AI coding agents under human direction.</p>
       <h1>A real desktop IDE — that an LLM can actually drive.</h1>
       <p class="sub">
         A <strong>native, low-footprint</strong> C++/SDL3 desktop IDE focused on editor, diff,
@@ -296,6 +306,26 @@
         <a class="btn" href="#start">Get started</a>
       </div>
 
+      <figure id="demo" class="hero-video">
+        <div class="video-wrap">
+          <div class="video-chrome">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            <span class="title">microide — 36 second workflow tour</span>
+          </div>
+          <video controls muted loop playsinline preload="metadata" poster="media/hero-poster.png">
+            <source src="media/hero-demo.webm" type="video/webm">
+            <source src="media/hero-demo.mp4" type="video/mp4">
+            <div class="video-fallback">
+              <span>No recording is bundled in the repository.</span>
+              <span>Build and run it in two commands — see <a href="#start">Get started</a>.</span>
+            </div>
+          </video>
+        </div>
+        <figcaption>
+          36 seconds: edit, search, terminal, diff, merge, debug, and agent control — generated from the real app.
+        </figcaption>
+      </figure>
+
       <div class="vibe-banner">
         <span class="tag">100% vibecoded</span>
         <p>
@@ -311,42 +341,6 @@
   </header>
 
   <main>
-
-    <!-- ============ DEMO VIDEO ============ -->
-    <section id="demo">
-      <div class="container">
-        <p class="eyebrow">demo</p>
-        <h2>See it in motion</h2>
-        <p class="lead">
-          The fastest way to judge an IDE is to watch it work — multiple projects, diff and
-          merge, the debugger paused on a breakpoint, and an LLM driving it over the control
-          channel, all in one session.
-        </p>
-
-        <figure style="margin:24px 0 0;">
-          <div class="video-wrap">
-            <div class="video-chrome">
-              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-              <span class="title">microide — demo.mp4</span>
-            </div>
-            <!-- Drop the recorded file(s) into docs/media/. Poster shows until played. -->
-            <video controls preload="none" poster="media/hero-poster.png">
-              <source src="media/hero-demo.webm" type="video/webm">
-              <source src="media/hero-demo.mp4" type="video/mp4">
-              <!-- Shown if the browser can't play / files are not present yet -->
-              <div class="video-fallback">
-                <span>No recording is bundled in the repository.</span>
-                <span>Build and run it in two commands — see <a href="#start">Get started</a>.</span>
-              </div>
-            </video>
-          </div>
-          <figcaption>
-            Prefer to drive it yourself? Build in two commands and reproduce the same
-            workflows shown across this page.
-          </figcaption>
-        </figure>
-      </div>
-    </section>
 
     <!-- ============ PILLARS ============ -->
     <section id="why">

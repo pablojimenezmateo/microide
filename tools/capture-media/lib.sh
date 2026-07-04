@@ -87,13 +87,18 @@ cm_start_xvfb() {
   export DISPLAY="$CM_DISPLAY_NUM"
   export SDL_VIDEODRIVER=x11
   # Wait for the display to accept connections.
-  local i
+  local i ready=0
   for i in $(seq 1 40); do
     if command -v xdpyinfo >/dev/null && xdpyinfo -display "$CM_DISPLAY_NUM" >/dev/null 2>&1; then
+      ready=1
       break
     fi
+    kill -0 "$CM_XVFB_PID" 2>/dev/null || break
     sleep 0.1
   done
+  if [[ "$ready" != "1" ]]; then
+    cm_die "Xvfb failed to start on $CM_DISPLAY_NUM; if the log mentions /tmp/.X11-unix, repair it with: sudo chown root:root /tmp/.X11-unix && sudo chmod 1777 /tmp/.X11-unix"
+  fi
   cm_log "Xvfb up on $CM_DISPLAY_NUM (${CM_W}x${CM_H})"
 }
 
