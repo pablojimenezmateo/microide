@@ -149,7 +149,7 @@ class WorkspaceActionContext {
     std::function<std::optional<std::string>()> last_terminal_command_text;
     std::function<std::optional<std::string>()> selection_text_with_context;
     std::function<std::optional<std::string>()> read_clipboard_text;
-    std::function<void()> paste_clipboard_into_terminal;
+    std::function<void(std::string)> paste_text_into_terminal;
     std::function<void()> refresh_available_colorscheme_names;
     std::function<void(std::string_view)> apply_colorscheme;
     std::function<void()> apply_editor_preferences_to_all_tabs;

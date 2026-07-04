@@ -806,7 +806,7 @@ void WorkspaceActionContext::PasteClipboard() {
       clipboard_text->resize(util::PreviousUtf8Boundary(*clipboard_text, kMaxPasteBytes));
     }
     if (state_.surface.focus == FocusTarget::Panel && operations_.active_terminal_tab() != nullptr) {
-      operations_.paste_clipboard_into_terminal();
+      operations_.paste_text_into_terminal(std::move(*clipboard_text));
       return;
     }
     if (operations_.insert_text_into_active_text_surface(*clipboard_text)) {

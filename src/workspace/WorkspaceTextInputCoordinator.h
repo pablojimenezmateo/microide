@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -79,6 +80,7 @@ class TextInputCoordinator {
   bool HandleSingleLineKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool PasteClipboardIntoTerminal();
+  bool PasteTextIntoTerminal(std::string text);
   bool InsertTextAtActiveSurface(std::string_view input);
   bool HasSelectionAtActiveSingleLineSurface() const;
   std::string SelectedTextAtActiveSingleLineSurface() const;

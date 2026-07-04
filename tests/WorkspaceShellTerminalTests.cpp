@@ -770,6 +770,27 @@ void TestWorkspaceShellTerminalPasteActionTargetsPanelFocus() {
          "terminal-focused paste should not modify the editor buffer");
 }
 
+void TestWorkspaceShellTerminalPasteActionCapsClipboardBytes() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  constexpr std::size_t kMaxPasteBytes = 64u << 20;
+  WorkspaceShellTestAccess::SetClipboardTextReader(shell, []() -> std::optional<std::string> {
+    return std::string(kMaxPasteBytes + 4096, 'x');
+  });
+
+  Expect(WorkspaceShellTestAccess::ExecutePasteClipboard(shell),
+         "terminal paste action should accept a large clipboard");
+  const std::string sent = TerminalSessionTestAccess::SentBytes(session);
+  Expect(sent.size() <= kMaxPasteBytes && sent.size() >= kMaxPasteBytes - 4,
+         "terminal paste action should keep sent bytes within the clipboard cap, sent " +
+             std::to_string(sent.size()) + " bytes");
+  Expect(!sent.empty() && sent.front() == 'x' && sent.back() == 'x',
+         "terminal paste cap should preserve the retained payload bytes");
+}
+
 void TestWorkspaceShellTerminalTabsDragReorderToStart() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1035,6 +1056,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalPanelRightClickOpensContextMenu);
   AddTest(tests, "WorkspaceShell/TerminalPasteActionTargetsPanelFocus",
           TestWorkspaceShellTerminalPasteActionTargetsPanelFocus);
+  AddTest(tests, "WorkspaceShell/TerminalPasteActionCapsClipboardBytes",
+          TestWorkspaceShellTerminalPasteActionCapsClipboardBytes);
   AddTest(tests, "WorkspaceShell/TerminalTabsDragReorderToStart",
           TestWorkspaceShellTerminalTabsDragReorderToStart);
   AddTest(tests, "WorkspaceShell/TerminalTabsOverflowReachableViaHeaderWheel",

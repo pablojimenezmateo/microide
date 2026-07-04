@@ -554,8 +554,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .last_terminal_command_text = [this]() { return LastTerminalCommandText(); },
           .selection_text_with_context = [this]() { return SelectionTextWithContext(); },
           .read_clipboard_text = [this]() { return ReadClipboardText(); },
-          .paste_clipboard_into_terminal =
-              [this]() { MakeTextInputCoordinator().PasteClipboardIntoTerminal(); },
+          .paste_text_into_terminal =
+              [this](std::string text) {
+                MakeTextInputCoordinator().PasteTextIntoTerminal(std::move(text));
+              },
           .refresh_available_colorscheme_names =
               [this]() { MakePersistenceCoordinator().RefreshAvailableColorschemeNames(); },
           .apply_colorscheme =

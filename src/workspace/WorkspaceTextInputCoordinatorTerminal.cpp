@@ -3,12 +3,27 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceShell.h"
+#include "util/StringUtil.h"
 
 namespace microide::workspace {
+namespace {
+
+constexpr std::size_t kMaxTerminalPasteBytes = 64u << 20;
+
+void ClampTerminalPasteText(std::string& text) {
+  if (text.size() <= kMaxTerminalPasteBytes) {
+    return;
+  }
+  text.resize(util::PreviousUtf8Boundary(text, kMaxTerminalPasteBytes));
+}
+
+}  // namespace
+
 bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
                                                  SDL_Keymod modifiers) {
   auto* terminal_tab = operations_.active_terminal_tab();
@@ -140,22 +155,31 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
 }
 
 bool TextInputCoordinator::PasteClipboardIntoTerminal() {
+  std::optional<std::string> clipboard_text = operations_.read_clipboard_text();
+  if (!clipboard_text.has_value()) {
+    return true;
+  }
+
+  return PasteTextIntoTerminal(std::move(*clipboard_text));
+}
+
+bool TextInputCoordinator::PasteTextIntoTerminal(std::string text) {
   auto* terminal_tab = operations_.active_terminal_tab();
   if (terminal_tab == nullptr) {
     return false;
   }
 
-  const std::optional<std::string> clipboard_text = operations_.read_clipboard_text();
-  if (!clipboard_text.has_value()) {
+  ClampTerminalPasteText(text);
+  if (text.empty()) {
     return true;
   }
 
   operations_.clear_terminal_selection();
-  if (clipboard_text->find_first_of("\r\n") == std::string::npos) {
-    operations_.append_terminal_pending_input(*clipboard_text);
+  if (text.find_first_of("\r\n") == std::string::npos) {
+    operations_.append_terminal_pending_input(text);
   }
   terminal_tab->follow_tail = true;
-  terminal_tab->session.PasteText(*clipboard_text);
+  terminal_tab->session.PasteText(text);
   operations_.request_bottom_panel_content_redraw();
   return true;
 }
