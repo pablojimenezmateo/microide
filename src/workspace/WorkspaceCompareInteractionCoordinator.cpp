@@ -569,6 +569,14 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
     operations_.request_editor_surface_redraw();
     return;
   }
+  // The save above just rewrote output_path — TextViewport::Save always does an
+  // atomic write+rename, which bumps the mtime even when the buffer was clean. Sync
+  // disk_result_tick to that fresh value (via the same function ValidateMergeResult
+  // reads) so our own write is not misread as an external modification, which would
+  // otherwise reject every Mark Resolved and never stage the file.
+  if (!merge_tab->output_path.empty()) {
+    merge_tab->disk_result_tick = FileModificationTick(merge_tab->output_path);
+  }
 
   const bool result_should_exist = !merge_tab->file_conflict.requires_existence_choice ||
                                    !merge_tab->result_viewport.lines().empty();

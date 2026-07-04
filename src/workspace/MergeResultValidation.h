@@ -53,4 +53,10 @@ std::size_t CountRemainingMergeConflicts(std::span<const MergeTrackedConflict> c
 std::size_t CountResolvedMergeConflicts(std::span<const MergeTrackedConflict> conflicts);
 MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request);
 
+// The file's last-write tick, or nullopt if it does not exist / cannot be read.
+// ValidateMergeResult's external-modification check reads this; callers that write
+// the result file (e.g. Mark Resolved's save) must refresh merge_tab.disk_result_tick
+// with the SAME function so their own write is not mistaken for an external change.
+std::optional<std::uint64_t> FileModificationTick(const std::filesystem::path& path);
+
 }  // namespace microide::workspace

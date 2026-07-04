@@ -172,6 +172,17 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
   ParsedGitConflictOutput parsed;
   std::vector<ParsedGitConflictSegment> segments;
   std::size_t line_index = 0;
+  // The conflict separator is exactly "=======" (7 equals). SplitSyntaxLines keeps
+  // a trailing '\r', so a CRLF working-tree file yields "=======\r"; match with a
+  // '\r'-tolerant exact compare. Staying exact (not starts_with) avoids treating a
+  // content line like "=========" or "======= heading" inside the block as the
+  // separator, which the sigil markers can afford via starts_with but this cannot.
+  const auto is_conflict_separator = [](std::string_view line) {
+    if (!line.empty() && line.back() == '\r') {
+      line.remove_suffix(1);
+    }
+    return line == "=======";
+  };
   while (line_index < lines.size()) {
     if (!lines[line_index].starts_with("<<<<<<<")) {
       ParsedGitConflictSegment segment;
@@ -192,19 +203,19 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
     ParsedGitConflictBlock block;
     ++line_index;
     while (line_index < lines.size() && !lines[line_index].starts_with("|||||||") &&
-           lines[line_index] != "=======") {
+           !is_conflict_separator(lines[line_index])) {
       block.current_lines.push_back(lines[line_index]);
       ++line_index;
     }
     if (line_index < lines.size() && lines[line_index].starts_with("|||||||")) {
       block.has_base = true;
       ++line_index;
-      while (line_index < lines.size() && lines[line_index] != "=======") {
+      while (line_index < lines.size() && !is_conflict_separator(lines[line_index])) {
         block.base_lines.push_back(lines[line_index]);
         ++line_index;
       }
     }
-    if (line_index >= lines.size() || lines[line_index] != "=======") {
+    if (line_index >= lines.size() || !is_conflict_separator(lines[line_index])) {
       return std::nullopt;
     }
     ++line_index;

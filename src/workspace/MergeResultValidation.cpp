@@ -6,7 +6,6 @@
 #include "util/TextFileIO.h"
 
 namespace microide::workspace {
-namespace {
 
 std::optional<std::uint64_t> FileModificationTick(const std::filesystem::path& path) {
   std::error_code error;
@@ -19,8 +18,6 @@ std::optional<std::uint64_t> FileModificationTick(const std::filesystem::path& p
   }
   return static_cast<std::uint64_t>(tick.time_since_epoch().count());
 }
-
-}  // namespace
 
 bool MergeResultContainsConflictMarkers(std::string_view text) {
   return util::ContainsCompleteConflictMarkers(text);

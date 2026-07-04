@@ -112,9 +112,46 @@ void TestCrlfHeavyClassification() {
          "crlf-only differences should classify as line-ending-heavy");
 }
 
+// Mark Resolved saves the result (bumping the file mtime) and then validates it.
+// Regression: the resolver must refresh disk_result_tick to the saved file's mtime
+// so its own write is not flagged as an external modification, which previously
+// rejected every Mark Resolved and never staged the file.
+void TestMarkResolvedRefreshesDiskTick() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path result_path = temp_dir.path() / "resolved.txt";
+  WriteFile(result_path, "clean resolved content\nno markers here\n");
+
+  MergeTabState merge_tab;
+  merge_tab.result_viewport.LoadContent("clean resolved content\nno markers here\n", {},
+                                        merge_tab.result_line_ending);
+  merge_tab.result_viewport.SetDirty(false);
+  merge_tab.output_path = result_path;
+  // Stale open-time tick, as if the resolver's own save had since rewritten the file.
+  merge_tab.disk_result_tick = 1;
+
+  const MergeValidationResult stale = ValidateMergeResult(MergeValidationRequest{
+      .merge_tab = merge_tab,
+      .project_root = {},
+      .result_should_exist = true,
+  });
+  Expect(!stale.ok && stale.issue == MergeValidationIssue::ExternalModification,
+         "a disk tick disagreeing with the file mtime flags external modification");
+
+  // Refresh the tick to the file's current mtime (what Mark Resolved now does).
+  merge_tab.disk_result_tick = microide::workspace::FileModificationTick(result_path);
+  const MergeValidationResult refreshed = ValidateMergeResult(MergeValidationRequest{
+      .merge_tab = merge_tab,
+      .project_root = {},
+      .result_should_exist = true,
+  });
+  Expect(refreshed.ok, "after refreshing the disk tick, validation accepts the saved result");
+}
+
 }  // namespace
 
 void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "MergeConflict/MarkResolvedRefreshesDiskTick",
+          TestMarkResolvedRefreshesDiskTick);
   AddTest(tests, "MergeConflict/BothModifiedClassification", TestBothModifiedClassification);
   AddTest(tests, "MergeConflict/BothAddedClassification", TestBothAddedClassification);
   AddTest(tests, "MergeConflict/BinaryClassification", TestBinaryClassification);
