@@ -917,6 +917,38 @@ void TestWorkspaceShellTabMoveCommandSupportsRelativeOffsets() {
          "relative tabmove should keep the moved tab active");
 }
 
+void TestWorkspaceShellTabMoveCommandSupportsRelativeForwardOffset() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.cpp";
+  const std::filesystem::path beta = root / "beta.cpp";
+  const std::filesystem::path gamma = root / "gamma.cpp";
+  WriteFile(alpha, "int alpha() { return 1; }\n");
+  WriteFile(beta, "int beta() { return 2; }\n");
+  WriteFile(gamma, "int gamma() { return 3; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha), "first tab should open");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, beta), "second tab should open");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, gamma), "third tab should open");
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);  // make alpha the active tab
+
+  // Regression: "tabmove +N" (leading '+') silently failed because ParseInt
+  // (std::from_chars) rejects a leading '+', so the whole relative-forward form
+  // was unreachable — only "tabmove -N" and absolute "tabmove N" worked.
+  Expect(ExecuteCommand(shell, "tabmove +2"),
+         "tabmove should accept a leading '+' relative-forward offset");
+
+  const auto& tabs = WorkspaceShellTestAccess::OpenTabs(shell);
+  Expect(tabs.size() == 3, "tabmove should keep the same tab count");
+  Expect(tabs[0].path == beta.lexically_normal() && tabs[1].path == gamma.lexically_normal() &&
+             tabs[2].path == alpha.lexically_normal(),
+         "relative-forward tabmove should move the active tab forward two slots");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 2,
+         "relative-forward tabmove should keep the moved tab active");
+}
+
 void TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3456,6 +3488,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeCommandResolvesRelativePaths);
   AddTest(tests, "WorkspaceShell/TabMoveCommandSupportsRelativeOffsets",
           TestWorkspaceShellTabMoveCommandSupportsRelativeOffsets);
+  AddTest(tests, "WorkspaceShell/TabMoveCommandSupportsRelativeForwardOffset",
+          TestWorkspaceShellTabMoveCommandSupportsRelativeForwardOffset);
   AddTest(tests, "WorkspaceShell/GotoAndJumpCommandsUseTypedNavigationRequests",
           TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests);
   AddTest(tests, "WorkspaceShell/GlobalCommandsApplyTypedRequests",

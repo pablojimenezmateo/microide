@@ -174,16 +174,22 @@ TabSwitchRequest BuildTabSwitchRequest(const std::vector<std::string>& args) {
 }
 
 std::optional<TabMoveRequest> BuildTabMoveRequest(const std::vector<std::string>& args) {
-  if (args.empty()) {
+  if (args.empty() || args[0].empty()) {
     return std::nullopt;
   }
-  const std::optional<int> slot = ParseIntArgument(args[0]);
+  const std::string& raw = args[0];
+  const bool relative = raw.front() == '+' || raw.front() == '-';
+  // ParseInt (std::from_chars) rejects a leading '+', so the relative-forward form
+  // "+N" must have its sign stripped before parsing; "-N" parses directly as a
+  // negative offset and "N" as an absolute slot.
+  const std::optional<int> slot =
+      raw.front() == '+' ? util::ParseInt(std::string_view(raw).substr(1)) : ParseIntArgument(raw);
   if (!slot.has_value()) {
     return std::nullopt;
   }
   return TabMoveRequest{
       .slot = *slot,
-      .relative = !args[0].empty() && (args[0].front() == '+' || args[0].front() == '-'),
+      .relative = relative,
   };
 }
 

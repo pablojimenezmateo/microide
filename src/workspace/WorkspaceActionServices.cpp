@@ -615,6 +615,14 @@ void WorkspaceActionContext::Undo() {
       operations_.clear_active_snippet_session_after_undo();
     }
     if (changed) {
+      // Undo mutates the document like any other edit, so the fold model must be
+      // recomputed. The content_revision fingerprint alone does not force a rescan
+      // once a file is fully resolved, so mark the fold model dirty explicitly
+      // (mirroring NotifyEditorViewportChanged); otherwise restored/removed folds
+      // go stale — a phantom fold marker can hide an arbitrary line range.
+      if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
+        editor_tab->folding_model->MarkDirty();
+      }
       if (auto* compare_tab = operations_.active_compare_tab();
           compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
         util::PerformanceTrace::Scope scope(
@@ -677,6 +685,10 @@ void WorkspaceActionContext::Redo() {
       changed = viewport->Redo();
     }
     if (changed) {
+      // See Undo: redo mutates the document, so force a fold-model rescan.
+      if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
+        editor_tab->folding_model->MarkDirty();
+      }
       if (auto* compare_tab = operations_.active_compare_tab();
           compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
         util::PerformanceTrace::Scope scope(
