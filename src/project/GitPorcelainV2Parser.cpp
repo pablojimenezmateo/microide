@@ -33,11 +33,6 @@ std::string_view PathAfterLeadingTokens(std::string_view body, std::size_t token
   return body.substr(offset);
 }
 
-bool RecordLooksLikePathContinuation(std::string_view record) {
-  return !record.empty() && record[0] != '#' && record[0] != '1' && record[0] != '2' &&
-         record[0] != 'u' && record[0] != '?' && record[0] != '!';
-}
-
 bool ParseAheadBehind(std::string_view token, int* ahead, int* behind) {
   if (ahead == nullptr || behind == nullptr || token.size() < 4 || token[0] != '+' ||
       token.find('-') == std::string_view::npos) {
@@ -181,12 +176,17 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
         if (path.empty()) {
           break;
         }
+        // In `--porcelain=v2 -z` a rename/copy record's origPath is always the
+        // immediately following NUL-delimited field. SplitNulDelimited already
+        // consumed that NUL, so `record` never contains one and the origPath is
+        // simply records[index + 1]; consume it unconditionally (bounds
+        // permitting), exactly as the v1 status parser and the diff parser do.
+        // The previous first-byte heuristic gate silently dropped the source path
+        // for any file whose name began with '#', '1', '2', 'u', '?' or '!'
+        // (e.g. "1-notes.md", "2023-log.txt", "#readme"), losing its tree badge
+        // and leaving the origPath record to be misparsed as a bogus entry.
         std::optional<std::filesystem::path> old_path;
-        const std::size_t embedded_nul = record.find('\0', 2);
-        if (embedded_nul != std::string_view::npos && embedded_nul + 1 < record.size()) {
-          old_path = std::filesystem::path(record.substr(embedded_nul + 1));
-        } else if (index + 1 < records.size() &&
-                   RecordLooksLikePathContinuation(records[index + 1])) {
+        if (index + 1 < records.size()) {
           old_path = std::filesystem::path(records[index + 1]);
           ++index;
         }

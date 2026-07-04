@@ -91,6 +91,8 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .request_active_tab_redraw =
               [this](bool include_tree_sidebar) { RequestActiveTabRedraw(include_tree_sidebar); },
           .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
+          .invalidate_editor_tab_geometry =
+              [this]() { tab_strip_service_.InvalidateEditorTabGeometry(); },
           .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
           .request_automatic_git_sidebar_refresh =
               [this]() { RequestAutomaticGitSidebarRefresh(); },

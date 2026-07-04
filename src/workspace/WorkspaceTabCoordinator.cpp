@@ -918,6 +918,11 @@ void TabCoordinator::CollapseFocusedGroup() {
   state_.group_split_orientation = EditorSplitOrientation::None;
   state_.group_split_fraction = 0.5f;
   state_.surface.focus = FocusTarget::Editor;
+  // Erasing a group reindexes the survivors; the per-group tab-strip geometry
+  // cache keys only on (tab_count, window_width) and is indexed by group slot, so
+  // without this drop the survivor could render the destroyed group's cached tab
+  // titles/widths whenever their tab_count and the window width happen to match.
+  operations_.invalidate_editor_tab_geometry();
 }
 
 bool TabCoordinator::CloseEditorGroup() {

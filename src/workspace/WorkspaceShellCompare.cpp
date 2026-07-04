@@ -577,8 +577,7 @@ void WorkspaceShell::SyncCompareSelectionFromViewport(CompareTabState& compare_t
   const std::size_t model_row =
       CompareRowIndexForRightLine(compare_tab, compare_tab.right_viewport.cursor_line());
   compare_tab.selected_row =
-      compare::ComparePresentationModelRowIndex(compare_tab.presentation, model_row)
-          .value_or(model_row);
+      compare::ComparePresentationRowForModelRow(compare_tab.presentation, model_row);
   compare_tab.horizontal_scroll = compare_tab.right_viewport.horizontal_scroll();
   if (reveal_selection) {
     if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
@@ -601,8 +600,7 @@ void WorkspaceShell::SyncCompareSelectionFromViewport(CompareTabState& compare_t
     const std::size_t scroll_model_row =
         CompareRowIndexForRightLine(compare_tab, compare_tab.right_viewport.scroll_line());
     compare_tab.scroll_row = static_cast<int>(
-        compare::ComparePresentationModelRowIndex(compare_tab.presentation, scroll_model_row)
-            .value_or(scroll_model_row));
+        compare::ComparePresentationRowForModelRow(compare_tab.presentation, scroll_model_row));
     SyncCompareViewportScroll(compare_tab);
   }
 }

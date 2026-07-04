@@ -205,7 +205,10 @@ int CompareTabSelectedHunkIndex(const CompareTabState& compare_tab) {
     return -1;
   }
   const std::size_t model_row = CompareTabSelectedModelRow(compare_tab);
-  return compare_tab.model.rows[model_row].hunk;
+  // Clamp like the sibling CompareTabSelectedModelRowRef: a selected_row derived
+  // from a stale presentation (before RefreshCompareTabPresentation re-runs) can
+  // exceed model.rows, and this must never index out of bounds.
+  return compare_tab.model.rows[std::min(model_row, compare_tab.model.rows.size() - 1)].hunk;
 }
 
 void SetCompareTabSelectedPresentationRow(CompareTabState& compare_tab, std::size_t row) {

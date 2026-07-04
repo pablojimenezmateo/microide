@@ -69,6 +69,33 @@ void TestGitBlameIncrementalParserHandlesRepeatedCommitsAndBoundary() {
          "incremental parser should preserve repeated commit line counts");
 }
 
+void TestGitBlameIncrementalParserAcceptsSha256ObjectIds() {
+  // Regression: a SHA-256 repo (extensions.objectFormat=sha256) emits 64-char
+  // object ids in blame-incremental headers. The header detector previously
+  // hardcoded 40 hex chars, so every header was rejected and blame produced
+  // zero attributions.
+  const std::string sha256(64, 'a');
+  const std::string output =
+      sha256 + " 1 1 2\n"
+      "author Alice\n"
+      "author-time 1700000000\n"
+      "summary Add alpha\n"
+      "filename main.cpp\n";
+
+  const auto attributions = ParseGitBlameIncrementalOutput(output);
+  Expect(attributions.size() == 1, "SHA-256 blame header should be recognized");
+  Expect(attributions[0].commit_id == sha256,
+         "SHA-256 commit id should round-trip in full");
+  Expect(attributions[0].author == "Alice",
+         "SHA-256 entry should carry its author metadata");
+  Expect(attributions[0].line_count == 2, "SHA-256 entry should keep its line count");
+
+  // A malformed 50-char hex run (neither 40 nor 64) must still be rejected.
+  const std::string bad = std::string(50, 'a') + " 1 1 1\nfilename main.cpp\n";
+  Expect(ParseGitBlameIncrementalOutput(bad).empty(),
+         "a non-40/64 hex run should not be treated as a commit header");
+}
+
 void TestGitBlameServiceLoadsVisibleLinesForCleanTrackedFile() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -473,6 +500,8 @@ void TestGitBlameServiceLatestRequestSupersedesPendingWindow() {
 }  // namespace
 
 void RegisterGitBlameServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "GitBlame/IncrementalParserAcceptsSha256ObjectIds",
+          TestGitBlameIncrementalParserAcceptsSha256ObjectIds);
   AddTest(tests, "GitBlame/IncrementalParserHandlesRepeatedCommitsAndBoundary",
           TestGitBlameIncrementalParserHandlesRepeatedCommitsAndBoundary);
   AddTest(tests, "GitBlame/LoadsVisibleLinesForCleanTrackedFile",

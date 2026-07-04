@@ -466,6 +466,9 @@
   static void RequestCloseProject(WorkspaceShell& shell, std::size_t index) {
     shell.RequestCloseProject(index);
   }
+  static void RequestCloseTab(WorkspaceShell& shell, std::size_t index) {
+    shell.RequestCloseTab(index);
+  }
   static void CloseProject(WorkspaceShell& shell, std::size_t index) { shell.CloseProject(index); }
   static void OpenFile(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.OpenFile(path);

@@ -137,18 +137,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
               running_ = false;
               child_pid_ = -1;
               if (emit_exit_marker) {
-                if (lines_.empty()) {
-                  lines_.push_back(TerminalLine{});
-                }
-                if (!lines_.back().cells.empty()) {
-                  lines_.push_back(TerminalLine{});
-                }
-                cursor_row_ = lines_.size() - 1;
-                cursor_column_ = lines_.back().cells.size();
-                AppendOutputLocked("[process exited]");
-                lines_.push_back(TerminalLine{});
-                TrimScrollbackLocked();
-                AdvanceSnapshotGenerationLocked();
+                EmitProcessExitMarkerLocked();
               }
             }
             PushWakeEvent();

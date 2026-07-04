@@ -83,7 +83,12 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
   // exact (and clears this token-cache entry so it is recomputed).
   if (exact) {
     line_highlight_states_[line_index] = highlighted.end_state;
-    if (line_index >= line_highlight_states_valid_through_) {
+    // Advance the frontier only on a contiguous write. A write above the frontier
+    // (line_index > valid_through) would jump it over the intervening, still-stale
+    // [valid_through, line_index) entries and falsely mark them valid — a later
+    // resume would then read those stale states. See the frontier invariant note
+    // on line_highlight_states_valid_through_ in TextViewport.h.
+    if (line_index == line_highlight_states_valid_through_) {
       line_highlight_states_valid_through_ = line_index + 1;
     }
   }
@@ -227,7 +232,9 @@ void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const
         state = SyntaxHighlighter::AdvanceState(document_->lines.LineView(line), document_->path, state);
       }
       line_highlight_states_[line] = state;
-      if (line >= line_highlight_states_valid_through_) {
+      // Contiguous-only advance: a replay resuming from a checkpoint above the
+      // frontier must not jump valid_through over the stale gap below it.
+      if (line == line_highlight_states_valid_through_) {
         line_highlight_states_valid_through_ = line + 1;
       }
       ++highlight_checkpoint_advances_;
@@ -301,7 +308,12 @@ void TextViewport::InstallPrefetchedHighlights(HighlightPrefetchResult result) {
     // snapshot line is still current; just fold the precomputed data in.
     if (offset < result.end_states.size() && line < line_highlight_states_.size()) {
       line_highlight_states_[line] = result.end_states[offset];
-      if (line >= line_highlight_states_valid_through_) {
+      // Contiguous-only advance. Besides preventing a frontier jump over a stale
+      // gap, this also stops a deep-jump prefetch (whose start_line sits far above
+      // the frontier, and whose end_states derive from an approximate resume
+      // state) from promoting those approximate states to authoritative — such a
+      // batch never installs contiguously from the frontier.
+      if (line == line_highlight_states_valid_through_) {
         line_highlight_states_valid_through_ = line + 1;
       }
     }
@@ -377,7 +389,10 @@ SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const
       state = SyntaxHighlighter::AdvanceState(document_->lines.LineView(line), document_->path, state);
     }
     line_highlight_states_[line] = state;
-    if (line >= line_highlight_states_valid_through_) {
+    // Contiguous-only advance: see the frontier invariant note in TextViewport.h.
+    // Resuming from a checkpoint above the frontier must not mark the stale gap
+    // below it valid.
+    if (line == line_highlight_states_valid_through_) {
       line_highlight_states_valid_through_ = line + 1;
     }
     ++highlight_state_advances_;

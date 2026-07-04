@@ -197,6 +197,10 @@ class TerminalSession {
   };
 
   void AppendOutputLocked(std::string_view data);
+  // Append the "[process exited]" marker on a fresh line. Resets any dangling
+  // escape-parser state first so a child that died mid-sequence cannot swallow
+  // the marker. Caller must hold mutex_.
+  void EmitProcessExitMarkerLocked();
   // Reset escape-parsing state after an over-length / malformed sequence so the
   // stream recovers to normal text instead of growing the buffer unbounded.
   void AbandonEscapeSequenceLocked();

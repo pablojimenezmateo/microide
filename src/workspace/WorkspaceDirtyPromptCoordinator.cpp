@@ -88,7 +88,12 @@ void DirtyPromptCoordinator::ConfirmCloseTab(const DirtyPromptState& prompt) {
   if (prompt.selected_action == 0 && !editor_tabs_.Save(prompt.tab_index)) {
     return;
   }
-  prompt_surfaces_.DismissDirtyPrompt(false);
+  // Restore the pre-prompt focus (matching ConfirmCloseProject). TabCoordinator::
+  // Close only resets focus off the overlay on the active-tab / last-tab paths;
+  // closing a *non-active* dirty tab leaves focus == Overlay, so with the overlay
+  // now hidden every keystroke would route to the dead overlay handler and be
+  // swallowed until the user clicked back into a surface. restore_focus fixes it.
+  prompt_surfaces_.DismissDirtyPrompt(true);
   editor_tabs_.Close(prompt.tab_index);
 }
 
@@ -97,7 +102,9 @@ void DirtyPromptCoordinator::ConfirmCloseTabs(const DirtyPromptState& prompt) {
     return;
   }
 
-  prompt_surfaces_.DismissDirtyPrompt(false);
+  // See ConfirmCloseTab: restore focus so closing non-active dirty tabs cannot
+  // strand keyboard input on the now-hidden overlay handler.
+  prompt_surfaces_.DismissDirtyPrompt(true);
   std::vector<std::size_t> indices = prompt.target_tabs;
   std::sort(indices.begin(), indices.end());
   indices.erase(std::unique(indices.begin(), indices.end()), indices.end());

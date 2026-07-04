@@ -536,6 +536,13 @@ class TextViewport {
   // line_highlight_states_.size())` are stale and must be ignored by readers.
   // We bump this on edits instead of resetting each entry to `SyntaxState{}`,
   // which was an O(lines - start) loop on every keystroke (round-4 Finding 4).
+  // INVARIANT: this is a strictly contiguous-from-0 frontier — `[0, valid_through)`
+  // is always fully populated and current. Writers therefore advance it ONLY on a
+  // contiguous write (`line == valid_through`), never `line >= valid_through`: a
+  // replay that resumes from a checkpoint above the frontier (possible after an
+  // off-thread checkpoint backfill advances the checkpoint chain without touching
+  // this vector) would otherwise jump the frontier over the still-stale gap below
+  // it and falsely mark those pre-edit states valid.
   mutable std::size_t line_highlight_states_valid_through_ = 0;
   mutable std::vector<SyntaxState> highlight_checkpoints_;
   // Same lazy-invalidation pattern for the periodic checkpoint vector.

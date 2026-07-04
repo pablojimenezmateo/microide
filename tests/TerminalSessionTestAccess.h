@@ -73,6 +73,11 @@ struct TerminalSessionTestAccess {
     session.FlushPendingReply();
   }
 
+  static void EmitProcessExitMarker(microide::terminal::TerminalSession& session) {
+    std::scoped_lock lock(session.mutex_);
+    session.EmitProcessExitMarkerLocked();
+  }
+
   static void SetLaunchLabel(microide::terminal::TerminalSession& session, std::string_view label) {
     std::scoped_lock lock(session.mutex_);
     session.default_launch_label_ = std::string(label);

@@ -94,6 +94,17 @@ std::optional<std::size_t> ComparePresentationModelRowIndex(
     const ComparePresentationModel& presentation,
     std::size_t model_row_index);
 
+// Map a model row to the presentation row that represents it, always returning a
+// valid presentation-space index (0 when the presentation is empty). Unlike
+// ComparePresentationModelRowIndex this resolves a model row hidden inside a
+// collapsed run to that run's CollapsedContext placeholder, and otherwise falls
+// back to the nearest anchored row at or above it — so a caller storing the
+// result into a presentation-space field (selection/scroll) never lands a raw
+// out-of-range model index there.
+std::size_t ComparePresentationRowForModelRow(
+    const ComparePresentationModel& presentation,
+    std::size_t model_row_index);
+
 std::size_t ComparePresentationToModelRow(const ComparePresentationModel& presentation,
                                           std::size_t presentation_row_index);
 

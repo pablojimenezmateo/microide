@@ -40,6 +40,28 @@ void TerminalSession::AbandonEscapeSequenceLocked() {
   osc_escape_pending_ = false;
 }
 
+void TerminalSession::EmitProcessExitMarkerLocked() {
+  // The child may have died mid-escape-sequence (e.g. an OSC/DCS opened but never
+  // terminated). escape_mode_ persists across reads, so without resetting it the
+  // marker below would be fed straight into the dangling parser and consumed as
+  // sequence content — the marker would never display. Also drop any partial
+  // UTF-8 lead bytes so the marker text is not prefixed by a stray glyph.
+  AbandonEscapeSequenceLocked();
+  pending_utf8_sequence_.clear();
+  if (lines_.empty()) {
+    lines_.push_back(TerminalLine{});
+  }
+  if (!lines_.back().cells.empty()) {
+    lines_.push_back(TerminalLine{});
+  }
+  cursor_row_ = lines_.size() - 1;
+  cursor_column_ = lines_.back().cells.size();
+  AppendOutputLocked("[process exited]");
+  lines_.push_back(TerminalLine{});
+  TrimScrollbackLocked();
+  AdvanceSnapshotGenerationLocked();
+}
+
 void TerminalSession::AppendOutputLocked(std::string_view data) {
   if (lines_.empty()) {
     lines_.push_back(TerminalLine{});

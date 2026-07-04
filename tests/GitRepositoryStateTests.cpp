@@ -94,6 +94,47 @@ void TestPorcelainV2RenamePathWithSpaces() {
   Expect(saw_rename, "rename pair should preserve spaced paths");
 }
 
+void TestPorcelainV2RenameSourceStartingWithStatusSigil() {
+  // Regression: the rename origPath is the next NUL field and must be consumed
+  // unconditionally. A source filename whose first byte collides with a record
+  // sigil ('#', '1', '2', 'u', '?', '!') was previously rejected by a first-byte
+  // heuristic, dropping old_path and re-parsing the source as a bogus record.
+  // Two renames whose sources start with '2' and 'u' exercise both.
+  std::string output = "2 R. N... 100644 100644 100644 abc def R100 renamed_a.txt";
+  output.push_back('\0');
+  output.append("2data.txt");  // source begins with '2'
+  output.push_back('\0');
+  output.append("2 R. N... 100644 100644 100644 abc def R100 renamed_b.txt");
+  output.push_back('\0');
+  output.append("user.txt");  // source begins with 'u'
+  output.push_back('\0');
+
+  const auto state = GitPorcelainV2Parser::Parse(output, "/repo", 5, 0);
+  Expect(state.entries.size() == 2,
+         "both renames should parse without the source being misread as an entry");
+
+  bool saw_a = false;
+  bool saw_b = false;
+  for (const auto& entry : state.entries) {
+    Expect(entry.kind == GitRepositoryEntryKind::Renamed, "both entries should be renames");
+    if (entry.path.relative_path == std::filesystem::path("renamed_a.txt")) {
+      saw_a = entry.old_path.has_value() &&
+              entry.old_path->relative_path == std::filesystem::path("2data.txt");
+    }
+    if (entry.path.relative_path == std::filesystem::path("renamed_b.txt")) {
+      saw_b = entry.old_path.has_value() &&
+              entry.old_path->relative_path == std::filesystem::path("user.txt");
+    }
+  }
+  Expect(saw_a, "rename source '2data.txt' should be preserved as old_path");
+  Expect(saw_b, "rename source 'user.txt' should be preserved as old_path");
+  // The old paths must also carry a tree git status badge.
+  Expect(state.tree_git_statuses.count("2data.txt") == 1,
+         "rename source should receive a tree git status");
+  Expect(state.tree_git_statuses.count("user.txt") == 1,
+         "rename source should receive a tree git status");
+}
+
 void TestPorcelainV2ConflictClassification() {
   // Match real `git status --porcelain=v2 -z` unmerged output (modes + object ids).
   std::string output =
@@ -151,6 +192,8 @@ void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitRepositoryState/PorcelainV2RenamePair", TestPorcelainV2RenamePair);
   AddTest(tests, "GitRepositoryState/PorcelainV2RenamePathWithSpaces",
           TestPorcelainV2RenamePathWithSpaces);
+  AddTest(tests, "GitRepositoryState/PorcelainV2RenameSourceStartingWithStatusSigil",
+          TestPorcelainV2RenameSourceStartingWithStatusSigil);
   AddTest(tests, "GitRepositoryState/PorcelainV2ConflictClassification",
           TestPorcelainV2ConflictClassification);
   AddTest(tests, "GitRepositoryState/PorcelainV2ShortRecordDoesNotThrow",

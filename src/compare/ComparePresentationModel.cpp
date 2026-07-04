@@ -240,6 +240,40 @@ std::optional<std::size_t> ComparePresentationModelRowIndex(
   return std::nullopt;
 }
 
+std::size_t ComparePresentationRowForModelRow(const ComparePresentationModel& presentation,
+                                              std::size_t model_row_index) {
+  // An exact Model row always wins. Otherwise fall to the nearest anchored row
+  // whose representative model start is <= the target: presentation rows are in
+  // ascending model order, and a collapsed run emits its visible prefix rows,
+  // then the CollapsedContext placeholder, then its visible suffix rows — so for
+  // a genuinely hidden interior row (which has no Model row of its own) the last
+  // anchor at-or-below it is exactly that run's placeholder. Note collapsed_run_
+  // length is the *full* run length including the visible context, so a
+  // containment test on it would wrongly capture the visible rows — the
+  // ascending nearest-anchor rule avoids that entirely.
+  std::size_t best = 0;
+  bool found = false;
+  for (std::size_t i = 0; i < presentation.rows.size(); ++i) {
+    const ComparePresentationRow& row = presentation.rows[i];
+    std::size_t representative_start = 0;
+    if (row.kind == ComparePresentationRowKind::Model) {
+      if (row.model_row_index == model_row_index) {
+        return i;  // exact visible row
+      }
+      representative_start = row.model_row_index;
+    } else if (row.kind == ComparePresentationRowKind::CollapsedContext) {
+      representative_start = row.collapsed_run_start_model_row;
+    } else {
+      continue;  // Metadata / HunkHeader rows have no model anchor.
+    }
+    if (representative_start <= model_row_index) {
+      best = i;
+      found = true;
+    }
+  }
+  return found ? best : 0;
+}
+
 std::size_t ComparePresentationToModelRow(const ComparePresentationModel& presentation,
                                           std::size_t presentation_row_index) {
   if (presentation_row_index >= presentation.rows.size()) {

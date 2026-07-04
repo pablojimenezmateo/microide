@@ -808,9 +808,55 @@ void TestWorkspaceShellLaunchConfigPicker() {
          "confirming a filtered match persists the underlying launch-config index");
 }
 
+void TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  WriteFile(file_a, "alpha\n");
+  WriteFile(file_b, "beta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_a);
+  // Dirty tab 0 while it is active, then open (and switch to) tab 1 so tab 0 is a
+  // *non-active* dirty tab.
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("edited ");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b),
+         "second tab should open");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 2, "two tabs should be open");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 1, "tab 1 should be active");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell), "editor should hold focus");
+
+  // Close the non-active dirty tab; the dirty prompt appears with focus on the
+  // overlay.
+  WorkspaceShellTestAccess::RequestCloseTab(shell, 0);
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "closing a dirty tab should raise the dirty prompt");
+  Expect(WorkspaceShellTestAccess::FocusIsOverlay(shell),
+         "the dirty prompt should take focus while visible");
+
+  // Discard (Don't Save = action 1) and close the tab.
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 1);
+
+  Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "confirming should dismiss the dirty prompt");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 1,
+         "the non-active tab should be closed");
+  // Regression: focus must not remain stranded on the now-hidden overlay handler,
+  // which would silently swallow every keystroke until the user clicked a surface.
+  Expect(!WorkspaceShellTestAccess::FocusIsOverlay(shell),
+         "closing a non-active dirty tab must not strand focus on the hidden overlay");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+         "focus should return to the editor after the prompt closes");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/ClosingNonActiveDirtyTabDoesNotStrandFocus",
+          TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus);
   AddTest(tests, "WorkspaceShell/RenamePromptSavesDirtyTabs",
           TestWorkspaceShellRenamePromptSavesDirtyTabs);
   AddTest(tests, "WorkspaceShell/RenamePromptMouseClickPositionsCaret",

@@ -13,18 +13,25 @@ namespace microide::project {
 namespace {
 
 bool IsHexCommitPrefix(std::string_view line) {
-  if (line.size() < 40) {
-    return false;
-  }
-  for (std::size_t i = 0; i < 40; ++i) {
-    const char ch = line[i];
+  // A blame-incremental header starts with the full object id followed by a
+  // space (or end-of-line): 40 hex chars in a SHA-1 repo, 64 in a SHA-256 repo
+  // (extensions.objectFormat=sha256). Match the whole leading hex run and accept
+  // either width rather than hardcoding 40, which silently rejected every header
+  // in a SHA-256 repo and produced no blame attributions at all.
+  std::size_t hex_len = 0;
+  while (hex_len < line.size()) {
+    const char ch = line[hex_len];
     const bool is_digit = ch >= '0' && ch <= '9';
     const bool is_hex_lower = ch >= 'a' && ch <= 'f';
     if (!is_digit && !is_hex_lower) {
-      return false;
+      break;
     }
+    ++hex_len;
   }
-  return line.size() == 40 || line[40] == ' ';
+  if (hex_len != 40 && hex_len != 64) {
+    return false;
+  }
+  return hex_len == line.size() || line[hex_len] == ' ';
 }
 
 struct CommitMetadata {

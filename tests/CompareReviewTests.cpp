@@ -14,6 +14,7 @@ using microide::compare::BuildCompareModel;
 using microide::compare::ComparePresentationCollapseState;
 using microide::compare::ComparePresentationOptions;
 using microide::compare::ComparePresentationRowKind;
+using microide::compare::ComparePresentationRowForModelRow;
 using microide::compare::ComparePresentationToModelRow;
 using microide::compare::CompareReviewMode;
 using microide::compare::CompareSemanticFileKind;
@@ -479,6 +480,82 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                             "expanding a second run should not re-collapse the first");
                      Expect(!find_run_row(middle_run_identities[1]).has_value(),
                             "fully expanding the second run should also remove its collapsed row");
+                   }});
+
+  tests.push_back({"CompareReview/PresentationRowForModelRowResolvesCollapsedRuns",
+                   [] {
+                     const auto build_text = [](std::string_view changed_a,
+                                                std::string_view changed_b) {
+                       std::string text;
+                       for (int i = 0; i < 24; ++i) {
+                         text += "prefix " + std::to_string(i) + "\n";
+                       }
+                       text += std::string(changed_a) + "\n";
+                       for (int i = 0; i < 500; ++i) {
+                         text += "middle " + std::to_string(i) + "\n";
+                       }
+                       text += std::string(changed_b) + "\n";
+                       for (int i = 0; i < 8; ++i) {
+                         text += "suffix " + std::to_string(i) + "\n";
+                       }
+                       return text;
+                     };
+
+                     const auto model = BuildCompareModel(build_text("left a", "left b"),
+                                                          build_text("right a", "right b"));
+                     const auto presentation = BuildComparePresentationModel(
+                         model,
+                         InferCompareSemanticFileMetadata(CompareSemanticMetadataInput{
+                             .path = "f.txt",
+                             .left_content = build_text("left a", "left b"),
+                             .right_content = build_text("right a", "right b"),
+                             .git_entry = std::nullopt,
+                             .old_path = {},
+                         }),
+                         ComparePresentationOptions{}, ComparePresentationCollapseState{}, 1);
+
+                     // Locate the middle collapsed run and a model row hidden inside it.
+                     std::optional<std::size_t> collapsed_row;
+                     std::size_t hidden_model_row = 0;
+                     for (std::size_t i = 0; i < presentation.rows.size(); ++i) {
+                       const auto& row = presentation.rows[i];
+                       if (row.kind == ComparePresentationRowKind::CollapsedContext &&
+                           row.collapsed_run_length > 2) {
+                         collapsed_row = i;
+                         // A row squarely inside the hidden interior.
+                         hidden_model_row =
+                             row.collapsed_run_start_model_row + row.collapsed_run_length / 2;
+                         break;
+                       }
+                     }
+                     Expect(collapsed_row.has_value(),
+                            "fixture should expose a middle collapsed run");
+
+                     // A hidden model row must resolve to the collapse placeholder, never a
+                     // raw (out-of-range) model index in presentation space.
+                     const std::size_t resolved =
+                         ComparePresentationRowForModelRow(presentation, hidden_model_row);
+                     Expect(resolved == *collapsed_row,
+                            "hidden model row should map to its CollapsedContext placeholder");
+                     Expect(resolved < presentation.rows.size(),
+                            "resolved presentation row must be in range");
+
+                     // A visible model row must resolve to its exact presentation row and
+                     // round-trip back to the same model row.
+                     std::optional<std::size_t> visible_presentation_row;
+                     for (std::size_t i = 0; i < presentation.rows.size(); ++i) {
+                       if (presentation.rows[i].kind == ComparePresentationRowKind::Model) {
+                         visible_presentation_row = i;
+                         break;
+                       }
+                     }
+                     Expect(visible_presentation_row.has_value(),
+                            "presentation should contain visible model rows");
+                     const std::size_t visible_model_row =
+                         presentation.rows[*visible_presentation_row].model_row_index;
+                     Expect(ComparePresentationRowForModelRow(presentation, visible_model_row) ==
+                                *visible_presentation_row,
+                            "a visible model row should map to its exact presentation row");
                    }});
 }
 

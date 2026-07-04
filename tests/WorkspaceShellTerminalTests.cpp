@@ -1003,9 +1003,50 @@ void TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents() {
          "mouse-captured releases should leave transcript selection disabled");
 }
 
+std::string TerminalScreenText(microide::terminal::TerminalSession& session) {
+  std::string text;
+  for (const auto& line : session.SnapshotLines()) {
+    for (const auto& cell : line.cells) {
+      text += cell.DisplayText();
+    }
+    text += '\n';
+  }
+  return text;
+}
+
+void TestWorkspaceShellTerminalExitMarkerSurvivesOpenEscape() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  // The child emits an OSC that is never terminated (no ST/BEL) and then dies,
+  // leaving the parser stuck in the OSC string-payload state across the read.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]0;my title");
+  TerminalSessionTestAccess::EmitProcessExitMarker(session);
+  Expect(TerminalScreenText(session).find("[process exited]") != std::string::npos,
+         "exit marker must display even when the child died mid-escape-sequence");
+}
+
+void TestWorkspaceShellTerminalExitMarkerDisplaysAfterCleanOutput() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "done\r\n");
+  TerminalSessionTestAccess::EmitProcessExitMarker(session);
+  const std::string text = TerminalScreenText(session);
+  Expect(text.find("done") != std::string::npos, "prior output should remain");
+  Expect(text.find("[process exited]") != std::string::npos,
+         "exit marker should display in the normal (no open escape) case");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/TerminalExitMarkerSurvivesOpenEscape",
+          TestWorkspaceShellTerminalExitMarkerSurvivesOpenEscape);
+  AddTest(tests, "WorkspaceShell/TerminalExitMarkerDisplaysAfterCleanOutput",
+          TestWorkspaceShellTerminalExitMarkerDisplaysAfterCleanOutput);
   AddTest(tests, "WorkspaceShell/TerminalCtrlShiftVPastesBracketedClipboard",
           TestWorkspaceShellCtrlShiftVPastesBracketedClipboard);
   AddTest(tests, "WorkspaceShell/TerminalShiftInsertPastesRawClipboard",
