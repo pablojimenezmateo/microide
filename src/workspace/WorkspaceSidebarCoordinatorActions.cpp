@@ -460,12 +460,21 @@ bool SidebarCoordinator::UnstageGitEntry(const std::size_t entry_index) {
   return true;
 }
 
-bool SidebarCoordinator::DiscardGitEntry(const std::size_t entry_index) {
+bool SidebarCoordinator::DiscardGitEntry(const std::size_t entry_index,
+                                         const std::optional<std::filesystem::path>& expected_path) {
   const GitSidebarEntry* entry = GitEntry(entry_index);
   if (entry == nullptr) {
     return false;
   }
   if (!IsGitWorkflowSection(entry->section)) {
+    return false;
+  }
+  // A confirm prompt captures the entry index, but an async git-status refresh can
+  // reorder/shrink the entries before the user confirms. Re-validate that the index
+  // still points at the exact path they confirmed, so a discard (which destroys
+  // working-tree changes) never lands on a different file that slid into the slot.
+  if (expected_path.has_value() &&
+      entry->path.lexically_normal() != expected_path->lexically_normal()) {
     return false;
   }
 

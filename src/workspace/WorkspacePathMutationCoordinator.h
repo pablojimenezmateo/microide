@@ -22,7 +22,7 @@ class PathMutationCoordinator {
     // Post a transient notification toast (used to surface file-op failures).
     std::function<void(NotificationService::Tone, std::string)> notify;
     std::function<bool()> discard_all_git_sidebar_entries;
-    std::function<bool(std::size_t)> discard_git_sidebar_entry;
+    std::function<bool(std::size_t, const std::filesystem::path&)> discard_git_sidebar_entry;
     std::function<bool()> confirm_discard_patch_preview;
     std::function<void()> cancel_discard_patch_preview;
     std::function<void()> refresh_project_files;

@@ -651,8 +651,9 @@ bool WorkspaceShell::UnstageGitSidebarEntry(std::size_t entry_index) {
   return MakeSidebarService().UnstageGitEntry(entry_index);
 }
 
-bool WorkspaceShell::DiscardGitSidebarEntry(std::size_t entry_index) {
-  return MakeSidebarService().DiscardGitEntry(entry_index);
+bool WorkspaceShell::DiscardGitSidebarEntry(std::size_t entry_index,
+                                           const std::optional<std::filesystem::path>& expected_path) {
+  return MakeSidebarService().DiscardGitEntry(entry_index, expected_path);
 }
 
 bool WorkspaceShell::DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index) {

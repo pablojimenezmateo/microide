@@ -159,8 +159,9 @@ bool SidebarService::UnstageGitEntry(std::size_t entry_index) {
   return coordinator_.UnstageGitEntry(entry_index);
 }
 
-bool SidebarService::DiscardGitEntry(std::size_t entry_index) {
-  return coordinator_.DiscardGitEntry(entry_index);
+bool SidebarService::DiscardGitEntry(std::size_t entry_index,
+                                     const std::optional<std::filesystem::path>& expected_path) {
+  return coordinator_.DiscardGitEntry(entry_index, expected_path);
 }
 
 void SidebarService::OpenDiscardGitEntryPrompt(std::size_t entry_index) {

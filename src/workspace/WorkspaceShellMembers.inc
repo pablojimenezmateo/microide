@@ -1067,7 +1067,7 @@
   bool DiscardAllGitSidebarEntries();
   bool StageGitSidebarEntry(std::size_t entry_index);
   bool UnstageGitSidebarEntry(std::size_t entry_index);
-  bool DiscardGitSidebarEntry(std::size_t entry_index);
+  bool DiscardGitSidebarEntry(std::size_t entry_index, const std::optional<std::filesystem::path>& expected_path = {});
   bool DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index);
   void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
   void SetGitOutgoingBaseChoice(OutgoingBaseChoice choice);

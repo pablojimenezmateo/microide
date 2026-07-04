@@ -127,9 +127,11 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
 
   if (state.action == PromptSurfaceState::Action::DiscardGitEntry) {
     const auto entry_index = util::ParseSize(state.input.text());
+    // Pass the confirmed path so the discard re-validates the (possibly stale)
+    // index still points at it — an async refresh may have reordered the entries.
     const bool discarded =
         entry_index.has_value() &&
-        operations_.discard_git_sidebar_entry(*entry_index);
+        operations_.discard_git_sidebar_entry(*entry_index, state.path);
     prompt_surfaces_.DismissPromptSurface(discarded ? false : true);
     if (discarded) {
       CurrentProjectState().surface.focus = FocusTarget::Sidebar;
@@ -190,7 +192,9 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabSer
               },
           .discard_all_git_sidebar_entries = [this]() { return DiscardAllGitSidebarEntries(); },
           .discard_git_sidebar_entry =
-              [this](std::size_t index) { return DiscardGitSidebarEntry(index); },
+              [this](std::size_t index, const std::filesystem::path& expected_path) {
+                return DiscardGitSidebarEntry(index, expected_path);
+              },
           .confirm_discard_patch_preview =
               [this]() { return patch_apply_service_.ConfirmPendingDiscard(); },
           .cancel_discard_patch_preview =
