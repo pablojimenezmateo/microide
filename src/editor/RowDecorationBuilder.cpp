@@ -109,6 +109,36 @@ void AppendColumnFill(DecoratedTextRow& row, const RowDecorationInput& in, const
   });
 }
 
+// Changed-span underlines positioned on the fixed cell grid (source->visual via
+// ResolveVisualColumn, then visual * char_width), matching the grid text runs,
+// caret, selection and diagnostics. Used when the row renders on the grid
+// (`layout` set); the sibling AppendChangedSpanUnderlines keeps the MeasureWidth
+// geometry for the proportional (layout == null) path so each row stays internally
+// consistent with however its text was drawn.
+void AppendChangedSpanUnderlinesGrid(DecoratedTextRow& row, const RowDecorationInput& in) {
+  const Uint8 dimmed_alpha = static_cast<Uint8>(std::clamp(
+      std::lround(static_cast<double>(in.changed_span_color.a) * 0.55), 0l, 255l));
+  const SDL_Color color{in.changed_span_color.r, in.changed_span_color.g, in.changed_span_color.b,
+                        dimmed_alpha};
+  for (const compare::CompareTextSpan& span : in.changed_spans) {
+    const std::size_t start_visual = ResolveVisualColumn(in, span.start);
+    const std::size_t end_visual = ResolveVisualColumn(in, span.end);
+    const std::size_t visible_start = std::max(start_visual, in.row_visual_start);
+    const std::size_t visible_end = std::min(end_visual, in.row_visual_end);
+    if (visible_end <= visible_start) {
+      continue;
+    }
+    row.underlines.push_back(DecoratedUnderline{
+        .rect = SDL_FRect{
+            in.text_x + static_cast<float>(visible_start - in.row_visual_start) * in.char_width,
+            in.y + in.line_height - 2.0f,
+            static_cast<float>(visible_end - visible_start) * in.char_width,
+            1.0f},
+        .color = color,
+    });
+  }
+}
+
 // Append underline / strikethrough lines for plugin text-style decorations,
 // clipped to the visible byte window (same geometry as diagnostic underlines).
 void AppendTextStyleUnderlines(DecoratedTextRow& row, const RowDecorationInput& in) {
@@ -225,11 +255,16 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
     }
 
     if (!in.changed_spans.empty()) {
-      const std::size_t visible_columns =
-          in.row_visual_end > in.row_visual_start ? in.row_visual_end - in.row_visual_start : 0;
-      AppendChangedSpanUnderlines(row, *in.text_renderer, in.text_x, in.y, in.line_height,
-                                  text_view, in.row_visual_start, visible_columns, in.changed_spans,
-                                  in.changed_span_color);
+      if (in.layout != nullptr) {
+        // Grid text -> grid-aligned underlines (see AppendChangedSpanUnderlinesGrid).
+        AppendChangedSpanUnderlinesGrid(row, in);
+      } else {
+        const std::size_t visible_columns =
+            in.row_visual_end > in.row_visual_start ? in.row_visual_end - in.row_visual_start : 0;
+        AppendChangedSpanUnderlines(row, *in.text_renderer, in.text_x, in.y, in.line_height,
+                                    text_view, in.row_visual_start, visible_columns, in.changed_spans,
+                                    in.changed_span_color);
+      }
     }
 
     if (!in.diagnostics.empty() && in.text != nullptr) {
