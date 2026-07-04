@@ -13,6 +13,7 @@ using microide::util::IsValidUtf8;
 using microide::util::JoinLines;
 using microide::util::LineEnding;
 using microide::util::LineEndingLabel;
+using microide::util::NormalizeLineEndings;
 using microide::util::ParseLineEndingLabel;
 using microide::util::SerializeLines;
 using microide::util::SplitLines;
@@ -50,6 +51,11 @@ void TestStringUtilSplitLinesNormalizesMixedLineEndings() {
   Expect(lines[0] == "alpha" && lines[1] == "beta" && lines[2] == "gamma" &&
              lines[3].empty(),
          "line splitting should normalize CRLF, CR, and LF separators consistently");
+}
+
+void TestStringUtilNormalizeLineEndingsPreservesCrOnlyLineBreaks() {
+  Expect(NormalizeLineEndings("alpha\r\nbeta\rgamma\n") == "alpha\nbeta\ngamma\n",
+         "normalization should convert CRLF and lone CR separators to LF separators");
 }
 
 void TestStringUtilJoinLinesHonorsSeparatorsAndEmptyInput() {
@@ -255,6 +261,8 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
           TestStringUtilUtf8ValidationRejectsBrokenSequences);
   AddTest(tests, "StringUtil/SplitLinesNormalizesMixedLineEndings",
           TestStringUtilSplitLinesNormalizesMixedLineEndings);
+  AddTest(tests, "StringUtil/NormalizeLineEndingsPreservesCrOnlyLineBreaks",
+          TestStringUtilNormalizeLineEndingsPreservesCrOnlyLineBreaks);
   AddTest(tests, "StringUtil/JoinLinesHonorsSeparatorsAndEmptyInput",
           TestStringUtilJoinLinesHonorsSeparatorsAndEmptyInput);
   AddTest(tests, "StringUtil/LineEndingHelpersRoundTrip",

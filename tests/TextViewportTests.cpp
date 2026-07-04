@@ -2222,6 +2222,38 @@ void TestTextViewportFastLoadMatchesCrlfDecode() {
   Expect(crlf_view.LineEndingLabel() == "CRLF", "CRLF file labels as CRLF");
 }
 
+void TestTextViewportFastLoadPreservesCrOnlyLines() {
+  TextViewport view;
+  Expect(view.OpenFile(WriteScratchFile("cr-only.txt", "alpha\rbeta\rgamma\r")),
+         "CR-only file opens");
+  Expect(view.line_count() == 4,
+         "CR-only files should keep logical lines plus a trailing empty line");
+  Expect(view.lines().LineView(0) == "alpha" && view.lines().LineView(1) == "beta" &&
+             view.lines().LineView(2) == "gamma" && view.lines().LineView(3).empty(),
+         "lone CR bytes should become line breaks, not disappear");
+  Expect(view.LineEndingLabel() == "CR", "CR-only file labels as CR");
+}
+
+void TestTextViewportFastLoadDenseCrlfFile() {
+  std::string content;
+  constexpr int kLineCount = 100000;
+  content.reserve(static_cast<std::size_t>(kLineCount) * 3);
+  for (int i = 0; i < kLineCount; ++i) {
+    content += "x\r\n";
+  }
+
+  TextViewport view;
+  Expect(view.OpenFile(WriteScratchFile("dense-crlf.txt", content)),
+         "dense CRLF file opens without line-vector amplification");
+  Expect(view.line_count() == static_cast<std::size_t>(kLineCount + 1),
+         "dense CRLF file should preserve every logical row plus the trailing empty line");
+  Expect(view.lines().LineView(0) == "x" &&
+             view.lines().LineView(static_cast<std::size_t>(kLineCount - 1)) == "x" &&
+             view.lines().LineView(static_cast<std::size_t>(kLineCount)).empty(),
+         "dense CRLF canonicalization should keep first, last, and trailing rows intact");
+  Expect(view.LineEndingLabel() == "CRLF", "dense CRLF file labels as CRLF");
+}
+
 void TestTextViewportFastLoadNoTrailingNewline() {
   TextViewport view;
   Expect(view.OpenFile(WriteScratchFile("notrail.txt", "one\ntwo")),
@@ -2340,6 +2372,10 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportLoadLinesMatchesSerializeRoundTrip);
   AddTest(tests, "TextViewport/FastLoadMatchesCrlfDecode",
           TestTextViewportFastLoadMatchesCrlfDecode);
+  AddTest(tests, "TextViewport/FastLoadPreservesCrOnlyLines",
+          TestTextViewportFastLoadPreservesCrOnlyLines);
+  AddTest(tests, "TextViewport/FastLoadDenseCrlfFile",
+          TestTextViewportFastLoadDenseCrlfFile);
   AddTest(tests, "TextViewport/FastLoadNoTrailingNewline",
           TestTextViewportFastLoadNoTrailingNewline);
   AddTest(tests, "TextViewport/FastLoadEmptyFile",

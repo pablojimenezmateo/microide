@@ -15,6 +15,75 @@
 #include "util/TextFileIO.h"
 
 namespace microide::editor {
+namespace {
+
+struct LineEndingMetadata {
+  util::LineEnding line_ending = util::LineEnding::LF;
+  bool mixed_line_endings = false;
+  bool has_cr = false;
+};
+
+LineEndingMetadata AnalyzeLineEndings(std::string_view content) {
+  std::size_t crlf = 0;
+  std::size_t lf = 0;
+  std::size_t cr = 0;
+  for (std::size_t i = 0; i < content.size(); ++i) {
+    if (content[i] == '\r') {
+      if (i + 1 < content.size() && content[i + 1] == '\n') {
+        ++crlf;
+        ++i;
+      } else {
+        ++cr;
+      }
+    } else if (content[i] == '\n') {
+      ++lf;
+    }
+  }
+
+  LineEndingMetadata metadata;
+  metadata.has_cr = crlf > 0 || cr > 0;
+  const std::size_t present_styles =
+      (crlf > 0 ? 1 : 0) + (lf > 0 ? 1 : 0) + (cr > 0 ? 1 : 0);
+  metadata.mixed_line_endings = present_styles > 1;
+  if (crlf >= lf && crlf >= cr && crlf > 0) {
+    metadata.line_ending = util::LineEnding::CRLF;
+  } else if (lf >= cr && lf > 0) {
+    metadata.line_ending = util::LineEnding::LF;
+  } else if (cr > 0) {
+    metadata.line_ending = util::LineEnding::CR;
+  }
+  return metadata;
+}
+
+std::string CanonicalizeLineEndingsToLf(std::string_view content,
+                                        const LineEndingMetadata& metadata) {
+  if (!metadata.has_cr) {
+    return std::string(content);
+  }
+  std::string normalized;
+  normalized.reserve(content.size());
+  for (std::size_t i = 0; i < content.size(); ++i) {
+    if (content[i] == '\r') {
+      normalized.push_back('\n');
+      if (i + 1 < content.size() && content[i + 1] == '\n') {
+        ++i;
+      }
+    } else {
+      normalized.push_back(content[i]);
+    }
+  }
+  return normalized;
+}
+
+std::string CanonicalizeLineEndingsToLf(std::string&& content,
+                                        const LineEndingMetadata& metadata) {
+  if (!metadata.has_cr) {
+    return std::move(content);
+  }
+  return CanonicalizeLineEndingsToLf(std::string_view(content), metadata);
+}
+
+}  // namespace
 
 bool TextViewport::OpenFile(const std::filesystem::path& path) {
   std::string perf_label = "TextViewport::OpenFile";
@@ -28,20 +97,13 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
     return false;
   }
 
-  // Fast path: a file with no '\r' is already in the document's canonical
-  // representation (lines joined by '\n'), so hand the bytes straight to the
-  // buffer instead of splitting into a vector<string> and rejoining. This skips
-  // two full copies of the file plus one heap allocation per line on the open
-  // path -- the dominant cost for large files.
-  if (content->find('\r') == std::string::npos) {
-    const TextEncoding encoding = DetectEncoding(*content);
-    ResetStateFromText(std::move(*content), path, LineEnding::LF, false, encoding, false, false);
-    return true;
-  }
-
-  const util::DecodedText decoded = util::DecodeLines(*content);
-  ResetState(decoded.lines, path, decoded.line_ending, decoded.mixed_line_endings,
-             DetectEncoding(*content), false, false);
+  // Convert directly to the editor's canonical LF buffer. The old CRLF/CR path
+  // decoded into vector<string> and PieceTree immediately joined it back into a
+  // string, so a dense CRLF file could force one allocation per line on open.
+  const LineEndingMetadata metadata = AnalyzeLineEndings(*content);
+  const TextEncoding encoding = DetectEncoding(*content);
+  ResetStateFromText(CanonicalizeLineEndingsToLf(std::move(*content), metadata), path,
+                     metadata.line_ending, metadata.mixed_line_endings, encoding, false, false);
   return true;
 }
 
@@ -114,17 +176,11 @@ void TextViewport::LoadContent(std::string_view content,
                                const std::filesystem::path& path,
                                std::optional<LineEnding> line_ending) {
   EnsureDocument();
-  // Fast path mirrors OpenFile: when the caller does not force a line ending and
-  // the content is already '\n'-canonical, skip the split/rejoin round-trip.
-  if (!line_ending.has_value() && content.find('\r') == std::string_view::npos) {
-    const TextEncoding encoding = DetectEncoding(content);
-    ResetStateFromText(std::string(content), path, LineEnding::LF, false, encoding, false, false);
-    return;
-  }
-  const util::DecodedText decoded = util::DecodeLines(content);
-  ResetState(decoded.lines, path, line_ending.value_or(decoded.line_ending),
-             line_ending.has_value() ? false : decoded.mixed_line_endings, DetectEncoding(content),
-             false, false);
+  const LineEndingMetadata metadata = AnalyzeLineEndings(content);
+  ResetStateFromText(CanonicalizeLineEndingsToLf(content, metadata), path,
+                     line_ending.value_or(metadata.line_ending),
+                     line_ending.has_value() ? false : metadata.mixed_line_endings,
+                     DetectEncoding(content), false, false);
 }
 
 void TextViewport::LoadLines(std::vector<std::string> lines, const std::filesystem::path& path,

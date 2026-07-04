@@ -275,9 +275,14 @@ bool IsValidUtf8(std::string_view content) {
 std::string NormalizeLineEndings(std::string_view text) {
   std::string normalized;
   normalized.reserve(text.size());
-  for (char character : text) {
-    if (character != '\r') {
-      normalized.push_back(character);
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    if (text[i] == '\r') {
+      normalized.push_back('\n');
+      if (i + 1 < text.size() && text[i + 1] == '\n') {
+        ++i;
+      }
+    } else {
+      normalized.push_back(text[i]);
     }
   }
   return normalized;
