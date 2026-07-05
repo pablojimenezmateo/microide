@@ -1,6 +1,11 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-07-05 (v2.6.4 shipped — correctness & hardening release: a broad batch of
+Reviewed on 2026-07-05 (v2.6.5 shipped — shared overview-ruler lane: a single primitive painted
+left of the vertical scrollbar across the editor, compare, and merge surfaces to show diff/merge
+changes, search matches, diagnostics, and the caret at a glance, gated by
+`editor.view.overview_ruler.enabled` (default on), with an allocation-free live-caret marker,
+colorscheme-switch cache invalidation, and deterministic equal-priority marker tie-breaks.
+Prior: v2.6.4 correctness & hardening release — a broad batch of
 user-visible bug fixes across editor, compare/merge, git, LSP/DAP, and plugin surfaces (fold gutter,
 compare cell-grid alignment + row-layout cache, multi-caret paste desync, git rename data-loss, LSP
 shutdown deadlock, merge "Mark Resolved" CRLF), VSCode-aligned default keybindings + a Go to Line
