@@ -79,13 +79,19 @@ confirm() {
 }
 
 # --- 1. bump version -------------------------------------------------------
-log "1/8  Bump version in CMakeLists.txt + README.md"
+# Rewrite the version by PATTERN, not by the old literal, so a doc surface that
+# has already drifted (e.g. a landing page frozen at an ancient tag) self-heals
+# instead of being skipped by a s/OLD/NEW/ that no longer matches. tools/
+# check-doc-versions.sh (step 3) then hard-asserts every public surface agrees.
+log "1/9  Bump version in CMakeLists.txt + README.md + docs/index.html"
 sed -i "s/project(microide VERSION ${OLD_VERSION}/project(microide VERSION ${VERSION}/" CMakeLists.txt
-sed -i "s/${OLD_VERSION}/${VERSION}/g" README.md
+sed -i -E "s/Tagged \`v[0-9]+\.[0-9]+\.[0-9]+\`/Tagged \`v${VERSION}\`/g; \
+           s/microide_[0-9]+\.[0-9]+\.[0-9]+_amd64\.deb/microide_${VERSION}_amd64.deb/g" README.md
+sed -i -E "s/([Tt]agged v)[0-9]+\.[0-9]+\.[0-9]+/\1${VERSION}/g" docs/index.html
 info "CMakeLists: $(grep -oP 'VERSION \K[0-9.]+' CMakeLists.txt | head -1)"
 
 # --- 2. changelog draft ----------------------------------------------------
-log "2/8  Draft CHANGELOG.md section"
+log "2/9  Draft CHANGELOG.md section"
 PREV_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo '')"
 {
   echo "## [$VERSION] - $DATE"
@@ -112,13 +118,21 @@ else
   info "added '## [$VERSION] - $DATE' (review & tighten the TODO before publishing)"
 fi
 
-# --- 3. build --------------------------------------------------------------
+# --- 3. verify doc/version consistency ------------------------------------
+# Hard gate: every public surface (README status + verify examples, landing
+# page banner, newest CHANGELOG entry) must state the version just baked into
+# CMakeLists.txt. Runs AFTER the changelog draft so the new entry is in place.
+# This is what stops the stated version from ever drifting again.
+log "3/9  Verify doc version consistency"
+bash tools/check-doc-versions.sh || die "docs still drift from $VERSION (see DRIFT lines above)"
+
+# --- 4. build --------------------------------------------------------------
 # Release ships with LTO (-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON): the perf
 # gate already measures RelWithDebInfo+LTO, so cross-TU inlining in the hot
 # editor/render paths (e.g. TextViewport <-> EditorViewRenderer) is part of the
 # validated codegen. CMakeLists downgrades gracefully if the toolchain lacks IPO
 # and auto-skips ld.lld under LTO. The trade-off is a slower final link.
-log "3/8  Build (Release + LTO)"
+log "4/9  Build (Release + LTO)"
 cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON >/dev/null
 cmake --build "$BUILD_DIR" -j"$(nproc)"
@@ -126,16 +140,16 @@ BAKED="$("$BUILD_DIR/microide/microide" --version 2>/dev/null | grep -oP '[0-9]+
 [[ "$BAKED" == "$VERSION" ]] || die "built binary reports '$BAKED', expected '$VERSION'"
 info "binary reports $BAKED"
 
-# --- 4. test gate ----------------------------------------------------------
+# --- 5. test gate ----------------------------------------------------------
 if [[ $SKIP_TESTS == 0 ]]; then
-  log "4/8  Test gate (ctest)"
+  log "5/9  Test gate (ctest)"
   ctest --test-dir "$BUILD_DIR" --output-on-failure
 else
-  log "4/8  Test gate SKIPPED (--skip-tests)"
+  log "5/9  Test gate SKIPPED (--skip-tests)"
 fi
 
-# --- 5. man page + media ---------------------------------------------------
-log "5/8  Regenerate man page + showcase media"
+# --- 6. man page + media ---------------------------------------------------
+log "6/9  Regenerate man page + showcase media"
 bash tools/gen-man.sh "$BUILD_DIR/microide/microide"
 if [[ $SKIP_MEDIA == 0 ]]; then
   bash tools/capture-media.sh
@@ -143,8 +157,8 @@ else
   info "media SKIPPED (--skip-media) — remember the 'UI change ⇒ regenerate media' rule"
 fi
 
-# --- 6. package + checksum + sign -----------------------------------------
-log "6/8  Package .deb + checksum + GPG sign"
+# --- 7. package + checksum + sign -----------------------------------------
+log "7/9  Package .deb + checksum + GPG sign"
 ( cd "$BUILD_DIR" && cpack -G DEB )
 DEB_PATH="$(find "$BUILD_DIR" -maxdepth 1 -name "$DEB" -print -quit)"
 [[ -n "$DEB_PATH" ]] || DEB_PATH="$(find "$BUILD_DIR" -maxdepth 1 -name 'microide_*_amd64.deb' -print -quit)"
@@ -161,10 +175,10 @@ else
   info "WARNING: release key $KEY_FPR not in keyring — skipping signatures"
 fi
 
-# --- 7. stop here unless publishing ---------------------------------------
+# --- 8. stop here unless publishing ---------------------------------------
 ARTIFACTS=("$DEB" "$DEB.sha256" "$DEB.asc" "$DEB.sha256.asc" "microide-signing-key.asc")
 if [[ $PUBLISH == 0 ]]; then
-  log "7/8  LOCAL-ONLY — staged, nothing pushed"
+  log "8/9  LOCAL-ONLY — staged, nothing pushed"
   info "Artifacts in $REPO:"
   for a in "${ARTIFACTS[@]}"; do [[ -e "$REPO/$a" ]] && printf '     %s\n' "$a"; done
   cat <<EOF
@@ -177,8 +191,11 @@ EOF
   exit 0
 fi
 
-# --- 8. publish ------------------------------------------------------------
-log "8/8  Publish: commit, tag, push, GitHub release"
+# --- 9. publish ------------------------------------------------------------
+log "9/9  Publish: commit, tag, push, GitHub release"
+# Final gate before anything leaves the machine: re-verify doc/version
+# consistency in case the CHANGELOG TODO or docs were hand-edited after step 3.
+bash tools/check-doc-versions.sh || die "docs drift from $VERSION — refusing to publish"
 git -C "$REPO" diff --stat
 confirm "Commit version/changelog/man/media, tag $TAG, push, and create the GitHub release?" \
   || die "aborted before publish (local changes are staged on disk)"

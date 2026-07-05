@@ -53,6 +53,13 @@ run_logged() {
 
 check_tests() {
   local log="${LOG_DIR}/microide-tests.log"
+  # Fast, build-free pre-check: every public doc must state the CMakeLists
+  # version. Catches a manual version bump that forgot a doc surface before it
+  # ships — see tools/check-doc-versions.sh. Cheap grep, so run it up front.
+  bash tools/check-doc-versions.sh || {
+    echo "run-checks: doc/version drift — fix before building (tests not run)" >&2
+    return 1
+  }
   # ctest in the default build only invokes the microide_tests binary (see
   # add_test in CMakeLists.txt), so scope the build to that target and its deps.
   # This skips the production microide executable and the bench binaries, which

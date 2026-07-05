@@ -2,7 +2,7 @@
 
 Date: 2026-04-28
 
-Representative project: `/home/pablo/Documents/projects/microide`
+Representative project: `/home/user/Documents/projects/microide`
 
 Command used for both runs:
 

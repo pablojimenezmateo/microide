@@ -331,7 +331,7 @@
           agents — a mix of Claude, GPT, and other tools — under human direction. There is no
           hand-written code path. It's published as a real-world experiment in agent-driven
           development: interesting to read, useful to build on. That describes how the code was
-          <em>authored</em>, not how mature it is — the build is stable, tagged v2.3.0, and
+          <em>authored</em>, not how mature it is — the build is stable, tagged v2.6.4, and
           covered by 117 test files plus fuzzing, sanitizer, and performance gates.
         </p>
       </div>
@@ -762,7 +762,9 @@
 
           <div>
             <h3 style="font-family:var(--mono); color:var(--accent);">Build from source</h3>
-<pre><span class="c"># Requires CMake 3.28+, a C++20 compiler, SDL3 dev package</span>
+<pre><span class="c"># Deps (Debian/Ubuntu). PCRE2 is required; Lua/ttf/fontconfig recommended.</span>
+<span class="k">sudo apt-get install -y</span> cmake ninja-build pkg-config \
+  libsdl3-dev libsdl3-ttf-dev libpcre2-dev liblua5.4-dev libfontconfig-dev
 <span class="k">cmake</span> -S . -B build
 <span class="k">cmake</span> --build build -j8
 <span class="k">./build/microide/microide</span></pre>
