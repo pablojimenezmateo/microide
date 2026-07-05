@@ -280,8 +280,16 @@ EditorViewMetrics EditorViewRenderer::ComputeMetrics(const render::TextRenderer&
       metrics.sticky_band_top_y + static_cast<float>(sticky_clamped) * metrics.line_height;
   metrics.visible_rows =
       static_cast<std::size_t>(std::max(1, max_total_rows - static_cast<int>(sticky_clamped)));
+  // Right reserve = 12px inset past the gutter (mirrors text_x) + a 21px right gutter that
+  // covers the vertical scrollbar (kScrollbarThickness 10 + inset 2) AND the overview-ruler
+  // lane painted just left of it (workspace/OverviewRuler.h: kLaneGap 3 + kLaneWidth 6), so
+  // a long line's trailing glyphs never lay out under the lane. Kept unconditional (not
+  // gated on the overview-ruler setting) so the text width is identical across the render
+  // path and every hit-test/scroll ComputeMetrics caller — a gated reserve would desync
+  // click-to-caret mapping near the right edge from what was drawn.
+  constexpr float kTextRightReserve = 33.0f;
   metrics.visible_columns = static_cast<std::size_t>(
-      std::max(8.0f, (rect.w - metrics.gutter_width - 28.0f) / char_width));
+      std::max(8.0f, (rect.w - metrics.gutter_width - kTextRightReserve) / char_width));
   return metrics;
 }
 

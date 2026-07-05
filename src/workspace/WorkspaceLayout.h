@@ -57,26 +57,13 @@ struct ScrollbarGeometry {
   bool vertical = true;
 };
 
-struct CompareScrollbarMarker {
+// A coalesced run of same-kind changed rows in the compare presentation, ready to be
+// mapped onto the overview lane. Geometry + color are applied by the render TU via
+// overview::BuildMarkers; this stays a pure, testable walk over the diff model.
+struct CompareScrollbarRun {
   compare::CompareRowKind kind = compare::CompareRowKind::Unchanged;
   int start_row = 0;
   int end_row = 0;
-  SDL_FRect rect{};
-};
-
-struct MergeScrollbarMarkerInput {
-  int start_row = 0;
-  int end_row = 0;
-  compare::MergeChoice choice = compare::MergeChoice::Base;
-  bool valid = true;
-};
-
-struct MergeScrollbarMarker {
-  int start_row = 0;
-  int end_row = 0;
-  compare::MergeChoice choice = compare::MergeChoice::Base;
-  bool valid = true;
-  SDL_FRect rect{};
 };
 
 struct StripSlotLayout {
@@ -255,8 +242,6 @@ inline constexpr float kWorkspaceTabCloseButtonRightInset = 6.0f;
 inline constexpr float kWorkspaceMenuPopupSeparatorHeight = 8.0f;
 inline constexpr float kWorkspaceMenuPopupItemHeight = 22.0f;
 inline constexpr float kWorkspaceDiffScrollbarReserve = 12.0f;
-inline constexpr float kWorkspaceDiffMarkerLaneWidth = 6.0f;
-inline constexpr float kWorkspaceDiffMarkerLaneGap = 3.0f;
 inline constexpr float kWorkspaceStatusBarHeight = 22.0f;
 inline constexpr float kWorkspaceMenuOverflowChevronWidth = 28.0f;
 inline constexpr float kWorkspaceTabCloseHitInflate = 3.0f;
@@ -415,14 +400,9 @@ std::optional<ScrollbarGeometry> MakeHorizontalScrollbarGeometry(const SDL_FRect
 float ScrollUnitsForPointer(const ScrollbarGeometry& geometry,
                             float pointer_coordinate,
                             float grab_offset);
-std::vector<CompareScrollbarMarker> BuildCompareScrollbarMarkers(
-    const SDL_FRect& track,
+std::vector<CompareScrollbarRun> BuildCompareScrollbarRuns(
     const compare::ComparePresentationModel& presentation,
     const compare::CompareModel& model);
-std::vector<MergeScrollbarMarker> BuildMergeScrollbarMarkers(
-    const SDL_FRect& track,
-    std::size_t total_rows,
-    const std::vector<MergeScrollbarMarkerInput>& inputs);
 float ComputeChromeButtonWidth(float measured_label_width);
 std::vector<StripSlotLayout> ComputeVisibleStripLayouts(const std::vector<float>& widths,
                                                         float start_x,

@@ -462,6 +462,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspacePathMutationCoordinatorTabs.cpp
   src/workspace/WorkspaceLifecycleCoordinator.cpp
   src/workspace/WorkspaceLayout.cpp
+  src/workspace/OverviewRuler.cpp
   src/workspace/WorkspaceLayoutMergeAndChrome.cpp
   src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/TerminalPanelService.cpp

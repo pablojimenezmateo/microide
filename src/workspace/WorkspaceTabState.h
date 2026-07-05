@@ -19,6 +19,7 @@
 #include "editor/TextLayout.h"
 #include "editor/TextViewport.h"
 #include "terminal/TerminalSession.h"
+#include "workspace/OverviewRuler.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -131,8 +132,9 @@ struct CompareTabState {
   std::size_t max_visual_columns = 0;
   bool scrollbar_marker_cache_valid = false;
   std::uint64_t scrollbar_marker_cache_revision = 0;
+  std::uint64_t scrollbar_marker_cache_theme_token = 0;
   SDL_FRect scrollbar_marker_cache_track{};
-  std::vector<CompareScrollbarMarker> scrollbar_marker_cache;
+  std::vector<overview::Marker> scrollbar_marker_cache;
   float divider_fraction = 0.5f;
   bool right_editable = false;
   bool right_view_active = false;
@@ -182,8 +184,9 @@ struct MergeTabState {
   std::uint64_t model_revision = 0;
   bool scrollbar_marker_cache_valid = false;
   std::uint64_t scrollbar_marker_cache_revision = 0;
+  std::uint64_t scrollbar_marker_cache_theme_token = 0;
   SDL_FRect scrollbar_marker_cache_track{};
-  std::vector<MergeScrollbarMarker> scrollbar_marker_cache;
+  std::vector<overview::Marker> scrollbar_marker_cache;
   float left_divider_fraction = 1.0f / 3.0f;
   float right_divider_fraction = 2.0f / 3.0f;
   bool persistable = true;

@@ -552,6 +552,19 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Editor → Essentials → Block Structure",
       },
       SettingSpec{
+          .id = "editor.view.overview_ruler.enabled",
+          .label = "Scrollbar Overview Ruler",
+          .description = "Show a marker bar beside the editor scrollbar with search matches, "
+                         "diagnostics, and the caret position, so you can see where they are "
+                         "across the whole file at a glance.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Editor → View",
+      },
+      SettingSpec{
           .id = "sidebar.file_icons",
           .label = "File Type Icons",
           .description =

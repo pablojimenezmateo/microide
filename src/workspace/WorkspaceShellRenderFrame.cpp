@@ -2,11 +2,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <optional>
+#include <span>
+#include <vector>
 
 #include "editor/TextLayout.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/OverviewRuler.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
@@ -14,6 +18,162 @@
 namespace microide::workspace {
 
 using namespace detail;
+
+namespace {
+
+// Overlap priority for editor overview-ruler markers: when two sources map onto the
+// same pixel row the higher value wins it. Errors/warnings beat search; the active
+// search match beats plain matches; the caret is drawn on top separately.
+constexpr int kOverviewPrioDiagError = 90;
+constexpr int kOverviewPrioDiagWarning = 80;
+constexpr int kOverviewPrioSearchActive = 70;
+constexpr int kOverviewPrioSearchMatch = 60;
+constexpr int kOverviewPrioDiagInfo = 40;
+constexpr int kOverviewPrioDiagHint = 30;
+
+SDL_Color OverviewSeverityColor(const render::Theme& theme, editor::DiagnosticSeverity severity) {
+  switch (severity) {
+    case editor::DiagnosticSeverity::Error:
+      return theme.diagnostic_error;
+    case editor::DiagnosticSeverity::Warning:
+      return theme.diagnostic_warning;
+    case editor::DiagnosticSeverity::Info:
+      return theme.diagnostic_info;
+    case editor::DiagnosticSeverity::Hint:
+    default:
+      return theme.diagnostic_hint;
+  }
+}
+
+int OverviewSeverityPriority(editor::DiagnosticSeverity severity) {
+  switch (severity) {
+    case editor::DiagnosticSeverity::Error:
+      return kOverviewPrioDiagError;
+    case editor::DiagnosticSeverity::Warning:
+      return kOverviewPrioDiagWarning;
+    case editor::DiagnosticSeverity::Info:
+      return kOverviewPrioDiagInfo;
+    case editor::DiagnosticSeverity::Hint:
+    default:
+      return kOverviewPrioDiagHint;
+  }
+}
+
+// Cache key for a pane's overview markers. Excludes the caret line (drawn live) so
+// cursor movement never invalidates the cached search+diagnostic set. `theme_token`
+// tracks the colorscheme so a live theme switch rebuilds the baked-in marker colors.
+struct EditorOverviewSignature {
+  const void* viewport = nullptr;
+  std::size_t line_count = 0;
+  bool dirty = false;
+  std::uint64_t diag_revision = 0;
+  int diag_min_severity = 0;
+  bool search_active = false;
+  std::uint64_t search_revision = 0;
+  std::size_t search_selected = 0;
+  std::size_t search_count = 0;
+  std::uint64_t theme_token = 0;
+  bool operator==(const EditorOverviewSignature&) const = default;
+};
+
+struct EditorOverviewPaneCache {
+  EditorOverviewSignature sig;
+  SDL_FRect track{};
+  std::vector<overview::Marker> markers;  // search + diagnostics (caret drawn live)
+};
+
+// Paints the editor overview ruler beside `track`: a lane with density-reduced markers
+// for search matches and diagnostics (rebuilt only when a source or the lane changed),
+// plus a live caret marker on top. Scratch vectors are caller-owned/thread-local so a
+// steady frame allocates nothing.
+void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
+                             ProjectWorkspaceState& project_state,
+                             const OverlaySurfaceViewModel& overlay_vm,
+                             editor::TextViewport& viewport, bool pane_active,
+                             editor::DiagnosticSeverity diag_min_severity, const SDL_FRect& track,
+                             float pane_left, EditorOverviewPaneCache& cache,
+                             std::vector<overview::MarkerInput>& inputs,
+                             std::vector<std::uint32_t>& buckets, std::vector<SDL_Color>& palette) {
+  const SDL_FRect lane = overview::LaneRect(track, pane_left);
+  const SDL_FRect inner_lane = overview::LaneInnerRect(lane);
+  const std::size_t total_rows = viewport.line_count();
+
+  const BufferSearchState& buffer_search = project_state.overlay.workflow.buffer_search;
+  const bool search_active =
+      pane_active &&
+      (overlay_vm.mode == OverlayMode::BufferSearch || overlay_vm.mode == OverlayMode::BufferReplace) &&
+      !buffer_search.matches.empty();
+
+  EditorOverviewSignature sig;
+  sig.viewport = &viewport;
+  sig.line_count = total_rows;
+  sig.dirty = viewport.dirty();
+  sig.diag_revision = project_state.diagnostics_store.revision();
+  sig.diag_min_severity = static_cast<int>(diag_min_severity);
+  sig.search_active = search_active;
+  sig.search_revision = buffer_search.matches_revision;
+  sig.search_selected = buffer_search.selected_index;
+  sig.search_count = buffer_search.matches.size();
+  sig.theme_token = overview::ThemeMarkerToken(theme);
+
+  if (cache.sig != sig || !RectsEqual(cache.track, inner_lane)) {
+    inputs.clear();
+    // Diagnostics: suppressed while the buffer is dirty (stale line positions) or has no
+    // on-disk path, matching the main editor render's diagnostic gating.
+    if (!viewport.dirty() && !viewport.path().empty()) {
+      if (const std::vector<editor::PublishedDiagnostic>* diags =
+              project_state.diagnostics_store.FindByPathKey(viewport.path_key());
+          diags != nullptr) {
+        thread_local std::vector<editor::PublishedDiagnostic> tls_filtered;
+        const std::span<const editor::PublishedDiagnostic> filtered =
+            editor::FilterDiagnosticsAtLeastSeverity(
+                std::span<const editor::PublishedDiagnostic>(*diags), diag_min_severity,
+                tls_filtered);
+        for (const editor::PublishedDiagnostic& diagnostic : filtered) {
+          const int start = static_cast<int>(diagnostic.range.start.line);
+          const int end =
+              static_cast<int>(std::max(diagnostic.range.end.line, diagnostic.range.start.line)) + 1;
+          inputs.push_back(overview::MarkerInput{.start_row = start,
+                                                 .end_row = end,
+                                                 .color = OverviewSeverityColor(theme, diagnostic.severity),
+                                                 .priority = OverviewSeverityPriority(diagnostic.severity)});
+        }
+      }
+    }
+    // Search matches (only while the find/replace overlay is open on the active pane).
+    if (search_active) {
+      for (std::size_t i = 0; i < buffer_search.matches.size(); ++i) {
+        const int line = static_cast<int>(buffer_search.matches[i].start.line);
+        const bool selected = i == buffer_search.selected_index;
+        inputs.push_back(overview::MarkerInput{
+            .start_row = line,
+            .end_row = line + 1,
+            .color = selected ? theme.search_match_active : theme.search_match,
+            .priority = selected ? kOverviewPrioSearchActive : kOverviewPrioSearchMatch});
+      }
+    }
+    cache.markers = overview::ReduceMarkers(inner_lane, total_rows, inputs, buckets, palette);
+    cache.sig = sig;
+    cache.track = inner_lane;
+  }
+
+  overview::DrawLane(renderer, theme, lane, cache.markers);
+
+  // Caret line, drawn live (one rect) so cursor movement never invalidates the cache.
+  // Uses the allocation-free single-marker builder so a steady frame never touches the heap.
+  const overview::MarkerInput caret_input{.start_row = static_cast<int>(viewport.cursor_line()),
+                                          .end_row = static_cast<int>(viewport.cursor_line()) + 1,
+                                          .color = theme.cursor,
+                                          .priority = 0};
+  overview::Marker caret_marker;
+  if (overview::BuildMarker(inner_lane, total_rows, caret_input, caret_marker)) {
+    SDL_SetRenderDrawColor(renderer, caret_marker.color.r, caret_marker.color.g,
+                           caret_marker.color.b, caret_marker.color.a);
+    SDL_RenderFillRect(renderer, &caret_marker.rect);
+  }
+}
+
+}  // namespace
 
 void WorkspaceShell::ResizeTerminalToPanel(const SDL_FRect& panel_rect) {
   auto* terminal_tab = ActiveTerminalTab();
@@ -433,6 +593,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         setting_enabled("editor.view.render_whitespace", false);
     const bool blame_inline_enabled = setting_enabled("editor.blame.inline.enabled", true);
     const bool line_numbers_enabled = setting_enabled("editor.line_numbers", true);
+    const bool overview_ruler_enabled = setting_enabled("editor.view.overview_ruler.enabled", true);
     // Phase E1: inline plugin-surface insets. Experimental and off by default, so
     // the editor geometry stays byte-for-byte identical for everyone else. One
     // master gate, like DebugEnabled(): with no plugin/LSP presentation bundle the
@@ -586,6 +747,16 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       draw_review_comment_markers(*viewport, pane.rect, metrics);
 
     }
+    // Overview-ruler marker caches, one per pane, keyed by a cheap signature so the
+    // search+diagnostic marker set only rebuilds when a source or the lane geometry
+    // changes (never on scroll or caret movement).
+    thread_local std::vector<EditorOverviewPaneCache> tls_overview_caches;
+    thread_local std::vector<overview::MarkerInput> tls_overview_inputs;
+    thread_local std::vector<std::uint32_t> tls_overview_buckets;
+    thread_local std::vector<SDL_Color> tls_overview_palette;
+    if (overview_ruler_enabled) {
+      tls_overview_caches.resize(panes.size());
+    }
     for (std::size_t pane_index = 0; pane_index < panes.size(); ++pane_index) {
       const EditorPaneLayout& pane = panes[pane_index];
       if (pane.group_index >= project_state.editor_groups.size()) {
@@ -605,6 +776,13 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                       scroll_layout.vertical_scrollbar->thumb,
                       pane.active &&
                          context_.interaction_state.drag_target == DragTarget::EditorVerticalScrollbar);
+        if (overview_ruler_enabled) {
+          DrawEditorOverviewRuler(renderer, theme_, project_state, overlay_vm, *viewport,
+                                  pane.active, diagnostics_min_severity,
+                                  scroll_layout.vertical_scrollbar->track, pane.rect.x,
+                                  tls_overview_caches[pane_index], tls_overview_inputs,
+                                  tls_overview_buckets, tls_overview_palette);
+        }
       }
       if (scroll_layout.horizontal_scrollbar.has_value()) {
         DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,

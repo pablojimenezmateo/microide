@@ -17,6 +17,7 @@
 #include "util/PerformanceTrace.h"
 #include "workspace/CompareMergeRender.h"
 #include "workspace/CompareTabReview.h"
+#include "workspace/OverviewRuler.h"
 #include "workspace/CompareVisibleLayoutCache.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceShellRenderPrimitives.h"
@@ -49,28 +50,36 @@ SDL_Color CompareMarkerColor(const render::Theme& theme, compare::CompareRowKind
   }
 }
 
-void DrawCompareScrollbarMarkers(SDL_Renderer* renderer,
-                                 const render::Theme& theme,
-                                 const SDL_FRect& track,
-                                 CompareTabState& compare_tab) {
-  if (renderer == nullptr) {
+// Rebuilds the cached overview markers for `compare_tab` when the presentation or the
+// lane geometry changed. Markers are pre-mapped to `inner_lane` so the render path is a
+// plain draw.
+void EnsureCompareOverviewMarkers(const render::Theme& theme,
+                                  const SDL_FRect& inner_lane,
+                                  std::uint64_t theme_token,
+                                  CompareTabState& compare_tab) {
+  if (compare_tab.scrollbar_marker_cache_valid &&
+      compare_tab.scrollbar_marker_cache_revision == compare_tab.presentation_revision &&
+      compare_tab.scrollbar_marker_cache_theme_token == theme_token &&
+      RectsEqual(compare_tab.scrollbar_marker_cache_track, inner_lane)) {
     return;
   }
 
-  if (!compare_tab.scrollbar_marker_cache_valid ||
-      compare_tab.scrollbar_marker_cache_revision != compare_tab.presentation_revision ||
-      !RectsEqual(compare_tab.scrollbar_marker_cache_track, track)) {
-    compare_tab.scrollbar_marker_cache =
-        BuildCompareScrollbarMarkers(track, compare_tab.presentation, compare_tab.model);
-    compare_tab.scrollbar_marker_cache_track = track;
-    compare_tab.scrollbar_marker_cache_revision = compare_tab.presentation_revision;
-    compare_tab.scrollbar_marker_cache_valid = true;
+  const std::vector<CompareScrollbarRun> runs =
+      BuildCompareScrollbarRuns(compare_tab.presentation, compare_tab.model);
+  std::vector<overview::MarkerInput> inputs;
+  inputs.reserve(runs.size());
+  for (const CompareScrollbarRun& run : runs) {
+    inputs.push_back(overview::MarkerInput{.start_row = run.start_row,
+                                           .end_row = run.end_row,
+                                           .color = CompareMarkerColor(theme, run.kind),
+                                           .priority = 0});
   }
-  for (const CompareScrollbarMarker& marker : compare_tab.scrollbar_marker_cache) {
-    const SDL_Color color = CompareMarkerColor(theme, marker.kind);
-    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-    SDL_RenderFillRect(renderer, &marker.rect);
-  }
+  compare_tab.scrollbar_marker_cache =
+      overview::BuildMarkers(inner_lane, compare_tab.presentation.rows.size(), inputs);
+  compare_tab.scrollbar_marker_cache_track = inner_lane;
+  compare_tab.scrollbar_marker_cache_revision = compare_tab.presentation_revision;
+  compare_tab.scrollbar_marker_cache_theme_token = theme_token;
+  compare_tab.scrollbar_marker_cache_valid = true;
 }
 
 }  // namespace
@@ -613,19 +622,13 @@ void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer,
   compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
 
   if (scroll_layout.vertical_scrollbar.has_value()) {
-    const SDL_FRect marker_lane = MakeRect(
-        std::max(editor_surface.x,
-                 scroll_layout.vertical_scrollbar->track.x - kWorkspaceDiffMarkerLaneGap -
-                     kWorkspaceDiffMarkerLaneWidth),
-        scroll_layout.vertical_scrollbar->track.y, kWorkspaceDiffMarkerLaneWidth,
-        scroll_layout.vertical_scrollbar->track.h);
-    const SDL_FRect marker_inner_lane =
-        MakeRect(marker_lane.x + 1.0f, marker_lane.y + 1.0f, std::max(0.0f, marker_lane.w - 2.0f),
-                 std::max(0.0f, marker_lane.h - 2.0f));
-    DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
-    DrawRect(renderer, marker_lane, theme_.border);
-    DrawCompareScrollbarMarkers(renderer, theme_, marker_inner_lane, *compare_tab);
-    detail::DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
+    const SDL_FRect track = scroll_layout.vertical_scrollbar->track;
+    const SDL_FRect lane = overview::LaneRect(track, editor_surface.x);
+    const SDL_FRect inner_lane = overview::LaneInnerRect(lane);
+    EnsureCompareOverviewMarkers(theme_, inner_lane, overview::ThemeMarkerToken(theme_),
+                                 *compare_tab);
+    overview::DrawLane(renderer, theme_, lane, compare_tab->scrollbar_marker_cache);
+    detail::DrawScrollbarTrack(renderer, theme_, track);
     detail::DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
                        context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);
   }

@@ -13,6 +13,7 @@ void WorkspaceShell::RefreshBufferSearch() {
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
   if (viewport == nullptr) {
     buffer_search.matches.clear();
+    ++buffer_search.matches_revision;
     buffer_search.selected_index = 0;
     buffer_search.incremental = {};
     return;
@@ -37,6 +38,7 @@ void WorkspaceShell::RefreshBufferSearch() {
   buffer_search.matches = can_refine
                               ? RefineLiteralSearchMatches(buffer, query, buffer_search.matches)
                               : FindLiteralSearchMatches(buffer, query);
+  ++buffer_search.matches_revision;
 
   incremental.valid = true;
   incremental.viewport = viewport;

@@ -5,9 +5,11 @@
 #include "compare/CompareSemanticMetadata.h"
 #include "workspace/CompareMergeRender.h"
 #include "workspace/LayoutModeService.h"
+#include "workspace/OverviewRuler.h"
 #include "workspace/WorkspaceLayout.h"
 
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 namespace microide::tests {
@@ -18,12 +20,11 @@ using microide::workspace::BottomPanelLineIndexAtY;
 using microide::workspace::CompareCollapsedContextBlockRect;
 using microide::workspace::EmptyTabStripPlaceholderRect;
 using microide::workspace::BuildChromeTabRenderItems;
-using microide::workspace::BuildCompareScrollbarMarkers;
+using microide::workspace::BuildCompareScrollbarRuns;
 using microide::workspace::ClassifyMergeHoverState;
 using microide::workspace::ComputeDirtyPromptButtonRects;
 using microide::workspace::ComputeDirtyPromptRect;
 using microide::workspace::ComputeEditorSplitAxisLayout;
-using microide::workspace::BuildMergeScrollbarMarkers;
 using microide::workspace::ClampBottomPanelHeight;
 using microide::workspace::ClampSidebarWidth;
 using microide::workspace::ComputeChromeButtonWidth;
@@ -125,6 +126,19 @@ void TestWorkspaceSharedScrollbarReserveGeometry() {
          "horizontal scrollbar track should reserve the shared vertical scrollbar width");
 }
 
+std::vector<microide::workspace::overview::Marker> CompareMarkersFromRuns(
+    const SDL_FRect& lane, const std::vector<microide::workspace::CompareScrollbarRun>& runs,
+    std::size_t total_rows) {
+  std::vector<microide::workspace::overview::MarkerInput> inputs;
+  inputs.reserve(runs.size());
+  for (const auto& run : runs) {
+    inputs.push_back(microide::workspace::overview::MarkerInput{
+        .start_row = run.start_row, .end_row = run.end_row, .color = SDL_Color{255, 0, 0, 255},
+        .priority = 0});
+  }
+  return microide::workspace::overview::BuildMarkers(lane, total_rows, inputs);
+}
+
 void TestWorkspaceSharedCompareScrollbarMarkers() {
   const auto make_row = [](microide::compare::CompareRowKind kind) {
     return microide::compare::CompareRow{
@@ -162,18 +176,21 @@ void TestWorkspaceSharedCompareScrollbarMarkers() {
           }),
       microide::compare::ComparePresentationOptions{},
       microide::compare::ComparePresentationCollapseState{}, 1);
-  const auto markers =
-      BuildCompareScrollbarMarkers(MakeRect(10.0f, 20.0f, 8.0f, 70.0f), presentation, model);
-  Expect(markers.size() == 3, "compare scrollbar markers should group contiguous changed rows");
-  Expect(markers[0].kind == microide::compare::CompareRowKind::Added &&
-             markers[0].start_row == 1 && markers[0].end_row == 3,
-         "compare scrollbar markers should preserve added-row ranges");
-  Expect(markers[1].kind == microide::compare::CompareRowKind::Modified &&
-             markers[1].start_row == 3 && markers[1].end_row == 4,
-         "compare scrollbar markers should preserve modified-row ranges");
-  Expect(markers[2].kind == microide::compare::CompareRowKind::Deleted &&
-             markers[2].start_row == 4 && markers[2].end_row == 6,
-         "compare scrollbar markers should preserve deleted-row ranges");
+  const auto runs = BuildCompareScrollbarRuns(presentation, model);
+  Expect(runs.size() == 3, "compare scrollbar runs should group contiguous changed rows");
+  Expect(runs[0].kind == microide::compare::CompareRowKind::Added && runs[0].start_row == 1 &&
+             runs[0].end_row == 3,
+         "compare scrollbar runs should preserve added-row ranges");
+  Expect(runs[1].kind == microide::compare::CompareRowKind::Modified && runs[1].start_row == 3 &&
+             runs[1].end_row == 4,
+         "compare scrollbar runs should preserve modified-row ranges");
+  Expect(runs[2].kind == microide::compare::CompareRowKind::Deleted && runs[2].start_row == 4 &&
+             runs[2].end_row == 6,
+         "compare scrollbar runs should preserve deleted-row ranges");
+
+  const auto markers = CompareMarkersFromRuns(MakeRect(10.0f, 20.0f, 8.0f, 70.0f), runs,
+                                              presentation.rows.size());
+  Expect(markers.size() == 3, "shared builder should emit one marker per changed run");
   Expect(markers[0].rect.y >= 20.0f && markers[2].rect.y + markers[2].rect.h <= 90.0f,
          "compare scrollbar markers should stay inside the track bounds");
   Expect(markers[1].rect.h >= 2.0f,
@@ -213,51 +230,151 @@ void TestWorkspaceSharedCompareScrollbarMarkersFollowPresentationRows() {
       microide::compare::ComparePresentationOptions{},
       microide::compare::ComparePresentationCollapseState{}, 1);
 
-  const auto markers =
-      BuildCompareScrollbarMarkers(MakeRect(10.0f, 20.0f, 8.0f, 100.0f), presentation, model);
-  Expect(markers.size() == 2,
-         "collapsed compare presentations should still emit one marker per visible changed run");
+  const auto runs = BuildCompareScrollbarRuns(presentation, model);
+  Expect(runs.size() == 2,
+         "collapsed compare presentations should still emit one run per visible changed run");
   Expect(presentation.rows.size() > 5,
          "collapsed compare fixture should include buffered context rows around changes");
-  Expect(markers[0].start_row > 1 && markers[0].end_row > markers[0].start_row,
+  Expect(runs[0].start_row > 1 && runs[0].end_row > runs[0].start_row,
          "first changed run should be positioned using presentation-row coordinates");
-  Expect(markers[1].start_row > markers[0].end_row && markers[1].end_row > markers[1].start_row,
+  Expect(runs[1].start_row > runs[0].end_row && runs[1].end_row > runs[1].start_row,
          "second changed run should also be positioned using presentation-row coordinates");
+
+  const auto markers = CompareMarkersFromRuns(MakeRect(10.0f, 20.0f, 8.0f, 100.0f), runs,
+                                              presentation.rows.size());
+  Expect(markers.size() == 2, "shared builder should emit one marker per visible changed run");
   Expect(markers[1].rect.y < 90.0f,
          "collapsed context should shrink the marker gap instead of preserving raw model spacing");
 }
 
 void TestWorkspaceSharedMergeScrollbarMarkers() {
-  const std::vector<microide::workspace::MergeScrollbarMarkerInput> inputs = {
-      {.start_row = 2, .end_row = 5, .choice = microide::compare::MergeChoice::Base, .valid = true},
-      {.start_row = 10,
-       .end_row = 14,
-       .choice = microide::compare::MergeChoice::Incoming,
-       .valid = true},
-      {.start_row = 18,
-       .end_row = 19,
-       .choice = microide::compare::MergeChoice::Both,
-       .valid = false},
+  const SDL_Color color{100, 150, 200, 255};
+  const std::vector<microide::workspace::overview::MarkerInput> inputs = {
+      {.start_row = 2, .end_row = 5, .color = color, .priority = 0},
+      {.start_row = 10, .end_row = 14, .color = color, .priority = 0},
+      {.start_row = 18, .end_row = 19, .color = color, .priority = 0},
   };
 
   const auto markers =
-      BuildMergeScrollbarMarkers(MakeRect(10.0f, 20.0f, 8.0f, 90.0f), 24, inputs);
+      microide::workspace::overview::BuildMarkers(MakeRect(10.0f, 20.0f, 8.0f, 90.0f), 24, inputs);
   Expect(markers.size() == 3,
-         "merge scrollbar markers should preserve one marker per tracked merge span");
-  Expect(markers[0].start_row == 2 && markers[0].end_row == 5 &&
-             markers[0].choice == microide::compare::MergeChoice::Base && markers[0].valid,
-         "merge scrollbar markers should preserve the first tracked span");
-  Expect(markers[1].start_row == 10 && markers[1].end_row == 14 &&
-             markers[1].choice == microide::compare::MergeChoice::Incoming && markers[1].valid,
-         "merge scrollbar markers should preserve the second tracked span");
-  Expect(markers[2].start_row == 18 && markers[2].end_row == 19 &&
-             markers[2].choice == microide::compare::MergeChoice::Both && !markers[2].valid,
-         "merge scrollbar markers should preserve invalid spans too");
+         "shared builder should preserve one marker per tracked merge span");
   Expect(markers.front().rect.y >= 20.0f &&
              markers.back().rect.y + markers.back().rect.h <= 110.0f,
          "merge scrollbar markers should stay inside the track bounds");
   Expect(markers.back().rect.h >= 2.0f,
          "merge scrollbar markers should stay visible even for near-single-line spans");
+}
+
+void TestWorkspaceSharedOverviewLaneGeometry() {
+  namespace overview = microide::workspace::overview;
+  const SDL_FRect track = MakeRect(200.0f, 40.0f, 10.0f, 300.0f);
+  const SDL_FRect lane = overview::LaneRect(track);
+  Expect(lane.x < track.x, "overview lane sits to the left of the scrollbar track");
+  Expect(std::abs((lane.x + lane.w + overview::kLaneGap) - track.x) < 0.01f,
+         "lane is separated from the track by exactly the lane gap");
+  Expect(lane.y == track.y && lane.h == track.h,
+         "lane spans the same vertical extent as the track");
+  Expect(lane.w == overview::kLaneWidth, "lane uses the configured lane width");
+
+  const SDL_FRect inner = overview::LaneInnerRect(lane);
+  Expect(inner.x == lane.x + 1.0f && inner.y == lane.y + 1.0f,
+         "inner lane insets by 1px for the border");
+  Expect(inner.w == lane.w - 2.0f && inner.h == lane.h - 2.0f,
+         "inner lane is 2px smaller than the lane in each dimension");
+}
+
+void TestWorkspaceSharedOverviewReducerBoundsAndPriority() {
+  namespace overview = microide::workspace::overview;
+  const SDL_FRect inner_lane = MakeRect(100.0f, 10.0f, 6.0f, 50.0f);
+  std::vector<std::uint32_t> buckets;
+  std::vector<SDL_Color> palette;
+
+  // Thousands of single-line inputs across a huge document must collapse to at most
+  // one marker per lane pixel (~ceil(height)), never one per input.
+  std::vector<overview::MarkerInput> dense;
+  const SDL_Color low{10, 10, 10, 255};
+  for (int line = 0; line < 4000; line += 2) {
+    dense.push_back({.start_row = line, .end_row = line + 1, .color = low, .priority = 1});
+  }
+  const auto reduced = overview::ReduceMarkers(inner_lane, 4000, dense, buckets, palette);
+  Expect(!reduced.empty(), "dense reducer should still emit markers");
+  Expect(reduced.size() <= static_cast<std::size_t>(std::ceil(inner_lane.h)) + 1,
+         "dense reducer output is bounded by lane height, not input count");
+  for (const auto& marker : reduced) {
+    Expect(marker.rect.y >= inner_lane.y - 0.01f &&
+               marker.rect.y + marker.rect.h <= inner_lane.y + inner_lane.h + 0.01f,
+           "reduced markers stay within the lane");
+  }
+
+  // Higher priority wins a contested pixel row: a high-priority error over the same
+  // row as a low-priority match paints the error color.
+  const SDL_Color high{200, 0, 0, 255};
+  const std::vector<overview::MarkerInput> contested = {
+      {.start_row = 5, .end_row = 6, .color = low, .priority = 1},
+      {.start_row = 5, .end_row = 6, .color = high, .priority = 90},
+  };
+  const auto resolved = overview::ReduceMarkers(inner_lane, 20, contested, buckets, palette);
+  Expect(!resolved.empty(), "contested reducer should emit a marker");
+  bool saw_high = false;
+  for (const auto& marker : resolved) {
+    if (marker.color.r == high.r && marker.color.g == high.g && marker.color.b == high.b) {
+      saw_high = true;
+    }
+    Expect(!(marker.color.r == low.r && marker.color.g == low.g && marker.color.b == low.b),
+           "the lower-priority color must not win the contested pixel");
+  }
+  Expect(saw_high, "the higher-priority color should win the contested pixel");
+}
+
+void TestWorkspaceSharedOverviewReducerEqualPriorityTieIsInputOrder() {
+  namespace overview = microide::workspace::overview;
+  const SDL_FRect inner_lane = MakeRect(100.0f, 10.0f, 6.0f, 50.0f);
+  std::vector<std::uint32_t> buckets;
+  std::vector<SDL_Color> palette;
+
+  const SDL_Color first{10, 20, 30, 255};
+  const SDL_Color second{200, 180, 160, 255};
+  // Two equal-priority, different-colored inputs collide on one pixel row. The winner
+  // must be the FIRST input (source order), deterministically — never the incidental
+  // palette-insertion order a full-packed-value compare used to leak.
+  const auto color_at_row5 = [&](const SDL_Color& a, const SDL_Color& b) -> SDL_Color {
+    const std::vector<overview::MarkerInput> contested = {
+        {.start_row = 5, .end_row = 6, .color = a, .priority = 50},
+        {.start_row = 5, .end_row = 6, .color = b, .priority = 50},
+    };
+    const auto reduced = overview::ReduceMarkers(inner_lane, 20, contested, buckets, palette);
+    Expect(!reduced.empty(), "equal-priority contest should still emit a marker");
+    return reduced.front().color;
+  };
+
+  const SDL_Color forward = color_at_row5(first, second);
+  Expect(forward.r == first.r && forward.g == first.g && forward.b == first.b,
+         "equal priority: the first input wins the contested pixel");
+  const SDL_Color reversed = color_at_row5(second, first);
+  Expect(reversed.r == second.r && reversed.g == second.g && reversed.b == second.b,
+         "equal-priority winner tracks input order, not a fixed palette magnitude");
+}
+
+void TestWorkspaceSharedOverviewLaneLeftClamp() {
+  namespace overview = microide::workspace::overview;
+  const SDL_FRect track = MakeRect(200.0f, 40.0f, 10.0f, 300.0f);
+
+  // Unclamped (default): the lane sits its full footprint left of the track.
+  const SDL_FRect unclamped = overview::LaneRect(track);
+  Expect(std::abs(unclamped.x - (track.x - overview::kLaneGap - overview::kLaneWidth)) < 0.01f,
+         "default LaneRect places the lane a full gap+width left of the track");
+
+  // A min_x to the right of the natural lane x clamps the lane so it never paints left of
+  // the owning surface (regression: the extraction dropped this guard).
+  const float surface_left = track.x - 4.0f;  // narrower than gap+width (9px)
+  const SDL_FRect clamped = overview::LaneRect(track, surface_left);
+  Expect(clamped.x == surface_left, "LaneRect clamps the lane's left edge to min_x");
+  Expect(clamped.w == overview::kLaneWidth, "clamping keeps the configured lane width");
+
+  // A min_x left of the natural lane x leaves it untouched.
+  const SDL_FRect unaffected = overview::LaneRect(track, 0.0f);
+  Expect(unaffected.x == unclamped.x, "a min_x left of the lane does not move it");
 }
 
 void TestWorkspaceSharedPanelGeometryHelpers() {
@@ -1012,6 +1129,14 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedCompareScrollbarMarkersFollowPresentationRows);
   AddTest(tests, "WorkspaceShared/MergeScrollbarMarkers",
           TestWorkspaceSharedMergeScrollbarMarkers);
+  AddTest(tests, "WorkspaceShared/OverviewLaneGeometry",
+          TestWorkspaceSharedOverviewLaneGeometry);
+  AddTest(tests, "WorkspaceShared/OverviewReducerBoundsAndPriority",
+          TestWorkspaceSharedOverviewReducerBoundsAndPriority);
+  AddTest(tests, "WorkspaceShared/OverviewReducerEqualPriorityTieIsInputOrder",
+          TestWorkspaceSharedOverviewReducerEqualPriorityTieIsInputOrder);
+  AddTest(tests, "WorkspaceShared/OverviewLaneLeftClamp",
+          TestWorkspaceSharedOverviewLaneLeftClamp);
   AddTest(tests, "WorkspaceShared/PanelGeometryHelpers", TestWorkspaceSharedPanelGeometryHelpers);
   AddTest(tests, "WorkspaceShared/PromptGeometry", TestWorkspaceSharedPromptGeometry);
   AddTest(tests, "WorkspaceShared/ScrollbarEdgeCases", TestWorkspaceSharedScrollbarEdgeCases);

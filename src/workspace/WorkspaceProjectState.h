@@ -104,6 +104,9 @@ struct BufferSearchState {
   editor::SingleLineEditor query;
   editor::SingleLineEditor replace_text;
   std::vector<editor::SelectionRange> matches;
+  // Bumped whenever `matches` is reassigned (see WorkspaceShell::RefreshBufferSearch) so
+  // the editor overview ruler can cheaply detect when its cached markers are stale.
+  std::uint64_t matches_revision = 0;
   std::size_t selected_index = 0;
   std::vector<std::size_t> temporarily_expanded_fold_openers;
   std::filesystem::path temporarily_expanded_fold_tab_path;

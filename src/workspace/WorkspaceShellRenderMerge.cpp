@@ -16,6 +16,7 @@
 #include "util/PerformanceTrace.h"
 #include "workspace/CompareMergeRender.h"
 #include "workspace/MergeResolverContext.h"
+#include "workspace/OverviewRuler.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceShellRenderPrimitives.h"
@@ -51,46 +52,40 @@ SDL_Color MergeMarkerColor(const render::Theme& theme,
   }
 }
 
-void DrawMergeScrollbarMarkers(SDL_Renderer* renderer,
-                               const render::Theme& theme,
-                               const SDL_FRect& track,
-                               std::size_t total_rows,
-                               MergeTabState& merge_tab) {
-  if (renderer == nullptr) {
+// Rebuilds the cached overview markers for `merge_tab` when the model or the lane
+// geometry changed. One marker per conflict, pre-mapped to `inner_lane`.
+void EnsureMergeOverviewMarkers(const render::Theme& theme,
+                                const SDL_FRect& inner_lane,
+                                std::size_t total_rows,
+                                std::uint64_t theme_token,
+                                MergeTabState& merge_tab) {
+  if (merge_tab.scrollbar_marker_cache_valid &&
+      merge_tab.scrollbar_marker_cache_revision == merge_tab.model_revision &&
+      merge_tab.scrollbar_marker_cache_theme_token == theme_token &&
+      RectsEqual(merge_tab.scrollbar_marker_cache_track, inner_lane)) {
     return;
   }
 
-  if (!merge_tab.scrollbar_marker_cache_valid ||
-      merge_tab.scrollbar_marker_cache_revision != merge_tab.model_revision ||
-      !RectsEqual(merge_tab.scrollbar_marker_cache_track, track)) {
-    // Marker inputs are only needed on a cache miss (model revision or track
-    // change), so the per-conflict vector is built here instead of per frame.
-    std::vector<MergeScrollbarMarkerInput> inputs;
-    inputs.reserve(merge_tab.conflicts.size());
-    for (const auto& conflict : merge_tab.conflicts) {
-      const int start_row = static_cast<int>(std::min(
-          {conflict.incoming_start_line, conflict.start_line, conflict.current_start_line}));
-      const int end_row = static_cast<int>(std::max(
-          {std::max(conflict.incoming_end_line, conflict.incoming_start_line + 1),
-           std::max(conflict.end_line, conflict.start_line + 1),
-           std::max(conflict.current_end_line, conflict.current_start_line + 1)}));
-      inputs.push_back(MergeScrollbarMarkerInput{
-          .start_row = start_row,
-          .end_row = end_row,
-          .choice = conflict.last_choice,
-          .valid = conflict.valid,
-      });
-    }
-    merge_tab.scrollbar_marker_cache = BuildMergeScrollbarMarkers(track, total_rows, inputs);
-    merge_tab.scrollbar_marker_cache_track = track;
-    merge_tab.scrollbar_marker_cache_revision = merge_tab.model_revision;
-    merge_tab.scrollbar_marker_cache_valid = true;
+  std::vector<overview::MarkerInput> inputs;
+  inputs.reserve(merge_tab.conflicts.size());
+  for (const auto& conflict : merge_tab.conflicts) {
+    const int start_row = static_cast<int>(std::min(
+        {conflict.incoming_start_line, conflict.start_line, conflict.current_start_line}));
+    const int end_row = static_cast<int>(std::max(
+        {std::max(conflict.incoming_end_line, conflict.incoming_start_line + 1),
+         std::max(conflict.end_line, conflict.start_line + 1),
+         std::max(conflict.current_end_line, conflict.current_start_line + 1)}));
+    inputs.push_back(overview::MarkerInput{
+        .start_row = start_row,
+        .end_row = end_row,
+        .color = MergeMarkerColor(theme, conflict.last_choice, conflict.valid),
+        .priority = 0});
   }
-  for (const MergeScrollbarMarker& marker : merge_tab.scrollbar_marker_cache) {
-    const SDL_Color color = MergeMarkerColor(theme, marker.choice, marker.valid);
-    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-    SDL_RenderFillRect(renderer, &marker.rect);
-  }
+  merge_tab.scrollbar_marker_cache = overview::BuildMarkers(inner_lane, total_rows, inputs);
+  merge_tab.scrollbar_marker_cache_track = inner_lane;
+  merge_tab.scrollbar_marker_cache_revision = merge_tab.model_revision;
+  merge_tab.scrollbar_marker_cache_theme_token = theme_token;
+  merge_tab.scrollbar_marker_cache_valid = true;
 }
 
 }  // namespace
@@ -160,19 +155,13 @@ void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRe
     const std::size_t line_count =
         std::max({merge_tab->model.incoming_lines.size(), merge_tab->result_viewport.line_count(),
                   merge_tab->model.current_lines.size(), std::size_t{1}});
-    const SDL_FRect marker_lane = MakeRect(
-        std::max(editor_surface.x,
-                 scroll_layout.vertical_scrollbar->track.x - kWorkspaceDiffMarkerLaneGap -
-                     kWorkspaceDiffMarkerLaneWidth),
-        scroll_layout.vertical_scrollbar->track.y, kWorkspaceDiffMarkerLaneWidth,
-        scroll_layout.vertical_scrollbar->track.h);
-    const SDL_FRect marker_inner_lane =
-        MakeRect(marker_lane.x + 1.0f, marker_lane.y + 1.0f, std::max(0.0f, marker_lane.w - 2.0f),
-                 std::max(0.0f, marker_lane.h - 2.0f));
-    DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
-    DrawRect(renderer, marker_lane, theme_.border);
-    DrawMergeScrollbarMarkers(renderer, theme_, marker_inner_lane, line_count, *merge_tab);
-    detail::DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
+    const SDL_FRect track = scroll_layout.vertical_scrollbar->track;
+    const SDL_FRect lane = overview::LaneRect(track, editor_surface.x);
+    const SDL_FRect inner_lane = overview::LaneInnerRect(lane);
+    EnsureMergeOverviewMarkers(theme_, inner_lane, line_count, overview::ThemeMarkerToken(theme_),
+                               *merge_tab);
+    overview::DrawLane(renderer, theme_, lane, merge_tab->scrollbar_marker_cache);
+    detail::DrawScrollbarTrack(renderer, theme_, track);
     detail::DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
                        context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);
   }

@@ -811,43 +811,19 @@ float ScrollUnitsForPointer(const ScrollbarGeometry& geometry,
   return ((thumb_start - track_start) / travel) * max_scroll;
 }
 
-std::vector<CompareScrollbarMarker> BuildCompareScrollbarMarkers(
-    const SDL_FRect& track,
+std::vector<CompareScrollbarRun> BuildCompareScrollbarRuns(
     const compare::ComparePresentationModel& presentation,
     const compare::CompareModel& model) {
-  std::vector<CompareScrollbarMarker> markers;
-  if (track.w <= 0.0f || track.h <= 0.0f || presentation.rows.empty() ||
-      model.rows.empty()) {
-    return markers;
+  std::vector<CompareScrollbarRun> runs;
+  if (presentation.rows.empty() || model.rows.empty()) {
+    return runs;
   }
 
-  const float total_rows = static_cast<float>(presentation.rows.size());
-  const float track_end = track.y + track.h;
-  auto push_marker = [&](int start_row,
-                         int end_row,
-                         compare::CompareRowKind kind) {
+  auto push_run = [&](int start_row, int end_row, compare::CompareRowKind kind) {
     if (kind == compare::CompareRowKind::Unchanged || start_row < 0 || end_row <= start_row) {
       return;
     }
-
-    const float top = track.y + (static_cast<float>(start_row) / total_rows) * track.h;
-    const float bottom = track.y + (static_cast<float>(end_row) / total_rows) * track.h;
-    float y = std::clamp(std::floor(top), track.y, std::max(track.y, track_end - 1.0f));
-    float height = std::max(2.0f, std::ceil(bottom) - y);
-    if (y + height > track_end) {
-      y = std::max(track.y, track_end - height);
-      height = std::min(height, track_end - y);
-    }
-    if (height <= 0.0f) {
-      return;
-    }
-
-    markers.push_back(CompareScrollbarMarker{
-        .kind = kind,
-        .start_row = start_row,
-        .end_row = end_row,
-        .rect = MakeRect(track.x, y, track.w, height),
-    });
+    runs.push_back(CompareScrollbarRun{.kind = kind, .start_row = start_row, .end_row = end_row});
   };
 
   int run_start = -1;
@@ -856,7 +832,7 @@ std::vector<CompareScrollbarMarker> BuildCompareScrollbarMarkers(
     const compare::ComparePresentationRow& presentation_row = presentation.rows[i];
     if (presentation_row.kind != compare::ComparePresentationRowKind::Model ||
         presentation_row.model_row_index >= model.rows.size()) {
-      push_marker(run_start, static_cast<int>(i), run_kind);
+      push_run(run_start, static_cast<int>(i), run_kind);
       run_start = -1;
       run_kind = compare::CompareRowKind::Unchanged;
       continue;
@@ -864,7 +840,7 @@ std::vector<CompareScrollbarMarker> BuildCompareScrollbarMarkers(
 
     const compare::CompareRowKind kind = model.rows[presentation_row.model_row_index].kind;
     if (kind == compare::CompareRowKind::Unchanged) {
-      push_marker(run_start, static_cast<int>(i), run_kind);
+      push_run(run_start, static_cast<int>(i), run_kind);
       run_start = -1;
       run_kind = compare::CompareRowKind::Unchanged;
       continue;
@@ -874,51 +850,12 @@ std::vector<CompareScrollbarMarker> BuildCompareScrollbarMarkers(
       continue;
     }
 
-    push_marker(run_start, static_cast<int>(i), run_kind);
+    push_run(run_start, static_cast<int>(i), run_kind);
     run_start = static_cast<int>(i);
     run_kind = kind;
   }
-  push_marker(run_start, static_cast<int>(presentation.rows.size()), run_kind);
-  return markers;
-}
-
-std::vector<MergeScrollbarMarker> BuildMergeScrollbarMarkers(
-    const SDL_FRect& track,
-    std::size_t total_rows,
-    const std::vector<MergeScrollbarMarkerInput>& inputs) {
-  std::vector<MergeScrollbarMarker> markers;
-  if (track.w <= 0.0f || track.h <= 0.0f || total_rows == 0 || inputs.empty()) {
-    return markers;
-  }
-
-  const float total_units = static_cast<float>(total_rows);
-  const float track_end = track.y + track.h;
-  for (const MergeScrollbarMarkerInput& input : inputs) {
-    if (input.end_row <= input.start_row || input.start_row < 0) {
-      continue;
-    }
-
-    const float top = track.y + (static_cast<float>(input.start_row) / total_units) * track.h;
-    const float bottom = track.y + (static_cast<float>(input.end_row) / total_units) * track.h;
-    float y = std::clamp(std::floor(top), track.y, std::max(track.y, track_end - 1.0f));
-    float height = std::max(2.0f, std::ceil(bottom) - y);
-    if (y + height > track_end) {
-      y = std::max(track.y, track_end - height);
-      height = std::min(height, track_end - y);
-    }
-    if (height <= 0.0f) {
-      continue;
-    }
-
-    markers.push_back(MergeScrollbarMarker{
-        .start_row = input.start_row,
-        .end_row = input.end_row,
-        .choice = input.choice,
-        .valid = input.valid,
-        .rect = MakeRect(track.x, y, track.w, height),
-    });
-  }
-  return markers;
+  push_run(run_start, static_cast<int>(presentation.rows.size()), run_kind);
+  return runs;
 }
 
 namespace {
