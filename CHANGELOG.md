@@ -6,11 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
-## [2.6.4] - Unreleased
+## [2.6.4] - 2026-07-05
 
-A **correctness and hardening** cycle on top of 2.6.3, still accumulating. It pairs
-a broad round of user-visible bug fixes across editor, compare/merge, git, LSP/DAP,
-and plugin surfaces with a continued defensive-caps sweep. Draft — not yet tagged.
+A **correctness and hardening** cycle on top of 2.6.3. It pairs a broad round of
+user-visible bug fixes across editor, compare/merge, git, LSP/DAP, and plugin
+surfaces with a continued defensive-caps sweep.
 
 ### Changed
 
