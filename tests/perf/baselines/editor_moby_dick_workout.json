@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":212132,"p50_allocations":139362,"p95_allocations":172113.44999999995,"p95_wall_ms":159.48069224999995,"max_wall_ms":206.635187,"p50_wall_ms":114.16806299999999},"scenario":"editor_moby_dick_workout"}

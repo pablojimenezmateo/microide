@@ -70,6 +70,7 @@ coverage and a clear owner.
 | --- | --- | --- | --- |
 | Startup (no project, small, large) | `cold_startup_no_project`, `cold_startup_small_project`, `cold_startup_large_project` | p50/p95/max wall time, allocation counts | app bootstrap, session restore, workspace init |
 | Editing and render throughput | `typing_small_file`, `typing_large_file`, `scroll_large_file`, `large_file_open_first_paint`, `multi_tab_cycle` | p50/p95/max wall time, allocation counts | editor, text viewport, render view-model pipeline |
+| Large-file workout (opt-in) | `editor_moby_dick_workout` | per-phase p50/p95/max wall time, allocation counts | editor, text viewport, clipboard, undo history, resize/relayout |
 | Search and indexing | `project_search_literal`, `project_search_regex`, `search_first_result`, `file_finder_cold` | p50/p95/max wall time | project search, file finder, background executor |
 | Shell surfaces | `compare_tab_open`, `merge_tab_open`, `compare_scroll_large_fixture`, `merge_scroll_large_fixture`, `merge_scroll_interleaved_hunks`, `compare_scroll_selection`, `git_sidebar_activate` | p50/p95/max wall time, allocation counts | compare/merge services, sidebar services |
 | Git workstation | `git_sidebar_refresh_large_repo`, `git_sidebar_refresh_many_untracked`, `diff_open_1000_file_changes`, `diff_next_hunk_large_file`, `diff_stage_hunk_large_patch`, `diff_stage_selected_lines`, `merge_open_many_conflicts`, `merge_next_conflict_large_file`, `merge_accept_hunk_interleaved`, `merge_edit_result_then_scroll`, `commit_open_with_large_staged_set`, `external_change_refresh_open_diff`, `external_change_refresh_open_merge` | p50/p95/max wall time, allocation counts, per-iteration `perf_counters` | `GitRepositoryService`, compare/merge services, staging, commit workflow, file watchers |
@@ -104,9 +105,14 @@ candidates; keep the live-session scenario advisory (its subprocess timing is in
 The current harness is useful, but it is not complete. These gaps are still open and should be
 described honestly in README / roadmap text until they are closed:
 
-- the gated suite now covers large-file open-to-first-paint, but it still does not cover every
-  large-file interaction. Cursor jumps and edit-after-open traces remain worth adding if those
-  regressions recur.
+- the gated suite now covers large-file open-to-first-paint, and `editor_moby_dick_workout`
+  additionally traces cursor-jump-to-end/middle, window resize, whole-document
+  select-all/cut/paste/undo/redo, and a mid-document typing burst on a real ~1.2 MB / ~22k-line
+  prose file. That scenario is **opt-in**: its fixture is a network fetch
+  (`generate_editor_essentials_perf_fixtures.py --fixture moby`, kept out of `--fixture all`), so
+  it is `run_by_default = false` (explicit `--scenarios=editor_moby_dick_workout`) yet
+  `baseline_gated = true` — it enforces its committed baseline when run on the reference runner.
+  Other large-file interaction traces remain worth adding if those regressions recur.
 - the large-surface interaction gates now cover compare and merge scroll bursts, interleaved merge
   hunks, compare scrolling with a multi-row selection, and the Git workstation scenario set below
   (sidebar refresh, diff open/navigation/staging, merge open/navigation/accept/edit-scroll, commit

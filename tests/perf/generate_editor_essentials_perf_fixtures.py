@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import urllib.request
 from pathlib import Path
 
 TARGET_LINES_CPP = 50_000
@@ -20,6 +21,17 @@ TARGET_BYTES_1MB = 1 << 20  # 1 MiB
 BLOCK_DEPTH = 64  # deep nesting chunks; 4 spaces each => conventional C++/Python indentation.
 INDENT_UNIT = "    "
 PY_LINE_COMMENT = "# perf fixture"
+
+# Project Gutenberg ebook #2701 (Herman Melville, "Moby-Dick; or, The Whale").
+# Public domain. Used verbatim (body only) as a real ~1.2 MB / ~22k-line prose
+# buffer for the editor_moby_dick_workout perf scenario -- the "Moby Dick
+# workout" large-file responsiveness test. The download happens only at
+# fixture-generation time; committed .sha256 pins the normalized body so
+# `--ensure` catches drift, and the perf scenario skips gracefully if the
+# (gitignored) fixture is absent.
+MOBY_DICK_URL = "https://www.gutenberg.org/files/2701/2701-0.txt"
+MOBY_DICK_START_MARKER = "*** START OF THE PROJECT GUTENBERG EBOOK"
+MOBY_DICK_END_MARKER = "*** END OF THE PROJECT GUTENBERG EBOOK"
 
 
 def wipe_tree(root: Path) -> None:
@@ -195,11 +207,49 @@ def write_fixture_mixed_1mb(root: Path) -> None:
     if len(blob) < TARGET_BYTES_1MB:
         blob.extend(b"@" * (TARGET_BYTES_1MB - len(blob)))
     path.write_bytes(bytes(blob))
+def write_fixture_moby_dick(root: Path) -> None:
+    """Real Moby-Dick prose body (Gutenberg #2701), normalized to LF.
+
+    Strips the Project Gutenberg boilerplate outside the START/END markers so
+    the body is stable against header/footer churn, canonicalizes line endings
+    to LF, and ensures exactly one trailing newline. The result is ~1.2 MB over
+    ~22k lines -- a full novel of natural prose, unlike the synthetic C++/Python
+    fixtures.
+    """
+    wipe_tree(root)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "moby-dick.txt"
+
+    with urllib.request.urlopen(MOBY_DICK_URL, timeout=60) as response:  # noqa: S310 (fixed https URL)
+        raw = response.read().decode("utf-8")
+
+    # Split on any newline flavor, then keep only the lines strictly between the
+    # Gutenberg START and END markers.
+    all_lines = raw.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    start_idx = next(
+        (i for i, ln in enumerate(all_lines) if ln.startswith(MOBY_DICK_START_MARKER)), None
+    )
+    end_idx = next(
+        (i for i, ln in enumerate(all_lines) if ln.startswith(MOBY_DICK_END_MARKER)), None
+    )
+    if start_idx is None or end_idx is None or end_idx <= start_idx:
+        raise RuntimeError("moby_dick: could not locate Gutenberg START/END markers")
+
+    body = all_lines[start_idx + 1 : end_idx]
+    # Trim leading/trailing blank lines so the body starts and ends on content.
+    while body and body[0].strip() == "":
+        body.pop(0)
+    while body and body[-1].strip() == "":
+        body.pop()
+
+    path.write_text("\n".join(body) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--fixture",
-        choices=("cpp", "py", "mb", "all"),
+        choices=("cpp", "py", "mb", "moby", "all"),
         default="all",
         help="Which fixture subtree to regenerate (default: all).",
     )
@@ -215,9 +265,16 @@ def main() -> int:
         "--output-1mb",
         default="tests/perf/fixtures/editor_essentials_1mb",
     )
+    parser.add_argument(
+        "--output-moby",
+        default="tests/perf/fixtures/editor_essentials_moby_dick",
+    )
     parser.add_argument("--hash-cpp", default="tests/perf/fixtures/editor_essentials_50k_cpp.sha256")
     parser.add_argument("--hash-py", default="tests/perf/fixtures/editor_essentials_50k_py.sha256")
     parser.add_argument("--hash-1mb", default="tests/perf/fixtures/editor_essentials_1mb.sha256")
+    parser.add_argument(
+        "--hash-moby", default="tests/perf/fixtures/editor_essentials_moby_dick.sha256"
+    )
     parser.add_argument(
         "--ensure",
         action="store_true",
@@ -237,6 +294,10 @@ def main() -> int:
         specs.append(("py", Path(args.output_py), Path(args.hash_py), write_fixture_py))
     if args.fixture in ("mb", "all"):
         specs.append(("1mb", Path(args.output_1mb), Path(args.hash_1mb), write_fixture_mixed_1mb))
+    # `moby` is deliberately NOT part of `all`: it needs a network fetch, so it
+    # stays opt-in (`--fixture moby`) to keep offline `--fixture all` working.
+    if args.fixture == "moby":
+        specs.append(("moby", Path(args.output_moby), Path(args.hash_moby), write_fixture_moby_dick))
 
     if args.ensure:
         return ensure_fixtures(cwd, specs)

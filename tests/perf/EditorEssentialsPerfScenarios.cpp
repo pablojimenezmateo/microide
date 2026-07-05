@@ -473,6 +473,121 @@ void RunMidFileEditLatencyLargeFile(ScenarioContext& context) {
   });
 }
 
+// The "Moby Dick workout" (hogbaysoftware.com/posts/moby-dick-workout): a
+// full-novel responsiveness test. Drives the six canonical steps on the real
+// ~1.2 MB / ~22k-line Project Gutenberg Moby-Dick body through the same SDL
+// input path the app uses -- select-all / cut / paste / undo / redo run as real
+// Ctrl-key chords (the keyboard + control-channel editing verbs), and the
+// window is resized at the end and the middle. Deterministic: one fixed
+// fixture, software renderer, fixed window; the per-phase Measure() calls yield
+// p50/p95/max wall + allocation counts.
+//
+// The fixture is opt-in (a network fetch; see
+// generate_editor_essentials_perf_fixtures.py --fixture moby), so this scenario
+// is run_by_default=false -- select it explicitly on the reference runner:
+//   microide_perf --scenarios=editor_moby_dick_workout
+void RunMobyDickWorkout(ScenarioContext& context) {
+  const std::filesystem::path moby =
+      "tests/perf/fixtures/editor_essentials_moby_dick/moby-dick.txt";
+  if (!std::filesystem::exists(moby)) {
+    std::cerr << "editor_moby_dick_workout: missing fixture " << moby
+              << " (run: python3 tests/perf/generate_editor_essentials_perf_fixtures.py"
+              << " --fixture moby)\n";
+    return;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+
+  // Step 1: open the novel and reach first stable paint.
+  context.Measure("moby.open_first_paint", [&] {
+    context.OpenTab(moby);
+    context.PumpFrames(2);
+  });
+  auto& vp = context.ActiveViewport();
+  const std::size_t total_lines = vp.lines().size();
+  if (total_lines < 20000) {
+    throw std::runtime_error("editor_moby_dick_workout: fixture too short");
+  }
+  const std::size_t last_line = total_lines - 1;
+  const std::size_t mid_line = total_lines / 2;
+
+  // Step 2: navigate to the end, then resize the window (shrink + restore).
+  context.Measure("moby.scroll_to_end", [&] {
+    vp.MoveCursorTo(last_line, 0, false);
+    context.PumpFrames(2);
+  });
+  context.Measure("moby.resize_at_end", [&] {
+    context.ResizeWindow(1280, 720);
+    context.PumpFrames(1);
+    context.ResizeWindow(1920, 1080);
+    context.PumpFrames(1);
+  });
+
+  // Step 3: jump to the middle, then resize again.
+  context.Measure("moby.jump_to_middle", [&] {
+    vp.MoveCursorTo(mid_line, 0, false);
+    context.PumpFrames(2);
+  });
+  context.Measure("moby.resize_at_middle", [&] {
+    context.ResizeWindow(1280, 720);
+    context.PumpFrames(1);
+    context.ResizeWindow(1920, 1080);
+    context.PumpFrames(1);
+  });
+
+  // Step 4: whole-document edit ops -- select all, cut, paste, undo, redo, each
+  // a real Ctrl chord. The net effect is the identity transform, so the line
+  // count must return to the original regardless of whether the headless
+  // clipboard round-trips (if cut/paste are no-ops the buffer never changed);
+  // this doubles as a corruption check.
+  vp.MoveCursorTo(0, 0, false);
+  context.Measure("moby.select_all", [&] {
+    context.KeyDown(SDLK_A, SDL_KMOD_CTRL);
+    context.PumpFrames(1);
+  });
+  context.Measure("moby.cut", [&] {
+    context.KeyDown(SDLK_X, SDL_KMOD_CTRL);
+    context.PumpFrames(1);
+  });
+  context.Measure("moby.paste", [&] {
+    context.KeyDown(SDLK_V, SDL_KMOD_CTRL);
+    context.PumpFrames(1);
+  });
+  context.Measure("moby.undo", [&] {
+    context.KeyDown(SDLK_Z, SDL_KMOD_CTRL);
+    context.PumpFrames(1);
+  });
+  context.Measure("moby.redo", [&] {
+    context.KeyDown(SDLK_Y, SDL_KMOD_CTRL);
+    context.PumpFrames(1);
+  });
+  const std::size_t after_edit_ops = vp.lines().size();
+  if (after_edit_ops == 0 || after_edit_ops + 2 < total_lines ||
+      after_edit_ops > total_lines + 2) {
+    throw std::runtime_error(
+        "editor_moby_dick_workout: buffer corrupted after select-all/cut/paste/undo/redo");
+  }
+
+  // Step 5: mid-document editing. Typing must not lag or scroll-jump to the top,
+  // so we assert the scroll stays anchored near the middle after the burst.
+  vp.MoveCursorTo(mid_line, 0, false);
+  context.PumpFrames(2);  // settle scroll/highlights before the measured burst
+  const std::size_t scroll_before = vp.scroll_line();
+  context.Measure("moby.mid_edit_burst", [&] {
+    context.Type("call me Ishmael ");
+    for (int i = 0; i < 12; ++i) {
+      context.KeyDown(SDLK_RETURN);
+      context.KeyDown(SDLK_BACKSPACE);
+    }
+    context.PumpFrames(1);
+  });
+  // A regression that resets the viewport to line 0 on a mid-document edit would
+  // drop scroll_line from ~mid to ~0; allow a small legitimate drift.
+  if (vp.scroll_line() + 100 < scroll_before) {
+    throw std::runtime_error(
+        "editor_moby_dick_workout: mid-document edit scroll-jumped toward the top");
+  }
+}
+
 const ScenarioRegistration g_perf_editor_occurrences_scan({Scenario{
     .name = "editor_occurrences_scan",
     .smoke = false,
@@ -542,6 +657,15 @@ const ScenarioRegistration g_perf_mid_file_edit_latency_large_file({Scenario{
     .name = "mid_file_edit_latency_large_file",
     .smoke = false,
     .run = RunMidFileEditLatencyLargeFile,
+}});
+const ScenarioRegistration g_perf_editor_moby_dick_workout({Scenario{
+    .name = "editor_moby_dick_workout",
+    .smoke = false,
+    .baseline_gated = true,
+    // Opt-in: the fixture is a network fetch (--fixture moby), so this does not
+    // run in the default/smoke suites; select it explicitly on the reference runner.
+    .run_by_default = false,
+    .run = RunMobyDickWorkout,
 }});
 
 }  // namespace
