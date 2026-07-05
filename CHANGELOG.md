@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.6.5] - 2026-07-05
+
+### Added
+- Shared overview-ruler lane painted left of the vertical scrollbar, used by the
+  editor, compare, and merge surfaces to show diff/merge changes, search matches,
+  diagnostics, and the caret at a glance. Enabled by
+  `editor.view.overview_ruler.enabled` (default on).
+
+### Fixed
+- Reserve the overview-lane gutter in editor metrics so a long line's trailing
+  glyphs never lay out under the lane.
+- Rebuild baked-in overview-ruler marker colors on a live colorscheme switch
+  (folded a theme token into the marker cache keys) instead of leaving them stale.
+- Deterministic tie-break when equal-priority markers contend for a pixel
+  (first writer wins by input order, not palette-insertion order).
+
 ## [2.6.4] - 2026-07-05
 
 A **correctness and hardening** cycle on top of 2.6.3. It pairs a broad round of
