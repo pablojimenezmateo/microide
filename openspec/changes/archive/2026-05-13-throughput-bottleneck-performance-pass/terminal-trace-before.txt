@@ -1,14 +1,14 @@
 [perf] running scenario 1/1: terminal_scroll_long_output
 [perf]    48.35 ms total |    45.10 ms | RuntimeSyntaxRegistry::EnsureInitialized
-[perf]    88.66 ms total |    37.34 ms |                   TextViewport::OpenFile(path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf]    88.66 ms total |    37.34 ms |                   TextViewport::OpenFile(path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
 [perf]    88.69 ms total |    37.37 ms |                 TabCoordinator::RestoreEditorView::OpenFile
 [perf]   103.12 ms total |    51.81 ms |               TabCoordinator::RestoreEditorView
 [perf]   103.16 ms total |    51.84 ms |             TabCoordinator::EnsureEditorTabLoaded
-[perf]   103.89 ms total |    52.58 ms |           TabCoordinator::Activate(index=16,path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf]   103.89 ms total |    52.58 ms |           TabCoordinator::Activate(index=16,path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
 [perf]   103.90 ms total |    52.60 ms |         WorkspaceShell::InitializeCurrentProject::ActivateCurrentTabAfterStateLoad
 [perf]   104.18 ms total |    54.98 ms |       WorkspaceShell::InitializeCurrentProject
 [perf]   104.19 ms total |    54.99 ms |     ProjectCatalogService::ActivateProjectState::InitializeCurrentProject
-[perf]   104.19 ms total |    54.99 ms |   ProjectCatalogService::ActivateProjectState(root=/home/gef/Documents/projects/microide/tests/perf/fixtures/switch_project_b)
+[perf]   104.19 ms total |    54.99 ms |   ProjectCatalogService::ActivateProjectState(root=<repo>/tests/perf/fixtures/switch_project_b)
 [perf]   104.19 ms total |    54.99 ms | ProjectCatalogCoordinator::Activate
 [perf] scenario=terminal_scroll_long_output iteration=1/1
 [perf]  1625.44 ms total |  1435.58 ms | WorkspaceRootView::Render

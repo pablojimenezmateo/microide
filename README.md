@@ -53,7 +53,7 @@ for what is actually measured, and what is not.
 ## Highlights
 
 ### Editing
-- Multi-project tabs, file tabs, nested shared-buffer splits, deferred-commit tab drag with ghost
+- Multi-project tabs, file tabs, split editor groups, deferred-commit tab drag with ghost
 - UTF-8 codepoint boundaries, IME preedit, line-ending detection and preservation
 - Multi-caret editing with position remap, region-stack highlighting, and copy-with-context
 - Soft word wrap with hanging indent; long-method fold resolution
@@ -89,7 +89,7 @@ for what is actually measured, and what is not.
 ### Terminal
 - PTY-backed terminal tabs with scrollback and selection
 - Alternate-screen support, application cursor-key mode, origin mode, autowrap, bracketed paste
-- OSC 52 clipboard copy, focus notifications, basic device/cursor query replies
+- OSC 52 clipboard copy (opt-in, off by default), focus notifications, basic device/cursor query replies
 - Terminal text selection, copy, and paste shortcuts
 - Tab drag reordering; right-click for "Copy Last Command + Output"
 
@@ -117,7 +117,7 @@ for what is actually measured, and what is not.
 - Language providers: definition, references, signature help, document symbols
 - Presentation contributions: color themes, file-icon themes, rich status items (tone + progress)
 - Host-owned registries: settings, keybindings, status items, menus, formatters, save participants,
-  completion providers, code actions, tests, SCM, auth, annotations
+  completion providers, code actions, tests, SCM, annotations
 - `plugins-reload` command; file-watch–triggered asset reload on Linux
 - Repo-owned dogfood examples: `plugins/eslint` (diagnostics), `plugins/eol-annotations`
   (decorations), `plugins/surface-preview` (content surfaces), `plugins/presentation-demo`
@@ -675,7 +675,7 @@ See `dev-docs/performance/startup-tracing.md` and `dev-docs/performance/runtime-
   `ctx.settings.*`, `ctx.menus.add`, `ctx.keybindings.add`, `ctx.status.*`,
   `ctx.formatters.add`, `ctx.save_participants.add`, `ctx.completion.add`,
   `ctx.code_actions.add`, `ctx.tasks.add`, `ctx.tools.add`, `ctx.tests.add`,
-  `ctx.scm.add`, `ctx.annotations.add`, `ctx.auth.add`
+  `ctx.scm.add`, `ctx.annotations.add`
 - Syntax: `syntax/*.lua` inside the user plugin directory, loaded at startup and on `plugins-reload`
 
 ## License

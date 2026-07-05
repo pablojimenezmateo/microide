@@ -26,7 +26,7 @@ or your real microide config. Full details + the scene list:
 | `hero-demo.mp4`      | Labeled hero trailer — H.264/MP4 (primary source) | `record-hero.sh` |
 | `hero-demo.webm`     | Labeled hero trailer — VP9/WebM (smaller source)  | `record-hero.sh` |
 | `hero-poster.png`    | Mid-action still shown before the video plays     | `record-hero.sh` |
-| `og.png`             | *(optional)* 1200×630 social preview — add by hand | — |
+| `og.png`             | 1200×630 social preview (og:image / twitter:card) — hero-poster contained on `#0d1117` | by hand |
 
 ## Regenerate on any UI change
 

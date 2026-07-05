@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.6.4] - Unreleased
+
+A **correctness and hardening** cycle on top of 2.6.3, still accumulating. It pairs
+a broad round of user-visible bug fixes across editor, compare/merge, git, LSP/DAP,
+and plugin surfaces with a continued defensive-caps sweep. Draft — not yet tagged.
+
+### Fixed
+
+- **Compare/merge:** compare panes render on the cell grid so caret, selection, and
+  text stay aligned; visible row layouts are cached outside the render loop. Merge
+  "Mark Resolved" self-rejection and CRLF conflict-marker parsing fixed.
+- **Editor:** fold gutter spacing corrected for wide line numbers; stale fold model
+  after undo/redo and `tabmove +N` fixed; multi-caret paste remap desync on lone-CR /
+  reversed line endings fixed; syntax highlighting carries the open-region stack across
+  blank and over-long lines.
+- **Git:** data loss when discarding or unstaging a staged rename fixed; sidebar discard
+  validated against the confirmed path rather than a stale index.
+- **LSP/DAP:** LSP shutdown deadlock, document leak, and stranded requests fixed; DAP
+  scope overflow fixed.
+- **Plugins:** plugin worker hang and control-channel reply race fixed.
+- **Settings:** steppers use the real ranges for scrollback, blink, autosave, and scale.
+
+### Security / resilience hardening
+
+- Additional allocation and length caps: terminal paste payloads, output-channel
+  retained bytes, control-socket connections, DAP protocol arrays, and terminal
+  tabulation repeats.
+- Hardened JSON/number parsing, persisted-record writes, and CR line-ending file loads.
+- Tenth-round resilience sweep: git-v2 crash, DAP list flooding, terminal reply-write stall.
+
+### Performance
+
+- Faster JSON string parse/serialize on the LSP/DAP hot path; render hot-path allocations
+  removed; plugin buffer open/save/close dispatch gated on subscriber interest.
+
 ## [2.6.3] - 2026-07-04
 
 A **resilience-hardening** release on top of 2.6.2. It lands a multi-round

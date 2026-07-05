@@ -27,7 +27,7 @@ The shell is intentionally compact:
 - a custom in-window menu bar
 - project tabs above file tabs
 - a persistent left sidebar with tree, search, problems, tests, and source-control modes
-- a central editor workspace with nested splits
+- a central editor workspace with split editor groups
 - a docked terminal-and-command pane
 - centered overlays for file finding and commit picking
 
@@ -43,7 +43,8 @@ The current SDL shell already includes:
 
 - multi-project tabs with app-level workspace restore
 - normal editor tabs, compare tabs, and merge tabs
-- nested shared-buffer splits inside editor tabs
+- first-class editor groups with split-right/split-down (superseded the older nested in-tab
+  shared-buffer split model, collapsed in v2.1.0)
 - a shared decorated text-grid render path across editor, compare, and merge surfaces, so row
   fills, syntax runs, and underline semantics do not degrade just because a file or diff is large
 - checkpointed syntax-highlight state in `TextViewport`, so random jumps in large files reuse

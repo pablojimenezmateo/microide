@@ -8,7 +8,7 @@ microide text: built without SDL_ttf; falling back to SDL debug text
 microide text: built without SDL_ttf; falling back to SDL debug text
 microide text: built without SDL_ttf; falling back to SDL debug text
 microide text: built without SDL_ttf; falling back to SDL debug text
-file: "/home/gef/Documents/projects/microide/src/workspace/WorkspaceShellRenderFrame.cpp"
+file: "<repo>/src/workspace/WorkspaceShellRenderFrame.cpp"
 left-ref: HEAD
 right-ref: WORKTREE
 runs: 5

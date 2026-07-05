@@ -25,6 +25,23 @@ and seccomp. This narrows plugin trust but does not fully isolate the Lua state.
 
 See [guidelines/plugin-trust-model.md](guidelines/plugin-trust-model.md) for the full model.
 
+## Control channel
+
+The optional external control channel (`microide --control`, for headless / LLM-driven control)
+listens on a **local `AF_UNIX` socket only** — there is no TCP listener and nothing binds to the
+network. The socket is created with `0600` permissions (owner read/write only) under
+`$XDG_RUNTIME_DIR/microide/`, so the trust boundary is standard Unix filesystem permissions: only
+your user can connect. There is **no per-message authentication token** — this is intentional for a
+single-user desktop tool and is the same model as the socket's file permissions.
+
+When `$XDG_RUNTIME_DIR` is unset, the socket falls back to `/tmp/microide/` (a world-writable
+parent directory). The socket itself is still `0600`, but on a shared multi-user host you should
+prefer running with `$XDG_RUNTIME_DIR` set (the default on modern Linux desktops). Untrusted input
+on the channel is bounded defensively — control descriptor files are capped (1 MiB) and the number
+of concurrent control instances is limited — so a hostile local process cannot exhaust memory or
+stall the CLI through the channel. See
+[dev-docs/control/control-channel.md](dev-docs/control/control-channel.md) for the full protocol.
+
 ## Safe startup flags (Git Workstation)
 
 For recovery or inspection of unfamiliar repositories:

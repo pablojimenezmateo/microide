@@ -1,18 +1,18 @@
 [perf] running scenario 1/1: editor_fold_recompute
 [perf]    61.83 ms total |    58.52 ms | RuntimeSyntaxRegistry::EnsureInitialized
-[perf]   103.40 ms total |    37.84 ms |                     TextViewport::OpenFile(path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf]   103.40 ms total |    37.84 ms |                     TextViewport::OpenFile(path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
 [perf]   103.43 ms total |    37.87 ms |                   TabCoordinator::RestoreEditorView::OpenFile
 [perf]   116.66 ms total |    51.10 ms |                 TabCoordinator::RestoreEditorView
 [perf]   116.68 ms total |    51.13 ms |               TabCoordinator::EnsureEditorTabLoaded
-[perf]   117.38 ms total |    51.82 ms |             TabCoordinator::Activate(index=16,path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf]   117.38 ms total |    51.82 ms |             TabCoordinator::Activate(index=16,path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
 [perf]   117.38 ms total |    51.83 ms |           WorkspaceShell::InitializeCurrentProject::ActivateCurrentTabAfterStateLoad
 [perf]   117.67 ms total |    54.41 ms |       WorkspaceShell::InitializeCurrentProject
 [perf]   117.68 ms total |    54.42 ms |     ProjectCatalogService::ActivateProjectState::InitializeCurrentProject
-[perf]   117.68 ms total |    54.42 ms |   ProjectCatalogService::ActivateProjectState(root=/home/gef/Documents/projects/microide/tests/perf/fixtures/switch_project_b)
+[perf]   117.68 ms total |    54.42 ms |   ProjectCatalogService::ActivateProjectState(root=<repo>/tests/perf/fixtures/switch_project_b)
 [perf]   117.68 ms total |    54.42 ms | ProjectCatalogCoordinator::Activate
 [perf] scenario=editor_fold_recompute iteration=1/1
-[perf]   152.70 ms total |    34.73 ms |   TextViewport::OpenFile(path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
-[perf]   166.25 ms total |    48.32 ms | TabCoordinator::OpenFileInNewTab(path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf]   152.70 ms total |    34.73 ms |   TextViewport::OpenFile(path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf]   166.25 ms total |    48.32 ms | TabCoordinator::OpenFileInNewTab(path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
 [perf]  1214.44 ms total |  1046.10 ms | WorkspaceRootView::Render
 [perf]  2902.82 ms total |  1644.10 ms | WorkspaceRootView::Render
 [perf]  2915.33 ms total |    11.39 ms |   TextViewport::Undo::ApplyHistoryEntry
@@ -63,22 +63,22 @@
 [perf]  3465.90 ms total |    11.67 ms | TextViewport::Undo
 [perf]  3491.34 ms total |    11.73 ms |   TextViewport::Undo::ApplyHistoryEntry
 [perf]  3491.37 ms total |    11.76 ms | TextViewport::Undo
-[perf]  3533.52 ms total |     9.23 ms |   ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown::Entry(index=7,root=/home/gef/Documents/projects/microide/tests/perf/fixtures/switch_project_b)
+[perf]  3533.52 ms total |     9.23 ms |   ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown::Entry(index=7,root=<repo>/tests/perf/fixtures/switch_project_b)
 [perf]  3533.55 ms total |     9.26 ms | ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown
 [perf] running scenario 2/2: editor_auto_close_typing
-[perf]  3579.52 ms total |    26.90 ms |                   TextViewport::OpenFile(path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf]  3579.52 ms total |    26.90 ms |                   TextViewport::OpenFile(path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
 [perf]  3579.54 ms total |    26.92 ms |                 TabCoordinator::RestoreEditorView::OpenFile
 [perf]  3588.66 ms total |    36.04 ms |               TabCoordinator::RestoreEditorView
 [perf]  3588.68 ms total |    36.06 ms |             TabCoordinator::EnsureEditorTabLoaded
-[perf]  3589.20 ms total |    36.58 ms |           TabCoordinator::Activate(index=16,path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf]  3589.20 ms total |    36.58 ms |           TabCoordinator::Activate(index=16,path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
 [perf]  3589.21 ms total |    36.60 ms |         WorkspaceShell::InitializeCurrentProject::ActivateCurrentTabAfterStateLoad
 [perf]  3589.44 ms total |    38.49 ms |       WorkspaceShell::InitializeCurrentProject
 [perf]  3589.46 ms total |    38.50 ms |     ProjectCatalogService::ActivateProjectState::InitializeCurrentProject
-[perf]  3589.46 ms total |    38.50 ms |   ProjectCatalogService::ActivateProjectState(root=/home/gef/Documents/projects/microide/tests/perf/fixtures/switch_project_b)
+[perf]  3589.46 ms total |    38.50 ms |   ProjectCatalogService::ActivateProjectState(root=<repo>/tests/perf/fixtures/switch_project_b)
 [perf]  3589.46 ms total |    38.50 ms | ProjectCatalogCoordinator::Activate
 [perf] scenario=editor_auto_close_typing iteration=1/1
-[perf]  3613.67 ms total |    24.11 ms |   TextViewport::OpenFile(path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
-[perf]  3623.00 ms total |    33.48 ms | TabCoordinator::OpenFileInNewTab(path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf]  3613.67 ms total |    24.11 ms |   TextViewport::OpenFile(path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf]  3623.00 ms total |    33.48 ms | TabCoordinator::OpenFileInNewTab(path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
 [perf]  4540.07 ms total |   916.00 ms | WorkspaceRootView::Render
 [perf]  4555.12 ms total |    11.59 ms |   WorkspaceEventDispatcher::Handle::TextInput
 [perf]  4555.14 ms total |    11.61 ms | WorkspaceEventDispatcher::Handle
@@ -562,19 +562,19 @@
 [perf]  7354.20 ms total |    11.88 ms | TextViewport::Undo
 [perf]  7381.55 ms total |    27.10 ms | WorkspaceRootView::Render
 [perf] running scenario 3/3: editor_smart_indent_typing
-[perf]  7466.14 ms total |    26.91 ms |                   TextViewport::OpenFile(path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf]  7466.14 ms total |    26.91 ms |                   TextViewport::OpenFile(path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
 [perf]  7466.17 ms total |    26.94 ms |                 TabCoordinator::RestoreEditorView::OpenFile
 [perf]  7475.32 ms total |    36.10 ms |               TabCoordinator::RestoreEditorView
 [perf]  7475.34 ms total |    36.12 ms |             TabCoordinator::EnsureEditorTabLoaded
-[perf]  7475.87 ms total |    36.65 ms |           TabCoordinator::Activate(index=16,path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf]  7475.87 ms total |    36.65 ms |           TabCoordinator::Activate(index=16,path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
 [perf]  7475.88 ms total |    36.68 ms |         WorkspaceShell::InitializeCurrentProject::ActivateCurrentTabAfterStateLoad
 [perf]  7476.08 ms total |    39.01 ms |       WorkspaceShell::InitializeCurrentProject
 [perf]  7476.08 ms total |    39.01 ms |     ProjectCatalogService::ActivateProjectState::InitializeCurrentProject
-[perf]  7476.08 ms total |    39.01 ms |   ProjectCatalogService::ActivateProjectState(root=/home/gef/Documents/projects/microide/tests/perf/fixtures/switch_project_b)
+[perf]  7476.08 ms total |    39.01 ms |   ProjectCatalogService::ActivateProjectState(root=<repo>/tests/perf/fixtures/switch_project_b)
 [perf]  7476.08 ms total |    39.01 ms | ProjectCatalogCoordinator::Activate
 [perf] scenario=editor_smart_indent_typing iteration=1/1
-[perf]  7500.21 ms total |    24.05 ms |   TextViewport::OpenFile(path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
-[perf]  7509.74 ms total |    33.61 ms | TabCoordinator::OpenFileInNewTab(path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf]  7500.21 ms total |    24.05 ms |   TextViewport::OpenFile(path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf]  7509.74 ms total |    33.61 ms | TabCoordinator::OpenFileInNewTab(path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
 [perf]  8430.61 ms total |   919.82 ms | WorkspaceRootView::Render
 [perf]  8457.96 ms total |    11.70 ms |   TextViewport::Undo::ApplyHistoryEntry
 [perf]  8457.99 ms total |    11.73 ms | TextViewport::Undo
@@ -818,22 +818,22 @@
 [perf] 11285.89 ms total |    11.91 ms | TextViewport::Undo
 [perf] 11420.36 ms total |   134.16 ms |   EditorViewRenderer::Render
 [perf] 11420.61 ms total |   134.48 ms | WorkspaceRootView::Render
-[perf] 11433.45 ms total |     6.54 ms |   ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown::Entry(index=7,root=/home/gef/Documents/projects/microide/tests/perf/fixtures/switch_project_b)
+[perf] 11433.45 ms total |     6.54 ms |   ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown::Entry(index=7,root=<repo>/tests/perf/fixtures/switch_project_b)
 [perf] 11433.47 ms total |     6.56 ms | ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown
 [perf] running scenario 4/4: editor_surround_multi_caret
-[perf] 11482.00 ms total |    27.76 ms |                   TextViewport::OpenFile(path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf] 11482.00 ms total |    27.76 ms |                   TextViewport::OpenFile(path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
 [perf] 11482.03 ms total |    27.78 ms |                 TabCoordinator::RestoreEditorView::OpenFile
 [perf] 11491.15 ms total |    36.92 ms |               TabCoordinator::RestoreEditorView
 [perf] 11491.18 ms total |    36.94 ms |             TabCoordinator::EnsureEditorTabLoaded
-[perf] 11492.05 ms total |    37.82 ms |           TabCoordinator::Activate(index=16,path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf] 11492.05 ms total |    37.82 ms |           TabCoordinator::Activate(index=16,path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
 [perf] 11492.08 ms total |    37.85 ms |         WorkspaceShell::InitializeCurrentProject::ActivateCurrentTabAfterStateLoad
 [perf] 11492.33 ms total |    40.13 ms |       WorkspaceShell::InitializeCurrentProject
 [perf] 11492.33 ms total |    40.13 ms |     ProjectCatalogService::ActivateProjectState::InitializeCurrentProject
-[perf] 11492.33 ms total |    40.13 ms |   ProjectCatalogService::ActivateProjectState(root=/home/gef/Documents/projects/microide/tests/perf/fixtures/switch_project_b)
+[perf] 11492.33 ms total |    40.13 ms |   ProjectCatalogService::ActivateProjectState(root=<repo>/tests/perf/fixtures/switch_project_b)
 [perf] 11492.34 ms total |    40.13 ms | ProjectCatalogCoordinator::Activate
 [perf] scenario=editor_surround_multi_caret iteration=1/1
-[perf] 11516.70 ms total |    24.29 ms |   TextViewport::OpenFile(path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
-[perf] 11526.27 ms total |    33.89 ms | TabCoordinator::OpenFileInNewTab(path=/home/gef/Documents/projects/microide/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf] 11516.70 ms total |    24.29 ms |   TextViewport::OpenFile(path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
+[perf] 11526.27 ms total |    33.89 ms | TabCoordinator::OpenFileInNewTab(path=<repo>/tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp)
 [perf] 12444.04 ms total |   916.71 ms | WorkspaceRootView::Render
 [perf] 12456.82 ms total |     7.91 ms |         TextViewport::EnsureHighlightCheckpoint::ReplayToCheckpoint
 [perf] 12456.84 ms total |     7.93 ms |       TextViewport::EnsureHighlightCheckpoint
@@ -843,5 +843,5 @@
 [perf] 12555.88 ms total |    13.60 ms |   TextViewport::Undo::ApplyHistoryEntry
 [perf] 12556.34 ms total |    14.07 ms | TextViewport::Undo
 [perf] 13878.54 ms total |  1322.02 ms | WorkspaceRootView::Render
-[perf] 13895.44 ms total |     7.61 ms |   ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown::Entry(index=7,root=/home/gef/Documents/projects/microide/tests/perf/fixtures/switch_project_b)
+[perf] 13895.44 ms total |     7.61 ms |   ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown::Entry(index=7,root=<repo>/tests/perf/fixtures/switch_project_b)
 [perf] 13895.46 ms total |     7.63 ms | ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown

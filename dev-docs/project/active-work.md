@@ -1,6 +1,13 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-07-03 (v2.6.1 shipped — font-picker polish on top of 2.6.0: scrollable
+Reviewed on 2026-07-05 (v2.6.3 shipped — resilience-hardening release: a multi-round white-box
+pentest sweep bounding adversarial/pathological inputs across terminal, editor, compare/merge, git,
+filesystem-watch, LSP/DAP, and plugin surfaces with allocation caps, recursion-depth guards, and
+list-length limits, plus one new opt-in terminal-clipboard (OSC 52) setting, off by default.
+Prior: v2.6.2 workspace-chrome release — project tab strip polish. A batch of ~24 correctness fixes
+is staged for 2.6.4-dev on `main` (fold gutter, compare cell-grid alignment + row-layout cache,
+multi-caret paste desync, git rename data-loss, LSP shutdown deadlock, merge "Mark Resolved" CRLF).
+Prior: v2.6.1 font-picker polish on top of 2.6.0: scrollable
 font-family dropdown with real scrollbar + mouse-wheel, weight/style-deduped family names,
 fontconfig enabled by default, and a `ResolveFamilyToFile` correctness fix. Prior: v2.6.0
 settings & tabs cycle — full settings overhaul with live-applied values and set-as-default,

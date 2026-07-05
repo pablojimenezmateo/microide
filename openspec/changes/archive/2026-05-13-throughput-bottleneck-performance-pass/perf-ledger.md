@@ -16,7 +16,7 @@ Local runs were captured on 2026-05-13 under `SDL_VIDEODRIVER=dummy` because thi
 
 ## Measurement Defect
 
-`PerfHarness::InitializeDriver` sets `XDG_CONFIG_HOME` to `/tmp/microide-perf-config`, but it does not set `XDG_STATE_HOME`. The harness therefore restored real state from `/home/gef/.local/state/microide/workspace-session`, which currently contains eight projects. This contaminates startup and terminal scenarios with unrelated project restore and 50k-line editor renders.
+`PerfHarness::InitializeDriver` sets `XDG_CONFIG_HOME` to `/tmp/microide-perf-config`, but it does not set `XDG_STATE_HOME`. The harness therefore restored real state from `/home/user/.local/state/microide/workspace-session`, which currently contains eight projects. This contaminates startup and terminal scenarios with unrelated project restore and 50k-line editor renders.
 
 Observed trace evidence:
 
