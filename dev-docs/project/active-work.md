@@ -599,7 +599,7 @@ Open work:
 
 Current state:
 
-- the editor is functionally strong, but the text model is still byte-oriented
+- the editor is functionally strong; the piece-tree text model stores raw UTF-8 bytes over 32-bit byte offsets, with UTF-8 correctness enforced at codepoint boundaries for cursor movement and IME
 - large-file mode, blame shadow text, and retained redraw are shipped
 - undo and redo now store line-range patches plus cursor and scroll state instead of full
   document snapshots, which removes the worst buffer-history memory blow-up on large files
@@ -608,7 +608,7 @@ Current state:
 
 Open work:
 
-- continue UTF-8 and IME hardening while the underlying text storage is still byte-based
+- continue UTF-8 and IME hardening over the piece tree's byte-offset storage
 - validate large-file thresholds on larger repositories and adjust only from measured behavior
 - validate blame shadow text on real repositories and keep it asynchronous, viewport-scoped, and cheap enough to preserve typing and scrolling latency
 - expand compare and merge workflow coverage where editor-side regressions are still too easy to miss

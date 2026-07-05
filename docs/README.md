@@ -5,8 +5,7 @@ This directory is published as the project site via GitHub Pages
 Jekyll so files are served as-is.
 
 - `index.html` — the single-page showcase site (self-contained: inline CSS, no JS,
-  no external requests). Placeholders marked `[HUMAN: …]` are intentional — fill in
-  the prose before publishing.
+  no external requests).
 - `media/` — demo video, screenshots, and social image. See `media/README.md`.
 
 ## Preview locally

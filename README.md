@@ -18,7 +18,7 @@ For the authoritative in-scope / non-goal list see `openspec/specs/product-visio
 > No third-party comparative benchmarks yet. Read [Known Limitations](#known-limitations) and
 > [Security & Trust Model](#security--trust-model) before using on a real project.
 >
-> **Verified, not just written.** 117 test files and 9 fuzz targets back the build, gated by
+> **Verified, not just written.** 121 test files and 10 fuzz targets back the build, gated by
 > ASAN / UBSAN / TSAN sanitizer runs, committed startup/typing/scroll/diff/search performance
 > baselines, and architecture-invariant lints enforced on every test run.
 
