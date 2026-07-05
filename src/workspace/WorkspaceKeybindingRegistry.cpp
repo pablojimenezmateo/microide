@@ -94,8 +94,8 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
       KeybindingSpec{
           .id = "sidebar-toggle",
           .action = ActionId::SidebarToggle,
-          .key = SDLK_F8,
-          .modifiers = SDL_KMOD_NONE,
+          .key = SDLK_B,
+          .modifiers = SDL_KMOD_CTRL,
           .context = KeybindingContext::Global,
           .args = {},
           .arg_count = 0,
@@ -114,8 +114,8 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
       KeybindingSpec{
           .id = "file-finder",
           .action = ActionId::Files,
-          .key = SDLK_F6,
-          .modifiers = SDL_KMOD_NONE,
+          .key = SDLK_P,
+          .modifiers = SDL_KMOD_CTRL,
           .context = KeybindingContext::Global,
           .args = {},
           .arg_count = 0,
@@ -133,8 +133,30 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
       },
       // Debugger execution control (Phase 3). Global; the actions are gated on
       // `debug.enabled` + session state in WorkspaceActionAvailability, so these
-      // keys are inert until a session is active. Pause has no default key (F6 is
-      // taken by file-finder); bind it via the command palette / keybindings.
+      // keys are inert until a session is active. F5/F10/F11/Shift+F11 mirror
+      // VSCode, and F6=Pause matches VSCode as well. F8=Start fills the gap left
+      // by F5 only *continuing* an already-paused session; F6/F8 were reclaimed
+      // from the former file-finder/sidebar-toggle bindings.
+      KeybindingSpec{
+          .id = "debug-start",
+          .action = ActionId::StartDebugging,
+          .key = SDLK_F8,
+          .modifiers = SDL_KMOD_NONE,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "debug-pause",
+          .action = ActionId::DebugPause,
+          .key = SDLK_F6,
+          .modifiers = SDL_KMOD_NONE,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
       KeybindingSpec{
           .id = "debug-continue",
           .action = ActionId::DebugContinue,
@@ -502,12 +524,19 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
       KeybindingSpec{
           .id = "add-cursor-all-matches",
           .action = ActionId::AddCursorAtAllMatches,
-          // Ctrl+Alt+L: Ctrl+Shift+L is reserved for plugin-contributed
-          // bindings and matches the existing plugin-keybinding test fixture.
-          // Users who want the VSCode-style chord (Ctrl+Shift+L) can override
-          // this default through the keybinding registry.
+          // Ctrl+Shift+L matches VSCode's "Select all occurrences".
           .key = SDLK_L,
-          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT),
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "goto-line",
+          .action = ActionId::Goto,
+          .key = SDLK_G,
+          .modifiers = SDL_KMOD_CTRL,
           .context = KeybindingContext::Editor,
           .args = {},
           .arg_count = 0,

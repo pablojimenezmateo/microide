@@ -3,6 +3,7 @@
 #include "editor/BreakpointStore.h"
 #include "util/Parse.h"
 #include "workspace/EditorTabService.h"
+#include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/PromptSurfaceService.h"
 #include "workspace/WorkspaceDirtyPromptCoordinator.h"
@@ -198,6 +199,8 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
       return "Edit Watch";
     case PromptSurfaceState::Action::EvaluateReplInput:
       return "Debug Console";
+    case PromptSurfaceState::Action::GoToLine:
+      return "Go to Line";
   }
   return "Prompt";
 }
@@ -250,6 +253,8 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Edit this watch expression (empty removes it).";
     case PromptSurfaceState::Action::EvaluateReplInput:
       return "Evaluate in the active session; the result prints to the console.";
+    case PromptSurfaceState::Action::GoToLine:
+      return "Enter a line[:column] to jump to.";
   }
   return {};
 }
@@ -298,6 +303,8 @@ std::vector<std::string> WorkspaceShell::PromptSurfaceActionLabels() const {
       return {"Save", "Cancel"};
     case PromptSurfaceState::Action::EvaluateReplInput:
       return {"Evaluate", "Close"};
+    case PromptSurfaceState::Action::GoToLine:
+      return {"Go", "Cancel"};
   }
   return {"OK", "Cancel"};
 }
@@ -394,6 +401,17 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
   if (context_.prompts.surface_visible &&
       context_.prompts.surface.action == PromptSurfaceState::Action::EvaluateReplInput) {
     CommitDebugReplPrompt();
+    return;
+  }
+  if (context_.prompts.surface_visible &&
+      context_.prompts.surface.action == PromptSurfaceState::Action::GoToLine) {
+    // Commit "Go to Line": reuse the ActionId::Goto path so the typed
+    // line[:column] shares the same parsing/clamping as the `goto` command.
+    const std::string spec = context_.prompts.surface.input.text();
+    MakePromptSurfaceService().DismissPromptSurface(true);
+    if (!spec.empty()) {
+      ActionCoordinator(MakeActionContext()).Execute(ActionId::Goto, {spec}, ActionSource::Shortcut);
+    }
     return;
   }
   EditorTabService editor_tabs = MakeEditorTabService();

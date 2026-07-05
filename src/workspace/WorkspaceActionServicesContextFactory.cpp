@@ -195,6 +195,14 @@ void WorkspaceActionContext::OpenCommandPalette(std::string seed) {
   }
 }
 
+void WorkspaceActionContext::OpenGoToLinePrompt() {
+  if (operations_.open_prompt_surface) {
+    operations_.open_prompt_surface(PromptSurfaceState::Action::GoToLine,
+                                    PromptSurfaceState::Kind::TextInput,
+                                    std::filesystem::path{}, std::string{});
+  }
+}
+
 void WorkspaceActionContext::EditBreakpointModifierFromMenu(ActionId id) {
   if (operations_.edit_breakpoint_modifier_from_menu) {
     operations_.edit_breakpoint_modifier_from_menu(id);

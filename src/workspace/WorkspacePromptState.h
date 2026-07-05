@@ -65,6 +65,8 @@ struct PromptSurfaceState {
     // Debugger (Phase 9): evaluate an expression in the active session via
     // `evaluate(context:"repl")`; the result is appended to the debug console.
     EvaluateReplInput,
+    // Editor navigation: jump the active viewport to a typed `line[:column]`.
+    GoToLine,
   };
 
   Kind kind = Kind::None;

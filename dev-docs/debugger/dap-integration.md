@@ -689,8 +689,9 @@ Wiring:
   continue/step, Running for pause via a new `debug_session_stopped` operation),
   global-executor dispatch, and context/shell forwarders. **Default keys**
   (`WorkspaceKeybindingRegistry`): Continue=F5, Step Over=F10, Step In=F11, Step
-  Out=Shift+F11. Pause has no default (F6 is taken by file-finder); bind via the
-  palette. `restart` is deferred to Phase 7.
+  Out=Shift+F11, Pause=F6, Start=F8 (F6/F8 reclaimed once the file-finder and
+  sidebar-toggle moved to Ctrl+P / Ctrl+B to match VSCode). `restart` is deferred
+  to Phase 7.
 - Theme: `debug_execution_line` + `debug_execution_arrow` (with `debug-execution-
   line` / `debug-execution-arrow` theme-file keys).
 

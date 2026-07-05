@@ -1119,6 +1119,55 @@ void TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus() {
          "closing the overlay with a visible sidebar should restore sidebar focus");
 }
 
+void TestWorkspaceShellVsCodeAlignedShortcutsDispatch() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "README.md";
+  WriteFile(source, "hello\nworld\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "fixture project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+         "opening a file should focus the editor");
+
+  // Ctrl+G (editor context) opens the "Go to Line" modal — VSCode's Go to Line.
+  // Previously this action had no key and no-opped from the menu.
+  Expect(SendKeyDown(shell, SDLK_G, SDL_KMOD_CTRL), "Ctrl+G should be handled");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "Ctrl+G should open the Go to Line modal");
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "Escape should dismiss the Go to Line modal");
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "Escape should close the modal");
+
+  // Ctrl+P opens the file finder (VSCode "Go to File"; replaces the former F6).
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL), "Ctrl+P should be handled");
+  Expect(WorkspaceShellTestAccess::OverlayModeIsFileFinder(shell),
+         "Ctrl+P should open the file-finder overlay");
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "Escape should dismiss the file finder");
+
+  // Ctrl+B toggles the sidebar (VSCode "Toggle Sidebar"; replaces the former F8).
+  const bool sidebar_before = WorkspaceShellTestAccess::SidebarVisible(shell);
+  Expect(SendKeyDown(shell, SDLK_B, SDL_KMOD_CTRL), "Ctrl+B should be handled");
+  Expect(WorkspaceShellTestAccess::SidebarVisible(shell) != sidebar_before,
+         "Ctrl+B should toggle sidebar visibility");
+
+  // The retired function keys no longer trigger their old surfaces (F6 is now
+  // debug-pause, F8 is debug-start — both inert without a debug session).
+  const bool sidebar_state = WorkspaceShellTestAccess::SidebarVisible(shell);
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
+         "no overlay should be open before pressing F6");
+  SendKeyDown(shell, SDLK_F6, SDL_KMOD_NONE);
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
+         "F6 should no longer open the file finder");
+  SendKeyDown(shell, SDLK_F8, SDL_KMOD_NONE);
+  Expect(WorkspaceShellTestAccess::SidebarVisible(shell) == sidebar_state,
+         "F8 should no longer toggle the sidebar");
+}
+
 void TestWorkspaceShellFilesShortcutEscapeRestoresEditorFocusOnWelcome() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
@@ -3500,6 +3549,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCommandPaletteRunsCommandLineVsFuzzyPick);
   AddTest(tests, "WorkspaceShell/CtrlNOpensUntitledTab",
           TestWorkspaceShellCtrlNOpensUntitledTab);
+  AddTest(tests, "WorkspaceShell/VsCodeAlignedShortcutsDispatch",
+          TestWorkspaceShellVsCodeAlignedShortcutsDispatch);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresSidebarFocus",
           TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresEditorFocusOnWelcome",

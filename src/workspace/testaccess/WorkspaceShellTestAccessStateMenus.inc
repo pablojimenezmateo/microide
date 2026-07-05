@@ -81,6 +81,9 @@
   static const std::string& PromptSurfaceInput(const WorkspaceShell& shell) {
     return shell.context_.prompts.surface.input.text();
   }
+  static void SetPromptSurfaceInput(WorkspaceShell& shell, const std::string& text) {
+    shell.context_.prompts.surface.input.SetText(text);
+  }
   static std::size_t PromptSurfaceInputCaret(const WorkspaceShell& shell) {
     return shell.context_.prompts.surface.input.caret();
   }

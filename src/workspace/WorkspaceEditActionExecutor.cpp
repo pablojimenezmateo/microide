@@ -85,6 +85,12 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       const std::optional<LineNavigationRequest> request =
           BuildLineNavigationRequest(args, id == ActionId::Jump);
       if (!request.has_value()) {
+        // No line supplied (the Ctrl+G shortcut or the "Go to Line…" menu):
+        // open the single-line "Go to Line" modal. Typing `goto <line>` in the
+        // command palette still works for the keyboard-driven path.
+        if (id == ActionId::Goto && args.empty()) {
+          context_.OpenGoToLinePrompt();
+        }
         return DispatchResult::Handled;
       }
 

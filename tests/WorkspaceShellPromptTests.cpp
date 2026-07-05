@@ -75,6 +75,31 @@ void TestWorkspaceShellRenamePromptSavesDirtyTabs() {
          "rename save flow should clear the dirty flag after saving");
 }
 
+void TestWorkspaceShellGoToLinePromptNavigatesActiveEditor() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "l1\nl2\nl3\nl4\nl5\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "fixture project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  // Ctrl+G opens the single-line Go to Line modal (not the command palette).
+  Expect(SendKeyDown(shell, SDLK_G, SDL_KMOD_CTRL), "Ctrl+G should be handled");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "Ctrl+G should open the Go to Line modal");
+
+  WorkspaceShellTestAccess::SetPromptSurfaceInput(shell, "4");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "confirming Go to Line should dismiss the modal");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 3,
+         "Go to Line 4 should move the caret to zero-based line 3");
+}
+
 void TestWorkspaceShellRenamePromptRetargetsDiagnostics() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -859,6 +884,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus);
   AddTest(tests, "WorkspaceShell/RenamePromptSavesDirtyTabs",
           TestWorkspaceShellRenamePromptSavesDirtyTabs);
+  AddTest(tests, "WorkspaceShell/GoToLinePromptNavigatesActiveEditor",
+          TestWorkspaceShellGoToLinePromptNavigatesActiveEditor);
   AddTest(tests, "WorkspaceShell/RenamePromptMouseClickPositionsCaret",
           TestWorkspaceShellRenamePromptMouseClickPositionsCaret);
   AddTest(tests, "WorkspaceShell/RenamePromptRetargetsDiagnostics",

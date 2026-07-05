@@ -12,6 +12,17 @@ A **correctness and hardening** cycle on top of 2.6.3, still accumulating. It pa
 a broad round of user-visible bug fixes across editor, compare/merge, git, LSP/DAP,
 and plugin surfaces with a continued defensive-caps sweep. Draft — not yet tagged.
 
+### Changed
+
+- **Default keybindings aligned with VSCode.** The file finder now opens with
+  `Ctrl+P` (was F6), the sidebar toggles with `Ctrl+B` (was F8), "add cursor at
+  all matches" is `Ctrl+Shift+L` (was `Ctrl+Alt+L`, now matching the palette
+  hint), and "go to line" gains `Ctrl+G`. The two freed function keys move to the
+  debugger — `F6` = Pause (VSCode's default) and `F8` = Start Debugging — filling
+  the gap where F5 only *continued* an already-paused session. `Ctrl+G` /
+  "Go to Line…" now opens a dedicated single-line modal (it previously did
+  nothing); typing `goto <line>` in the command palette still works too.
+
 ### Fixed
 
 - **Compare/merge:** compare panes render on the cell grid so caret, selection, and

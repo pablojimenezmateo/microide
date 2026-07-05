@@ -189,9 +189,8 @@ Default **Edit** menu shortcuts (editor context):
   shaping; single-line `Tab` still inserts a tab / soft-tab per existing rules)
 - Sort lines — no default accelerator in the built-in registry
 - Add cursor next match — `Ctrl+D`
-- Add cursor all matches — **`Ctrl+Alt+L`** by default (see comment in
-  `WorkspaceKeybindingRegistry.cpp`; VS Code-style `Ctrl+Shift+L` is available
-  via user/plugin keybindings if desired)
+- Add cursor all matches — **`Ctrl+Shift+L`** by default (matches VS Code's
+  "Select all occurrences")
 
 ### Multi-cursor mouse gestures
 

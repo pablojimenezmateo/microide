@@ -407,6 +407,8 @@ class WorkspaceActionContext {
   void OpenDebugReplPrompt();
   void OpenLaunchConfigPicker();
   void OpenCommandPalette(std::string seed = {});
+  // Open the single-line "Go to Line" modal prompt (VSCode-style Ctrl+G).
+  void OpenGoToLinePrompt();
   // Right-side debug pane (toggle / surface switch).
   void ToggleDebugPane();
   void ShowDebugPaneSurface(DebugPaneMode mode);

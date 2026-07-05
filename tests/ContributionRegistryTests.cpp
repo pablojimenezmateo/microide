@@ -71,6 +71,32 @@ void TestKeybindingRegistryBuiltinsNonEmpty() {
          "BuiltinKeybindingSpecs should be non-empty");
 }
 
+void TestKeybindingRegistryNoOverlaps() {
+  // Two built-in bindings collide when they share the same key + modifiers AND
+  // their contexts can be active at the same time: identical contexts, or either
+  // is Global (a Global binding matches in every context via FindKeybinding).
+  // Bindings in two different non-Global contexts (e.g. Editor vs Terminal)
+  // never fire in the same focus state, so they do not collide.
+  const auto specs = BuiltinKeybindingSpecs();
+  constexpr SDL_Keymod kRelevant = static_cast<SDL_Keymod>(
+      SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT | SDL_KMOD_GUI);
+  const auto contexts_overlap = [](KeybindingContext a, KeybindingContext b) {
+    return a == b || a == KeybindingContext::Global || b == KeybindingContext::Global;
+  };
+  for (std::size_t i = 0; i < specs.size(); ++i) {
+    for (std::size_t j = i + 1; j < specs.size(); ++j) {
+      const auto& a = specs[i];
+      const auto& b = specs[j];
+      const bool same_chord =
+          a.key == b.key && (a.modifiers & kRelevant) == (b.modifiers & kRelevant);
+      const bool clash = same_chord && contexts_overlap(a.context, b.context);
+      Expect(!clash, (std::string("keybinding overlap: '") + std::string(a.id) + "' and '" +
+                      std::string(b.id) + "' share a chord in overlapping contexts")
+                         .c_str());
+    }
+  }
+}
+
 void TestKeybindingRegistryFindById() {
   const auto* spec = FindBuiltinKeybinding("save");
   Expect(spec != nullptr, "should find built-in keybinding 'save'");
@@ -970,6 +996,7 @@ return ide.plugin({
 void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "KeybindingRegistry/BuiltinsNonEmpty",
           TestKeybindingRegistryBuiltinsNonEmpty);
+  AddTest(tests, "KeybindingRegistry/NoOverlaps", TestKeybindingRegistryNoOverlaps);
   AddTest(tests, "KeybindingRegistry/FindById", TestKeybindingRegistryFindById);
   AddTest(tests, "KeybindingRegistry/FindUnknown", TestKeybindingRegistryFindUnknown);
   AddTest(tests, "KeybindingRegistry/ParseKeyChordSingleKey",

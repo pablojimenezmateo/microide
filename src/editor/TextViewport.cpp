@@ -24,7 +24,7 @@ TextViewport::TextViewport() {
       "microide\n\n"
       "SDL3 shell scaffold is running.\n"
       "Open files from the sidebar with Enter.\n"
-      "F8 toggles the sidebar, F6 toggles the overlay.\n");
+      "Ctrl+B toggles the sidebar, Ctrl+P opens the file finder.\n");
 }
 
 TextViewport::TextViewport(const TextViewport& other)

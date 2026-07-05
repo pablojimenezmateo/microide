@@ -288,7 +288,7 @@ return ide.plugin({
     ctx.keybindings.add({
       id = "log",
       action = "keybindings.log",
-      key = "Ctrl+Shift+L",
+      key = "Ctrl+Shift+Y",
       context = "editor"
     })
   end
@@ -313,7 +313,7 @@ return ide.plugin({
   WorkspaceShellTestAccess::ClearPluginMessages(shell);
 
   Expect(SendKeyDown(
-             shell, SDLK_L, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
+             shell, SDLK_Y, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
          "pressing a contributed editor keybinding should be handled");
   Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
              WorkspaceShellTestAccess::PluginMessages(shell).back() ==

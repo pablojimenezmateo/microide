@@ -476,20 +476,25 @@ Each project gets a persisted default accent color on first open; override it wi
 
 ## Controls
 
+Shortcuts follow VSCode's defaults where they apply, so most muscle memory carries
+over. Compare, merge, and the git sidebar add their own single-key actions.
+
 | Key | Action |
 |-----|--------|
-| `F8` | Toggle sidebar |
-| `F6` | Toggle centered overlay |
+| `Ctrl+p` | Open file finder (fuzzy quick-open) |
+| `Ctrl+b` | Toggle sidebar |
 | `Ctrl+Tab` | Cycle focus: sidebar → editor → command/terminal pane |
 | `Ctrl+w` | Close active tab |
 | `Ctrl+f` | Buffer search |
 | `Ctrl+h` | Replace in buffer |
 | `Ctrl+Shift+f` | Project-wide search in sidebar |
+| `Ctrl+g` | Go to line |
+| `Ctrl+Shift+l` | Add cursor at all matches |
 | `Ctrl+a` | Select whole buffer |
 | `Ctrl+c` / `Ctrl+x` / `Ctrl+v` | Copy / Cut / Paste |
 | `Ctrl+z` / `Ctrl+y` | Undo / Redo |
 | `Ctrl+s` | Save |
-| `Ctrl+e` | Open command prompt |
+| `Ctrl+Shift+p` | Open command palette |
 | `Shift+arrows`, `Home`, `End`, `Ctrl+Home`, `Ctrl+End` | Extend selection |
 | `PageUp` / `PageDown` | Scroll viewport |
 | `d` on sidebar file | Open compare commit picker |
@@ -513,7 +518,7 @@ Right-click terminal tab: **Copy Last Command + Output**.
 
 ## Commands
 
-Run commands with `Ctrl+e` (command prompt). Current commands:
+Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 
 - `code-actions`
 - `command-palette`
