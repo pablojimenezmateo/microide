@@ -255,6 +255,10 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
              text_input_surface == TextInputSurface::CommitPicker ||
              text_input_surface == TextInputSurface::SidebarSearchQuery ||
              text_input_surface == TextInputSurface::SidebarSearchReplace;
+    case ActionId::InsertText:
+      // `type <text>` targets the active editable viewport or a text-input
+      // surface, same as a paste.
+      [[fallthrough]];
     case ActionId::PasteClipboard:
       return active_editable_viewport != nullptr ||
              text_input_surface == TextInputSurface::PromptInput ||

@@ -808,54 +808,62 @@ void WorkspaceActionContext::CutSelection() {
 void WorkspaceActionContext::PasteClipboard() {
   if (std::optional<std::string> clipboard_text = operations_.read_clipboard_text();
       clipboard_text.has_value()) {
-    // Cap a pathologically large paste before it is normalized, line-split (one
-    // std::string per line), inserted, and stored in the undo history. A
-    // multi-hundred-MB Ctrl+V would otherwise amplify into a multi-GB transient
-    // and undo entry -> OOM from a single gesture. 64 MiB is far beyond any
-    // interactive paste.
-    constexpr std::size_t kMaxPasteBytes = 64u << 20;
-    if (clipboard_text->size() > kMaxPasteBytes) {
-      clipboard_text->resize(util::PreviousUtf8Boundary(*clipboard_text, kMaxPasteBytes));
+    InsertTextIntoActiveSurface(std::move(*clipboard_text));
+  }
+}
+
+void WorkspaceActionContext::InsertText(std::string text) {
+  InsertTextIntoActiveSurface(std::move(text));
+}
+
+void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text) {
+  // Cap a pathologically large insertion before it is normalized, line-split
+  // (one std::string per line), inserted, and stored in the undo history. A
+  // multi-hundred-MB paste or `type` payload would otherwise amplify into a
+  // multi-GB transient and undo entry -> OOM from a single gesture. 64 MiB is
+  // far beyond any interactive paste or typed argument.
+  constexpr std::size_t kMaxInsertBytes = 64u << 20;
+  if (text.size() > kMaxInsertBytes) {
+    text.resize(util::PreviousUtf8Boundary(text, kMaxInsertBytes));
+  }
+  if (state_.surface.focus == FocusTarget::Panel && operations_.active_terminal_tab() != nullptr) {
+    operations_.paste_text_into_terminal(std::move(text));
+    return;
+  }
+  if (operations_.insert_text_into_active_text_surface(text)) {
+    return;
+  }
+  if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
+    const bool was_dirty = viewport->dirty();
+    const std::size_t cursor_before_line = viewport->cursor_line();
+    std::vector<std::string> before_lines;
+    std::optional<editor::SelectionRange> selection_before;
+    std::optional<editor::TextPosition> cursor_before;
+    if (auto* merge_tab = operations_.active_merge_tab();
+        merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+      before_lines = viewport->lines().Snapshot();
+      selection_before = viewport->selection_range();
+      cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
     }
-    if (state_.surface.focus == FocusTarget::Panel && operations_.active_terminal_tab() != nullptr) {
-      operations_.paste_text_into_terminal(std::move(*clipboard_text));
-      return;
+    viewport->InsertText(text);
+    if (auto* compare_tab = operations_.active_compare_tab();
+        compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
+      operations_.refresh_compare_tab_derived_state(*compare_tab);
+      operations_.sync_compare_selection_from_viewport(*compare_tab, true);
     }
-    if (operations_.insert_text_into_active_text_surface(*clipboard_text)) {
-      return;
+    if (auto* merge_tab = operations_.active_merge_tab();
+        merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+      operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
+                                                            selection_before, *cursor_before);
     }
-    if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
-      const bool was_dirty = viewport->dirty();
-      const std::size_t cursor_before_line = viewport->cursor_line();
-      std::vector<std::string> before_lines;
-      std::optional<editor::SelectionRange> selection_before;
-      std::optional<editor::TextPosition> cursor_before;
-      if (auto* merge_tab = operations_.active_merge_tab();
-          merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-        before_lines = viewport->lines().Snapshot();
-        selection_before = viewport->selection_range();
-        cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
-      }
-      viewport->InsertText(*clipboard_text);
-      if (auto* compare_tab = operations_.active_compare_tab();
-          compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-        operations_.refresh_compare_tab_derived_state(*compare_tab);
-        operations_.sync_compare_selection_from_viewport(*compare_tab, true);
-      }
-      if (auto* merge_tab = operations_.active_merge_tab();
-          merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
-                                                              selection_before, *cursor_before);
-      }
-      operations_.reset_caret_blink();
-      operations_.request_active_tab_redraw(false);
-      operations_.request_focused_editor_redraw();
-      operations_.request_active_editable_last_change_redraw();
-      if (viewport->dirty() != was_dirty) {
-        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                      viewport->cursor_line());
-        operations_.request_tab_strip_redraw();
-      }
+    operations_.reset_caret_blink();
+    operations_.request_active_tab_redraw(false);
+    operations_.request_focused_editor_redraw();
+    operations_.request_active_editable_last_change_redraw();
+    if (viewport->dirty() != was_dirty) {
+      operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
+                                                                    viewport->cursor_line());
+      operations_.request_tab_strip_redraw();
     }
   }
 }

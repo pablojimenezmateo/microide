@@ -141,6 +141,21 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       context_.PasteClipboard();
       return DispatchResult::Handled;
     }
+    case ActionId::InsertText: {
+      // `type <text>`: insert literal text at the caret. Args are already
+      // shell-tokenized (quotes/escapes handled by ParseCommandLine), so join
+      // them with single spaces — `type foo bar` and `type "foo bar"` both
+      // insert `foo bar`.
+      std::string text;
+      for (const std::string& arg : args) {
+        if (!text.empty()) text.push_back(' ');
+        text += arg;
+      }
+      if (!text.empty()) {
+        context_.InsertText(std::move(text));
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::InlineCompletion: {
       std::string error_message;
       if (!context_.RequestInlineCompletion(&error_message)) {

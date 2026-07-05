@@ -619,6 +619,13 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `split-down [path]`
 - `focus-other-group`
 - `close-group`
+- `copy`
+- `cut`
+- `paste`
+- `redo`
+- `type <text>`
+- `select-all`
+- `undo`
 - `jump-to-matching-bracket`
 - `toggle-line-comment`
 - `toggle-block-comment`

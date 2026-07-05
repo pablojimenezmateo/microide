@@ -365,6 +365,10 @@ class WorkspaceActionContext {
   std::optional<std::string> SelectionTextWithContext();
   void CutSelection();
   void PasteClipboard();
+  // Insert literal text at the caret (replacing any selection), routed through
+  // the same active-surface insertion path as PasteClipboard. Backs the
+  // `type <text>` command / control-channel verb.
+  void InsertText(std::string text);
 
   void RefreshAvailableColorschemeNames();
   void ApplyColorscheme(std::string_view name);
@@ -465,6 +469,13 @@ class WorkspaceActionContext {
   // Mark layout dirty and request a full-window repaint after a live config
   // change (theme, UI scale). Shared so the redraw idiom is not duplicated.
   void RequestLiveConfigRedraw();
+
+  // Insert `text` into the currently focused surface (terminal, single-line
+  // text input, or the active editable viewport) with the matching redraw
+  // requests. Shared by PasteClipboard and InsertText so the insertion +
+  // merge/compare-tracking + redraw idiom lives in exactly one place. Caps
+  // pathologically large payloads before line-splitting/undo storage.
+  void InsertTextIntoActiveSurface(std::string text);
 
   ProjectCatalogState& project_catalog_;
   ProjectWorkspaceState& state_;

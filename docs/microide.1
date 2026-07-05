@@ -149,7 +149,19 @@ Query verbs
 Commands
 --------
 Any command from the command palette works. Run `microide control-commands` for
-the full list. Breakpoint commands added for headless control:
+the full list.
+
+Edit a buffer headlessly (open -> navigate -> edit), e.g. the Moby Dick workout:
+  open <path>            open a file in a new tab
+  goto <line[:col]>      move the caret to an absolute position (1-based)
+  search <query>         Find in Buffer (seeds add-cursor-* and next-match)
+  add-cursor-all-matches place a caret at every match of the current seed
+  select-all             select the whole buffer
+  type <text>            insert literal text at the caret (replaces selection)
+  cut / copy / paste     clipboard edits at the caret/selection
+  undo / redo            walk the edit history
+
+Breakpoint commands added for headless control:
   breakpoint-set <file> <line> [condition]
   breakpoint-remove <file> <line>
   breakpoint-enable <file> <line>
@@ -346,6 +358,13 @@ Every runnable command (also printed by
   split-down [path]
   focus-other-group
   close-group
+  copy
+  cut
+  paste
+  redo
+  type <text>
+  select-all
+  undo
   jump-to-matching-bracket
   toggle-line-comment
   toggle-block-comment

@@ -100,6 +100,10 @@ enum class ActionId {
   Redo,
   ReplaceInBuffer,
   InsertSnippet,
+  // Insert literal text at the caret (replacing any selection). Reachable over
+  // the command line / control channel as `type <text>`; the primary way an
+  // external/headless caller enters characters into the active editor.
+  InsertText,
   SelectAll,
   Undo,
   // Editor essentials: structural & shape actions
