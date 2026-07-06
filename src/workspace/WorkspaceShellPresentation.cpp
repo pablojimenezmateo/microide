@@ -167,7 +167,7 @@ void WorkspaceShell::RefreshStatusBar() {
           .startup_mode_text = startup_mode_text,
           .startup_mode_tooltip = startup_mode_tooltip,
       },
-      context_.current_project_state, layout_mode_service_.CurrentMode(), ActiveEditorViewport());
+      context_.current_project_state, ActiveEditorViewport());
 }
 
 }  // namespace microide::workspace

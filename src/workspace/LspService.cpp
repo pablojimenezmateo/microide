@@ -26,6 +26,33 @@ namespace {
 
 constexpr Uint64 kLspRequestTimeoutMs = 10000;
 
+// Map a document position through a single replacement of [before_start, before_end)
+// whose inserted text ends at `new_end`. Positions at or before the edit start are
+// unchanged; positions at or after the edit end shift onto the replacement's new
+// geometry; positions strictly inside the replaced span collapse to the new end (the
+// server republishes an authoritative range shortly after).
+editor::TextPosition AdjustPositionForReplace(editor::TextPosition p,
+                                              editor::TextPosition before_start,
+                                              editor::TextPosition before_end,
+                                              editor::TextPosition new_end) {
+  if (p.line < before_start.line ||
+      (p.line == before_start.line && p.column <= before_start.column)) {
+    return p;
+  }
+  if (p.line > before_end.line ||
+      (p.line == before_end.line && p.column >= before_end.column)) {
+    if (p.line == before_end.line) {
+      return editor::TextPosition{new_end.line, new_end.column + (p.column - before_end.column)};
+    }
+    const std::ptrdiff_t line_delta =
+        static_cast<std::ptrdiff_t>(new_end.line) - static_cast<std::ptrdiff_t>(before_end.line);
+    const std::ptrdiff_t shifted = static_cast<std::ptrdiff_t>(p.line) + line_delta;
+    return editor::TextPosition{static_cast<std::size_t>(std::max<std::ptrdiff_t>(0, shifted)),
+                                p.column};
+  }
+  return new_end;
+}
+
 // Memoized language detection for the active viewport. The result is stable while
 // the active file is unchanged, so this collapses the repeated per-frame filetype
 // detection (status bar + provider checks + sync) into a single regex pass.
@@ -409,6 +436,72 @@ void LspService::PublishLspSemanticTokens(ProjectWorkspaceState& state, std::str
   }
 }
 
+void LspService::ShiftLspDiagnosticsForAppliedEdit(const editor::TextViewport& viewport) {
+  if (viewport.path().empty()) {
+    return;
+  }
+  const std::optional<editor::AppliedEdit>& applied = viewport.last_applied_edit();
+  if (!applied.has_value()) {
+    return;
+  }
+  const editor::SelectionRange before =
+      editor::TextViewport::NormalizeRange(applied->range_before);
+  const editor::TextPosition before_start = before.start;
+  const editor::TextPosition before_end = before.end;
+  const std::string& replacement = applied->replacement_text;
+  const std::size_t newline_count =
+      static_cast<std::size_t>(std::count(replacement.begin(), replacement.end(), '\n'));
+  const std::size_t last_line_length =
+      newline_count == 0 ? replacement.size()
+                         : replacement.size() - (replacement.find_last_of('\n') + 1);
+  const editor::TextPosition new_end =
+      newline_count == 0
+          ? editor::TextPosition{before_start.line, before_start.column + last_line_length}
+          : editor::TextPosition{before_start.line + newline_count, last_line_length};
+  if (before_start == before_end && new_end == before_start) {
+    return;  // Empty edit -> nothing moved.
+  }
+  CurrentProjectState().diagnostics_store.TransformOwnerFile(
+      "lsp", viewport.path(),
+      [before_start, before_end, new_end](editor::SelectionRange range) {
+        range.start = AdjustPositionForReplace(range.start, before_start, before_end, new_end);
+        range.end = AdjustPositionForReplace(range.end, before_start, before_end, new_end);
+        return range;
+      });
+}
+
+void LspService::ShiftLspDiagnosticsForBulkChange(const editor::TextViewport& viewport,
+                                                  const std::vector<std::string>& before_lines,
+                                                  const std::vector<std::string>& after_lines) {
+  if (viewport.path().empty() || before_lines.size() == after_lines.size()) {
+    return;  // No net line change: in-place edits keep diagnostics roughly aligned.
+  }
+  std::size_t first_changed = 0;
+  const std::size_t common = std::min(before_lines.size(), after_lines.size());
+  while (first_changed < common && before_lines[first_changed] == after_lines[first_changed]) {
+    ++first_changed;
+  }
+  const std::ptrdiff_t line_delta = static_cast<std::ptrdiff_t>(after_lines.size()) -
+                                    static_cast<std::ptrdiff_t>(before_lines.size());
+  CurrentProjectState().diagnostics_store.TransformOwnerFile(
+      "lsp", viewport.path(), [first_changed, line_delta](editor::SelectionRange range) {
+        const auto shift = [&](editor::TextPosition p) {
+          if (p.line < first_changed) {
+            return p;
+          }
+          std::ptrdiff_t shifted = static_cast<std::ptrdiff_t>(p.line) + line_delta;
+          if (shifted < static_cast<std::ptrdiff_t>(first_changed)) {
+            shifted = static_cast<std::ptrdiff_t>(first_changed);
+          }
+          p.line = static_cast<std::size_t>(shifted);
+          return p;
+        };
+        range.start = shift(range.start);
+        range.end = shift(range.end);
+        return range;
+      });
+}
+
 void LspService::SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
                                                 const std::vector<std::string>& after_lines) {
   editor::TextViewport* viewport = operations_.active_editable_viewport();
@@ -416,7 +509,8 @@ void LspService::SyncLspForActiveEditableChange(const std::vector<std::string>& 
     return;
   }
 
-  (void)before_lines;
+  // Keep diagnostics positioned for the dirty buffer until the server republishes.
+  ShiftLspDiagnosticsForBulkChange(*viewport, before_lines, after_lines);
   std::string language_id;
   LspClient* client = LspClientForViewport(*viewport, &language_id);
   if (client == nullptr) {
@@ -470,6 +564,10 @@ void LspService::SyncLspForActiveEditableLastChange() {
     client->DidChange(uri, util::SerializeLines(viewport->lines().Snapshot(), viewport->line_ending()));
     return;
   }
+
+  // Slide stored diagnostics through this keystroke so they stay on their text
+  // while the buffer is dirty, until the server republishes authoritative ranges.
+  ShiftLspDiagnosticsForAppliedEdit(*viewport);
 
   if (!client->SupportsIncrementalSync()) {
     util::PerformanceTrace::Scope scope(

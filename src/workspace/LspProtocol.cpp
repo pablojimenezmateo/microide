@@ -203,6 +203,17 @@ JsonValue MakeRange(const LspClient::Range& range) {
   return JsonValue(std::move(object));
 }
 
+JsonValue MakeDiagnostic(const LspClient::Diagnostic& diagnostic) {
+  JsonObject object;
+  object["range"] = MakeRange(diagnostic.range);
+  object["message"] = JsonValue(diagnostic.message);
+  object["severity"] = JsonValue(static_cast<std::int64_t>(diagnostic.severity));
+  if (!diagnostic.code.empty()) {
+    object["code"] = JsonValue(diagnostic.code);
+  }
+  return JsonValue(std::move(object));
+}
+
 JsonValue MakeTextDocumentIdentifier(const std::string& uri) {
   JsonObject object;
   object["uri"] = JsonValue(uri);

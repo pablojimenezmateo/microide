@@ -2388,7 +2388,77 @@ void TestTextViewportColumnCaretsAreCapped() {
          "a column select should still place some carets");
 }
 
+// Mirrors WorkspaceShell::ApplyLspWorkspaceEdit for a multi-line "remove unused
+// includes" fix: several non-contiguous single-line deletions, clamped, sorted
+// highest-position-first, applied inside one undo group. A single Undo must fully
+// restore the original document (else save-after-undo persists truncated content).
+void TestTextViewportGroupedNonContiguousDeletesUndoFully() {
+  TextViewport viewport;
+  std::string content;
+  for (int i = 0; i < 12; ++i) {
+    content += "#include \"h" + std::to_string(i) + "\"\n";
+  }
+  content += "int main() { return 0; }\n";
+  viewport.LoadContent(content, "/tmp/grouped-undo.cpp");
+  const auto original = viewport.lines().Snapshot();
+
+  // Delete lines 1, 4, 7, 10 (non-contiguous), each as a full-line range.
+  std::vector<SelectionRange> edits = {
+      {{1, 0}, {2, 0}}, {{4, 0}, {5, 0}}, {{7, 0}, {8, 0}}, {{10, 0}, {11, 0}}};
+  std::sort(edits.begin(), edits.end(), [](const SelectionRange& a, const SelectionRange& b) {
+    return a.start.line > b.start.line;
+  });
+
+  viewport.BeginUndoGroup();
+  for (const auto& range : edits) {
+    viewport.ReplaceRange(range, "", /*record_undo=*/true);
+  }
+  viewport.EndUndoGroup();
+  Expect(viewport.lines().size() == original.size() - 4,
+         "grouped deletes should remove exactly four lines");
+  Expect(viewport.dirty(),
+         "a grouped edit that changed the buffer must leave it dirty");
+
+  const bool undone = viewport.Undo();
+  Expect(undone, "one Undo should reverse the whole grouped edit");
+  const auto restored = viewport.lines().Snapshot();
+  Expect(restored == original,
+         "a single Undo must fully restore the original buffer after grouped non-contiguous deletes");
+}
+
+// Data-integrity: after a save, undoing PAST the saved point must mark the buffer
+// dirty, because its content now differs from what is on disk. Regression guard for
+// the "edit -> save -> undo shows clean -> content silently lost on reopen" bug.
+void TestTextViewportUndoPastSaveMarksDirty() {
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / "microide-undo-save-dirty.txt";
+  std::filesystem::remove(path);
+  TextViewport viewport;
+  viewport.LoadContent("line0\nline1\nline2\n", path);
+  Expect(!viewport.dirty(), "a freshly loaded buffer is clean");
+  const auto original = viewport.lines().Snapshot();
+
+  viewport.ReplaceRange(SelectionRange{{1, 0}, {2, 0}}, "", /*record_undo=*/true);
+  Expect(viewport.dirty(), "deleting a line marks the buffer dirty");
+  Expect(viewport.Save(), "save should succeed");
+  Expect(!viewport.dirty(), "a successful save clears the dirty flag");
+
+  Expect(viewport.Undo(), "undo should succeed");
+  Expect(viewport.lines().Snapshot() == original, "undo restores the deleted line");
+  Expect(viewport.dirty(),
+         "undoing past a save must mark the buffer dirty; the content now differs from disk");
+
+  // Redoing back to the saved content must return to clean.
+  Expect(viewport.Redo(), "redo should succeed");
+  Expect(!viewport.dirty(), "redoing back to the saved content returns to clean");
+  std::filesystem::remove(path);
+}
+
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextViewport/UndoPastSaveMarksDirty",
+          TestTextViewportUndoPastSaveMarksDirty);
+  AddTest(tests, "TextViewport/GroupedNonContiguousDeletesUndoFully",
+          TestTextViewportGroupedNonContiguousDeletesUndoFully);
   AddTest(tests, "TextViewport/ColumnCaretsAreCapped", TestTextViewportColumnCaretsAreCapped);
   AddTest(tests, "TextViewport/UndoHistoryEnforcesByteBudget",
           TestUndoHistoryEnforcesByteBudget);

@@ -45,6 +45,8 @@ constexpr std::size_t kEditorHoverPopupMaxPluginTitleLines = 2;
 constexpr std::size_t kEditorHoverPopupMaxPluginContentLines = 6;
 constexpr float kEditorHoverPopupPrimaryActionHitPaddingX = 12.0f;
 constexpr float kEditorHoverPopupPrimaryActionHitPaddingY = 6.0f;
+// Shortcut shown next to the diagnostic "Quick Fix" button (matches ActionId::CodeActions).
+constexpr std::string_view kQuickFixShortcutHint = "Ctrl+.";
 
 SDL_FRect HoverPopupHoverZoneRect(const SDL_FRect& anchor_rect, const SDL_FRect& popup_rect) {
   const float left = std::min(anchor_rect.x, popup_rect.x) - kEditorHoverPopupHoverMargin;
@@ -181,7 +183,7 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
     const SDL_FRect card_rect = PositionHoverPopup(active_editor_hover_target_->anchor_rect,
                                                    card_width, card_height, layout.editor_surface);
     const SDL_FRect action_rect = MakeRect(
-        card_rect.x + card_rect.w - copy_width - kEditorHoverPopupPadding,
+        card_rect.x + kEditorHoverPopupPadding,
         card_rect.y + card_rect.h - button_height - kEditorHoverPopupPadding, copy_width,
         button_height);
     return EditorHoverPopupLayout{
@@ -243,6 +245,18 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
     return std::nullopt;
   }
   const editor::PublishedDiagnostic& diagnostic = *active_editor_hover_target_->diagnostic;
+  // Language-server diagnostics may carry code actions (e.g. clangd's "remove
+  // unused #include"). Offer a "Quick Fix" affordance that opens the code-action
+  // menu at the diagnostic's range; plugin/other diagnostics have no such path.
+  const bool offer_quick_fix = diagnostic.owner == "lsp";
+  const float button_height = line_height + 8.0f;
+  const float quick_fix_width =
+      offer_quick_fix ? std::max(96.0f, text_renderer_.MeasureWidth("Quick Fix") + 18.0f) : 0.0f;
+  const float quick_fix_hint_width =
+      offer_quick_fix ? text_renderer_.MeasureWidth(kQuickFixShortcutHint) : 0.0f;
+  // Button on the left, the muted shortcut hint to its right, share the button row.
+  const float button_row_width =
+      offer_quick_fix ? quick_fix_width + kEditorHoverPopupGap + quick_fix_hint_width : 0.0f;
   const std::string_view severity = DiagnosticSeverityLabel(diagnostic.severity);
   const float severity_width = text_renderer_.MeasureWidth(severity);
   const float message_width =
@@ -250,9 +264,10 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
                text_renderer_.MeasureWidth(diagnostic.message));
   const float preferred_width = std::max(
       kEditorHoverPopupMinWidth,
-      std::max(severity_width, message_width) + kEditorHoverPopupPadding * 2.0f);
+      std::max({severity_width, message_width, button_row_width}) + kEditorHoverPopupPadding * 2.0f);
   const float card_width = ClampPopupWidth(
-      preferred_width, severity_width + kEditorHoverPopupPadding * 2.0f, max_card_width);
+      preferred_width,
+      std::max(severity_width, button_row_width) + kEditorHoverPopupPadding * 2.0f, max_card_width);
   const auto message_lines = WrapEditorHoverPopupText(
       diagnostic.message, std::max(0.0f, card_width - kEditorHoverPopupPadding * 2.0f),
       kEditorHoverPopupMaxDiagnosticLines);
@@ -263,9 +278,16 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
                                    kEditorHoverPopupLineGap);
   const float card_height = kEditorHoverPopupPadding * 2.0f + line_height +
                             (message_lines.empty() ? 0.0f
-                                                   : kEditorHoverPopupSectionGap + message_height);
+                                                   : kEditorHoverPopupSectionGap + message_height) +
+                            (offer_quick_fix ? kEditorHoverPopupSectionGap + button_height : 0.0f);
   const SDL_FRect card_rect = PositionHoverPopup(active_editor_hover_target_->anchor_rect,
                                                  card_width, card_height, layout.editor_surface);
+  std::optional<SDL_FRect> action_rect;
+  if (offer_quick_fix) {
+    action_rect = MakeRect(card_rect.x + kEditorHoverPopupPadding,
+                           card_rect.y + card_rect.h - button_height - kEditorHoverPopupPadding,
+                           quick_fix_width, button_height);
+  }
   return EditorHoverPopupLayout{
       .kind = EditorHoverTarget::Kind::Diagnostic,
       .anchor_rect = active_editor_hover_target_->anchor_rect,
@@ -273,7 +295,7 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
       .blame_line_index = 0,
       .diagnostic = diagnostic,
       .plugin_hover = std::nullopt,
-      .primary_action_rect = std::nullopt,
+      .primary_action_rect = action_rect,
   };
 }
 
@@ -488,13 +510,23 @@ void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
   if (popup->primary_action_rect.has_value()) {
     const bool action_hovered = last_mouse_position_valid_ &&
                                 EditorHoverPopupPrimaryActionHovered(last_mouse_x_, last_mouse_y_);
-    DrawButtonCentered(text_renderer_, renderer, theme_, *popup->primary_action_rect, "Copy SHA",
+    const char* action_label =
+        popup->kind == EditorHoverTarget::Kind::Diagnostic ? "Quick Fix" : "Copy SHA";
+    DrawButtonCentered(text_renderer_, renderer, theme_, *popup->primary_action_rect, action_label,
                        ButtonTone::Accent,
                        ButtonVisualState{
                            .enabled = true,
                            .hovered = action_hovered,
                            .active = false,
                        });
+    if (popup->kind == EditorHoverTarget::Kind::Diagnostic) {
+      const float hint_x =
+          popup->primary_action_rect->x + popup->primary_action_rect->w + kEditorHoverPopupGap;
+      const float hint_y = popup->primary_action_rect->y +
+                           (popup->primary_action_rect->h - text_renderer_.LineHeight()) * 0.5f;
+      text_renderer_.DrawStringOn(renderer, hint_x, hint_y, theme_.text_secondary,
+                                  theme_.overlay_background, kQuickFixShortcutHint);
+    }
   }
 }
 
@@ -532,6 +564,21 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
     }
   }
   if (target.has_value()) {
+    // Sticky hover for the diagnostic "Quick Fix" card: when it is showing and the
+    // pointer is over it (or the bridge zone), keep it rather than letting a target
+    // underneath the card (a squiggle on the line beneath the popup) steal focus
+    // while the user reaches for the button. Scoped to Diagnostic popups so the
+    // blame popup's own hover/redraw behavior is unaffected; the gap between anchor
+    // and card is already handled by the retention check below (target null there).
+    if (previous_target.has_value() && *previous_target != *target &&
+        previous_target->kind == EditorHoverTarget::Kind::Diagnostic) {
+      if (const auto sticky = ActiveEditorHoverPopupLayout();
+          sticky.has_value() && sticky->primary_action_rect.has_value() &&
+          (Contains(sticky->rect, x, y) ||
+           Contains(HoverPopupHoverZoneRect(sticky->anchor_rect, sticky->rect), x, y))) {
+        return;
+      }
+    }
     if (!previous_target.has_value() || *previous_target != *target) {
       ++editor_hover_target_generation_;
     }

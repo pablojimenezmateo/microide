@@ -68,10 +68,6 @@ void WorkspaceShell::ActiveLspStatusStrings(bool ensure_started, std::string& te
   lsp_service_.ActiveLspStatusStrings(ensure_started, text, tooltip);
 }
 
-std::string WorkspaceShell::ActiveLspStatusText(bool ensure_started) {
-  return lsp_service_.ActiveLspStatusText(ensure_started);
-}
-
 void WorkspaceShell::BeginTrackedLspRequest() { lsp_service_.BeginTrackedLspRequest(); }
 
 void WorkspaceShell::FinishTrackedLspRequest() { lsp_service_.FinishTrackedLspRequest(); }

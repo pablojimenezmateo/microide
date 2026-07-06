@@ -1067,7 +1067,7 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
   };
   // Spec ordering (workspace-status-bar §"Segment list at first slice"):
   //   left:  project, branch, language, indent, encoding
-  //   right: line/column, problems, lsp, layout-mode
+  //   right: line/column, problems, lsp
   add_segment(StatusBarSegmentId::Project, vm.left_segments);
   add_segment(StatusBarSegmentId::Branch, vm.left_segments);
   add_segment(StatusBarSegmentId::Language, vm.left_segments);
@@ -1076,11 +1076,10 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
   add_segment(StatusBarSegmentId::LineColumn, vm.right_segments);
   add_segment(StatusBarSegmentId::Problems, vm.right_segments);
   add_segment(StatusBarSegmentId::Lsp, vm.right_segments);
-  add_segment(StatusBarSegmentId::LayoutMode, vm.right_segments);
 
   if (vm.layout_mode == LayoutMode::Compact) {
     // Compact-mode drop order (workspace-status-bar §"Compact-mode segment drop order"):
-    //   layout-mode badge, encoding, language, indent display
+    //   encoding, language, indent display
     // Keep: project+branch+cleanliness, line/column, problems count, LSP state
     const auto drop_segment = [&](StatusBarSegmentId id,
                                     std::vector<StatusBarSegmentViewModel>& segments) {
@@ -1092,7 +1091,6 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
         segments.erase(it);
       }
     };
-    drop_segment(StatusBarSegmentId::LayoutMode, vm.right_segments);
     drop_segment(StatusBarSegmentId::Encoding, vm.left_segments);
     drop_segment(StatusBarSegmentId::Language, vm.left_segments);
     drop_segment(StatusBarSegmentId::Indent, vm.left_segments);

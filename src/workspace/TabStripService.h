@@ -85,14 +85,16 @@ class TabStripService {
                                     float strip_width,
                                     const MeasureWidthFn& measure_width,
                                     const TitleProvider& display_title,
-                                    const TitleProvider& tooltip_label) const;
+                                    const TitleProvider& tooltip_label,
+                                    std::uint64_t dirty_fingerprint) const;
   std::vector<VisibleStripTab> ComputeVisibleEditorTabs(
       const EditorGroup& group,
       std::size_t group_index,
       const SDL_FRect& tab_strip,
       const MeasureWidthFn& measure_width,
       const TitleProvider& display_title,
-      const TitleProvider& tooltip_label) const;
+      const TitleProvider& tooltip_label,
+      std::uint64_t dirty_fingerprint) const;
   void InvalidateEditorTabGeometry();
 
   TabStripOverflowControls ComputeProjectTabOverflowControls(
@@ -141,6 +143,11 @@ class TabStripService {
     std::vector<float> widths;
     std::vector<std::string> display_titles;
     std::vector<std::string> tooltip_labels;
+    // Fingerprint of the per-tab dirty state at the last rebuild. The display
+    // titles carry a leading "*" for dirty buffers, so a dirty flip changes the
+    // rendered strip even when tab_count/window_width are unchanged; folding it
+    // into the cache key rebuilds the titles/widths when a buffer is saved/edited.
+    std::uint64_t dirty_fingerprint = 0;
     std::uint64_t version = 0;
     bool valid = false;
   };
@@ -175,7 +182,8 @@ class TabStripService {
                                   float strip_width,
                                   const MeasureWidthFn& measure_width,
                                   const TitleProvider& display_title,
-                                  const TitleProvider& tooltip_label) const;
+                                  const TitleProvider& tooltip_label,
+                                  std::uint64_t dirty_fingerprint) const;
   TabStripOverflowControls BuildOverflowControls(
       const SDL_FRect& strip,
       const std::vector<VisibleStripTab>& visible_tabs,

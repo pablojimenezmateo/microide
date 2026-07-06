@@ -13,7 +13,6 @@ namespace microide::workspace {
 void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
                                     const Operations& operations,
                                     const ProjectWorkspaceState& project_state,
-                                    LayoutMode layout_mode,
                                     const editor::TextViewport* active_viewport) {
   util::AddPerformanceCounter(util::PerfCounterId::FrameRefreshStatusBarCalls);
 
@@ -81,7 +80,6 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     project_segment.text = project_segment_cache_.text;
     project_segment.tooltip = project_segment_cache_.tooltip;
     project_segment.visible = true;
-    project_segment.clickable = true;
     branch_segment = {};
   }
   if (project_state.root.empty()) {
@@ -99,13 +97,6 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
   }
   status_bar_service.SetSegment(StatusBarSegmentId::Branch, std::move(branch_segment));
 
-  StatusBarSegmentValue layout_mode_segment;
-  layout_mode_segment.text = layout_mode == LayoutMode::Compact ? "Compact mode" : "Regular mode";
-  layout_mode_segment.tooltip = "Switch between regular and compact mode";
-  layout_mode_segment.visible = true;
-  layout_mode_segment.clickable = true;
-  status_bar_service.SetSegment(StatusBarSegmentId::LayoutMode, std::move(layout_mode_segment));
-
   if (active_viewport != nullptr) {
     const editor::TextViewport* const viewport = active_viewport;
     if (editor_segments_cache_.viewport != viewport ||
@@ -122,7 +113,6 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     line_col.text = editor_segments_cache_.line_column_text;
     line_col.tooltip = "Go to line/column";
     line_col.visible = true;
-    line_col.clickable = true;
     status_bar_service.SetSegment(StatusBarSegmentId::LineColumn, std::move(line_col));
 
     if (editor_segments_cache_.viewport != viewport ||
@@ -138,7 +128,6 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     indent.text = editor_segments_cache_.indent_text;
     indent.tooltip = "Change indent settings";
     indent.visible = true;
-    indent.clickable = true;
     status_bar_service.SetSegment(StatusBarSegmentId::Indent, std::move(indent));
 
     StatusBarSegmentValue language;
@@ -159,7 +148,6 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       language.text = filetype;
       language.tooltip = "Language: " + filetype;
       language.visible = true;
-      language.clickable = true;
     }
     status_bar_service.SetSegment(StatusBarSegmentId::Language, std::move(language));
 
@@ -203,7 +191,6 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       problems.text = editor_segments_cache_.problems_text;
       problems.tooltip = "Open Problems";
       problems.visible = true;
-      problems.clickable = true;
       problems.tone =
           errors > 0 ? StatusBarSegmentTone::Error : StatusBarSegmentTone::Warning;
     } else {

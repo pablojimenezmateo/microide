@@ -498,7 +498,8 @@ bool AssistService::TrySnippetDeleteForwardInEditor(editor::TextViewport* viewpo
   return true;
 }
 
-bool AssistService::ShowCodeActionsOverlay(std::string* error_message) {
+bool AssistService::ShowCodeActionsOverlay(std::string* error_message,
+                                           const editor::SelectionRange* explicit_range) {
   if (error_message != nullptr) {
     error_message->clear();
   }
@@ -510,10 +511,13 @@ bool AssistService::ShowCodeActionsOverlay(std::string* error_message) {
   const std::string language_id = DetectViewportLanguageId(*viewport);
   const std::filesystem::path request_path = viewport->path();
   const std::optional<editor::SelectionRange> selection = viewport->selection_range();
-  const editor::SelectionRange range = selection.value_or(editor::SelectionRange{
-      .start = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()},
-      .end = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()},
-  });
+  const editor::SelectionRange range =
+      explicit_range != nullptr
+          ? *explicit_range
+          : selection.value_or(editor::SelectionRange{
+                .start = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()},
+                .end = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()},
+            });
 
   // Open the overlay in a loading state immediately; the plugin code-action query
   // runs on the worker without blocking the UI. Results (or the LSP fallback) fill
@@ -575,6 +579,10 @@ void AssistService::BeginLspCodeActionFallback(editor::TextViewport& viewport,
 
   operations_.ensure_lsp_document_open(viewport, *client, language_id);
   const std::filesystem::path request_path = viewport.path();
+  std::vector<LspClient::Diagnostic> context_diagnostics;
+  if (operations_.collect_lsp_context_diagnostics) {
+    context_diagnostics = operations_.collect_lsp_context_diagnostics(viewport, range);
+  }
   session.items.clear();
   session.selected_index = 0;
   session.source = "lsp";
@@ -589,6 +597,7 @@ void AssistService::BeginLspCodeActionFallback(editor::TextViewport& viewport,
           .end = LspClient::Position{static_cast<int>(range.end.line),
                                      static_cast<int>(range.end.column)},
       },
+      std::move(context_diagnostics),
       [this, request_path](std::optional<std::vector<LspClient::CodeAction>> actions) {
         operations_.finish_tracked_lsp_request();
         // Drop superseded results if the active editable buffer changed since the
@@ -611,10 +620,29 @@ void AssistService::BeginLspCodeActionFallback(editor::TextViewport& viewport,
             for (const auto& argument : action.arguments) {
               arguments.push_back(JsonValueToArgumentString(argument));
             }
+            std::vector<CodeActionEdit> edits;
+            if (action.has_edit) {
+              for (const auto& [uri, text_edits] : action.edit.changes) {
+                const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
+                for (const auto& [lsp_range, new_text] : text_edits) {
+                  edits.push_back(CodeActionEdit{
+                      .path = path.value_or(std::filesystem::path{}),
+                      .range = editor::SelectionRange{
+                          .start = editor::TextPosition{static_cast<std::size_t>(lsp_range.start.line),
+                                                        static_cast<std::size_t>(lsp_range.start.character)},
+                          .end = editor::TextPosition{static_cast<std::size_t>(lsp_range.end.line),
+                                                      static_cast<std::size_t>(lsp_range.end.character)},
+                      },
+                      .new_text = new_text,
+                  });
+                }
+              }
+            }
             current_session.items.push_back(CodeActionSessionItem{
                 .title = action.title,
                 .command = action.command,
                 .arguments = std::move(arguments),
+                .edits = std::move(edits),
             });
           }
         }
@@ -629,6 +657,23 @@ bool AssistService::ExecuteSelectedCodeAction() {
   }
   const CodeActionSessionItem& action =
       session.items[std::min(session.selected_index, session.items.size() - 1)];
+
+  // Inline WorkspaceEdit actions (clangd quickfixes like "remove #include X")
+  // apply directly to the open buffers; command-style actions dispatch through
+  // the command registry. An action with neither is inert.
+  if (!action.edits.empty()) {
+    const bool applied = operations_.apply_lsp_workspace_edit
+                             ? operations_.apply_lsp_workspace_edit(action.edits)
+                             : false;
+    if (applied) {
+      operations_.dismiss_overlay(true);
+    } else {
+      session.error = "Could not apply fix";
+      operations_.request_overlay_redraw();
+    }
+    return applied;
+  }
+
   if (action.command.empty()) {
     return false;
   }

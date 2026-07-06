@@ -282,7 +282,7 @@ void TestWorkspaceShellCustomFrameResizeCursorsMatchHitTest() {
                 "left custom frame edge should use a horizontal resize cursor");
 }
 
-void TestWorkspaceShellStatusBarClickableSegmentsUsePointerCursor() {
+void TestWorkspaceShellStatusBarSegmentsAreNotClickable() {
   EnsureDummySdlVideoInitialized();
 
   TemporaryDirectory temp_dir;
@@ -296,18 +296,24 @@ void TestWorkspaceShellStatusBarClickableSegmentsUsePointerCursor() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::RefreshStatusBar(shell);
 
-  const auto segment_rect = WorkspaceShellTestAccess::StatusBarSegmentRect(
-      shell, microide::workspace::StatusBarSegmentId::Project);
-  Expect(segment_rect.has_value(),
-         "status bar cursor fixture should expose a clickable project segment");
-  const float x = segment_rect->x + segment_rect->w * 0.5f;
-  const float y = segment_rect->y + segment_rect->h * 0.5f;
-
-  WorkspaceShellTestAccess::UpdateMouseCursor(shell, x, y);
-  Expect(WorkspaceShellTestAccess::CachedCursorIsPointer(shell),
-         "clickable status bar segments should cache the pointer cursor");
-  Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, x, y),
-         "clickable status bar segments should resolve to the pointer cursor");
+  // The status bar has no buttons: hovering any segment yields the default cursor
+  // (no pointer), because no segment is clickable. StatusBarSegmentRect returns a
+  // segment's geometry regardless of clickability, so probe the cursor — which does
+  // gate on `clickable` — at each visible segment's center instead.
+  for (const auto id : {microide::workspace::StatusBarSegmentId::Project,
+                        microide::workspace::StatusBarSegmentId::LineColumn,
+                        microide::workspace::StatusBarSegmentId::Indent,
+                        microide::workspace::StatusBarSegmentId::Language,
+                        microide::workspace::StatusBarSegmentId::Problems}) {
+    const auto rect = WorkspaceShellTestAccess::StatusBarSegmentRect(shell, id);
+    if (!rect.has_value()) {
+      continue;  // segment not present at this width/state
+    }
+    const float cx = rect->x + rect->w * 0.5f;
+    const float cy = rect->y + rect->h * 0.5f;
+    Expect(WorkspaceShellTestAccess::CursorKindAtIsDefault(shell, cx, cy),
+           "status bar segments must not be clickable (no pointer cursor on the bottom bar)");
+  }
 }
 
 void TestWorkspaceShellCursorUpdatesWhenProjectSearchResultsArriveWithoutMotion() {
@@ -512,8 +518,8 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWindowControlCursorUsesPaddedHitRect);
   AddTest(tests, "WorkspaceShell/CustomFrameResizeCursorsMatchHitTest",
           TestWorkspaceShellCustomFrameResizeCursorsMatchHitTest);
-  AddTest(tests, "WorkspaceShell/StatusBarClickableSegmentsUsePointerCursor",
-          TestWorkspaceShellStatusBarClickableSegmentsUsePointerCursor);
+  AddTest(tests, "WorkspaceShell/StatusBarSegmentsAreNotClickable",
+          TestWorkspaceShellStatusBarSegmentsAreNotClickable);
   AddTest(tests, "WorkspaceShell/CursorUpdatesWhenProjectSearchResultsArriveWithoutMotion",
           TestWorkspaceShellCursorUpdatesWhenProjectSearchResultsArriveWithoutMotion);
   AddTest(tests, "WorkspaceShell/CursorSplitNonFocusedGroupTabUsesPointer",

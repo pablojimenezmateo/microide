@@ -118,9 +118,10 @@ void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
 
   if (cache.sig != sig || !RectsEqual(cache.track, inner_lane)) {
     inputs.clear();
-    // Diagnostics: suppressed while the buffer is dirty (stale line positions) or has no
-    // on-disk path, matching the main editor render's diagnostic gating.
-    if (!viewport.dirty() && !viewport.path().empty()) {
+    // Diagnostics stay visible while the buffer is dirty: LspService slides their
+    // positions through each edit so they track the text until the server
+    // republishes. Only a pathless (unsaved scratch) buffer has none.
+    if (!viewport.path().empty()) {
       if (const std::vector<editor::PublishedDiagnostic>* diags =
               project_state.diagnostics_store.FindByPathKey(viewport.path_key());
           diags != nullptr) {
@@ -519,7 +520,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     const auto diagnostics_for_viewport =
         [this, &project_state, diagnostics_min_severity](const editor::TextViewport& viewport)
         -> std::span<const editor::PublishedDiagnostic> {
-      if (viewport.path().empty() || viewport.dirty()) {
+      if (viewport.path().empty()) {
         return {};
       }
       const auto* diagnostics = project_state.diagnostics_store.FindByPathKey(viewport.path_key());

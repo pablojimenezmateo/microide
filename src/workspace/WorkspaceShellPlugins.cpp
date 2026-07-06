@@ -278,6 +278,15 @@ WorkspaceShell::WorkspaceShell() {
                 return ExecuteCommandName(command_name, args, ActionSource::Menu,
                                           error_message);
               },
+          .collect_lsp_context_diagnostics =
+              [this](const editor::TextViewport& viewport,
+                     const editor::SelectionRange& range) {
+                return CollectLspContextDiagnostics(viewport, range);
+              },
+          .apply_lsp_workspace_edit =
+              [this](const std::vector<CodeActionEdit>& edits) {
+                return ApplyLspWorkspaceEdit(edits);
+              },
           .open_file_in_new_tab =
               [this](const std::filesystem::path& path) { return OpenFileInNewTab(path); },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
@@ -1104,6 +1113,182 @@ bool WorkspaceShell::ApplyPluginWorkspaceEdit(
   RequestActiveEditableLastChangeRedraw();
   RequestChromeRedraw();
   return true;
+}
+
+bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& edits) {
+  if (edits.empty()) {
+    return false;
+  }
+
+  // Resolve a target path to an already-open editable buffer. An empty path (or
+  // one matching the active buffer) resolves to the active editable buffer; other
+  // paths must already be open (v1 never edits files on disk, so undo stays
+  // coherent). Mirrors ApplyPluginWorkspaceEdit's resolution.
+  const auto resolve = [&](const std::filesystem::path& path) -> editor::TextViewport* {
+    if (path.empty()) {
+      return ActiveEditableViewport();
+    }
+    const std::filesystem::path normalized = path.lexically_normal();
+    if (editor::TextViewport* active = ActiveEditableViewport();
+        active != nullptr && active->path().lexically_normal() == normalized) {
+      return active;
+    }
+    for (auto& group : context_.current_project_state.editor_groups) {
+      for (auto& tab : group.open_tabs) {
+        if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+          continue;
+        }
+        auto& state = *tab.editor_state;
+        if (!state.needs_restore &&
+            state.viewport.path().lexically_normal() == normalized) {
+          return &state.viewport;
+        }
+      }
+    }
+    return nullptr;
+  };
+
+  // Group edits by the buffer they resolve to; each buffer applies its edits as a
+  // single grouped-undo step, highest-position-first so earlier ranges stay valid.
+  std::vector<std::pair<editor::TextViewport*, std::vector<std::pair<editor::SelectionRange, std::string>>>>
+      by_viewport;
+  const auto bucket_for = [&](editor::TextViewport* viewport)
+      -> std::vector<std::pair<editor::SelectionRange, std::string>>& {
+    for (auto& entry : by_viewport) {
+      if (entry.first == viewport) {
+        return entry.second;
+      }
+    }
+    by_viewport.emplace_back(viewport, std::vector<std::pair<editor::SelectionRange, std::string>>{});
+    return by_viewport.back().second;
+  };
+
+  for (const CodeActionEdit& edit : edits) {
+    editor::TextViewport* viewport = resolve(edit.path);
+    if (viewport == nullptr) {
+      continue;
+    }
+    bucket_for(viewport).emplace_back(edit.range, edit.new_text);
+  }
+
+  // Snapshot the active buffer so a multi-edit apply (e.g. "remove all unused
+  // includes" -> one deletion per include, all in a single undo group) re-syncs
+  // the language server with a FULL document change. The incremental last-change
+  // path only carries the last of N edits, which would desync clangd (garbage
+  // diagnostics that never reconcile) and strand stale markers on wrong lines.
+  editor::TextViewport* active_viewport = ActiveEditableViewport();
+  std::vector<std::string> active_before_lines;
+  if (active_viewport != nullptr) {
+    active_before_lines = active_viewport->lines().Snapshot();
+  }
+
+  bool applied_any = false;
+  for (auto& [viewport, buffer_edits] : by_viewport) {
+    if (viewport == nullptr || buffer_edits.empty()) {
+      continue;
+    }
+    // Clamp 0-based LSP coordinates to the live document.
+    const auto clamp = [&](editor::TextPosition pos) -> editor::TextPosition {
+      const std::size_t line_count = viewport->line_count();
+      if (line_count == 0) {
+        return editor::TextPosition{0, 0};
+      }
+      if (pos.line >= line_count) {
+        pos.line = line_count - 1;
+      }
+      const std::size_t line_length = viewport->lines()[pos.line].size();
+      if (pos.column > line_length) {
+        pos.column = line_length;
+      }
+      return pos;
+    };
+    for (auto& [range, text] : buffer_edits) {
+      range.start = clamp(range.start);
+      range.end = clamp(range.end);
+    }
+    std::sort(buffer_edits.begin(), buffer_edits.end(), [](const auto& lhs, const auto& rhs) {
+      const editor::SelectionRange a = editor::TextViewport::NormalizeRange(lhs.first);
+      const editor::SelectionRange b = editor::TextViewport::NormalizeRange(rhs.first);
+      if (a.start.line != b.start.line) {
+        return a.start.line > b.start.line;
+      }
+      return a.start.column > b.start.column;
+    });
+
+    viewport->BeginUndoGroup();
+    for (const auto& [range, text] : buffer_edits) {
+      viewport->ReplaceRange(range, text, /*record_undo=*/true);
+    }
+    viewport->EndUndoGroup();
+    applied_any = true;
+  }
+
+  if (applied_any) {
+    ResetCaretBlink();
+    // Full-document re-sync (not the single-edit incremental path) so clangd sees
+    // every removed line and republishes authoritative diagnostics.
+    if (active_viewport != nullptr) {
+      RequestActiveEditableChangeRedraw(active_before_lines, active_viewport->lines().Snapshot());
+    } else {
+      RequestActiveEditableLastChangeRedraw();
+    }
+    // Repaint the tab strip so the dirty indicator appears immediately; the edit
+    // just flipped the buffer to dirty and RequestChromeRedraw only damages the
+    // menu-bar region, leaving the tab dot stale until the next full repaint.
+    RequestActiveTabRedraw(/*include_tree_sidebar=*/false);
+  }
+  return applied_any;
+}
+
+std::vector<LspClient::Diagnostic> WorkspaceShell::CollectLspContextDiagnostics(
+    const editor::TextViewport& viewport, const editor::SelectionRange& range) const {
+  std::vector<LspClient::Diagnostic> result;
+  const std::vector<editor::PublishedDiagnostic>* diagnostics =
+      context_.current_project_state.diagnostics_store.FindByPathKey(viewport.path_key());
+  if (diagnostics == nullptr) {
+    return result;
+  }
+
+  // Position ordering + range overlap so a cursor sitting on (or a selection
+  // spanning) a diagnostic includes it. Requesting range and diagnostic range are
+  // both 0-based half-open per LSP.
+  const auto before = [](const editor::TextPosition& a, const editor::TextPosition& b) {
+    return a.line < b.line || (a.line == b.line && a.column < b.column);
+  };
+  const editor::SelectionRange want = editor::TextViewport::NormalizeRange(range);
+  const auto severity_code = [](editor::DiagnosticSeverity severity) {
+    switch (severity) {
+      case editor::DiagnosticSeverity::Error:
+        return 1;
+      case editor::DiagnosticSeverity::Warning:
+        return 2;
+      case editor::DiagnosticSeverity::Info:
+        return 3;
+      case editor::DiagnosticSeverity::Hint:
+        return 4;
+    }
+    return 1;
+  };
+
+  for (const editor::PublishedDiagnostic& diagnostic : *diagnostics) {
+    const editor::SelectionRange have = editor::TextViewport::NormalizeRange(diagnostic.range);
+    // Overlap unless one range ends strictly before the other begins.
+    const bool disjoint = before(have.end, want.start) || before(want.end, have.start);
+    if (disjoint) {
+      continue;
+    }
+    result.push_back(LspClient::Diagnostic{
+        .range = LspClient::Range{
+            .start = LspClient::Position{static_cast<int>(diagnostic.range.start.line),
+                                         static_cast<int>(diagnostic.range.start.column)},
+            .end = LspClient::Position{static_cast<int>(diagnostic.range.end.line),
+                                       static_cast<int>(diagnostic.range.end.column)},
+        },
+        .message = diagnostic.message,
+        .severity = severity_code(diagnostic.severity),
+    });
+  }
+  return result;
 }
 
 void WorkspaceShell::PublishPluginGhostText(

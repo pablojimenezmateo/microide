@@ -179,6 +179,34 @@ void TextViewportUndoHistory::PushRedo(Entry entry) {
   redo_stack_.push_back(std::move(entry));
 }
 
+void TextViewportUndoHistory::MarkSaved() {
+  // Dirty is tracked per undo/redo position via the captured ViewState flags. The
+  // freshly-saved buffer is the one clean position; every OTHER reachable position
+  // (reached by undoing past the save, or redoing forward) now differs from disk,
+  // so its flag must read dirty. Blanket-mark everything dirty, then clear only the
+  // ViewState(s) that represent the current (saved) position: the top undo entry's
+  // after_state, and — if we saved while sitting above undone edits — the
+  // most-recently-undone redo entry's before_state.
+  for (Entry& entry : undo_stack_) {
+    entry.before_state.dirty = true;
+    entry.after_state.dirty = true;
+  }
+  for (Entry& entry : redo_stack_) {
+    entry.before_state.dirty = true;
+    entry.after_state.dirty = true;
+  }
+  if (!undo_stack_.empty()) {
+    undo_stack_.back().after_state.dirty = false;
+  }
+  if (!redo_stack_.empty()) {
+    redo_stack_.back().before_state.dirty = false;
+  }
+  // A subsequent contiguous edit must start a fresh undo entry rather than
+  // coalescing into the just-saved top entry (which would rewrite the saved
+  // position's after_state back to dirty).
+  EndCoalesceRun();
+}
+
 void TextViewportUndoHistory::Clear() {
   EndCoalesceRun();
   undo_stack_.clear();

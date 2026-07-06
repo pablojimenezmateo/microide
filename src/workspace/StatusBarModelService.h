@@ -24,7 +24,6 @@ class StatusBarModelService {
   void Refresh(StatusBarService& status_bar_service,
                const Operations& operations,
                const ProjectWorkspaceState& project_state,
-               LayoutMode layout_mode,
                const editor::TextViewport* active_viewport);
 
  private:

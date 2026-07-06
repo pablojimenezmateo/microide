@@ -86,7 +86,6 @@ void TestStatusBarCompactDropOrder() {
   SetSegment(service, StatusBarSegmentId::LineColumn, "Ln 4, Col 2");
   SetSegment(service, StatusBarSegmentId::Problems, "0 problems");
   SetSegment(service, StatusBarSegmentId::Lsp, "LSP: Ready");
-  SetSegment(service, StatusBarSegmentId::LayoutMode, "compact");
 
   LayoutModeInputs inputs;
   inputs.user_override = LayoutModeInputs::Override::Compact;
@@ -100,8 +99,6 @@ void TestStatusBarCompactDropOrder() {
          "compact status bar should keep project and branch and drop lower-priority left segments");
   Expect(vm.left_segments[0].text == "microide" && vm.left_segments[1].text == "main",
          "compact status bar should preserve project and branch order");
-  Expect(!vm.right_segments.empty() && vm.right_segments.back().text != "compact",
-         "compact status bar should drop the layout-mode badge before essential right segments");
   const auto find_segment = [&](StatusBarSegmentId id,
                                   const std::vector<microide::workspace::StatusBarSegmentViewModel>&
                                       segments) {

@@ -39,8 +39,8 @@ void WorkspaceShell::RenderStatusBar(SDL_Renderer* renderer,
   const auto segment_color = [&](const StatusBarSegmentViewModel& seg) -> SDL_Color {
     // Diagnostic segments are colored by semantic tone (set in
     // StatusBarModelService) so the count/state -- not the display text -- picks
-    // the color. Problems keeps a severity color even though it is clickable;
-    // the clickable hover affordance is applied separately in draw_segment.
+    // the color. The status bar has no clickable segments; every segment renders
+    // as plain (non-interactive) text.
     switch (seg.id) {
       case StatusBarSegmentId::Problems:
         return tone_color(seg.tone, theme_.diagnostic_warning);

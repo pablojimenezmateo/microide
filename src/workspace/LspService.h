@@ -93,6 +93,15 @@ class LspService {
   ProjectWorkspaceState& CurrentProjectState();
   const ProjectWorkspaceState& CurrentProjectState() const;
 
+  // Keep stored "lsp" diagnostics positioned as the buffer changes, before the
+  // server republishes. The single-edit path maps positions precisely through the
+  // viewport's last applied edit; the bulk path (paste/undo/format) shifts
+  // diagnostics below the first changed line by the net line delta.
+  void ShiftLspDiagnosticsForAppliedEdit(const editor::TextViewport& viewport);
+  void ShiftLspDiagnosticsForBulkChange(const editor::TextViewport& viewport,
+                                        const std::vector<std::string>& before_lines,
+                                        const std::vector<std::string>& after_lines);
+
   WorkspaceContext* context_ = nullptr;
   CompletionRegistry* completion_registry_ = nullptr;
   CodeActionRegistry* code_action_registry_ = nullptr;

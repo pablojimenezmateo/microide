@@ -69,15 +69,21 @@ class LspClient {
     int insert_text_format = 1;
   };
 
+  struct WorkspaceEdit {
+    // Map from URI to list of text edits.
+    std::unordered_map<std::string, std::vector<std::pair<Range, std::string>>> changes;
+  };
+
   struct CodeAction {
     std::string title;
     std::string command;
     std::vector<util::JsonValue> arguments;
-  };
-
-  struct WorkspaceEdit {
-    // Map from URI to list of text edits.
-    std::unordered_map<std::string, std::vector<std::pair<Range, std::string>>> changes;
+    // Inline WorkspaceEdit carried by the action (clangd delivers quickfixes,
+    // e.g. "remove unused #include", this way). Applied directly to open buffers
+    // rather than via a server command. `has_edit` distinguishes an empty edit
+    // from an absent one.
+    WorkspaceEdit edit;
+    bool has_edit = false;
   };
 
   struct DocumentSymbol {
@@ -191,8 +197,12 @@ class LspClient {
   // Async textDocument/completion.
   void RequestCompletionAsync(std::string uri, Position pos, CompletionCallback callback);
 
-  // Async textDocument/codeAction.
-  void RequestCodeActionAsync(std::string uri, Range range, CodeActionCallback callback);
+  // Async textDocument/codeAction. `context_diagnostics` populates the request
+  // `context.diagnostics`; clangd only returns quickfixes for diagnostics passed
+  // here (it matches them by range + message).
+  void RequestCodeActionAsync(std::string uri, Range range,
+                              std::vector<Diagnostic> context_diagnostics,
+                              CodeActionCallback callback);
 
   // Async textDocument/formatting.
   void RequestFormattingAsync(std::string uri, int tab_size, bool insert_spaces,

@@ -124,7 +124,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
     std::span<const editor::PublishedDiagnostic> diagnostics,
     float x,
     float y) const {
-  if (viewport.path().empty() || viewport.dirty() || diagnostics.empty() ||
+  if (viewport.path().empty() || diagnostics.empty() ||
       !Contains(interaction.rect, x, y)) {
     return std::nullopt;
   }
@@ -404,7 +404,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
 
   for (const EditorPaneLayout& pane : panes) {
     const editor::TextViewport* viewport = ViewportForPane(pane);
-    if (viewport == nullptr || viewport->path().empty() || viewport->dirty()) {
+    if (viewport == nullptr || viewport->path().empty()) {
       continue;
     }
 

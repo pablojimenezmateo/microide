@@ -274,6 +274,37 @@ bool DiagnosticsStore::ReplaceForOwnerFile(std::string_view owner,
   return true;
 }
 
+bool DiagnosticsStore::TransformOwnerFile(
+    std::string_view owner, const std::filesystem::path& path,
+    const std::function<SelectionRange(SelectionRange)>& transform) {
+  if (!transform) {
+    return false;
+  }
+  const std::string owner_key(owner);
+  const std::string path_key = PathKey(path);
+  if (owner_key.empty() || path_key.empty()) {
+    return false;
+  }
+  const auto owner_it = diagnostics_by_owner_.find(owner_key);
+  if (owner_it == diagnostics_by_owner_.end()) {
+    return false;
+  }
+  const auto file_it = owner_it->second.find(path_key);
+  if (file_it == owner_it->second.end() || file_it->second.diagnostics.empty()) {
+    return false;
+  }
+
+  for (PublishedDiagnostic& diagnostic : file_it->second.diagnostics) {
+    diagnostic.range = transform(diagnostic.range);
+  }
+  // Severity counts are unaffected by a position shift, so the per-owner summary
+  // stays valid; only order can change. Re-sort, then rebuild the merged view
+  // (which recomputes the merged summary and bumps the store revision on change).
+  SortDiagnostics(&file_it->second.diagnostics);
+  RebuildPath(path_key);
+  return true;
+}
+
 bool DiagnosticsStore::ClearOwner(std::string_view owner) {
   const auto owner_it = diagnostics_by_owner_.find(owner);
   if (owner_it == diagnostics_by_owner_.end()) {

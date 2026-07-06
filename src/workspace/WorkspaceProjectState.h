@@ -218,10 +218,21 @@ struct CompletionSessionState {
   std::string error;
 };
 
+// One resolved text edit from a code action's inline WorkspaceEdit. Coordinates
+// are 0-based (LSP-native). An empty `path` targets the active editable buffer.
+struct CodeActionEdit {
+  std::filesystem::path path;
+  editor::SelectionRange range;
+  std::string new_text;
+};
+
 struct CodeActionSessionItem {
   std::string title;
   std::string command;
   std::vector<std::string> arguments;
+  // When non-empty the action is applied directly as buffer edits (no command
+  // dispatch). This is how clangd delivers quickfixes like "remove #include X".
+  std::vector<CodeActionEdit> edits;
 };
 
 struct CodeActionSessionState {

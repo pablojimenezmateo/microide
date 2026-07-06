@@ -48,6 +48,14 @@ class AssistService {
     std::function<void(std::string, std::string)> show_signature_help;
     std::function<bool(std::string_view, const std::vector<std::string>&, std::string*)>
         execute_command_name;
+    // Collect the diagnostics for the viewport's file that overlap `range`,
+    // converted to LSP wire form, to populate a codeAction request `context`.
+    std::function<std::vector<LspClient::Diagnostic>(const editor::TextViewport&,
+                                                     const editor::SelectionRange&)>
+        collect_lsp_context_diagnostics;
+    // Apply a code action's inline WorkspaceEdit (0-based edits) directly to the
+    // open buffers. Returns false if no target buffer resolved / edit was stale.
+    std::function<bool(const std::vector<CodeActionEdit>&)> apply_lsp_workspace_edit;
     std::function<bool(const std::filesystem::path&)> open_file_in_new_tab;
     std::function<void()> reset_caret_blink;
     std::function<void()> request_focused_editor_redraw;
@@ -88,7 +96,11 @@ class AssistService {
   bool TrySnippetInsertTextInEditor(editor::TextViewport* viewport, std::string_view text);
   bool TrySnippetBackspaceInEditor(editor::TextViewport* viewport);
   bool TrySnippetDeleteForwardInEditor(editor::TextViewport* viewport);
-  bool ShowCodeActionsOverlay(std::string* error_message = nullptr);
+  // `explicit_range`, when set, targets code actions at that document range
+  // (e.g. a diagnostic's range from the hover "Quick Fix" affordance) instead of
+  // the current cursor/selection.
+  bool ShowCodeActionsOverlay(std::string* error_message = nullptr,
+                              const editor::SelectionRange* explicit_range = nullptr);
   bool ExecuteSelectedCodeAction();
   bool GoToLspDefinition(std::string* error_message = nullptr);
   bool FindLspReferences(std::string* error_message = nullptr);

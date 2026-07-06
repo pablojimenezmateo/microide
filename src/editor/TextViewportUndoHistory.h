@@ -100,6 +100,11 @@ class TextViewportUndoHistory {
   void PushRedo(Entry entry);
   void ClearRedo() { redo_stack_.clear(); }
   void Clear();
+  // Re-baseline the dirty flags so the current undo/redo position is the single
+  // clean point and every other reachable position reads dirty. Called after a
+  // successful save so that undoing PAST the save (or redoing forward) correctly
+  // reports the buffer as differing from disk.
+  void MarkSaved();
 
   // Pure helpers -------------------------------------------------------
   static void ApplyEntryToLines(std::vector<std::string>& lines, const Entry& entry,

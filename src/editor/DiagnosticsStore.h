@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -68,6 +69,13 @@ class DiagnosticsStore {
   bool ReplaceForOwnerFile(std::string_view owner,
                            const std::filesystem::path& path,
                            std::vector<Diagnostic> diagnostics);
+  // Adjust every diagnostic range for `owner`+`path` in place via `transform`,
+  // then re-sort and rebuild the merged view. Used to keep diagnostic positions
+  // live during editing (before the language server republishes), so squiggles
+  // slide with the text instead of being hidden while the buffer is dirty.
+  // Returns true if the file had diagnostics to transform.
+  bool TransformOwnerFile(std::string_view owner, const std::filesystem::path& path,
+                          const std::function<SelectionRange(SelectionRange)>& transform);
   bool ClearOwner(std::string_view owner);
   bool ClearOwnerFile(std::string_view owner, const std::filesystem::path& path);
   bool RetargetPathPrefix(const std::filesystem::path& old_prefix,

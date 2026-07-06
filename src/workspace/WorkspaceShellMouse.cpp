@@ -68,15 +68,25 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   const auto visible_hover_popup = ActiveEditorHoverPopupLayout();
   if (event.button.button == SDL_BUTTON_LEFT && visible_hover_popup.has_value() &&
       Contains(visible_hover_popup->rect, event.button.x, event.button.y)) {
-    if (visible_hover_popup->kind == EditorHoverTarget::Kind::Blame &&
+    const bool primary_action_hit =
         visible_hover_popup->primary_action_rect.has_value() &&
-      Contains(EditorHoverPopupPrimaryActionHitRect(*visible_hover_popup), event.button.x,
-                 event.button.y)) {
+        Contains(EditorHoverPopupPrimaryActionHitRect(*visible_hover_popup), event.button.x,
+                 event.button.y);
+    if (visible_hover_popup->kind == EditorHoverTarget::Kind::Blame && primary_action_hit) {
       if (const editor::EditorBlameLine* blame_line =
               editor_blame_overlay_service_.VisibleLine(visible_hover_popup->blame_line_index);
           blame_line != nullptr && !blame_line->commit_id.empty() &&
           WriteClipboardText(blame_line->commit_id)) {
       }
+    } else if (visible_hover_popup->kind == EditorHoverTarget::Kind::Diagnostic &&
+               primary_action_hit && visible_hover_popup->diagnostic.has_value()) {
+      // Open the code-action menu targeted at the diagnostic's range so the fix
+      // list reflects this diagnostic (there may be several actions).
+      const editor::SelectionRange range = visible_hover_popup->diagnostic->range;
+      active_editor_hover_target_.reset();
+      assist_service_.ShowCodeActionsOverlay(nullptr, &range);
+      EnsureRedraw([this]() { RequestWindowRedraw(); });
+      return true;
     }
     context_.current_project_state.surface.focus = FocusTarget::Editor;
     EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
@@ -189,11 +199,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     } else {
       EnsureRedraw([this]() { RequestWindowRedraw(); });
     }
-    return true;
-  }
-
-  if (HandleStatusBarButtonDown(event, layout)) {
-    EnsureRedraw([this]() { RequestWindowRedraw(); });
     return true;
   }
 

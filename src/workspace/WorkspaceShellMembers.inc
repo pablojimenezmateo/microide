@@ -936,6 +936,14 @@
   // and clamps every edit, applies them as one grouped-undo step, then optionally
   // moves the caret / sets the selection. Returns true when a buffer was edited.
   bool ApplyPluginWorkspaceEdit(const plugin::PluginHost::WorkspaceEditRequest& request);
+  // Apply a code action's inline WorkspaceEdit (0-based, LSP-native coordinates)
+  // to the open buffers. Sibling of ApplyPluginWorkspaceEdit (which takes 1-based
+  // plugin coordinates); shares its resolve-open-buffer-only + grouped-undo +
+  // highest-position-first apply discipline.
+  bool ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& edits);
+  // Collect the diagnostics for `viewport`'s file that overlap `range`, in LSP
+  // wire form, to populate a textDocument/codeAction request context.
+  std::vector<LspClient::Diagnostic> CollectLspContextDiagnostics(const editor::TextViewport& viewport, const editor::SelectionRange& range) const;
   // Ghost text (Copilot-style inline suggestion). The plugin publishes a proposal;
   // the host validates it against the live caret, stores at most one (last writer
   // wins), renders it dimmed, inserts it on Tab (Accept), and clears it on Esc
@@ -1381,7 +1389,6 @@
   void StopAllDebugSessions();
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
   void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip);
-  std::string ActiveLspStatusText(bool ensure_started = true);
   void BeginTrackedLspRequest();
   void FinishTrackedLspRequest();
   LspClient* LspClientForViewport(const editor::TextViewport& viewport,
@@ -1584,7 +1591,6 @@
   const std::vector<std::string>& CachedFontFamilies();
   void TogglePluginEnabled(std::string_view plugin_id);
   void EnsureSettingsSelectionVisible();
-  bool HandleStatusBarButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   void RenderPromptSurface(
       SDL_Renderer* renderer,
       const WorkspaceLayout& layout,

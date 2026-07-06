@@ -530,7 +530,8 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
     operations_.reveal_overlay_selection(overlay);
     if (state_.overlay.mode == OverlayMode::CommitPicker ||
         state_.overlay.mode == OverlayMode::LaunchConfigPicker ||
-        state_.overlay.mode == OverlayMode::CommandPalette) {
+        state_.overlay.mode == OverlayMode::CommandPalette ||
+        state_.overlay.mode == OverlayMode::CodeActions) {
       operations_.activate_overlay_selection();
     }
   }

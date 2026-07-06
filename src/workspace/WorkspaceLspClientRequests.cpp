@@ -54,14 +54,62 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
       [failure = std::move(failure)]() { failure(std::nullopt); });
 }
 
-void LspClient::RequestCodeActionAsync(std::string uri, Range range, CodeActionCallback callback) {
+namespace {
+
+// Parse an inline `edit` (WorkspaceEdit) from a code action into `out`. Handles
+// both the `changes` object shape (uri -> edits, clangd's default when the
+// client does not advertise documentChanges support -- our case) and the
+// `documentChanges` array shape. Returns true when at least one edit was parsed.
+bool ParseCodeActionEdit(const util::JsonValue& edit, LspClient::WorkspaceEdit& out) {
+  bool any = false;
+  if (edit.HasKey("changes")) {
+    const auto& changes = edit["changes"];
+    for (const auto& [uri, edits] : changes.AsObject()) {
+      if (!edits.IsArray()) continue;
+      auto& bucket = out.changes[uri];
+      for (const auto& text_edit : edits.AsArray()) {
+        bucket.emplace_back(lsp_protocol::ParseRange(text_edit["range"]),
+                            text_edit["newText"].AsString());
+        any = true;
+      }
+    }
+  }
+  if (edit.HasKey("documentChanges") && edit["documentChanges"].IsArray()) {
+    for (const auto& doc_change : edit["documentChanges"].AsArray()) {
+      // TextDocumentEdit shape: { textDocument: { uri }, edits: [ TextEdit ] }.
+      // Skip create/rename/delete resource ops (no `edits` array).
+      if (!doc_change.HasKey("edits") || !doc_change["edits"].IsArray()) continue;
+      const std::string uri = doc_change["textDocument"]["uri"].AsString();
+      auto& bucket = out.changes[uri];
+      for (const auto& text_edit : doc_change["edits"].AsArray()) {
+        bucket.emplace_back(lsp_protocol::ParseRange(text_edit["range"]),
+                            text_edit["newText"].AsString());
+        any = true;
+      }
+    }
+  }
+  return any;
+}
+
+}  // namespace
+
+void LspClient::RequestCodeActionAsync(std::string uri, Range range,
+                                       std::vector<Diagnostic> context_diagnostics,
+                                       CodeActionCallback callback) {
   if (!callback) return;
   CodeActionCallback failure = callback;
   using namespace util;
   JsonObject params;
   params["textDocument"] = lsp_protocol::MakeTextDocumentIdentifier(uri);
   params["range"] = lsp_protocol::MakeRange(range);
-  params["context"] = JsonValue(JsonObject{});
+  JsonObject context;
+  JsonArray diagnostics_json;
+  diagnostics_json.reserve(context_diagnostics.size());
+  for (const auto& diagnostic : context_diagnostics) {
+    diagnostics_json.push_back(lsp_protocol::MakeDiagnostic(diagnostic));
+  }
+  context["diagnostics"] = JsonValue(std::move(diagnostics_json));
+  params["context"] = JsonValue(std::move(context));
   impl_->DispatchRequest(
       "textDocument/codeAction", JsonValue(std::move(params)),
       [cb = std::move(callback)](util::JsonValue resp) {
@@ -86,6 +134,9 @@ void LspClient::RequestCodeActionAsync(std::string uri, Range range, CodeActionC
             const auto& command = action["command"];
             ca.command = command["command"].AsString();
             ca.arguments = command["arguments"].AsArray();
+          }
+          if (action.HasKey("edit")) {
+            ca.has_edit = ParseCodeActionEdit(action["edit"], ca.edit);
           }
           actions.push_back(std::move(ca));
         }

@@ -7,6 +7,25 @@
 #include "workspace/LayoutModeService.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceProjectPresentation.h"
+#include "workspace/WorkspaceTabCoordinator.h"
+
+namespace {
+
+// Position-sensitive FNV-1a fold of each open tab's dirty state. The editor tab
+// titles carry a leading "*" when dirty, so this feeds the geometry cache key so a
+// save/edit that flips dirtiness rebuilds the strip without needing a resize.
+std::uint64_t EditorTabsDirtyFingerprint(
+    const microide::workspace::EditorGroup& group) {
+  std::uint64_t fingerprint = 1469598103934665603ull;  // FNV-1a offset basis
+  for (const auto& tab : group.open_tabs) {
+    const std::uint64_t bit =
+        microide::workspace::TabCoordinator::TabStateIsDirty(tab) ? 1u : 0u;
+    fingerprint = (fingerprint ^ bit) * 1099511628211ull;  // FNV-1a prime
+  }
+  return fingerprint;
+}
+
+}  // namespace
 
 namespace microide::workspace {
 
@@ -142,7 +161,8 @@ void WorkspaceTabStripChrome::EnsureActiveTabVisibleForGroup(std::size_t group_i
   tab_strip_service_->EnsureActiveEditorTabVisible(
       state.editor_groups[group_index], group_index, tab_strip_width, operations_.measure_width,
       [this, group_index](std::size_t i) { return operations_.editor_tab_display_title(group_index, i); },
-      [this, group_index](std::size_t i) { return operations_.editor_tab_tooltip_label(group_index, i); });
+      [this, group_index](std::size_t i) { return operations_.editor_tab_tooltip_label(group_index, i); },
+      EditorTabsDirtyFingerprint(state.editor_groups[group_index]));
 }
 
 std::vector<VisibleStripTab> WorkspaceTabStripChrome::ComputeVisibleTabs(
@@ -160,7 +180,8 @@ std::vector<VisibleStripTab> WorkspaceTabStripChrome::ComputeVisibleTabsForGroup
   return tab_strip_service_->ComputeVisibleEditorTabs(
       state.editor_groups[group_index], group_index, tab_strip, operations_.measure_width,
       [this, group_index](std::size_t i) { return operations_.editor_tab_display_title(group_index, i); },
-      [this, group_index](std::size_t i) { return operations_.editor_tab_tooltip_label(group_index, i); });
+      [this, group_index](std::size_t i) { return operations_.editor_tab_tooltip_label(group_index, i); },
+      EditorTabsDirtyFingerprint(state.editor_groups[group_index]));
 }
 
 TabStripOverflowControls WorkspaceTabStripChrome::ComputeProjectTabOverflowControls(

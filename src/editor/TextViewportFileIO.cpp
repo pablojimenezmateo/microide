@@ -149,6 +149,9 @@ bool TextViewport::Save() {
 
   document_->mixed_line_endings = false;
   document_->dirty = false;
+  // Re-baseline undo/redo dirty flags to this saved position so undoing past the
+  // save marks the buffer dirty (its content then differs from what we just wrote).
+  undo_history_.MarkSaved();
   // Record the just-written file's identity so (a) a save-time conflict check
   // sees a matching signature next time and (b) the watcher's echo of our own
   // write is recognized and suppressed instead of forcing a redundant reload.

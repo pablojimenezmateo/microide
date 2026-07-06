@@ -36,6 +36,11 @@ std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const util::JsonVa
 // ---- Encode (LSP structs -> wire JSON) ------------------------------------
 util::JsonValue MakePosition(const LspClient::Position& position);
 util::JsonValue MakeRange(const LspClient::Range& range);
+// Encode a diagnostic for a request `context.diagnostics` array (range, message,
+// severity, and code when non-empty). Servers like clangd match the stored
+// quickfixes against these by range + message, so the round-tripped values must
+// mirror what the server originally published.
+util::JsonValue MakeDiagnostic(const LspClient::Diagnostic& diagnostic);
 util::JsonValue MakeTextDocumentIdentifier(const std::string& uri);
 util::JsonValue MakeTextDocumentPositionParams(const std::string& uri,
                                                const LspClient::Position& position);

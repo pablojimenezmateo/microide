@@ -143,17 +143,20 @@ void TabStripService::RefreshEditorGeometryCache(const EditorGroup& group,
                                                  float strip_width,
                                                  const MeasureWidthFn& measure_width,
                                                  const TitleProvider& display_title,
-                                                 const TitleProvider& tooltip_label) const {
+                                                 const TitleProvider& tooltip_label,
+                                                 std::uint64_t dirty_fingerprint) const {
   TabStripGeometryCache& geometry = editor_tab_geometry_cache_[group_index];
   const std::size_t tab_count = group.open_tabs.size();
   const bool cache_hit = geometry.valid && geometry.tab_count == tab_count &&
-                         geometry.window_width == strip_width;
+                         geometry.window_width == strip_width &&
+                         geometry.dirty_fingerprint == dirty_fingerprint;
   if (cache_hit) {
     return;
   }
 
   geometry.tab_count = tab_count;
   geometry.window_width = strip_width;
+  geometry.dirty_fingerprint = dirty_fingerprint;
   geometry.widths.clear();
   geometry.display_titles.clear();
   geometry.tooltip_labels.clear();
@@ -176,7 +179,8 @@ void TabStripService::EnsureActiveEditorTabVisible(EditorGroup& group,
                                                    float strip_width,
                                                    const MeasureWidthFn& measure_width,
                                                    const TitleProvider& display_title,
-                                                   const TitleProvider& tooltip_label) const {
+                                                   const TitleProvider& tooltip_label,
+                                                   std::uint64_t dirty_fingerprint) const {
   TabStripGeometryCache& geometry = editor_tab_geometry_cache_[group_index];
   if (group.open_tabs.empty()) {
     group.tab_scroll_index = 0;
@@ -185,7 +189,7 @@ void TabStripService::EnsureActiveEditorTabVisible(EditorGroup& group,
   }
 
   RefreshEditorGeometryCache(group, group_index, strip_width, measure_width, display_title,
-                             tooltip_label);
+                             tooltip_label, dirty_fingerprint);
 
   const float start_x = 12.0f + OverflowStripReserveForHiddenCount(1);
   const float gap = 1.0f;
@@ -232,7 +236,8 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
     const SDL_FRect& tab_strip,
     const MeasureWidthFn& measure_width,
     const TitleProvider& display_title,
-    const TitleProvider& tooltip_label) const {
+    const TitleProvider& tooltip_label,
+    std::uint64_t dirty_fingerprint) const {
   TabStripGeometryCache& geometry = editor_tab_geometry_cache_[group_index];
   VisibleEditorTabsCache& visible_cache = visible_editor_tabs_cache_[group_index];
   if (group.open_tabs.empty()) {
@@ -242,7 +247,7 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
   }
 
   RefreshEditorGeometryCache(group, group_index, tab_strip.w, measure_width, display_title,
-                             tooltip_label);
+                             tooltip_label, dirty_fingerprint);
 
   // Memoize the built VisibleStripTab vector keyed by geometry-cache version
   // plus the inputs the BuildVisibleStripTabs loop varies on. The geometry
