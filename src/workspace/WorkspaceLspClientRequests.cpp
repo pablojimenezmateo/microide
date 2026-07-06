@@ -45,8 +45,24 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
           ci.detail = item["detail"].AsString();
           ci.documentation = item["documentation"].AsString();
           ci.insert_text = item["insertText"].AsString();
-          if (ci.insert_text.empty()) ci.insert_text = ci.label;
           ci.insert_text_format = item["insertTextFormat"].AsInt(1);
+          // Prefer the server's textEdit: its range is authoritative (it knows the
+          // token being completed, so a member/path completion extends the
+          // qualifier instead of a heuristic clobbering it), and its newText wins
+          // over insertText. Supports both TextEdit{range,newText} and
+          // InsertReplaceEdit{insert,replace,newText}; we use the replace range so
+          // accepting mid-identifier overwrites the whole token.
+          if (item.HasKey("textEdit")) {
+            const auto& text_edit = item["textEdit"];
+            if (text_edit.HasKey("range")) {
+              ci.replace_range = lsp_protocol::ParseRange(text_edit["range"]);
+            } else if (text_edit.HasKey("replace")) {
+              ci.replace_range = lsp_protocol::ParseRange(text_edit["replace"]);
+            }
+            std::string new_text = text_edit["newText"].AsString();
+            if (!new_text.empty()) ci.insert_text = std::move(new_text);
+          }
+          if (ci.insert_text.empty()) ci.insert_text = ci.label;
           items.push_back(std::move(ci));
         }
         cb(std::optional<std::vector<CompletionItem>>(std::move(items)));

@@ -525,6 +525,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceSidebarRegistry.cpp
   src/workspace/WorkspaceThemeRegistry.cpp
   src/workspace/WorkspaceFileIconRegistry.cpp
+  src/workspace/LspPositionEncoding.cpp
   src/workspace/LspProtocol.cpp
   src/workspace/LspService.cpp
   src/workspace/WorkspaceLspClient.cpp
@@ -768,6 +769,7 @@ add_executable(microide_tests
   tests/GitSidebarCommandCenterTests.cpp
   tests/WorkspaceLspClientTests.cpp
   tests/LspProtocolTests.cpp
+  tests/LspPositionEncodingTests.cpp
   tests/WorkspaceDapClientTests.cpp
   tests/DapProtocolTests.cpp
   tests/DebugServiceTests.cpp

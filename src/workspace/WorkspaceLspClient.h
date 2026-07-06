@@ -67,6 +67,13 @@ class LspClient {
     int sort_text_priority = 0;
     // LSP InsertTextFormat: 1=PlainText, 2=Snippet
     int insert_text_format = 1;
+    // Server-provided replacement range (0-based, in the server's negotiated
+    // position encoding), parsed from `textEdit.range` or `insertReplaceEdit`.
+    // When present it is authoritative: the client replaces exactly this range
+    // instead of a heuristic word range, so member/path completions (obj.| , a/b|)
+    // extend the qualifier rather than overwriting it. Absent for servers/items
+    // that only return `insertText`.
+    std::optional<Range> replace_range;
   };
 
   struct WorkspaceEdit {

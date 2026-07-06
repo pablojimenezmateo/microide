@@ -1,11 +1,14 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "editor/TextViewport.h"
+#include "workspace/LspPositionEncoding.h"
 #include "workspace/WorkspaceCodeActionRegistry.h"
 #include "workspace/WorkspaceCompletionRegistry.h"
 #include "workspace/WorkspaceLspManager.h"
@@ -78,15 +81,27 @@ class LspService {
                              std::string_view language_id,
                              std::string_view precomputed_uri = {});
   void PublishLspDiagnostics(ProjectWorkspaceState& state, std::string uri,
+                             lsp_encoding::PositionEncoding encoding,
                              std::vector<LspClient::Diagnostic> diagnostics);
   // Request textDocument/semanticTokens/full for `viewport` and publish the
   // recolor decorations under owner "lsp:semantic" when the response arrives.
+  // Each request bumps a per-URI generation captured in the response closure so a
+  // response superseded by a newer request (the buffer changed meanwhile) is
+  // dropped in PublishLspSemanticTokens instead of painting stale colors.
   void RequestLspSemanticTokens(const editor::TextViewport& viewport, LspClient& client);
   void PublishLspSemanticTokens(ProjectWorkspaceState& state, std::string uri,
+                                std::uint64_t request_generation,
+                                lsp_encoding::PositionEncoding encoding,
                                 std::vector<std::string> legend,
                                 std::vector<LspClient::SemanticToken> tokens);
   void SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
                                       const std::vector<std::string>& after_lines);
+  // Full-document re-sync for an arbitrary edited buffer (not necessarily the
+  // active one). Used by multi-buffer workspace edits so every edited buffer's
+  // server mirror + stored diagnostics stay in sync, not just the active tab's.
+  void SyncLspForBufferChange(const editor::TextViewport& viewport,
+                              const std::vector<std::string>& before_lines,
+                              const std::vector<std::string>& after_lines);
   void SyncLspForActiveEditableLastChange();
 
  private:
@@ -102,12 +117,25 @@ class LspService {
                                         const std::vector<std::string>& before_lines,
                                         const std::vector<std::string>& after_lines);
 
+  // Drop the absolute-positioned "lsp:semantic" recolor overlay for `viewport`'s
+  // file. The overlay is invalid the moment the buffer's line/column geometry
+  // shifts, so any content edit clears it (the lexical highlighter keeps painting
+  // until a fresh semantic response lands); a stale overlay would otherwise paint
+  // wrong colors once the buffer returns to a clean, render-visible state.
+  void ClearLspSemanticTokensForFile(const editor::TextViewport& viewport);
+
   WorkspaceContext* context_ = nullptr;
   CompletionRegistry* completion_registry_ = nullptr;
   CodeActionRegistry* code_action_registry_ = nullptr;
   const render::Theme* theme_ = nullptr;
   Operations operations_{};
   Uint32 wake_event_type_ = 0;
+
+  // Per-URI monotonic generation for semantic-token requests. Bumped on every
+  // request; the response closure captures its value and PublishLspSemanticTokens
+  // drops any response whose captured generation is no longer current (superseded
+  // by a later request because the buffer changed).
+  std::unordered_map<std::string, std::uint64_t> semantic_token_generation_;
 };
 
 }  // namespace microide::workspace

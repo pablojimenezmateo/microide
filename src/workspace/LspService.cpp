@@ -16,6 +16,7 @@
 #include "util/StringUtil.h"
 #include "workspace/FileUri.h"
 #include "workspace/LanguageDetection.h"
+#include "workspace/LspPositionEncoding.h"
 #include "workspace/WorkspaceCodeActionRegistry.h"
 #include "workspace/WorkspaceCompletionRegistry.h"
 #include "workspace/WorkspaceContext.h"
@@ -68,6 +69,41 @@ std::string DetectActiveLanguageIdCached(const editor::TextViewport& viewport,
 
 std::string SerializeViewportText(const editor::TextViewport& viewport) {
   return util::SerializeLines(viewport.lines().Snapshot(), viewport.line_ending());
+}
+
+// Resolve the open editor viewport backing `path`, or nullptr if the file is not
+// open in an (already-hydrated) editor tab. Used to obtain line text for inbound
+// position-encoding conversion of diagnostics / semantic tokens.
+const editor::TextViewport* FindOpenEditorViewport(const ProjectWorkspaceState& state,
+                                                   const std::filesystem::path& path) {
+  const std::filesystem::path normalized = path.lexically_normal();
+  for (const auto& group : state.editor_groups) {
+    for (const auto& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+        continue;
+      }
+      const auto& editor_state = *tab.editor_state;
+      if (!editor_state.needs_restore &&
+          editor_state.viewport.path().lexically_normal() == normalized) {
+        return &editor_state.viewport;
+      }
+    }
+  }
+  return nullptr;
+}
+
+// Convert an inbound LSP `character` (server encoding) on `line` to an editor byte
+// column, given the resolved file viewport (nullptr => pass through as bytes, the
+// utf-8 / file-not-open case).
+std::size_t InboundColumn(const editor::TextViewport* viewport, std::size_t line, int character,
+                          lsp_encoding::PositionEncoding encoding) {
+  const std::size_t raw = static_cast<std::size_t>(std::max(0, character));
+  if (viewport == nullptr || encoding == lsp_encoding::PositionEncoding::Utf8) {
+    return raw;
+  }
+  const std::string_view text =
+      line < viewport->lines().size() ? std::string_view(viewport->lines()[line]) : std::string_view{};
+  return lsp_encoding::LspCharacterToByteColumn(text, raw, encoding);
 }
 
 // Map an LSP standard semantic-token type name to the editor's lexical token
@@ -315,9 +351,12 @@ LspClient* LspService::LspClientForViewport(const editor::TextViewport& viewport
   // Bind the diagnostics sink once per client lifetime; this funnel runs on the
   // hot edit path, so avoid re-allocating the std::function on every change.
   if (!client->HasDiagnosticsCallback()) {
-    client->SetDiagnosticsCallback([this, project](std::string uri,
-                                                   std::vector<LspClient::Diagnostic> diagnostics) {
-      PublishLspDiagnostics(*project, std::move(uri), std::move(diagnostics));
+    client->SetDiagnosticsCallback([this, project, client](
+                                       std::string uri,
+                                       std::vector<LspClient::Diagnostic> diagnostics) {
+      PublishLspDiagnostics(*project, std::move(uri),
+                            lsp_encoding::ParsePositionEncoding(client->ServerPositionEncoding()),
+                            std::move(diagnostics));
     });
   }
   return client;
@@ -341,11 +380,20 @@ void LspService::EnsureLspDocumentOpen(const editor::TextViewport& viewport, Lsp
 }
 
 void LspService::PublishLspDiagnostics(ProjectWorkspaceState& state, std::string uri,
+                                       lsp_encoding::PositionEncoding encoding,
                                        std::vector<LspClient::Diagnostic> diagnostics) {
   const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
   if (!path.has_value()) {
     return;
   }
+
+  // Resolve the file's buffer for position-encoding conversion (server `character`
+  // units -> editor byte columns). Null (file not open / utf-8) passes through.
+  const editor::TextViewport* file_viewport = FindOpenEditorViewport(state, *path);
+  const auto to_position = [&](const LspClient::Position& p) {
+    const std::size_t line = static_cast<std::size_t>(std::max(p.line, 0));
+    return editor::TextPosition{line, InboundColumn(file_viewport, line, p.character, encoding)};
+  };
 
   std::vector<editor::Diagnostic> converted;
   converted.reserve(diagnostics.size());
@@ -353,16 +401,8 @@ void LspService::PublishLspDiagnostics(ProjectWorkspaceState& state, std::string
     converted.push_back(editor::Diagnostic{
         .range =
             editor::SelectionRange{
-                .start =
-                    editor::TextPosition{
-                        static_cast<std::size_t>(std::max(diagnostic.range.start.line, 0)),
-                        static_cast<std::size_t>(std::max(diagnostic.range.start.character, 0)),
-                    },
-                .end =
-                    editor::TextPosition{
-                        static_cast<std::size_t>(std::max(diagnostic.range.end.line, 0)),
-                        static_cast<std::size_t>(std::max(diagnostic.range.end.character, 0)),
-                    },
+                .start = to_position(diagnostic.range.start),
+                .end = to_position(diagnostic.range.end),
             },
         .severity = DiagnosticSeverityFromLsp(diagnostic.severity),
         .message = diagnostic.message,
@@ -385,26 +425,44 @@ void LspService::RequestLspSemanticTokens(const editor::TextViewport& viewport, 
   if (legend.empty()) {
     return;
   }
+  const std::uint64_t generation = ++semantic_token_generation_[uri];
+  const lsp_encoding::PositionEncoding encoding =
+      lsp_encoding::ParsePositionEncoding(client.ServerPositionEncoding());
   client.RequestSemanticTokensAsync(
-      uri, [this, project, uri, legend = std::move(legend)](
+      uri, [this, project, uri, generation, encoding, legend = std::move(legend)](
                std::optional<std::vector<LspClient::SemanticToken>> tokens) mutable {
         if (!tokens.has_value()) {
           return;
         }
-        PublishLspSemanticTokens(*project, std::move(uri), std::move(legend), std::move(*tokens));
+        PublishLspSemanticTokens(*project, std::move(uri), generation, encoding, std::move(legend),
+                                 std::move(*tokens));
       });
 }
 
 void LspService::PublishLspSemanticTokens(ProjectWorkspaceState& state, std::string uri,
+                                          std::uint64_t request_generation,
+                                          lsp_encoding::PositionEncoding encoding,
                                           std::vector<std::string> legend,
                                           std::vector<LspClient::SemanticToken> tokens) {
   if (theme_ == nullptr) {
+    return;
+  }
+  // Drop a response the buffer has already moved past: any edit since this request
+  // bumped the URI's generation (or cleared it), so painting these absolute
+  // positions would corrupt the current text. Mirrors the revision guard in
+  // TextViewport::InstallPrefetchedHighlights.
+  if (const auto it = semantic_token_generation_.find(uri);
+      it == semantic_token_generation_.end() || it->second != request_generation) {
     return;
   }
   const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
   if (!path.has_value()) {
     return;
   }
+  // Resolve the file's buffer once for position-encoding conversion (token
+  // start_char/length are in the server's encoding units; the overlay stores byte
+  // columns). Null (file not open / utf-8) => InboundColumn passes through.
+  const editor::TextViewport* file_viewport = FindOpenEditorViewport(state, *path);
   const SDL_Color plain = theme_->text_primary;
   editor::PluginDecorationData data;
   data.text_styles.reserve(tokens.size());
@@ -419,19 +477,37 @@ void LspService::PublishLspSemanticTokens(ProjectWorkspaceState& state, std::str
     }
     editor::TextStyleDecoration style;
     style.line = static_cast<std::uint32_t>(token.line);
-    style.start_column = static_cast<std::uint32_t>(token.start_char);
-    // ParseSemanticTokensData bounds line/start_char/length to [0, INT_MAX]
-    // individually, but their sum can still overflow a signed int here. Compute
-    // in int64 and clamp so `end_column` never wraps to a garbage value (UB).
-    const std::int64_t end_column =
+    const std::size_t line = static_cast<std::size_t>(token.line);
+    const std::size_t start_byte = InboundColumn(file_viewport, line, token.start_char, encoding);
+    // ParseSemanticTokensData bounds start_char/length to [0, INT_MAX] each, but
+    // their sum can overflow a signed int; compute the end unit in int64 and clamp.
+    const std::int64_t end_units =
         std::min<std::int64_t>(static_cast<std::int64_t>(token.start_char) + token.length,
-                               std::numeric_limits<std::uint32_t>::max());
-    style.end_column = static_cast<std::uint32_t>(end_column);
+                               std::numeric_limits<int>::max());
+    const std::size_t end_byte =
+        InboundColumn(file_viewport, line, static_cast<int>(end_units), encoding);
+    style.start_column = static_cast<std::uint32_t>(start_byte);
+    style.end_column = static_cast<std::uint32_t>(std::max(start_byte, end_byte));
     style.foreground = editor::SyntaxTokenColor(*theme_, kind, plain);  // a!=0 => recolor
     data.text_styles.push_back(style);
   }
   if (state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("lsp:semantic", *path,
                                                                        std::move(data))) {
+    operations_.request_editor_surface_redraw();
+  }
+}
+
+void LspService::ClearLspSemanticTokensForFile(const editor::TextViewport& viewport) {
+  if (viewport.path().empty()) {
+    return;
+  }
+  ProjectWorkspaceState& state = CurrentProjectState();
+  auto* presentation = state.plugin_presentation.get();
+  if (presentation == nullptr) {
+    return;  // Nothing published yet -> nothing to invalidate.
+  }
+  if (presentation->decorations.ClearOwnerFile("lsp:semantic", viewport.path())) {
+    state.MaybeReleasePluginPresentation();
     operations_.request_editor_surface_redraw();
   }
 }
@@ -505,29 +581,55 @@ void LspService::ShiftLspDiagnosticsForBulkChange(const editor::TextViewport& vi
 void LspService::SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
                                                 const std::vector<std::string>& after_lines) {
   editor::TextViewport* viewport = operations_.active_editable_viewport();
-  if (viewport == nullptr || viewport->path().empty()) {
+  if (viewport == nullptr) {
+    return;
+  }
+  SyncLspForBufferChange(*viewport, before_lines, after_lines);
+}
+
+void LspService::SyncLspForBufferChange(const editor::TextViewport& viewport,
+                                        const std::vector<std::string>& before_lines,
+                                        const std::vector<std::string>& after_lines) {
+  if (viewport.path().empty()) {
     return;
   }
 
+  // A bulk edit shifts the buffer geometry, so the absolute-positioned semantic
+  // overlay is now stale -> drop it (the lexical layer keeps painting). Done
+  // before the client early-out so a stale overlay is cleared even with no server.
+  ClearLspSemanticTokensForFile(viewport);
+
   // Keep diagnostics positioned for the dirty buffer until the server republishes.
-  ShiftLspDiagnosticsForBulkChange(*viewport, before_lines, after_lines);
+  ShiftLspDiagnosticsForBulkChange(viewport, before_lines, after_lines);
   std::string language_id;
-  LspClient* client = LspClientForViewport(*viewport, &language_id);
+  LspClient* client = LspClientForViewport(viewport, &language_id);
   if (client == nullptr) {
     return;
   }
-  const std::string uri = FileUriForPath(viewport->path());
-  EnsureLspDocumentOpen(*viewport, *client, language_id, uri);
+  const std::string uri = FileUriForPath(viewport.path());
+  // If the document is not open yet, EnsureLspDocumentOpen's didOpen carries the
+  // CURRENT (already-edited) buffer text, so a following didChange would apply the
+  // edit a second time and desync the server. Only send didChange when it was
+  // already open at entry.
+  const bool was_open = client->HasOpenDocument(uri);
+  EnsureLspDocumentOpen(viewport, *client, language_id, uri);
 
   // Full-document sync for the bulk-change path. The per-keystroke path
   // (SyncLspForActiveEditableLastChange) sends true ranged incremental edits via
   // the viewport's last applied edit; here we only have before/after snapshots,
-  // so a clean full replace is the correct, desync-proof choice.
-  client->DidChange(uri, util::SerializeLines(after_lines, viewport->line_ending()));
-  // Refresh semantic tokens on bulk edits (paste/undo/format/multi-edit). The
-  // per-keystroke path stays request-free to keep typing fast; live incremental
-  // semantic refresh (a debounced re-request) is a documented follow-up.
-  RequestLspSemanticTokens(*viewport, *client);
+  // so a clean full replace is the correct, desync-proof choice. Full text needs
+  // no per-column position-encoding conversion, so this stays correct for utf-16
+  // servers too.
+  if (was_open) {
+    client->DidChange(uri, util::SerializeLines(after_lines, viewport.line_ending()));
+  }
+  // Re-request semantic tokens only when the edit left the buffer clean (e.g. an
+  // undo landing on the saved point). The overlay is render-suppressed while
+  // dirty, so requesting for a dirty buffer would paint nothing yet be superseded
+  // by the next clean transition anyway.
+  if (!viewport.dirty()) {
+    RequestLspSemanticTokens(viewport, *client);
+  }
 }
 
 void LspService::SyncLspForActiveEditableLastChange() {
@@ -536,6 +638,13 @@ void LspService::SyncLspForActiveEditableLastChange() {
   if (viewport == nullptr || viewport->path().empty()) {
     return;
   }
+
+  // This keystroke/undo shifted the buffer, so the absolute-positioned semantic
+  // overlay is stale -> drop it (the lexical layer keeps painting). Cleared before
+  // the client early-out so a stale overlay is dropped even with no server. While
+  // the buffer is dirty the overlay is render-suppressed anyway; the clean-branch
+  // re-request below repopulates it when an undo/redo lands on the saved point.
+  ClearLspSemanticTokensForFile(*viewport);
 
   std::string language_id;
   LspClient* client = nullptr;
@@ -551,6 +660,9 @@ void LspService::SyncLspForActiveEditableLastChange() {
   // the DidChange below, so FileUriForPath's normalize+percent-encode runs once
   // per keystroke instead of twice.
   const std::string uri = FileUriForPath(viewport->path());
+  // See SyncLspForActiveEditableChange: if the doc was not open, the didOpen just
+  // sent the current (already-edited) text, so a didChange would double-apply.
+  const bool was_open = client->HasOpenDocument(uri);
   {
     util::PerformanceTrace::Scope scope(
         "LspService::SyncLspForActiveEditableLastChange::EnsureDocumentOpen");
@@ -558,39 +670,51 @@ void LspService::SyncLspForActiveEditableLastChange() {
   }
 
   const auto& applied_edit = viewport->last_applied_edit();
-  if (!applied_edit.has_value()) {
-    util::PerformanceTrace::Scope scope(
-        "LspService::SyncLspForActiveEditableLastChange::FullSyncNoAppliedEdit");
-    client->DidChange(uri, util::SerializeLines(viewport->lines().Snapshot(), viewport->line_ending()));
-    return;
+  if (applied_edit.has_value()) {
+    // Slide stored diagnostics through this keystroke so they stay on their text
+    // while the buffer is dirty, until the server republishes authoritative ranges.
+    ShiftLspDiagnosticsForAppliedEdit(*viewport);
   }
 
-  // Slide stored diagnostics through this keystroke so they stay on their text
-  // while the buffer is dirty, until the server republishes authoritative ranges.
-  ShiftLspDiagnosticsForAppliedEdit(*viewport);
-
-  if (!client->SupportsIncrementalSync()) {
-    util::PerformanceTrace::Scope scope(
-        "LspService::SyncLspForActiveEditableLastChange::FullSyncNoIncrementalSupport");
-    client->DidChange(uri, util::SerializeLines(viewport->lines().Snapshot(), viewport->line_ending()));
-    return;
+  if (was_open) {
+    // The incremental range carries PRE-edit byte columns; we no longer have the
+    // pre-edit line text to re-encode them, so ranged incremental sync is only
+    // safe when the server counts UTF-8 bytes (clangd's negotiated case — the hot
+    // path). For utf-16/utf-32 servers, fall back to a full-document replace, which
+    // needs no per-column encoding and stays desync-proof.
+    const bool utf8_positions = lsp_encoding::ParsePositionEncoding(
+                                    client->ServerPositionEncoding()) ==
+                                lsp_encoding::PositionEncoding::Utf8;
+    if (!applied_edit.has_value() || !client->SupportsIncrementalSync() || !utf8_positions) {
+      util::PerformanceTrace::Scope scope(
+          "LspService::SyncLspForActiveEditableLastChange::FullSync");
+      client->DidChange(uri,
+                        util::SerializeLines(viewport->lines().Snapshot(), viewport->line_ending()));
+    } else {
+      util::PerformanceTrace::Scope scope(
+          "LspService::SyncLspForActiveEditableLastChange::IncrementalSync");
+      client->DidChangeIncremental(
+          uri,
+          LspClient::Range{
+              .start = LspClient::Position{
+                  static_cast<int>(applied_edit->range_before.start.line),
+                  static_cast<int>(applied_edit->range_before.start.column),
+              },
+              .end = LspClient::Position{
+                  static_cast<int>(applied_edit->range_before.end.line),
+                  static_cast<int>(applied_edit->range_before.end.column),
+              },
+          },
+          applied_edit->replacement_text);
+    }
   }
 
-  util::PerformanceTrace::Scope scope(
-      "LspService::SyncLspForActiveEditableLastChange::IncrementalSync");
-  client->DidChangeIncremental(
-      uri,
-      LspClient::Range{
-          .start = LspClient::Position{
-              static_cast<int>(applied_edit->range_before.start.line),
-              static_cast<int>(applied_edit->range_before.start.column),
-          },
-          .end = LspClient::Position{
-              static_cast<int>(applied_edit->range_before.end.line),
-              static_cast<int>(applied_edit->range_before.end.column),
-          },
-      },
-      applied_edit->replacement_text);
+  // Repopulate the semantic overlay when the edit leaves the buffer clean (an
+  // undo/redo landing on the saved point). Typing leaves the buffer dirty and so
+  // stays request-free; the overlay is render-suppressed while dirty regardless.
+  if (!viewport->dirty()) {
+    RequestLspSemanticTokens(*viewport, *client);
+  }
 }
 
 void LspService::ConsumeLspCallbacks() { CurrentLspManager().DrainCallbacks(); }

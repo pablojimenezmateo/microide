@@ -208,6 +208,11 @@ struct CompletionSessionItem {
   std::string documentation;
   std::string insert_text;
   bool is_snippet = false;
+  // Per-item replacement range from an LSP textEdit (0-based, already converted to
+  // editor byte columns). When set it overrides the session's heuristic
+  // `replacement_range` so member/path completions extend the qualifier instead of
+  // overwriting it.
+  std::optional<editor::SelectionRange> replacement_range;
 };
 
 struct CompletionSessionState {

@@ -1396,8 +1396,8 @@
   void EnsureLspDocumentOpen(const editor::TextViewport& viewport,
                              LspClient& client,
                              std::string_view language_id);
-  void PublishLspDiagnostics(ProjectWorkspaceState& state,
-                             std::string uri,
+  void PublishLspDiagnostics(ProjectWorkspaceState& state, std::string uri,
+                             lsp_encoding::PositionEncoding encoding,
                              std::vector<LspClient::Diagnostic> diagnostics);
   void SyncLspForActiveEditableLastChange();
   void SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,

@@ -945,17 +945,24 @@ bool TabCoordinator::CloseEditorGroup() {
       operations_.open_buffer_view_counts ? operations_.open_buffer_view_counts()
                                           : std::unordered_map<std::string, std::size_t>{};
   const EditorGroup& closing = state_.focused_group();
+  // Count THIS group's own views per path first. A buffer can be open in more than
+  // one tab of the closing group (e.g. an editor tab plus a compare/merge tab whose
+  // editable side is the same path), so the old `global count == 1` test never
+  // fired for it and leaked the didClose + stored diagnostics. Fire once per path
+  // whose ENTIRE view count lives in this group, i.e. closing the group drops the
+  // last open view.
+  std::unordered_map<std::string, std::size_t> closing_counts;
   for (const TabEntry& tab : closing.open_tabs) {
-    // Whole-group one-shot close: the snapshot count is exact because no tab in
-    // this group is erased until CollapseFocusedGroup below, so ==1 means the
-    // surviving group holds no other view of this buffer.
     const std::filesystem::path path = LspCloseCandidatePath(tab);
-    if (path.empty()) {
-      continue;
+    if (!path.empty()) {
+      ++closing_counts[path.generic_string()];
     }
-    const auto it = view_counts.find(path.generic_string());
-    if (it != view_counts.end() && it->second == 1) {
-      operations_.notify_lsp_buffer_close(path);
+  }
+  for (const auto& [path_key, closing_count] : closing_counts) {
+    const auto it = view_counts.find(path_key);
+    const std::size_t total_views = it != view_counts.end() ? it->second : closing_count;
+    if (total_views <= closing_count) {
+      operations_.notify_lsp_buffer_close(std::filesystem::path(path_key));
     }
   }
   CollapseFocusedGroup();

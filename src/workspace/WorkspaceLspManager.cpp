@@ -185,7 +185,13 @@ bool LspManager::HasRegisteredServers() const {
 void LspManager::DrainCallbacks() {
   util::StartupTrace::Scope trace_scope("LspManager::DrainCallbacks");
   for (auto& [_, entry] : servers_) {
-    if (entry.client && entry.client->IsRunning()) {
+    // Drain regardless of IsRunning(): when a server dies unexpectedly its IO
+    // thread posts synthetic failure callbacks (FailPendingRequests) — the only
+    // thing that clears a hung "LSP: working..." indicator and the requesting UI's
+    // loading state — and by then IsRunning() is already false. Gating on
+    // IsRunning() stranded those callbacks unrun until teardown. Mirrors
+    // DapManager::DrainCallbacks and the retiring_clients_ loop below.
+    if (entry.client) {
       entry.client->DrainCallbacks();
     }
   }

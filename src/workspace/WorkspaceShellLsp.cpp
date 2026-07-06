@@ -83,8 +83,9 @@ void WorkspaceShell::EnsureLspDocumentOpen(const editor::TextViewport& viewport,
 }
 
 void WorkspaceShell::PublishLspDiagnostics(ProjectWorkspaceState& state, std::string uri,
+                                           lsp_encoding::PositionEncoding encoding,
                                            std::vector<LspClient::Diagnostic> diagnostics) {
-  lsp_service_.PublishLspDiagnostics(state, std::move(uri), std::move(diagnostics));
+  lsp_service_.PublishLspDiagnostics(state, std::move(uri), encoding, std::move(diagnostics));
 }
 
 void WorkspaceShell::SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,

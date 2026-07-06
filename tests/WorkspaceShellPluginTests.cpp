@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "editor/PluginDecorationStore.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/StringUtil.h"
 #include "workspace/FileUri.h"
@@ -2908,6 +2909,74 @@ void TestWorkspaceShellPluginApplyEditsRejectsUnopenedPath() {
   Expect(editor.lines()[0] == "hello", "a rejected edit must not touch the active buffer");
 }
 
+// Seeds an "lsp:semantic" recolor overlay for `path` (as an async clangd
+// semantic-tokens response would), so a test can assert whether a subsequent edit
+// clears it.
+void SeedLspSemanticOverlay(WorkspaceShell& shell, const std::filesystem::path& path) {
+  auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  microide::editor::PluginDecorationData data;
+  microide::editor::TextStyleDecoration style;
+  style.line = 1;
+  style.start_column = 0;
+  style.end_column = 3;
+  style.foreground = SDL_Color{200, 100, 50, 255};
+  data.text_styles.push_back(style);
+  state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("lsp:semantic", path,
+                                                                   std::move(data));
+}
+
+bool HasLspSemanticOverlay(WorkspaceShell& shell, const std::filesystem::path& path) {
+  const auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  const auto* presentation = state.plugin_presentation_if_present();
+  if (presentation == nullptr) {
+    return false;
+  }
+  const auto* decorations = presentation->decorations.FindByPath(path);
+  return decorations != nullptr && !decorations->text_styles.empty();
+}
+
+// Regression: LSP semantic tokens are an absolute-positioned recolor overlay that
+// paints over the lexical highlighter. It is only render-visible while the buffer
+// is clean, so a stale overlay left behind by an edit becomes visible the moment
+// the buffer returns to a clean state — the reported "quick-fix -> undo -> save"
+// corruption. Every content edit (typing AND undo) must drop the overlay so it can
+// never paint misaligned colors; a fresh request repopulates it on the next clean
+// transition (save / undo onto the saved point).
+void TestWorkspaceShellLspSemanticOverlayClearedOnEditAndUndo() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.cpp";
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "semantic-overlay fixture should open the project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  SeedLspSemanticOverlay(shell, source);
+  Expect(HasLspSemanticOverlay(shell, source),
+         "seeded lsp:semantic overlay should be present before editing");
+
+  // A plain edit shifts buffer geometry -> the overlay is stale and must be dropped.
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "x"),
+         "typing into an editable buffer should be handled");
+  Expect(!HasLspSemanticOverlay(shell, source),
+         "a content edit should clear the stale lsp:semantic overlay");
+
+  // Re-seed to model a late/stale response landing while dirty (render-suppressed),
+  // then undo — the exact reported repro. Undo returns the buffer to a clean,
+  // render-visible state, so it too must clear the stale overlay.
+  SeedLspSemanticOverlay(shell, source);
+  Expect(HasLspSemanticOverlay(shell, source),
+         "re-seeded overlay should be present before undo");
+  Expect(SendKeyDown(shell, SDLK_Z, SDL_KMOD_CTRL), "Ctrl+Z should undo the edit");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "int main() {",
+         "undo should restore the original first line");
+  Expect(!HasLspSemanticOverlay(shell, source),
+         "undo must clear the stale lsp:semantic overlay (the reported corruption)");
+}
+
 // Opens a bare project + editable file (no plugin needed) with ghost text enabled,
 // caret parked at the end of the first line. Ghost-text state-machine tests drive
 // the host's publish/accept/dismiss/invalidate entry points directly via TestAccess.
@@ -3313,6 +3382,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginApplyEditsRejectsUnopenedPath);
   AddTest(tests, "WorkspaceShell/PluginApplyEditsClampsOutOfBounds",
           TestWorkspaceShellPluginApplyEditsClampsOutOfBounds);
+  AddTest(tests, "WorkspaceShell/LspSemanticOverlayClearedOnEditAndUndo",
+          TestWorkspaceShellLspSemanticOverlayClearedOnEditAndUndo);
   AddTest(tests, "WorkspaceShell/GhostTextPublishStoresAndSplits",
           TestWorkspaceShellGhostTextPublishStoresAndSplits);
   AddTest(tests, "WorkspaceShell/GhostTextDisabledSettingNoOp",

@@ -13,6 +13,7 @@
 #include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 #include "workspace/FileUri.h"
+#include "workspace/LspPositionEncoding.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
@@ -537,7 +538,14 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
       std::vector<std::string> command = AugmentClangdWithCompileCommandsDir(
           language_server.command, context_.current_project_state.root);
       CurrentLspManager().RegisterServer(language_server.language_ids, command,
-                                         "file://" + context_.current_project_state.root.generic_string(),
+                                         // Percent-encode the rootUri the same way
+                                         // document URIs are (FileUriForPath); a raw
+                                         // "file://" + path is a malformed URI for a
+                                         // root with a space/#/non-ASCII byte, so the
+                                         // server would see opened documents as
+                                         // outside its workspace (breaking symbols,
+                                         // cross-file nav, rename) or reject init.
+                                         FileUriForPath(context_.current_project_state.root),
                                          context_.current_project_state.root.generic_string(),
                                          language_server.eager_start,
                                          language_server.initialization_options,
@@ -929,10 +937,12 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
   if (client == nullptr) {
     return;
   }
-  client->SetDiagnosticsCallback([this, project = &context_.current_project_state](
+  client->SetDiagnosticsCallback([this, project = &context_.current_project_state, client](
                                      std::string uri,
                                      std::vector<LspClient::Diagnostic> diagnostics) {
-    PublishLspDiagnostics(*project, std::move(uri), std::move(diagnostics));
+    PublishLspDiagnostics(*project, std::move(uri),
+                          lsp_encoding::ParsePositionEncoding(client->ServerPositionEncoding()),
+                          std::move(diagnostics));
   });
   EnsureLspDocumentOpen(*viewport, *client, language_id);
   // Must match the percent-encoded URI the document was opened under
@@ -940,6 +950,12 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
   // desyncs for any path with a space/non-ASCII/reserved byte, so the server sees
   // didSave for a URI it never opened.
   client->DidSave(FileUriForPath(normalized_path));
+  // The buffer is now clean, so the semantic-token overlay becomes render-visible
+  // again. Re-request it for the saved content: an edit-then-undo-then-save
+  // sequence cleared the overlay on each edit, and semantic tokens are pull-based
+  // (the server never pushes them), so without this the identifiers would keep the
+  // lexical-only colors until the next unrelated re-request.
+  lsp_service_.RequestLspSemanticTokens(*viewport, *client);
 }
 
 void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
@@ -1171,15 +1187,18 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
     bucket_for(viewport).emplace_back(edit.range, edit.new_text);
   }
 
-  // Snapshot the active buffer so a multi-edit apply (e.g. "remove all unused
-  // includes" -> one deletion per include, all in a single undo group) re-syncs
-  // the language server with a FULL document change. The incremental last-change
-  // path only carries the last of N edits, which would desync clangd (garbage
-  // diagnostics that never reconcile) and strand stale markers on wrong lines.
+  // Snapshot EVERY target buffer before applying so each edited buffer can be
+  // re-synced with a FULL document change (the incremental last-change path only
+  // carries the last of N edits, which would desync the server). A WorkspaceEdit
+  // can touch several open buffers (header+source rename, multi-file fixit); each
+  // one's server mirror and stored diagnostics must be reconciled, not just the
+  // active tab's.
   editor::TextViewport* active_viewport = ActiveEditableViewport();
-  std::vector<std::string> active_before_lines;
-  if (active_viewport != nullptr) {
-    active_before_lines = active_viewport->lines().Snapshot();
+  std::vector<std::vector<std::string>> before_snapshots(by_viewport.size());
+  for (std::size_t i = 0; i < by_viewport.size(); ++i) {
+    if (by_viewport[i].first != nullptr && !by_viewport[i].second.empty()) {
+      before_snapshots[i] = by_viewport[i].first->lines().Snapshot();
+    }
   }
 
   bool applied_any = false;
@@ -1187,7 +1206,18 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
     if (viewport == nullptr || buffer_edits.empty()) {
       continue;
     }
-    // Clamp 0-based LSP coordinates to the live document.
+    // Resolve the server's position encoding for this buffer so the edit's LSP
+    // `character` offsets (utf-16 code units by spec default) map to the right
+    // UTF-8 byte column — mis-mapping on a non-ASCII line splits a multibyte
+    // sequence and corrupts the buffer.
+    std::string vp_language_id;
+    LspClient* vp_client = lsp_service_.LspClientForViewport(*viewport, &vp_language_id);
+    const lsp_encoding::PositionEncoding vp_encoding =
+        vp_client != nullptr
+            ? lsp_encoding::ParsePositionEncoding(vp_client->ServerPositionEncoding())
+            : lsp_encoding::PositionEncoding::Utf8;
+    // Convert 0-based LSP coordinates to editor byte columns, clamped to the live
+    // document. LspCharacterToByteColumn already clamps the column to the line.
     const auto clamp = [&](editor::TextPosition pos) -> editor::TextPosition {
       const std::size_t line_count = viewport->line_count();
       if (line_count == 0) {
@@ -1196,28 +1226,40 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
       if (pos.line >= line_count) {
         pos.line = line_count - 1;
       }
-      const std::size_t line_length = viewport->lines()[pos.line].size();
-      if (pos.column > line_length) {
-        pos.column = line_length;
-      }
+      pos.column = lsp_encoding::LspCharacterToByteColumn(
+          std::string_view(viewport->lines()[pos.line]), pos.column, vp_encoding);
       return pos;
     };
     for (auto& [range, text] : buffer_edits) {
       range.start = clamp(range.start);
       range.end = clamp(range.end);
     }
-    std::sort(buffer_edits.begin(), buffer_edits.end(), [](const auto& lhs, const auto& rhs) {
-      const editor::SelectionRange a = editor::TextViewport::NormalizeRange(lhs.first);
-      const editor::SelectionRange b = editor::TextViewport::NormalizeRange(rhs.first);
+    // Apply highest-position-first so earlier ranges stay valid as later ones are
+    // applied. For edits at the SAME position (e.g. two inserts at (0,0)), apply
+    // the later array entry FIRST: each same-position insert pushes the previous
+    // one right, so this leaves the array order intact left-to-right in the result.
+    // (A plain stable_sort would reverse them.) We sort an index vector so the
+    // original array index is available as the tie-break.
+    std::vector<std::size_t> apply_order(buffer_edits.size());
+    for (std::size_t i = 0; i < apply_order.size(); ++i) {
+      apply_order[i] = i;
+    }
+    std::sort(apply_order.begin(), apply_order.end(), [&](std::size_t lhs, std::size_t rhs) {
+      const editor::SelectionRange a = editor::TextViewport::NormalizeRange(buffer_edits[lhs].first);
+      const editor::SelectionRange b = editor::TextViewport::NormalizeRange(buffer_edits[rhs].first);
       if (a.start.line != b.start.line) {
         return a.start.line > b.start.line;
       }
-      return a.start.column > b.start.column;
+      if (a.start.column != b.start.column) {
+        return a.start.column > b.start.column;
+      }
+      return lhs > rhs;
     });
 
     viewport->BeginUndoGroup();
-    for (const auto& [range, text] : buffer_edits) {
-      viewport->ReplaceRange(range, text, /*record_undo=*/true);
+    for (const std::size_t idx : apply_order) {
+      viewport->ReplaceRange(buffer_edits[idx].first, buffer_edits[idx].second,
+                             /*record_undo=*/true);
     }
     viewport->EndUndoGroup();
     applied_any = true;
@@ -1225,11 +1267,28 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
 
   if (applied_any) {
     ResetCaretBlink();
-    // Full-document re-sync (not the single-edit incremental path) so clangd sees
-    // every removed line and republishes authoritative diagnostics.
-    if (active_viewport != nullptr) {
-      RequestActiveEditableChangeRedraw(active_before_lines, active_viewport->lines().Snapshot());
-    } else {
+    // Full-document re-sync of EVERY edited buffer. The active buffer additionally
+    // drives the visible redraw via RequestActiveEditableChangeRedraw (which itself
+    // full-syncs the active viewport); non-active edited buffers are synced
+    // directly through the LSP service so their server mirror + diagnostics stay
+    // correct even though they are not the visible tab.
+    bool active_synced = false;
+    for (std::size_t i = 0; i < by_viewport.size(); ++i) {
+      editor::TextViewport* viewport = by_viewport[i].first;
+      if (viewport == nullptr || by_viewport[i].second.empty()) {
+        continue;
+      }
+      if (viewport == active_viewport) {
+        RequestActiveEditableChangeRedraw(before_snapshots[i], viewport->lines().Snapshot());
+        active_synced = true;
+      } else {
+        lsp_service_.SyncLspForBufferChange(*viewport, before_snapshots[i],
+                                            viewport->lines().Snapshot());
+      }
+    }
+    if (!active_synced) {
+      // The edit did not touch the active buffer; still refresh its last-change
+      // derived state so the caret/redraw bookkeeping stays consistent.
       RequestActiveEditableLastChangeRedraw();
     }
     // Repaint the tab strip so the dirty indicator appears immediately; the edit

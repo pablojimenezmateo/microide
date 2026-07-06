@@ -1044,9 +1044,10 @@ struct LspClient::Impl {
             supports_incremental_sync.store(sync_kind == 2, std::memory_order_release);
 
             // Capture the negotiated position encoding. utf-8 means our editor
-            // byte offsets are already exact; anything else (or the unreported
-            // utf-16 default) means non-ASCII positions need conversion that is
-            // not yet implemented, so surface it rather than silently corrupting.
+            // byte offsets are already exact; utf-16/utf-32 are converted per line
+            // at every position seam (lsp_encoding::*), and the per-keystroke
+            // incremental sync falls back to full-document sync for those so the
+            // pre-edit byte range never needs re-encoding.
             {
               std::string negotiated = "utf-16";
               if (server_caps.HasKey("positionEncoding") &&
@@ -1056,12 +1057,6 @@ struct LspClient::Impl {
               {
                 std::lock_guard lock(mutex);
                 position_encoding = negotiated;
-              }
-              if (negotiated != "utf-8") {
-                std::fprintf(stderr,
-                             "[lsp] server negotiated position encoding '%s'; positions past "
-                             "non-ASCII characters may be inaccurate (utf-8 preferred)\n",
-                             negotiated.c_str());
               }
             }
 
