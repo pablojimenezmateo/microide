@@ -2643,6 +2643,121 @@ return ide.plugin({
          "not only on the first edit or go-to-definition)");
 }
 
+// Regression: a file that was already open when the session is restored must have
+// its LSP document opened (textDocument/didOpen) so diagnostics/semantic tokens
+// paint without the user interacting. The bug: session restore activated the tab
+// BEFORE the cpp-lsp-style plugin registered its language server, so the
+// activation's NotifyLspBufferOpen found no client and skipped didOpen, and the
+// post-plugin-reload buffer replay passed open_lsp_documents=false. The server
+// started only to render the status bar and the document was never opened, leaving
+// the restored file with no markers until a click. The fix flips the restore
+// reload to open_lsp_documents=true so open buffers are engaged after servers exist.
+void TestWorkspaceShellRestoreEngagesLspForOpenDocument() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path state_home = temp_dir.path() / "state";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "print('hi')\n");
+
+  // A minimal real LSP server: replies to initialize and exits cleanly on
+  // shutdown/exit so the client counts as running (didOpen is sent) and teardown
+  // is fast. It need not produce diagnostics — HasOpenDocument tracks didOpen.
+  const std::filesystem::path server_py = temp_dir.path() / "server.py";
+  WriteFile(server_py, std::string(R"py(import json
+import sys
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    return json.loads(body.decode("utf-8")) if body else None
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        write_message({"jsonrpc": "2.0", "id": msg["id"],
+                       "result": {"capabilities": {"textDocumentSync": 1}}})
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+
+  WritePluginInit(
+      plugins_root, "pylsp",
+      "local ide = require(\"microide\")\n"
+      "return ide.plugin({\n"
+      "  id = \"pylsp\",\n"
+      "  capabilities = { process = { exec = true } },\n"
+      "  setup = function(ctx)\n"
+      "    ctx.lsp.add({\n"
+      "      id = \"pylsp.server\",\n"
+      "      language_id = \"python\",\n"
+      "      command = { \"python3\", \"" + server_py.generic_string() + "\" },\n"
+      "    })\n"
+      "  end\n"
+      "})\n");
+
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+  // Session state persists under XDG_STATE_HOME; pin it so both shells below share
+  // one session file instead of touching the real user state directory.
+  ScopedEnvVar scoped_state_home("XDG_STATE_HOME", state_home.string());
+
+  // Phase 1: open the project and the file, then persist the session with the file
+  // open (this is the "a file was open when you last closed microide" setup).
+  {
+    WorkspaceShell shell;
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+           "phase 1 should open the project");
+    Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, py_file),
+           "phase 1 should open the .py file");
+    WorkspaceShellTestAccess::SaveSessionState(shell);
+  }
+
+  // Phase 2: a fresh shell restores that session — the real startup path. The fix
+  // must engage the language server for the restored active document.
+  WorkspaceShell restored;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(restored, project, /*restore=*/true, false),
+         "phase 2 should restore the project session");
+
+  const std::string uri = workspace::FileUriForPath(py_file);
+  workspace::LspClient* const client =
+      WorkspaceShellTestAccess::LspManagerForTesting(restored).FindStartedServer("python");
+  Expect(client != nullptr,
+         "restoring a session with an open supported file must START its language "
+         "server (not leave it registered-but-idle until the user interacts)");
+  Expect(client != nullptr && client->HasOpenDocument(uri),
+         "restoring a session with an open file must send textDocument/didOpen so "
+         "diagnostics/semantic tokens paint without a click (regression: "
+         "open_lsp_documents was false on the restore reload)");
+}
+
 // SEAM 2 — host-owned plugin buffer edits (ctx.editor.apply_edits).
 // Loads a plugin exposing commands that drive apply_edits/set_cursor/set_selection
 // against the active buffer, then asserts the host applied them with correct
@@ -3288,6 +3403,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectReactivationKeepsLanguageServerWarm);
   AddTest(tests, "WorkspaceShell/OpensDocumentInLspOnFileOpen",
           TestWorkspaceShellOpensDocumentInLspOnFileOpen);
+  AddTest(tests, "WorkspaceShell/RestoreEngagesLspForOpenDocument",
+          TestWorkspaceShellRestoreEngagesLspForOpenDocument);
 }
 
 }  // namespace microide::tests

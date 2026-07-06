@@ -37,6 +37,16 @@ bool LspLifecycleTraceEnabled() {
   return enabled;
 }
 
+// Milliseconds since the first traced event, so a lifecycle trace reads as a
+// timeline ("[lsp] +0ms ... / +2400ms ...") that shows exactly where the seconds
+// between spawn and Ready go, without a wall-clock the reader has to subtract.
+long LspTraceElapsedMs() {
+  static const std::chrono::steady_clock::time_point epoch = std::chrono::steady_clock::now();
+  return static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now() - epoch)
+                               .count());
+}
+
 void TraceLspLifecycle(std::string_view language_id,
                        int pid,
                        std::string_view phase,
@@ -45,11 +55,12 @@ void TraceLspLifecycle(std::string_view language_id,
     return;
   }
   if (detail.empty()) {
-    std::fprintf(stderr, "[lsp] %.*s pid=%d %.*s\n", static_cast<int>(language_id.size()),
-                 language_id.data(), pid, static_cast<int>(phase.size()), phase.data());
+    std::fprintf(stderr, "[lsp] +%ldms %.*s pid=%d %.*s\n", LspTraceElapsedMs(),
+                 static_cast<int>(language_id.size()), language_id.data(), pid,
+                 static_cast<int>(phase.size()), phase.data());
     return;
   }
-  std::fprintf(stderr, "[lsp] %.*s pid=%d %.*s | %.*s\n",
+  std::fprintf(stderr, "[lsp] +%ldms %.*s pid=%d %.*s | %.*s\n", LspTraceElapsedMs(),
                static_cast<int>(language_id.size()), language_id.data(), pid,
                static_cast<int>(phase.size()), phase.data(), static_cast<int>(detail.size()),
                detail.data());
@@ -459,23 +470,25 @@ struct LspClient::Impl {
     const std::string& message = value["message"].AsString();
     const int percentage = value["percentage"].AsInt(0);
 
-    std::lock_guard lock(mutex);
-    if (kind == "end") {
-      readiness_snapshot.state = initialized.load(std::memory_order_acquire)
-                                     ? LspClient::ReadinessSnapshot::State::Ready
-                                     : LspClient::ReadinessSnapshot::State::Starting;
-      readiness_snapshot.message =
-          initialized.load(std::memory_order_acquire) ? "Ready" : "Starting...";
-      readiness_snapshot.indexed_count = 0;
-      return;
+    {
+      std::lock_guard lock(mutex);
+      if (kind == "end") {
+        readiness_snapshot.state = initialized.load(std::memory_order_acquire)
+                                       ? LspClient::ReadinessSnapshot::State::Ready
+                                       : LspClient::ReadinessSnapshot::State::Starting;
+        readiness_snapshot.message =
+            initialized.load(std::memory_order_acquire) ? "Ready" : "Starting...";
+        readiness_snapshot.indexed_count = 0;
+      } else {
+        readiness_snapshot.state = LspClient::ReadinessSnapshot::State::Indexing;
+        readiness_snapshot.message = !message.empty() ? message
+                                   : !title.empty() ? title
+                                                    : "Indexing...";
+        readiness_snapshot.indexed_count = std::max({ExtractIndexedCount(message),
+                                                     ExtractIndexedCount(title), percentage});
+      }
     }
-
-    readiness_snapshot.state = LspClient::ReadinessSnapshot::State::Indexing;
-    readiness_snapshot.message = !message.empty() ? message
-                               : !title.empty() ? title
-                                                : "Indexing...";
-    readiness_snapshot.indexed_count = std::max({ExtractIndexedCount(message),
-                                                 ExtractIndexedCount(title), percentage});
+    TraceLspLifecycle(language_id, proc.pid(), "progress", kind.empty() ? "report" : kind);
   }
 
   void ShutdownProcessOnce(int timeout_ms = 3000) {
@@ -747,6 +760,7 @@ struct LspClient::Impl {
         const auto& params = msg["params"];
         std::string uri = params["uri"].AsString();
         std::vector<Diagnostic> diags = lsp_protocol::ParseDiagnostics(params["diagnostics"]);
+        TraceLspLifecycle(language_id, proc.pid(), "publishDiagnostics", uri);
         OnPublishDiagnostics cb;
         {
           std::lock_guard lock(mutex);
@@ -821,6 +835,7 @@ struct LspClient::Impl {
 
   void DoInitializeBlocking() {
     util::StartupTrace::Scope trace_scope("LspClient::DoInitializeBlocking");
+    TraceLspLifecycle(language_id, proc.pid(), "init-thread-begin");
     initializing.store(true, std::memory_order_release);
     {
       std::lock_guard lock(mutex);
@@ -991,6 +1006,7 @@ struct LspClient::Impl {
       initializing.store(false, std::memory_order_release);
       return;
     }
+    TraceLspLifecycle(language_id, proc.pid(), "initialize-request", "sent");
 
     ReadBuf& buf = io_buf;
     bool got_init = false;
@@ -1074,6 +1090,8 @@ struct LspClient::Impl {
         break;
       }
     }
+    TraceLspLifecycle(language_id, proc.pid(), "initialize-response",
+                      got_init ? "received" : "missing");
 
     if (!got_init) {
       (void)proc.IsRunning();
@@ -1129,6 +1147,7 @@ struct LspClient::Impl {
     io_thread = std::thread([this]() { IoMain(); });
     Wake();  // flush the queued config/didOpen without waiting for the first poll
 
+    bool is_indexing = false;
     {
       std::lock_guard lock(mutex);
       if (readiness_snapshot.state != LspClient::ReadinessSnapshot::State::Indexing) {
@@ -1136,8 +1155,10 @@ struct LspClient::Impl {
         readiness_snapshot.message = "Ready";
         readiness_snapshot.indexed_count = 0;
       }
+      is_indexing = readiness_snapshot.state == LspClient::ReadinessSnapshot::State::Indexing;
     }
     initializing.store(false, std::memory_order_release);
+    TraceLspLifecycle(language_id, proc.pid(), "initialized", is_indexing ? "indexing" : "ready");
   }
 
   void DoShutdown() {

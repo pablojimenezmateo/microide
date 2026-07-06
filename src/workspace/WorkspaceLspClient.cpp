@@ -21,6 +21,7 @@ bool LspClient::Start(const std::vector<std::string>& command, const std::string
                       const util::JsonValue& settings,
                       const platform::SubprocessSandbox& sandbox) {
   util::StartupTrace::Scope trace_scope("LspClient::Start");
+  TraceLspLifecycle(language_id, -1, "start-request", command.empty() ? "" : command.front());
   impl_->last_error.clear();
   impl_->initialization_options = initialization_options;
   impl_->settings = settings;
@@ -44,6 +45,7 @@ bool LspClient::Start(const std::vector<std::string>& command, const std::string
       return false;
     }
   }
+  TraceLspLifecycle(language_id, impl_->proc.pid(), "process-started");
 
   impl_->root_uri = root_uri;
   impl_->language_id = language_id;
@@ -157,6 +159,7 @@ void LspClient::DrainCallbacks() {
 }
 
 bool LspClient::DidOpen(std::string uri, std::string language_id, std::string text) {
+  TraceLspLifecycle(language_id, impl_->proc.pid(), "didOpen", uri);
   {
     std::lock_guard lock(impl_->mutex);
     impl_->document_versions[uri] = 1;

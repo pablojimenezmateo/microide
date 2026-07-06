@@ -318,10 +318,17 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     {
       util::PerformanceTrace::Scope scope(
           "WorkspaceShell::InitializeCurrentProject::ReloadPluginsForCurrentProject");
+      // Open the restored buffers' LSP documents here, AFTER this reload registers
+      // the plugin-contributed language servers. The earlier tab activation
+      // (ActivateCurrentTabAfterStateLoad -> NotifyLspBufferOpen) runs before any
+      // server is registered, so it finds no client and cannot send didOpen — a
+      // session-restored file would otherwise start clangd (via the status query)
+      // but never open the document, leaving it with no diagnostics/semantic tokens
+      // until the user interacted. EnsureLspDocumentOpen is idempotent.
       ReloadPluginsForCurrentProject(PluginReloadRequest{
           .syntax_definitions = false,
           .replay_buffer_opens = false,
-          .open_lsp_documents = false,
+          .open_lsp_documents = true,
       });
     }
     return true;
