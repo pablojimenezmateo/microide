@@ -140,8 +140,12 @@ void TestArchitectureInvariants() {
              // (change-detect the project.follow_out_of_root_symlinks toggle so ApplyLiveSettings
              // re-scans only when it flips) and replace_all_aggregate_cap_bytes_ (a test seam for the
              // Replace-All buffer ceiling).
+             // 1645: +1 for last_applied_files_exclude_ (change-detect the project.files_exclude
+             // edit so ApplyLiveSettings re-applies exclude globs + re-scans only on an actual change).
+             // 1646: +1 for NotifyLspBufferOpen (engages the LSP on file open / tab activation +
+             // session restore, not only on the first edit or go-to-definition).
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1644);
+                                                     1646);
            });
 
   bool hard_failure = false;

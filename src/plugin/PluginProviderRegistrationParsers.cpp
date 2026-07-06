@@ -11,6 +11,7 @@ namespace {
 
 // Field readers are centralized in lua_interop; ReadStringField here is the
 // optional-returning variant so parsers can detect missing required fields.
+using lua_interop::ReadBoolField;
 using lua_interop::ReadFunctionRefField;
 using lua_interop::ReadStringArrayField;
 constexpr auto& ReadStringField = lua_interop::ReadOptionalStringField;
@@ -43,6 +44,7 @@ bool ParseLanguageServerRegistration(lua_State* state,
       .plugin_id = plugin_id,
       .initialization_options = {},
       .settings = {},
+      .eager_start = ReadBoolField(state, 1, "eager_start"),
   };
   // initialization_options / settings are accepted as JSON-string fields and
   // parsed host-side; malformed JSON is ignored (left Null).

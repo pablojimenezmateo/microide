@@ -7,6 +7,7 @@
 #include <string_view>
 #include <unordered_set>
 
+#include "project/CompileCommandsLocator.h"
 #include "util/JsonValue.h"
 #include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
@@ -23,6 +24,39 @@ namespace {
 
 bool IsVirtualDocumentUri(std::string_view text) {
   return text.starts_with("virtual://");
+}
+
+// clangd cannot find a compile_commands.json in a non-standard build dir (e.g.
+// builds/, out/, cmake-build-*). When the host discovers one, append
+// --compile-commands-dir so cross-file features work instead of silently
+// degrading. Only clangd understands the flag, so gate on the program name and
+// skip when the plugin already set it. Returns the (possibly augmented) command.
+std::vector<std::string> AugmentClangdWithCompileCommandsDir(
+    std::vector<std::string> command, const std::filesystem::path& project_root) {
+  if (command.empty()) {
+    return command;
+  }
+  const std::string program = std::filesystem::path(command.front()).filename().string();
+  if (program.rfind("clangd", 0) != 0) {
+    return command;  // not clangd; the flag would break other servers
+  }
+  for (const std::string& arg : command) {
+    if (arg.rfind("--compile-commands-dir", 0) == 0) {
+      return command;  // plugin/user already specified one
+    }
+  }
+  const std::optional<std::filesystem::path> dir =
+      project::DiscoverCompileCommandsDir(project_root);
+  if (!dir.has_value()) {
+    SDL_Log("cpp-lsp: no compile_commands.json found under %s — clangd cross-file "
+            "features will be limited until one is generated",
+            project_root.generic_string().c_str());
+    return command;
+  }
+  command.push_back("--compile-commands-dir=" + dir->generic_string());
+  SDL_Log("cpp-lsp: pointing clangd at compile_commands.json in %s",
+          dir->generic_string().c_str());
+  return command;
 }
 
 // True when the live editor no longer matches the suggestion's anchor. Cheap
@@ -491,10 +525,13 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
       for (const auto& language_id : language_server.language_ids) {
         active_language_servers.insert(language_id);
       }
-      CurrentLspManager().RegisterServer(language_server.language_ids, language_server.command,
+      std::vector<std::string> command = AugmentClangdWithCompileCommandsDir(
+          language_server.command, context_.current_project_state.root);
+      CurrentLspManager().RegisterServer(language_server.language_ids, command,
                                          "file://" + context_.current_project_state.root.generic_string(),
                                          context_.current_project_state.root.generic_string(),
-                                         false, language_server.initialization_options,
+                                         language_server.eager_start,
+                                         language_server.initialization_options,
                                          language_server.settings, language_server.sandbox);
     }
     CurrentLspManager().BeginShutdownServersNotIn(active_language_servers);
@@ -833,6 +870,34 @@ void WorkspaceShell::NotifyPluginBufferOpen(const std::filesystem::path& path) {
   if (plugin_runtime_.enabled() && !normalized_path.empty()) {
     plugin_runtime_.Host().OnBufferOpen(normalized_path);
   }
+  NotifyLspBufferOpen(normalized_path);
+}
+
+void WorkspaceShell::NotifyLspBufferOpen(const std::filesystem::path& path) {
+  // Engage the language server the moment a document becomes the active editor —
+  // start a lazily-registered server, send `textDocument/didOpen`, and request
+  // semantic tokens/diagnostics. Without this the LSP only woke on the first
+  // *edit* or an explicit action (go-to-definition/hover), so a freshly opened OR
+  // session-restored file left the status stuck at "LSP: Starting..." (lazy
+  // server never started) or painted no diagnostics/semantic colors (server up
+  // but the doc was never opened) until the user interacted. Called from both the
+  // manual-open path (NotifyPluginBufferOpen) and tab activation/restore, so a
+  // file that was already open at startup engages the LSP too. EnsureLspDocumentOpen
+  // is idempotent (HasOpenDocument), so re-activations are cheap no-ops.
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  if (normalized_path.empty()) {
+    return;
+  }
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().lexically_normal() != normalized_path) {
+    return;
+  }
+  std::string language_id;
+  LspClient* client = LspClientForViewport(*viewport, &language_id);
+  if (client == nullptr) {
+    return;
+  }
+  EnsureLspDocumentOpen(*viewport, *client, language_id);
 }
 
 void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {

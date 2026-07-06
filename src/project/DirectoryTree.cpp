@@ -302,6 +302,11 @@ void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
 
   IgnoreMatcher matcher;
   matcher.SetRoot(root_);
+  // Seed the same defaults + user excludes the index/finder use, so VCS metadata,
+  // dependency, and build-output dirs render grayed (ignored) here rather than as
+  // normal entries — and stay consistent with what the finder indexes.
+  matcher.AddDefaultRules();
+  matcher.AddExcludeGlobs(exclude_globs_);
   if (refresh_git_statuses) {
     git_statuses_ = CollectGitStatuses(root_);
   }
@@ -360,11 +365,9 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
       iterator.increment(error);
       continue;
     }
-    if (is_directory && path.filename() == ".git") {
-      iterator.increment(error);
-      continue;
-    }
 
+    // .git/.svn/build-output/etc. are no longer special-cased: the seeded matcher
+    // marks them ignored, so they render grayed (and stay lazily expandable).
     const bool ignored = matcher.Ignored(relative, is_directory);
     if (sort_key.starts_with('.') && !ignored) {
       iterator.increment(error);

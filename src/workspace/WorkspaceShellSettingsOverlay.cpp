@@ -407,6 +407,20 @@ void WorkspaceShell::ApplyLiveSettings() {
     context_.current_project_state.file_finder.InvalidateIndexCache();
     RequestSidebarRedraw();
   }
+  // Editing the exclude globs changes what the tree grays and what the finder/index
+  // walk skips, so re-apply and re-scan on an actual change (same cost rationale).
+  if (std::string files_exclude = GetSettingValue("project.files_exclude").value_or(std::string());
+      files_exclude != last_applied_files_exclude_) {
+    last_applied_files_exclude_ = files_exclude;
+    std::vector<std::string> globs = ParseExcludeGlobs(files_exclude);
+    context_.current_project_state.directory_tree.SetExcludeGlobs(globs);
+    context_.current_project_state.file_index.SetExcludeGlobs(globs);
+    project_file_monitor_.SetExcludeGlobs(globs);
+    context_.current_project_state.directory_tree.Refresh();
+    context_.current_project_state.file_index.Refresh();
+    context_.current_project_state.file_finder.InvalidateIndexCache();
+    RequestSidebarRedraw();
+  }
 
   LiveSettingsEditorSnapshot snapshot;
   snapshot.project_root = context_.current_project_state.root.lexically_normal();

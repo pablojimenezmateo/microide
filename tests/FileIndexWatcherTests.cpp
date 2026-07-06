@@ -512,6 +512,159 @@ void TestFileIndexWatcherPollDiffSingleTickEmitsUniqueCreateModifyDelete() {
          "poll diff should contain exactly one delete entry");
 }
 
+// The core large-project fix: with NO root .gitignore, the initial scan must still
+// prune VCS metadata and build-output dirs via the built-in defaults, and must apply
+// file-level ignore rules (the closed index/finder parity gap).
+void TestFileIndexWatcherExcludesDefaultsAndFileLevelIgnore() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "svn_project";
+  // No root .gitignore at all (mirrors an SVN checkout).
+  WriteFile(root / "src" / "main.cpp", "int main() {}\n");
+  WriteFile(root / ".svn" / "wc.db", "svn-metadata\n");
+  WriteFile(root / "builds" / "artifact.o", "binary\n");
+  WriteFile(root / "node_modules" / "pkg" / "index.js", "1;\n");
+  // A nested .gitignore excludes a specific FILE (not a directory).
+  WriteFile(root / "src" / ".gitignore", "secret.txt\n");
+  WriteFile(root / "src" / "secret.txt", "shh\n");
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::vector<IndexUpdateBatch> batches;
+
+  FileIndexWatcher watcher;
+  watcher.SetCallback([&](IndexUpdateBatch batch) {
+    std::lock_guard lock(mutex);
+    batches.push_back(std::move(batch));
+    cv.notify_all();
+  });
+  Expect(watcher.Watch(root), "Watch should succeed without a root .gitignore");
+
+  const bool got_initial = WaitFor(
+      mutex, cv,
+      [&] {
+        for (const auto& batch : batches) {
+          if (batch.is_initial) return true;
+        }
+        return false;
+      },
+      std::chrono::milliseconds(1500));
+  Expect(got_initial, "FileIndexWatcher should emit an initial batch");
+
+  bool saw_main = false, saw_svn = false, saw_build = false, saw_node = false, saw_secret = false;
+  {
+    std::lock_guard lock(mutex);
+    for (const auto& batch : batches) {
+      if (!batch.is_initial) continue;
+      saw_main = saw_main || BatchContainsPath(batch, std::filesystem::path("src/main.cpp"));
+      saw_svn = saw_svn || BatchContainsPath(batch, std::filesystem::path(".svn/wc.db"));
+      saw_build = saw_build || BatchContainsPath(batch, std::filesystem::path("builds/artifact.o"));
+      saw_node =
+          saw_node || BatchContainsPath(batch, std::filesystem::path("node_modules/pkg/index.js"));
+      saw_secret = saw_secret || BatchContainsPath(batch, std::filesystem::path("src/secret.txt"));
+    }
+  }
+  Expect(saw_main, "initial batch should contain real sources");
+  Expect(!saw_svn, "default rules should prune .svn/ even without a .gitignore");
+  Expect(!saw_build, "default rules should prune builds/ even without a .gitignore");
+  Expect(!saw_node, "default rules should prune node_modules/");
+  Expect(!saw_secret, "a file-level nested .gitignore rule should exclude the file from the index");
+
+  watcher.Unwatch();
+}
+
+// A user-configured exclude glob skips a custom-named directory the defaults miss.
+void TestFileIndexWatcherHonorsUserExcludeGlobs() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "custom_excludes";
+  WriteFile(root / "src" / "main.cpp", "int main() {}\n");
+  WriteFile(root / "vendored" / "lib.c", "// vendored\n");
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::vector<IndexUpdateBatch> batches;
+
+  FileIndexWatcher watcher;
+  watcher.SetExcludeGlobs({"vendored/"});
+  watcher.SetCallback([&](IndexUpdateBatch batch) {
+    std::lock_guard lock(mutex);
+    batches.push_back(std::move(batch));
+    cv.notify_all();
+  });
+  Expect(watcher.Watch(root), "Watch should succeed");
+
+  const bool got_initial = WaitFor(
+      mutex, cv,
+      [&] {
+        for (const auto& batch : batches) {
+          if (batch.is_initial) return true;
+        }
+        return false;
+      },
+      std::chrono::milliseconds(1500));
+  Expect(got_initial, "FileIndexWatcher should emit an initial batch");
+
+  bool saw_main = false, saw_vendored = false;
+  {
+    std::lock_guard lock(mutex);
+    for (const auto& batch : batches) {
+      if (!batch.is_initial) continue;
+      saw_main = saw_main || BatchContainsPath(batch, std::filesystem::path("src/main.cpp"));
+      saw_vendored =
+          saw_vendored || BatchContainsPath(batch, std::filesystem::path("vendored/lib.c"));
+    }
+  }
+  Expect(saw_main, "initial batch should contain real sources");
+  Expect(!saw_vendored, "a user exclude glob should prune the custom directory");
+  watcher.Unwatch();
+}
+
+// A small entry budget truncates the initial batch instead of walking an unbounded tree.
+void TestFileIndexWatcherInitialBatchRespectsEntryBudget() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "big_project";
+  for (int i = 0; i < 20; ++i) {
+    WriteFile(root / "src" / ("file" + std::to_string(i) + ".cpp"), "// x\n");
+  }
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::vector<IndexUpdateBatch> batches;
+
+  FileIndexWatcher watcher;
+  watcher.SetEntryBudget(5);
+  watcher.SetCallback([&](IndexUpdateBatch batch) {
+    std::lock_guard lock(mutex);
+    batches.push_back(std::move(batch));
+    cv.notify_all();
+  });
+  Expect(watcher.Watch(root), "Watch should succeed");
+
+  const bool got_initial = WaitFor(
+      mutex, cv,
+      [&] {
+        for (const auto& batch : batches) {
+          if (batch.is_initial) return true;
+        }
+        return false;
+      },
+      std::chrono::milliseconds(1500));
+  Expect(got_initial, "FileIndexWatcher should emit an initial batch");
+
+  bool truncated = false;
+  std::size_t kept = 0;
+  {
+    std::lock_guard lock(mutex);
+    for (const auto& batch : batches) {
+      if (!batch.is_initial) continue;
+      truncated = truncated || batch.truncated;
+      kept = batch.changes.size();
+    }
+  }
+  Expect(truncated, "an initial scan exceeding the entry budget should be flagged truncated");
+  Expect(kept <= 5, "a truncated batch should keep at most the budgeted number of entries");
+  watcher.Unwatch();
+}
+
 }  // namespace
 
 void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
@@ -537,6 +690,12 @@ void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
           TestFileIndexWatcherUnwatchDuringBootstrapIsSafe);
   AddTest(tests, "FileIndexWatcher/PollDiffSingleTickEmitsUniqueCreateModifyDelete",
           TestFileIndexWatcherPollDiffSingleTickEmitsUniqueCreateModifyDelete);
+  AddTest(tests, "FileIndexWatcher/ExcludesDefaultsAndFileLevelIgnore",
+          TestFileIndexWatcherExcludesDefaultsAndFileLevelIgnore);
+  AddTest(tests, "FileIndexWatcher/HonorsUserExcludeGlobs",
+          TestFileIndexWatcherHonorsUserExcludeGlobs);
+  AddTest(tests, "FileIndexWatcher/InitialBatchRespectsEntryBudget",
+          TestFileIndexWatcherInitialBatchRespectsEntryBudget);
 }
 
 }  // namespace microide::tests

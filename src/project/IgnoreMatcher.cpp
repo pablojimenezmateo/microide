@@ -2,6 +2,7 @@
 
 #include <cctype>
 #include <fstream>
+#include <string_view>
 #include <system_error>
 
 #include "util/StringUtil.h"
@@ -123,6 +124,35 @@ bool IgnoreMatcher::SetRoot(const std::filesystem::path& root) {
   rules_.clear();
   LoadIgnoreFile(root_ / ".gitignore");
   return true;
+}
+
+void IgnoreMatcher::AddDefaultRules() {
+  // Directory-only, basename-matched (no '/') rules, so each name is pruned at any
+  // depth exactly as the equivalent ".name/" line in a .gitignore would be.
+  static constexpr std::string_view kDefaultDirRules[] = {
+      // Version-control metadata.
+      ".git/", ".svn/", ".hg/", ".bzr/",
+      // Dependency / cache / virtualenv trees.
+      "node_modules/", ".cache/", ".venv/", "__pycache__/",
+      // Common build-output trees. Grayed + unindexed by default (never hidden).
+      "build/", "builds/", "out/", "dist/", "target/", "cmake-build-*/", ".vs/",
+      "bin/", "obj/",
+  };
+  for (const std::string_view rule_text : kDefaultDirRules) {
+    Rule rule;
+    if (ParseRule(std::string(), std::string(rule_text), rule)) {
+      rules_.push_back(std::move(rule));
+    }
+  }
+}
+
+void IgnoreMatcher::AddExcludeGlobs(const std::vector<std::string>& globs) {
+  for (const std::string& glob : globs) {
+    Rule rule;
+    if (ParseRule(std::string(), glob, rule)) {
+      rules_.push_back(std::move(rule));
+    }
+  }
 }
 
 void IgnoreMatcher::LoadIgnoreFile(const std::filesystem::path& path) {

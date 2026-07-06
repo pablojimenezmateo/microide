@@ -39,6 +39,8 @@ ProjectFile BuildProjectFile(const std::filesystem::path& absolute_root,
 FileIndex::FileIndex(FileIndex&& other) noexcept {
   std::unique_lock other_lock(other.files_mutex_);
   root_ = std::move(other.root_);
+  exclude_globs_ = std::move(other.exclude_globs_);
+  truncated_ = other.truncated_;
   files_ = std::move(other.files_);
   version_ = other.version_;
   exclude_hidden_cache_ = std::move(other.exclude_hidden_cache_);
@@ -52,11 +54,23 @@ FileIndex& FileIndex::operator=(FileIndex&& other) noexcept {
 
   std::scoped_lock lock(files_mutex_, other.files_mutex_);
   root_ = std::move(other.root_);
+  exclude_globs_ = std::move(other.exclude_globs_);
+  truncated_ = other.truncated_;
   files_ = std::move(other.files_);
   version_ = other.version_;
   exclude_hidden_cache_ = std::move(other.exclude_hidden_cache_);
   include_hidden_cache_ = std::move(other.include_hidden_cache_);
   return *this;
+}
+
+void FileIndex::SetExcludeGlobs(std::vector<std::string> globs) {
+  std::unique_lock lock(files_mutex_);
+  exclude_globs_ = std::move(globs);
+}
+
+bool FileIndex::truncated() const {
+  std::shared_lock lock(files_mutex_);
+  return truncated_;
 }
 
 bool FileIndex::SetRoot(const std::filesystem::path& root,
@@ -102,11 +116,17 @@ void FileIndex::Refresh() {
     root = root_;
   }
 
+  std::vector<std::string> excludes;
+  {
+    std::shared_lock lock(files_mutex_);
+    excludes = exclude_globs_;
+  }
+
   std::vector<ProjectFile> rebuilt;
   if (!root.empty()) {
     const auto scanned = CollectProjectFiles(
         root, ProjectFileScanMode::IncludeHidden,
-        follow_out_of_root_symlinks_.load(std::memory_order_relaxed));
+        follow_out_of_root_symlinks_.load(std::memory_order_relaxed), excludes);
     rebuilt.reserve(scanned.size());
     for (const auto& relative_path : scanned) {
       rebuilt.push_back(BuildProjectFile(root, relative_path));
@@ -167,6 +187,7 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
     std::unique_lock lock(files_mutex_);
     files_ = std::move(rebuilt);
     ++version_;
+    truncated_ = batch.truncated;
     exclude_hidden_cache_.needs_refresh = true;
     include_hidden_cache_.needs_refresh = true;
     return true;

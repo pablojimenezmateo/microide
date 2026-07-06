@@ -112,6 +112,39 @@ void TestDirectoryTreeShowsHiddenIgnoredEntries() {
          "hidden ignored directories should be tagged as ignored");
 }
 
+// The user's requirement: VCS metadata and build-output dirs are treated exactly
+// like gitignored entries — shown GRAYED (ignored=true), not hidden — even when no
+// .gitignore exists. A user exclude glob grays a custom dir the same way.
+void TestDirectoryTreeGraysBuildAndVcsDirsNotHidden() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "svn_project";
+  // No .gitignore (SVN-style checkout).
+  WriteFile(root / "src" / "main.cpp", "int main() {}\n");
+  WriteFile(root / ".svn" / "wc.db", "svn\n");
+  WriteFile(root / "builds" / "artifact.o", "bin\n");
+  WriteFile(root / "vendored" / "lib.c", "// v\n");
+
+  DirectoryTree tree;
+  tree.SetExcludeGlobs({"vendored/"});
+  Expect(tree.SetRoot(root), "directory tree should open fixture root");
+
+  const auto* svn = FindEntry(tree, root / ".svn");
+  Expect(svn != nullptr, ".svn should remain visible in the tree model (not hidden)");
+  Expect(svn != nullptr && svn->ignored, ".svn should be grayed (tagged ignored)");
+
+  const auto* builds = FindEntry(tree, root / "builds");
+  Expect(builds != nullptr, "builds/ should remain visible (not hidden)");
+  Expect(builds != nullptr && builds->ignored, "builds/ should be grayed (tagged ignored)");
+
+  const auto* vendored = FindEntry(tree, root / "vendored");
+  Expect(vendored != nullptr, "a user-excluded dir should remain visible (not hidden)");
+  Expect(vendored != nullptr && vendored->ignored,
+         "a user-excluded dir should be grayed (tagged ignored)");
+
+  const auto* src = FindEntry(tree, root / "src");
+  Expect(src != nullptr && !src->ignored, "ordinary source dirs stay non-ignored");
+}
+
 void TestDirectoryTreeSelectPathExpandsAncestors() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -162,6 +195,8 @@ void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
           TestDirectoryTreeTracksMaterializationIndependentlyFromIgnoredStatus);
   AddTest(tests, "DirectoryTree/ShowsHiddenIgnoredEntries",
           TestDirectoryTreeShowsHiddenIgnoredEntries);
+  AddTest(tests, "DirectoryTree/GraysBuildAndVcsDirsNotHidden",
+          TestDirectoryTreeGraysBuildAndVcsDirsNotHidden);
   AddTest(tests, "DirectoryTree/SelectPathExpandsAncestors",
           TestDirectoryTreeSelectPathExpandsAncestors);
   AddTest(tests, "DirectoryTree/StopsExpandingSymlinkCycle",

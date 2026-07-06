@@ -48,6 +48,49 @@ void TestIgnoreMatcherNegationAndDirectoryRules() {
   Expect(!matcher.Ignored("keep.tmp", false), "a later negation should un-ignore the file");
 }
 
+void TestIgnoreMatcherDefaultRulesGrayVcsAndBuildDirs() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root);
+
+  IgnoreMatcher matcher;
+  matcher.SetRoot(root);
+  matcher.AddDefaultRules();
+
+  // VCS metadata + build-output dirs are ignored as directories, at any depth.
+  Expect(matcher.Ignored(".svn", true), "default rules should ignore .svn/");
+  Expect(matcher.Ignored(".git", true), "default rules should ignore .git/");
+  Expect(matcher.Ignored("builds", true), "default rules should ignore builds/");
+  Expect(matcher.Ignored("out", true), "default rules should ignore out/");
+  Expect(matcher.Ignored("node_modules", true), "default rules should ignore node_modules/");
+  Expect(matcher.Ignored("Visum/src/node_modules", true),
+         "default (basename) rules should match a nested node_modules");
+  Expect(matcher.Ignored("cmake-build-debug", true),
+         "glob default rule should match cmake-build-* dirs");
+
+  // Directory-only: a like-named regular file is not ignored, and real source is untouched.
+  Expect(!matcher.Ignored("builds", false), "a file named 'builds' should not be ignored");
+  Expect(!matcher.Ignored("src/main.cpp", false), "ordinary source must not be ignored");
+}
+
+void TestIgnoreMatcherExcludeGlobsAndReinclude() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root);
+
+  IgnoreMatcher matcher;
+  matcher.SetRoot(root);
+  matcher.AddDefaultRules();
+  // A user exclude adds a custom dir; a later "!build/" re-includes a default-ignored one.
+  matcher.AddExcludeGlobs({"vendored/", "!build/"});
+
+  Expect(matcher.Ignored("vendored", true), "a user exclude glob should ignore its directory");
+  Expect(!matcher.Ignored("build", true),
+         "a trailing !build/ exclude should re-include the default-ignored build dir");
+  // The default .svn ignore still applies (not re-included).
+  Expect(matcher.Ignored(".svn", true), "unrelated defaults remain in effect");
+}
+
 }  // namespace
 
 void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests) {
@@ -55,6 +98,10 @@ void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests) {
           TestIgnoreMatcherNestedGitignoreBasePrefix);
   AddTest(tests, "IgnoreMatcher/NegationAndDirectoryRules",
           TestIgnoreMatcherNegationAndDirectoryRules);
+  AddTest(tests, "IgnoreMatcher/DefaultRulesGrayVcsAndBuildDirs",
+          TestIgnoreMatcherDefaultRulesGrayVcsAndBuildDirs);
+  AddTest(tests, "IgnoreMatcher/ExcludeGlobsAndReinclude",
+          TestIgnoreMatcherExcludeGlobsAndReinclude);
 }
 
 }  // namespace microide::tests

@@ -41,11 +41,8 @@ void CollectFiles(const std::filesystem::path& root,
     const std::filesystem::path path = iterator->path();
     const bool is_directory = iterator->is_directory();
 
-    if (is_directory && path.filename() == ".git") {
-      ++iterator;
-      continue;
-    }
-
+    // .git/.svn/build-output/etc. are pruned by the seeded matcher below (default
+    // rules), so no name is special-cased here.
     const std::filesystem::path relative =
         path.lexically_normal().lexically_relative(root.lexically_normal());
     if (relative.empty()) {
@@ -91,7 +88,8 @@ void CollectFiles(const std::filesystem::path& root,
 
 std::vector<std::filesystem::path> CollectProjectFiles(const std::filesystem::path& root,
                                                        ProjectFileScanMode mode,
-                                                       bool follow_out_of_root_symlinks) {
+                                                       bool follow_out_of_root_symlinks,
+                                                       const std::vector<std::string>& exclude_globs) {
   util::AddPerformanceCounter(util::PerfCounterId::ProjectFileScannerCollectProjectFilesCalls);
   std::error_code error;
   const std::filesystem::path absolute_root = std::filesystem::absolute(root, error);
@@ -102,6 +100,9 @@ std::vector<std::filesystem::path> CollectProjectFiles(const std::filesystem::pa
 
   IgnoreMatcher matcher;
   matcher.SetRoot(absolute_root);
+  // Defaults after the root .gitignore (take precedence), user excludes last.
+  matcher.AddDefaultRules();
+  matcher.AddExcludeGlobs(exclude_globs);
 
   std::vector<std::filesystem::path> files;
   SymlinkLoopGuard loop_guard(absolute_root,

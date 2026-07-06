@@ -359,6 +359,15 @@ void TabCoordinator::Activate(std::size_t index) {
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
   operations_.reset_caret_blink();
+  // Engage the language server for the now-active editor document. This covers the
+  // session-restore case (a file already open at startup, activated without ever
+  // going through OpenFileInNewTab) and plain tab switches — without it, a
+  // restored file's LSP stayed at "Starting..." with no diagnostics/semantic
+  // colors until an edit or go-to-definition. Idempotent, so switches are cheap.
+  if (tab.kind == TabEntry::Kind::Editor && !active_vp_path.empty() &&
+      operations_.notify_lsp_buffer_open) {
+    operations_.notify_lsp_buffer_open(active_vp_path);
+  }
   operations_.request_active_tab_redraw(tab.kind == TabEntry::Kind::Editor &&
                                         !active_vp_path.empty());
 }

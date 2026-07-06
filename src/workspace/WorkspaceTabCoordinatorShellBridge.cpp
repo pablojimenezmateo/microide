@@ -62,6 +62,8 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
               [this](const std::filesystem::path& path) { NotifyPluginBufferSave(path); },
           .notify_plugin_buffer_open =
               [this](const std::filesystem::path& path) { NotifyPluginBufferOpen(path); },
+          .notify_lsp_buffer_open =
+              [this](const std::filesystem::path& path) { NotifyLspBufferOpen(path); },
           .notify_lsp_buffer_close =
               [this](const std::filesystem::path& path) { NotifyLspBufferClose(path); },
           .count_open_buffer_views =

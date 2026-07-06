@@ -121,9 +121,36 @@ void TestScannerFollowsSymlinkToDotDotPrefixedInRootDir() {
 #endif
 }
 
+// Without any .gitignore, the scanner must still prune VCS metadata and build
+// output via the built-in defaults, and honor a user exclude glob.
+void TestScannerPrunesDefaultsAndUserExcludes() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "src" / "main.cpp", "int main() {}\n");
+  WriteFile(root / ".svn" / "wc.db", "svn\n");
+  WriteFile(root / "builds" / "artifact.o", "bin\n");
+  WriteFile(root / "vendored" / "lib.c", "// v\n");
+
+  const auto default_scan =
+      CollectProjectFiles(root, ProjectFileScanMode::IncludeHidden, false);
+  Expect(ContainsName(default_scan, "main.cpp"), "real sources should be collected");
+  Expect(!ContainsName(default_scan, "wc.db"), "default rules should prune .svn/");
+  Expect(!ContainsName(default_scan, "artifact.o"), "default rules should prune builds/");
+  Expect(ContainsName(default_scan, "lib.c"),
+         "a custom dir is collected until the user excludes it");
+
+  const auto excluded_scan =
+      CollectProjectFiles(root, ProjectFileScanMode::IncludeHidden, false, {"vendored/"});
+  Expect(!ContainsName(excluded_scan, "lib.c"),
+         "a user exclude glob should prune the custom directory");
+  Expect(ContainsName(excluded_scan, "main.cpp"), "real sources remain after exclusion");
+}
+
 }  // namespace
 
 void RegisterProjectFileScannerTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ProjectFileScanner/PrunesDefaultsAndUserExcludes",
+          TestScannerPrunesDefaultsAndUserExcludes);
   AddTest(tests, "ProjectFileScanner/DoesNotFollowRootEscapingSymlink",
           TestScannerDoesNotFollowRootEscapingSymlink);
   AddTest(tests, "ProjectFileScanner/FollowsInProjectSymlink",

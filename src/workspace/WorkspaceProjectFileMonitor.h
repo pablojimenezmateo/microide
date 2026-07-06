@@ -11,8 +11,10 @@
 #include <optional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "platform/FileWatcher.h"
+#include "project/ProjectTraversalFilter.h"
 
 namespace microide::workspace {
 
@@ -22,6 +24,9 @@ class WorkspaceProjectFileMonitor {
   ~WorkspaceProjectFileMonitor();
 
   void SetDeferredArming(bool deferred);
+  // User/project-configured ignore globs (gitignore syntax) folded into every
+  // traversal filter this monitor builds. Applied on the next SetProjectRoot/arm.
+  void SetExcludeGlobs(std::vector<std::string> globs);
   void SetPollInterval(std::chrono::milliseconds poll_interval);
   // Override the watcher's per-walk entry budget (mainly a testing seam to trip the
   // "too large" degradation cheaply without building a 50k-entry tree).
@@ -45,8 +50,6 @@ class WorkspaceProjectFileMonitor {
   bool ConsumeTreeTooLargeNotice();
 
  private:
-  class ProjectTraversalFilter;
-
   bool EnsureWatching();
   bool HasVisibleChangesSinceDeferredArming() const;
   bool ReserveWakeEvent(Uint32* event_type) const;
@@ -66,7 +69,8 @@ class WorkspaceProjectFileMonitor {
   std::filesystem::path watched_project_root_;
   std::optional<std::filesystem::file_time_type> deferred_arm_baseline_;
   platform::FileTreeWatcher watcher_;
-  std::shared_ptr<ProjectTraversalFilter> traversal_filter_;
+  std::vector<std::string> exclude_globs_;
+  std::shared_ptr<project::ProjectTraversalFilter> traversal_filter_;
 
   // Off-shell-thread polling. background_poster_ is set once at startup and only
   // touched on the shell thread; the flags below cross to the executor thread.

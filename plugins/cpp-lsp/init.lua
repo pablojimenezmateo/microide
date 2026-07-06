@@ -70,6 +70,12 @@ return ide.plugin({
       id = "clangd",
       language_ids = { "c", "c++", "objective-c" },
       command = command,
+      -- Lazy start (on first C/C++ file open) is the default: clangd inits in <1s
+      -- and the host now engages the server on file open (didOpen + diagnostics +
+      -- semantic tokens), so there is no "Starting..."/blank-decorations wait. Set
+      -- eager_start = true only to overlap clangd's background index with browsing
+      -- on projects large enough for indexing to matter (needs a compile DB).
+      eager_start = false,
     })
   end,
 })

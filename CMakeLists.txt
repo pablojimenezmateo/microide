@@ -311,6 +311,8 @@ set(MICROIDE_CORE_SOURCES
   src/project/ProjectFileScanner.cpp
   src/project/GitStatusService.cpp
   src/project/IgnoreMatcher.cpp
+  src/project/ProjectTraversalFilter.cpp
+  src/project/CompileCommandsLocator.cpp
   src/project/PatternCache.cpp
   src/project/ProjectBackgroundExecutor.cpp
   src/project/SubprocessHelper.cpp
@@ -752,6 +754,8 @@ add_executable(microide_tests
   tests/DirtyRegionPolicyTests.cpp
   tests/FilesystemTests.cpp
   tests/IgnoreMatcherTests.cpp
+  tests/ProjectTraversalFilterTests.cpp
+  tests/CompileCommandsLocatorTests.cpp
   tests/WorkspaceProjectFileMonitorTests.cpp
   tests/FileFinderTests.cpp
   tests/RecentsServiceTests.cpp

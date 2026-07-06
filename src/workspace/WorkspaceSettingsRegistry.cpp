@@ -414,6 +414,24 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Workspace",
       },
       SettingSpec{
+          .id = "project.files_exclude",
+          .label = "Excluded Paths",
+          .description = "Extra ignore patterns (gitignore syntax, one per line or comma-separated) "
+                         "for the file tree, finder, search index, and file watcher — on top of the "
+                         "built-in defaults (VCS metadata, node_modules/.cache, and build-output dirs "
+                         "like build/out/dist/target). Excluded directories render grayed in the tree "
+                         "(still expandable) but are not indexed or watched. Use a leading '!' to "
+                         "re-include a directory the defaults would otherwise skip (e.g. '!build/').",
+          .type = SettingType::String,
+          .scope = SettingScope::User,
+          .default_bool = false,
+          .default_int = 0,
+          .default_float = 0.0f,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Workspace",
+      },
+      SettingSpec{
           .id = "editor.caret_blink.enabled",
           .label = "Caret Blink",
           .description = "Blink the text caret. When off, the caret stays solid (no idle wake-ups).",

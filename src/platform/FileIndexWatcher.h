@@ -1,9 +1,11 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace microide::platform {
@@ -22,6 +24,7 @@ struct IndexUpdateBatch {
   };
   std::vector<Change> changes;
   bool is_initial = false;  // true for first full-scan batch on Watch()
+  bool truncated = false;   // true when the walk hit the entry budget and stopped early
 };
 
 // Threading contract: The callback registered via SetCallback() fires on the watcher's
@@ -39,6 +42,15 @@ class FileIndexWatcher {
 
   // Must be called before Watch(). Replaces any previously set callback.
   void SetCallback(Callback callback);
+
+  // User/project-configured ignore globs (gitignore syntax, root-anchored) folded
+  // into the traversal filter alongside the built-in defaults. Call before Watch().
+  void SetExcludeGlobs(std::vector<std::string> globs);
+
+  // Override the per-walk entry budget for the initial scan (mainly a test seam to
+  // trip truncation cheaply). Kept files past this count are dropped and the batch
+  // is flagged truncated. Call before Watch(). Defaults to kTreeTraversalEntryBudget.
+  void SetEntryBudget(std::size_t max_entries);
 
   // Start watching root_path recursively. Immediately emits an initial IndexUpdateBatch
   // (is_initial=true) with all files found in the tree. Returns true on success.

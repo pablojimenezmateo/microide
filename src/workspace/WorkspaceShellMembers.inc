@@ -673,6 +673,7 @@
   void ReloadVirtualDocumentTabs(std::string_view uri);
   bool IsReadOnlyVirtualDocument(const std::filesystem::path& path) const;
   void NotifyPluginBufferOpen(const std::filesystem::path& path);
+  void NotifyLspBufferOpen(const std::filesystem::path& path);
   void NotifyPluginBufferSave(const std::filesystem::path& path);
   void NotifyLspBufferClose(const std::filesystem::path& path);
   void ResetProjectScopedState(bool show_welcome);
@@ -1951,6 +1952,9 @@
   // Last-applied value of "project.follow_out_of_root_symlinks". Defaults to the
   // setting default (false) so a live toggle re-scans the tree/index exactly once.
   bool last_applied_follow_out_of_root_symlinks_ = false;
+  // Last-applied raw value of "project.files_exclude" so a live edit re-applies the
+  // exclude globs and re-scans exactly once (empty default matches an unset setting).
+  std::string last_applied_files_exclude_;
   // Ceiling on the aggregate modified-content Replace-All buffers before writing.
   // Above it the operation aborts (surfacing an error) rather than risk OOM. A
   // member (not a local constant) so tests can lower it without a huge fixture.

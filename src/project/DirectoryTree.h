@@ -41,6 +41,10 @@ class DirectoryTree {
   // when the tree is rebuilt. Default false keeps the out-of-root containment
   // guard active.
   void SetFollowOutOfRootSymlinks(bool follow) { follow_out_of_root_symlinks_ = follow; }
+  // User/project-configured ignore globs folded into the tree's matcher alongside
+  // the built-in defaults; consulted on the next rebuild. Matched entries render
+  // grayed (ignored), not hidden.
+  void SetExcludeGlobs(std::vector<std::string> globs) { exclude_globs_ = std::move(globs); }
   void RefreshGitStatuses();
   void ApplyGitStatuses(std::unordered_map<std::string, GitFileStatus> statuses);
   void MoveSelection(int delta);
@@ -92,6 +96,7 @@ class DirectoryTree {
 
   std::filesystem::path root_;
   bool follow_out_of_root_symlinks_ = false;
+  std::vector<std::string> exclude_globs_;
   std::vector<TreeEntry> entries_;
   std::uint64_t entries_revision_ = 0;
   std::unordered_map<std::string, GitFileStatus> git_statuses_;

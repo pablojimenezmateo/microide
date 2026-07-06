@@ -4,11 +4,13 @@
 #include <filesystem>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
 #include "project/ProjectChangeNormalizer.h"
 #include "util/PerformanceTrace.h"
+#include "util/StringUtil.h"
 #include "platform/AppDirectories.h"
 #include "app/BackgroundTaskCounter.h"
 #include "util/StartupTrace.h"
@@ -59,6 +61,8 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
       file_index_watcher_generation_.fetch_add(1, std::memory_order_acq_rel) + 1;
 
   file_index_watcher_ = std::make_unique<platform::FileIndexWatcher>();
+  file_index_watcher_->SetExcludeGlobs(
+      ParseExcludeGlobs(GetSettingValue("project.files_exclude").value_or(std::string())));
   file_index_watcher_->SetCallback([this, watcher_generation](platform::IndexUpdateBatch batch) {
     if (file_index_watcher_generation_.load(std::memory_order_acquire) != watcher_generation) {
       return;
@@ -397,6 +401,11 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
       follow_out_of_root_symlinks);
   context_.current_project_state.file_index.SetFollowOutOfRootSymlinks(
       follow_out_of_root_symlinks);
+  std::vector<std::string> exclude_globs =
+      ParseExcludeGlobs(GetSettingValue("project.files_exclude").value_or(std::string()));
+  context_.current_project_state.directory_tree.SetExcludeGlobs(exclude_globs);
+  context_.current_project_state.file_index.SetExcludeGlobs(exclude_globs);
+  project_file_monitor_.SetExcludeGlobs(exclude_globs);
   {
     util::StartupTrace::Scope tree_scope("DirectoryTree::SetRoot");
     if (!context_.current_project_state.directory_tree.SetRoot(context_.current_project_state.root)) {

@@ -2,6 +2,7 @@
 
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/StringUtil.h"
+#include "workspace/FileUri.h"
 #include "workspace/PluginEditorEventTracker.h"
 #include "workspace/WorkspaceLspClient.h"
 #include "workspace/WorkspaceLspManager.h"
@@ -2582,6 +2583,66 @@ return ide.plugin({
          "switching back must retain the SAME warm client instance (no restart/re-index)");
 }
 
+// Regression: opening/viewing a file must engage the language server (start a
+// lazy server + send textDocument/didOpen) without requiring an edit or an
+// explicit LSP action. Before the fix the LSP only woke on the first edit or on
+// go-to-definition, so opening a file left the status stuck at "LSP: Starting..."
+// and painted no diagnostics/semantic colors until the user interacted.
+void TestWorkspaceShellOpensDocumentInLspOnFileOpen() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "print('hi')\n");
+
+  WritePluginInit(
+      plugins_root, "pylsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({
+      id = "pylsp.server",
+      language_id = "python",
+      command = { "py-lsp-server" },
+    })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "fixture should open the project");
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell).HasServer("python"),
+         "the plugin's python language server should be registered");
+
+  // Attach a warm stub (test-installed, so EnsureStarted returns it without
+  // spawning a real process) to observe didOpen without a live server.
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
+         "fixture should attach a stub python client");
+
+  const std::string uri = workspace::FileUriForPath(py_file);
+  Expect(!stub_raw->HasOpenDocument(uri),
+         "precondition: the document is not open in the LSP before it is opened");
+
+  // Open the file for viewing only — no edit, no go-to-definition.
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, py_file),
+         "fixture should open the .py file");
+
+  Expect(stub_raw->HasOpenDocument(uri),
+         "opening a file must send textDocument/didOpen (engage the LSP on open, "
+         "not only on the first edit or go-to-definition)");
+}
+
 // SEAM 2 — host-owned plugin buffer edits (ctx.editor.apply_edits).
 // Loads a plugin exposing commands that drive apply_edits/set_cursor/set_selection
 // against the active buffer, then asserts the host applied them with correct
@@ -3225,6 +3286,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectReactivationDoesNotReloadPlugins);
   AddTest(tests, "WorkspaceShell/ProjectReactivationKeepsLanguageServerWarm",
           TestWorkspaceShellProjectReactivationKeepsLanguageServerWarm);
+  AddTest(tests, "WorkspaceShell/OpensDocumentInLspOnFileOpen",
+          TestWorkspaceShellOpensDocumentInLspOnFileOpen);
 }
 
 }  // namespace microide::tests

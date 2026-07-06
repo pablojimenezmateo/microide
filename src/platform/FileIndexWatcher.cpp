@@ -1,6 +1,6 @@
 #include "platform/FileIndexWatcher.h"
 
-#include "project/IgnoreMatcher.h"
+#include "project/ProjectTraversalFilter.h"
 #include "util/StringUtil.h"
 
 #include <SDL3/SDL.h>
@@ -82,23 +82,12 @@ bool TryComputeRelativePath(const std::filesystem::path& absolute_path,
 #endif
 }
 
+// A directory is skipped (not walked, not watched, not indexed) when the shared
+// traversal filter excludes it: VCS metadata, dependency/cache trees, common
+// build-output dirs, user excludes, and nested .gitignore all funnel through here.
 bool ShouldSkipWatchedDirectory(const std::filesystem::path& directory,
-                                const std::filesystem::path& root,
-                                const project::IgnoreMatcher* matcher) {
-  if (directory.filename() == ".git") {
-    return true;
-  }
-  if (matcher == nullptr) {
-    return false;
-  }
-  std::filesystem::path relative;
-  if (!TryComputeRelativePath(directory, root, relative) ||
-      relative == std::filesystem::path(".")) {
-    return false;
-  }
-  // The path overload normalizes internally; an extra lexically_normal() here
-  // would just build and normalize a second path for nothing.
-  return matcher->Ignored(relative, /*is_directory=*/true);
+                                project::ProjectTraversalFilter* filter) {
+  return filter != nullptr && filter->ShouldSkipDirectory(directory);
 }
 
 bool TryBuildTrackedRelativePath(const std::filesystem::path& absolute_path,
@@ -117,34 +106,27 @@ bool TryBuildTrackedRelativePath(const std::filesystem::path& absolute_path,
 }
 
 #if defined(_WIN32)
-bool ShouldIgnoreTrackedRelativePath(const std::filesystem::path& relative_path,
-                                     const project::IgnoreMatcher* matcher) {
+bool ShouldIgnoreTrackedRelativePath(const std::filesystem::path& root,
+                                     const std::filesystem::path& relative_path,
+                                     project::ProjectTraversalFilter* filter) {
   if (relative_path.empty() || IsGitMetadataRelativePath(relative_path)) {
     return true;
   }
-  if (matcher == nullptr) {
+  if (filter == nullptr) {
     return false;
   }
-  const std::filesystem::path normalized = relative_path.lexically_normal();
-  // `normalized` (and each parent_path() of it) is already normalized, so the
-  // string_view overload avoids re-normalizing on every ancestor check.
-  if (matcher->IgnoredNormalized(normalized.generic_string(), false)) {
-    return true;
-  }
-  for (std::filesystem::path parent = normalized.parent_path();
-       !parent.empty() && parent != std::filesystem::path(".");
-       parent = parent.parent_path()) {
-    if (matcher->IgnoredNormalized(parent.generic_string(), true)) {
-      return true;
-    }
-  }
-  return false;
+  // The filter walks the full ancestor chain (nested .gitignore + defaults) itself.
+  return !filter->Includes((root / relative_path).lexically_normal(),
+                           platform::PathType::RegularFile);
 }
 #endif
 
-// Build an initial IndexUpdateBatch by scanning root recursively.
+// Build an initial IndexUpdateBatch by scanning root recursively, pruning excluded
+// directories (VCS/build/deps/nested-.gitignore) and files, and stopping once
+// `max_entries` kept files have been collected (batch.truncated is then set).
 IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
-                                   const project::IgnoreMatcher* matcher,
+                                   project::ProjectTraversalFilter* filter,
+                                   std::size_t max_entries,
                                    const std::atomic<bool>* stop_requested = nullptr) {
   IndexUpdateBatch batch;
   batch.is_initial = true;
@@ -162,9 +144,11 @@ IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
     if (status_error) {
       continue;
     }
-    if (std::filesystem::is_directory(status) &&
-        ShouldSkipWatchedDirectory(it->path(), root, matcher)) {
-      it.disable_recursion_pending();
+    if (std::filesystem::is_directory(status)) {
+      // Prune excluded subtrees before descending so they cost zero budget.
+      if (ShouldSkipWatchedDirectory(it->path(), filter)) {
+        it.disable_recursion_pending();
+      }
       continue;
     }
     if (!std::filesystem::is_regular_file(status)) {
@@ -174,6 +158,16 @@ IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
     std::filesystem::path rel;
     if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
       continue;
+    }
+    // File-level ignore check (parity with the finder/tree): an ignored file whose
+    // parent directory was not itself pruned is still excluded from the index.
+    if (filter != nullptr &&
+        !filter->Includes(abs_path, platform::PathType::RegularFile)) {
+      continue;
+    }
+    if (batch.changes.size() >= max_entries) {
+      batch.truncated = true;
+      break;
     }
 
     std::error_code mtime_error;
@@ -245,7 +239,11 @@ struct FileIndexWatcher::Impl {
   std::atomic<bool> is_native{false};
   std::filesystem::path root;
   FileIndexWatcher::Callback callback;
-  std::shared_ptr<project::IgnoreMatcher> ignore_matcher;
+  // Filter inputs are set before any walk thread starts and never mutated after,
+  // so worker threads read them race-free and each constructs its OWN filter (the
+  // per-directory matcher cache is not thread-safe to share).
+  std::vector<std::string> exclude_globs;
+  std::size_t entry_budget = platform::kTreeTraversalEntryBudget;
   bool warned_fallback = false;
 
   // inotify backend
@@ -336,9 +334,10 @@ struct FileIndexWatcher::Impl {
   void StartInitialScan() {
     StopInitialScan();
     stop_initial_scan.store(false, std::memory_order_release);
-    auto matcher = ignore_matcher;
-    initial_scan_worker = std::thread([this, matcher]() {
-      IndexUpdateBatch initial = BuildInitialBatch(root, matcher.get(), &stop_initial_scan);
+    initial_scan_worker = std::thread([this]() {
+      project::ProjectTraversalFilter filter(root, exclude_globs);
+      IndexUpdateBatch initial =
+          BuildInitialBatch(root, &filter, entry_budget, &stop_initial_scan);
       if (!stop_initial_scan.load(std::memory_order_acquire) && callback) {
         callback(std::move(initial));
       }
@@ -363,9 +362,9 @@ struct FileIndexWatcher::Impl {
   // was registered (root-skipped or already-present entries return true with
   // out_added=false).
   bool AddSingleWatch(const std::filesystem::path& dir,
-                      const project::IgnoreMatcher* matcher, bool& out_added) {
+                      project::ProjectTraversalFilter* filter, bool& out_added) {
     out_added = false;
-    if (ShouldSkipWatchedDirectory(dir, root, matcher)) {
+    if (ShouldSkipWatchedDirectory(dir, filter)) {
       return true;
     }
     if (wd_to_path.size() >= kMaxIndexWatchEntries) {
@@ -387,9 +386,9 @@ struct FileIndexWatcher::Impl {
   // stop_native_setup so an Unwatch() during bootstrap returns promptly. Returns false
   // only on inotify watch-limit exhaustion (ENOSPC); other per-watch errors are skipped.
   bool AddWatchRecursive(const std::filesystem::path& dir,
-                         const project::IgnoreMatcher* matcher) {
+                         project::ProjectTraversalFilter* filter) {
     bool added = false;
-    if (!AddSingleWatch(dir, matcher, added)) {
+    if (!AddSingleWatch(dir, filter, added)) {
       return false;
     }
 
@@ -406,7 +405,7 @@ struct FileIndexWatcher::Impl {
         continue;
       }
       if (std::filesystem::is_directory(status) &&
-          ShouldSkipWatchedDirectory(it->path(), root, matcher)) {
+          ShouldSkipWatchedDirectory(it->path(), filter)) {
         it.disable_recursion_pending();
         continue;
       }
@@ -447,7 +446,9 @@ struct FileIndexWatcher::Impl {
     }
 
     bool root_added = false;
-    if (!AddSingleWatch(root, ignore_matcher.get(), root_added) || !root_added) {
+    // The project root is never itself excluded, so a null filter suffices here;
+    // the setup thread builds its own filter for the recursive subtree walk.
+    if (!AddSingleWatch(root, nullptr, root_added) || !root_added) {
       // Either ENOSPC on the very first watch, or root itself is somehow ignored.
       // Tear down and let the caller fall back to poll mode.
       CloseIfValid(control_pipe[0]);
@@ -466,11 +467,11 @@ struct FileIndexWatcher::Impl {
     // worker. Events that arrive on the root watch during this window queue inside the
     // kernel's inotify queue and are drained when the worker starts; we don't read them
     // from a second thread, so there's no data race on wd_to_path.
-    auto matcher = ignore_matcher;
-    setup_thread = std::thread([this, matcher]() {
+    setup_thread = std::thread([this]() {
+      project::ProjectTraversalFilter filter(root, exclude_globs);
       // Walk subdirectories of root and register watches for each. AddWatchRecursive
       // re-uses the existing root watch (inotify_add_watch returns the same wd).
-      const bool watches_ok = AddWatchRecursive(root, matcher.get());
+      const bool watches_ok = AddWatchRecursive(root, &filter);
       if (stop_native_setup.load(std::memory_order_acquire)) {
         setup_done.store(true, std::memory_order_release);
         return;
@@ -541,8 +542,11 @@ struct FileIndexWatcher::Impl {
               const std::filesystem::path abs_path = (dir / name).lexically_normal();
 
               if (is_dir && (ev->mask & (IN_CREATE | IN_MOVED_TO)) != 0) {
-                // New directory: add watches for it recursively
-                AddWatchRecursive(abs_path, ignore_matcher.get());
+                // New directory: add watches for it recursively. Build a fresh
+                // filter per event (rare) so this single-threaded worker never
+                // shares the filter's mutable cache with another walk.
+                project::ProjectTraversalFilter filter(root, exclude_globs);
+                AddWatchRecursive(abs_path, &filter);
                 // No file change to report
               } else if (!is_dir) {
                 std::filesystem::path rel;
@@ -607,6 +611,7 @@ struct FileIndexWatcher::Impl {
       std::map<std::filesystem::path,
                std::pair<std::filesystem::file_time_type, std::uintmax_t>>
           result;
+      project::ProjectTraversalFilter filter(root, exclude_globs);
       std::error_code error;
       constexpr auto opts = std::filesystem::directory_options::skip_permission_denied;
       for (std::filesystem::recursive_directory_iterator it(root, opts, error), end;
@@ -617,7 +622,7 @@ struct FileIndexWatcher::Impl {
           continue;
         }
         if (std::filesystem::is_directory(status) &&
-            ShouldSkipWatchedDirectory(it->path(), root, ignore_matcher.get())) {
+            ShouldSkipWatchedDirectory(it->path(), &filter)) {
           it.disable_recursion_pending();
           continue;
         }
@@ -627,6 +632,9 @@ struct FileIndexWatcher::Impl {
         const std::filesystem::path abs_path = it->path().lexically_normal();
         std::filesystem::path rel;
         if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
+          continue;
+        }
+        if (!filter.Includes(abs_path, platform::PathType::RegularFile)) {
           continue;
         }
         std::error_code mtime_error;
@@ -673,7 +681,10 @@ struct FileIndexWatcher::Impl {
   std::atomic<bool> is_native{false};
   std::filesystem::path root;
   FileIndexWatcher::Callback callback;
-  std::shared_ptr<project::IgnoreMatcher> ignore_matcher;
+  // See the __linux__ backend for the threading contract: inputs set before any
+  // walk thread starts; each walk constructs its own (non-shareable) filter.
+  std::vector<std::string> exclude_globs;
+  std::size_t entry_budget = platform::kTreeTraversalEntryBudget;
 
   // FSEvents backend
   FSEventStreamRef stream = nullptr;
@@ -734,9 +745,10 @@ struct FileIndexWatcher::Impl {
   void StartInitialScan() {
     StopInitialScan();
     stop_initial_scan.store(false, std::memory_order_release);
-    auto matcher = ignore_matcher;
-    initial_scan_worker = std::thread([this, matcher]() {
-      IndexUpdateBatch initial = BuildInitialBatch(root, matcher.get(), &stop_initial_scan);
+    initial_scan_worker = std::thread([this]() {
+      project::ProjectTraversalFilter filter(root, exclude_globs);
+      IndexUpdateBatch initial =
+          BuildInitialBatch(root, &filter, entry_budget, &stop_initial_scan);
       if (!stop_initial_scan.load(std::memory_order_acquire) && callback) {
         callback(std::move(initial));
       }
@@ -855,6 +867,7 @@ struct FileIndexWatcher::Impl {
       std::map<std::filesystem::path,
                std::pair<std::filesystem::file_time_type, std::uintmax_t>>
           result;
+      project::ProjectTraversalFilter filter(root, exclude_globs);
       std::error_code error;
       constexpr auto opts = std::filesystem::directory_options::skip_permission_denied;
       for (std::filesystem::recursive_directory_iterator it(root, opts, error), end;
@@ -865,7 +878,7 @@ struct FileIndexWatcher::Impl {
           continue;
         }
         if (std::filesystem::is_directory(status) &&
-            ShouldSkipWatchedDirectory(it->path(), root, ignore_matcher.get())) {
+            ShouldSkipWatchedDirectory(it->path(), &filter)) {
           it.disable_recursion_pending();
           continue;
         }
@@ -875,6 +888,9 @@ struct FileIndexWatcher::Impl {
         const std::filesystem::path abs_path = it->path().lexically_normal();
         std::filesystem::path rel;
         if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
+          continue;
+        }
+        if (!filter.Includes(abs_path, platform::PathType::RegularFile)) {
           continue;
         }
         std::error_code mtime_error;
@@ -919,7 +935,10 @@ struct FileIndexWatcher::Impl {
   std::atomic<bool> is_native{false};
   std::filesystem::path root;
   FileIndexWatcher::Callback callback;
-  std::shared_ptr<project::IgnoreMatcher> ignore_matcher;
+  // See the __linux__ backend for the threading contract: inputs set before any
+  // walk thread starts; each walk constructs its own (non-shareable) filter.
+  std::vector<std::string> exclude_globs;
+  std::size_t entry_budget = platform::kTreeTraversalEntryBudget;
   bool warned_fallback = false;
 
   HANDLE dir_handle = INVALID_HANDLE_VALUE;
@@ -980,8 +999,9 @@ struct FileIndexWatcher::Impl {
     StopInitialScan();
     stop_initial_scan.store(false, std::memory_order_release);
     initial_scan_worker = std::thread([this]() {
+      project::ProjectTraversalFilter filter(root, exclude_globs);
       IndexUpdateBatch initial =
-          BuildInitialBatch(root, ignore_matcher.get(), &stop_initial_scan);
+          BuildInitialBatch(root, &filter, entry_budget, &stop_initial_scan);
       if (!stop_initial_scan.load(std::memory_order_acquire) && callback) {
         callback(std::move(initial));
       }
@@ -1014,6 +1034,8 @@ struct FileIndexWatcher::Impl {
   }
 
   void WorkerMain() {
+    // Single-threaded worker: one filter for its whole lifetime is safe.
+    project::ProjectTraversalFilter filter(root, exclude_globs);
     constexpr DWORD kFilter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
                               FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
     constexpr DWORD kBufSize = 65536;
@@ -1071,7 +1093,7 @@ struct FileIndexWatcher::Impl {
             reinterpret_cast<const FILE_NOTIFY_INFORMATION*>(ptr);
         const std::wstring wname(info->FileName, info->FileNameLength / sizeof(WCHAR));
         const std::filesystem::path rel = std::filesystem::path(wname).lexically_normal();
-        if (ShouldIgnoreTrackedRelativePath(rel, ignore_matcher.get())) {
+        if (ShouldIgnoreTrackedRelativePath(root, rel, &filter)) {
           if (info->NextEntryOffset == 0) {
             break;
           }
@@ -1137,6 +1159,7 @@ struct FileIndexWatcher::Impl {
       std::map<std::filesystem::path,
                std::pair<std::filesystem::file_time_type, std::uintmax_t>>
           result;
+      project::ProjectTraversalFilter filter(root, exclude_globs);
       std::error_code error;
       constexpr auto opts = std::filesystem::directory_options::skip_permission_denied;
       for (std::filesystem::recursive_directory_iterator it(root, opts, error), end;
@@ -1147,7 +1170,7 @@ struct FileIndexWatcher::Impl {
           continue;
         }
         if (std::filesystem::is_directory(status) &&
-            ShouldSkipWatchedDirectory(it->path(), root, ignore_matcher.get())) {
+            ShouldSkipWatchedDirectory(it->path(), &filter)) {
           it.disable_recursion_pending();
           continue;
         }
@@ -1157,6 +1180,9 @@ struct FileIndexWatcher::Impl {
         const std::filesystem::path abs_path = it->path().lexically_normal();
         std::filesystem::path rel;
         if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
+          continue;
+        }
+        if (!filter.Includes(abs_path, platform::PathType::RegularFile)) {
           continue;
         }
         std::error_code mtime_error;
@@ -1202,7 +1228,10 @@ struct FileIndexWatcher::Impl {
   std::atomic<bool> is_native{false};
   std::filesystem::path root;
   FileIndexWatcher::Callback callback;
-  std::shared_ptr<project::IgnoreMatcher> ignore_matcher;
+  // See the __linux__ backend for the threading contract: inputs set before any
+  // walk thread starts; each walk constructs its own (non-shareable) filter.
+  std::vector<std::string> exclude_globs;
+  std::size_t entry_budget = platform::kTreeTraversalEntryBudget;
   bool warned_fallback = false;
   bool poll_mode = false;
   std::thread poll_worker;
@@ -1233,6 +1262,7 @@ struct FileIndexWatcher::Impl {
       std::map<std::filesystem::path,
                std::pair<std::filesystem::file_time_type, std::uintmax_t>>
           result;
+      project::ProjectTraversalFilter filter(root, exclude_globs);
       std::error_code error;
       constexpr auto opts = std::filesystem::directory_options::skip_permission_denied;
       for (std::filesystem::recursive_directory_iterator it(root, opts, error), end;
@@ -1243,7 +1273,7 @@ struct FileIndexWatcher::Impl {
           continue;
         }
         if (std::filesystem::is_directory(status) &&
-            ShouldSkipWatchedDirectory(it->path(), root, ignore_matcher.get())) {
+            ShouldSkipWatchedDirectory(it->path(), &filter)) {
           it.disable_recursion_pending();
           continue;
         }
@@ -1253,6 +1283,9 @@ struct FileIndexWatcher::Impl {
         const std::filesystem::path abs_path = it->path().lexically_normal();
         std::filesystem::path rel;
         if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
+          continue;
+        }
+        if (!filter.Includes(abs_path, platform::PathType::RegularFile)) {
           continue;
         }
         std::error_code mtime_error;
@@ -1307,6 +1340,14 @@ void FileIndexWatcher::SetCallback(Callback callback) {
   impl_->callback = std::move(callback);
 }
 
+void FileIndexWatcher::SetExcludeGlobs(std::vector<std::string> globs) {
+  impl_->exclude_globs = std::move(globs);
+}
+
+void FileIndexWatcher::SetEntryBudget(std::size_t max_entries) {
+  impl_->entry_budget = max_entries;
+}
+
 bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
   Unwatch();
 
@@ -1317,16 +1358,9 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
     return false;
   }
   impl_->root = absolute_root.lexically_normal();
-
-  // Load .gitignore once per Watch() and share it across the (possibly background) walks.
-  // Reading .gitignore is fast and bounded; threading through a const matcher keeps the
-  // recursive walks reading immutable state.
-  auto matcher = std::make_shared<project::IgnoreMatcher>();
-  if (matcher->SetRoot(impl_->root)) {
-    impl_->ignore_matcher = std::move(matcher);
-  } else {
-    impl_->ignore_matcher.reset();
-  }
+  // The traversal filter (root .gitignore + built-in defaults + exclude_globs) is
+  // constructed per-walk on the walk's own thread; exclude_globs / entry_budget are
+  // set via the setters before this call and read race-free by those threads.
 
 #if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
   // Try native backend

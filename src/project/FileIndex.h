@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <shared_mutex>
+#include <string>
 #include <vector>
 
 #include "platform/FileIndexWatcher.h"
@@ -62,6 +63,14 @@ class FileIndex {
   void SetFollowOutOfRootSymlinks(bool follow) {
     follow_out_of_root_symlinks_.store(follow, std::memory_order_relaxed);
   }
+  // User/project-configured ignore globs folded into the full-rescan (Refresh) via
+  // CollectProjectFiles, alongside the built-in defaults. The background watcher
+  // carries its own copy (FileIndexWatcher::SetExcludeGlobs); this covers the
+  // manual ScanNow/Refresh path.
+  void SetExcludeGlobs(std::vector<std::string> globs);
+  // True when the last initial index batch hit the entry budget and was truncated
+  // (the index therefore lists only a prefix of a very large tree).
+  bool truncated() const;
   // Applies an index update batch. For the initial full-scan batch (the only
   // expensive case), `is_cancelled` is polled during the bulk rebuild; if it
   // returns true the rebuild aborts before committing, leaving the index
@@ -101,6 +110,8 @@ class FileIndex {
   std::filesystem::path root_;
   std::atomic<bool> follow_out_of_root_symlinks_{false};
   mutable std::shared_mutex files_mutex_;
+  std::vector<std::string> exclude_globs_;  // guarded by files_mutex_
+  bool truncated_ = false;                  // guarded by files_mutex_
   std::vector<ProjectFile> files_;
   std::uint64_t version_ = 0;
   mutable CacheBucket exclude_hidden_cache_;
