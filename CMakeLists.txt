@@ -532,6 +532,9 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/LspService.cpp
   src/workspace/WorkspaceLspClient.cpp
   src/workspace/WorkspaceLspClientRequests.cpp
+  src/workspace/WorkspaceLspClientTransport.cpp
+  src/workspace/WorkspaceLspClientDispatch.cpp
+  src/workspace/WorkspaceLspClientLifecycle.cpp
   src/workspace/WorkspaceLspManager.cpp
   src/workspace/DapProtocol.cpp
   src/workspace/WorkspaceDapClient.cpp
