@@ -25,33 +25,9 @@
 
 #include "util/StartupTrace.h"
 #include "workspace/LspClientTrace.h"
+#include "workspace/LspMessageFraming.h"
 
 namespace microide::workspace {
-
-// ---------------------------------------------------------------------------
-// Internal buffer — avoids O(n) prefix-erasure on every line read.
-// ---------------------------------------------------------------------------
-struct ReadBuf {
-  std::string data;
-  std::size_t pos = 0;
-
-  std::string_view view() const {
-    return std::string_view(data).substr(pos);
-  }
-
-  void consume(std::size_t n) {
-    pos += n;
-    // Compact when the consumed prefix is large to bound memory usage.
-    if (pos > 65536 && pos > data.size() / 2) {
-      data.erase(0, pos);
-      pos = 0;
-    }
-  }
-
-  void append(std::string_view chunk) {
-    data.append(chunk);
-  }
-};
 
 // ---------------------------------------------------------------------------
 // Impl
@@ -82,16 +58,11 @@ struct LspClient::Impl {
   // Single I/O thread state. One thread per server reads stdout and writes stdin;
   // it blocks in poll() over stdout + a self-pipe wakeup, so it makes no
   // fixed-cadence idle wakeups and reacts immediately to data or new outbound.
-  // io_buf is filled first by the initialize handshake and then handed to the I/O
+  // framer_ is filled first by the initialize handshake and then handed to the I/O
   // thread; keeping it a member preserves any bytes the server pushed right after
   // the initialize response (e.g. clangd's early registerCapability / progress /
-  // configuration requests) across that handoff.
-  ReadBuf io_buf;
-  // Remaining body bytes to drain-and-discard for a frame whose declared
-  // Content-Length exceeded kMaxLspMessageBytes. Skipping the whole frame lets
-  // the parser resync to the next frame instead of reading body bytes as headers
-  // (which would desync the stream and tear the session down).
-  std::size_t skip_body_bytes_ = 0;
+  // configuration requests) across that handoff, along with any partial frame.
+  LspMessageFramer framer_;
   std::thread io_thread;
   std::atomic<bool> stop_io{false};
   std::mutex wake_mutex;          // guards wake_pipe_ open/close/Wake (brief, non-blocking)
@@ -473,7 +444,7 @@ struct LspClient::Impl {
 
   void ParseBufferedMessages() {
     while (true) {
-      auto msg_opt = TryParseOneMessage(io_buf);
+      auto msg_opt = framer_.Next();
       if (!msg_opt) break;
       DispatchMessage(std::move(*msg_opt));
     }
@@ -484,7 +455,7 @@ struct LspClient::Impl {
     const int read_timeout = cached_stdout_fd_ >= 0 ? 0 : 50;
     while (!stop_io.load(std::memory_order_acquire)) {
       // Parse anything already buffered first: the initialize handoff can leave
-      // server-pushed messages in io_buf with no *new* stdout data behind them,
+      // server-pushed messages in framer_ with no *new* stdout data behind them,
       // and a single read can carry several messages. Dispatch may enqueue replies.
       ParseBufferedMessages();
       DrainOutbound();
@@ -501,8 +472,8 @@ struct LspClient::Impl {
       }
       auto chunk = proc.Read(4096, read_timeout);
       if (!chunk) break;  // EOF / fatal read error
-      if (!chunk->empty()) io_buf.append(*chunk);
-      if (io_buf.view().size() > kMaxLspReadBufferBytes) {
+      if (!chunk->empty()) framer_.Append(*chunk);
+      if (framer_.BufferedBytes() > kMaxLspReadBufferBytes) {
         break;  // runaway server (no valid frame): tear the session down
       }
     }
@@ -520,72 +491,6 @@ struct LspClient::Impl {
     // alive, where proc.IsRunning() alone would keep accepting sends. DoInitialize
     // resets this to false before spawning a fresh io_thread on restart.
     stop_io.store(true, std::memory_order_release);
-  }
-
-  std::optional<util::JsonValue> TryParseOneMessage(ReadBuf& buf) {
-    static constexpr std::string_view kPrefix = "Content-Length: ";
-
-    // Draining the body of an oversized frame we chose to skip: consume what is
-    // buffered and stop until the rest arrives. The read loop keeps feeding bytes,
-    // so the frame is discarded a chunk at a time without the buffer ever growing.
-    if (skip_body_bytes_ > 0) {
-      const std::size_t drop = std::min<std::size_t>(skip_body_bytes_, buf.view().size());
-      buf.consume(drop);
-      skip_body_bytes_ -= drop;
-      return std::nullopt;
-    }
-
-    const std::string_view v = buf.view();
-    const auto nl = v.find('\n');
-    if (nl == std::string_view::npos) return std::nullopt;
-
-    std::string_view line = v.substr(0, nl);
-    if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
-
-    if (line.substr(0, kPrefix.size()) != kPrefix) {
-      buf.consume(nl + 1);
-      return std::nullopt;
-    }
-
-    const std::string_view len_sv = line.substr(kPrefix.size());
-    int content_len = 0;
-    const auto [ptr, ec] = std::from_chars(len_sv.data(), len_sv.data() + len_sv.size(), content_len);
-    if (ec != std::errc{} || content_len <= 0) {
-      // Malformed/absurd length (an out-of-int-range value fails to parse here):
-      // drop the header line and try to resync on the next. The read-buffer cap
-      // remains the backstop if the stream never recovers.
-      buf.consume(nl + 1);
-      return std::nullopt;
-    }
-
-    // Locate the end of the header block (the blank line). Headers are tiny, so
-    // waiting for the whole block never blocks on the (possibly huge) body.
-    std::size_t body_start = nl + 1;
-    while (body_start < v.size()) {
-      const auto nl2 = v.find('\n', body_start);
-      if (nl2 == std::string_view::npos) return std::nullopt;
-      std::string_view hdr = v.substr(body_start, nl2 - body_start);
-      if (!hdr.empty() && hdr.back() == '\r') hdr.remove_suffix(1);
-      body_start = nl2 + 1;
-      if (hdr.empty()) break;
-    }
-
-    if (static_cast<std::size_t>(content_len) > kMaxLspMessageBytes) {
-      // Too large to buffer: skip the entire frame (headers + body) so the parser
-      // resyncs to the next frame instead of reading body bytes as headers.
-      buf.consume(body_start);
-      skip_body_bytes_ = static_cast<std::size_t>(content_len);
-      return std::nullopt;
-    }
-
-    if (v.size() - body_start < static_cast<std::size_t>(content_len)) {
-      return std::nullopt;
-    }
-
-    const std::string_view body = v.substr(body_start, content_len);
-    auto parsed = util::ParseJson(body);
-    buf.consume(body_start + content_len);
-    return parsed;
   }
 
   // Reply to a server-initiated request. `id` is echoed verbatim (it may be an
@@ -970,7 +875,6 @@ struct LspClient::Impl {
     }
     TraceLspLifecycle(language_id, proc.pid(), "initialize-request", "sent");
 
-    ReadBuf& buf = io_buf;
     bool got_init = false;
     {
       util::StartupTrace::Scope wait_init_scope("LspClient::DoInitializeBlocking::WaitInitializeResponse");
@@ -981,12 +885,12 @@ struct LspClient::Impl {
           initializing.store(false, std::memory_order_release);
           return;
         }
-        auto resp_opt = TryParseOneMessage(buf);
+        auto resp_opt = framer_.Next();
         if (!resp_opt) {
           auto chunk = proc.Read(4096, 500);
           if (!chunk) break;
-          if (!chunk->empty()) buf.append(*chunk);
-          if (buf.view().size() > kMaxLspReadBufferBytes) break;  // runaway server
+          if (!chunk->empty()) framer_.Append(*chunk);
+          if (framer_.BufferedBytes() > kMaxLspReadBufferBytes) break;  // runaway server
           continue;
         }
         const auto& resp = *resp_opt;

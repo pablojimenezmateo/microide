@@ -1,0 +1,78 @@
+#include "workspace/LspMessageFraming.h"
+
+#include <algorithm>
+#include <charconv>
+#include <string_view>
+#include <system_error>
+
+#include "workspace/LspClientTrace.h"
+
+namespace microide::workspace {
+
+std::optional<util::JsonValue> LspMessageFramer::Next() {
+  static constexpr std::string_view kPrefix = "Content-Length: ";
+
+  // Draining the body of an oversized frame we chose to skip: consume what is
+  // buffered and stop until the rest arrives. The read loop keeps feeding bytes,
+  // so the frame is discarded a chunk at a time without the buffer ever growing.
+  if (skip_body_bytes > 0) {
+    const std::size_t drop = std::min<std::size_t>(skip_body_bytes, buf.view().size());
+    buf.consume(drop);
+    skip_body_bytes -= drop;
+    return std::nullopt;
+  }
+
+  const std::string_view v = buf.view();
+  const auto nl = v.find('\n');
+  if (nl == std::string_view::npos) return std::nullopt;
+
+  std::string_view line = v.substr(0, nl);
+  if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+
+  if (line.substr(0, kPrefix.size()) != kPrefix) {
+    buf.consume(nl + 1);
+    return std::nullopt;
+  }
+
+  const std::string_view len_sv = line.substr(kPrefix.size());
+  int content_len = 0;
+  const auto [ptr, ec] = std::from_chars(len_sv.data(), len_sv.data() + len_sv.size(), content_len);
+  if (ec != std::errc{} || content_len <= 0) {
+    // Malformed/absurd length (an out-of-int-range value fails to parse here):
+    // drop the header line and try to resync on the next. The read-buffer cap
+    // remains the backstop if the stream never recovers.
+    buf.consume(nl + 1);
+    return std::nullopt;
+  }
+
+  // Locate the end of the header block (the blank line). Headers are tiny, so
+  // waiting for the whole block never blocks on the (possibly huge) body.
+  std::size_t body_start = nl + 1;
+  while (body_start < v.size()) {
+    const auto nl2 = v.find('\n', body_start);
+    if (nl2 == std::string_view::npos) return std::nullopt;
+    std::string_view hdr = v.substr(body_start, nl2 - body_start);
+    if (!hdr.empty() && hdr.back() == '\r') hdr.remove_suffix(1);
+    body_start = nl2 + 1;
+    if (hdr.empty()) break;
+  }
+
+  if (static_cast<std::size_t>(content_len) > kMaxLspMessageBytes) {
+    // Too large to buffer: skip the entire frame (headers + body) so the parser
+    // resyncs to the next frame instead of reading body bytes as headers.
+    buf.consume(body_start);
+    skip_body_bytes = static_cast<std::size_t>(content_len);
+    return std::nullopt;
+  }
+
+  if (v.size() - body_start < static_cast<std::size_t>(content_len)) {
+    return std::nullopt;
+  }
+
+  const std::string_view body = v.substr(body_start, content_len);
+  auto parsed = util::ParseJson(body);
+  buf.consume(body_start + content_len);
+  return parsed;
+}
+
+}  // namespace microide::workspace

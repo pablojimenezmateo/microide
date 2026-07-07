@@ -2,10 +2,14 @@
 
 #include "util/JsonValue.h"
 #include "workspace/FileUri.h"
+#include "workspace/LspMessageFraming.h"
 #include "workspace/WorkspaceLspClient.h"
 #include "workspace/WorkspaceLspManager.h"
 
 #include <chrono>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -875,6 +879,75 @@ while True:
 #endif
 }
 
+// ---------------------------------------------------------------------------
+// LspMessageFramer — direct, subprocess-free unit coverage of the wire codec.
+// The parser is a hot path and a hostile-input surface; these exercise its
+// cross-chunk state (partial frames, coalesced frames, header EOL variants,
+// malformed-length resync, oversized-frame skip) deterministically.
+// ---------------------------------------------------------------------------
+namespace {
+
+std::string LspFrame(std::string_view body, bool crlf = true) {
+  const std::string eol = crlf ? "\r\n" : "\n";
+  return "Content-Length: " + std::to_string(body.size()) + eol + eol + std::string(body);
+}
+
+}  // namespace
+
+void TestLspMessageFramerSplitFrameAcrossChunks() {
+  workspace::LspMessageFramer framer;
+  const std::string frame = LspFrame(R"({"jsonrpc":"2.0","method":"a"})");
+  const std::size_t split = frame.size() / 2;
+  framer.Append(std::string_view(frame).substr(0, split));
+  Expect(!framer.Next().has_value(), "a partial frame yields no message");
+  framer.Append(std::string_view(frame).substr(split));
+  auto msg = framer.Next();
+  Expect(msg.has_value(), "the completed frame yields a message");
+  Expect(msg->HasKey("method") && (*msg)["method"].AsString() == "a", "method field parses");
+  Expect(!framer.Next().has_value(), "no trailing message remains");
+}
+
+void TestLspMessageFramerMultipleFramesInOneChunk() {
+  workspace::LspMessageFramer framer;
+  framer.Append(LspFrame(R"({"method":"one"})") + LspFrame(R"({"method":"two"})"));
+  auto a = framer.Next();
+  auto b = framer.Next();
+  Expect(a.has_value() && (*a)["method"].AsString() == "one", "first coalesced frame parses");
+  Expect(b.has_value() && (*b)["method"].AsString() == "two", "second coalesced frame parses");
+  Expect(!framer.Next().has_value(), "only two frames were present");
+}
+
+void TestLspMessageFramerBareNewlineHeaders() {
+  workspace::LspMessageFramer framer;
+  framer.Append(LspFrame(R"({"method":"lf"})", /*crlf=*/false));
+  auto msg = framer.Next();
+  Expect(msg.has_value() && (*msg)["method"].AsString() == "lf",
+         "bare-\\n headers (no \\r) still frame a message");
+}
+
+void TestLspMessageFramerMalformedLengthResyncs() {
+  workspace::LspMessageFramer framer;
+  framer.Append("Content-Length: notanumber\r\n\r\n" + LspFrame(R"({"method":"ok"})"));
+  std::optional<util::JsonValue> got;
+  for (int i = 0; i < 8 && !got.has_value(); ++i) {
+    got = framer.Next();
+  }
+  Expect(got.has_value() && (*got)["method"].AsString() == "ok",
+         "a malformed Content-Length header is dropped and the stream resyncs to the next frame");
+}
+
+void TestLspMessageFramerOversizedFrameSkips() {
+  workspace::LspMessageFramer framer;
+  const std::size_t oversized = 64ull * 1024 * 1024 + 1;  // just past kMaxLspMessageBytes
+  framer.Append("Content-Length: " + std::to_string(oversized) + "\r\n\r\n");
+  Expect(!framer.Next().has_value(), "an oversized header frames no message");
+  Expect(framer.skip_body_bytes == oversized, "the oversized body is queued for skipping whole");
+  framer.Append(std::string(1000, 'x'));
+  Expect(!framer.Next().has_value(), "skipped body bytes never frame a message");
+  Expect(framer.skip_body_bytes == oversized - 1000, "the skip counter decrements as body drains");
+  Expect(framer.BufferedBytes() == 0, "drained skip bytes leave the buffer empty");
+}
+
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceLspClient/FileUriEncodesSpecialCharsAndRoundTrips",
           TestFileUriEncodesSpecialCharsAndRoundTrips);
@@ -904,6 +977,16 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestLspManagerSharesOneSubprocessAcrossLanguageIds);
   AddTest(tests, "WorkspaceLspClient/SkipsOversizedFrameAndResyncs",
           TestWorkspaceLspClientSkipsOversizedFrameAndResyncs);
+  AddTest(tests, "WorkspaceLspClient/FramerSplitFrameAcrossChunks",
+          TestLspMessageFramerSplitFrameAcrossChunks);
+  AddTest(tests, "WorkspaceLspClient/FramerMultipleFramesInOneChunk",
+          TestLspMessageFramerMultipleFramesInOneChunk);
+  AddTest(tests, "WorkspaceLspClient/FramerBareNewlineHeaders",
+          TestLspMessageFramerBareNewlineHeaders);
+  AddTest(tests, "WorkspaceLspClient/FramerMalformedLengthResyncs",
+          TestLspMessageFramerMalformedLengthResyncs);
+  AddTest(tests, "WorkspaceLspClient/FramerOversizedFrameSkips",
+          TestLspMessageFramerOversizedFrameSkips);
 }
 
 }  // namespace microide::tests
