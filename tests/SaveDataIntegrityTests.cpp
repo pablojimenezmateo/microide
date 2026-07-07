@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <string>
 #include <system_error>
+#include <utility>
 
 #if !defined(_WIN32)
 #include <sys/stat.h>
@@ -33,6 +34,16 @@ int PosixModeBits(const std::filesystem::path& path) {
     return -1;
   }
   return static_cast<int>(status.st_mode & 07777);
+}
+
+// (inode, hardlink count) of a path, or (0, 0) if it cannot be stat'd. Used to prove that an
+// atomic save replaces the inode (and thus breaks a hardlink) rather than writing in place.
+std::pair<ino_t, nlink_t> PosixInodeAndLinks(const std::filesystem::path& path) {
+  struct stat status{};
+  if (::stat(path.c_str(), &status) != 0) {
+    return {0, 0};
+  }
+  return {status.st_ino, status.st_nlink};
 }
 #endif
 
@@ -263,6 +274,55 @@ void TestSaveBinaryContentRoundTripsExactly() {
   }
 }
 
+// #4: a UTF-8 BOM (EF BB BF) is valid UTF-8, so it stays content on line 0 rather than being
+// stripped or misread as binary. A clean round-trip must reproduce the BOM byte-for-byte;
+// losing it would corrupt files that tools (MSVC, some CSV readers) require a BOM on.
+void TestSavePreservesUtf8Bom() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "bom.txt";
+  const std::string bom = "\xEF\xBB\xBF";
+  const std::string original = bom + "hello\nworld\n";
+  WriteFile(path, original);
+
+  TextViewport viewport;
+  Expect(viewport.OpenFile(path), "opening a UTF-8 BOM file should succeed");
+  Expect(viewport.encoding() == TextViewport::TextEncoding::UTF8,
+         "a UTF-8 BOM is valid UTF-8 and must not be misclassified as binary");
+  Expect(viewport.Save(), "clean save should succeed");
+  Expect(ReadFile(path) == original, "a clean save must preserve the UTF-8 BOM bytes verbatim");
+}
+
+#if !defined(_WIN32)
+// #5: the atomic temp+rename save deliberately replaces the file's inode, which breaks a
+// hardlink -- other names for the old inode keep the pre-save content. This is the accepted
+// trade-off for crash-atomic saves (a partial in-place write would risk corruption), so pin
+// the contract explicitly: the saved path gets the new content on a fresh inode, and the
+// sibling hardlink is left pointing at the original bytes rather than silently diverging
+// half-written.
+void TestAtomicSaveReplacesInodeAndBreaksHardlink() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path original_name = temp_dir.path() / "a.txt";
+  const std::filesystem::path hardlink_name = temp_dir.path() / "b.txt";
+  Expect(WriteTextFileAtomically(original_name, "shared\n"), "seed write should succeed");
+
+  std::error_code error;
+  std::filesystem::create_hard_link(original_name, hardlink_name, error);
+  Expect(!error, "creating the hardlink should succeed");
+  const auto [seed_ino, seed_links] = PosixInodeAndLinks(original_name);
+  Expect(seed_links == 2, "precondition: the two names share one inode with link count 2");
+
+  Expect(WriteTextFileAtomically(original_name, "rewritten\n"), "atomic resave should succeed");
+
+  Expect(ReadFile(original_name) == "rewritten\n",
+         "the saved path must hold the new content (no data loss on the file being saved)");
+  const auto [new_ino, new_links] = PosixInodeAndLinks(original_name);
+  Expect(new_ino != seed_ino, "an atomic save replaces the inode (rename swaps in a fresh file)");
+  Expect(new_links == 1, "the saved path is a fresh single-linked inode after the rename");
+  Expect(ReadFile(hardlink_name) == "shared\n",
+         "the sibling hardlink keeps the original bytes intact, never a half-written file");
+}
+#endif  // !_WIN32
+
 // C13: saving over a file that changed on disk since it was opened must be detectable so the
 // higher layer can refuse and surface the reload/overwrite banner instead of silently
 // clobbering the external change. DetectDiskConflict is the guard signal the coordinator's
@@ -388,6 +448,11 @@ void RegisterSaveDataIntegrityTests(std::vector<TestCase>& tests) {
           TestSaveBinaryContentRoundTripsExactly);
   AddTest(tests, "SaveDataIntegrity/SaveDetectsExternalChangeConflict",
           TestSaveDetectsExternalChangeConflict);
+  AddTest(tests, "SaveDataIntegrity/SavePreservesUtf8Bom", TestSavePreservesUtf8Bom);
+#if !defined(_WIN32)
+  AddTest(tests, "SaveDataIntegrity/AtomicSaveReplacesInodeAndBreaksHardlink",
+          TestAtomicSaveReplacesInodeAndBreaksHardlink);
+#endif
   AddTest(tests, "SaveDataIntegrity/ReloadResetsUndoHistory", TestReloadResetsUndoHistory);
   AddTest(tests, "SaveDataIntegrity/GitDiscardRestoresExactCommittedBytes",
           TestGitDiscardRestoresExactCommittedBytes);

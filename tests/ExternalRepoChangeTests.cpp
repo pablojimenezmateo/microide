@@ -148,6 +148,42 @@ void TestWorkspaceShellSaveTimeConflictGuardBlocksClobber() {
          "a blocked save should raise the external-change banner");
 }
 
+// #6: the after-delay autosave flush must honor the same disk-conflict guard as a manual
+// save. If the file changed on disk since load, an autosave firing (e.g. debounce elapsed
+// while the user was away) must NOT silently overwrite the external change -- it routes
+// through SaveTab, so it refuses and raises the banner instead of clobbering.
+void TestWorkspaceShellAutosaveFlushRespectsDiskConflict() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_path = root / "notes.txt";
+  WriteFile(file_path, "original\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "autosave-conflict fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  // Set the mode AFTER opening: OpenProjectTab loads the project/user config, which would
+  // otherwise reset editor.autosave back to its default.
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.autosave", "after_delay"),
+         "after_delay autosave should be settable");
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
+  DrainProjectChanges(shell);
+
+  // External writer changes the file; the watcher event is deliberately missed.
+  WriteFile(file_path, "newer on disk\n");
+
+  // Fire the autosave flush directly (as the debounce wake would).
+  WorkspaceShellTestAccess::MaybeAutosaveDirtyTabs(shell, /*on_focus_change=*/false);
+
+  Expect(ReadFile(file_path) == "newer on disk\n",
+         "an autosave flush must not overwrite an external change (no silent clobber)");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "the buffer must stay dirty when autosave is blocked by a disk conflict");
+  Expect(WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path),
+         "a blocked autosave should raise the external-change banner just like a manual save");
+}
+
 void TestWorkspaceShellBannerOverwriteWritesInMemoryEdits() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -323,6 +359,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellExternalChangeBannerForDirtyBuffer);
   AddTest(tests, "ExternalRepoChange/SelfWriteDoesNotRaiseBanner",
           TestWorkspaceShellSelfWriteDoesNotRaiseBanner);
+  AddTest(tests, "ExternalRepoChange/AutosaveFlushRespectsDiskConflict",
+          TestWorkspaceShellAutosaveFlushRespectsDiskConflict);
   AddTest(tests, "ExternalRepoChange/SaveTimeConflictGuardBlocksClobber",
           TestWorkspaceShellSaveTimeConflictGuardBlocksClobber);
   AddTest(tests, "ExternalRepoChange/BannerOverwriteWritesInMemoryEdits",
