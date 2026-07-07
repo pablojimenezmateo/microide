@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -10,6 +11,8 @@
 
 #include "editor/TextViewport.h"
 #include "plugin/PluginHost.h"
+#include "workspace/AssistProviderMerge.h"
+#include "workspace/LspPositionEncoding.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLanguageContract.h"
 #include "workspace/WorkspaceLspManager.h"
@@ -132,18 +135,60 @@ class AssistService {
   EditSideEffectsSnapshot CaptureEditSnapshot(editor::TextViewport& viewport) const;
   void ApplyEditSideEffects(editor::TextViewport& viewport,
                             const EditSideEffectsSnapshot& snapshot) const;
-  // Populate the (already-open) completion overlay from the language server when no
-  // plugin provider returned completions. Runs on the UI thread; issues its own
-  // async LSP request. `provider_error` carries the plugin provider's message for
-  // the "no LSP available" diagnostic.
-  void BeginLspCompletionFallback(editor::TextViewport& viewport,
-                                  const std::string& language_id,
-                                  const std::string& provider_error);
-  // Code-action analogue of BeginLspCompletionFallback (carries the request range).
-  void BeginLspCodeActionFallback(editor::TextViewport& viewport,
-                                  const std::string& language_id,
-                                  const editor::SelectionRange& range,
-                                  const std::string& provider_error);
+
+  // Per-request state for the LSP-primary *concurrent* provider model: a plugin
+  // worker and the language server are queried at once, then their results are
+  // merged (ranked, de-duplicated) or the navigation source is chosen. Both
+  // callbacks run on the UI mailbox drain, so no locking is needed.
+  struct CompletionMerge {
+    assist_merge::TwoSourceState sources;
+    std::string language_id;
+    std::vector<CompletionSessionItem> lsp_items;
+    std::vector<CompletionSessionItem> plugin_items;
+  };
+  struct CodeActionMerge {
+    assist_merge::TwoSourceState sources;
+    std::string language_id;
+    std::vector<CodeActionSessionItem> lsp_items;
+    std::vector<CodeActionSessionItem> plugin_items;
+  };
+  struct NavigationMerge {
+    assist_merge::TwoSourceState sources;
+    lsp_encoding::PositionEncoding lsp_encoding = lsp_encoding::PositionEncoding::Utf8;
+    std::vector<plugin::PluginHost::LocationResult> plugin_locations;
+    std::vector<LspClient::Location> lsp_locations;
+    bool acted = false;
+  };
+
+  // Transform a source's raw results into the shared overlay item type.
+  std::vector<CompletionSessionItem> TransformPluginCompletions(
+      const std::vector<plugin::PluginHost::CompletionCandidate>& items) const;
+  std::vector<CompletionSessionItem> TransformLspCompletions(
+      const std::optional<std::vector<LspClient::CompletionItem>>& items,
+      lsp_encoding::PositionEncoding encoding) const;
+  std::vector<CodeActionSessionItem> TransformPluginCodeActions(
+      const std::vector<plugin::PluginHost::CodeActionCandidate>& items) const;
+  std::vector<CodeActionSessionItem> TransformLspCodeActions(
+      const std::optional<std::vector<LspClient::CodeAction>>& actions) const;
+
+  // Merge both sources into the (already-open) overlay session. Called on each
+  // source's arrival; publishes the ranked union so results appear as soon as
+  // either source answers, LSP-first when a server serves the language.
+  void PublishCompletionMerge(const std::shared_ptr<CompletionMerge>& merge,
+                              const std::filesystem::path& request_path);
+  void PublishCodeActionMerge(const std::shared_ptr<CodeActionMerge>& merge,
+                              const std::filesystem::path& request_path);
+  // Navigate once the preferred source resolves (go-to-definition). Waits for the
+  // language server when it serves the buffer, else uses the plugin result.
+  void ResolveDefinitionNavigation(const std::shared_ptr<NavigationMerge>& merge,
+                                   const std::filesystem::path& request_path);
+  // Render the merged reference set (both sources, de-duplicated by location)
+  // into the References output channel once both sources have resolved.
+  void PublishReferenceMerge(const std::shared_ptr<NavigationMerge>& merge,
+                             const std::filesystem::path& request_path);
+  // Log a genuine language-server startup failure to the LSP log. No-op when a
+  // server served the buffer or none is configured (avoids per-request noise).
+  void MaybeLogLspUnavailable(const std::string& language_id, bool lsp_authoritative);
   // Expand a snippet whose `prefix` matches the identifier immediately left of the
   // caret (Tab with no active session). Returns false on no/ambiguous match so the
   // caller falls through to inserting a literal tab.
@@ -152,9 +197,6 @@ class AssistService {
   // Open a plugin-provided navigation target (1-based line/column) in a new tab
   // and move the caret there. Shared by go-to-definition and the outline view.
   void NavigateToPluginLocation(const plugin::PluginHost::LocationResult& location);
-  // Render plugin-provided references into the References output channel using
-  // the same file:line:column + 3-line-context layout the LSP path produces.
-  void EmitPluginReferences(const std::vector<plugin::PluginHost::LocationResult>& locations);
 
   // Shared go-to-definition / find-references prologue. Returns the active
   // editable viewport, or nullptr after writing "No active file" to

@@ -377,6 +377,7 @@ void LspClient::Impl::DoShutdown() {
       test_hover_handler = nullptr;
       test_formatting_handler = nullptr;
       test_rename_handler = nullptr;
+      test_completion_handler = nullptr;
     }
     initialized.store(false, std::memory_order_release);
     initializing.store(false, std::memory_order_release);

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -110,120 +111,147 @@ bool AssistService::ShowCompletionOverlay(std::string* error_message) {
   const std::string language_id = DetectViewportLanguageId(*viewport);
   const std::filesystem::path request_path = viewport->path();
 
-  // Open the overlay in a loading state immediately; the plugin completion query
-  // runs on the worker and never blocks the UI. Results (or the LSP fallback) fill
-  // in on the next mailbox drain. With no worker wired the callback runs inline.
+  // Open the overlay in a loading state immediately, then query the plugin worker
+  // and the language server CONCURRENTLY (never serially). Neither blocks the UI;
+  // each fills the overlay on its own mailbox drain via PublishCompletionMerge,
+  // which ranks LSP-first for served languages and de-dupes overlapping labels.
   auto& session = context_->current_project_state.overlay.workflow.completion;
   session.items.clear();
   session.selected_index = 0;
   session.replacement_range = CompletionReplacementRange(*viewport);
-  session.source = "plugin";
+  session.source = "lsp";
   session.error = "Loading...";
   operations_.show_overlay(OverlayMode::Completion);
 
+  auto merge = std::make_shared<CompletionMerge>();
+  merge->language_id = language_id;
+
+  // Language-server source. A present server is authoritative for its language.
+  LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
+  merge->sources.lsp_authoritative = client != nullptr;
+  if (client != nullptr) {
+    operations_.ensure_lsp_document_open(*viewport, *client, language_id);
+    operations_.begin_tracked_lsp_request();
+    const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
+    const std::size_t request_line = viewport->cursor_line();
+    client->RequestCompletionAsync(
+        FileUriForPath(request_path),
+        ByteColumnToLspPosition(*viewport, request_line, viewport->cursor_column(), encoding),
+        [this, request_path, encoding, merge](
+            std::optional<std::vector<LspClient::CompletionItem>> items) {
+          operations_.finish_tracked_lsp_request();
+          merge->sources.lsp_pending = false;
+          // finish_tracked above must run first so the in-flight counter is not
+          // leaked when a stale result bails.
+          if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+            return;
+          }
+          merge->lsp_items = TransformLspCompletions(items, encoding);
+          PublishCompletionMerge(merge, request_path);
+        });
+  } else {
+    merge->sources.lsp_pending = false;
+  }
+
+  // Plugin source, dispatched at the same time.
   plugin_runtime_->Host().QueryCompletionsAsync(
       language_id, request_path, viewport->cursor_line() + 1, viewport->cursor_column() + 1, {},
-      [this, language_id, request_path](
-          std::vector<plugin::PluginHost::CompletionCandidate> items, std::string provider_error) {
-        // Drop superseded results: the active editable buffer changed since the
-        // request was issued.
-        editor::TextViewport* current = operations_.active_editable_viewport();
-        if (ResultIsStale(current, request_path)) {
+      [this, request_path, merge](std::vector<plugin::PluginHost::CompletionCandidate> items,
+                                  std::string /*provider_error*/) {
+        merge->sources.plugin_pending = false;
+        if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
           return;
         }
-        auto& current_session = context_->current_project_state.overlay.workflow.completion;
-        if (!items.empty()) {
-          current_session.items.clear();
-          current_session.selected_index = 0;
-          current_session.source = "plugin";
-          current_session.error = std::move(provider_error);
-          const bool snippets_on = EditorSnippetsSettingEnabled();
-          for (const auto& item : items) {
-            current_session.items.push_back(CompletionSessionItem{
-                .label = item.label,
-                .detail = item.detail,
-                .documentation = item.documentation,
-                .insert_text = item.insert_text,
-                .is_snippet = snippets_on && item.is_snippet,
-            });
-          }
-          operations_.request_overlay_redraw();
-          return;
-        }
-        // No plugin completions: fall back to the language server in the same overlay.
-        BeginLspCompletionFallback(*current, language_id, provider_error);
+        merge->plugin_items = TransformPluginCompletions(items);
+        PublishCompletionMerge(merge, request_path);
       });
   return true;
 }
 
-void AssistService::BeginLspCompletionFallback(editor::TextViewport& viewport,
-                                               const std::string& language_id,
-                                               const std::string& provider_error) {
-  auto& session = context_->current_project_state.overlay.workflow.completion;
-  LspClient* client = operations_.lsp_client_for_viewport(viewport, nullptr);
-  if (client == nullptr) {
-    const std::string failure =
-        LspUnavailableMessage(operations_.current_lsp_manager(), language_id, provider_error);
-    output_channels_->AppendLine("lsp.log", "LSP Log", failure);
-    session.items.clear();
-    session.selected_index = 0;
-    session.source = "plugin";
-    session.error = failure;
-    operations_.request_overlay_redraw();
+std::vector<CompletionSessionItem> AssistService::TransformPluginCompletions(
+    const std::vector<plugin::PluginHost::CompletionCandidate>& items) const {
+  const bool snippets_on = EditorSnippetsSettingEnabled();
+  std::vector<CompletionSessionItem> result;
+  result.reserve(items.size());
+  for (const auto& item : items) {
+    result.push_back(CompletionSessionItem{
+        .label = item.label,
+        .detail = item.detail,
+        .documentation = item.documentation,
+        .insert_text = item.insert_text,
+        .is_snippet = snippets_on && item.is_snippet,
+    });
+  }
+  return result;
+}
+
+std::vector<CompletionSessionItem> AssistService::TransformLspCompletions(
+    const std::optional<std::vector<LspClient::CompletionItem>>& items,
+    lsp_encoding::PositionEncoding encoding) const {
+  std::vector<CompletionSessionItem> result;
+  if (!items.has_value()) {
+    return result;
+  }
+  const bool snippets_on = EditorSnippetsSettingEnabled();
+  editor::TextViewport* apply_viewport = operations_.active_editable_viewport();
+  result.reserve(items->size());
+  for (const auto& item : *items) {
+    std::optional<editor::SelectionRange> item_range;
+    if (item.replace_range.has_value() && apply_viewport != nullptr) {
+      item_range = LspRangeToEditorRange(*apply_viewport, *item.replace_range, encoding);
+    }
+    result.push_back(CompletionSessionItem{
+        .label = item.label,
+        .detail = item.detail,
+        .documentation = item.documentation,
+        .insert_text = item.insert_text,
+        .is_snippet = snippets_on && item.insert_text_format == 2,
+        .replacement_range = item_range,
+    });
+  }
+  return result;
+}
+
+void AssistService::PublishCompletionMerge(const std::shared_ptr<CompletionMerge>& merge,
+                                           const std::filesystem::path& request_path) {
+  if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
     return;
   }
-
-  operations_.ensure_lsp_document_open(viewport, *client, language_id);
-  const std::filesystem::path request_path = viewport.path();
-  session.items.clear();
-  session.selected_index = 0;
-  session.replacement_range = CompletionReplacementRange(viewport);
-  session.source = "lsp";
-  session.error = "Loading...";
+  auto& session = context_->current_project_state.overlay.workflow.completion;
+  const auto& primary = merge->sources.lsp_authoritative ? merge->lsp_items : merge->plugin_items;
+  const auto& secondary =
+      merge->sources.lsp_authoritative ? merge->plugin_items : merge->lsp_items;
+  session.items = assist_merge::RankedUnion(
+      primary, secondary, [](const CompletionSessionItem& item) { return item.label; });
+  if (session.selected_index >= session.items.size()) {
+    session.selected_index = 0;
+  }
+  session.source = merge->lsp_items.empty() ? "plugin" : "lsp";
+  if (merge->sources.AnyPending()) {
+    session.error = session.items.empty() ? "Loading..." : std::string{};
+  } else if (session.items.empty()) {
+    session.error = "No completions available";
+    MaybeLogLspUnavailable(merge->language_id, merge->sources.lsp_authoritative);
+  } else {
+    session.error.clear();
+  }
   operations_.request_overlay_redraw();
-  operations_.begin_tracked_lsp_request();
-  const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
-  const std::size_t request_line = viewport.cursor_line();
-  client->RequestCompletionAsync(
-      FileUriForPath(viewport.path()),
-      ByteColumnToLspPosition(viewport, request_line, viewport.cursor_column(), encoding),
-      [this, request_path, encoding](std::optional<std::vector<LspClient::CompletionItem>> items) {
-        operations_.finish_tracked_lsp_request();
-        // Drop superseded results: the active editable buffer changed since the
-        // request was issued (mirrors the plugin completion guard above). Without
-        // this a slow LSP response clobbers a newer completion session or lands
-        // across a file/project switch. finish_tracked above must run first so the
-        // in-flight counter is not leaked when we bail.
-        if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
-          return;
-        }
-        auto& current_session = context_->current_project_state.overlay.workflow.completion;
-        current_session.items.clear();
-        current_session.selected_index = 0;
-        current_session.source = "lsp";
-        if (!items.has_value() || items->empty()) {
-          current_session.error = "No completions available";
-        } else {
-          current_session.error.clear();
-          editor::TextViewport* apply_viewport = operations_.active_editable_viewport();
-          for (const auto& item : *items) {
-            const bool snippets_on = EditorSnippetsSettingEnabled();
-            std::optional<editor::SelectionRange> item_range;
-            if (item.replace_range.has_value() && apply_viewport != nullptr) {
-              item_range = LspRangeToEditorRange(*apply_viewport, *item.replace_range, encoding);
-            }
-            current_session.items.push_back(CompletionSessionItem{
-                .label = item.label,
-                .detail = item.detail,
-                .documentation = item.documentation,
-                .insert_text = item.insert_text,
-                .is_snippet = snippets_on && item.insert_text_format == 2,
-                .replacement_range = item_range,
-            });
-          }
-        }
-        operations_.request_overlay_redraw();
-      });
+}
+
+void AssistService::MaybeLogLspUnavailable(const std::string& language_id, bool lsp_authoritative) {
+  // A server served the buffer, or the language has none configured: not a
+  // failure worth logging on every request.
+  if (lsp_authoritative || language_id.empty()) {
+    return;
+  }
+  LspManager& manager = operations_.current_lsp_manager();
+  if (!manager.HasServer(language_id)) {
+    return;
+  }
+  const std::string detail = manager.LastServerError(language_id);
+  const std::string message = detail.empty() ? ("LSP startup failed for " + language_id)
+                                             : ("LSP startup failed for " + language_id + ": " + detail);
+  output_channels_->AppendLine("lsp.log", "LSP Log", message);
 }
 
 AssistService::EditSideEffectsSnapshot AssistService::CaptureEditSnapshot(
@@ -536,136 +564,147 @@ bool AssistService::ShowCodeActionsOverlay(std::string* error_message,
                 .end = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()},
             });
 
-  // Open the overlay in a loading state immediately; the plugin code-action query
-  // runs on the worker without blocking the UI. Results (or the LSP fallback) fill
-  // in on the drain. With no worker wired the callback runs inline.
+  // Open the overlay in a loading state immediately, then query the plugin worker
+  // and the language server CONCURRENTLY. Neither blocks the UI; each fills the
+  // overlay on its own drain via PublishCodeActionMerge (LSP-first, de-duped).
   auto& session = context_->current_project_state.overlay.workflow.code_actions;
-  session.items.clear();
-  session.selected_index = 0;
-  session.source = "plugin";
-  session.error = "Loading...";
-  operations_.show_overlay(OverlayMode::CodeActions);
-
-  plugin_runtime_->Host().QueryCodeActionsAsync(
-      language_id, request_path, range.start.line + 1, range.start.column + 1, range.end.line + 1,
-      range.end.column + 1,
-      [this, language_id, request_path, range](
-          std::vector<plugin::PluginHost::CodeActionCandidate> items, std::string provider_error) {
-        editor::TextViewport* current = operations_.active_editable_viewport();
-        if (current == nullptr || current->path() != request_path) {
-          return;  // superseded
-        }
-        auto& current_session = context_->current_project_state.overlay.workflow.code_actions;
-        if (!items.empty()) {
-          current_session.items.clear();
-          current_session.selected_index = 0;
-          current_session.source = "plugin";
-          current_session.error = std::move(provider_error);
-          for (const auto& item : items) {
-            current_session.items.push_back(CodeActionSessionItem{
-                .title = item.title,
-                .command = item.command,
-                .arguments = item.arguments,
-            });
-          }
-          operations_.request_overlay_redraw();
-          return;
-        }
-        BeginLspCodeActionFallback(*current, language_id, range, provider_error);
-      });
-  return true;
-}
-
-void AssistService::BeginLspCodeActionFallback(editor::TextViewport& viewport,
-                                               const std::string& language_id,
-                                               const editor::SelectionRange& range,
-                                               const std::string& provider_error) {
-  auto& session = context_->current_project_state.overlay.workflow.code_actions;
-  LspClient* client = operations_.lsp_client_for_viewport(viewport, nullptr);
-  if (client == nullptr) {
-    const std::string failure =
-        LspUnavailableMessage(operations_.current_lsp_manager(), language_id, provider_error);
-    output_channels_->AppendLine("lsp.log", "LSP Log", failure);
-    session.items.clear();
-    session.selected_index = 0;
-    session.source = "plugin";
-    session.error = failure;
-    operations_.request_overlay_redraw();
-    return;
-  }
-
-  operations_.ensure_lsp_document_open(viewport, *client, language_id);
-  const std::filesystem::path request_path = viewport.path();
-  std::vector<LspClient::Diagnostic> context_diagnostics;
-  if (operations_.collect_lsp_context_diagnostics) {
-    context_diagnostics = operations_.collect_lsp_context_diagnostics(viewport, range);
-  }
   session.items.clear();
   session.selected_index = 0;
   session.source = "lsp";
   session.error = "Loading...";
-  operations_.request_overlay_redraw();
-  operations_.begin_tracked_lsp_request();
-  const lsp_encoding::PositionEncoding code_action_encoding = LspEncodingForClient(*client);
-  client->RequestCodeActionAsync(
-      FileUriForPath(viewport.path()),
-      LspClient::Range{
-          .start = ByteColumnToLspPosition(viewport, range.start.line, range.start.column,
-                                           code_action_encoding),
-          .end = ByteColumnToLspPosition(viewport, range.end.line, range.end.column,
-                                         code_action_encoding),
-      },
-      std::move(context_diagnostics),
-      [this, request_path](std::optional<std::vector<LspClient::CodeAction>> actions) {
-        operations_.finish_tracked_lsp_request();
-        // Drop superseded results if the active editable buffer changed since the
-        // request was issued (mirrors the plugin guard); finish_tracked above must
-        // run first so the in-flight counter is not leaked when we bail.
+  operations_.show_overlay(OverlayMode::CodeActions);
+
+  auto merge = std::make_shared<CodeActionMerge>();
+  merge->language_id = language_id;
+
+  LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
+  merge->sources.lsp_authoritative = client != nullptr;
+  if (client != nullptr) {
+    operations_.ensure_lsp_document_open(*viewport, *client, language_id);
+    std::vector<LspClient::Diagnostic> context_diagnostics;
+    if (operations_.collect_lsp_context_diagnostics) {
+      context_diagnostics = operations_.collect_lsp_context_diagnostics(*viewport, range);
+    }
+    operations_.begin_tracked_lsp_request();
+    const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
+    client->RequestCodeActionAsync(
+        FileUriForPath(request_path),
+        LspClient::Range{
+            .start =
+                ByteColumnToLspPosition(*viewport, range.start.line, range.start.column, encoding),
+            .end = ByteColumnToLspPosition(*viewport, range.end.line, range.end.column, encoding),
+        },
+        std::move(context_diagnostics),
+        [this, request_path, merge](std::optional<std::vector<LspClient::CodeAction>> actions) {
+          operations_.finish_tracked_lsp_request();
+          merge->sources.lsp_pending = false;
+          if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+            return;
+          }
+          merge->lsp_items = TransformLspCodeActions(actions);
+          PublishCodeActionMerge(merge, request_path);
+        });
+  } else {
+    merge->sources.lsp_pending = false;
+  }
+
+  plugin_runtime_->Host().QueryCodeActionsAsync(
+      language_id, request_path, range.start.line + 1, range.start.column + 1, range.end.line + 1,
+      range.end.column + 1,
+      [this, request_path, merge](std::vector<plugin::PluginHost::CodeActionCandidate> items,
+                                  std::string /*provider_error*/) {
+        merge->sources.plugin_pending = false;
         if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
           return;
         }
-        auto& current_session = context_->current_project_state.overlay.workflow.code_actions;
-        current_session.items.clear();
-        current_session.selected_index = 0;
-        current_session.source = "lsp";
-        if (!actions.has_value() || actions->empty()) {
-          current_session.error = "No code actions available";
-        } else {
-          current_session.error.clear();
-          for (const auto& action : *actions) {
-            std::vector<std::string> arguments;
-            arguments.reserve(action.arguments.size());
-            for (const auto& argument : action.arguments) {
-              arguments.push_back(JsonValueToArgumentString(argument));
-            }
-            std::vector<CodeActionEdit> edits;
-            if (action.has_edit) {
-              for (const auto& [uri, text_edits] : action.edit.changes) {
-                const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
-                for (const auto& [lsp_range, new_text] : text_edits) {
-                  edits.push_back(CodeActionEdit{
-                      .path = path.value_or(std::filesystem::path{}),
-                      .range = editor::SelectionRange{
-                          .start = editor::TextPosition{static_cast<std::size_t>(lsp_range.start.line),
-                                                        static_cast<std::size_t>(lsp_range.start.character)},
-                          .end = editor::TextPosition{static_cast<std::size_t>(lsp_range.end.line),
-                                                      static_cast<std::size_t>(lsp_range.end.character)},
-                      },
-                      .new_text = new_text,
-                  });
-                }
-              }
-            }
-            current_session.items.push_back(CodeActionSessionItem{
-                .title = action.title,
-                .command = action.command,
-                .arguments = std::move(arguments),
-                .edits = std::move(edits),
-            });
-          }
-        }
-        operations_.request_overlay_redraw();
+        merge->plugin_items = TransformPluginCodeActions(items);
+        PublishCodeActionMerge(merge, request_path);
       });
+  return true;
+}
+
+std::vector<CodeActionSessionItem> AssistService::TransformPluginCodeActions(
+    const std::vector<plugin::PluginHost::CodeActionCandidate>& items) const {
+  std::vector<CodeActionSessionItem> result;
+  result.reserve(items.size());
+  for (const auto& item : items) {
+    result.push_back(CodeActionSessionItem{
+        .title = item.title,
+        .command = item.command,
+        .arguments = item.arguments,
+    });
+  }
+  return result;
+}
+
+std::vector<CodeActionSessionItem> AssistService::TransformLspCodeActions(
+    const std::optional<std::vector<LspClient::CodeAction>>& actions) const {
+  std::vector<CodeActionSessionItem> result;
+  if (!actions.has_value()) {
+    return result;
+  }
+  result.reserve(actions->size());
+  for (const auto& action : *actions) {
+    std::vector<std::string> arguments;
+    arguments.reserve(action.arguments.size());
+    for (const auto& argument : action.arguments) {
+      arguments.push_back(JsonValueToArgumentString(argument));
+    }
+    std::vector<CodeActionEdit> edits;
+    if (action.has_edit) {
+      for (const auto& [uri, text_edits] : action.edit.changes) {
+        const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
+        for (const auto& [lsp_range, new_text] : text_edits) {
+          edits.push_back(CodeActionEdit{
+              .path = path.value_or(std::filesystem::path{}),
+              .range = editor::SelectionRange{
+                  .start = editor::TextPosition{static_cast<std::size_t>(lsp_range.start.line),
+                                                static_cast<std::size_t>(lsp_range.start.character)},
+                  .end = editor::TextPosition{static_cast<std::size_t>(lsp_range.end.line),
+                                              static_cast<std::size_t>(lsp_range.end.character)},
+              },
+              .new_text = new_text,
+          });
+        }
+      }
+    }
+    result.push_back(CodeActionSessionItem{
+        .title = action.title,
+        .command = action.command,
+        .arguments = std::move(arguments),
+        .edits = std::move(edits),
+    });
+  }
+  return result;
+}
+
+void AssistService::PublishCodeActionMerge(const std::shared_ptr<CodeActionMerge>& merge,
+                                           const std::filesystem::path& request_path) {
+  if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+    return;
+  }
+  auto& session = context_->current_project_state.overlay.workflow.code_actions;
+  const auto& primary = merge->sources.lsp_authoritative ? merge->lsp_items : merge->plugin_items;
+  const auto& secondary =
+      merge->sources.lsp_authoritative ? merge->plugin_items : merge->lsp_items;
+  // De-dupe by title + command so an identical action offered by both sources
+  // appears once (an empty command still distinguishes edit-only quickfixes).
+  session.items = assist_merge::RankedUnion(
+      primary, secondary,
+      [](const CodeActionSessionItem& item) { return item.title + "\x1f" + item.command; });
+  if (session.selected_index >= session.items.size()) {
+    session.selected_index = 0;
+  }
+  session.source = merge->lsp_items.empty() ? "plugin" : "lsp";
+  if (merge->sources.AnyPending()) {
+    session.error = session.items.empty() ? "Loading..." : std::string{};
+  } else if (session.items.empty()) {
+    session.error = "No code actions available";
+    MaybeLogLspUnavailable(merge->language_id, merge->sources.lsp_authoritative);
+  } else {
+    session.error.clear();
+  }
+  operations_.request_overlay_redraw();
 }
 
 bool AssistService::ExecuteSelectedCodeAction() {
@@ -716,62 +755,95 @@ bool AssistService::GoToLspDefinition(std::string* error_message) {
     return false;
   }
 
-  // Plugin-native definition providers run first (mirrors completion / code action
-  // orchestration), dispatched to the worker so the lookup never blocks the UI. A
-  // non-empty result navigates; otherwise the callback hands off to the LSP path.
+  // Query the plugin provider and the language server CONCURRENTLY (mirrors
+  // completion / code actions). The server is authoritative for its language:
+  // navigation waits for its answer and uses the plugin result only if the
+  // server comes back empty, so a slower LSP reply can't be pre-empted by a
+  // stale plugin hit.
   const std::string language_id = DetectViewportLanguageId(*viewport);
   const std::filesystem::path request_path = viewport->path();
   const std::size_t request_line = viewport->cursor_line();
   const std::size_t request_column = viewport->cursor_column();
+
+  auto merge = std::make_shared<NavigationMerge>();
+
+  LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
+  merge->sources.lsp_authoritative = client != nullptr;
+  if (client != nullptr) {
+    operations_.ensure_lsp_document_open(*viewport, *client, language_id);
+    operations_.begin_tracked_lsp_request();
+    merge->lsp_encoding = LspEncodingForClient(*client);
+    client->RequestGoToDefinitionAsync(
+        FileUriForPath(request_path),
+        ByteColumnToLspPosition(*viewport, request_line, request_column, merge->lsp_encoding),
+        [this, request_path, merge](std::optional<std::vector<LspClient::Location>> locations) {
+          operations_.finish_tracked_lsp_request();
+          merge->sources.lsp_pending = false;
+          if (locations.has_value()) {
+            merge->lsp_locations = std::move(*locations);
+          }
+          ResolveDefinitionNavigation(merge, request_path);
+        });
+  } else {
+    merge->sources.lsp_pending = false;
+  }
+
   plugin_runtime_->Host().QueryDefinitionAsync(
       language_id, request_path, request_line + 1, request_column + 1,
-      [this, request_path, request_line, request_column](
-          std::vector<plugin::PluginHost::LocationResult> locations, std::string /*provider_error*/) {
-        editor::TextViewport* current = operations_.active_editable_viewport();
-        if (current == nullptr || current->path() != request_path) {
-          return;  // superseded
-        }
-        if (!locations.empty()) {
-          NavigateToPluginLocation(locations.front());
-          return;
-        }
-        LspClient* client = PrepareLspRequest(*current, nullptr);
-        if (client == nullptr) {
-          return;
-        }
-        const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
-        client->RequestGoToDefinitionAsync(
-            FileUriForPath(request_path),
-            ByteColumnToLspPosition(*current, request_line, request_column, encoding),
-            [this, encoding](std::optional<std::vector<LspClient::Location>> locations) {
-              operations_.finish_tracked_lsp_request();
-              if (!locations.has_value() || locations->empty()) {
-                output_channels_->AppendLine("lsp.definition", "LSP Definition",
-                                             "No definition found");
-                return;
-              }
-              const std::optional<std::filesystem::path> path =
-                  PathFromFileUri(locations->front().uri);
-              if (!path.has_value()) {
-                return;
-              }
-              if (!operations_.open_file_in_new_tab(*path)) {
-                return;
-              }
-              if (editor::TextViewport* active = operations_.active_editor_viewport();
-                  active != nullptr) {
-                const std::size_t target_line = static_cast<std::size_t>(
-                    std::max(locations->front().range.start.line, 0));
-                active->MoveCursorTo(target_line,
-                                     LspPositionToByteColumn(*active, target_line,
-                                                             locations->front().range.start.character,
-                                                             encoding));
-                operations_.reset_caret_blink();
-                operations_.request_focused_editor_redraw();
-              }
-            });
+      [this, request_path, merge](std::vector<plugin::PluginHost::LocationResult> locations,
+                                  std::string /*provider_error*/) {
+        merge->sources.plugin_pending = false;
+        merge->plugin_locations = std::move(locations);
+        ResolveDefinitionNavigation(merge, request_path);
       });
   return true;
+}
+
+void AssistService::ResolveDefinitionNavigation(const std::shared_ptr<NavigationMerge>& merge,
+                                                const std::filesystem::path& request_path) {
+  if (merge->acted) {
+    return;
+  }
+  if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+    // The buffer switched since the request; abandon without navigating a
+    // different file or emitting a spurious "no definition" message.
+    return;
+  }
+  const assist_merge::NavChoice choice = assist_merge::ChooseNavigation(
+      merge->sources.lsp_authoritative, merge->sources.lsp_pending,
+      !merge->lsp_locations.empty(), merge->sources.plugin_pending,
+      !merge->plugin_locations.empty());
+  switch (choice) {
+    case assist_merge::NavChoice::Pending:
+      return;
+    case assist_merge::NavChoice::None:
+      merge->acted = true;
+      output_channels_->AppendLine("lsp.definition", "LSP Definition", "No definition found");
+      return;
+    case assist_merge::NavChoice::UsePlugin:
+      merge->acted = true;
+      NavigateToPluginLocation(merge->plugin_locations.front());
+      return;
+    case assist_merge::NavChoice::UseLsp: {
+      merge->acted = true;
+      const LspClient::Location& location = merge->lsp_locations.front();
+      const std::optional<std::filesystem::path> path = PathFromFileUri(location.uri);
+      if (!path.has_value() || !operations_.open_file_in_new_tab(*path)) {
+        return;
+      }
+      if (editor::TextViewport* active = operations_.active_editor_viewport(); active != nullptr) {
+        const std::size_t target_line =
+            static_cast<std::size_t>(std::max(location.range.start.line, 0));
+        active->MoveCursorTo(target_line,
+                             LspPositionToByteColumn(*active, target_line,
+                                                     location.range.start.character,
+                                                     merge->lsp_encoding));
+        operations_.reset_caret_blink();
+        operations_.request_focused_editor_redraw();
+      }
+      return;
+    }
+  }
 }
 
 bool AssistService::FindLspReferences(std::string* error_message) {
@@ -783,59 +855,105 @@ bool AssistService::FindLspReferences(std::string* error_message) {
     return false;
   }
 
-  // Plugin-native reference providers run first, dispatched to the worker so the
-  // lookup never blocks the UI. A non-empty result renders into the References
-  // output channel; otherwise the callback hands off to the LSP path.
+  // Query the plugin provider and the language server CONCURRENTLY, then render
+  // the de-duplicated union once both have resolved (LSP-first for served
+  // languages). A single output-channel rebuild avoids mid-flight flicker.
   const std::string language_id = DetectViewportLanguageId(*viewport);
   const std::filesystem::path request_path = viewport->path();
   const std::size_t request_line = viewport->cursor_line();
   const std::size_t request_column = viewport->cursor_column();
+
+  auto merge = std::make_shared<NavigationMerge>();
+
+  LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
+  merge->sources.lsp_authoritative = client != nullptr;
+  if (client != nullptr) {
+    operations_.ensure_lsp_document_open(*viewport, *client, language_id);
+    operations_.begin_tracked_lsp_request();
+    client->RequestFindReferencesAsync(
+        FileUriForPath(request_path),
+        ByteColumnToLspPosition(*viewport, request_line, request_column,
+                                LspEncodingForClient(*client)),
+        true,
+        [this, request_path, merge](std::optional<std::vector<LspClient::Location>> locations) {
+          operations_.finish_tracked_lsp_request();
+          merge->sources.lsp_pending = false;
+          if (locations.has_value()) {
+            merge->lsp_locations = std::move(*locations);
+          }
+          PublishReferenceMerge(merge, request_path);
+        });
+  } else {
+    merge->sources.lsp_pending = false;
+  }
+
   plugin_runtime_->Host().QueryReferencesAsync(
       language_id, request_path, request_line + 1, request_column + 1, true,
-      [this, request_path, request_line, request_column](
-          std::vector<plugin::PluginHost::LocationResult> locations, std::string /*provider_error*/) {
-        editor::TextViewport* current = operations_.active_editable_viewport();
-        if (current == nullptr || current->path() != request_path) {
-          return;  // superseded
-        }
-        if (!locations.empty()) {
-          EmitPluginReferences(locations);
-          return;
-        }
-        LspClient* client = PrepareLspRequest(*current, nullptr);
-        if (client == nullptr) {
-          return;
-        }
-        client->RequestFindReferencesAsync(
-            FileUriForPath(request_path),
-            ByteColumnToLspPosition(*current, request_line, request_column,
-                                    LspEncodingForClient(*client)),
-            true,
-            [this](std::optional<std::vector<LspClient::Location>> locations) {
-              operations_.finish_tracked_lsp_request();
-              output_channels_->Clear("lsp.references");
-              if (!locations.has_value() || locations->empty()) {
-                output_channels_->AppendLine("lsp.references", "LSP References",
-                                             "No references found");
-                return;
-              }
-              std::map<std::filesystem::path, std::vector<std::string>> file_line_cache;
-              for (std::size_t index = 0; index < locations->size(); ++index) {
-                const auto& location = (*locations)[index];
-                const std::optional<std::filesystem::path> path = PathFromFileUri(location.uri);
-                if (!path.has_value()) {
-                  continue;
-                }
-                // LSP positions are 0-based; the shared formatter expects 1-based.
-                EmitReferenceEntry(
-                    "lsp.references", "LSP References", *path,
-                    static_cast<std::size_t>(std::max(location.range.start.line, 0)) + 1,
-                    static_cast<std::size_t>(std::max(location.range.start.character, 0)) + 1,
-                    index + 1 < locations->size(), file_line_cache);
-              }
-            });
+      [this, request_path, merge](std::vector<plugin::PluginHost::LocationResult> locations,
+                                  std::string /*provider_error*/) {
+        merge->sources.plugin_pending = false;
+        merge->plugin_locations = std::move(locations);
+        PublishReferenceMerge(merge, request_path);
       });
   return true;
+}
+
+void AssistService::PublishReferenceMerge(const std::shared_ptr<NavigationMerge>& merge,
+                                          const std::filesystem::path& request_path) {
+  if (merge->acted || merge->sources.AnyPending()) {
+    return;  // render exactly once, after both sources resolve
+  }
+  merge->acted = true;
+  if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+    return;
+  }
+
+  // Normalize both sources to (path, 1-based line, 1-based column). LSP columns
+  // use the raw code-unit offset: references only show line:col, so a slightly
+  // off non-ASCII column is not worth a per-entry encoding round-trip.
+  struct RefTarget {
+    std::filesystem::path path;
+    std::size_t line = 0;
+    std::size_t column = 0;
+  };
+  std::vector<RefTarget> lsp_targets;
+  lsp_targets.reserve(merge->lsp_locations.size());
+  for (const auto& location : merge->lsp_locations) {
+    const std::optional<std::filesystem::path> path = PathFromFileUri(location.uri);
+    if (!path.has_value()) {
+      continue;
+    }
+    lsp_targets.push_back(
+        RefTarget{*path, static_cast<std::size_t>(std::max(location.range.start.line, 0)) + 1,
+                  static_cast<std::size_t>(std::max(location.range.start.character, 0)) + 1});
+  }
+  std::vector<RefTarget> plugin_targets;
+  plugin_targets.reserve(merge->plugin_locations.size());
+  for (const auto& location : merge->plugin_locations) {
+    if (location.path.empty()) {
+      continue;
+    }
+    plugin_targets.push_back(RefTarget{location.path, location.line, location.column});
+  }
+
+  const auto& primary = merge->sources.lsp_authoritative ? lsp_targets : plugin_targets;
+  const auto& secondary = merge->sources.lsp_authoritative ? plugin_targets : lsp_targets;
+  const std::vector<RefTarget> merged =
+      assist_merge::RankedUnion(primary, secondary, [](const RefTarget& target) {
+        return target.path.generic_string() + ":" + std::to_string(target.line) + ":" +
+               std::to_string(target.column);
+      });
+
+  output_channels_->Clear("lsp.references");
+  if (merged.empty()) {
+    output_channels_->AppendLine("lsp.references", "LSP References", "No references found");
+    return;
+  }
+  std::map<std::filesystem::path, std::vector<std::string>> file_line_cache;
+  for (std::size_t index = 0; index < merged.size(); ++index) {
+    EmitReferenceEntry("lsp.references", "LSP References", merged[index].path, merged[index].line,
+                       merged[index].column, index + 1 < merged.size(), file_line_cache);
+  }
 }
 
 namespace {
@@ -1056,21 +1174,6 @@ void AssistService::NavigateToPluginLocation(const plugin::PluginHost::LocationR
                          location.column > 0 ? location.column - 1 : 0);
     operations_.reset_caret_blink();
     operations_.request_focused_editor_redraw();
-  }
-}
-
-void AssistService::EmitPluginReferences(
-    const std::vector<plugin::PluginHost::LocationResult>& locations) {
-  output_channels_->Clear("lsp.references");
-  std::map<std::filesystem::path, std::vector<std::string>> file_line_cache;
-  for (std::size_t index = 0; index < locations.size(); ++index) {
-    const auto& location = locations[index];
-    if (location.path.empty()) {
-      continue;
-    }
-    // Provider line/column are already 1-based.
-    EmitReferenceEntry("lsp.references", "References", location.path, location.line,
-                       location.column, index + 1 < locations.size(), file_line_cache);
   }
 }
 

@@ -260,6 +260,10 @@ class LspClient {
   void SetTestRenameHandler(
       std::function<void(std::string uri, std::string new_name, RenameCallback cb)> handler);
   void ClearTestRenameHandler();
+  // Unit tests: feed a canned completion response (a CompletionItem[]).
+  void SetTestCompletionHandler(
+      std::function<void(std::string uri, Position pos, CompletionCallback cb)> handler);
+  void ClearTestCompletionHandler();
   // Unit tests: feed a canned semantic-tokens response + legend.
   void SetTestSemanticTokensHandler(
       std::function<void(std::string uri, SemanticTokensCallback cb)> handler);

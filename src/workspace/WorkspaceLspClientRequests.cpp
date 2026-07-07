@@ -33,6 +33,22 @@ void LspClient::RequestHoverAsync(std::string uri, Position pos, HoverCallback c
 }
 
 void LspClient::RequestCompletionAsync(std::string uri, Position pos, CompletionCallback callback) {
+  if (!callback) return;
+  {
+    std::lock_guard lock(impl_->mutex);
+    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
+      auto handler = impl_->test_completion_handler;
+      impl_->main_mailbox.PostWithoutWake(
+          [handler, uri = std::move(uri), pos, cb = std::move(callback)]() mutable {
+            if (handler) {
+              handler(std::move(uri), pos, std::move(cb));
+            } else {
+              cb(std::nullopt);
+            }
+          });
+      return;
+    }
+  }
   impl_->DispatchResultRequest(
       "textDocument/completion", lsp_protocol::MakeTextDocumentPositionParams(uri, pos),
       std::move(callback),

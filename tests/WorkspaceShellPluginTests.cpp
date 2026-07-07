@@ -1753,6 +1753,104 @@ return ide.plugin({
          "the previously-closed file should be opened, renamed, and saved to disk");
 }
 
+// Regression for the LSP-primary concurrent provider merge: a language with BOTH
+// a plugin completion provider AND a language server must show the UNION of both
+// sources (LSP-first, de-duplicated) — previously the plugin result suppressed
+// the server entirely (serial plugin-first fallback).
+void TestWorkspaceShellCompletionMergesPluginAndLspSources() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path md_file = project / "notes.md";
+  WriteFile(md_file, "alpha\n");
+
+  // The plugin registers a markdown completion provider AND a markdown server.
+  // The provider returns one shared label ("common") plus a plugin-only label.
+  WritePluginInit(
+      plugins_root, "mdtools",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "mdtools",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.completion.add({
+      id = "md",
+      language_id = "markdown",
+      provide = function(buffer, position, trigger)
+        return {
+          { label = "common", insert_text = "common" },
+          { label = "plug_only", insert_text = "plug_only" },
+        }
+      end
+    })
+    ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "md-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "merge fixture should open the project");
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  // The server returns an LSP-only label plus the same shared "common" label.
+  stub_raw->SetTestCompletionHandler(
+      [](std::string, workspace::LspClient::Position,
+         workspace::LspClient::CompletionCallback cb) {
+        std::vector<workspace::LspClient::CompletionItem> items;
+        workspace::LspClient::CompletionItem lsp_one;
+        lsp_one.label = "lsp_one";
+        lsp_one.insert_text = "lsp_one";
+        workspace::LspClient::CompletionItem common;
+        common.label = "common";
+        common.insert_text = "common";
+        items.push_back(std::move(lsp_one));
+        items.push_back(std::move(common));
+        cb(std::move(items));
+      });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
+         "fixture should attach a stub markdown client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, md_file);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 5);
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"),
+         "completion command should execute");
+  // The plugin source resolves inline; drain the mailbox so the concurrent LSP
+  // stub response arrives and the merge re-publishes.
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+
+  const auto& session = WorkspaceShellTestAccess::CompletionSession(shell);
+  Expect(session.items.size() == 3,
+         "the merged overlay should contain the union of both sources with the shared label "
+         "de-duplicated (lsp_one, common, plug_only)");
+  Expect(session.items[0].label == "lsp_one",
+         "the language server's items must rank first for a language it serves");
+  std::size_t common_count = 0;
+  bool has_plugin_only = false;
+  for (const auto& item : session.items) {
+    if (item.label == "common") {
+      ++common_count;
+    }
+    if (item.label == "plug_only") {
+      has_plugin_only = true;
+    }
+  }
+  Expect(common_count == 1, "the label offered by both sources must appear exactly once");
+  Expect(has_plugin_only, "a plugin-only completion must survive the merge");
+}
+
 void TestWorkspaceShellOutlineSidebarFromDocumentSymbols() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3908,6 +4006,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenameSymbolAppliesLspEdit);
   AddTest(tests, "WorkspaceShell/RenameSymbolOpensAndSavesClosedFiles",
           TestWorkspaceShellRenameSymbolOpensAndSavesClosedFiles);
+  AddTest(tests, "WorkspaceShell/CompletionMergesPluginAndLspSources",
+          TestWorkspaceShellCompletionMergesPluginAndLspSources);
   AddTest(tests, "WorkspaceShell/PluginsReloadFallsBackFromMissingActivePluginSidebar",
           TestWorkspaceShellPluginsReloadFallsBackFromMissingActivePluginSidebar);
   AddTest(tests, "WorkspaceShell/SidebarModeMenuListsPluginSidebars",

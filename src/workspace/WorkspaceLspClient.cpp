@@ -331,6 +331,17 @@ void LspClient::ClearTestRenameHandler() {
   impl_->test_rename_handler = nullptr;
 }
 
+void LspClient::SetTestCompletionHandler(
+    std::function<void(std::string uri, Position pos, CompletionCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_completion_handler = std::move(handler);
+}
+
+void LspClient::ClearTestCompletionHandler() {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_completion_handler = nullptr;
+}
+
 std::vector<std::string> LspClient::SemanticTokenLegend() const {
   std::lock_guard lock(impl_->mutex);
   return impl_->semantic_token_types;
