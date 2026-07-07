@@ -1097,6 +1097,88 @@ bool AssistService::FormatActiveDocument(std::string* error_message) {
   return true;
 }
 
+namespace {
+
+// Lower a signature-help result to the display (signature, documentation) pair the
+// caret-anchored popup shows: the active overload's label plus a block that leads
+// with the active parameter (so the user sees which argument they are typing) then
+// the signature documentation. Returns nullopt when there is nothing to show. The
+// plugin and LSP variants share this exact shape so either source renders identically.
+std::optional<std::pair<std::string, std::string>> LowerPluginSignature(
+    const plugin::PluginHost::SignatureHelpResult& result) {
+  if (result.signatures.empty()) {
+    return std::nullopt;
+  }
+  const std::size_t active =
+      result.active_signature >= 0 &&
+              static_cast<std::size_t>(result.active_signature) < result.signatures.size()
+          ? static_cast<std::size_t>(result.active_signature)
+          : 0;
+  const plugin::PluginHost::SignatureInfo& signature = result.signatures[active];
+  std::string documentation;
+  if (signature.active_parameter >= 0 &&
+      static_cast<std::size_t>(signature.active_parameter) < signature.parameters.size()) {
+    const plugin::PluginHost::SignatureParameter& parameter =
+        signature.parameters[static_cast<std::size_t>(signature.active_parameter)];
+    if (!parameter.label.empty()) {
+      documentation = parameter.label;
+    }
+    if (!parameter.documentation.empty()) {
+      if (!documentation.empty()) {
+        documentation += " — ";
+      }
+      documentation += parameter.documentation;
+    }
+  }
+  if (!signature.documentation.empty()) {
+    if (!documentation.empty()) {
+      documentation += "\n";
+    }
+    documentation += signature.documentation;
+  }
+  return std::make_pair(signature.label, std::move(documentation));
+}
+
+std::optional<std::pair<std::string, std::string>> LowerLspSignature(
+    const LspClient::SignatureHelp& help) {
+  if (help.signatures.empty()) {
+    return std::nullopt;
+  }
+  const std::size_t active =
+      help.active_signature >= 0 &&
+              static_cast<std::size_t>(help.active_signature) < help.signatures.size()
+          ? static_cast<std::size_t>(help.active_signature)
+          : 0;
+  const LspClient::SignatureInformation& signature = help.signatures[active];
+  // A per-signature activeParameter (LSP 3.16+) overrides the top-level one.
+  const int active_parameter =
+      signature.active_parameter >= 0 ? signature.active_parameter : help.active_parameter;
+  std::string documentation;
+  if (active_parameter >= 0 &&
+      static_cast<std::size_t>(active_parameter) < signature.parameters.size()) {
+    const LspClient::SignatureParameter& parameter =
+        signature.parameters[static_cast<std::size_t>(active_parameter)];
+    if (!parameter.label.empty()) {
+      documentation = parameter.label;
+    }
+    if (!parameter.documentation.empty()) {
+      if (!documentation.empty()) {
+        documentation += " — ";
+      }
+      documentation += parameter.documentation;
+    }
+  }
+  if (!signature.documentation.empty()) {
+    if (!documentation.empty()) {
+      documentation += "\n";
+    }
+    documentation += signature.documentation;
+  }
+  return std::make_pair(signature.label, std::move(documentation));
+}
+
+}  // namespace
+
 bool AssistService::ShowSignatureHelp(std::string* error_message) {
   if (error_message != nullptr) {
     error_message->clear();
@@ -1109,59 +1191,92 @@ bool AssistService::ShowSignatureHelp(std::string* error_message) {
     return false;
   }
 
-  // Plugin language providers own signature help (no LSP fallback yet), dispatched
-  // to the worker so the lookup never blocks the UI. An empty result is simply
-  // "nothing to show"; the popup is built and shown from the callback on the drain.
+  // Query the plugin provider and the language server CONCURRENTLY (mirrors
+  // completion / definition). The server is authoritative for its language: the
+  // popup waits for its answer and uses the plugin result only if the server
+  // comes back empty. The lookups run on the worker / I/O thread so neither
+  // blocks the UI; the popup is chosen and shown from the mailbox drain.
   const std::string language_id = DetectViewportLanguageId(*viewport);
   const std::filesystem::path request_path = viewport->path();
-  plugin_runtime_->Host().QuerySignatureHelpAsync(
-      language_id, request_path, viewport->cursor_line() + 1, viewport->cursor_column() + 1,
-      [this, request_path](bool resolved, plugin::PluginHost::SignatureHelpResult result,
-                           std::string /*provider_error*/) {
-        editor::TextViewport* current = operations_.active_editable_viewport();
-        if (current == nullptr || current->path() != request_path) {
-          return;  // superseded
-        }
-        if (!resolved || result.signatures.empty()) {
-          return;
-        }
-        const std::size_t active =
-            result.active_signature >= 0 &&
-                    static_cast<std::size_t>(result.active_signature) < result.signatures.size()
-                ? static_cast<std::size_t>(result.active_signature)
-                : 0;
-        const plugin::PluginHost::SignatureInfo& signature = result.signatures[active];
+  const std::size_t request_line = viewport->cursor_line();
+  const std::size_t request_column = viewport->cursor_column();
 
-        // Build the supporting block off the render path: lead with the active
-        // parameter (so the user sees which argument they are typing) then the
-        // signature documentation.
-        std::string documentation;
-        if (signature.active_parameter >= 0 &&
-            static_cast<std::size_t>(signature.active_parameter) < signature.parameters.size()) {
-          const plugin::PluginHost::SignatureParameter& parameter =
-              signature.parameters[static_cast<std::size_t>(signature.active_parameter)];
-          if (!parameter.label.empty()) {
-            documentation = parameter.label;
-          }
-          if (!parameter.documentation.empty()) {
-            if (!documentation.empty()) {
-              documentation += " — ";
+  auto merge = std::make_shared<SignatureHelpMerge>();
+
+  LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
+  merge->sources.lsp_authoritative = client != nullptr;
+  if (client != nullptr) {
+    operations_.ensure_lsp_document_open(*viewport, *client, language_id);
+    operations_.begin_tracked_lsp_request();
+    const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
+    client->RequestSignatureHelpAsync(
+        FileUriForPath(request_path),
+        ByteColumnToLspPosition(*viewport, request_line, request_column, encoding),
+        [this, request_path, merge](std::optional<LspClient::SignatureHelp> help) {
+          operations_.finish_tracked_lsp_request();
+          merge->sources.lsp_pending = false;
+          if (help.has_value()) {
+            if (auto lowered = LowerLspSignature(*help)) {
+              merge->lsp_has = true;
+              merge->lsp_signature = std::move(lowered->first);
+              merge->lsp_documentation = std::move(lowered->second);
             }
-            documentation += parameter.documentation;
           }
-        }
-        if (!signature.documentation.empty()) {
-          if (!documentation.empty()) {
-            documentation += "\n";
-          }
-          documentation += signature.documentation;
-        }
+          ResolveSignatureHelp(merge, request_path);
+        });
+  } else {
+    merge->sources.lsp_pending = false;
+  }
 
-        if (operations_.show_signature_help) {
-          operations_.show_signature_help(signature.label, std::move(documentation));
+  plugin_runtime_->Host().QuerySignatureHelpAsync(
+      language_id, request_path, request_line + 1, request_column + 1,
+      [this, request_path, merge](bool resolved, plugin::PluginHost::SignatureHelpResult result,
+                                  std::string /*provider_error*/) {
+        merge->sources.plugin_pending = false;
+        if (resolved) {
+          if (auto lowered = LowerPluginSignature(result)) {
+            merge->plugin_has = true;
+            merge->plugin_signature = std::move(lowered->first);
+            merge->plugin_documentation = std::move(lowered->second);
+          }
         }
+        ResolveSignatureHelp(merge, request_path);
       });
   return true;
+}
+
+void AssistService::ResolveSignatureHelp(const std::shared_ptr<SignatureHelpMerge>& merge,
+                                         const std::filesystem::path& request_path) {
+  if (merge->acted) {
+    return;
+  }
+  if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+    return;  // buffer switched; don't anchor a popup on a different file
+  }
+  const assist_merge::NavChoice choice = assist_merge::ChooseNavigation(
+      merge->sources.lsp_authoritative, merge->sources.lsp_pending, merge->lsp_has,
+      merge->sources.plugin_pending, merge->plugin_has);
+  switch (choice) {
+    case assist_merge::NavChoice::Pending:
+      return;
+    case assist_merge::NavChoice::None:
+      // Nothing to show. Leave any existing popup untouched (the host lifecycle
+      // dismisses it on Escape / edits), matching the prior plugin-only behavior.
+      merge->acted = true;
+      return;
+    case assist_merge::NavChoice::UsePlugin:
+      merge->acted = true;
+      if (operations_.show_signature_help) {
+        operations_.show_signature_help(merge->plugin_signature, merge->plugin_documentation);
+      }
+      return;
+    case assist_merge::NavChoice::UseLsp:
+      merge->acted = true;
+      if (operations_.show_signature_help) {
+        operations_.show_signature_help(merge->lsp_signature, merge->lsp_documentation);
+      }
+      return;
+  }
 }
 
 void AssistService::NavigateToPluginLocation(const plugin::PluginHost::LocationResult& location) {

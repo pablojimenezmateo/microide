@@ -102,6 +102,26 @@ class LspClient {
     std::vector<DocumentSymbol> children;
   };
 
+  struct SignatureParameter {
+    std::string label;
+    std::string documentation;
+  };
+
+  struct SignatureInformation {
+    std::string label;
+    std::string documentation;
+    std::vector<SignatureParameter> parameters;
+    // Per-signature active parameter (LSP 3.16+ signatureInformation.activeParameter);
+    // -1 when the signature does not override the top-level activeParameter.
+    int active_parameter = -1;
+  };
+
+  struct SignatureHelp {
+    std::vector<SignatureInformation> signatures;
+    int active_signature = 0;
+    int active_parameter = 0;
+  };
+
   // One decoded semantic token: an absolute (line, start_char, length) range plus
   // the server-legend token-type index (the deltas in `data` are pre-resolved).
   struct SemanticToken {
@@ -129,6 +149,7 @@ class LspClient {
       std::function<void(std::optional<std::vector<DocumentSymbol>>)>;
   using SemanticTokensCallback =
       std::function<void(std::optional<std::vector<SemanticToken>>)>;
+  using SignatureHelpCallback = std::function<void(std::optional<SignatureHelp>)>;
 
   LspClient();
   ~LspClient();
@@ -216,6 +237,9 @@ class LspClient {
   // Async textDocument/completion.
   void RequestCompletionAsync(std::string uri, Position pos, CompletionCallback callback);
 
+  // Async textDocument/signatureHelp. nullopt when the server has no result.
+  void RequestSignatureHelpAsync(std::string uri, Position pos, SignatureHelpCallback callback);
+
   // Async textDocument/codeAction. `context_diagnostics` populates the request
   // `context.diagnostics`; clangd only returns quickfixes for diagnostics passed
   // here (it matches them by range + message).
@@ -271,6 +295,10 @@ class LspClient {
   void SetTestCompletionHandler(
       std::function<void(std::string uri, Position pos, CompletionCallback cb)> handler);
   void ClearTestCompletionHandler();
+  // Unit tests: feed a canned signature-help response.
+  void SetTestSignatureHelpHandler(
+      std::function<void(std::string uri, Position pos, SignatureHelpCallback cb)> handler);
+  void ClearTestSignatureHelpHandler();
   // Unit tests: drive the server-request path (as the I/O thread would) so a
   // simulated workspace/applyEdit exercises the real dispatch → main-thread apply.
   // The reply is enqueued to the outbound queue (swallowed in stub mode).

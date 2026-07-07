@@ -1857,6 +1857,83 @@ return ide.plugin({
   Expect(has_plugin_only, "a plugin-only completion must survive the merge");
 }
 
+// Signature help is LSP-primary: when a server serves the language, its result is
+// shown even though a plugin provider also answers. The plugin result is used only
+// as a fallback when no server serves the buffer.
+void TestWorkspaceShellSignatureHelpPrefersLspOverPlugin() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path md_file = project / "notes.md";
+  WriteFile(md_file, "alpha\n");
+
+  // The plugin registers a markdown signature-help provider AND a markdown server.
+  WritePluginInit(
+      plugins_root, "mdsig",
+      R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "mdsig",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.signature_help.add({
+      id = "sig",
+      language_id = "markdown",
+      provide = function(_, _)
+        return {
+          active_signature = 0,
+          signatures = { { label = "plugin_sig(a)", documentation = "from plugin" } },
+        }
+      end
+    })
+    ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "md-lsp-server" } })
+  end
+})
+)lua");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "signature fixture should open the project");
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  stub_raw->SetTestSignatureHelpHandler(
+      [](std::string, workspace::LspClient::Position,
+         workspace::LspClient::SignatureHelpCallback cb) {
+        workspace::LspClient::SignatureHelp help;
+        workspace::LspClient::SignatureInformation info;
+        info.label = "lsp_sig(x)";
+        info.documentation = "from server";
+        help.signatures.push_back(std::move(info));
+        cb(std::move(help));
+      });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
+         "fixture should attach a stub markdown client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, md_file);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 5);
+
+  Expect(WorkspaceShellTestAccess::ShowSignatureHelp(shell),
+         "signature help should dispatch");
+  // The plugin source resolves inline; drain so the concurrent LSP stub arrives and
+  // the LSP-primary choice publishes the popup.
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+
+  const auto popup = WorkspaceShellTestAccess::SignatureHelpPopup(shell);
+  Expect(popup.has_value(), "a signature-help popup should be shown");
+  Expect(popup->signature == "lsp_sig(x)",
+         "the language server's signature must win over the plugin's for a served language");
+}
+
 // Regression for server-initiated workspace/applyEdit: a WorkspaceEdit pushed by
 // the language server must apply to open buffers in place AND write closed files
 // silently on disk (no tab), matching the client-initiated rename behavior.
@@ -4087,6 +4164,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenameSymbolOpensAndSavesClosedFiles);
   AddTest(tests, "WorkspaceShell/CompletionMergesPluginAndLspSources",
           TestWorkspaceShellCompletionMergesPluginAndLspSources);
+  AddTest(tests, "WorkspaceShell/SignatureHelpPrefersLspOverPlugin",
+          TestWorkspaceShellSignatureHelpPrefersLspOverPlugin);
   AddTest(tests, "WorkspaceShell/ServerApplyEditEditsOpenAndClosedFiles",
           TestWorkspaceShellServerApplyEditEditsOpenAndClosedFiles);
   AddTest(tests, "WorkspaceShell/PluginsReloadFallsBackFromMissingActivePluginSidebar",

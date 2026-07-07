@@ -24,6 +24,13 @@ std::vector<LspClient::Diagnostic> ParseDiagnostics(const util::JsonValue& array
 LspClient::DocumentSymbol ParseDocumentSymbol(const util::JsonValue& value);
 std::vector<LspClient::DocumentSymbol> ParseDocumentSymbols(const util::JsonValue& result);
 
+// Parse a `textDocument/signatureHelp` result. Handles a parameter `label` given
+// either as a string or as `[start, end]` offsets into the signature label, and
+// `documentation` as a bare string or MarkupContent ({value}). The signature and
+// parameter counts are bounded so a hostile server cannot force an unbounded
+// main-thread allocation.
+LspClient::SignatureHelp ParseSignatureHelp(const util::JsonValue& result);
+
 // Parse a WorkspaceEdit into the URI-keyed edit map. Handles both the `changes`
 // object shape (uri -> TextEdit[]) and the `documentChanges` array shape
 // (TextDocumentEdit[]; resource create/rename/delete ops are skipped). The total

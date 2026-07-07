@@ -82,6 +82,20 @@ void LspClient::Impl::DoInitializeBlocking() {
 
   JsonObject signature_caps;
   signature_caps["dynamicRegistration"] = JsonValue(false);
+  {
+    JsonObject parameter_info;
+    // We resolve `[start, end]` parameter-label offsets against the signature label.
+    parameter_info["labelOffsetSupport"] = JsonValue(true);
+    JsonObject signature_info;
+    signature_info["parameterInformation"] = JsonValue(std::move(parameter_info));
+    // Per-signature activeParameter overrides the top-level value (LSP 3.16+).
+    signature_info["activeParameterSupport"] = JsonValue(true);
+    JsonArray doc_formats;
+    doc_formats.push_back(JsonValue("markdown"));
+    doc_formats.push_back(JsonValue("plaintext"));
+    signature_info["documentationFormat"] = JsonValue(std::move(doc_formats));
+    signature_caps["signatureInformation"] = JsonValue(std::move(signature_info));
+  }
 
   JsonObject definition_caps;
   definition_caps["dynamicRegistration"] = JsonValue(false);
@@ -380,6 +394,7 @@ void LspClient::Impl::DoShutdown() {
       test_formatting_handler = nullptr;
       test_rename_handler = nullptr;
       test_completion_handler = nullptr;
+      test_signature_help_handler = nullptr;
       apply_edit_handler = nullptr;
     }
     initialized.store(false, std::memory_order_release);

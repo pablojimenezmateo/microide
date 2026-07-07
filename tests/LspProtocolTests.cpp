@@ -236,10 +236,63 @@ void TestLspProtocolParsesWorkspaceEdit() {
   Expect(capped.changes.at("file:///h.cpp").size() == 2, "the total-edit cap truncates the list");
 }
 
+void TestLspProtocolParsesSignatureHelp() {
+  // Two overloads; parameter labels as strings, documentation as MarkupContent and
+  // as a bare string; top-level active signature/parameter.
+  const JsonValue help = Json(R"({
+    "activeSignature":1,
+    "activeParameter":0,
+    "signatures":[
+      {"label":"foo() -> int","documentation":"first overload"},
+      {"label":"foo(int a, int b) -> int",
+       "documentation":{"kind":"markdown","value":"second overload"},
+       "activeParameter":1,
+       "parameters":[
+         {"label":"int a","documentation":"the first arg"},
+         {"label":"int b","documentation":{"kind":"plaintext","value":"the second arg"}}]}
+    ]})");
+  const LspClient::SignatureHelp parsed = codec::ParseSignatureHelp(help);
+  Expect(parsed.signatures.size() == 2, "both overloads parse");
+  Expect(parsed.active_signature == 1, "top-level activeSignature parsed");
+  Expect(parsed.active_parameter == 0, "top-level activeParameter parsed");
+  Expect(parsed.signatures[1].label == "foo(int a, int b) -> int", "signature label parsed");
+  Expect(parsed.signatures[1].documentation == "second overload",
+         "MarkupContent documentation unwrapped to its value");
+  Expect(parsed.signatures[1].active_parameter == 1,
+         "per-signature activeParameter overrides the top-level one");
+  Expect(parsed.signatures[1].parameters.size() == 2, "both parameters parse");
+  Expect(parsed.signatures[1].parameters[0].label == "int a", "string parameter label parsed");
+  Expect(parsed.signatures[1].parameters[1].documentation == "the second arg",
+         "MarkupContent parameter documentation unwrapped");
+  // A signature that omits activeParameter reports -1 (falls back to the top level).
+  Expect(parsed.signatures[0].active_parameter == -1, "absent per-signature activeParameter is -1");
+
+  // Parameter label given as `[start, end]` offsets into the signature label.
+  const JsonValue offsets = Json(R"json({
+    "signatures":[{"label":"bar(x, y)","parameters":[{"label":[4,5]},{"label":[7,8]}]}]})json");
+  const LspClient::SignatureHelp offset_parsed = codec::ParseSignatureHelp(offsets);
+  Expect(offset_parsed.signatures.size() == 1, "offset-label signature parses");
+  Expect(offset_parsed.signatures[0].parameters[0].label == "x",
+         "first parameter label resolved from offsets");
+  Expect(offset_parsed.signatures[0].parameters[1].label == "y",
+         "second parameter label resolved from offsets");
+
+  // Out-of-range offsets are ignored rather than reading past the label.
+  const JsonValue bad = Json(R"({"signatures":[{"label":"z","parameters":[{"label":[3,9]}]}]})");
+  const LspClient::SignatureHelp bad_parsed = codec::ParseSignatureHelp(bad);
+  Expect(bad_parsed.signatures[0].parameters[0].label.empty(),
+         "out-of-range offset label yields empty, not a read past the string");
+
+  // A result with no signatures is empty (nothing to show).
+  const LspClient::SignatureHelp none = codec::ParseSignatureHelp(Json("{}"));
+  Expect(none.signatures.empty(), "missing signatures array yields no signatures");
+}
+
 }  // namespace
 
 void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspProtocol/ParsesWorkspaceEdit", TestLspProtocolParsesWorkspaceEdit);
+  AddTest(tests, "LspProtocol/ParsesSignatureHelp", TestLspProtocolParsesSignatureHelp);
   AddTest(tests, "LspProtocol/ParsesHoverContents", TestLspProtocolParsesHoverContents);
   AddTest(tests, "LspProtocol/ParseCapsBoundHostileArrays",
           TestLspProtocolParseCapsBoundHostileArrays);

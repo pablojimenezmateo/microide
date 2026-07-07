@@ -192,6 +192,75 @@ LspClient::WorkspaceEdit ParseWorkspaceEdit(const JsonValue& edit, std::size_t m
 }
 
 namespace {
+// A `documentation` field: either a bare string or MarkupContent ({kind, value}).
+std::string ParseDocumentationString(const JsonValue& value) {
+  if (value.IsString()) {
+    return value.AsString();
+  }
+  if (value.HasKey("value")) {
+    return value["value"].AsString();
+  }
+  return {};
+}
+}  // namespace
+
+LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
+  LspClient::SignatureHelp help;
+  if (!result.HasKey("signatures") || !result["signatures"].IsArray()) {
+    return help;
+  }
+  help.active_signature = static_cast<int>(result["activeSignature"].AsInt(0));
+  help.active_parameter = static_cast<int>(result["activeParameter"].AsInt(0));
+  // Bound the materialized signature/parameter counts (hostile-server backstop,
+  // mirrors the other request caps). A usable overload menu never approaches these.
+  constexpr std::size_t kMaxSignatures = 64;
+  constexpr std::size_t kMaxParameters = 512;
+  const auto& signatures = result["signatures"].AsArray();
+  const std::size_t signature_count = std::min(signatures.size(), kMaxSignatures);
+  help.signatures.reserve(signature_count);
+  for (std::size_t i = 0; i < signature_count; ++i) {
+    const JsonValue& signature = signatures[i];
+    LspClient::SignatureInformation info;
+    info.label = signature["label"].AsString();
+    info.documentation = ParseDocumentationString(signature["documentation"]);
+    info.active_parameter = signature.HasKey("activeParameter")
+                                ? static_cast<int>(signature["activeParameter"].AsInt(-1))
+                                : -1;
+    if (signature.HasKey("parameters") && signature["parameters"].IsArray()) {
+      const auto& parameters = signature["parameters"].AsArray();
+      const std::size_t parameter_count = std::min(parameters.size(), kMaxParameters);
+      info.parameters.reserve(parameter_count);
+      for (std::size_t p = 0; p < parameter_count; ++p) {
+        const JsonValue& parameter = parameters[p];
+        LspClient::SignatureParameter out_parameter;
+        const JsonValue& label = parameter["label"];
+        if (label.IsArray()) {
+          // `[start, end]` offsets into the signature label (server position
+          // encoding; treated as byte offsets — exact for ASCII signatures, which
+          // is the common case for the labels servers return here).
+          const auto& bounds = label.AsArray();
+          if (bounds.size() == 2) {
+            const std::int64_t start = bounds[0].AsInt(0);
+            const std::int64_t end = bounds[1].AsInt(0);
+            if (start >= 0 && end >= start &&
+                static_cast<std::size_t>(end) <= info.label.size()) {
+              out_parameter.label = info.label.substr(static_cast<std::size_t>(start),
+                                                      static_cast<std::size_t>(end - start));
+            }
+          }
+        } else {
+          out_parameter.label = label.AsString();
+        }
+        out_parameter.documentation = ParseDocumentationString(parameter["documentation"]);
+        info.parameters.push_back(std::move(out_parameter));
+      }
+    }
+    help.signatures.push_back(std::move(info));
+  }
+  return help;
+}
+
+namespace {
 // One MarkedString element: either a bare string or {language, value}.
 std::string MarkedStringValue(const JsonValue& value) {
   if (value.IsString()) {

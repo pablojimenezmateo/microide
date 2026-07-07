@@ -159,6 +159,20 @@ class AssistService {
     std::vector<LspClient::Location> lsp_locations;
     bool acted = false;
   };
+  // Signature help is a single caret-anchored popup, so the two sources are
+  // *chosen* between (LSP-primary, like navigation) rather than unioned. Each
+  // source lowers its raw result into the display (signature, documentation) pair
+  // as it arrives; the resolver shows exactly one, once.
+  struct SignatureHelpMerge {
+    assist_merge::TwoSourceState sources;
+    bool lsp_has = false;
+    std::string lsp_signature;
+    std::string lsp_documentation;
+    bool plugin_has = false;
+    std::string plugin_signature;
+    std::string plugin_documentation;
+    bool acted = false;
+  };
 
   // Transform a source's raw results into the shared overlay item type.
   std::vector<CompletionSessionItem> TransformPluginCompletions(
@@ -186,6 +200,10 @@ class AssistService {
   // into the References output channel once both sources have resolved.
   void PublishReferenceMerge(const std::shared_ptr<NavigationMerge>& merge,
                              const std::filesystem::path& request_path);
+  // Show the chosen signature-help popup once the preferred source resolves
+  // (LSP-primary; plugin used only when the server serves nothing).
+  void ResolveSignatureHelp(const std::shared_ptr<SignatureHelpMerge>& merge,
+                            const std::filesystem::path& request_path);
   // Log a genuine language-server startup failure to the LSP log. No-op when a
   // server served the buffer or none is configured (avoids per-request noise).
   void MaybeLogLspUnavailable(const std::string& language_id, bool lsp_authoritative);

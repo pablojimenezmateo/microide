@@ -342,6 +342,17 @@ void LspClient::ClearTestCompletionHandler() {
   impl_->test_completion_handler = nullptr;
 }
 
+void LspClient::SetTestSignatureHelpHandler(
+    std::function<void(std::string uri, Position pos, SignatureHelpCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_signature_help_handler = std::move(handler);
+}
+
+void LspClient::ClearTestSignatureHelpHandler() {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_signature_help_handler = nullptr;
+}
+
 void LspClient::SetApplyEditHandler(std::function<bool(WorkspaceEdit)> handler) {
   std::lock_guard lock(impl_->mutex);
   impl_->apply_edit_handler = std::move(handler);
