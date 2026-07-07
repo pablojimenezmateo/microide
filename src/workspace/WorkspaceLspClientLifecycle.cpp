@@ -147,7 +147,9 @@ void LspClient::Impl::DoInitializeBlocking() {
   JsonObject workspace_caps;
   workspace_caps["configuration"] = JsonValue(true);
   workspace_caps["workspaceFolders"] = JsonValue(true);
-  workspace_caps["applyEdit"] = JsonValue(false);
+  // Server-initiated edits are applied by the host (open buffers in place, closed
+  // files silently on disk) via the bound apply-edit handler.
+  workspace_caps["applyEdit"] = JsonValue(true);
   {
     JsonObject did_change_config;
     did_change_config["dynamicRegistration"] = JsonValue(false);
@@ -378,6 +380,7 @@ void LspClient::Impl::DoShutdown() {
       test_formatting_handler = nullptr;
       test_rename_handler = nullptr;
       test_completion_handler = nullptr;
+      apply_edit_handler = nullptr;
     }
     initialized.store(false, std::memory_order_release);
     initializing.store(false, std::memory_order_release);

@@ -345,6 +345,12 @@ LspClient* LspService::LspClientForViewport(const editor::TextViewport& viewport
                             std::move(diagnostics));
     });
   }
+  // Bind the server-initiated workspace/applyEdit handler once per client. Runs on
+  // the main thread (buffer/disk mutation) when the server pushes an edit.
+  if (!client->HasApplyEditHandler()) {
+    client->SetApplyEditHandler(
+        [this](LspClient::WorkspaceEdit edit) { return ApplyServerWorkspaceEdit(std::move(edit)); });
+  }
   return client;
 }
 
@@ -717,6 +723,162 @@ void LspService::SyncLspForActiveEditableLastChange() {
   if (!viewport->dirty()) {
     RequestLspSemanticTokens(*viewport, *client);
   }
+}
+
+LspService::DiskEditResult LspService::ApplyLspEditsToClosedFilesOnDisk(
+    const std::vector<CodeActionEdit>& edits,
+    const std::function<bool(const std::filesystem::path&)>& is_open) {
+  DiskEditResult result;
+
+  // Group edits by normalized target path. An empty path targets the active
+  // buffer (always open); paths the caller edits in place are skipped so undo
+  // stays coherent for the buffers the user has on screen.
+  std::vector<std::pair<std::filesystem::path,
+                        std::vector<std::pair<editor::SelectionRange, std::string>>>>
+      by_path;
+  const auto bucket_for = [&](const std::filesystem::path& normalized)
+      -> std::vector<std::pair<editor::SelectionRange, std::string>>& {
+    for (auto& entry : by_path) {
+      if (entry.first == normalized) {
+        return entry.second;
+      }
+    }
+    by_path.emplace_back(normalized,
+                         std::vector<std::pair<editor::SelectionRange, std::string>>{});
+    return by_path.back().second;
+  };
+  for (const CodeActionEdit& edit : edits) {
+    if (edit.path.empty()) {
+      continue;
+    }
+    const std::filesystem::path normalized = edit.path.lexically_normal();
+    if (is_open && is_open(normalized)) {
+      continue;
+    }
+    bucket_for(normalized).emplace_back(edit.range, edit.new_text);
+  }
+
+  for (auto& [path, file_edits] : by_path) {
+    if (file_edits.empty()) {
+      continue;
+    }
+    // Load into a scratch viewport so line-ending / BOM / encoding detection and
+    // the atomic, permission-preserving save path are reused verbatim. This
+    // viewport is never registered as a tab.
+    editor::TextViewport scratch;
+    if (!scratch.OpenFile(path)) {
+      result.any_failed = true;
+      continue;
+    }
+    // Resolve the server's position encoding for this file's language (the same
+    // running server produced the WorkspaceEdit, so its encoding governs the
+    // `character` offsets). FindStartedServer avoids spawning a server just to
+    // rename a closed file; default to UTF-8 when none is running.
+    const std::string language_id = DetectViewportLanguageId(scratch);
+    LspClient* client = CurrentLspManager().FindStartedServer(language_id);
+    const lsp_encoding::PositionEncoding encoding =
+        client != nullptr ? LspEncodingForClient(*client) : lsp_encoding::PositionEncoding::Utf8;
+
+    // Map 0-based LSP coordinates to editor byte columns, clamped to the live
+    // document (mirrors ApplyLspWorkspaceEdit's per-buffer mapping).
+    const auto clamp = [&](editor::TextPosition pos) -> editor::TextPosition {
+      const std::size_t line_count = scratch.line_count();
+      if (line_count == 0) {
+        return editor::TextPosition{0, 0};
+      }
+      if (pos.line >= line_count) {
+        pos.line = line_count - 1;
+      }
+      pos.column = lsp_encoding::LspCharacterToByteColumn(
+          std::string_view(scratch.lines()[pos.line]), pos.column, encoding);
+      return pos;
+    };
+    for (auto& [range, text] : file_edits) {
+      range.start = clamp(range.start);
+      range.end = clamp(range.end);
+    }
+    // Apply highest-position-first (later array entry first on ties) so earlier
+    // ranges stay valid as later ones apply — identical ordering to the open-buffer
+    // path. No undo is recorded: the scratch buffer is written and discarded.
+    std::vector<std::size_t> apply_order(file_edits.size());
+    for (std::size_t i = 0; i < apply_order.size(); ++i) {
+      apply_order[i] = i;
+    }
+    std::sort(apply_order.begin(), apply_order.end(), [&](std::size_t lhs, std::size_t rhs) {
+      const editor::SelectionRange a = editor::TextViewport::NormalizeRange(file_edits[lhs].first);
+      const editor::SelectionRange b = editor::TextViewport::NormalizeRange(file_edits[rhs].first);
+      if (a.start.line != b.start.line) {
+        return a.start.line > b.start.line;
+      }
+      if (a.start.column != b.start.column) {
+        return a.start.column > b.start.column;
+      }
+      return lhs > rhs;
+    });
+    for (const std::size_t idx : apply_order) {
+      scratch.ReplaceRange(file_edits[idx].first, file_edits[idx].second, /*record_undo=*/false);
+    }
+    if (!scratch.Save()) {
+      result.any_failed = true;
+      continue;
+    }
+    ++result.files_written;
+    result.edits_applied += file_edits.size();
+  }
+  return result;
+}
+
+bool LspService::IsPathOpenInProject(const std::filesystem::path& normalized) const {
+  for (const auto& group : CurrentProjectState().editor_groups) {
+    for (const auto& tab : group.open_tabs) {
+      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+          !tab.editor_state->needs_restore &&
+          tab.editor_state->viewport.path().lexically_normal() == normalized) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool LspService::ApplyServerWorkspaceEdit(LspClient::WorkspaceEdit edit) {
+  // Flatten the URI-keyed WorkspaceEdit into the shared 0-based edit records; both
+  // appliers map the LSP `character` offsets through the position encoding.
+  std::vector<CodeActionEdit> flat;
+  for (const auto& [uri, text_edits] : edit.changes) {
+    const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
+    if (!path.has_value()) {
+      continue;
+    }
+    for (const auto& [range, new_text] : text_edits) {
+      flat.push_back(CodeActionEdit{
+          .path = *path,
+          .range = editor::SelectionRange{
+              .start = editor::TextPosition{static_cast<std::size_t>(std::max(0, range.start.line)),
+                                            static_cast<std::size_t>(std::max(0, range.start.character))},
+              .end = editor::TextPosition{static_cast<std::size_t>(std::max(0, range.end.line)),
+                                          static_cast<std::size_t>(std::max(0, range.end.character))},
+          },
+          .new_text = new_text,
+      });
+    }
+  }
+  if (flat.empty()) {
+    return false;
+  }
+  bool applied = false;
+  // Open buffers edit in place (the shell resolves + re-syncs them); closed files
+  // are written silently on disk. Passing the full set to both is safe: the
+  // open-buffer applier skips paths that are not open, and the disk applier skips
+  // paths that are open.
+  if (operations_.apply_workspace_edit_to_open_buffers) {
+    applied = operations_.apply_workspace_edit_to_open_buffers(flat);
+  }
+  const DiskEditResult disk = ApplyLspEditsToClosedFilesOnDisk(
+      flat, [this](const std::filesystem::path& normalized) {
+        return IsPathOpenInProject(normalized);
+      });
+  return applied || disk.files_written > 0;
 }
 
 void LspService::ConsumeLspCallbacks() { CurrentLspManager().DrainCallbacks(); }

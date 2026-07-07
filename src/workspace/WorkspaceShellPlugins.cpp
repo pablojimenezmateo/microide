@@ -164,6 +164,10 @@ WorkspaceShell::WorkspaceShell() {
           .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
           .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
+          .apply_workspace_edit_to_open_buffers =
+              [this](const std::vector<CodeActionEdit>& edits) {
+                return ApplyLspWorkspaceEdit(edits);
+              },
       });
   // Live theme pointer for baking semantic-token recolor decorations (theme_'s
   // address is stable; a theme switch mutates it in place).
@@ -1348,11 +1352,12 @@ void WorkspaceShell::ApplyRenameWorkspaceEdit(const std::string& new_name,
     return;
   }
 
-  // Some files are not open. Confirm before opening + saving them all — writing
-  // files the user hasn't opened is an outward, hard-to-undo action.
+  // Some files are not open. Confirm before writing them — editing files the user
+  // hasn't opened is an outward, hard-to-undo action. The closed files are applied
+  // SILENTLY on disk (VSCode-style); no tabs are opened for them.
   std::string detail = "Renaming to '" + new_name + "' changes " +
                        std::to_string(affected.size()) + (affected.size() == 1 ? " file" : " files") +
-                       " (" + std::to_string(closed_count) + " not open). Open all and save?";
+                       " (" + std::to_string(closed_count) + " not open). Apply and save?";
   pending_rename_save_ =
       PendingRenameSave{new_name, edits, std::move(affected)};
   OpenPromptSurface(PromptSurfaceState::Action::ConfirmRenameSave,
@@ -1370,17 +1375,10 @@ void WorkspaceShell::CommitPendingRenameSave() {
   const PendingRenameSave pending = std::move(*pending_rename_save_);
   pending_rename_save_.reset();
 
-  // Open every affected file that is not already open (OpenFileInNewTab dedups /
-  // reloads clean tabs), so ApplyLspWorkspaceEdit resolves each edit to a buffer.
-  for (const std::filesystem::path& path : pending.affected_paths) {
-    if (!IsPathOpenInEditorState(context_.current_project_state, path)) {
-      OpenFileInNewTab(path);
-    }
-  }
+  // Open files keep their edits applied in place (ApplyLspWorkspaceEdit resolves
+  // only already-open buffers; closed files are skipped there), then are saved.
   ApplyLspWorkspaceEdit(pending.edits);
 
-  // Save every affected buffer to disk. Skip a buffer whose file changed on disk
-  // since we opened it (surface the external-change banner instead of clobbering).
   std::size_t saved = 0;
   bool any_conflict = false;
   for (auto& group : context_.current_project_state.editor_groups) {
@@ -1409,10 +1407,18 @@ void WorkspaceShell::CommitPendingRenameSave() {
     }
   }
 
+  // Apply the remaining edits to the CLOSED files directly on disk — no tab spam.
+  const auto is_open = [this](const std::filesystem::path& normalized) {
+    return IsPathOpenInEditorState(context_.current_project_state, normalized);
+  };
+  const LspService::DiskEditResult disk =
+      lsp_service_.ApplyLspEditsToClosedFilesOnDisk(pending.edits, is_open);
+  saved += disk.files_written;
+
   std::string feedback = "Renamed to '" + pending.new_name + "' in " + std::to_string(saved) +
                          (saved == 1 ? " file" : " files");
-  if (any_conflict) {
-    feedback += " (some skipped: changed on disk)";
+  if (any_conflict || disk.any_failed) {
+    feedback += " (some skipped)";
   }
   context_.current_project_state.panel.feedback.text = std::move(feedback);
   RequestActiveTabRedraw(/*include_tree_sidebar=*/true);

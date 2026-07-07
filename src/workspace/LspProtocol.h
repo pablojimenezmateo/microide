@@ -24,6 +24,15 @@ std::vector<LspClient::Diagnostic> ParseDiagnostics(const util::JsonValue& array
 LspClient::DocumentSymbol ParseDocumentSymbol(const util::JsonValue& value);
 std::vector<LspClient::DocumentSymbol> ParseDocumentSymbols(const util::JsonValue& result);
 
+// Parse a WorkspaceEdit into the URI-keyed edit map. Handles both the `changes`
+// object shape (uri -> TextEdit[]) and the `documentChanges` array shape
+// (TextDocumentEdit[]; resource create/rename/delete ops are skipped). The total
+// files and edits are bounded so a hostile server cannot force an unbounded
+// main-thread allocation (a rename/apply-edit result is re-materialized here).
+LspClient::WorkspaceEdit ParseWorkspaceEdit(const util::JsonValue& edit,
+                                            std::size_t max_files = 10000,
+                                            std::size_t max_edits_total = 200000);
+
 // Decode a `textDocument/hover` result's `contents` into a single plain/markdown
 // string. Handles all three wire shapes: MarkupContent ({kind, value}), a bare
 // MarkedString, and a MarkedString[] (joined with blank lines). Returns empty when

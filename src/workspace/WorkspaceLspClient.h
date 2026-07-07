@@ -183,6 +183,13 @@ class LspClient {
   // True once a diagnostics callback has been installed.
   bool HasDiagnosticsCallback() const;
 
+  // Install the handler for server-initiated `workspace/applyEdit`. Set from the
+  // main thread; invoked on the main thread (it mutates buffers / writes files)
+  // and returns whether the edit was applied. Advertising the capability without a
+  // handler still replies applied:false. HasApplyEditHandler binds it once.
+  void SetApplyEditHandler(std::function<bool(WorkspaceEdit)> handler);
+  bool HasApplyEditHandler() const;
+
   // Call from the main thread each frame to dispatch pending callbacks.
   void DrainCallbacks();
 
@@ -264,6 +271,11 @@ class LspClient {
   void SetTestCompletionHandler(
       std::function<void(std::string uri, Position pos, CompletionCallback cb)> handler);
   void ClearTestCompletionHandler();
+  // Unit tests: drive the server-request path (as the I/O thread would) so a
+  // simulated workspace/applyEdit exercises the real dispatch → main-thread apply.
+  // The reply is enqueued to the outbound queue (swallowed in stub mode).
+  void SimulateServerRequestForTesting(const std::string& method, util::JsonValue params,
+                                       util::JsonValue id);
   // Unit tests: feed a canned semantic-tokens response + legend.
   void SetTestSemanticTokensHandler(
       std::function<void(std::string uri, SemanticTokensCallback cb)> handler);

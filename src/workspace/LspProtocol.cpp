@@ -147,6 +147,50 @@ std::vector<LspClient::DocumentSymbol> ParseDocumentSymbols(const JsonValue& res
   return symbols;
 }
 
+LspClient::WorkspaceEdit ParseWorkspaceEdit(const JsonValue& edit, std::size_t max_files,
+                                            std::size_t max_edits_total) {
+  LspClient::WorkspaceEdit out;
+  std::size_t total_edits = 0;
+  const auto append_edits = [&](const std::string& uri, const JsonValue& edits_array) {
+    if (!edits_array.IsArray()) {
+      return;
+    }
+    if (out.changes.size() >= max_files && out.changes.find(uri) == out.changes.end()) {
+      return;
+    }
+    auto& bucket = out.changes[uri];
+    for (const auto& text_edit : edits_array.AsArray()) {
+      if (total_edits >= max_edits_total) {
+        break;
+      }
+      bucket.emplace_back(ParseRange(text_edit["range"]), text_edit["newText"].AsString());
+      ++total_edits;
+    }
+  };
+  if (edit.HasKey("changes")) {
+    for (const auto& [uri, edits_val] : edit["changes"].AsObject()) {
+      if (total_edits >= max_edits_total) {
+        break;
+      }
+      append_edits(uri, edits_val);
+    }
+  }
+  if (edit.HasKey("documentChanges") && edit["documentChanges"].IsArray()) {
+    for (const auto& doc_change : edit["documentChanges"].AsArray()) {
+      if (total_edits >= max_edits_total) {
+        break;
+      }
+      // TextDocumentEdit shape: { textDocument: { uri }, edits: [ TextEdit ] }.
+      // Skip create/rename/delete resource ops (no `edits` array).
+      if (!doc_change.HasKey("edits") || !doc_change["edits"].IsArray()) {
+        continue;
+      }
+      append_edits(doc_change["textDocument"]["uri"].AsString(), doc_change["edits"]);
+    }
+  }
+  return out;
+}
+
 namespace {
 // One MarkedString element: either a bare string or {language, value}.
 std::string MarkedStringValue(const JsonValue& value) {

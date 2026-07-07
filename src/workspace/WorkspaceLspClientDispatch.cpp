@@ -8,9 +8,11 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "util/StartupTrace.h"
+#include "workspace/LspProtocol.h"
 
 namespace microide::workspace {
 
@@ -69,11 +71,31 @@ void LspClient::Impl::HandleServerRequest(const util::JsonValue& id, const std::
     return;
   }
   if (method == "workspace/applyEdit") {
-    // Host-side edit application is not wired here; report not-applied so the
-    // server can recover rather than wait forever.
-    JsonObject obj;
-    obj["applied"] = JsonValue(false);
-    SendResponseResult(id, JsonValue(std::move(obj)));
+    std::function<bool(WorkspaceEdit)> handler;
+    {
+      std::lock_guard lock(mutex);
+      handler = apply_edit_handler;
+    }
+    if (!handler) {
+      // No host applier bound: report not-applied so the server recovers rather
+      // than wait forever.
+      JsonObject obj;
+      obj["applied"] = JsonValue(false);
+      SendResponseResult(id, JsonValue(std::move(obj)));
+      return;
+    }
+    // Apply on the MAIN thread (it mutates open buffers / writes files), then reply
+    // with the real applied flag. The mailbox task is dropped unrun if the client
+    // is destroyed first, so capturing `this` cannot dangle.
+    WorkspaceEdit edit = lsp_protocol::ParseWorkspaceEdit(params["edit"]);
+    util::JsonValue captured_id = id;
+    main_mailbox.Post([this, captured_id = std::move(captured_id), edit = std::move(edit),
+                       handler = std::move(handler)]() mutable {
+      const bool applied = handler(std::move(edit));
+      JsonObject obj;
+      obj["applied"] = JsonValue(applied);
+      SendResponseResult(captured_id, JsonValue(std::move(obj)));
+    });
     return;
   }
   SendResponseError(id, -32601, "method not found: " + method);

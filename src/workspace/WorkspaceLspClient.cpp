@@ -342,6 +342,21 @@ void LspClient::ClearTestCompletionHandler() {
   impl_->test_completion_handler = nullptr;
 }
 
+void LspClient::SetApplyEditHandler(std::function<bool(WorkspaceEdit)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->apply_edit_handler = std::move(handler);
+}
+
+void LspClient::SimulateServerRequestForTesting(const std::string& method, util::JsonValue params,
+                                                util::JsonValue id) {
+  impl_->HandleServerRequest(id, method, params);
+}
+
+bool LspClient::HasApplyEditHandler() const {
+  std::lock_guard lock(impl_->mutex);
+  return static_cast<bool>(impl_->apply_edit_handler);
+}
+
 std::vector<std::string> LspClient::SemanticTokenLegend() const {
   std::lock_guard lock(impl_->mutex);
   return impl_->semantic_token_types;

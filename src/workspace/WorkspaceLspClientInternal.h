@@ -120,6 +120,10 @@ struct LspClient::Impl {
 
   // Diagnostics callback — set from main thread, called on main thread via main_mailbox.
   OnPublishDiagnostics diagnostics_callback;
+  // Server-initiated workspace/applyEdit handler — set from the main thread and
+  // invoked on the main thread (it mutates buffers / writes files); returns
+  // whether the edit was applied. Null => reply applied:false.
+  std::function<bool(WorkspaceEdit)> apply_edit_handler;
 
   std::unordered_map<std::string, int> document_versions;
   std::deque<QueuedMessage> deferred_messages;

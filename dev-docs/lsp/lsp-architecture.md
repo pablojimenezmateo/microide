@@ -39,8 +39,9 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
 | `LspMessageFraming.{h,cpp}` | `LspMessageFramer`: the `Content-Length` JSON-RPC codec as a pure, unit-tested value type (partial-frame + oversized-skip state). |
 | `LspClientTrace.{h,cpp}` | `TraceLspLifecycle` (opt-in via `MICROIDE_TRACE_LSP_LIFECYCLE`) + transport tuning constants (`kLspRequestTimeout`, queue/message/read-buffer caps). |
 | `WorkspaceLspManager.{h,cpp}` | `LspManager`: one subprocess per canonical language id (aliases share one), non-blocking retiring-clients drain. |
-| `LspService.{h,cpp}` | Per-project doc sync, diagnostics convert+publish, semantic-token request/publish with generation guards, diagnostic shifting on dirty edits, readiness/status strings. |
-| `LspProtocol.{h,cpp}` | JSON ↔ LSP wire mapping (parse/encode helpers). |
+| `LspService.{h,cpp}` | Per-project doc sync, diagnostics convert+publish, semantic-token request/publish with generation guards, diagnostic shifting on dirty edits, readiness/status strings, the closed-file on-disk edit applier, and the server-initiated `applyEdit` handler. |
+| `LspProtocol.{h,cpp}` | JSON ↔ LSP wire mapping (parse/encode helpers), incl. the shared `ParseWorkspaceEdit` (rename / code-action / applyEdit all route through it). |
+| `AssistProviderMerge.h` | Pure, unit-tested ranking / de-dup / navigation-choice helpers for the LSP-primary concurrent provider merge. |
 | `LspPositionEncoding.{h,cpp}` | Pure byte ↔ code-unit codec (utf-8/16/32). |
 | `LspViewportPositions.h` | Viewport-aware wrappers over the codec (the single home for "resolve line in a viewport, then convert its column"). |
 | `WorkspaceShellLsp.cpp` | Thin `WorkspaceShell` forwarders → `LspService`; document-symbol → outline adapter. |
@@ -71,10 +72,24 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
 - **Do not rename** `SendMessageImmediate` (a `tsan.supp` entry targets it by
   mangled symbol) or the five didOpen-guard methods scanned by
   `CheckLspDidOpenIsNonBlocking`.
-- **Server-initiated `workspace/applyEdit` is not yet wired** — `HandleServerRequest`
-  replies `applied:false`, and the client advertises `workspace.applyEdit=false`.
-  Cross-file edits flow only through the client-initiated `textDocument/rename`
-  (and code-action) result path.
+- **Server-initiated `workspace/applyEdit` is wired.** The client advertises
+  `workspace.applyEdit=true`; `HandleServerRequest` parses the edit, posts it to the
+  main thread (buffer/disk mutation must not run on the I/O thread), applies it via
+  the bound `apply_edit_handler`, then replies with the real `applied` flag. The
+  handler (`LspService::ApplyServerWorkspaceEdit`) edits open buffers in place and
+  writes closed files silently on disk — the same split as client-initiated rename.
+- **Provider precedence is LSP-primary concurrent merge** (`AssistProviderMerge.h`).
+  Completion / code actions / go-to-definition / find-references fire the plugin
+  worker and the language server *at the same time*, then merge: list overlays
+  publish a ranked, de-duplicated union (LSP-first for served languages) as each
+  source arrives; go-to-definition waits for the authoritative server and falls back
+  to the plugin only when the server returns empty. Never serial plugin-first.
+- **Rename across unopened files applies silently on disk** (VSCode-style). The
+  closed-file applier (`LspService::ApplyLspEditsToClosedFilesOnDisk`) loads each
+  file into a throwaway `TextViewport` (reusing line-ending / BOM / encoding
+  detection + the atomic, permission-preserving save), applies the encoding-mapped
+  edits, and saves — no tab is opened. Open buffers still edit in place via
+  `WorkspaceShell::ApplyLspWorkspaceEdit`. A confirmation prompt gates the write.
 
 ## Transport model
 
@@ -92,6 +107,11 @@ backstops: bounded message/read-buffer sizes with oversized-frame skip-and-resyn
 - `LspProtocolTests` / `LspPositionEncodingTests` — wire codec + encoding units.
 - `WorkspaceLspClientTests` — lifecycle/shutdown races, stub-mode request
   round-trips, and direct `LspMessageFramer` framing units.
+- `AssistServiceTests` — pure provider-merge units (`RankedUnion` ordering/de-dup,
+  `ChooseNavigation` LSP-wins/wait/fallback) plus the stale-result guard.
+- `WorkspaceShellPluginTests` — dual-source completion merge (LSP-first + de-dup),
+  silent on-disk rename (closed file written, no tab), and server-initiated
+  `workspace/applyEdit` (open buffer + closed file) via the simulate-request hook.
 - `Phase5Tests` / `WorkspaceShellPluginTests` — end-to-end through a Python
   fake server (diagnostics, hover, outline, format, rename, semantic overlay).
 - `LspRealServerE2ETests` — **opt-in** end-to-end against real clangd (skips when

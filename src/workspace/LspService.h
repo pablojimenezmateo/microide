@@ -23,6 +23,7 @@ namespace microide::workspace {
 
 struct WorkspaceContext;
 struct ProjectWorkspaceState;
+struct CodeActionEdit;
 
 // Host-owned home for the LSP glue that used to live directly on WorkspaceShell:
 // per-project server management, document synchronization, diagnostics publishing,
@@ -37,6 +38,10 @@ class LspService {
     std::function<void()> request_editor_surface_redraw;
     std::function<void()> request_chrome_redraw;
     std::function<void()> request_bottom_panel_redraw;
+    // Apply 0-based LSP edits to already-open buffers in place (the shell's
+    // ApplyLspWorkspaceEdit). Used by the server-initiated workspace/applyEdit
+    // path; closed files are written on disk by LspService itself.
+    std::function<bool(const std::vector<CodeActionEdit>&)> apply_workspace_edit_to_open_buffers;
   };
 
   LspService() = default;
@@ -106,7 +111,34 @@ class LspService {
                               const std::vector<std::string>& after_lines);
   void SyncLspForActiveEditableLastChange();
 
+  // Outcome of a silent on-disk WorkspaceEdit application (VSCode-style rename
+  // across unopened files), for a preview/feedback summary.
+  struct DiskEditResult {
+    std::size_t files_written = 0;
+    std::size_t edits_applied = 0;
+    bool any_failed = false;
+  };
+  // Apply `edits` to files that are NOT open in any editor, directly on disk: each
+  // target file is loaded into a scratch viewport (so line-ending / BOM / encoding
+  // detection and the atomic, permission-preserving save path are reused), its
+  // ranged edits are applied with the server's negotiated position encoding
+  // (highest-position-first), then it is saved — no tab is opened, no active editor
+  // state is touched. `is_open(normalized_path)` returns true for a path the caller
+  // edits in place (skipped here); an empty edit path (the active buffer) is always
+  // skipped. Reuses the per-file position-encoding mapping of ApplyLspWorkspaceEdit.
+  DiskEditResult ApplyLspEditsToClosedFilesOnDisk(
+      const std::vector<CodeActionEdit>& edits,
+      const std::function<bool(const std::filesystem::path&)>& is_open);
+
  private:
+  // Apply a server-initiated WorkspaceEdit on the main thread: open buffers in
+  // place (via the Operations hook), closed files silently on disk. Returns true
+  // when at least one edit was applied. Bound as the LspClient apply-edit handler.
+  bool ApplyServerWorkspaceEdit(LspClient::WorkspaceEdit edit);
+  // True when `normalized` (a lexically-normal path) is open in a hydrated editor
+  // tab of the current project.
+  bool IsPathOpenInProject(const std::filesystem::path& normalized) const;
+
   ProjectWorkspaceState& CurrentProjectState();
   const ProjectWorkspaceState& CurrentProjectState() const;
 

@@ -204,9 +204,42 @@ void TestLspProtocolParsesHoverContents() {
          "empty contents array yields empty");
 }
 
+void TestLspProtocolParsesWorkspaceEdit() {
+  // `changes` object shape (uri -> TextEdit[]).
+  const JsonValue changes = Json(R"({"changes":{
+      "file:///a.cpp":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":3}},"newText":"sum"}],
+      "file:///b.cpp":[
+        {"range":{"start":{"line":2,"character":4},"end":{"line":2,"character":7}},"newText":"sum"},
+        {"range":{"start":{"line":5,"character":0},"end":{"line":5,"character":3}},"newText":"sum"}]}})");
+  const LspClient::WorkspaceEdit edit = codec::ParseWorkspaceEdit(changes);
+  Expect(edit.changes.size() == 2, "both files parse from the changes object");
+  Expect(edit.changes.at("file:///a.cpp").size() == 1, "a.cpp has one edit");
+  Expect(edit.changes.at("file:///b.cpp").size() == 2, "b.cpp has two edits");
+  Expect(edit.changes.at("file:///a.cpp")[0].second == "sum", "newText parsed");
+
+  // `documentChanges` array shape (TextDocumentEdit[]); resource ops are skipped.
+  const JsonValue doc_changes = Json(R"({"documentChanges":[
+      {"textDocument":{"uri":"file:///c.cpp","version":1},
+       "edits":[{"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":2}},"newText":"x"}]},
+      {"kind":"rename","oldUri":"file:///old.cpp","newUri":"file:///new.cpp"}]})");
+  const LspClient::WorkspaceEdit from_doc = codec::ParseWorkspaceEdit(doc_changes);
+  Expect(from_doc.changes.size() == 1, "the resource-rename op is skipped, leaving one file");
+  Expect(from_doc.changes.count("file:///c.cpp") == 1, "the TextDocumentEdit file is parsed");
+
+  // Caps bound a hostile edit count.
+  const JsonValue hostile = Json(R"({"changes":{"file:///h.cpp":[
+      {"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"newText":"a"},
+      {"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":1}},"newText":"b"},
+      {"range":{"start":{"line":2,"character":0},"end":{"line":2,"character":1}},"newText":"c"}]}})");
+  const LspClient::WorkspaceEdit capped =
+      codec::ParseWorkspaceEdit(hostile, /*max_files=*/10, /*max_edits_total=*/2);
+  Expect(capped.changes.at("file:///h.cpp").size() == 2, "the total-edit cap truncates the list");
+}
+
 }  // namespace
 
 void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "LspProtocol/ParsesWorkspaceEdit", TestLspProtocolParsesWorkspaceEdit);
   AddTest(tests, "LspProtocol/ParsesHoverContents", TestLspProtocolParsesHoverContents);
   AddTest(tests, "LspProtocol/ParseCapsBoundHostileArrays",
           TestLspProtocolParseCapsBoundHostileArrays);

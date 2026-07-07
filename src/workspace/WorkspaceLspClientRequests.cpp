@@ -95,45 +95,6 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
       });
 }
 
-namespace {
-
-// Parse an inline `edit` (WorkspaceEdit) from a code action into `out`. Handles
-// both the `changes` object shape (uri -> edits, clangd's default when the
-// client does not advertise documentChanges support -- our case) and the
-// `documentChanges` array shape. Returns true when at least one edit was parsed.
-bool ParseCodeActionEdit(const util::JsonValue& edit, LspClient::WorkspaceEdit& out) {
-  bool any = false;
-  if (edit.HasKey("changes")) {
-    const auto& changes = edit["changes"];
-    for (const auto& [uri, edits] : changes.AsObject()) {
-      if (!edits.IsArray()) continue;
-      auto& bucket = out.changes[uri];
-      for (const auto& text_edit : edits.AsArray()) {
-        bucket.emplace_back(lsp_protocol::ParseRange(text_edit["range"]),
-                            text_edit["newText"].AsString());
-        any = true;
-      }
-    }
-  }
-  if (edit.HasKey("documentChanges") && edit["documentChanges"].IsArray()) {
-    for (const auto& doc_change : edit["documentChanges"].AsArray()) {
-      // TextDocumentEdit shape: { textDocument: { uri }, edits: [ TextEdit ] }.
-      // Skip create/rename/delete resource ops (no `edits` array).
-      if (!doc_change.HasKey("edits") || !doc_change["edits"].IsArray()) continue;
-      const std::string uri = doc_change["textDocument"]["uri"].AsString();
-      auto& bucket = out.changes[uri];
-      for (const auto& text_edit : doc_change["edits"].AsArray()) {
-        bucket.emplace_back(lsp_protocol::ParseRange(text_edit["range"]),
-                            text_edit["newText"].AsString());
-        any = true;
-      }
-    }
-  }
-  return any;
-}
-
-}  // namespace
-
 void LspClient::RequestCodeActionAsync(std::string uri, Range range,
                                        std::vector<Diagnostic> context_diagnostics,
                                        CodeActionCallback callback) {
@@ -177,7 +138,8 @@ void LspClient::RequestCodeActionAsync(std::string uri, Range range,
             ca.arguments = command["arguments"].AsArray();
           }
           if (action.HasKey("edit")) {
-            ca.has_edit = ParseCodeActionEdit(action["edit"], ca.edit);
+            ca.edit = lsp_protocol::ParseWorkspaceEdit(action["edit"]);
+            ca.has_edit = !ca.edit.changes.empty();
           }
           actions.push_back(std::move(ca));
         }
@@ -285,31 +247,11 @@ void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string ne
   impl_->DispatchResultRequest(
       "textDocument/rename", JsonValue(std::move(params)), std::move(callback),
       [](const util::JsonValue& result) {
-        WorkspaceEdit edit;
-        if (result.HasKey("changes")) {
-          // Cap the total files and edits materialized on the main thread. A
-          // hostile/buggy server can pack a sub-64 MiB rename result with
-          // thousands of files each carrying a huge edit array (or one file with
-          // millions of edits), each edit becoming a Range + newText string here.
-          // These ceilings are far beyond any real rename's footprint.
-          constexpr std::size_t kMaxRenameFiles = 10000;
-          constexpr std::size_t kMaxRenameEditsTotal = 200000;
-          std::size_t total_edits = 0;
-          for (const auto& [file_uri, edits_val] : result["changes"].AsObject()) {
-            if (edit.changes.size() >= kMaxRenameFiles || total_edits >= kMaxRenameEditsTotal) {
-              break;
-            }
-            auto& file_edits = edit.changes[file_uri];
-            for (const auto& e : edits_val.AsArray()) {
-              if (total_edits >= kMaxRenameEditsTotal) {
-                break;
-              }
-              file_edits.emplace_back(lsp_protocol::ParseRange(e["range"]), e["newText"].AsString());
-              ++total_edits;
-            }
-          }
-        }
-        return std::optional<WorkspaceEdit>(std::move(edit));
+        // ParseWorkspaceEdit bounds the total files/edits materialized on the main
+        // thread (a hostile server could otherwise pack a sub-64 MiB result with
+        // thousands of files each carrying a huge edit array). A rename result also
+        // supports the `documentChanges` shape, which the helper handles too.
+        return std::optional<WorkspaceEdit>(lsp_protocol::ParseWorkspaceEdit(result));
       });
 }
 

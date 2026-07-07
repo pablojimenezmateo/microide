@@ -13,7 +13,9 @@
 
 #include <chrono>
 #include <cctype>
+#include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -1744,13 +1746,17 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::PromptSurfaceMessage(shell).find("not open") != std::string::npos,
          "the confirmation should state that some files are not open");
 
-  // Confirm -> open helper.py, apply, save both files.
+  // Confirm -> apply main.py in place + save, and apply helper.py SILENTLY on disk.
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
 
   Expect(ReadFile(main_py) == "count = 1\n",
          "the already-open file should be renamed and saved to disk");
   Expect(ReadFile(helper_py) == "print(count)\n",
-         "the previously-closed file should be opened, renamed, and saved to disk");
+         "the previously-closed file should be renamed and saved to disk");
+  // VSCode-style silent apply: the closed file is written directly, NOT opened as
+  // a tab (no tab spam on large renames).
+  Expect(WorkspaceShellTestAccess::CountOpenBufferViews(shell, helper_py) == 0,
+         "a closed file touched by a rename must be written on disk without opening a tab");
 }
 
 // Regression for the LSP-primary concurrent provider merge: a language with BOTH
@@ -1849,6 +1855,79 @@ return ide.plugin({
   }
   Expect(common_count == 1, "the label offered by both sources must appear exactly once");
   Expect(has_plugin_only, "a plugin-only completion must survive the merge");
+}
+
+// Regression for server-initiated workspace/applyEdit: a WorkspaceEdit pushed by
+// the language server must apply to open buffers in place AND write closed files
+// silently on disk (no tab), matching the client-initiated rename behavior.
+void TestWorkspaceShellServerApplyEditEditsOpenAndClosedFiles() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path open_md = project / "open.md";
+  const std::filesystem::path closed_md = project / "closed.md";  // never opened
+  WriteFile(open_md, "aaa\n");
+  WriteFile(closed_md, "aaa\n");
+
+  WritePluginInit(
+      plugins_root, "mdlsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "mdlsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "md-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "applyEdit fixture should open the project");
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
+         "fixture should attach a stub markdown client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, open_md);
+  // Trigger any assist so LspClientForViewport binds the apply-edit handler on the
+  // client (mirrors the once-per-client diagnostics binding).
+  WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(stub_raw->HasApplyEditHandler(),
+         "resolving the client for a viewport should bind the apply-edit handler");
+
+  // The server pushes an edit replacing "aaa" -> "bbb" in BOTH files.
+  const std::string edit_json = std::string("{\"edit\":{\"changes\":{\"") +
+                                workspace::FileUriForPath(open_md) +
+                                "\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},"
+                                "\"end\":{\"line\":0,\"character\":3}},\"newText\":\"bbb\"}],\"" +
+                                workspace::FileUriForPath(closed_md) +
+                                "\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},"
+                                "\"end\":{\"line\":0,\"character\":3}},\"newText\":\"bbb\"}]}}}";
+  std::optional<util::JsonValue> params = util::ParseJson(edit_json);
+  Expect(params.has_value(), "the applyEdit params fixture should parse");
+  stub_raw->SimulateServerRequestForTesting("workspace/applyEdit", std::move(*params),
+                                            util::JsonValue(static_cast<std::int64_t>(1)));
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "bbb",
+         "the open buffer should be edited in place by the server-pushed edit");
+  Expect(ReadFile(closed_md) == "bbb\n",
+         "the closed file should be written silently on disk by the server-pushed edit");
+  Expect(WorkspaceShellTestAccess::CountOpenBufferViews(shell, closed_md) == 0,
+         "the server-pushed edit must not open a tab for the closed file");
 }
 
 void TestWorkspaceShellOutlineSidebarFromDocumentSymbols() {
@@ -4008,6 +4087,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenameSymbolOpensAndSavesClosedFiles);
   AddTest(tests, "WorkspaceShell/CompletionMergesPluginAndLspSources",
           TestWorkspaceShellCompletionMergesPluginAndLspSources);
+  AddTest(tests, "WorkspaceShell/ServerApplyEditEditsOpenAndClosedFiles",
+          TestWorkspaceShellServerApplyEditEditsOpenAndClosedFiles);
   AddTest(tests, "WorkspaceShell/PluginsReloadFallsBackFromMissingActivePluginSidebar",
           TestWorkspaceShellPluginsReloadFallsBackFromMissingActivePluginSidebar);
   AddTest(tests, "WorkspaceShell/SidebarModeMenuListsPluginSidebars",
