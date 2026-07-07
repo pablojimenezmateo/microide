@@ -1765,6 +1765,17 @@
   Uint64 AutosaveDelayMs() const;
   void MaybeArmAutosaveTimer();
   std::optional<Uint32> NextAutosaveDelayMs() const;
+  // Crash-safety session flush (WorkspaceShellRedraw.cpp). ALWAYS ON, independent of
+  // editor.autosave: unlike autosave (which writes the user's file only when opted in),
+  // this periodically writes the in-memory SESSION snapshot — including unsaved buffer
+  // content — to the durable record store so a crash / kill -9 loses at most the last
+  // debounce window instead of everything since the last event-driven session save. It
+  // never touches the user's files. MaybeArmSessionFlushTimer re-arms on each real edit;
+  // NextSessionFlushDelayMs wakes the idle loop near the deadline; HandleScheduledWake
+  // fires FlushSessionStateForCrashSafety once the buffer settles.
+  void MaybeArmSessionFlushTimer();
+  std::optional<Uint32> NextSessionFlushDelayMs() const;
+  void FlushSessionStateForCrashSafety();
   // Chrome-like tab-slide animation (WorkspaceShellRedraw.cpp). NextTabSlideDelayMs
   // schedules ~60fps wakes while a strip is easing; AdvanceTabSlide steps the
   // offsets on a scheduled wake and clears the state when the post-release settle
@@ -2016,6 +2027,13 @@
   // resetting the debounce or disarming a pending flush).
   const editor::TextViewport* autosave_last_viewport_ = nullptr;
   bool autosave_armed_ = false;
+  // Crash-safety session-flush debounce (see MaybeArmSessionFlushTimer). Independent of
+  // the autosave debounce above so it stays always-on regardless of the autosave setting
+  // and covers untitled/path-less dirty buffers too.
+  Uint64 session_flush_edit_epoch_ms_ = 0;
+  std::uint64_t session_flush_last_content_revision_ = 0;
+  const editor::TextViewport* session_flush_last_viewport_ = nullptr;
+  bool session_flush_armed_ = false;
   // Set only while MaybeAutosaveDirtyTabs is writing dirty buffers, so the shared save
   // path skips the synchronous format-on-save subprocess. Autosave (focus change /
   // after delay) must never block the UI thread on an external formatter — explicit

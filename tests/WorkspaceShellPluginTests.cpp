@@ -3359,7 +3359,71 @@ return ide.plugin({
 
 }  // namespace
 
+// Data-integrity (A5/C6): a multi-file LSP WorkspaceEdit applies to each OPEN buffer as
+// its own grouped-undo step; each buffer's dirty/save/undo baseline is fully independent,
+// and a target that is not open is left untouched on disk (v1 keeps undo coherent by
+// never editing files it cannot undo). Saving+undoing one buffer must not disturb another.
+void TestWorkspaceShellMultiBufferWorkspaceEditIndependentBaselines() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path a_path = root / "a.txt";
+  const std::filesystem::path b_path = root / "b.txt";
+  const std::filesystem::path c_path = root / "c.txt";  // referenced but NOT opened
+  WriteFile(a_path, "aaa\n");
+  WriteFile(b_path, "bbb\n");
+  WriteFile(c_path, "ccc\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, a_path);      // tab 0 = a
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, b_path),  // tab 1 = b
+         "opening the second file should succeed");
+
+  const auto range = [](std::size_t line, std::size_t col) {
+    return editor::SelectionRange{editor::TextPosition{line, col}, editor::TextPosition{line, col}};
+  };
+  const std::vector<microide::workspace::CodeActionEdit> edits = {
+      {a_path, range(0, 0), "X"},
+      {b_path, range(0, 0), "Y"},
+      {c_path, range(0, 0), "Z"},  // not open -> must be dropped, disk untouched
+  };
+  Expect(WorkspaceShellTestAccess::ApplyLspWorkspaceEdit(shell, edits),
+         "a multi-buffer workspace edit should apply to the open buffers");
+
+  // Both open buffers were edited and are dirty; the unopened file is untouched on disk.
+  Expect(ReadFile(c_path) == "ccc\n",
+         "an edit targeting a file that is not open must not touch it on disk");
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "Xaaa", "buffer A got its edit");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "buffer A is dirty");
+  WorkspaceShellTestAccess::ActivateTab(shell, 1);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "Ybbb", "buffer B got its edit");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "buffer B is dirty");
+
+  // Save A, then undo A past the save. B must be entirely unaffected.
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "saving buffer A should succeed");
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "A is clean right after its save");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).Undo(), "undo in A should succeed");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "aaa",
+         "undo restores buffer A's original content");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "A is dirty after undoing past its save (its content now differs from disk)");
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 1);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "Ybbb",
+         "buffer B is untouched by A's save+undo");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "buffer B keeps its own dirty baseline (it was never saved)");
+  Expect(ReadFile(b_path) == "bbb\n", "buffer B was never written to disk");
+}
+
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/MultiBufferWorkspaceEditIndependentBaselines",
+          TestWorkspaceShellMultiBufferWorkspaceEditIndependentBaselines);
   AddTest(tests, "WorkspaceShell/PluginSnippetTabTriggerExpands",
           TestWorkspaceShellPluginSnippetTabTriggerExpands);
   AddTest(tests, "WorkspaceShell/PluginEditorEventTrackerCoalescesChanges",

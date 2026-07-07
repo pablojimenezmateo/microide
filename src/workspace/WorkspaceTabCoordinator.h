@@ -77,6 +77,11 @@ class TabCoordinator {
   void SyncActiveEditorTabMetadata();
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
+  // Shared reload core for both of the above. Reloads every editor view on `path`
+  // across ALL editor groups (not just the focused one) so a split view of the same
+  // file in the non-focused group is refreshed too. `clean_only` skips dirty views
+  // (the clean-reload path); false reloads unconditionally (the from-disk overwrite).
+  void ReloadEditorTabsForPath(const std::filesystem::path& path, bool clean_only);
   // Force-saves every dirty editor view on `path`, bypassing the save-time
   // disk-conflict guard (the user explicitly chose to overwrite). Returns true
   // if at least one view was saved.

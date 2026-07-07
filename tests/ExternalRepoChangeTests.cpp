@@ -272,11 +272,53 @@ void TestWorkspaceShellExternalHeadChangeMarksGitSnapshotStale() {
          "external HEAD changes should mark the git snapshot stale");
 }
 
+// Data-integrity (A4): an external change to a file open as a clean view in BOTH split
+// groups must reload every group, not just the focused one — a non-focused split view
+// left showing stale content can later be saved over the external change.
+void TestWorkspaceShellExternalChangeReloadsBothSplitGroups() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_path = root / "shared.txt";
+  WriteFile(file_path, "clean\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "split-reload fixture should open the project");
+
+  // Group 0 gets a clean view of the file.
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  // Split, then open the same file as a clean view in the new (now focused) group.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "splitting the editor group should succeed");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "there should be two groups");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  // Refocus group 0 so group 1 (also holding the file) is the NON-focused group.
+  if (WorkspaceShellTestAccess::FocusedGroupIndex(shell) != 0) {
+    WorkspaceShellTestAccess::FocusOtherEditorGroup(shell);
+  }
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0,
+         "group 0 should be focused, leaving group 1 non-focused");
+  DrainProjectChanges(shell);
+
+  WriteFile(file_path, "clean updated\n");
+  Expect(WaitForProjectReload(shell, std::chrono::seconds(1)),
+         "external file change should trigger a project reload");
+
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).lines()[0] == "clean updated",
+         "the focused group's clean view should reload");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).lines()[0] == "clean updated",
+         "the NON-focused split group's clean view must also reload (no stale content)");
+}
+
 }  // namespace
 
 void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ExternalRepoChange/ReloadsCleanBuffer",
           TestWorkspaceShellExternalChangeReloadsCleanBuffer);
+  AddTest(tests, "ExternalRepoChange/ReloadsBothSplitGroups",
+          TestWorkspaceShellExternalChangeReloadsBothSplitGroups);
   AddTest(tests, "ExternalRepoChange/BannerForDirtyBuffer",
           TestWorkspaceShellExternalChangeBannerForDirtyBuffer);
   AddTest(tests, "ExternalRepoChange/SelfWriteDoesNotRaiseBanner",

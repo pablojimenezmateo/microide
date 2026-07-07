@@ -835,6 +835,71 @@ void TestWorkspaceShellFoldAllUnfoldAllCtrlKChord() {
          "Ctrl+keypad 0 should complete the fold-all chord");
 }
 
+// Data-integrity (B1/C10): the crash-safety session flush must stage unsaved buffer
+// content to the durable store WITHOUT a clean shutdown, so a fresh shell can restore it.
+// This is the net for a crash / kill -9 between event-driven session saves.
+void TestWorkspaceShellCrashSafetyFlushPersistsUnsavedContent() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha\nbeta\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(1, 0);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "unsaved "),
+         "crash-safety flush fixture should accept text input");
+  Expect(editor.dirty(), "the buffer should be dirty before the flush");
+
+  // Fire the exact routine the debounced timer runs — NO clean shutdown.
+  WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+
+  // A fresh shell (as if relaunched after a crash) must recover the unsaved content.
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "restore after a crash-safety flush should succeed");
+  WorkspaceShellTestAccess::ActivateTab(restored, 0);
+  const auto& reopened = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(reopened.lines()[1] == "unsaved beta",
+         "the crash-safety flush must persist unsaved buffer content for restore");
+  Expect(reopened.dirty(), "restored crash-safety content must stay dirty (still unsaved to disk)");
+}
+
+// B1: the crash-safety flush debounce arms once a real edit lands on a dirty buffer.
+void TestWorkspaceShellCrashSafetyFlushTimerArmsOnEdit() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  // First arm call only baselines the active viewport's content revision.
+  WorkspaceShellTestAccess::ArmSessionFlushTimer(shell);
+  Expect(!WorkspaceShellTestAccess::SessionFlushArmed(shell),
+         "the flush timer should not arm before any edit");
+
+  // A real edit bumps the content revision; the next arm detects it and arms.
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+  WorkspaceShellTestAccess::ArmSessionFlushTimer(shell);
+  Expect(WorkspaceShellTestAccess::SessionFlushArmed(shell),
+         "an edit on a dirty buffer should arm the crash-safety flush debounce");
+}
+
 void TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2095,6 +2160,10 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBufferSearchKeepsRevealAfterClose);
   AddTest(tests, "WorkspaceShell/FoldAllUnfoldAllCtrlKChord",
           TestWorkspaceShellFoldAllUnfoldAllCtrlKChord);
+  AddTest(tests, "WorkspaceShell/CrashSafetyFlushPersistsUnsavedContent",
+          TestWorkspaceShellCrashSafetyFlushPersistsUnsavedContent);
+  AddTest(tests, "WorkspaceShell/CrashSafetyFlushTimerArmsOnEdit",
+          TestWorkspaceShellCrashSafetyFlushTimerArmsOnEdit);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesDirtyEditorBufferContent",
           TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesIndependentScrollPosition",

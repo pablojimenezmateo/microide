@@ -461,70 +461,37 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
 }
 
 void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {
-  const std::filesystem::path normalized_path = path.lexically_normal();
-  operations_.invalidate_editor_blame_path(normalized_path);
-
-  std::vector<std::size_t> matching_clean_tab_indices;
-  matching_clean_tab_indices.reserve(state_.focused_group().open_tabs.size());
-  for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
-    auto& tab = state_.focused_group().open_tabs[i];
-    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() || IsDirty(i)) {
-      continue;
-    }
-    if (operations_.editor_view_path(*tab.editor_state) == normalized_path) {
-      matching_clean_tab_indices.push_back(i);
-    }
-  }
-  if (matching_clean_tab_indices.empty()) {
-    return;
-  }
-
-  editor::TextViewport reopened_view;
-  if (!reopened_view.OpenFile(normalized_path)) {
-    return;
-  }
-  operations_.apply_editor_preferences(reopened_view);
-  operations_.apply_detected_indent_on_open(reopened_view);
-
-  for (std::size_t i : matching_clean_tab_indices) {
-    auto& editor_state = *state_.focused_group().open_tabs[i].editor_state;
-    const editor::TextViewport* current_view = &editor_state.viewport;
-    editor::TextViewport restored_view = reopened_view;
-    restored_view.SetViewportSize(current_view->visible_lines(), current_view->visible_columns());
-    restored_view.ApplyRestoredViewState(current_view->cursor_line(), current_view->cursor_column(),
-                                         current_view->scroll_line(),
-                                         current_view->horizontal_scroll());
-    editor_state.viewport = restored_view;
-    editor_state.restored_path = normalized_path;
-    editor_state.restored_cursor_line = restored_view.cursor_line();
-    editor_state.restored_cursor_column = restored_view.cursor_column();
-    editor_state.restored_scroll_line = restored_view.scroll_line();
-    editor_state.restored_horizontal_scroll = restored_view.horizontal_scroll();
-    editor_state.needs_restore = false;
-    editor_state.folding_model->Clear();
-    if (i == state_.focused_group().active_tab_index) {
-      SyncActiveEditorTabMetadata();
-      operations_.request_editor_surface_redraw();
-    }
-  }
+  ReloadEditorTabsForPath(path, /*clean_only=*/true);
 }
 
 void TabCoordinator::ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path) {
+  ReloadEditorTabsForPath(path, /*clean_only=*/false);
+}
+
+void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, bool clean_only) {
   const std::filesystem::path normalized_path = path.lexically_normal();
   operations_.invalidate_editor_blame_path(normalized_path);
 
-  std::vector<std::size_t> matching_tab_indices;
-  matching_tab_indices.reserve(state_.focused_group().open_tabs.size());
-  for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
-    const auto& tab = state_.focused_group().open_tabs[i];
-    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-      continue;
+  // Reload every editor view on this path across ALL groups — a split view of the same
+  // file in the non-focused group must not be left showing stale content (nor keep a
+  // stale disk_signature that would later misfire self-write echo suppression).
+  const auto matches = [&](const TabEntry& tab) {
+    return tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+           operations_.editor_view_path(*tab.editor_state) == normalized_path;
+  };
+  bool any_match = false;
+  for (const EditorGroup& group : state_.editor_groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      if (matches(tab) && !(clean_only && TabStateIsDirty(tab))) {
+        any_match = true;
+        break;
+      }
     }
-    if (operations_.editor_view_path(*tab.editor_state) == normalized_path) {
-      matching_tab_indices.push_back(i);
+    if (any_match) {
+      break;
     }
   }
-  if (matching_tab_indices.empty()) {
+  if (!any_match) {
     return;
   }
 
@@ -535,25 +502,34 @@ void TabCoordinator::ReloadEditorTabsForPathFromDisk(const std::filesystem::path
   operations_.apply_editor_preferences(reopened_view);
   operations_.apply_detected_indent_on_open(reopened_view);
 
-  for (std::size_t i : matching_tab_indices) {
-    auto& editor_state = *state_.focused_group().open_tabs[i].editor_state;
-    const editor::TextViewport* current_view = &editor_state.viewport;
-    editor::TextViewport restored_view = reopened_view;
-    restored_view.SetViewportSize(current_view->visible_lines(), current_view->visible_columns());
-    restored_view.ApplyRestoredViewState(current_view->cursor_line(), current_view->cursor_column(),
-                                         current_view->scroll_line(),
-                                         current_view->horizontal_scroll());
-    editor_state.viewport = restored_view;
-    editor_state.restored_path = normalized_path;
-    editor_state.restored_cursor_line = restored_view.cursor_line();
-    editor_state.restored_cursor_column = restored_view.cursor_column();
-    editor_state.restored_scroll_line = restored_view.scroll_line();
-    editor_state.restored_horizontal_scroll = restored_view.horizontal_scroll();
-    editor_state.needs_restore = false;
-    editor_state.folding_model->Clear();
-    if (i == state_.focused_group().active_tab_index) {
-      SyncActiveEditorTabMetadata();
-      operations_.request_editor_surface_redraw();
+  const std::size_t focused_index = state_.clamped_focused_group_index();
+  for (std::size_t g = 0; g < state_.editor_groups.size(); ++g) {
+    EditorGroup& group = state_.editor_groups[g];
+    const bool is_focused_group = g == focused_index;
+    for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
+      TabEntry& tab = group.open_tabs[i];
+      if (!matches(tab) || (clean_only && TabStateIsDirty(tab))) {
+        continue;
+      }
+      auto& editor_state = *tab.editor_state;
+      const editor::TextViewport* current_view = &editor_state.viewport;
+      editor::TextViewport restored_view = reopened_view;
+      restored_view.SetViewportSize(current_view->visible_lines(), current_view->visible_columns());
+      restored_view.ApplyRestoredViewState(current_view->cursor_line(), current_view->cursor_column(),
+                                           current_view->scroll_line(),
+                                           current_view->horizontal_scroll());
+      editor_state.viewport = restored_view;
+      editor_state.restored_path = normalized_path;
+      editor_state.restored_cursor_line = restored_view.cursor_line();
+      editor_state.restored_cursor_column = restored_view.cursor_column();
+      editor_state.restored_scroll_line = restored_view.scroll_line();
+      editor_state.restored_horizontal_scroll = restored_view.horizontal_scroll();
+      editor_state.needs_restore = false;
+      editor_state.folding_model->Clear();
+      if (is_focused_group && i == group.active_tab_index) {
+        SyncActiveEditorTabMetadata();
+        operations_.request_editor_surface_redraw();
+      }
     }
   }
 }

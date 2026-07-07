@@ -103,18 +103,50 @@ FileSignature StatFileSignature(const std::filesystem::path& path) {
   return signature;
 }
 
+namespace {
+
+// If `path` is a symlink, resolve it to the real file we should overwrite. An atomic
+// temp+rename against the link path itself replaces the *link* with a regular file and
+// never touches the intended target; resolving here means the rename lands on the target
+// so the link is preserved and its content is updated. Falls back to `path` for a
+// non-symlink, an unresolvable chain (loop), or any resolution error.
+std::filesystem::path ResolveSymlinkTarget(const std::filesystem::path& path) {
+  std::error_code error;
+  if (!std::filesystem::is_symlink(std::filesystem::symlink_status(path, error)) || error) {
+    return path;
+  }
+  const std::filesystem::path resolved = std::filesystem::weakly_canonical(path, error);
+  if (error || resolved.empty()) {
+    return path;
+  }
+  return resolved;
+}
+
+}  // namespace
+
 bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text) {
   if (path.empty()) {
     return false;
   }
 
+  // Overwrite the symlink's target, not the link node, so saving a symlinked file
+  // preserves the link instead of clobbering it with a fresh regular file.
+  const std::filesystem::path target = ResolveSymlinkTarget(path);
+
   std::error_code error;
-  std::filesystem::create_directories(path.parent_path(), error);
+  std::filesystem::create_directories(target.parent_path(), error);
   if (error) {
     return false;
   }
 
-  const std::filesystem::path temp_path = path.string() + ".tmp";
+  // Snapshot the existing file's mode/ownership so the atomic replace does not silently
+  // reset it to a fresh 0644 inode (dropping +x, setuid/setgid, group-write, or a
+  // restrictive 0600). Empty/valid==false for a brand-new file, which then keeps 0644.
+  const FilePermissions permissions = CaptureFilePermissions(target);
+
+  // Unique per-write temp beside the target (same directory keeps the final rename
+  // atomic on one filesystem) so two writers cannot O_TRUNC each other's staging file.
+  const std::filesystem::path temp_path = UniqueTemporaryPath(target);
   std::filesystem::remove(temp_path, error);
   error.clear();
 
@@ -130,7 +162,10 @@ bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view
     return false;
   }
 
-  if (!util::RenameReplacing(temp_path, path)) {
+  // Carry the original mode/owner onto the temp before it takes the target's place.
+  ApplyFilePermissions(temp_path, permissions);
+
+  if (!util::RenameReplacing(temp_path, target)) {
     std::filesystem::remove(temp_path, error);
     return false;
   }

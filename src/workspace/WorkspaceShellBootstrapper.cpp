@@ -40,6 +40,9 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
   // Re-arm the "after delay" autosave debounce on real buffer edits so a settled dirty
   // buffer saves itself. No-op (one setting read) unless autosave=after_delay.
   MaybeArmAutosaveTimer();
+  // Always-on crash-safety: re-arm the session-snapshot flush so a settled dirty buffer's
+  // unsaved content is durably staged for restore even if the process later crashes.
+  MaybeArmSessionFlushTimer();
   return result;
 }
 

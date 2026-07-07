@@ -144,8 +144,13 @@ void TestArchitectureInvariants() {
              // edit so ApplyLiveSettings re-applies exclude globs + re-scans only on an actual change).
              // 1646: +1 for NotifyLspBufferOpen (engages the LSP on file open / tab activation +
              // session restore, not only on the first edit or go-to-definition).
+             // 1653: +7 for the crash-safety session-flush debounce (MaybeArmSessionFlushTimer /
+             // NextSessionFlushDelayMs / FlushSessionStateForCrashSafety + its four debounce fields),
+             // an always-on net that stages unsaved buffer content to the durable session store so a
+             // crash / kill -9 loses at most the debounce window instead of everything since the last
+             // event-driven save.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1646);
+                                                     1653);
            });
 
   bool hard_failure = false;

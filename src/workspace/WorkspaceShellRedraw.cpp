@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "workspace/WorkspacePersistenceCoordinator.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -834,7 +836,41 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
       next_delay = *autosave_delay;
     }
   }
+  // The crash-safety session flush likewise wakes the loop near its debounce deadline so
+  // a settled dirty buffer is staged for restore without any input to drive it.
+  if (const auto session_flush_delay = NextSessionFlushDelayMs(); session_flush_delay.has_value()) {
+    if (!next_delay.has_value() || *session_flush_delay < *next_delay) {
+      next_delay = *session_flush_delay;
+    }
+  }
   return next_delay;
+}
+
+namespace {
+// How long after the last edit the crash-safety session flush waits before staging the
+// snapshot. Long enough that active typing coalesces into a single flush (keeping disk
+// churn low), short enough that a crash loses only a couple of seconds of unsaved edits.
+constexpr Uint64 kSessionFlushDebounceMs = 2500;
+}  // namespace
+
+std::optional<Uint32> WorkspaceShell::NextSessionFlushDelayMs() const {
+  if (!session_flush_armed_) {
+    return std::nullopt;
+  }
+  const Uint64 elapsed = SDL_GetTicks() - session_flush_edit_epoch_ms_;
+  if (elapsed >= kSessionFlushDebounceMs) {
+    return 0;
+  }
+  return static_cast<Uint32>(kSessionFlushDebounceMs - elapsed);
+}
+
+void WorkspaceShell::FlushSessionStateForCrashSafety() {
+  // Stage the active project's session (open tabs + unsaved buffer content) to the
+  // durable record store. Routed through the same PersistenceCoordinator the clean
+  // shutdown / event-driven saves use, so it inherits the robust unique-temp + .bak
+  // write. Deliberately does NOT touch the user's files — this is a restore snapshot,
+  // not a save.
+  MakePersistenceCoordinator().SaveSessionState();
 }
 
 WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
@@ -959,6 +995,15 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
             .rects = {},
         },
     };
+  }
+  // Crash-safety session flush fires once its debounce elapses. Invisible background
+  // persistence (no user-file write, no UI change), so disarm and fall through WITHOUT
+  // returning — other wake work (autosave, project reload, animation) still runs this
+  // tick. Disarming stops the deadline from busy-looping the wake until the next edit.
+  if (session_flush_armed_ &&
+      (SDL_GetTicks() - session_flush_edit_epoch_ms_) >= kSessionFlushDebounceMs) {
+    session_flush_armed_ = false;
+    FlushSessionStateForCrashSafety();
   }
   // "After delay" autosave fires once the debounce elapses. Disarm before saving so a
   // clean/manually-saved buffer does not busy-loop the wake; the save clears the dirty

@@ -804,6 +804,7 @@ add_executable(microide_tests
   tests/JsonValueTests.cpp
   tests/ProjectFileScannerTests.cpp
   tests/TextFileIOTests.cpp
+  tests/SaveDataIntegrityTests.cpp
   tests/ArchitectureInvariantsTests.cpp
   tests/architecture/ArchitectureFileScanner.cpp
   tests/architecture/ArchitectureRuleHelpers.cpp

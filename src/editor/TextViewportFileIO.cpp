@@ -83,6 +83,24 @@ std::string CanonicalizeLineEndingsToLf(std::string&& content,
   return CanonicalizeLineEndingsToLf(std::string_view(content), metadata);
 }
 
+// Split on '\n' only, preserving every other byte -- including a stray '\r' or a NUL --
+// verbatim inside the line. Used for opaque/binary ("Bytes"-encoded) content where a CR is
+// payload, not a line terminator: the split is exactly reversible by joining the lines back
+// with '\n', so an unedited open->save round-trips the bytes. (SplitLines/DecodeLines cannot
+// be used here: they treat CR as a line ending and would drop it.)
+std::vector<std::string> SplitOnLineFeedOnly(std::string_view content) {
+  std::vector<std::string> lines;
+  std::size_t start = 0;
+  for (std::size_t i = 0; i < content.size(); ++i) {
+    if (content[i] == '\n') {
+      lines.emplace_back(content.substr(start, i - start));
+      start = i + 1;
+    }
+  }
+  lines.emplace_back(content.substr(start));
+  return lines;
+}
+
 }  // namespace
 
 bool TextViewport::OpenFile(const std::filesystem::path& path) {
@@ -102,6 +120,14 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
   // string, so a dense CRLF file could force one allocation per line on open.
   const LineEndingMetadata metadata = AnalyzeLineEndings(*content);
   const TextEncoding encoding = DetectEncoding(*content);
+  if (encoding == TextEncoding::Bytes) {
+    // Opaque/binary content: a 0x0D or 0x0A is data, not a line ending. Split on '\n'
+    // only (keeping CR bytes in the line) and label the ending LF so Save joins with a
+    // single '\n' -- the only transform is the reversible split, so the bytes survive.
+    ResetState(SplitOnLineFeedOnly(*content), path, LineEnding::LF,
+               /*mixed_line_endings=*/false, encoding, /*placeholder=*/false, /*dirty=*/false);
+    return true;
+  }
   ResetStateFromText(CanonicalizeLineEndingsToLf(std::move(*content), metadata), path,
                      metadata.line_ending, metadata.mixed_line_endings, encoding, false, false);
   return true;
@@ -118,17 +144,23 @@ bool TextViewport::Save() {
   // in-memory buffer untouched unless the toggles change the content; this
   // keeps subsequent edits idempotent and avoids the noise of a re-layout
   // immediately after save.
+  // Opaque/binary content is round-tripped verbatim: skip whitespace/newline normalization
+  // and force an LF join (mirroring the '\n'-only split on open) so a stray CR or NUL is
+  // never rewritten. Applying trim or an ending override to binary bytes would corrupt them.
+  const bool opaque = document_->encoding == TextEncoding::Bytes;
   std::vector<std::string> normalized = document_->lines.ToVector();
   bool changed = false;
-  if (save_trim_trailing_whitespace_) {
+  if (!opaque && save_trim_trailing_whitespace_) {
     if (TrimTrailingWhitespace(normalized)) changed = true;
   }
-  if (save_ensure_final_newline_) {
+  if (!opaque && save_ensure_final_newline_) {
     if (EnsureSingleFinalNewline(normalized)) changed = true;
   }
 
-  // "auto" keeps the file's detected ending; an explicit lf/crlf override wins.
-  const LineEnding effective_ending = save_line_ending_override_.value_or(document_->line_ending);
+  // "auto" keeps the file's detected ending; an explicit lf/crlf override wins. Opaque
+  // content ignores both and always joins with LF.
+  const LineEnding effective_ending =
+      opaque ? LineEnding::LF : save_line_ending_override_.value_or(document_->line_ending);
   const std::string text = util::SerializeLines(
       changed ? normalized : document_->lines.Snapshot(), effective_ending);
   if (!util::WriteTextFileAtomically(document_->path, text)) {
@@ -180,10 +212,18 @@ void TextViewport::LoadContent(std::string_view content,
                                std::optional<LineEnding> line_ending) {
   EnsureDocument();
   const LineEndingMetadata metadata = AnalyzeLineEndings(content);
+  const TextEncoding encoding = DetectEncoding(content);
+  if (encoding == TextEncoding::Bytes) {
+    // Same opaque-bytes handling as OpenFile: preserve CR bytes and force an LF ending so a
+    // restored binary buffer saves back byte-for-byte.
+    ResetState(SplitOnLineFeedOnly(content), path, line_ending.value_or(LineEnding::LF),
+               /*mixed_line_endings=*/false, encoding, /*placeholder=*/false, /*dirty=*/false);
+    return;
+  }
   ResetStateFromText(CanonicalizeLineEndingsToLf(content, metadata), path,
                      line_ending.value_or(metadata.line_ending),
                      line_ending.has_value() ? false : metadata.mixed_line_endings,
-                     DetectEncoding(content), false, false);
+                     encoding, false, false);
 }
 
 void TextViewport::LoadLines(std::vector<std::string> lines, const std::filesystem::path& path,

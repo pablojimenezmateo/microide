@@ -402,13 +402,17 @@ void WorkspaceShell::ReloadCleanOpenBuffersFromDisk() {
   ++reload_clean_open_buffers_from_disk_invocation_count_;
   SyncActiveEditorTab();
   std::vector<std::filesystem::path> paths;
-  for (const auto& tab : context_.current_project_state.focused_group().open_tabs) {
-    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-      continue;
-    }
-    const std::filesystem::path path = EditorViewPath(*tab.editor_state);
-    if (!path.empty()) {
-      paths.push_back(path.lexically_normal());
+  // Collect across every group so a buffer open only in the non-focused split is still
+  // reloaded (ReloadCleanEditorTabsForPath itself reloads all groups per path).
+  for (const EditorGroup& group : context_.current_project_state.editor_groups) {
+    for (const auto& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+        continue;
+      }
+      const std::filesystem::path path = EditorViewPath(*tab.editor_state);
+      if (!path.empty()) {
+        paths.push_back(path.lexically_normal());
+      }
     }
   }
   std::sort(paths.begin(), paths.end());

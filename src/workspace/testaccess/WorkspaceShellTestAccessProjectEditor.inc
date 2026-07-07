@@ -476,6 +476,10 @@
   static bool OpenFileInNewTab(WorkspaceShell& shell, const std::filesystem::path& path) {
     return shell.OpenFileInNewTab(path);
   }
+  static bool ApplyLspWorkspaceEdit(WorkspaceShell& shell,
+                                    const std::vector<microide::workspace::CodeActionEdit>& edits) {
+    return shell.ApplyLspWorkspaceEdit(edits);
+  }
   static bool SplitEditorGroup(WorkspaceShell& shell,
                                microide::workspace::EditorSplitOrientation orientation) {
     return shell.SplitEditorGroup(orientation);

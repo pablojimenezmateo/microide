@@ -186,6 +186,33 @@ void WorkspaceShell::MaybeArmAutosaveTimer() {
   autosave_armed_ = !MakeEditorTabService().DirtyIndices().empty();
 }
 
+void WorkspaceShell::MaybeArmSessionFlushTimer() {
+  // Always-on crash-safety debounce (no editor.autosave gate). Detect a real buffer
+  // mutation via the active editable viewport's content revision, mirroring the autosave
+  // arm, but WITHOUT the path-backed gate so untitled dirty buffers are covered too.
+  const editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr) {
+    return;
+  }
+  // content_revision() is per-viewport; a tab switch changes the sampled value with no
+  // edit. Re-baseline against the newly-active viewport WITHOUT resetting the debounce
+  // or disarming, so a flush armed by an edit on another tab still fires (SaveSessionState
+  // persists every dirty tab, not just the active one).
+  if (viewport != session_flush_last_viewport_) {
+    session_flush_last_viewport_ = viewport;
+    session_flush_last_content_revision_ = viewport->content_revision();
+    return;
+  }
+  const std::uint64_t revision = viewport->content_revision();
+  if (revision == session_flush_last_content_revision_) {
+    return;  // Navigation/focus only: keep any pending debounce.
+  }
+  session_flush_last_content_revision_ = revision;
+  session_flush_edit_epoch_ms_ = SDL_GetTicks();
+  // Arm only when there is unsaved content somewhere to persist.
+  session_flush_armed_ = !MakeEditorTabService().DirtyIndices().empty();
+}
+
 std::optional<Uint32> WorkspaceShell::NextAutosaveDelayMs() const {
   if (!autosave_armed_) {
     return std::nullopt;

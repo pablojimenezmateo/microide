@@ -10,6 +10,13 @@
   static void SaveSessionState(WorkspaceShell& shell) {
     shell.MakePersistenceCoordinator().SaveSessionState();
   }
+  // Crash-safety session flush seam: invoke the exact routine the debounced timer fires,
+  // and inspect/drive the debounce arming, without simulating SDL clock advancement.
+  static void FlushSessionStateForCrashSafety(WorkspaceShell& shell) {
+    shell.FlushSessionStateForCrashSafety();
+  }
+  static void ArmSessionFlushTimer(WorkspaceShell& shell) { shell.MaybeArmSessionFlushTimer(); }
+  static bool SessionFlushArmed(WorkspaceShell& shell) { return shell.session_flush_armed_; }
   static bool ActivateCurrentTabAfterStateLoad(WorkspaceShell& shell) {
     return shell.ActivateCurrentTabAfterStateLoad();
   }

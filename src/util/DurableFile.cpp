@@ -1,11 +1,15 @@
 #include "util/DurableFile.h"
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <string>
 #include <system_error>
 
 #if defined(_WIN32)
 #include <fcntl.h>
 #include <io.h>
+#include <process.h>
 #include <sys/stat.h>
 #else
 #include <fcntl.h>
@@ -84,6 +88,57 @@ bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::p
   error.clear();
   std::filesystem::rename(from, to, error);
   return !error;
+}
+
+std::filesystem::path UniqueTemporaryPath(const std::filesystem::path& path) {
+  static std::atomic<std::uint64_t> counter{0};
+  const std::uint64_t seq = counter.fetch_add(1, std::memory_order_relaxed);
+#if defined(_WIN32)
+  const long long pid = static_cast<long long>(_getpid());
+#else
+  const long long pid = static_cast<long long>(::getpid());
+#endif
+  std::string suffix = ".tmp.";
+  suffix += std::to_string(pid);
+  suffix += '.';
+  suffix += std::to_string(seq);
+  return path.string() + suffix;
+}
+
+FilePermissions CaptureFilePermissions(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  (void)path;
+  return FilePermissions{};
+#else
+  struct stat status{};
+  if (::stat(path.c_str(), &status) != 0) {
+    return FilePermissions{};
+  }
+  return FilePermissions{
+      .valid = true,
+      .mode = static_cast<std::uint32_t>(status.st_mode & 07777),
+      .uid = static_cast<std::uint32_t>(status.st_uid),
+      .gid = static_cast<std::uint32_t>(status.st_gid),
+  };
+#endif
+}
+
+void ApplyFilePermissions(const std::filesystem::path& path, const FilePermissions& permissions) {
+  if (!permissions.valid) {
+    return;
+  }
+#if defined(_WIN32)
+  (void)path;
+#else
+  // Ownership first: chown can strip setuid/setgid, so restore mode afterwards. Both
+  // are best-effort — a non-root save of a file it does not own keeps whatever the
+  // fresh temp got, which is strictly no worse than today's unconditional 0644.
+  if (::chown(path.c_str(), static_cast<uid_t>(permissions.uid),
+              static_cast<gid_t>(permissions.gid)) != 0) {
+    // Ignore: EPERM for an unprivileged user is expected and non-fatal.
+  }
+  ::chmod(path.c_str(), static_cast<mode_t>(permissions.mode));
+#endif
 }
 
 }  // namespace microide::util

@@ -2454,9 +2454,152 @@ void TestTextViewportUndoPastSaveMarksDirty() {
   std::filesystem::remove(path);
 }
 
+// Data-integrity (dirty-baseline family): saving while parked ABOVE undone edits must
+// make the saved position the sole clean point — redoing forward off it re-dirties, and
+// undoing past it dirties, because both differ from what is on disk.
+void TestTextViewportSaveAboveUndoneEditsDirtiesRedo() {
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / "microide-save-above-undone.txt";
+  std::filesystem::remove(path);
+  TextViewport viewport;
+  viewport.LoadContent("L\n", path);
+
+  // Two discrete (non-coalescing) edits on different lines -> two undo entries.
+  viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "a", /*record_undo=*/true);  // E1
+  viewport.ReplaceRange(SelectionRange{{1, 0}, {1, 0}}, "b", /*record_undo=*/true);  // E2
+  Expect(viewport.Undo(), "undo should reverse the second insert");  // parked at E1's result
+
+  Expect(viewport.Save(), "saving while above an undone edit should succeed");
+  Expect(!viewport.dirty(), "the just-saved (undone-to) position is clean");
+
+  Expect(viewport.Redo(), "redo should re-apply the undone edit");
+  Expect(viewport.dirty(),
+         "redoing forward off the saved position must dirty (content now differs from disk)");
+
+  Expect(viewport.Undo(), "undo returns to the saved position");
+  Expect(!viewport.dirty(), "returning to the saved position is clean again");
+  Expect(viewport.Undo(), "undo past the save should succeed");
+  Expect(viewport.dirty(), "undoing past the save must dirty");
+  std::filesystem::remove(path);
+}
+
+// Data-integrity: a contiguous keystroke immediately after a save must start a FRESH
+// undo entry, never coalesce into the just-saved top entry. Coalescing would rewrite the
+// saved position's after-state back to dirty and make the saved content unreachable by
+// undo — silently losing it.
+void TestTextViewportSaveThenCoalescingKeystrokeStartsFreshEntry() {
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / "microide-save-then-type.txt";
+  std::filesystem::remove(path);
+  TextViewport viewport;
+  viewport.LoadContent("", path);
+
+  viewport.InsertCharacter('a');
+  Expect(viewport.Save(), "save should succeed");
+  Expect(!viewport.dirty(), "save clears dirty");
+
+  viewport.InsertCharacter('b');  // contiguous with 'a' — must NOT fold into the saved entry
+  Expect(viewport.dirty(), "typing after a save dirties the buffer");
+
+  Expect(viewport.Undo(), "undo should reverse only the post-save keystroke");
+  Expect(viewport.lines()[0] == "a",
+         "undo must land on the saved content 'a', proving the keystroke did not coalesce into it");
+  Expect(!viewport.dirty(), "landing back on the saved content reads clean");
+  std::filesystem::remove(path);
+}
+
+// Data-integrity: a grouped (single-undo) multi-edit interacts with save the same way a
+// single edit does — undo past the save dirties, redo back to it cleans.
+void TestTextViewportGroupedEditSaveUndoMarksDirty() {
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / "microide-grouped-save.txt";
+  std::filesystem::remove(path);
+  TextViewport viewport;
+  viewport.LoadContent("l0\nl1\nl2\nl3\n", path);
+  const auto original = viewport.lines().Snapshot();
+
+  viewport.BeginUndoGroup();
+  viewport.ReplaceRange(SelectionRange{{2, 0}, {3, 0}}, "", /*record_undo=*/true);
+  viewport.ReplaceRange(SelectionRange{{0, 0}, {1, 0}}, "", /*record_undo=*/true);
+  viewport.EndUndoGroup();
+  Expect(viewport.dirty(), "a grouped edit dirties the buffer");
+  Expect(viewport.Save(), "save should succeed");
+  Expect(!viewport.dirty(), "save clears dirty");
+
+  Expect(viewport.Undo(), "one undo reverses the whole group");
+  Expect(viewport.lines().Snapshot() == original, "undo restores the full original buffer");
+  Expect(viewport.dirty(), "undoing past the save dirties (content differs from disk)");
+  Expect(viewport.Redo(), "redo re-applies the group");
+  Expect(!viewport.dirty(), "redoing back to the saved content cleans");
+  std::filesystem::remove(path);
+}
+
+// Data-integrity: once the undo history evicts the saved entry (history cap), undoing as
+// far as possible must NEVER report clean for content that differs from disk. Eviction
+// removing the clean marker must fail safe to "dirty", not "clean".
+void TestTextViewportSaveEvictionNeverFalseClean() {
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / "microide-save-eviction.txt";
+  std::filesystem::remove(path);
+  TextViewport viewport;
+  viewport.LoadContent("seed\n", path);
+
+  viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "x", /*record_undo=*/true);
+  Expect(viewport.Save(), "save should succeed");
+  Expect(!viewport.dirty(), "save clears dirty");
+
+  // Push well past the 128-entry cap with discrete (non-coalescing) edits so the saved
+  // entry (and its clean-bridging successor) are both evicted from the front of the
+  // undo stack.
+  for (int i = 0; i < 200; ++i) {
+    viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "z", /*record_undo=*/true);
+  }
+  while (viewport.Undo()) {
+    // Walk all the way back to the oldest surviving entry.
+  }
+  Expect(viewport.dirty(),
+         "after the saved entry is evicted, the oldest reachable content differs from disk "
+         "and must report dirty (no false clean)");
+  std::filesystem::remove(path);
+}
+
+// Data-integrity: re-saving moves the sole clean point forward. After a second save,
+// undoing to the FIRST save's content reads dirty (disk now holds the second), and
+// redoing back to the second save reads clean.
+void TestTextViewportDoubleSaveRebaselines() {
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / "microide-double-save.txt";
+  std::filesystem::remove(path);
+  TextViewport viewport;
+  viewport.LoadContent("base\n", path);
+
+  viewport.InsertText("A");
+  Expect(viewport.Save(), "first save should succeed");
+  viewport.InsertText("B");
+  Expect(viewport.Save(), "second save should succeed");
+  Expect(!viewport.dirty(), "the second save is the clean point");
+
+  Expect(viewport.Undo(), "undo returns to the first-save content");
+  Expect(viewport.dirty(),
+         "the first-save content differs from disk (which now holds the second save) -> dirty");
+  Expect(viewport.Redo(), "redo returns to the second-save content");
+  Expect(!viewport.dirty(), "the second-save content matches disk -> clean");
+  std::filesystem::remove(path);
+}
+
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextViewport/UndoPastSaveMarksDirty",
           TestTextViewportUndoPastSaveMarksDirty);
+  AddTest(tests, "TextViewport/SaveAboveUndoneEditsDirtiesRedo",
+          TestTextViewportSaveAboveUndoneEditsDirtiesRedo);
+  AddTest(tests, "TextViewport/SaveThenCoalescingKeystrokeStartsFreshEntry",
+          TestTextViewportSaveThenCoalescingKeystrokeStartsFreshEntry);
+  AddTest(tests, "TextViewport/GroupedEditSaveUndoMarksDirty",
+          TestTextViewportGroupedEditSaveUndoMarksDirty);
+  AddTest(tests, "TextViewport/SaveEvictionNeverFalseClean",
+          TestTextViewportSaveEvictionNeverFalseClean);
+  AddTest(tests, "TextViewport/DoubleSaveRebaselines",
+          TestTextViewportDoubleSaveRebaselines);
   AddTest(tests, "TextViewport/GroupedNonContiguousDeletesUndoFully",
           TestTextViewportGroupedNonContiguousDeletesUndoFully);
   AddTest(tests, "TextViewport/ColumnCaretsAreCapped", TestTextViewportColumnCaretsAreCapped);
