@@ -1674,6 +1674,85 @@ return ide.plugin({
          "rename should apply the edit to the second occurrence as well");
 }
 
+// Regression: a rename that touches files which aren't open confirms first, then
+// opens every affected file, applies the edit, and saves them all to disk.
+void TestWorkspaceShellRenameSymbolOpensAndSavesClosedFiles() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path main_py = project / "main.py";
+  const std::filesystem::path helper_py = project / "helper.py";  // stays closed until confirm
+  WriteFile(main_py, "value = 1\n");
+  WriteFile(helper_py, "print(value)\n");
+
+  WritePluginInit(
+      plugins_root, "pylsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "pylsp.server", language_id = "python", command = { "py-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "rename fixture should open the project");
+
+  const std::string main_uri = workspace::FileUriForPath(main_py);
+  const std::string helper_uri = workspace::FileUriForPath(helper_py);
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  stub_raw->SetTestRenameHandler([main_uri, helper_uri](std::string uri, std::string new_name,
+                                                        workspace::LspClient::RenameCallback cb) {
+    (void)uri;
+    workspace::LspClient::WorkspaceEdit edit;
+    edit.changes[main_uri] = {{workspace::LspClient::Range{{0, 0}, {0, 5}}, new_name}};
+    edit.changes[helper_uri] = {{workspace::LspClient::Range{{0, 6}, {0, 11}}, new_name}};
+    cb(std::move(edit));
+  });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
+         "fixture should attach a stub python client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, main_py);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 2);  // inside "value"
+
+  // Type the new name and submit -> LSP rename request.
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "rename-symbol"),
+         "rename-symbol should open the name prompt");
+  WorkspaceShellTestAccess::SetPromptSurfaceInput(shell, "count");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+
+  // helper.py isn't open, so a confirmation appears before opening/saving.
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "a rename touching unopened files should confirm first");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceTitle(shell) == "Rename Across Files",
+         "the confirmation should be the rename-across-files prompt");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceMessage(shell).find("not open") != std::string::npos,
+         "the confirmation should state that some files are not open");
+
+  // Confirm -> open helper.py, apply, save both files.
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  Expect(ReadFile(main_py) == "count = 1\n",
+         "the already-open file should be renamed and saved to disk");
+  Expect(ReadFile(helper_py) == "print(count)\n",
+         "the previously-closed file should be opened, renamed, and saved to disk");
+}
+
 void TestWorkspaceShellOutlineSidebarFromDocumentSymbols() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3774,6 +3853,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFormatDocumentAppliesLspEdits);
   AddTest(tests, "WorkspaceShell/RenameSymbolAppliesLspEdit",
           TestWorkspaceShellRenameSymbolAppliesLspEdit);
+  AddTest(tests, "WorkspaceShell/RenameSymbolOpensAndSavesClosedFiles",
+          TestWorkspaceShellRenameSymbolOpensAndSavesClosedFiles);
   AddTest(tests, "WorkspaceShell/PluginsReloadFallsBackFromMissingActivePluginSidebar",
           TestWorkspaceShellPluginsReloadFallsBackFromMissingActivePluginSidebar);
   AddTest(tests, "WorkspaceShell/SidebarModeMenuListsPluginSidebars",

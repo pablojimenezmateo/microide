@@ -70,6 +70,9 @@ struct PromptSurfaceState {
     // LSP rename: rename the symbol under the cursor to the typed identifier,
     // applying the server's workspace edit across open buffers.
     RenameSymbol,
+    // LSP rename spanning unopened files: confirm before opening every affected
+    // file, applying the rename, and saving them all. Message in `detail`.
+    ConfirmRenameSave,
   };
 
   Kind kind = Kind::None;

@@ -289,6 +289,10 @@ WorkspaceShell::WorkspaceShell() {
               [this](const std::vector<CodeActionEdit>& edits) {
                 return ApplyLspWorkspaceEdit(edits);
               },
+          .apply_rename_workspace_edit =
+              [this](const std::string& new_name, const std::vector<CodeActionEdit>& edits) {
+                ApplyRenameWorkspaceEdit(new_name, edits);
+              },
           .open_file_in_new_tab =
               [this](const std::filesystem::path& path) { return OpenFileInNewTab(path); },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
@@ -1296,6 +1300,122 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
     RequestActiveTabRedraw(/*include_tree_sidebar=*/false);
   }
   return applied_any;
+}
+
+namespace {
+// True when `path` is open in a hydrated editor tab of any group.
+bool IsPathOpenInEditorState(const ProjectWorkspaceState& state,
+                            const std::filesystem::path& normalized_path) {
+  for (const auto& group : state.editor_groups) {
+    for (const auto& tab : group.open_tabs) {
+      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+          !tab.editor_state->needs_restore &&
+          tab.editor_state->viewport.path().lexically_normal() == normalized_path) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+}  // namespace
+
+void WorkspaceShell::ApplyRenameWorkspaceEdit(const std::string& new_name,
+                                              const std::vector<CodeActionEdit>& edits) {
+  if (edits.empty()) {
+    return;
+  }
+  // Distinct affected files (an empty path targets the active buffer, always open).
+  std::vector<std::filesystem::path> affected;
+  std::size_t closed_count = 0;
+  for (const CodeActionEdit& edit : edits) {
+    if (edit.path.empty()) {
+      continue;
+    }
+    const std::filesystem::path normalized = edit.path.lexically_normal();
+    if (std::find(affected.begin(), affected.end(), normalized) != affected.end()) {
+      continue;
+    }
+    affected.push_back(normalized);
+    if (!IsPathOpenInEditorState(context_.current_project_state, normalized)) {
+      ++closed_count;
+    }
+  }
+
+  if (closed_count == 0) {
+    // Everything is already open: apply in place, leaving the buffers dirty like any
+    // other edit (the user saves as usual).
+    ApplyLspWorkspaceEdit(edits);
+    return;
+  }
+
+  // Some files are not open. Confirm before opening + saving them all — writing
+  // files the user hasn't opened is an outward, hard-to-undo action.
+  std::string detail = "Renaming to '" + new_name + "' changes " +
+                       std::to_string(affected.size()) + (affected.size() == 1 ? " file" : " files") +
+                       " (" + std::to_string(closed_count) + " not open). Open all and save?";
+  pending_rename_save_ =
+      PendingRenameSave{new_name, edits, std::move(affected)};
+  OpenPromptSurface(PromptSurfaceState::Action::ConfirmRenameSave,
+                    PromptSurfaceState::Kind::Confirm, std::filesystem::path{}, std::string{});
+  context_.prompts.surface.detail = std::move(detail);
+  RequestChromeRedraw();
+}
+
+void WorkspaceShell::DiscardPendingRenameSave() { pending_rename_save_.reset(); }
+
+void WorkspaceShell::CommitPendingRenameSave() {
+  if (!pending_rename_save_.has_value()) {
+    return;
+  }
+  const PendingRenameSave pending = std::move(*pending_rename_save_);
+  pending_rename_save_.reset();
+
+  // Open every affected file that is not already open (OpenFileInNewTab dedups /
+  // reloads clean tabs), so ApplyLspWorkspaceEdit resolves each edit to a buffer.
+  for (const std::filesystem::path& path : pending.affected_paths) {
+    if (!IsPathOpenInEditorState(context_.current_project_state, path)) {
+      OpenFileInNewTab(path);
+    }
+  }
+  ApplyLspWorkspaceEdit(pending.edits);
+
+  // Save every affected buffer to disk. Skip a buffer whose file changed on disk
+  // since we opened it (surface the external-change banner instead of clobbering).
+  std::size_t saved = 0;
+  bool any_conflict = false;
+  for (auto& group : context_.current_project_state.editor_groups) {
+    for (auto& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+          tab.editor_state->needs_restore) {
+        continue;
+      }
+      editor::TextViewport& viewport = tab.editor_state->viewport;
+      const std::filesystem::path normalized = viewport.path().lexically_normal();
+      if (std::find(pending.affected_paths.begin(), pending.affected_paths.end(), normalized) ==
+          pending.affected_paths.end()) {
+        continue;
+      }
+      if (!viewport.dirty()) {
+        continue;
+      }
+      if (viewport.DetectDiskConflict() != editor::TextViewport::DiskConflict::None) {
+        any_conflict = true;
+        continue;
+      }
+      if (viewport.Save()) {
+        NotifyPluginBufferSave(viewport.path());
+        ++saved;
+      }
+    }
+  }
+
+  std::string feedback = "Renamed to '" + pending.new_name + "' in " + std::to_string(saved) +
+                         (saved == 1 ? " file" : " files");
+  if (any_conflict) {
+    feedback += " (some skipped: changed on disk)";
+  }
+  context_.current_project_state.panel.feedback.text = std::move(feedback);
+  RequestActiveTabRedraw(/*include_tree_sidebar=*/true);
 }
 
 std::vector<LspClient::Diagnostic> WorkspaceShell::CollectLspContextDiagnostics(

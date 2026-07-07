@@ -945,6 +945,21 @@
   // plugin coordinates); shares its resolve-open-buffer-only + grouped-undo +
   // highest-position-first apply discipline.
   bool ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& edits);
+  // Apply an LSP rename result. If every affected file is already open, applies in
+  // place (dirty). If some are closed, stashes the edit and confirms before opening
+  // them all, applying, and saving — a project-wide rename that stays undo-coherent.
+  void ApplyRenameWorkspaceEdit(const std::string& new_name,
+                                const std::vector<CodeActionEdit>& edits);
+  // Open, apply, and save the pending rename after the user confirms (or discard it
+  // on cancel). No-op when nothing is pending.
+  void CommitPendingRenameSave();
+  void DiscardPendingRenameSave();
+  struct PendingRenameSave {
+    std::string new_name;
+    std::vector<CodeActionEdit> edits;
+    std::vector<std::filesystem::path> affected_paths;
+  };
+  std::optional<PendingRenameSave> pending_rename_save_;
   // Collect the diagnostics for `viewport`'s file that overlap `range`, in LSP
   // wire form, to populate a textDocument/codeAction request context.
   std::vector<LspClient::Diagnostic> CollectLspContextDiagnostics(const editor::TextViewport& viewport, const editor::SelectionRange& range) const;

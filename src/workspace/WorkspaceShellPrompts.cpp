@@ -203,6 +203,8 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
       return "Go to Line";
     case PromptSurfaceState::Action::RenameSymbol:
       return "Rename Symbol";
+    case PromptSurfaceState::Action::ConfirmRenameSave:
+      return "Rename Across Files";
   }
   return "Prompt";
 }
@@ -259,6 +261,8 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Enter a line[:column] to jump to.";
     case PromptSurfaceState::Action::RenameSymbol:
       return "Enter a new name for the symbol under the cursor.";
+    case PromptSurfaceState::Action::ConfirmRenameSave:
+      return context_.prompts.surface.detail;
   }
   return {};
 }
@@ -311,6 +315,8 @@ std::vector<std::string> WorkspaceShell::PromptSurfaceActionLabels() const {
       return {"Go", "Cancel"};
     case PromptSurfaceState::Action::RenameSymbol:
       return {"Rename", "Cancel"};
+    case PromptSurfaceState::Action::ConfirmRenameSave:
+      return {"Rename & Save", "Cancel"};
   }
   return {"OK", "Cancel"};
 }
@@ -361,6 +367,17 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     // success branch previously passed `!opened` (== false), stranding keyboard
     // focus on the dismissed prompt and leaving input dead until the next click.
     MakePromptSurfaceService().DismissPromptSurface(true);
+    return;
+  }
+  if (context_.prompts.surface_visible &&
+      context_.prompts.surface.action == PromptSurfaceState::Action::ConfirmRenameSave) {
+    const bool confirmed = resolution != DirtyPathResolution::Discard;
+    MakePromptSurfaceService().DismissPromptSurface(true);
+    if (confirmed) {
+      CommitPendingRenameSave();
+    } else {
+      DiscardPendingRenameSave();
+    }
     return;
   }
   if (context_.prompts.surface_visible &&

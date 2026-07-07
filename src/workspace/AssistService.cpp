@@ -883,7 +883,7 @@ bool AssistService::RenameSymbol(const std::string& new_name, std::string* error
       ByteColumnToLspPosition(*viewport, viewport->cursor_line(), viewport->cursor_column(), encoding);
   client->RequestRenameAsync(
       FileUriForPath(request_path), position, new_name,
-      [this, request_path](std::optional<LspClient::WorkspaceEdit> edit) {
+      [this, request_path, new_name](std::optional<LspClient::WorkspaceEdit> edit) {
         operations_.finish_tracked_lsp_request();
         if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
           return;
@@ -894,7 +894,8 @@ bool AssistService::RenameSymbol(const std::string& new_name, std::string* error
         }
         // Flatten the URI-keyed WorkspaceEdit into the shared edit records (0-based
         // LSP coordinates; the apply path maps columns through the position
-        // encoding), then apply the whole set together.
+        // encoding). The host decides whether to apply in place or open + save the
+        // files that are not currently open.
         std::vector<CodeActionEdit> workspace_edits;
         for (const auto& [uri, text_edits] : edit->changes) {
           const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
@@ -913,12 +914,10 @@ bool AssistService::RenameSymbol(const std::string& new_name, std::string* error
             });
           }
         }
-        if (operations_.apply_lsp_workspace_edit &&
-            !operations_.apply_lsp_workspace_edit(workspace_edits)) {
-          // v1 only edits already-open buffers; a rename touching closed files
-          // applies to the open ones and reports the rest as skipped.
-          output_channels_->AppendLine("lsp.log", "LSP Log",
-                                       "Rename applied to open buffers only");
+        if (operations_.apply_rename_workspace_edit) {
+          operations_.apply_rename_workspace_edit(new_name, workspace_edits);
+        } else if (operations_.apply_lsp_workspace_edit) {
+          operations_.apply_lsp_workspace_edit(workspace_edits);
         }
       });
   return true;

@@ -152,8 +152,11 @@ void TestArchitectureInvariants() {
              // 1658: +5 for the LSP feature-wiring members: ComputeCenteredMenuOverlayRect (the
              // centered code-action menu), QueryLspDocumentSymbolsForOutline (LSP documentSymbol
              // outline fallback, 3 lines), and KickOffLspHover (LSP hover fallback).
+             // 1668: +10 for project-wide rename: ApplyRenameWorkspaceEdit / CommitPendingRenameSave
+             // / DiscardPendingRenameSave + the PendingRenameSave struct and its optional member
+             // (open + apply + save the files a rename touches that were not already open).
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1658);
+                                                     1668);
            });
 
   bool hard_failure = false;
