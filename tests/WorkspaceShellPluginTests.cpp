@@ -1934,6 +1934,85 @@ return ide.plugin({
          "the language server's signature must win over the plugin's for a served language");
 }
 
+// prepareRename refines the just-opened Rename Symbol prompt: it prefills the
+// server's placeholder, and rejects positions the server reports as not renameable.
+void TestWorkspaceShellPrepareRenameRefinesPrompt() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path md_file = project / "notes.md";
+  WriteFile(md_file, "alpha\n");
+
+  WritePluginInit(
+      plugins_root, "mdren",
+      R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "mdren",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "md-lsp-server" } })
+  end
+})
+)lua");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "rename fixture should open the project");
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  // First: the server suggests a placeholder distinct from the heuristic seed.
+  stub_raw->SetTestPrepareRenameHandler(
+      [](std::string, workspace::LspClient::Position,
+         workspace::LspClient::PrepareRenameCallback cb) {
+        workspace::LspClient::PrepareRename result;
+        result.can_rename = true;
+        result.placeholder = "server_placeholder";
+        cb(std::move(result));
+      });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
+         "fixture should attach a stub markdown client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, md_file);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 5);
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "rename-symbol"),
+         "rename-symbol should open the prompt");
+  // The prompt opens immediately seeded with the heuristic "alpha".
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "rename prompt should be visible");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "alpha",
+         "the prompt opens with the heuristic identifier seed");
+  // Draining delivers the prepareRename response, which refines the seed.
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "server_placeholder",
+         "prepareRename must prefill the server's placeholder over the heuristic seed");
+
+  // Now: the server reports the position is not renameable → the prompt is closed.
+  stub_raw->SetTestPrepareRenameHandler(
+      [](std::string, workspace::LspClient::Position,
+         workspace::LspClient::PrepareRenameCallback cb) {
+        workspace::LspClient::PrepareRename result;
+        result.can_rename = false;
+        cb(std::move(result));
+      });
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "rename-symbol"),
+         "rename-symbol should re-open the prompt");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "prompt should reopen");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "a non-renameable position must dismiss the rename prompt");
+}
+
 // Regression for server-initiated workspace/applyEdit: a WorkspaceEdit pushed by
 // the language server must apply to open buffers in place AND write closed files
 // silently on disk (no tab), matching the client-initiated rename behavior.
@@ -4166,6 +4245,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompletionMergesPluginAndLspSources);
   AddTest(tests, "WorkspaceShell/SignatureHelpPrefersLspOverPlugin",
           TestWorkspaceShellSignatureHelpPrefersLspOverPlugin);
+  AddTest(tests, "WorkspaceShell/PrepareRenameRefinesPrompt",
+          TestWorkspaceShellPrepareRenameRefinesPrompt);
   AddTest(tests, "WorkspaceShell/ServerApplyEditEditsOpenAndClosedFiles",
           TestWorkspaceShellServerApplyEditEditsOpenAndClosedFiles);
   AddTest(tests, "WorkspaceShell/PluginsReloadFallsBackFromMissingActivePluginSidebar",

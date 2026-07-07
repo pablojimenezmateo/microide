@@ -147,6 +147,20 @@ std::vector<LspClient::DocumentSymbol> ParseDocumentSymbols(const JsonValue& res
   return symbols;
 }
 
+std::vector<LspClient::TextEdit> ParseTextEdits(const JsonValue& result, std::size_t max_edits) {
+  std::vector<LspClient::TextEdit> edits;
+  if (!result.IsArray()) {
+    return edits;
+  }
+  const auto& array = result.AsArray();
+  const std::size_t count = std::min(array.size(), max_edits);
+  edits.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    edits.emplace_back(ParseRange(array[i]["range"]), array[i]["newText"].AsString());
+  }
+  return edits;
+}
+
 LspClient::WorkspaceEdit ParseWorkspaceEdit(const JsonValue& edit, std::size_t max_files,
                                             std::size_t max_edits_total) {
   LspClient::WorkspaceEdit out;
@@ -187,6 +201,31 @@ LspClient::WorkspaceEdit ParseWorkspaceEdit(const JsonValue& edit, std::size_t m
       }
       append_edits(doc_change["textDocument"]["uri"].AsString(), doc_change["edits"]);
     }
+  }
+  return out;
+}
+
+LspClient::PrepareRename ParsePrepareRename(const JsonValue& result) {
+  LspClient::PrepareRename out;
+  if (result.IsNull()) {
+    return out;  // server says this position is not renameable
+  }
+  if (result.HasKey("defaultBehavior")) {
+    out.can_rename = result["defaultBehavior"].AsBool(false);
+    return out;
+  }
+  if (result.HasKey("range")) {
+    // { range: Range, placeholder: string }
+    out.can_rename = true;
+    out.range = ParseRange(result["range"]);
+    out.placeholder = result["placeholder"].AsString();
+    return out;
+  }
+  if (result.HasKey("start") && result.HasKey("end")) {
+    // A bare Range (no placeholder; the caller keeps its heuristic seed).
+    out.can_rename = true;
+    out.range = ParseRange(result);
+    return out;
   }
   return out;
 }

@@ -288,11 +288,57 @@ void TestLspProtocolParsesSignatureHelp() {
   Expect(none.signatures.empty(), "missing signatures array yields no signatures");
 }
 
+void TestLspProtocolParsesPrepareRename() {
+  // `{ range, placeholder }` shape.
+  const LspClient::PrepareRename with_placeholder = codec::ParsePrepareRename(Json(
+      R"({"range":{"start":{"line":2,"character":4},"end":{"line":2,"character":9}},
+          "placeholder":"widget"})"));
+  Expect(with_placeholder.can_rename, "range+placeholder shape is renameable");
+  Expect(with_placeholder.placeholder == "widget", "placeholder parsed");
+  Expect(with_placeholder.range.start.character == 4, "range start parsed");
+
+  // A bare Range (no placeholder).
+  const LspClient::PrepareRename bare_range = codec::ParsePrepareRename(
+      Json(R"({"start":{"line":1,"character":0},"end":{"line":1,"character":3}})"));
+  Expect(bare_range.can_rename, "bare range is renameable");
+  Expect(bare_range.placeholder.empty(), "bare range carries no placeholder");
+  Expect(bare_range.range.end.character == 3, "bare range end parsed");
+
+  // `{ defaultBehavior: true/false }`.
+  Expect(codec::ParsePrepareRename(Json(R"({"defaultBehavior":true})")).can_rename,
+         "defaultBehavior true is renameable");
+  Expect(!codec::ParsePrepareRename(Json(R"({"defaultBehavior":false})")).can_rename,
+         "defaultBehavior false is not renameable");
+
+  // JSON null => the server says this position is not renameable.
+  Expect(!codec::ParsePrepareRename(Json("null")).can_rename,
+         "null result is not renameable");
+}
+
+void TestLspProtocolParsesTextEdits() {
+  const auto edits = codec::ParseTextEdits(Json(R"([
+      {"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":2}},"newText":"AB"},
+      {"range":{"start":{"line":3,"character":1},"end":{"line":3,"character":1}},"newText":"x"}])"));
+  Expect(edits.size() == 2, "both edits parse");
+  Expect(edits[0].second == "AB" && edits[1].second == "x", "newText parsed for each edit");
+  Expect(edits[0].first.end.character == 2, "range parsed for each edit");
+
+  // Non-array yields no edits; the cap truncates.
+  Expect(codec::ParseTextEdits(Json("{}")).empty(), "non-array yields no edits");
+  const auto capped = codec::ParseTextEdits(Json(R"([
+      {"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"newText":"a"},
+      {"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":1}},"newText":"b"}])"),
+      /*max_edits=*/1);
+  Expect(capped.size() == 1, "the edit cap truncates");
+}
+
 }  // namespace
 
 void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspProtocol/ParsesWorkspaceEdit", TestLspProtocolParsesWorkspaceEdit);
   AddTest(tests, "LspProtocol/ParsesSignatureHelp", TestLspProtocolParsesSignatureHelp);
+  AddTest(tests, "LspProtocol/ParsesPrepareRename", TestLspProtocolParsesPrepareRename);
+  AddTest(tests, "LspProtocol/ParsesTextEdits", TestLspProtocolParsesTextEdits);
   AddTest(tests, "LspProtocol/ParsesHoverContents", TestLspProtocolParsesHoverContents);
   AddTest(tests, "LspProtocol/ParseCapsBoundHostileArrays",
           TestLspProtocolParseCapsBoundHostileArrays);

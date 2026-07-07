@@ -208,11 +208,14 @@ void WorkspaceActionContext::OpenRenameSymbolPrompt() {
     return;
   }
   // Prefill with the identifier under the cursor so a rename usually starts from the
-  // current name.
+  // current name — this opens instantly. The language server's prepareRename then
+  // refines the seed / rejects invalid positions asynchronously (best-effort).
   std::string seed = operations_.symbol_at_cursor ? operations_.symbol_at_cursor() : std::string{};
   operations_.open_prompt_surface(PromptSurfaceState::Action::RenameSymbol,
-                                  PromptSurfaceState::Kind::TextInput, std::filesystem::path{},
-                                  std::move(seed));
+                                  PromptSurfaceState::Kind::TextInput, std::filesystem::path{}, seed);
+  if (operations_.refine_rename_prompt) {
+    operations_.refine_rename_prompt(std::move(seed));
+  }
 }
 
 void WorkspaceActionContext::EditBreakpointModifierFromMenu(ActionId id) {
@@ -446,6 +449,35 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .rename_symbol =
               [this](const std::string& new_name, std::string* error_message) {
                 return assist_service_.RenameSymbol(new_name, error_message);
+              },
+          // Refine a just-opened Rename Symbol prompt from the server's prepareRename:
+          // prefill the exact placeholder (only while the user has not typed over the
+          // heuristic seed) or dismiss with a hint for a non-renameable position.
+          // Best-effort and async; a no-op when no server serves the buffer.
+          .refine_rename_prompt =
+              [this](std::string original_seed) {
+                assist_service_.PrepareRenameForCursor(
+                    [this, original_seed = std::move(original_seed)](
+                        bool can_rename, std::string placeholder) {
+                      if (!context_.prompts.surface_visible ||
+                          context_.prompts.surface.action !=
+                              PromptSurfaceState::Action::RenameSymbol) {
+                        return;
+                      }
+                      if (!can_rename) {
+                        DismissPromptSurface(true);
+                        context_.current_project_state.panel.feedback.text =
+                            "You cannot rename this element";
+                        RequestChromeRedraw();
+                        return;
+                      }
+                      if (!placeholder.empty() && placeholder != original_seed &&
+                          context_.prompts.surface.input.text() == original_seed) {
+                        context_.prompts.surface.input.SetText(placeholder);
+                        context_.prompts.surface.input.SelectAll();
+                        RequestPromptRedraw();
+                      }
+                    });
               },
           .show_signature_help =
               [this](std::string* error_message) {

@@ -107,11 +107,14 @@ struct LspClient::Impl {
   std::function<void(std::string, std::string, RenameCallback)> test_rename_handler;
   std::function<void(std::string, Position, CompletionCallback)> test_completion_handler;
   std::function<void(std::string, Position, SignatureHelpCallback)> test_signature_help_handler;
+  std::function<void(std::string, Position, PrepareRenameCallback)> test_prepare_rename_handler;
 
   // Server semantic-token legend (index -> type name), captured at initialize.
   // Guarded by `mutex`. Empty when the server advertises no semanticTokens provider.
   std::vector<std::string> semantic_token_types;
   std::atomic<bool> supports_semantic_tokens{false};
+  // Server advertised renameProvider.prepareProvider (captured at initialize).
+  std::atomic<bool> supports_prepare_rename{false};
 
   // Negotiated position encoding (LSP `capabilities.positionEncoding`), captured at
   // initialize. Guarded by `mutex`. We advertise utf-8 first, so a conformant server

@@ -114,6 +114,12 @@ class AssistService {
   // Format the active editable buffer via the language server's
   // textDocument/formatting and apply the returned edits to the open buffer.
   bool FormatActiveDocument(std::string* error_message = nullptr);
+  // Prepare-rename probe for the symbol under the cursor: resolves the LSP client,
+  // fires textDocument/prepareRename, and delivers the result to `callback` on the
+  // main-thread drain. `callback(can_rename, placeholder)` — placeholder is the
+  // server's suggested seed (may be empty). Never invoked when no server serves the
+  // buffer (the caller keeps its heuristic seed and validates on rename).
+  void PrepareRenameForCursor(std::function<void(bool, std::string)> callback);
   // The identifier under the cursor in the active editable buffer (word chars:
   // alnum + '_'), or empty when the cursor is not on one. Used to prefill the
   // rename prompt.
@@ -135,6 +141,11 @@ class AssistService {
   EditSideEffectsSnapshot CaptureEditSnapshot(editor::TextViewport& viewport) const;
   void ApplyEditSideEffects(editor::TextViewport& viewport,
                             const EditSideEffectsSnapshot& snapshot) const;
+
+  // Apply a textDocument/formatting or rangeFormatting result to the active buffer
+  // (shared by whole-document and range formatting). Drops superseded results.
+  void ApplyFormattingResult(const std::filesystem::path& request_path,
+                             std::optional<std::vector<LspClient::TextEdit>> edits);
 
   // Per-request state for the LSP-primary *concurrent* provider model: a plugin
   // worker and the language server are queried at once, then their results are

@@ -106,7 +106,7 @@ void LspClient::Impl::DoInitializeBlocking() {
 
   JsonObject rename_caps;
   rename_caps["dynamicRegistration"] = JsonValue(false);
-  rename_caps["prepareSupport"] = JsonValue(false);
+  rename_caps["prepareSupport"] = JsonValue(true);
 
   JsonObject code_action_caps;
   code_action_caps["dynamicRegistration"] = JsonValue(false);
@@ -125,6 +125,9 @@ void LspClient::Impl::DoInitializeBlocking() {
 
   JsonObject formatting_caps;
   formatting_caps["dynamicRegistration"] = JsonValue(false);
+
+  JsonObject range_formatting_caps;
+  range_formatting_caps["dynamicRegistration"] = JsonValue(false);
 
   JsonObject document_symbol_caps;
   document_symbol_caps["dynamicRegistration"] = JsonValue(false);
@@ -155,6 +158,7 @@ void LspClient::Impl::DoInitializeBlocking() {
   text_document_caps["rename"] = JsonValue(std::move(rename_caps));
   text_document_caps["codeAction"] = JsonValue(std::move(code_action_caps));
   text_document_caps["formatting"] = JsonValue(std::move(formatting_caps));
+  text_document_caps["rangeFormatting"] = JsonValue(std::move(range_formatting_caps));
   text_document_caps["documentSymbol"] = JsonValue(std::move(document_symbol_caps));
   text_document_caps["semanticTokens"] = JsonValue(std::move(semantic_tokens_caps));
 
@@ -303,6 +307,16 @@ void LspClient::Impl::DoInitializeBlocking() {
               supports_semantic_tokens.store(true, std::memory_order_release);
             }
           }
+
+          // renameProvider may be a bare bool (plain rename) or an object that can
+          // carry prepareProvider (textDocument/prepareRename support).
+          if (server_caps.HasKey("renameProvider")) {
+            const auto& rename_provider = server_caps["renameProvider"];
+            if (rename_provider.HasKey("prepareProvider")) {
+              supports_prepare_rename.store(
+                  rename_provider["prepareProvider"].AsBool(false), std::memory_order_release);
+            }
+          }
         }
         got_init = true;
       }
@@ -395,6 +409,7 @@ void LspClient::Impl::DoShutdown() {
       test_rename_handler = nullptr;
       test_completion_handler = nullptr;
       test_signature_help_handler = nullptr;
+      test_prepare_rename_handler = nullptr;
       apply_edit_handler = nullptr;
     }
     initialized.store(false, std::memory_order_release);

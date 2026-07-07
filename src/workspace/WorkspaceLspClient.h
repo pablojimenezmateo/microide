@@ -251,12 +251,32 @@ class LspClient {
   void RequestFormattingAsync(std::string uri, int tab_size, bool insert_spaces,
                                FormattingCallback callback);
 
+  // Async textDocument/rangeFormatting — format only `range` (a selection). Same
+  // TextEdit[] result shape as whole-document formatting.
+  void RequestRangeFormattingAsync(std::string uri, Range range, int tab_size,
+                                   bool insert_spaces, FormattingCallback callback);
+
   // Async textDocument/definition.
   void RequestGoToDefinitionAsync(std::string uri, Position pos, LocationCallback callback);
 
   // Async textDocument/references.
   void RequestFindReferencesAsync(std::string uri, Position pos, bool include_declaration,
                                    LocationCallback callback);
+
+  // Result of a textDocument/prepareRename probe: whether the position is
+  // renameable, the identifier range, and a suggested placeholder (the current
+  // symbol text) to seed the rename prompt.
+  struct PrepareRename {
+    bool can_rename = false;
+    Range range{};
+    std::string placeholder;
+  };
+  using PrepareRenameCallback = std::function<void(std::optional<PrepareRename>)>;
+
+  // Async textDocument/prepareRename — validate the cursor position and fetch the
+  // server's suggested placeholder before opening the rename prompt. nullopt when
+  // the server has no prepareRename provider (caller falls back to its heuristic).
+  void RequestPrepareRenameAsync(std::string uri, Position pos, PrepareRenameCallback callback);
 
   // Async textDocument/rename.
   void RequestRenameAsync(std::string uri, Position pos, std::string new_name,
@@ -274,6 +294,10 @@ class LspClient {
   // provider; in that case RequestSemanticTokensAsync reports nullopt.
   std::vector<std::string> SemanticTokenLegend() const;
   bool SupportsSemanticTokens() const;
+
+  // True when the server advertised renameProvider.prepareProvider — i.e. a
+  // textDocument/prepareRename request is worth sending.
+  bool SupportsPrepareRename() const;
 
   // Unit tests: pretend a connected server without starting a subprocess.
   void EnableTestStubMode();
@@ -299,6 +323,11 @@ class LspClient {
   void SetTestSignatureHelpHandler(
       std::function<void(std::string uri, Position pos, SignatureHelpCallback cb)> handler);
   void ClearTestSignatureHelpHandler();
+  // Unit tests: feed a canned prepareRename response (also marks the capability
+  // supported so the request is not short-circuited).
+  void SetTestPrepareRenameHandler(
+      std::function<void(std::string uri, Position pos, PrepareRenameCallback cb)> handler);
+  void ClearTestPrepareRenameHandler();
   // Unit tests: drive the server-request path (as the I/O thread would) so a
   // simulated workspace/applyEdit exercises the real dispatch → main-thread apply.
   // The reply is enqueued to the outbound queue (swallowed in stub mode).

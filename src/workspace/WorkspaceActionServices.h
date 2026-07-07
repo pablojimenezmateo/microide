@@ -82,6 +82,9 @@ class WorkspaceActionContext {
     std::function<bool(std::string*)> format_active_document;
     std::function<std::string()> symbol_at_cursor;
     std::function<bool(const std::string&, std::string*)> rename_symbol;
+    // Refine a just-opened Rename Symbol prompt from the server's prepareRename
+    // (prefill the placeholder / reject non-renameable positions). Best-effort.
+    std::function<void(std::string)> refine_rename_prompt;
     std::function<bool(std::string*)> show_signature_help;
     std::function<bool(std::string*)> discover_tests_for_active_buffer;
     std::function<bool(const std::vector<std::string>&, std::string*)> run_tests;

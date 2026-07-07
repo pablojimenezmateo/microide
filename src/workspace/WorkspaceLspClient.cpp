@@ -377,6 +377,22 @@ bool LspClient::SupportsSemanticTokens() const {
   return impl_->supports_semantic_tokens.load(std::memory_order_acquire);
 }
 
+bool LspClient::SupportsPrepareRename() const {
+  return impl_->supports_prepare_rename.load(std::memory_order_acquire);
+}
+
+void LspClient::SetTestPrepareRenameHandler(
+    std::function<void(std::string uri, Position pos, PrepareRenameCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_prepare_rename_handler = std::move(handler);
+  impl_->supports_prepare_rename.store(true, std::memory_order_release);
+}
+
+void LspClient::ClearTestPrepareRenameHandler() {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_prepare_rename_handler = nullptr;
+}
+
 void LspClient::SetTestSemanticTokensHandler(
     std::function<void(std::string uri, SemanticTokensCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);

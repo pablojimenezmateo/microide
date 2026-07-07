@@ -19,10 +19,21 @@ LspClient::Location ParseLocation(const util::JsonValue& value);
 std::vector<LspClient::Location> ParseLocations(const util::JsonValue& result);
 LspClient::Diagnostic ParseDiagnostic(const util::JsonValue& value);
 std::vector<LspClient::Diagnostic> ParseDiagnostics(const util::JsonValue& array);
+// Parse a TextEdit[] (the shape textDocument/formatting and rangeFormatting both
+// return). Non-array input yields no edits; `max_edits` caps the count as a
+// hostile-server backstop (a whole-document reformat legitimately returns many).
+std::vector<LspClient::TextEdit> ParseTextEdits(const util::JsonValue& result,
+                                                std::size_t max_edits = 200000);
 // Accepts DocumentSymbol (range/selectionRange/children) or SymbolInformation
 // (location.range) item shapes.
 LspClient::DocumentSymbol ParseDocumentSymbol(const util::JsonValue& value);
 std::vector<LspClient::DocumentSymbol> ParseDocumentSymbols(const util::JsonValue& result);
+
+// Parse a `textDocument/prepareRename` result. Handles all wire shapes: a bare
+// Range, `{range, placeholder}`, `{defaultBehavior}`, and JSON null (position not
+// renameable → can_rename=false). Callers distinguish "no provider" (nullopt at
+// the request layer) from "server says not here" (can_rename=false).
+LspClient::PrepareRename ParsePrepareRename(const util::JsonValue& result);
 
 // Parse a `textDocument/signatureHelp` result. Handles a parameter `label` given
 // either as a string or as `[start, end]` offsets into the signature label, and

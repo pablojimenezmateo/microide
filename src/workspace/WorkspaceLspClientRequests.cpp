@@ -200,23 +200,50 @@ void LspClient::RequestFormattingAsync(std::string uri, int tab_size, bool inser
   impl_->DispatchResultRequest(
       "textDocument/formatting", JsonValue(std::move(params)), std::move(callback),
       [](const util::JsonValue& result) -> std::optional<std::vector<TextEdit>> {
+        // Return the FULL TextEdit[]: a whole-document reformat commonly comes back
+        // as many edits, and dropping all but the first silently corrupts the
+        // buffer. ParseTextEdits caps the count as a hostile-server backstop.
         if (!result.IsArray()) {
           return std::nullopt;
         }
-        // Return the FULL TextEdit[]: a whole-document reformat commonly comes back
-        // as many edits, and dropping all but the first silently corrupts the
-        // buffer. Cap the count as a hostile-server backstop (mirrors the other
-        // request caps); a real formatter never approaches this.
-        constexpr std::size_t kMaxFormattingEdits = 200000;
-        std::vector<TextEdit> edits;
-        const auto& array = result.AsArray();
-        const std::size_t count = std::min(array.size(), kMaxFormattingEdits);
-        edits.reserve(count);
-        for (std::size_t i = 0; i < count; ++i) {
-          edits.emplace_back(lsp_protocol::ParseRange(array[i]["range"]),
-                             array[i]["newText"].AsString());
+        return lsp_protocol::ParseTextEdits(result);
+      });
+}
+
+void LspClient::RequestRangeFormattingAsync(std::string uri, Range range, int tab_size,
+                                            bool insert_spaces, FormattingCallback callback) {
+  if (!callback) return;
+  {
+    std::lock_guard lock(impl_->mutex);
+    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
+      // Range formatting shares the formatting stub handler (same TextEdit[] shape).
+      auto handler = impl_->test_formatting_handler;
+      impl_->main_mailbox.PostWithoutWake(
+          [handler, uri = std::move(uri), cb = std::move(callback)]() mutable {
+            if (handler) {
+              handler(std::move(uri), std::move(cb));
+            } else {
+              cb(std::nullopt);
+            }
+          });
+      return;
+    }
+  }
+  using namespace util;
+  JsonObject options;
+  options["tabSize"] = JsonValue(static_cast<std::int64_t>(tab_size));
+  options["insertSpaces"] = JsonValue(insert_spaces);
+  JsonObject params;
+  params["textDocument"] = lsp_protocol::MakeTextDocumentIdentifier(uri);
+  params["range"] = lsp_protocol::MakeRange(range);
+  params["options"] = JsonValue(std::move(options));
+  impl_->DispatchResultRequest(
+      "textDocument/rangeFormatting", JsonValue(std::move(params)), std::move(callback),
+      [](const util::JsonValue& result) -> std::optional<std::vector<TextEdit>> {
+        if (!result.IsArray()) {
+          return std::nullopt;
         }
-        return edits;
+        return lsp_protocol::ParseTextEdits(result);
       });
 }
 
@@ -242,6 +269,37 @@ void LspClient::RequestFindReferencesAsync(std::string uri, Position pos,
       "textDocument/references", JsonValue(std::move(params)), std::move(callback),
       [](const util::JsonValue& result) {
         return std::optional<std::vector<Location>>(lsp_protocol::ParseLocations(result));
+      });
+}
+
+void LspClient::RequestPrepareRenameAsync(std::string uri, Position pos,
+                                          PrepareRenameCallback callback) {
+  if (!callback) return;
+  {
+    std::lock_guard lock(impl_->mutex);
+    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
+      auto handler = impl_->test_prepare_rename_handler;
+      impl_->main_mailbox.PostWithoutWake(
+          [handler, uri = std::move(uri), pos, cb = std::move(callback)]() mutable {
+            if (handler) {
+              handler(std::move(uri), pos, std::move(cb));
+            } else {
+              cb(std::nullopt);
+            }
+          });
+      return;
+    }
+  }
+  // Skip the round-trip when the server has no prepareRename provider: the caller
+  // then keeps its heuristic seed rather than provoking a server error per rename.
+  if (!impl_->supports_prepare_rename.load(std::memory_order_acquire)) {
+    callback(std::nullopt);
+    return;
+  }
+  impl_->DispatchResultRequest(
+      "textDocument/prepareRename", lsp_protocol::MakeTextDocumentPositionParams(uri, pos),
+      std::move(callback), [](const util::JsonValue& result) -> std::optional<PrepareRename> {
+        return lsp_protocol::ParsePrepareRename(result);
       });
 }
 

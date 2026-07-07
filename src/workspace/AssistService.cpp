@@ -1041,6 +1041,39 @@ bool AssistService::RenameSymbol(const std::string& new_name, std::string* error
   return true;
 }
 
+void AssistService::PrepareRenameForCursor(std::function<void(bool, std::string)> callback) {
+  if (!callback) {
+    return;
+  }
+  editor::TextViewport* viewport = operations_.active_editable_viewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    return;  // no callback: the caller keeps its heuristic seed
+  }
+  LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
+  if (client == nullptr || !client->SupportsPrepareRename()) {
+    return;  // no server / no prepareRename provider — keep the heuristic seed
+  }
+  const std::filesystem::path request_path = viewport->path();
+  const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
+  const LspClient::Position position = ByteColumnToLspPosition(
+      *viewport, viewport->cursor_line(), viewport->cursor_column(), encoding);
+  std::string language_id = DetectViewportLanguageId(*viewport);
+  operations_.ensure_lsp_document_open(*viewport, *client, language_id);
+  client->RequestPrepareRenameAsync(
+      FileUriForPath(request_path), position,
+      [this, request_path, callback = std::move(callback)](
+          std::optional<LspClient::PrepareRename> result) {
+        // Only meaningful while the same buffer is active; a switch abandons refine.
+        if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+          return;
+        }
+        if (!result.has_value()) {
+          return;  // no provider / error — the caller keeps its heuristic seed
+        }
+        callback(result->can_rename, result->placeholder);
+      });
+}
+
 bool AssistService::FormatActiveDocument(std::string* error_message) {
   if (error_message != nullptr) {
     error_message->clear();
@@ -1058,43 +1091,64 @@ bool AssistService::FormatActiveDocument(std::string* error_message) {
   }
   const std::filesystem::path request_path = viewport->path();
   const int tab_size = static_cast<int>(viewport->indent_width() > 0 ? viewport->indent_width() : 4);
-  client->RequestFormattingAsync(
-      FileUriForPath(request_path), tab_size, /*insert_spaces=*/true,
-      [this, request_path](std::optional<std::vector<LspClient::TextEdit>> edits) {
-        operations_.finish_tracked_lsp_request();
-        // Drop superseded results (buffer switched/closed) before mutating.
-        if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
-          return;
-        }
-        if (!edits.has_value() || edits->empty()) {
-          output_channels_->AppendLine("lsp.log", "LSP Log", "No formatting changes");
-          return;
-        }
-        // Convert to the shared workspace-edit records (0-based LSP coordinates; the
-        // apply path maps their columns through the server's position encoding) and
-        // apply the whole set together, highest-position-first.
-        std::vector<CodeActionEdit> workspace_edits;
-        workspace_edits.reserve(edits->size());
-        for (const auto& [range, new_text] : *edits) {
-          workspace_edits.push_back(CodeActionEdit{
-              .path = request_path,
-              .range = editor::SelectionRange{
-                  .start = editor::TextPosition{
-                      static_cast<std::size_t>(std::max(0, range.start.line)),
-                      static_cast<std::size_t>(std::max(0, range.start.character))},
-                  .end = editor::TextPosition{
-                      static_cast<std::size_t>(std::max(0, range.end.line)),
-                      static_cast<std::size_t>(std::max(0, range.end.character))},
-              },
-              .new_text = new_text,
-          });
-        }
-        if (operations_.apply_lsp_workspace_edit &&
-            !operations_.apply_lsp_workspace_edit(workspace_edits)) {
-          output_channels_->AppendLine("lsp.log", "LSP Log", "Could not apply formatting");
-        }
-      });
+  const auto on_result = [this, request_path](
+                             std::optional<std::vector<LspClient::TextEdit>> edits) {
+    ApplyFormattingResult(request_path, std::move(edits));
+  };
+  // Format the SELECTION only when there is one (VSCode "Format Selection"), else the
+  // whole document. Both return the same TextEdit[] shape and apply identically.
+  if (viewport->has_selection()) {
+    if (const std::optional<editor::SelectionRange> selection = viewport->selection_range()) {
+      const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
+      const editor::SelectionRange normalized = editor::TextViewport::NormalizeRange(*selection);
+      const LspClient::Range range{
+          .start = ByteColumnToLspPosition(*viewport, normalized.start.line,
+                                           normalized.start.column, encoding),
+          .end = ByteColumnToLspPosition(*viewport, normalized.end.line, normalized.end.column,
+                                         encoding),
+      };
+      client->RequestRangeFormattingAsync(FileUriForPath(request_path), range, tab_size,
+                                          /*insert_spaces=*/true, on_result);
+      return true;
+    }
+  }
+  client->RequestFormattingAsync(FileUriForPath(request_path), tab_size, /*insert_spaces=*/true,
+                                 on_result);
   return true;
+}
+
+void AssistService::ApplyFormattingResult(const std::filesystem::path& request_path,
+                                          std::optional<std::vector<LspClient::TextEdit>> edits) {
+  operations_.finish_tracked_lsp_request();
+  // Drop superseded results (buffer switched/closed) before mutating.
+  if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+    return;
+  }
+  if (!edits.has_value() || edits->empty()) {
+    output_channels_->AppendLine("lsp.log", "LSP Log", "No formatting changes");
+    return;
+  }
+  // Convert to the shared workspace-edit records (0-based LSP coordinates; the apply
+  // path maps their columns through the server's position encoding) and apply the
+  // whole set together, highest-position-first.
+  std::vector<CodeActionEdit> workspace_edits;
+  workspace_edits.reserve(edits->size());
+  for (const auto& [range, new_text] : *edits) {
+    workspace_edits.push_back(CodeActionEdit{
+        .path = request_path,
+        .range = editor::SelectionRange{
+            .start = editor::TextPosition{static_cast<std::size_t>(std::max(0, range.start.line)),
+                                          static_cast<std::size_t>(std::max(0, range.start.character))},
+            .end = editor::TextPosition{static_cast<std::size_t>(std::max(0, range.end.line)),
+                                        static_cast<std::size_t>(std::max(0, range.end.character))},
+        },
+        .new_text = new_text,
+    });
+  }
+  if (operations_.apply_lsp_workspace_edit &&
+      !operations_.apply_lsp_workspace_edit(workspace_edits)) {
+    output_channels_->AppendLine("lsp.log", "LSP Log", "Could not apply formatting");
+  }
 }
 
 namespace {
