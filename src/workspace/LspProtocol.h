@@ -24,6 +24,12 @@ std::vector<LspClient::Diagnostic> ParseDiagnostics(const util::JsonValue& array
 LspClient::DocumentSymbol ParseDocumentSymbol(const util::JsonValue& value);
 std::vector<LspClient::DocumentSymbol> ParseDocumentSymbols(const util::JsonValue& result);
 
+// Decode a `textDocument/hover` result's `contents` into a single plain/markdown
+// string. Handles all three wire shapes: MarkupContent ({kind, value}), a bare
+// MarkedString, and a MarkedString[] (joined with blank lines). Returns empty when
+// there is no usable content.
+std::string ParseHoverContents(const util::JsonValue& hover_result);
+
 // Decode a `textDocument/semanticTokens/full` result. The `data` array is a flat
 // run of 5-int groups (deltaLine, deltaStartChar, length, tokenType,
 // tokenModifiers) relative to the previous token; this resolves them to absolute

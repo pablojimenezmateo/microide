@@ -108,6 +108,28 @@ SDL_FRect WorkspaceShell::ComputeCaretAnchoredOverlayRect(const SDL_FRect& edito
   return SDL_FRect{std::floor(x), std::floor(y), std::floor(width), std::floor(height)};
 }
 
+SDL_FRect WorkspaceShell::ComputeCenteredMenuOverlayRect(const SDL_FRect& editor_area) const {
+  // Compact centered menu sized to the visible row count (matches the row metrics
+  // ComputeCaretAnchoredOverlayRect uses), but horizontally centered and pinned to
+  // a fixed vertical fraction — the canonical modal placement, without the
+  // finder-sized footprint that would dwarf a two-or-three-item action list.
+  constexpr float kRowStep = 22.0f;  // must match ComputeOverlayListLayout's row_step
+  constexpr float kListBottomPadding = 16.0f;
+  constexpr float kMaxVisibleRows = 9.0f;
+  constexpr float kVerticalFrac = 0.30f;
+
+  const int rows = std::clamp(static_cast<int>(OverlayItemCount()), 1,
+                              static_cast<int>(kMaxVisibleRows));
+  const float height =
+      OverlayListStartOffset() + kListBottomPadding + static_cast<float>(rows) * kRowStep + 6.0f;
+  const float width =
+      std::min(editor_area.w - 32.0f, std::max(320.0f, editor_area.w * 0.42f));
+
+  const float x = editor_area.x + (editor_area.w - width) * 0.5f;
+  const float y = editor_area.y + std::max(0.0f, (editor_area.h - height) * kVerticalFrac);
+  return SDL_FRect{std::floor(x), std::floor(y), std::floor(width), std::floor(height)};
+}
+
 SDL_FRect WorkspaceShell::FindWidgetAnchorRect(const SDL_FRect& fallback) const {
   // The find/replace widget floats over the editor text region (below the
   // breadcrumb). Fall back to the supplied rect only if the surface is unavailable.
@@ -120,9 +142,12 @@ SDL_FRect WorkspaceShell::FindWidgetAnchorRect(const SDL_FRect& fallback) const 
 
 SDL_FRect WorkspaceShell::ComputeOverlayRect(const SDL_FRect& editor_area) const {
   const OverlayState& overlay = context_.current_project_state.overlay;
-  if ((overlay.mode == OverlayMode::Completion || overlay.mode == OverlayMode::CodeActions) &&
-      overlay.caret_anchor.has_value()) {
+  if (overlay.mode == OverlayMode::Completion && overlay.caret_anchor.has_value()) {
     return ComputeCaretAnchoredOverlayRect(editor_area, *overlay.caret_anchor);
+  }
+  // Code actions are a centered, content-sized menu — the canonical modal look.
+  if (overlay.mode == OverlayMode::CodeActions) {
+    return ComputeCenteredMenuOverlayRect(editor_area);
   }
   // Local file search is a compact non-modal widget pinned to the top-right of the
   // editor *text* area (editor_surface, below the breadcrumb) — VSCode-style, not a

@@ -57,10 +57,10 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
     }
   };
 
-  // Completion and code-action popups anchor to the caret and stay compact; they must not
-  // dim the editor (that hides the code being completed) or carry a title bar.
-  const bool caret_anchored = overlay_vm.mode == OverlayMode::Completion ||
-                              overlay_vm.mode == OverlayMode::CodeActions;
+  // The completion popup anchors to the caret and stays compact: it must not dim the
+  // editor (that hides the code being completed) or carry a title bar. Code actions
+  // are a centered, titled menu like the other pickers.
+  const bool caret_anchored = overlay_vm.mode == OverlayMode::Completion;
   if (!caret_anchored) {
     DrawFilledRect(renderer, layout.editor_area, theme_.overlay_backdrop);
   }
@@ -294,9 +294,14 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
           TruncateLabel(label, overlay.w - 36.0f));
     }
   } else if (overlay_vm.mode == OverlayMode::CodeActions) {
+    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
+               theme_.text_primary, theme_.chrome_background, "Code Actions");
+    // "Loading..." / "No code actions available" render in the list area, below the
+    // title, so they read as the menu's status rather than colliding with the title.
     if (!overlay_state.workflow.code_actions.error.empty()) {
-      DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
-                 theme_.diff_deleted, theme_.overlay_background,
+      DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset,
+                 overlay_list_layout.list_rect.y + 6.0f, theme_.text_muted,
+                 theme_.overlay_background,
                  TruncateLabel(overlay_state.workflow.code_actions.error, overlay.w - 36.0f));
     }
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {

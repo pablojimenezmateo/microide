@@ -507,6 +507,10 @@
   mutable PluginHoverCache plugin_hover_cache_;
   void KickOffPluginHover(const std::filesystem::path& path, std::size_t line,
                           std::size_t column);
+  // LSP hover fallback: when the plugin provider yields no hover for the cached
+  // cell, query the language server and populate the same cache from its contents.
+  // Leaves the cell in Pending until the async result lands (then Resolved/Failed).
+  void KickOffLspHover(const std::filesystem::path& path, std::size_t line, std::size_t column);
 
   enum class ProjectOpenDialogLaunchResult {
     Launched,
@@ -1396,6 +1400,14 @@
   void EnsureLspDocumentOpen(const editor::TextViewport& viewport,
                              LspClient& client,
                              std::string_view language_id);
+  // Outline LSP fallback: resolve the server for `viewport`, open its document, and
+  // request textDocument/documentSymbol. The async response is applied through a
+  // FRESH SidebarCoordinator (the transient one that issued it is long gone by
+  // then), adapting the tree to the plugin DocumentSymbolNode shape the outline
+  // consumes. No-ops when no server is available.
+  void QueryLspDocumentSymbolsForOutline(const editor::TextViewport& viewport,
+                                         std::filesystem::path request_path,
+                                         std::string plugin_error);
   void PublishLspDiagnostics(ProjectWorkspaceState& state, std::string uri,
                              lsp_encoding::PositionEncoding encoding,
                              std::vector<LspClient::Diagnostic> diagnostics);
@@ -1677,6 +1689,11 @@
   SDL_FRect FindWidgetAnchorRect(const SDL_FRect& fallback) const;  // editor_surface anchor
   SDL_FRect ComputeCaretAnchoredOverlayRect(const SDL_FRect& editor_area,
                                             const SDL_FRect& caret_anchor) const;
+  // Content-sized centered menu (code actions): height tracks the visible row
+  // count like the caret-anchored popup, but it is horizontally centered and
+  // pinned to a fixed vertical fraction so a short action list stays compact
+  // instead of filling a finder-sized modal.
+  SDL_FRect ComputeCenteredMenuOverlayRect(const SDL_FRect& editor_area) const;
   std::string BreadcrumbLabel() const;
   std::string ProjectLabel() const;
   std::string ProjectLabelForRoot(const std::filesystem::path& root) const;

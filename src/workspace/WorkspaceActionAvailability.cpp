@@ -40,6 +40,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
   switch (id) {
     case ActionId::CodeActions:
       return active_viewport != nullptr && operations_.active_code_actions_available();
+    case ActionId::FormatDocument:
+    case ActionId::RenameSymbol:
+      // LSP-only actions; offered whenever a saved editable buffer is active. The
+      // executor reports "no language server" as feedback on invocation.
+      return active_editable_viewport != nullptr && !active_editable_viewport->path().empty();
     case ActionId::Completion:
       return active_viewport != nullptr && operations_.active_completion_available();
     case ActionId::InsertSnippet:

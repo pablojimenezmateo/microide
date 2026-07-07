@@ -9,6 +9,9 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
   static const auto kSpecs = std::to_array<ActionSpec>({
       ActionSpec{ActionId::CodeActions, "code-actions", "code-actions", "Code Actions",
                  "Ctrl+."},
+      ActionSpec{ActionId::FormatDocument, "format-document", "format-document", "Format Document",
+                 "Ctrl+Shift+I"},
+      ActionSpec{ActionId::RenameSymbol, "rename-symbol", "rename-symbol", "Rename Symbol", "F2"},
       ActionSpec{ActionId::OpenCommandPalette, "command-palette", "command-palette",
                  "Command Palette", "Ctrl+Shift+P"},
       ActionSpec{ActionId::Colorscheme, "colorscheme", "colorscheme [name|list]",

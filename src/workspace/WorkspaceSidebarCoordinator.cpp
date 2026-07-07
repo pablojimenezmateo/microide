@@ -272,6 +272,20 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
+          .query_lsp_document_symbols =
+              [this](const editor::TextViewport& viewport, std::filesystem::path request_path,
+                     std::string plugin_error) {
+                QueryLspDocumentSymbolsForOutline(viewport, std::move(request_path),
+                                                  std::move(plugin_error));
+              },
+          .apply_plugin_outline_result =
+              [this](std::filesystem::path request_path,
+                     std::vector<plugin::PluginHost::DocumentSymbolNode> symbols,
+                     std::string plugin_error) {
+                // Fresh coordinator: the transient one that issued the query is gone.
+                MakeSidebarCoordinator().ApplyPluginOutlineResult(
+                    std::move(request_path), std::move(symbols), std::move(plugin_error));
+              },
           .open_git_conflict_merge =
               [this](const std::filesystem::path& path) { return OpenGitConflictMerge(path); },
           .open_working_tree_comparison =

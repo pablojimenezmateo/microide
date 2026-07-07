@@ -180,9 +180,34 @@ void TestLspProtocolParseCapsBoundHostileArrays() {
   }
 }
 
+void TestLspProtocolParsesHoverContents() {
+  // MarkupContent: {kind, value}.
+  Expect(codec::ParseHoverContents(
+             Json(R"({"contents":{"kind":"markdown","value":"### foo\ndocs"}})")) ==
+             "### foo\ndocs",
+         "MarkupContent value is extracted");
+  // MarkedString object: {language, value}.
+  Expect(codec::ParseHoverContents(
+             Json(R"({"contents":{"language":"cpp","value":"int foo"}})")) == "int foo",
+         "MarkedString object value is extracted");
+  // Bare MarkedString string.
+  Expect(codec::ParseHoverContents(Json(R"({"contents":"just text"})")) == "just text",
+         "bare MarkedString string is returned verbatim");
+  // MarkedString[] joins blocks with a blank line, skipping empty pieces.
+  Expect(codec::ParseHoverContents(
+             Json(R"({"contents":["one",{"language":"cpp","value":"two"},""]})")) ==
+             "one\n\ntwo",
+         "MarkedString array joins non-empty blocks");
+  // No contents / empty.
+  Expect(codec::ParseHoverContents(Json("{}")).empty(), "missing contents yields empty");
+  Expect(codec::ParseHoverContents(Json(R"({"contents":[]})")).empty(),
+         "empty contents array yields empty");
+}
+
 }  // namespace
 
 void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "LspProtocol/ParsesHoverContents", TestLspProtocolParsesHoverContents);
   AddTest(tests, "LspProtocol/ParseCapsBoundHostileArrays",
           TestLspProtocolParseCapsBoundHostileArrays);
   AddTest(tests, "LspProtocol/DecodesSemanticTokens", TestLspProtocolDecodesSemanticTokens);

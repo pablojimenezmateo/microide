@@ -15,6 +15,7 @@
 #include "workspace/FileUri.h"
 #include "workspace/LanguageDetection.h"
 #include "workspace/LspPositionEncoding.h"
+#include "workspace/LspViewportPositions.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspacePathUtils.h"
 
@@ -76,48 +77,6 @@ editor::SelectionRange CompletionReplacementRange(const editor::TextViewport& vi
       .start = editor::TextPosition{viewport.cursor_line(), start_column},
       .end = editor::TextPosition{viewport.cursor_line(), viewport.cursor_column()},
   };
-}
-
-// Convert an LSP range (0-based, server position encoding) to an editor byte-column
-// SelectionRange, clamped to the document. The `character` field is mapped through
-// the negotiated position encoding so non-ASCII lines land on the right byte.
-editor::SelectionRange LspRangeToEditorRange(const editor::TextViewport& viewport,
-                                             const LspClient::Range& range,
-                                             lsp_encoding::PositionEncoding encoding) {
-  const auto& lines = viewport.lines();
-  const auto to_position = [&](const LspClient::Position& p) {
-    const std::size_t line = static_cast<std::size_t>(std::max(0, p.line));
-    const std::size_t character = static_cast<std::size_t>(std::max(0, p.character));
-    const std::string_view text = LineAtOrEmpty(lines.Snapshot(), line);
-    return editor::TextPosition{line,
-                                lsp_encoding::LspCharacterToByteColumn(text, character, encoding)};
-  };
-  return editor::SelectionRange{.start = to_position(range.start), .end = to_position(range.end)};
-}
-
-lsp_encoding::PositionEncoding EncodingForClient(const LspClient& client) {
-  return lsp_encoding::ParsePositionEncoding(client.ServerPositionEncoding());
-}
-
-// Convert an editor byte column (on `line` of `viewport`) to an outbound LSP
-// position in the server's negotiated encoding. Requests must be phrased in the
-// server's units or they resolve at the wrong token on non-ASCII lines.
-LspClient::Position ByteColumnToLspPosition(const editor::TextViewport& viewport, std::size_t line,
-                                            std::size_t byte_column,
-                                            lsp_encoding::PositionEncoding encoding) {
-  const std::string_view text = LineAtOrEmpty(viewport.lines().Snapshot(), line);
-  return LspClient::Position{
-      static_cast<int>(line),
-      static_cast<int>(lsp_encoding::ByteColumnToLspCharacter(text, byte_column, encoding))};
-}
-
-// Convert an inbound LSP position's `character` (server encoding) to an editor
-// byte column on `line` of `viewport`.
-std::size_t LspPositionToByteColumn(const editor::TextViewport& viewport, std::size_t line,
-                                    int character, lsp_encoding::PositionEncoding encoding) {
-  const std::string_view text = LineAtOrEmpty(viewport.lines().Snapshot(), line);
-  return lsp_encoding::LspCharacterToByteColumn(
-      text, static_cast<std::size_t>(std::max(0, character)), encoding);
 }
 
 }  // namespace
@@ -223,16 +182,11 @@ void AssistService::BeginLspCompletionFallback(editor::TextViewport& viewport,
   session.error = "Loading...";
   operations_.request_overlay_redraw();
   operations_.begin_tracked_lsp_request();
-  const lsp_encoding::PositionEncoding encoding =
-      lsp_encoding::ParsePositionEncoding(client->ServerPositionEncoding());
+  const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
   const std::size_t request_line = viewport.cursor_line();
-  const std::string_view cursor_line_text =
-      LineAtOrEmpty(viewport.lines().Snapshot(), request_line);
   client->RequestCompletionAsync(
       FileUriForPath(viewport.path()),
-      LspClient::Position{static_cast<int>(request_line),
-                          static_cast<int>(lsp_encoding::ByteColumnToLspCharacter(
-                              cursor_line_text, viewport.cursor_column(), encoding))},
+      ByteColumnToLspPosition(viewport, request_line, viewport.cursor_column(), encoding),
       [this, request_path, encoding](std::optional<std::vector<LspClient::CompletionItem>> items) {
         operations_.finish_tracked_lsp_request();
         // Drop superseded results: the active editable buffer changed since the
@@ -652,7 +606,7 @@ void AssistService::BeginLspCodeActionFallback(editor::TextViewport& viewport,
   session.error = "Loading...";
   operations_.request_overlay_redraw();
   operations_.begin_tracked_lsp_request();
-  const lsp_encoding::PositionEncoding code_action_encoding = EncodingForClient(*client);
+  const lsp_encoding::PositionEncoding code_action_encoding = LspEncodingForClient(*client);
   client->RequestCodeActionAsync(
       FileUriForPath(viewport.path()),
       LspClient::Range{
@@ -785,7 +739,7 @@ bool AssistService::GoToLspDefinition(std::string* error_message) {
         if (client == nullptr) {
           return;
         }
-        const lsp_encoding::PositionEncoding encoding = EncodingForClient(*client);
+        const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
         client->RequestGoToDefinitionAsync(
             FileUriForPath(request_path),
             ByteColumnToLspPosition(*current, request_line, request_column, encoding),
@@ -855,7 +809,7 @@ bool AssistService::FindLspReferences(std::string* error_message) {
         client->RequestFindReferencesAsync(
             FileUriForPath(request_path),
             ByteColumnToLspPosition(*current, request_line, request_column,
-                                    EncodingForClient(*client)),
+                                    LspEncodingForClient(*client)),
             true,
             [this](std::optional<std::vector<LspClient::Location>> locations) {
               operations_.finish_tracked_lsp_request();
@@ -880,6 +834,148 @@ bool AssistService::FindLspReferences(std::string* error_message) {
                     index + 1 < locations->size(), file_line_cache);
               }
             });
+      });
+  return true;
+}
+
+namespace {
+bool IsIdentifierByte(char ch) {
+  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+         ch == '_';
+}
+}  // namespace
+
+std::string AssistService::SymbolAtCursor() const {
+  editor::TextViewport* viewport = operations_.active_editable_viewport();
+  if (viewport == nullptr) {
+    return {};
+  }
+  const std::string_view line = LspLineView(*viewport, viewport->cursor_line());
+  std::size_t begin = std::min(viewport->cursor_column(), line.size());
+  std::size_t end = begin;
+  while (begin > 0 && IsIdentifierByte(line[begin - 1])) {
+    --begin;
+  }
+  while (end < line.size() && IsIdentifierByte(line[end])) {
+    ++end;
+  }
+  return std::string(line.substr(begin, end - begin));
+}
+
+bool AssistService::RenameSymbol(const std::string& new_name, std::string* error_message) {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  if (new_name.empty()) {
+    return false;
+  }
+  editor::TextViewport* viewport = RequireActiveEditableViewport(error_message);
+  if (viewport == nullptr) {
+    return false;
+  }
+  LspClient* client = PrepareLspRequest(*viewport, error_message);
+  if (client == nullptr) {
+    return false;
+  }
+  const std::filesystem::path request_path = viewport->path();
+  const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
+  const LspClient::Position position =
+      ByteColumnToLspPosition(*viewport, viewport->cursor_line(), viewport->cursor_column(), encoding);
+  client->RequestRenameAsync(
+      FileUriForPath(request_path), position, new_name,
+      [this, request_path](std::optional<LspClient::WorkspaceEdit> edit) {
+        operations_.finish_tracked_lsp_request();
+        if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+          return;
+        }
+        if (!edit.has_value() || edit->changes.empty()) {
+          output_channels_->AppendLine("lsp.log", "LSP Log", "No rename edits returned");
+          return;
+        }
+        // Flatten the URI-keyed WorkspaceEdit into the shared edit records (0-based
+        // LSP coordinates; the apply path maps columns through the position
+        // encoding), then apply the whole set together.
+        std::vector<CodeActionEdit> workspace_edits;
+        for (const auto& [uri, text_edits] : edit->changes) {
+          const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
+          for (const auto& [range, new_text] : text_edits) {
+            workspace_edits.push_back(CodeActionEdit{
+                .path = path.value_or(std::filesystem::path{}),
+                .range = editor::SelectionRange{
+                    .start = editor::TextPosition{
+                        static_cast<std::size_t>(std::max(0, range.start.line)),
+                        static_cast<std::size_t>(std::max(0, range.start.character))},
+                    .end = editor::TextPosition{
+                        static_cast<std::size_t>(std::max(0, range.end.line)),
+                        static_cast<std::size_t>(std::max(0, range.end.character))},
+                },
+                .new_text = new_text,
+            });
+          }
+        }
+        if (operations_.apply_lsp_workspace_edit &&
+            !operations_.apply_lsp_workspace_edit(workspace_edits)) {
+          // v1 only edits already-open buffers; a rename touching closed files
+          // applies to the open ones and reports the rest as skipped.
+          output_channels_->AppendLine("lsp.log", "LSP Log",
+                                       "Rename applied to open buffers only");
+        }
+      });
+  return true;
+}
+
+bool AssistService::FormatActiveDocument(std::string* error_message) {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  editor::TextViewport* viewport = RequireActiveEditableViewport(error_message);
+  if (viewport == nullptr) {
+    return false;
+  }
+  // Formatting is LSP-only (no plugin provider path). PrepareLspRequest resolves the
+  // client, opens the document, begins the tracked request, and records the
+  // unavailable-server message when there is none.
+  LspClient* client = PrepareLspRequest(*viewport, error_message);
+  if (client == nullptr) {
+    return false;
+  }
+  const std::filesystem::path request_path = viewport->path();
+  const int tab_size = static_cast<int>(viewport->indent_width() > 0 ? viewport->indent_width() : 4);
+  client->RequestFormattingAsync(
+      FileUriForPath(request_path), tab_size, /*insert_spaces=*/true,
+      [this, request_path](std::optional<std::vector<LspClient::TextEdit>> edits) {
+        operations_.finish_tracked_lsp_request();
+        // Drop superseded results (buffer switched/closed) before mutating.
+        if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+          return;
+        }
+        if (!edits.has_value() || edits->empty()) {
+          output_channels_->AppendLine("lsp.log", "LSP Log", "No formatting changes");
+          return;
+        }
+        // Convert to the shared workspace-edit records (0-based LSP coordinates; the
+        // apply path maps their columns through the server's position encoding) and
+        // apply the whole set together, highest-position-first.
+        std::vector<CodeActionEdit> workspace_edits;
+        workspace_edits.reserve(edits->size());
+        for (const auto& [range, new_text] : *edits) {
+          workspace_edits.push_back(CodeActionEdit{
+              .path = request_path,
+              .range = editor::SelectionRange{
+                  .start = editor::TextPosition{
+                      static_cast<std::size_t>(std::max(0, range.start.line)),
+                      static_cast<std::size_t>(std::max(0, range.start.character))},
+                  .end = editor::TextPosition{
+                      static_cast<std::size_t>(std::max(0, range.end.line)),
+                      static_cast<std::size_t>(std::max(0, range.end.character))},
+              },
+              .new_text = new_text,
+          });
+        }
+        if (operations_.apply_lsp_workspace_edit &&
+            !operations_.apply_lsp_workspace_edit(workspace_edits)) {
+          output_channels_->AppendLine("lsp.log", "LSP Log", "Could not apply formatting");
+        }
       });
   return true;
 }

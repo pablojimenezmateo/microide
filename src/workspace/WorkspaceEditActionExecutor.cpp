@@ -56,6 +56,17 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::FormatDocument: {
+      std::string error_message;
+      if (!context_.FormatActiveDocument(&error_message)) {
+        return reject(error_message.empty() ? "Formatting unavailable" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::RenameSymbol: {
+      context_.OpenRenameSymbolPrompt();
+      return DispatchResult::Handled;
+    }
     case ActionId::GoToDefinition: {
       std::string error_message;
       if (!context_.GoToLspDefinition(&error_message)) {

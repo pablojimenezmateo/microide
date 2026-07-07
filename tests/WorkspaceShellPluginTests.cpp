@@ -1405,6 +1405,275 @@ return ide.plugin({
          "moving the caret should dismiss the signature popup");
 }
 
+// Regression: the outline must populate from the language server's documentSymbol
+// when no plugin document-symbol provider returns anything. The plugin provider is
+// consulted first; on an empty result the outline falls back to LSP and flattens
+// the adapted symbol tree into the same rows.
+void TestWorkspaceShellOutlineSidebarFromLspFallback() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "class Widget:\n    def draw(self):\n        pass\n\n\ndef main():\n    pass\n");
+
+  // Register a python language server but NO plugin document-symbol provider, so the
+  // outline's plugin query returns empty and the LSP fallback drives the rows.
+  WritePluginInit(
+      plugins_root, "pylsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "pylsp.server", language_id = "python", command = { "py-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "outline LSP fixture should open the project");
+
+  // Attach a stub server that answers documentSymbol from a canned tree.
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  stub_raw->SetTestDocumentSymbolHandler(
+      [](std::string uri, workspace::LspClient::DocumentSymbolCallback cb) {
+        (void)uri;
+        workspace::LspClient::DocumentSymbol widget;
+        widget.name = "Widget";
+        widget.kind = 5;  // Class
+        widget.selection_range.start = {0, 6};
+        workspace::LspClient::DocumentSymbol draw;
+        draw.name = "draw";
+        draw.kind = 6;  // Method
+        draw.selection_range.start = {1, 8};
+        widget.children.push_back(draw);
+        workspace::LspClient::DocumentSymbol main_fn;
+        main_fn.name = "main";
+        main_fn.kind = 12;  // Function
+        main_fn.selection_range.start = {5, 4};
+        cb(std::vector<workspace::LspClient::DocumentSymbol>{widget, main_fn});
+      });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
+         "fixture should attach a stub python client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, py_file);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-show outline"),
+         "sidebar-show should accept the built-in outline view");
+  // The plugin query resolves inline (empty), then the LSP documentSymbol stub
+  // dispatches on the main-thread pump.
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+
+  const auto& items = WorkspaceShellTestAccess::PluginSidebarItems(shell);
+  Expect(items.size() == 3,
+         "outline should flatten the LSP document-symbol fallback into three rows");
+  Expect(items[0].label == "Widget" && items[0].depth == 0,
+         "LSP outline should list the class at depth 0");
+  Expect(items[1].label == "draw" && items[1].depth == 1,
+         "LSP outline should indent the method child to depth 1");
+  Expect(items[2].label == "main" && items[2].depth == 0,
+         "LSP outline should return to depth 0 after the child subtree");
+  // 0-based LSP selection range -> 1-based outline coordinates.
+  Expect(items[1].line == 2 && items[1].column == 9,
+         "LSP outline row should carry 1-based line/column from the selection range");
+}
+
+// Regression: hovering resolves through the language server when no plugin hover
+// provider answers. The LSP hover `contents` (MarkupContent here) fills the same
+// hover cache the popup renders.
+void TestWorkspaceShellHoverFromLspFallback() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "value = 1\n");
+
+  WritePluginInit(
+      plugins_root, "pylsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "pylsp.server", language_id = "python", command = { "py-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "hover LSP fixture should open the project");
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  stub_raw->SetTestHoverHandler([](std::string uri, workspace::LspClient::HoverCallback cb) {
+    (void)uri;
+    std::optional<util::JsonValue> hover =
+        util::ParseJson(R"({"contents":{"kind":"markdown","value":"int value"}})");
+    cb(std::move(hover));
+  });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
+         "fixture should attach a stub python client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, py_file);
+  const std::string content =
+      WorkspaceShellTestAccess::ResolveLspHoverForTesting(shell, py_file, 1, 1);
+  Expect(content == "int value",
+         "LSP hover fallback should populate the hover cache from the server contents");
+}
+
+// Regression: the format-document command applies the language server's TextEdit[]
+// to the active buffer. Guards the full end-to-end path: action -> LSP request ->
+// multi-edit apply (the request bug that dropped all but the first edit would drop
+// the second edit here).
+void TestWorkspaceShellFormatDocumentAppliesLspEdits() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "x=1\ny=2\n");
+
+  WritePluginInit(
+      plugins_root, "pylsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "pylsp.server", language_id = "python", command = { "py-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "format fixture should open the project");
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  // Two edits: reformat both lines. The second edit must survive (the dropped-edits
+  // bug would leave line 2 untouched).
+  stub_raw->SetTestFormattingHandler([](std::string uri, workspace::LspClient::FormattingCallback cb) {
+    (void)uri;
+    cb(std::vector<workspace::LspClient::TextEdit>{
+        {workspace::LspClient::Range{{0, 0}, {0, 3}}, "x = 1"},
+        {workspace::LspClient::Range{{1, 0}, {1, 3}}, "y = 2"}});
+  });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
+         "fixture should attach a stub python client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, py_file);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "format-document"),
+         "format-document command should dispatch");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "x = 1",
+         "formatting should apply the first edit to line 1");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[1] == "y = 2",
+         "formatting should also apply the trailing edit to line 2 (no dropped edits)");
+}
+
+// Regression: the rename-symbol command prefills the symbol under the cursor, and
+// on confirm applies the language server's workspace edit to the open buffer.
+void TestWorkspaceShellRenameSymbolAppliesLspEdit() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "value = 1\nprint(value)\n");
+
+  WritePluginInit(
+      plugins_root, "pylsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "pylsp.server", language_id = "python", command = { "py-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "rename fixture should open the project");
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  // Rename both occurrences of `value` to the typed name.
+  stub_raw->SetTestRenameHandler([](std::string uri, std::string new_name,
+                                    workspace::LspClient::RenameCallback cb) {
+    workspace::LspClient::WorkspaceEdit edit;
+    edit.changes[uri] = {
+        {workspace::LspClient::Range{{0, 0}, {0, 5}}, new_name},
+        {workspace::LspClient::Range{{1, 6}, {1, 11}}, new_name},
+    };
+    cb(std::move(edit));
+  });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
+         "fixture should attach a stub python client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, py_file);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 2);  // inside "value"
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "rename-symbol"),
+         "rename-symbol command should open the prompt");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "rename-symbol should open a text-input prompt");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "value",
+         "the rename prompt should prefill the symbol under the cursor");
+
+  WorkspaceShellTestAccess::SetPromptSurfaceInput(shell, "count");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "count = 1",
+         "rename should apply the edit on the declaration line");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[1] == "print(count)",
+         "rename should apply the edit to the second occurrence as well");
+}
+
 void TestWorkspaceShellOutlineSidebarFromDocumentSymbols() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3498,6 +3767,13 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSignatureHelpPopupFromPluginProvider);
   AddTest(tests, "WorkspaceShell/OutlineSidebarFromDocumentSymbols",
           TestWorkspaceShellOutlineSidebarFromDocumentSymbols);
+  AddTest(tests, "WorkspaceShell/OutlineSidebarFromLspFallback",
+          TestWorkspaceShellOutlineSidebarFromLspFallback);
+  AddTest(tests, "WorkspaceShell/HoverFromLspFallback", TestWorkspaceShellHoverFromLspFallback);
+  AddTest(tests, "WorkspaceShell/FormatDocumentAppliesLspEdits",
+          TestWorkspaceShellFormatDocumentAppliesLspEdits);
+  AddTest(tests, "WorkspaceShell/RenameSymbolAppliesLspEdit",
+          TestWorkspaceShellRenameSymbolAppliesLspEdit);
   AddTest(tests, "WorkspaceShell/PluginsReloadFallsBackFromMissingActivePluginSidebar",
           TestWorkspaceShellPluginsReloadFallsBackFromMissingActivePluginSidebar);
   AddTest(tests, "WorkspaceShell/SidebarModeMenuListsPluginSidebars",

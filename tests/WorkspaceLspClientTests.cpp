@@ -723,6 +723,33 @@ void TestWorkspaceLspClientSemanticTokensStubRoundTrip() {
          "the delivered token preserves its fields");
 }
 
+// Regression: formatting must deliver the FULL TextEdit[] to the caller. A prior
+// implementation returned only edits.front().newText, silently dropping every edit
+// after the first — corrupting the buffer for the common whole-document reformat
+// that comes back as many edits.
+void TestWorkspaceLspClientFormattingReturnsAllEdits() {
+  LspClient client;
+  client.EnableTestStubMode();
+  client.SetTestFormattingHandler([](std::string uri, LspClient::FormattingCallback cb) {
+    (void)uri;
+    cb(std::vector<LspClient::TextEdit>{
+        {LspClient::Range{{0, 0}, {0, 3}}, "one"},
+        {LspClient::Range{{2, 1}, {2, 4}}, "two"},
+        {LspClient::Range{{5, 0}, {5, 0}}, "three"}});
+  });
+
+  std::optional<std::vector<LspClient::TextEdit>> received;
+  client.RequestFormattingAsync("file:///s.cpp", 4, true, [&](auto edits) { received = std::move(edits); });
+  client.DrainCallbacks();
+
+  Expect(received.has_value() && received->size() == 3,
+         "formatting must return every TextEdit, not just the first");
+  Expect((*received)[1].second == "two" && (*received)[2].second == "three",
+         "the trailing edits must survive with their replacement text");
+  Expect((*received)[0].first.start.line == 0 && (*received)[1].first.start.line == 2,
+         "each edit keeps its own range");
+}
+
 // didOpen/didSave/didClose must all address a document under the SAME URI. That
 // URI is percent-encoded (FileUriForPath), so a path with a space or non-ASCII
 // byte must encode consistently and round-trip back — otherwise a hand-built raw
@@ -853,6 +880,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestFileUriEncodesSpecialCharsAndRoundTrips);
   AddTest(tests, "WorkspaceLspClient/SemanticTokensStubRoundTrip",
           TestWorkspaceLspClientSemanticTokensStubRoundTrip);
+  AddTest(tests, "WorkspaceLspClient/FormattingReturnsAllEdits",
+          TestWorkspaceLspClientFormattingReturnsAllEdits);
   AddTest(tests, "WorkspaceLspClient/ShutdownDoesNotRaceInitialization",
           TestWorkspaceLspClientShutdownDoesNotRaceInitialization);
   AddTest(tests, "WorkspaceLspClient/ShutdownWaitsForGracefulExit",

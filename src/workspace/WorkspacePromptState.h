@@ -67,6 +67,9 @@ struct PromptSurfaceState {
     EvaluateReplInput,
     // Editor navigation: jump the active viewport to a typed `line[:column]`.
     GoToLine,
+    // LSP rename: rename the symbol under the cursor to the typed identifier,
+    // applying the server's workspace edit across open buffers.
+    RenameSymbol,
   };
 
   Kind kind = Kind::None;

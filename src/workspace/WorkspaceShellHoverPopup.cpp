@@ -9,6 +9,9 @@
 #include "editor/DiagnosticsRender.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
+#include "workspace/FileUri.h"
+#include "workspace/LspProtocol.h"
+#include "workspace/LspViewportPositions.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceLayout.h"
 
@@ -619,10 +622,61 @@ void WorkspaceShell::KickOffPluginHover(const std::filesystem::path& path, std::
           TruncateHoverText(result.content);
           plugin_hover_cache_.state = PluginHoverCache::State::Resolved;
           plugin_hover_cache_.result = std::move(result);
-        } else {
-          plugin_hover_cache_.state = PluginHoverCache::State::Failed;
+          // Re-resolve at the current mouse position on the next frame -> cache hit.
+          QueueEditorHoverRefresh();
+          RequestFocusedEditorRedraw();
+          return;
         }
-        // Re-resolve at the current mouse position on the next frame -> cache hit.
+        // No plugin hover for this cell: fall back to the language server. The cell
+        // stays Pending until the LSP result lands (KickOffLspHover finalizes it).
+        KickOffLspHover(path, line, column);
+      });
+}
+
+void WorkspaceShell::KickOffLspHover(const std::filesystem::path& path, std::size_t line,
+                                     std::size_t column) {
+  const auto fail = [&]() {
+    plugin_hover_cache_.state = PluginHoverCache::State::Failed;
+    QueueEditorHoverRefresh();
+    RequestFocusedEditorRedraw();
+  };
+  editor::TextViewport* viewport = ActiveEditorViewport();
+  if (viewport == nullptr || viewport->path() != path) {
+    fail();
+    return;
+  }
+  std::string language_id;
+  LspClient* client = LspClientForViewport(*viewport, &language_id);
+  if (client == nullptr) {
+    fail();
+    return;
+  }
+  EnsureLspDocumentOpen(*viewport, *client, language_id);
+  // Cache coordinates are 1-based (query_line/query_column); the LSP position is
+  // 0-based with a byte-column -> server-encoding conversion.
+  const std::size_t line0 = line > 0 ? line - 1 : 0;
+  const std::size_t byte_column = column > 0 ? column - 1 : 0;
+  const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
+  BeginTrackedLspRequest();
+  client->RequestHoverAsync(
+      FileUriForPath(path), ByteColumnToLspPosition(*viewport, line0, byte_column, encoding),
+      [this, path, line, column](std::optional<util::JsonValue> result) {
+        FinishTrackedLspRequest();
+        if (plugin_hover_cache_.state != PluginHoverCache::State::Pending ||
+            !plugin_hover_cache_.Matches(path, line, column)) {
+          return;
+        }
+        std::string content =
+            result.has_value() ? lsp_protocol::ParseHoverContents(*result) : std::string{};
+        if (content.empty()) {
+          plugin_hover_cache_.state = PluginHoverCache::State::Failed;
+        } else {
+          plugin::PluginHost::HoverResult hover;
+          hover.content = std::move(content);
+          TruncateHoverText(hover.content);
+          plugin_hover_cache_.result = std::move(hover);
+          plugin_hover_cache_.state = PluginHoverCache::State::Resolved;
+        }
         QueueEditorHoverRefresh();
         RequestFocusedEditorRedraw();
       });

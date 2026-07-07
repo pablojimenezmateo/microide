@@ -147,6 +147,51 @@ std::vector<LspClient::DocumentSymbol> ParseDocumentSymbols(const JsonValue& res
   return symbols;
 }
 
+namespace {
+// One MarkedString element: either a bare string or {language, value}.
+std::string MarkedStringValue(const JsonValue& value) {
+  if (value.IsString()) {
+    return value.AsString();
+  }
+  if (value.HasKey("value")) {
+    return value["value"].AsString();
+  }
+  return {};
+}
+}  // namespace
+
+std::string ParseHoverContents(const JsonValue& hover_result) {
+  if (!hover_result.HasKey("contents")) {
+    return {};
+  }
+  const JsonValue& contents = hover_result["contents"];
+  // MarkupContent ({kind, value}) and the object form of MarkedString ({language,
+  // value}) both carry a "value" — take it directly.
+  if (contents.HasKey("value")) {
+    return contents["value"].AsString();
+  }
+  // MarkedString[]: join each element's text with a blank line between blocks.
+  if (contents.IsArray()) {
+    std::string out;
+    for (const auto& element : contents.AsArray()) {
+      const std::string piece = MarkedStringValue(element);
+      if (piece.empty()) {
+        continue;
+      }
+      if (!out.empty()) {
+        out += "\n\n";
+      }
+      out += piece;
+    }
+    return out;
+  }
+  // Bare MarkedString.
+  if (contents.IsString()) {
+    return contents.AsString();
+  }
+  return {};
+}
+
 std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const JsonValue& result,
                                                               std::size_t max_tokens) {
   std::vector<LspClient::SemanticToken> tokens;

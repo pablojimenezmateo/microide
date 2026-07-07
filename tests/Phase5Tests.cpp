@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cmath>
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <filesystem>
@@ -129,6 +130,11 @@ return ide.plugin({
              WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
                  WorkspaceShell::OverlayMode::CodeActions,
          "code-actions command should open the action overlay");
+  // The code-action menu is the canonical centered modal (not the old caret-anchored
+  // popup): it must not carry a caret anchor. (Centered-rect geometry is covered by
+  // WorkspaceShellProjectTests' CodeActionMenuIsCentered.)
+  Expect(!WorkspaceShellTestAccess::OverlayCaretAnchor(shell).has_value(),
+         "code actions must not carry a caret anchor (centered menu, not caret-anchored)");
   Expect(WorkspaceShellTestAccess::ExecuteSelectedCodeAction(shell),
          "selected code action should execute");
   Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&

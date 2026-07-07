@@ -6,6 +6,20 @@
     return *shell.context_.project_catalog.entries.at(index);
   }
   static void ConsumeLspCallbacks(WorkspaceShell& shell) { shell.ConsumeLspCallbacks(); }
+  // Drive the LSP hover fallback for a cell (1-based line/column) directly, drain
+  // the async result, and return the resolved hover content ("" if it failed).
+  static std::string ResolveLspHoverForTesting(WorkspaceShell& shell,
+                                               const std::filesystem::path& path, std::size_t line,
+                                               std::size_t column) {
+    shell.plugin_hover_cache_.path = path;
+    shell.plugin_hover_cache_.line = line;
+    shell.plugin_hover_cache_.column = column;
+    shell.plugin_hover_cache_.state = WorkspaceShell::PluginHoverCache::State::Pending;
+    shell.plugin_hover_cache_.result = plugin::PluginHost::HoverResult{};
+    shell.KickOffLspHover(path, line, column);
+    shell.ConsumeLspCallbacks();
+    return shell.plugin_hover_cache_.result.content;
+  }
   static bool IsControlChannelRunning(const WorkspaceShell& shell) {
     return shell.control_channel_service_.IsRunning();
   }

@@ -521,6 +521,8 @@ Right-click terminal tab: **Copy Last Command + Output**.
 Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 
 - `code-actions`
+- `format-document`
+- `rename-symbol`
 - `command-palette`
 - `colorscheme [name|list]`
 - `toggle-theme`

@@ -149,8 +149,11 @@ void TestArchitectureInvariants() {
              // an always-on net that stages unsaved buffer content to the durable session store so a
              // crash / kill -9 loses at most the debounce window instead of everything since the last
              // event-driven save.
+             // 1658: +5 for the LSP feature-wiring members: ComputeCenteredMenuOverlayRect (the
+             // centered code-action menu), QueryLspDocumentSymbolsForOutline (LSP documentSymbol
+             // outline fallback, 3 lines), and KickOffLspHover (LSP hover fallback).
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1653);
+                                                     1658);
            });
 
   bool hard_failure = false;

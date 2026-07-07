@@ -113,11 +113,16 @@ class LspClient {
 
   using OnPublishDiagnostics = std::function<void(std::string uri, std::vector<Diagnostic>)>;
 
+  // One text edit: a document range plus its replacement text (server encoding).
+  using TextEdit = std::pair<Range, std::string>;
+
   // Async callback types — called on the main thread from DrainCallbacks().
   using HoverCallback = std::function<void(std::optional<util::JsonValue>)>;
   using CompletionCallback = std::function<void(std::optional<std::vector<CompletionItem>>)>;
   using CodeActionCallback = std::function<void(std::optional<std::vector<CodeAction>>)>;
-  using FormattingCallback = std::function<void(std::optional<std::string>)>;
+  // Formatting returns the full TextEdit[] (whole-document reformats commonly come
+  // back as many edits); the caller applies them together.
+  using FormattingCallback = std::function<void(std::optional<std::vector<TextEdit>>)>;
   using LocationCallback = std::function<void(std::optional<std::vector<Location>>)>;
   using RenameCallback = std::function<void(std::optional<WorkspaceEdit>)>;
   using DocumentSymbolCallback =
@@ -245,6 +250,16 @@ class LspClient {
   void SetTestDocumentSymbolHandler(
       std::function<void(std::string uri, DocumentSymbolCallback cb)> handler);
   void ClearTestDocumentSymbolHandler();
+  // Unit tests: feed a canned hover response (raw LSP hover result JSON).
+  void SetTestHoverHandler(std::function<void(std::string uri, HoverCallback cb)> handler);
+  void ClearTestHoverHandler();
+  // Unit tests: feed a canned formatting response (a TextEdit[]).
+  void SetTestFormattingHandler(std::function<void(std::string uri, FormattingCallback cb)> handler);
+  void ClearTestFormattingHandler();
+  // Unit tests: feed a canned rename response (a WorkspaceEdit).
+  void SetTestRenameHandler(
+      std::function<void(std::string uri, std::string new_name, RenameCallback cb)> handler);
+  void ClearTestRenameHandler();
   // Unit tests: feed a canned semantic-tokens response + legend.
   void SetTestSemanticTokensHandler(
       std::function<void(std::string uri, SemanticTokensCallback cb)> handler);

@@ -79,6 +79,9 @@ class WorkspaceActionContext {
     std::function<bool(std::string*)> show_code_actions_overlay;
     std::function<bool(std::string*)> go_to_lsp_definition;
     std::function<bool(std::string*)> find_lsp_references;
+    std::function<bool(std::string*)> format_active_document;
+    std::function<std::string()> symbol_at_cursor;
+    std::function<bool(const std::string&, std::string*)> rename_symbol;
     std::function<bool(std::string*)> show_signature_help;
     std::function<bool(std::string*)> discover_tests_for_active_buffer;
     std::function<bool(const std::vector<std::string>&, std::string*)> run_tests;
@@ -304,6 +307,8 @@ class WorkspaceActionContext {
   bool GoToLspDefinition(std::string* error_message);
   bool ShowSignatureHelp(std::string* error_message);
   bool FindLspReferences(std::string* error_message);
+  bool FormatActiveDocument(std::string* error_message);
+  bool RenameSymbol(const std::string& new_name, std::string* error_message);
   bool DiscoverTestsForActiveBuffer(std::string* error_message);
   bool RunTests(const std::vector<std::string>& test_ids, std::string* error_message);
   bool RunAllDiscoveredTests(std::string* error_message);
@@ -413,6 +418,7 @@ class WorkspaceActionContext {
   void OpenCommandPalette(std::string seed = {});
   // Open the single-line "Go to Line" modal prompt (VSCode-style Ctrl+G).
   void OpenGoToLinePrompt();
+  void OpenRenameSymbolPrompt();
   // Right-side debug pane (toggle / surface switch).
   void ToggleDebugPane();
   void ShowDebugPaneSurface(DebugPaneMode mode);

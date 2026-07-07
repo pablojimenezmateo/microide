@@ -324,34 +324,73 @@ bool SidebarCoordinator::RefreshOutline() {
     operations_.request_sidebar_redraw();
   }
 
+  // The document-symbol query completes on a later main-thread drain, by which time
+  // this coordinator (a stack temporary) is destroyed. So the callback must NOT
+  // capture `this`: it routes the result back through the shell, which re-creates a
+  // fresh coordinator to apply it. `apply` holds the shell, not the coordinator.
+  auto apply = operations_.apply_plugin_outline_result;
   plugin_runtime_.Host().QueryDocumentSymbolsAsync(
       language_id, request_path,
-      [this, request_path](std::vector<plugin::PluginHost::DocumentSymbolNode> symbols,
-                           std::string error_message) {
-        // Superseded if the user switched away from the outline or changed buffer.
-        if (state_.sidebar.view_id != "outline") {
-          return;
-        }
-        editor::TextViewport* current =
-            operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
-        if (current == nullptr || current->path() != request_path) {
-          return;
-        }
-        state_.sidebar.plugin.items.clear();
-        state_.sidebar.plugin.error.clear();
-        if (symbols.empty() && !error_message.empty()) {
-          state_.sidebar.plugin.error = std::move(error_message);
-        }
-        FlattenDocumentSymbols(symbols, request_path, 0, &state_.sidebar.plugin.items);
-        ClampSelectionToItemCount(state_.sidebar.plugin.items.size(),
-                                  &state_.sidebar.plugin.selected_index);
-        RecomputePluginSidebarPlaceholder();
-        RevealSelectedPluginLine();
-        if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Outline) {
-          operations_.request_sidebar_redraw();
+      [apply = std::move(apply), request_path](
+          std::vector<plugin::PluginHost::DocumentSymbolNode> symbols, std::string error_message) {
+        if (apply) {
+          apply(request_path, std::move(symbols), std::move(error_message));
         }
       });
   return true;
+}
+
+void SidebarCoordinator::ApplyPluginOutlineResult(
+    const std::filesystem::path& request_path,
+    std::vector<plugin::PluginHost::DocumentSymbolNode> symbols, std::string plugin_error) {
+  if (state_.sidebar.view_id != "outline") {
+    return;
+  }
+  editor::TextViewport* current =
+      operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
+  if (current == nullptr || current->path() != request_path) {
+    return;
+  }
+  // No plugin symbols: fall back to the language server's documentSymbol so the
+  // outline works for any LSP-backed language even without a plugin provider (the
+  // shell issues that async request and applies its result through its own fresh
+  // coordinator). Otherwise flatten the plugin symbols directly.
+  if (symbols.empty() && operations_.query_lsp_document_symbols) {
+    operations_.query_lsp_document_symbols(*current, request_path, std::move(plugin_error));
+    return;
+  }
+  // Same flatten/placeholder/reveal path the LSP result uses.
+  ApplyLspOutlineResult(request_path, plugin_error, symbols);
+}
+
+void SidebarCoordinator::ApplyLspOutlineResult(
+    const std::filesystem::path& request_path, const std::string& plugin_error,
+    const std::vector<plugin::PluginHost::DocumentSymbolNode>& lsp_symbols) {
+  // Superseded if the user switched away from the outline or changed buffer while the
+  // request was in flight.
+  if (state_.sidebar.view_id != "outline") {
+    return;
+  }
+  editor::TextViewport* current =
+      operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
+  if (current == nullptr || current->path() != request_path) {
+    return;
+  }
+  state_.sidebar.plugin.items.clear();
+  state_.sidebar.plugin.error.clear();
+  // Surface the plugin provider's "no provider" message only when LSP also came back
+  // empty, so a working LSP fallback never shows a misleading plugin error.
+  if (lsp_symbols.empty() && !plugin_error.empty()) {
+    state_.sidebar.plugin.error = plugin_error;
+  }
+  FlattenDocumentSymbols(lsp_symbols, request_path, 0, &state_.sidebar.plugin.items);
+  ClampSelectionToItemCount(state_.sidebar.plugin.items.size(),
+                            &state_.sidebar.plugin.selected_index);
+  RecomputePluginSidebarPlaceholder();
+  RevealSelectedPluginLine();
+  if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Outline) {
+    operations_.request_sidebar_redraw();
+  }
 }
 
 void SidebarCoordinator::RecomputePluginSidebarPlaceholder() {

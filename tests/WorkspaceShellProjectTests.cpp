@@ -1794,6 +1794,34 @@ void TestWorkspaceShellShapingCapabilityTogglesGateExecutorCommandsAndIndentTab(
          "enabled sort-lines-ascending should lexicographically order the selection");
 }
 
+void TestWorkspaceShellCodeActionMenuIsCentered() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect editor_area = WorkspaceShellTestAccess::EditorAreaRect(shell);
+  // A short action list stays a compact, horizontally-centered modal — the canonical
+  // picker placement, not the former caret-anchored popup.
+  const SDL_FRect menu = WorkspaceShellTestAccess::CodeActionMenuRectForItemCount(shell, 3);
+  const float menu_center = menu.x + menu.w * 0.5f;
+  const float area_center = editor_area.x + editor_area.w * 0.5f;
+  Expect(std::fabs(menu_center - area_center) <= 1.0f,
+         "code-action menu should be horizontally centered in the editor area");
+  Expect(menu.w < editor_area.w,
+         "code-action menu should be a compact modal, narrower than the editor area");
+
+  // The height tracks the row count: a longer list is taller than a short one (up to
+  // the visible-row cap), confirming the content-sized menu rather than a fixed modal.
+  const SDL_FRect taller = WorkspaceShellTestAccess::CodeActionMenuRectForItemCount(shell, 8);
+  Expect(taller.h > menu.h, "a longer action list should produce a taller menu");
+}
+
 void TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3595,6 +3623,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter);
   AddTest(tests, "WorkspaceShell/ShapingCapabilityTogglesGateExecutorCommandsAndIndentTab",
           TestWorkspaceShellShapingCapabilityTogglesGateExecutorCommandsAndIndentTab);
+  AddTest(tests, "WorkspaceShell/CodeActionMenuIsCentered",
+          TestWorkspaceShellCodeActionMenuIsCentered);
   AddTest(tests, "WorkspaceShell/SettingsOverlayRightClickDoesNotOpenEditorContextMenu",
           TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu);
   AddTest(tests, "WorkspaceShell/SettingsOverlayTrapsKeyboardInput",

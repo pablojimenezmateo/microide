@@ -9,8 +9,11 @@
 #include "util/JsonValue.h"
 #include "util/StringUtil.h"
 #include "workspace/ControlSpec.h"
+#include "workspace/FileUri.h"
+#include "workspace/LspViewportPositions.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceCommandLineCoordinator.h"
+#include "workspace/WorkspaceSidebarCoordinator.h"
 
 // Thin forwarders to the host-owned protocol-client services so existing
 // render/menu/plugin call sites stay unchanged. The LSP glue lives in
@@ -80,6 +83,107 @@ LspClient* WorkspaceShell::LspClientForViewport(const editor::TextViewport& view
 void WorkspaceShell::EnsureLspDocumentOpen(const editor::TextViewport& viewport, LspClient& client,
                                            std::string_view language_id) {
   lsp_service_.EnsureLspDocumentOpen(viewport, client, language_id);
+}
+
+namespace {
+
+// LSP SymbolKind index -> the lowercase kind label the outline sidebar shows (it
+// mirrors the strings plugin document-symbol providers return).
+std::string_view LspSymbolKindName(int kind) {
+  switch (kind) {
+    case 1: return "file";
+    case 2: return "module";
+    case 3: return "namespace";
+    case 4: return "package";
+    case 5: return "class";
+    case 6: return "method";
+    case 7: return "property";
+    case 8: return "field";
+    case 9: return "constructor";
+    case 10: return "enum";
+    case 11: return "interface";
+    case 12: return "function";
+    case 13: return "variable";
+    case 14: return "constant";
+    case 15: return "string";
+    case 16: return "number";
+    case 17: return "boolean";
+    case 18: return "array";
+    case 19: return "object";
+    case 20: return "key";
+    case 21: return "null";
+    case 22: return "enum-member";
+    case 23: return "struct";
+    case 24: return "event";
+    case 25: return "operator";
+    case 26: return "type-parameter";
+    default: return "symbol";
+  }
+}
+
+// Adapt an LSP DocumentSymbol tree onto the plugin DocumentSymbolNode tree the
+// outline flatten path consumes. `line`/`column` become 1-based, and the column is
+// mapped from the server's position encoding to an editor byte column so the
+// outline navigates to the right spot on non-ASCII lines.
+plugin::PluginHost::DocumentSymbolNode AdaptLspDocumentSymbol(
+    const LspClient::DocumentSymbol& symbol, const editor::TextViewport& viewport,
+    lsp_encoding::PositionEncoding encoding) {
+  const std::size_t line = static_cast<std::size_t>(std::max(0, symbol.selection_range.start.line));
+  plugin::PluginHost::DocumentSymbolNode node;
+  node.name = symbol.name;
+  node.detail = symbol.detail;
+  node.kind = std::string(LspSymbolKindName(symbol.kind));
+  node.line = line + 1;
+  node.column =
+      LspPositionToByteColumn(viewport, line, symbol.selection_range.start.character, encoding) + 1;
+  node.children.reserve(symbol.children.size());
+  for (const auto& child : symbol.children) {
+    node.children.push_back(AdaptLspDocumentSymbol(child, viewport, encoding));
+  }
+  return node;
+}
+
+}  // namespace
+
+void WorkspaceShell::QueryLspDocumentSymbolsForOutline(const editor::TextViewport& viewport,
+                                                       std::filesystem::path request_path,
+                                                       std::string plugin_error) {
+  const auto apply = [this](const std::filesystem::path& path, const std::string& error,
+                            std::vector<plugin::PluginHost::DocumentSymbolNode> nodes) {
+    // Re-create the coordinator from the (long-lived) shell so the apply never runs
+    // on the transient coordinator that issued the request.
+    MakeSidebarCoordinator().ApplyLspOutlineResult(path, error, nodes);
+  };
+  std::string language_id;
+  LspClient* client = LspClientForViewport(viewport, &language_id);
+  if (client == nullptr) {
+    apply(request_path, plugin_error, {});
+    return;
+  }
+  EnsureLspDocumentOpen(viewport, *client, language_id);
+  const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
+  BeginTrackedLspRequest();
+  client->RequestDocumentSymbolAsync(
+      FileUriForPath(request_path),
+      [this, request_path = std::move(request_path), plugin_error = std::move(plugin_error),
+       encoding, apply](std::optional<std::vector<LspClient::DocumentSymbol>> symbols) {
+        FinishTrackedLspRequest();
+        editor::TextViewport* current = ActiveEditorViewport();
+        // Superseded (buffer/file switched): apply empty; ApplyLspOutlineResult
+        // re-checks the path and leaves the newer view untouched.
+        if (current == nullptr || current->path() != request_path) {
+          apply(request_path, plugin_error, {});
+          return;
+        }
+        std::vector<plugin::PluginHost::DocumentSymbolNode> nodes;
+        if (symbols.has_value()) {
+          nodes.reserve(symbols->size());
+          for (const auto& symbol : *symbols) {
+            nodes.push_back(AdaptLspDocumentSymbol(symbol, *current, encoding));
+          }
+        }
+        apply(request_path, plugin_error, std::move(nodes));
+      });
 }
 
 void WorkspaceShell::PublishLspDiagnostics(ProjectWorkspaceState& state, std::string uri,

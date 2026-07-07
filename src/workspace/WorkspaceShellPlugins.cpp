@@ -14,6 +14,7 @@
 #include "util/StartupTrace.h"
 #include "workspace/FileUri.h"
 #include "workspace/LspPositionEncoding.h"
+#include "workspace/LspViewportPositions.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
@@ -940,8 +941,7 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
   client->SetDiagnosticsCallback([this, project = &context_.current_project_state, client](
                                      std::string uri,
                                      std::vector<LspClient::Diagnostic> diagnostics) {
-    PublishLspDiagnostics(*project, std::move(uri),
-                          lsp_encoding::ParsePositionEncoding(client->ServerPositionEncoding()),
+    PublishLspDiagnostics(*project, std::move(uri), LspEncodingForClient(*client),
                           std::move(diagnostics));
   });
   EnsureLspDocumentOpen(*viewport, *client, language_id);
@@ -1213,9 +1213,8 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
     std::string vp_language_id;
     LspClient* vp_client = lsp_service_.LspClientForViewport(*viewport, &vp_language_id);
     const lsp_encoding::PositionEncoding vp_encoding =
-        vp_client != nullptr
-            ? lsp_encoding::ParsePositionEncoding(vp_client->ServerPositionEncoding())
-            : lsp_encoding::PositionEncoding::Utf8;
+        vp_client != nullptr ? LspEncodingForClient(*vp_client)
+                             : lsp_encoding::PositionEncoding::Utf8;
     // Convert 0-based LSP coordinates to editor byte columns, clamped to the live
     // document. LspCharacterToByteColumn already clamps the column to the line.
     const auto clamp = [&](editor::TextPosition pos) -> editor::TextPosition {

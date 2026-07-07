@@ -1,0 +1,78 @@
+#pragma once
+
+#include <algorithm>
+#include <cstddef>
+#include <string_view>
+
+#include "editor/TextViewport.h"
+#include "workspace/LspPositionEncoding.h"
+#include "workspace/WorkspaceLspClient.h"
+
+// Viewport-aware LSP position conversion — the single home for "resolve the
+// affected line in `viewport`, then map its column through the server's negotiated
+// position encoding". This logic used to be re-implemented in AssistService,
+// LspService, and WorkspaceShellPlugins; a subtle skew between the copies is a
+// data-corruption bug on non-ASCII lines, so it lives here once.
+//
+// All line access goes through TextBuffer::LineView (zero-copy) rather than
+// Snapshot() (which materializes the whole document) — the previous AssistService
+// copies snapshotted the entire buffer just to read one line.
+namespace microide::workspace {
+
+// Encoding the server negotiated for `client`, ready to feed the converters below.
+inline lsp_encoding::PositionEncoding LspEncodingForClient(const LspClient& client) {
+  return lsp_encoding::ParsePositionEncoding(client.ServerPositionEncoding());
+}
+
+// Zero-copy view of `line` in `viewport` (empty when out of range).
+inline std::string_view LspLineView(const editor::TextViewport& viewport, std::size_t line) {
+  return line < viewport.lines().size() ? viewport.lines().LineView(line) : std::string_view{};
+}
+
+// Editor byte column (on `line`) -> outbound LSP position in the server's encoding.
+// Requests must be phrased in the server's units or they resolve at the wrong
+// token on non-ASCII lines.
+inline LspClient::Position ByteColumnToLspPosition(const editor::TextViewport& viewport,
+                                                   std::size_t line, std::size_t byte_column,
+                                                   lsp_encoding::PositionEncoding encoding) {
+  const std::string_view text = LspLineView(viewport, line);
+  return LspClient::Position{
+      static_cast<int>(line),
+      static_cast<int>(lsp_encoding::ByteColumnToLspCharacter(text, byte_column, encoding))};
+}
+
+// Inbound LSP `character` (server encoding) on `line` -> editor byte column, given
+// a resolved viewport.
+inline std::size_t LspPositionToByteColumn(const editor::TextViewport& viewport, std::size_t line,
+                                           int character,
+                                           lsp_encoding::PositionEncoding encoding) {
+  const std::string_view text = LspLineView(viewport, line);
+  return lsp_encoding::LspCharacterToByteColumn(
+      text, static_cast<std::size_t>(std::max(0, character)), encoding);
+}
+
+// Inbound conversion with the `viewport == nullptr` / utf-8 fast path (the
+// file-not-open case): both short-circuit to the raw byte offset, since utf-8 is
+// pass-through and a missing buffer has no line text to map against.
+inline std::size_t LspInboundColumn(const editor::TextViewport* viewport, std::size_t line,
+                                    int character, lsp_encoding::PositionEncoding encoding) {
+  const std::size_t raw = static_cast<std::size_t>(std::max(0, character));
+  if (viewport == nullptr || encoding == lsp_encoding::PositionEncoding::Utf8) {
+    return raw;
+  }
+  return LspPositionToByteColumn(*viewport, line, character, encoding);
+}
+
+// Full LSP range (0-based, server encoding) -> editor byte-column SelectionRange,
+// clamped to the document.
+inline editor::SelectionRange LspRangeToEditorRange(const editor::TextViewport& viewport,
+                                                    const LspClient::Range& range,
+                                                    lsp_encoding::PositionEncoding encoding) {
+  const auto to_position = [&](const LspClient::Position& p) {
+    const std::size_t line = static_cast<std::size_t>(std::max(0, p.line));
+    return editor::TextPosition{line, LspPositionToByteColumn(viewport, line, p.character, encoding)};
+  };
+  return editor::SelectionRange{.start = to_position(range.start), .end = to_position(range.end)};
+}
+
+}  // namespace microide::workspace

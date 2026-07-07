@@ -6,6 +6,8 @@ namespace microide::workspace {
 
 enum class ActionId {
   CodeActions,
+  FormatDocument,
+  RenameSymbol,
   OpenCommandPalette,
   Colorscheme,
   ToggleColorTheme,

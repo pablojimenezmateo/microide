@@ -299,6 +299,38 @@ void LspClient::ClearTestDocumentSymbolHandler() {
   impl_->test_document_symbol_handler = nullptr;
 }
 
+void LspClient::SetTestHoverHandler(std::function<void(std::string uri, HoverCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_hover_handler = std::move(handler);
+}
+
+void LspClient::ClearTestHoverHandler() {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_hover_handler = nullptr;
+}
+
+void LspClient::SetTestFormattingHandler(
+    std::function<void(std::string uri, FormattingCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_formatting_handler = std::move(handler);
+}
+
+void LspClient::ClearTestFormattingHandler() {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_formatting_handler = nullptr;
+}
+
+void LspClient::SetTestRenameHandler(
+    std::function<void(std::string uri, std::string new_name, RenameCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_rename_handler = std::move(handler);
+}
+
+void LspClient::ClearTestRenameHandler() {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_rename_handler = nullptr;
+}
+
 std::vector<std::string> LspClient::SemanticTokenLegend() const {
   std::lock_guard lock(impl_->mutex);
   return impl_->semantic_token_types;

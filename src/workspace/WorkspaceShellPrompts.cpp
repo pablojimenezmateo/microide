@@ -201,6 +201,8 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
       return "Debug Console";
     case PromptSurfaceState::Action::GoToLine:
       return "Go to Line";
+    case PromptSurfaceState::Action::RenameSymbol:
+      return "Rename Symbol";
   }
   return "Prompt";
 }
@@ -255,6 +257,8 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Evaluate in the active session; the result prints to the console.";
     case PromptSurfaceState::Action::GoToLine:
       return "Enter a line[:column] to jump to.";
+    case PromptSurfaceState::Action::RenameSymbol:
+      return "Enter a new name for the symbol under the cursor.";
   }
   return {};
 }
@@ -305,6 +309,8 @@ std::vector<std::string> WorkspaceShell::PromptSurfaceActionLabels() const {
       return {"Evaluate", "Close"};
     case PromptSurfaceState::Action::GoToLine:
       return {"Go", "Cancel"};
+    case PromptSurfaceState::Action::RenameSymbol:
+      return {"Rename", "Cancel"};
   }
   return {"OK", "Cancel"};
 }
@@ -411,6 +417,17 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     MakePromptSurfaceService().DismissPromptSurface(true);
     if (!spec.empty()) {
       ActionCoordinator(MakeActionContext()).Execute(ActionId::Goto, {spec}, ActionSource::Shortcut);
+    }
+    return;
+  }
+  if (context_.prompts.surface_visible &&
+      context_.prompts.surface.action == PromptSurfaceState::Action::RenameSymbol) {
+    // Commit "Rename Symbol": hand the typed name to the LSP rename path, which
+    // renames the symbol at the (still-current) cursor across open buffers.
+    const std::string new_name = context_.prompts.surface.input.text();
+    MakePromptSurfaceService().DismissPromptSurface(true);
+    if (!new_name.empty()) {
+      MakeActionContext().RenameSymbol(new_name, nullptr);
     }
     return;
   }

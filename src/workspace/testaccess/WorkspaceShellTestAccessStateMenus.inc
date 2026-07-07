@@ -570,6 +570,29 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return ComputeSettingsOverlaySurfaceRect(layout.editor_area);
   }
+  // Overlay rect for whatever overlay is currently open — routes through the shell's
+  // ComputeOverlayRect (so a code-action overlay yields its centered-menu rect).
+  static SDL_FRect ActiveOverlayRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.ComputeOverlayRect(layout.editor_area);
+  }
+  static const std::optional<SDL_FRect>& OverlayCaretAnchor(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.caret_anchor;
+  }
+  // Force a code-action menu open with `item_count` placeholder actions and return
+  // its overlay rect. Exercises the centered-menu geometry without the async plugin/
+  // LSP path.
+  static SDL_FRect CodeActionMenuRectForItemCount(WorkspaceShell& shell, std::size_t item_count) {
+    auto& overlay = shell.context_.current_project_state.overlay;
+    overlay.visible = true;
+    overlay.mode = WorkspaceShell::OverlayMode::CodeActions;
+    overlay.caret_anchor.reset();
+    overlay.workflow.code_actions.items.clear();
+    overlay.workflow.code_actions.items.resize(item_count);
+    overlay.workflow.code_actions.selected_index = 0;
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.ComputeOverlayRect(layout.editor_area);
+  }
   static int SettingsOverlayScrollRow(const WorkspaceShell& shell) {
     return shell.settings_overlay_service_.ScrollRow();
   }

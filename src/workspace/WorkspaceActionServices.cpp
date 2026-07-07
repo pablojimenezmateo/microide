@@ -292,6 +292,14 @@ bool WorkspaceActionContext::GoToLspDefinition(std::string* error_message) {
   return operations_.go_to_lsp_definition(error_message);
 }
 
+bool WorkspaceActionContext::FormatActiveDocument(std::string* error_message) {
+  return operations_.format_active_document(error_message);
+}
+
+bool WorkspaceActionContext::RenameSymbol(const std::string& new_name, std::string* error_message) {
+  return operations_.rename_symbol(new_name, error_message);
+}
+
 bool WorkspaceActionContext::FindLspReferences(std::string* error_message) {
   return operations_.find_lsp_references(error_message);
 }

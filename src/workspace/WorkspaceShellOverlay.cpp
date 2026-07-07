@@ -32,9 +32,10 @@ void WorkspaceShell::ShowOverlay(OverlayMode mode) {
   active_signature_help_.reset();
   context_.current_project_state.overlay.visible = true;
   context_.current_project_state.overlay.mode = mode;
-  if (mode == OverlayMode::Completion || mode == OverlayMode::CodeActions) {
-    // Anchor the compact popup to the caret so it appears next to the code being
-    // completed instead of as a centered modal that hides it.
+  if (mode == OverlayMode::Completion) {
+    // Anchor the completion popup to the caret so it appears next to the code being
+    // completed instead of as a centered modal that hides it. (Code actions use the
+    // canonical centered menu — a short, deliberate list, not inline-with-typing.)
     if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
       context_.current_project_state.overlay.caret_anchor = ActiveEditorCaretRect(*layout);
     } else {
@@ -147,9 +148,13 @@ float WorkspaceShell::OverlayListStartOffset() const {
     case OverlayMode::BufferReplace:
       return 106.0f;
     case OverlayMode::Completion:
-    case OverlayMode::CodeActions:
-      // Caret-anchored popups render header-less, so the list starts near the top.
+      // The caret-anchored completion popup renders header-less, so the list starts
+      // near the top.
       return 8.0f;
+    case OverlayMode::CodeActions:
+      // The centered code-action menu carries a title bar (but no query field), so
+      // the list starts just below the title.
+      return 40.0f;
     case OverlayMode::CommitPicker:
     case OverlayMode::LaunchConfigPicker:
     case OverlayMode::CommandPalette:

@@ -17,6 +17,7 @@
 #include "workspace/FileUri.h"
 #include "workspace/LanguageDetection.h"
 #include "workspace/LspPositionEncoding.h"
+#include "workspace/LspViewportPositions.h"
 #include "workspace/WorkspaceCodeActionRegistry.h"
 #include "workspace/WorkspaceCompletionRegistry.h"
 #include "workspace/WorkspaceContext.h"
@@ -90,20 +91,6 @@ const editor::TextViewport* FindOpenEditorViewport(const ProjectWorkspaceState& 
     }
   }
   return nullptr;
-}
-
-// Convert an inbound LSP `character` (server encoding) on `line` to an editor byte
-// column, given the resolved file viewport (nullptr => pass through as bytes, the
-// utf-8 / file-not-open case).
-std::size_t InboundColumn(const editor::TextViewport* viewport, std::size_t line, int character,
-                          lsp_encoding::PositionEncoding encoding) {
-  const std::size_t raw = static_cast<std::size_t>(std::max(0, character));
-  if (viewport == nullptr || encoding == lsp_encoding::PositionEncoding::Utf8) {
-    return raw;
-  }
-  const std::string_view text =
-      line < viewport->lines().size() ? std::string_view(viewport->lines()[line]) : std::string_view{};
-  return lsp_encoding::LspCharacterToByteColumn(text, raw, encoding);
 }
 
 // Map an LSP standard semantic-token type name to the editor's lexical token
@@ -354,8 +341,7 @@ LspClient* LspService::LspClientForViewport(const editor::TextViewport& viewport
     client->SetDiagnosticsCallback([this, project, client](
                                        std::string uri,
                                        std::vector<LspClient::Diagnostic> diagnostics) {
-      PublishLspDiagnostics(*project, std::move(uri),
-                            lsp_encoding::ParsePositionEncoding(client->ServerPositionEncoding()),
+      PublishLspDiagnostics(*project, std::move(uri), LspEncodingForClient(*client),
                             std::move(diagnostics));
     });
   }
@@ -392,7 +378,7 @@ void LspService::PublishLspDiagnostics(ProjectWorkspaceState& state, std::string
   const editor::TextViewport* file_viewport = FindOpenEditorViewport(state, *path);
   const auto to_position = [&](const LspClient::Position& p) {
     const std::size_t line = static_cast<std::size_t>(std::max(p.line, 0));
-    return editor::TextPosition{line, InboundColumn(file_viewport, line, p.character, encoding)};
+    return editor::TextPosition{line, LspInboundColumn(file_viewport, line, p.character, encoding)};
   };
 
   std::vector<editor::Diagnostic> converted;
@@ -426,8 +412,7 @@ void LspService::RequestLspSemanticTokens(const editor::TextViewport& viewport, 
     return;
   }
   const std::uint64_t generation = ++semantic_token_generation_[uri];
-  const lsp_encoding::PositionEncoding encoding =
-      lsp_encoding::ParsePositionEncoding(client.ServerPositionEncoding());
+  const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(client);
   client.RequestSemanticTokensAsync(
       uri, [this, project, uri, generation, encoding, legend = std::move(legend)](
                std::optional<std::vector<LspClient::SemanticToken>> tokens) mutable {
@@ -461,7 +446,7 @@ void LspService::PublishLspSemanticTokens(ProjectWorkspaceState& state, std::str
   }
   // Resolve the file's buffer once for position-encoding conversion (token
   // start_char/length are in the server's encoding units; the overlay stores byte
-  // columns). Null (file not open / utf-8) => InboundColumn passes through.
+  // columns). Null (file not open / utf-8) => LspInboundColumn passes through.
   const editor::TextViewport* file_viewport = FindOpenEditorViewport(state, *path);
   const SDL_Color plain = theme_->text_primary;
   editor::PluginDecorationData data;
@@ -478,14 +463,14 @@ void LspService::PublishLspSemanticTokens(ProjectWorkspaceState& state, std::str
     editor::TextStyleDecoration style;
     style.line = static_cast<std::uint32_t>(token.line);
     const std::size_t line = static_cast<std::size_t>(token.line);
-    const std::size_t start_byte = InboundColumn(file_viewport, line, token.start_char, encoding);
+    const std::size_t start_byte = LspInboundColumn(file_viewport, line, token.start_char, encoding);
     // ParseSemanticTokensData bounds start_char/length to [0, INT_MAX] each, but
     // their sum can overflow a signed int; compute the end unit in int64 and clamp.
     const std::int64_t end_units =
         std::min<std::int64_t>(static_cast<std::int64_t>(token.start_char) + token.length,
                                std::numeric_limits<int>::max());
     const std::size_t end_byte =
-        InboundColumn(file_viewport, line, static_cast<int>(end_units), encoding);
+        LspInboundColumn(file_viewport, line, static_cast<int>(end_units), encoding);
     style.start_column = static_cast<std::uint32_t>(start_byte);
     style.end_column = static_cast<std::uint32_t>(std::max(start_byte, end_byte));
     style.foreground = editor::SyntaxTokenColor(*theme_, kind, plain);  // a!=0 => recolor
@@ -682,9 +667,8 @@ void LspService::SyncLspForActiveEditableLastChange() {
     // safe when the server counts UTF-8 bytes (clangd's negotiated case — the hot
     // path). For utf-16/utf-32 servers, fall back to a full-document replace, which
     // needs no per-column encoding and stays desync-proof.
-    const bool utf8_positions = lsp_encoding::ParsePositionEncoding(
-                                    client->ServerPositionEncoding()) ==
-                                lsp_encoding::PositionEncoding::Utf8;
+    const bool utf8_positions =
+        LspEncodingForClient(*client) == lsp_encoding::PositionEncoding::Utf8;
     if (!applied_edit.has_value() || !client->SupportsIncrementalSync() || !utf8_positions) {
       util::PerformanceTrace::Scope scope(
           "LspService::SyncLspForActiveEditableLastChange::FullSync");

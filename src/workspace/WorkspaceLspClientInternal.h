@@ -198,6 +198,9 @@ struct LspClient::Impl {
   std::atomic<bool> test_stub_mode{false};
   std::function<void(std::string, DocumentSymbolCallback)> test_document_symbol_handler;
   std::function<void(std::string, SemanticTokensCallback)> test_semantic_tokens_handler;
+  std::function<void(std::string, HoverCallback)> test_hover_handler;
+  std::function<void(std::string, FormattingCallback)> test_formatting_handler;
+  std::function<void(std::string, std::string, RenameCallback)> test_rename_handler;
 
   // Server semantic-token legend (index -> type name), captured at initialize.
   // Guarded by `mutex`. Empty when the server advertises no semanticTokens provider.
@@ -833,6 +836,32 @@ struct LspClient::Impl {
     }
   }
 
+  // Result-shaped request helper: owns the boilerplate every feature request
+  // repeats — the empty-`callback` guard, the "no `result` key" -> nullopt path,
+  // and the send-failure -> nullopt path — so a request method reduces to "build
+  // params + parse result". `parse_result` maps the response's `result` value to
+  // the callback's argument (an `std::optional<...>`); the absent/failure cases
+  // deliver a default-constructed argument (i.e. `std::nullopt`).
+  template <typename Callback, typename Parser>
+  void DispatchResultRequest(const std::string& method, util::JsonValue params, Callback callback,
+                             Parser parse_result) {
+    if (!callback) {
+      return;
+    }
+    Callback failure = callback;
+    DispatchRequest(
+        method, std::move(params),
+        [cb = std::move(callback), parse_result = std::move(parse_result)](
+            util::JsonValue resp) mutable {
+          if (!resp.HasKey("result")) {
+            cb({});
+            return;
+          }
+          cb(parse_result(resp["result"]));
+        },
+        [failure = std::move(failure)]() mutable { failure({}); });
+  }
+
   void DoInitializeBlocking() {
     util::StartupTrace::Scope trace_scope("LspClient::DoInitializeBlocking");
     TraceLspLifecycle(language_id, proc.pid(), "init-thread-begin");
@@ -1166,6 +1195,9 @@ struct LspClient::Impl {
       {
         std::lock_guard hook_lock(mutex);
         test_document_symbol_handler = nullptr;
+        test_hover_handler = nullptr;
+        test_formatting_handler = nullptr;
+        test_rename_handler = nullptr;
       }
       initialized.store(false, std::memory_order_release);
       initializing.store(false, std::memory_order_release);

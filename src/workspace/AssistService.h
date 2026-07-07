@@ -104,6 +104,16 @@ class AssistService {
   bool ExecuteSelectedCodeAction();
   bool GoToLspDefinition(std::string* error_message = nullptr);
   bool FindLspReferences(std::string* error_message = nullptr);
+  // Format the active editable buffer via the language server's
+  // textDocument/formatting and apply the returned edits to the open buffer.
+  bool FormatActiveDocument(std::string* error_message = nullptr);
+  // The identifier under the cursor in the active editable buffer (word chars:
+  // alnum + '_'), or empty when the cursor is not on one. Used to prefill the
+  // rename prompt.
+  std::string SymbolAtCursor() const;
+  // Rename the symbol under the cursor to `new_name` via the language server's
+  // textDocument/rename, applying the returned workspace edit across open buffers.
+  bool RenameSymbol(const std::string& new_name, std::string* error_message = nullptr);
   bool ShowSignatureHelp(std::string* error_message = nullptr);
 
  private:

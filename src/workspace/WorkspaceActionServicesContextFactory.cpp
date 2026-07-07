@@ -203,6 +203,18 @@ void WorkspaceActionContext::OpenGoToLinePrompt() {
   }
 }
 
+void WorkspaceActionContext::OpenRenameSymbolPrompt() {
+  if (!operations_.open_prompt_surface) {
+    return;
+  }
+  // Prefill with the identifier under the cursor so a rename usually starts from the
+  // current name.
+  std::string seed = operations_.symbol_at_cursor ? operations_.symbol_at_cursor() : std::string{};
+  operations_.open_prompt_surface(PromptSurfaceState::Action::RenameSymbol,
+                                  PromptSurfaceState::Kind::TextInput, std::filesystem::path{},
+                                  std::move(seed));
+}
+
 void WorkspaceActionContext::EditBreakpointModifierFromMenu(ActionId id) {
   if (operations_.edit_breakpoint_modifier_from_menu) {
     operations_.edit_breakpoint_modifier_from_menu(id);
@@ -425,6 +437,15 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .find_lsp_references =
               [this](std::string* error_message) {
                 return assist_service_.FindLspReferences(error_message);
+              },
+          .format_active_document =
+              [this](std::string* error_message) {
+                return assist_service_.FormatActiveDocument(error_message);
+              },
+          .symbol_at_cursor = [this]() { return assist_service_.SymbolAtCursor(); },
+          .rename_symbol =
+              [this](const std::string& new_name, std::string* error_message) {
+                return assist_service_.RenameSymbol(new_name, error_message);
               },
           .show_signature_help =
               [this](std::string* error_message) {
