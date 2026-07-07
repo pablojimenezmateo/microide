@@ -3325,6 +3325,57 @@ void TestWorkspaceShellLspSemanticOverlayClearedOnEditAndUndo() {
          "undo must clear the stale lsp:semantic overlay (the reported corruption)");
 }
 
+// The applied-edit diagnostic shift must run even when no language server serves
+// the buffer. Phase-1.4 moved ShiftLspDiagnosticsForAppliedEdit ahead of the
+// client early-out in SyncLspForActiveEditableLastChange, so stored "lsp"
+// diagnostics stay on their text while the buffer is dirty regardless of server
+// state; before that change a serverless edit stranded them on the pre-edit line.
+void TestWorkspaceShellLspDiagnosticsShiftOnEditWithoutServer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.cpp";
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "diagnostic-shift fixture should open the project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  // Seed an "lsp" diagnostic on the second line ("  return 0;"). This bare project
+  // has no contributed language server, so nothing will republish it.
+  Expect(WorkspaceShellTestAccess::PublishDiagnostics(
+             shell, "lsp", source,
+             {microide::editor::Diagnostic{
+                 .range =
+                     microide::editor::SelectionRange{
+                         .start = microide::editor::TextPosition{.line = 1, .column = 2},
+                         .end = microide::editor::TextPosition{.line = 1, .column = 8},
+                     },
+                 .severity = microide::editor::DiagnosticSeverity::Warning,
+                 .message = "unused result",
+             }}),
+         "seeding an lsp diagnostic should publish it");
+  {
+    const auto* published = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
+    Expect(published != nullptr && published->size() == 1 &&
+               published->front().range.start.line == 1,
+           "the seeded diagnostic should start on line 1 before editing");
+  }
+
+  // Insert a newline at the very top: every stored position at/after (0,0) shifts
+  // down one line. With no server, the pre-1.4 sync returned before shifting.
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "pressing Enter at the top of the buffer should insert a line");
+
+  const auto* published = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
+  Expect(published != nullptr && published->size() == 1,
+         "the diagnostic should still be stored after a serverless edit");
+  Expect(published->front().range.start.line == 2,
+         "the diagnostic must shift down a line even with no language server running");
+}
+
 // Opens a bare project + editable file (no plugin needed) with ghost text enabled,
 // caret parked at the end of the first line. Ghost-text state-machine tests drive
 // the host's publish/accept/dismiss/invalidate entry points directly via TestAccess.
@@ -3796,6 +3847,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginApplyEditsClampsOutOfBounds);
   AddTest(tests, "WorkspaceShell/LspSemanticOverlayClearedOnEditAndUndo",
           TestWorkspaceShellLspSemanticOverlayClearedOnEditAndUndo);
+  AddTest(tests, "WorkspaceShell/LspDiagnosticsShiftOnEditWithoutServer",
+          TestWorkspaceShellLspDiagnosticsShiftOnEditWithoutServer);
   AddTest(tests, "WorkspaceShell/GhostTextPublishStoresAndSplits",
           TestWorkspaceShellGhostTextPublishStoresAndSplits);
   AddTest(tests, "WorkspaceShell/GhostTextDisabledSettingNoOp",

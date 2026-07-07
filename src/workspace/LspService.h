@@ -2,9 +2,11 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "editor/TextViewport.h"
@@ -107,6 +109,32 @@ class LspService {
  private:
   ProjectWorkspaceState& CurrentProjectState();
   const ProjectWorkspaceState& CurrentProjectState() const;
+
+  // Shared preamble for the two didChange paths: resolve the server for `viewport`,
+  // compute its document URI once, capture whether the document was already open
+  // (BEFORE opening it — a fresh didOpen carries the current buffer text, so the
+  // caller must skip the following didChange or it double-applies and desyncs the
+  // server), then ensure it is open. Returns nullopt when no server serves the
+  // buffer. Allocation-free beyond the URI string (no std::function on the hot path).
+  struct BufferSyncTarget {
+    LspClient* client = nullptr;
+    std::string uri;
+    std::string language_id;
+    bool was_open = false;
+  };
+  std::optional<BufferSyncTarget> ResolveOpenDocumentForSync(const editor::TextViewport& viewport);
+
+  // Per-URI semantic-token generation guard. NextSemanticGeneration bumps and
+  // returns the current value (captured in a request's response closure);
+  // SemanticGenerationCurrent reports whether a captured value is still the latest,
+  // i.e. not superseded by a later request or a clear.
+  std::uint64_t NextSemanticGeneration(const std::string& uri);
+  bool SemanticGenerationCurrent(const std::string& uri, std::uint64_t generation) const;
+
+  // Apply `transform` to every stored "lsp" diagnostic range for `viewport`'s file
+  // (single-sources the owner tag + path). Instantiated only in LspService.cpp.
+  template <typename Transform>
+  void TransformLspDiagnostics(const editor::TextViewport& viewport, Transform&& transform);
 
   // Keep stored "lsp" diagnostics positioned as the buffer changes, before the
   // server republishes. The single-edit path maps positions precisely through the

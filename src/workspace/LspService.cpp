@@ -411,7 +411,7 @@ void LspService::RequestLspSemanticTokens(const editor::TextViewport& viewport, 
   if (legend.empty()) {
     return;
   }
-  const std::uint64_t generation = ++semantic_token_generation_[uri];
+  const std::uint64_t generation = NextSemanticGeneration(uri);
   const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(client);
   client.RequestSemanticTokensAsync(
       uri, [this, project, uri, generation, encoding, legend = std::move(legend)](
@@ -436,8 +436,7 @@ void LspService::PublishLspSemanticTokens(ProjectWorkspaceState& state, std::str
   // bumped the URI's generation (or cleared it), so painting these absolute
   // positions would corrupt the current text. Mirrors the revision guard in
   // TextViewport::InstallPrefetchedHighlights.
-  if (const auto it = semantic_token_generation_.find(uri);
-      it == semantic_token_generation_.end() || it->second != request_generation) {
+  if (!SemanticGenerationCurrent(uri, request_generation)) {
     return;
   }
   const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
@@ -522,9 +521,8 @@ void LspService::ShiftLspDiagnosticsForAppliedEdit(const editor::TextViewport& v
   if (before_start == before_end && new_end == before_start) {
     return;  // Empty edit -> nothing moved.
   }
-  CurrentProjectState().diagnostics_store.TransformOwnerFile(
-      "lsp", viewport.path(),
-      [before_start, before_end, new_end](editor::SelectionRange range) {
+  TransformLspDiagnostics(
+      viewport, [before_start, before_end, new_end](editor::SelectionRange range) {
         range.start = AdjustPositionForReplace(range.start, before_start, before_end, new_end);
         range.end = AdjustPositionForReplace(range.end, before_start, before_end, new_end);
         return range;
@@ -544,8 +542,8 @@ void LspService::ShiftLspDiagnosticsForBulkChange(const editor::TextViewport& vi
   }
   const std::ptrdiff_t line_delta = static_cast<std::ptrdiff_t>(after_lines.size()) -
                                     static_cast<std::ptrdiff_t>(before_lines.size());
-  CurrentProjectState().diagnostics_store.TransformOwnerFile(
-      "lsp", viewport.path(), [first_changed, line_delta](editor::SelectionRange range) {
+  TransformLspDiagnostics(
+      viewport, [first_changed, line_delta](editor::SelectionRange range) {
         const auto shift = [&](editor::TextPosition p) {
           if (p.line < first_changed) {
             return p;
@@ -561,6 +559,41 @@ void LspService::ShiftLspDiagnosticsForBulkChange(const editor::TextViewport& vi
         range.end = shift(range.end);
         return range;
       });
+}
+
+std::optional<LspService::BufferSyncTarget> LspService::ResolveOpenDocumentForSync(
+    const editor::TextViewport& viewport) {
+  BufferSyncTarget target;
+  target.client = LspClientForViewport(viewport, &target.language_id);
+  if (target.client == nullptr) {
+    return std::nullopt;
+  }
+  // Compute the URI once (FileUriForPath normalizes + percent-encodes) and reuse it
+  // for both the was-open check and the caller's DidChange.
+  target.uri = FileUriForPath(viewport.path());
+  // Capture BEFORE EnsureLspDocumentOpen: if the doc was not open, the didOpen it
+  // sends carries the current (already-edited) text, so a following didChange would
+  // double-apply. The caller gates its DidChange on was_open for exactly this reason.
+  target.was_open = target.client->HasOpenDocument(target.uri);
+  EnsureLspDocumentOpen(viewport, *target.client, target.language_id, target.uri);
+  return target;
+}
+
+std::uint64_t LspService::NextSemanticGeneration(const std::string& uri) {
+  return ++semantic_token_generation_[uri];
+}
+
+bool LspService::SemanticGenerationCurrent(const std::string& uri,
+                                           std::uint64_t generation) const {
+  const auto it = semantic_token_generation_.find(uri);
+  return it != semantic_token_generation_.end() && it->second == generation;
+}
+
+template <typename Transform>
+void LspService::TransformLspDiagnostics(const editor::TextViewport& viewport,
+                                         Transform&& transform) {
+  CurrentProjectState().diagnostics_store.TransformOwnerFile("lsp", viewport.path(),
+                                                             std::forward<Transform>(transform));
 }
 
 void LspService::SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
@@ -585,35 +618,29 @@ void LspService::SyncLspForBufferChange(const editor::TextViewport& viewport,
   ClearLspSemanticTokensForFile(viewport);
 
   // Keep diagnostics positioned for the dirty buffer until the server republishes.
+  // Runs before the client early-out so a dead/absent server never strands them.
   ShiftLspDiagnosticsForBulkChange(viewport, before_lines, after_lines);
-  std::string language_id;
-  LspClient* client = LspClientForViewport(viewport, &language_id);
-  if (client == nullptr) {
+
+  const std::optional<BufferSyncTarget> target = ResolveOpenDocumentForSync(viewport);
+  if (!target.has_value()) {
     return;
   }
-  const std::string uri = FileUriForPath(viewport.path());
-  // If the document is not open yet, EnsureLspDocumentOpen's didOpen carries the
-  // CURRENT (already-edited) buffer text, so a following didChange would apply the
-  // edit a second time and desync the server. Only send didChange when it was
-  // already open at entry.
-  const bool was_open = client->HasOpenDocument(uri);
-  EnsureLspDocumentOpen(viewport, *client, language_id, uri);
 
   // Full-document sync for the bulk-change path. The per-keystroke path
   // (SyncLspForActiveEditableLastChange) sends true ranged incremental edits via
   // the viewport's last applied edit; here we only have before/after snapshots,
   // so a clean full replace is the correct, desync-proof choice. Full text needs
   // no per-column position-encoding conversion, so this stays correct for utf-16
-  // servers too.
-  if (was_open) {
-    client->DidChange(uri, util::SerializeLines(after_lines, viewport.line_ending()));
+  // servers too. Only when the doc was already open (see ResolveOpenDocumentForSync).
+  if (target->was_open) {
+    target->client->DidChange(target->uri, util::SerializeLines(after_lines, viewport.line_ending()));
   }
   // Re-request semantic tokens only when the edit left the buffer clean (e.g. an
   // undo landing on the saved point). The overlay is render-suppressed while
   // dirty, so requesting for a dirty buffer would paint nothing yet be superseded
   // by the next clean transition anyway.
   if (!viewport.dirty()) {
-    RequestLspSemanticTokens(viewport, *client);
+    RequestLspSemanticTokens(viewport, *target->client);
   }
 }
 
@@ -631,35 +658,26 @@ void LspService::SyncLspForActiveEditableLastChange() {
   // re-request below repopulates it when an undo/redo lands on the saved point.
   ClearLspSemanticTokensForFile(*viewport);
 
-  std::string language_id;
-  LspClient* client = nullptr;
+  // Slide stored diagnostics through this keystroke so they stay on their text while
+  // the buffer is dirty, until the server republishes authoritative ranges. Runs
+  // before the client early-out (and self-guards on last_applied_edit) so a
+  // dead/absent server never strands diagnostics on the pre-edit position.
+  ShiftLspDiagnosticsForAppliedEdit(*viewport);
+
+  std::optional<BufferSyncTarget> target;
   {
     util::PerformanceTrace::Scope scope(
-        "LspService::SyncLspForActiveEditableLastChange::ResolveClient");
-    client = LspClientForViewport(*viewport, &language_id);
+        "LspService::SyncLspForActiveEditableLastChange::ResolveAndOpen");
+    target = ResolveOpenDocumentForSync(*viewport);
   }
-  if (client == nullptr) {
+  if (!target.has_value()) {
     return;
   }
-  // Compute the document URI once and reuse it for both the ensure-open check and
-  // the DidChange below, so FileUriForPath's normalize+percent-encode runs once
-  // per keystroke instead of twice.
-  const std::string uri = FileUriForPath(viewport->path());
-  // See SyncLspForActiveEditableChange: if the doc was not open, the didOpen just
-  // sent the current (already-edited) text, so a didChange would double-apply.
-  const bool was_open = client->HasOpenDocument(uri);
-  {
-    util::PerformanceTrace::Scope scope(
-        "LspService::SyncLspForActiveEditableLastChange::EnsureDocumentOpen");
-    EnsureLspDocumentOpen(*viewport, *client, language_id, uri);
-  }
+  LspClient* const client = target->client;
+  const std::string& uri = target->uri;
+  const bool was_open = target->was_open;
 
   const auto& applied_edit = viewport->last_applied_edit();
-  if (applied_edit.has_value()) {
-    // Slide stored diagnostics through this keystroke so they stay on their text
-    // while the buffer is dirty, until the server republishes authoritative ranges.
-    ShiftLspDiagnosticsForAppliedEdit(*viewport);
-  }
 
   if (was_open) {
     // The incremental range carries PRE-edit byte columns; we no longer have the
