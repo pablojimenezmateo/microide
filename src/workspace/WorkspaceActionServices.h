@@ -78,6 +78,9 @@ class WorkspaceActionContext {
     std::function<bool(std::string*)> show_insert_snippet_overlay;
     std::function<bool(std::string*)> show_code_actions_overlay;
     std::function<bool(std::string*)> go_to_lsp_definition;
+    std::function<bool(std::string*)> go_to_lsp_type_definition;
+    std::function<bool(std::string*)> go_to_lsp_implementation;
+    std::function<bool(std::string*)> go_to_lsp_declaration;
     std::function<bool(std::string*)> find_lsp_references;
     std::function<bool(std::string*)> format_active_document;
     std::function<std::string()> symbol_at_cursor;
@@ -308,6 +311,9 @@ class WorkspaceActionContext {
   bool ShowInsertSnippetOverlay(std::string* error_message);
   bool ShowCodeActionsOverlay(std::string* error_message);
   bool GoToLspDefinition(std::string* error_message);
+  bool GoToLspTypeDefinition(std::string* error_message);
+  bool GoToLspImplementation(std::string* error_message);
+  bool GoToLspDeclaration(std::string* error_message);
   bool ShowSignatureHelp(std::string* error_message);
   bool FindLspReferences(std::string* error_message);
   bool FormatActiveDocument(std::string* error_message);

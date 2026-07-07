@@ -46,7 +46,9 @@ std::string LspReadinessSuffix(const LspClient::ReadinessSnapshot& snapshot) {
 }  // namespace
 
 bool IsLspDrivenMenuAction(ActionId id) {
-  return id == ActionId::GoToDefinition || id == ActionId::FindReferences;
+  return id == ActionId::GoToDefinition || id == ActionId::GoToTypeDefinition ||
+         id == ActionId::GoToImplementation || id == ActionId::GoToDeclaration ||
+         id == ActionId::FindReferences;
 }
 
 bool IsLspMenuActionReady(const LspClient::ReadinessSnapshot& snapshot) {
@@ -165,6 +167,9 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::Jump, "Jump Relative…"),
       MenuSeparator(),
       MenuItem(ActionId::GoToDefinition),
+      MenuItem(ActionId::GoToTypeDefinition),
+      MenuItem(ActionId::GoToImplementation),
+      MenuItem(ActionId::GoToDeclaration),
       MenuItem(ActionId::FindReferences),
   });
   static const auto kGitItems = std::to_array<MenuItemSpec>({

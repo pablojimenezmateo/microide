@@ -824,26 +824,89 @@ void AssistService::ResolveDefinitionNavigation(const std::shared_ptr<Navigation
       merge->acted = true;
       NavigateToPluginLocation(merge->plugin_locations.front());
       return;
-    case assist_merge::NavChoice::UseLsp: {
+    case assist_merge::NavChoice::UseLsp:
       merge->acted = true;
-      const LspClient::Location& location = merge->lsp_locations.front();
-      const std::optional<std::filesystem::path> path = PathFromFileUri(location.uri);
-      if (!path.has_value() || !operations_.open_file_in_new_tab(*path)) {
-        return;
-      }
-      if (editor::TextViewport* active = operations_.active_editor_viewport(); active != nullptr) {
-        const std::size_t target_line =
-            static_cast<std::size_t>(std::max(location.range.start.line, 0));
-        active->MoveCursorTo(target_line,
-                             LspPositionToByteColumn(*active, target_line,
-                                                     location.range.start.character,
-                                                     merge->lsp_encoding));
-        operations_.reset_caret_blink();
-        operations_.request_focused_editor_redraw();
-      }
+      NavigateToLspLocation(merge->lsp_locations.front(), merge->lsp_encoding);
+      return;
+  }
+}
+
+void AssistService::NavigateToLspLocation(const LspClient::Location& location,
+                                          lsp_encoding::PositionEncoding encoding) {
+  const std::optional<std::filesystem::path> path = PathFromFileUri(location.uri);
+  if (!path.has_value() || !operations_.open_file_in_new_tab(*path)) {
+    return;
+  }
+  if (editor::TextViewport* active = operations_.active_editor_viewport(); active != nullptr) {
+    const std::size_t target_line =
+        static_cast<std::size_t>(std::max(location.range.start.line, 0));
+    active->MoveCursorTo(
+        target_line,
+        LspPositionToByteColumn(*active, target_line, location.range.start.character, encoding));
+    operations_.reset_caret_blink();
+    operations_.request_focused_editor_redraw();
+  }
+}
+
+bool AssistService::GoToLspNavigation(LspNavigationKind kind, std::string* error_message) {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  editor::TextViewport* viewport = RequireActiveEditableViewport(error_message);
+  if (viewport == nullptr) {
+    return false;
+  }
+  // typeDefinition / implementation / declaration are LSP-only (no plugin provider
+  // counterpart), so this is a single-source navigation: fire the server request and
+  // jump to the first location. PrepareLspRequest records the unavailable message.
+  LspClient* client = PrepareLspRequest(*viewport, error_message);
+  if (client == nullptr) {
+    return false;
+  }
+  const std::filesystem::path request_path = viewport->path();
+  const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
+  const LspClient::Position position = ByteColumnToLspPosition(
+      *viewport, viewport->cursor_line(), viewport->cursor_column(), encoding);
+  const char* empty_message = kind == LspNavigationKind::TypeDefinition ? "No type definition found"
+                              : kind == LspNavigationKind::Implementation ? "No implementation found"
+                                                                          : "No declaration found";
+  auto on_result = [this, request_path, encoding, empty_message](
+                       std::optional<std::vector<LspClient::Location>> locations) {
+    operations_.finish_tracked_lsp_request();
+    if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
       return;
     }
+    if (!locations.has_value() || locations->empty()) {
+      output_channels_->AppendLine("lsp.definition", "LSP Definition", empty_message);
+      return;
+    }
+    NavigateToLspLocation(locations->front(), encoding);
+  };
+  const std::string uri = FileUriForPath(request_path);
+  switch (kind) {
+    case LspNavigationKind::TypeDefinition:
+      client->RequestGoToTypeDefinitionAsync(uri, position, std::move(on_result));
+      break;
+    case LspNavigationKind::Implementation:
+      client->RequestGoToImplementationAsync(uri, position, std::move(on_result));
+      break;
+    case LspNavigationKind::Declaration:
+      client->RequestGoToDeclarationAsync(uri, position, std::move(on_result));
+      break;
   }
+  return true;
+}
+
+bool AssistService::GoToLspTypeDefinition(std::string* error_message) {
+  return GoToLspNavigation(LspNavigationKind::TypeDefinition, error_message);
+}
+
+bool AssistService::GoToLspImplementation(std::string* error_message) {
+  return GoToLspNavigation(LspNavigationKind::Implementation, error_message);
+}
+
+bool AssistService::GoToLspDeclaration(std::string* error_message) {
+  return GoToLspNavigation(LspNavigationKind::Declaration, error_message);
 }
 
 bool AssistService::FindLspReferences(std::string* error_message) {

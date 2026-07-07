@@ -441,6 +441,16 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
       },
       KeybindingSpec{
+          .id = "goto-implementation",
+          .action = ActionId::GoToImplementation,
+          .key = SDLK_F12,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
           .id = "find-references",
           .action = ActionId::FindReferences,
           .key = SDLK_F12,

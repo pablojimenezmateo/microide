@@ -74,6 +74,27 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::GoToTypeDefinition: {
+      std::string error_message;
+      if (!context_.GoToLspTypeDefinition(&error_message)) {
+        return reject(error_message.empty() ? "Type definition unavailable" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::GoToImplementation: {
+      std::string error_message;
+      if (!context_.GoToLspImplementation(&error_message)) {
+        return reject(error_message.empty() ? "Implementation unavailable" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::GoToDeclaration: {
+      std::string error_message;
+      if (!context_.GoToLspDeclaration(&error_message)) {
+        return reject(error_message.empty() ? "Declaration unavailable" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::FindReferences: {
       std::string error_message;
       if (!context_.FindLspReferences(&error_message)) {

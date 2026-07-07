@@ -437,6 +437,18 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](std::string* error_message) {
                 return assist_service_.GoToLspDefinition(error_message);
               },
+          .go_to_lsp_type_definition =
+              [this](std::string* error_message) {
+                return assist_service_.GoToLspTypeDefinition(error_message);
+              },
+          .go_to_lsp_implementation =
+              [this](std::string* error_message) {
+                return assist_service_.GoToLspImplementation(error_message);
+              },
+          .go_to_lsp_declaration =
+              [this](std::string* error_message) {
+                return assist_service_.GoToLspDeclaration(error_message);
+              },
           .find_lsp_references =
               [this](std::string* error_message) {
                 return assist_service_.FindLspReferences(error_message);

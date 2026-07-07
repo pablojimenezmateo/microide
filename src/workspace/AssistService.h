@@ -110,6 +110,12 @@ class AssistService {
                               const editor::SelectionRange* explicit_range = nullptr);
   bool ExecuteSelectedCodeAction();
   bool GoToLspDefinition(std::string* error_message = nullptr);
+  // LSP-only navigation to the type/interface, implementation(s), or declaration of
+  // the symbol under the cursor (textDocument/typeDefinition|implementation|
+  // declaration). Jumps to the first location returned.
+  bool GoToLspTypeDefinition(std::string* error_message = nullptr);
+  bool GoToLspImplementation(std::string* error_message = nullptr);
+  bool GoToLspDeclaration(std::string* error_message = nullptr);
   bool FindLspReferences(std::string* error_message = nullptr);
   // Format the active editable buffer via the language server's
   // textDocument/formatting and apply the returned edits to the open buffer.
@@ -226,6 +232,13 @@ class AssistService {
   // Open a plugin-provided navigation target (1-based line/column) in a new tab
   // and move the caret there. Shared by go-to-definition and the outline view.
   void NavigateToPluginLocation(const plugin::PluginHost::LocationResult& location);
+  // Open an LSP Location (0-based, server position encoding) in a new tab and move
+  // the caret there. Shared by definition and the type/impl/decl navigations.
+  void NavigateToLspLocation(const LspClient::Location& location,
+                             lsp_encoding::PositionEncoding encoding);
+
+  enum class LspNavigationKind { TypeDefinition, Implementation, Declaration };
+  bool GoToLspNavigation(LspNavigationKind kind, std::string* error_message);
 
   // Shared go-to-definition / find-references prologue. Returns the active
   // editable viewport, or nullptr after writing "No active file" to

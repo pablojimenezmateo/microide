@@ -247,13 +247,40 @@ void LspClient::RequestRangeFormattingAsync(std::string uri, Range range, int ta
       });
 }
 
+namespace {
+// definition / typeDefinition / implementation / declaration are identical on the
+// wire: TextDocumentPositionParams in, Location|Location[]|LocationLink[] out.
+// Templated on Impl so the private nested type is deduced, never named here.
+template <typename Impl>
+void DispatchLocationRequest(Impl* impl, const char* method, const std::string& uri,
+                             LspClient::Position pos, LspClient::LocationCallback callback) {
+  impl->DispatchResultRequest(
+      method, lsp_protocol::MakeTextDocumentPositionParams(uri, pos), std::move(callback),
+      [](const util::JsonValue& result) {
+        return std::optional<std::vector<LspClient::Location>>(
+            lsp_protocol::ParseLocations(result));
+      });
+}
+}  // namespace
+
 void LspClient::RequestGoToDefinitionAsync(std::string uri, Position pos,
                                            LocationCallback callback) {
-  impl_->DispatchResultRequest(
-      "textDocument/definition", lsp_protocol::MakeTextDocumentPositionParams(uri, pos),
-      std::move(callback), [](const util::JsonValue& result) {
-        return std::optional<std::vector<Location>>(lsp_protocol::ParseLocations(result));
-      });
+  DispatchLocationRequest(impl_, "textDocument/definition", uri, pos, std::move(callback));
+}
+
+void LspClient::RequestGoToTypeDefinitionAsync(std::string uri, Position pos,
+                                               LocationCallback callback) {
+  DispatchLocationRequest(impl_, "textDocument/typeDefinition", uri, pos, std::move(callback));
+}
+
+void LspClient::RequestGoToImplementationAsync(std::string uri, Position pos,
+                                               LocationCallback callback) {
+  DispatchLocationRequest(impl_, "textDocument/implementation", uri, pos, std::move(callback));
+}
+
+void LspClient::RequestGoToDeclarationAsync(std::string uri, Position pos,
+                                            LocationCallback callback) {
+  DispatchLocationRequest(impl_, "textDocument/declaration", uri, pos, std::move(callback));
 }
 
 void LspClient::RequestFindReferencesAsync(std::string uri, Position pos,

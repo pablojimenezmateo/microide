@@ -101,6 +101,14 @@ void LspClient::Impl::DoInitializeBlocking() {
   definition_caps["dynamicRegistration"] = JsonValue(false);
   definition_caps["linkSupport"] = JsonValue(true);
 
+  // typeDefinition / implementation / declaration share definition's link support.
+  const auto make_nav_caps = []() {
+    JsonObject caps;
+    caps["dynamicRegistration"] = JsonValue(false);
+    caps["linkSupport"] = JsonValue(true);
+    return caps;
+  };
+
   JsonObject references_caps;
   references_caps["dynamicRegistration"] = JsonValue(false);
 
@@ -154,6 +162,9 @@ void LspClient::Impl::DoInitializeBlocking() {
   text_document_caps["hover"] = JsonValue(std::move(hover_caps));
   text_document_caps["signatureHelp"] = JsonValue(std::move(signature_caps));
   text_document_caps["definition"] = JsonValue(std::move(definition_caps));
+  text_document_caps["typeDefinition"] = JsonValue(make_nav_caps());
+  text_document_caps["implementation"] = JsonValue(make_nav_caps());
+  text_document_caps["declaration"] = JsonValue(make_nav_caps());
   text_document_caps["references"] = JsonValue(std::move(references_caps));
   text_document_caps["rename"] = JsonValue(std::move(rename_caps));
   text_document_caps["codeAction"] = JsonValue(std::move(code_action_caps));

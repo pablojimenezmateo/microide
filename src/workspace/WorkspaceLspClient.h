@@ -259,6 +259,12 @@ class LspClient {
   // Async textDocument/definition.
   void RequestGoToDefinitionAsync(std::string uri, Position pos, LocationCallback callback);
 
+  // Async textDocument/typeDefinition, /implementation, /declaration. Same
+  // TextDocumentPositionParams request and Location[] result shape as definition.
+  void RequestGoToTypeDefinitionAsync(std::string uri, Position pos, LocationCallback callback);
+  void RequestGoToImplementationAsync(std::string uri, Position pos, LocationCallback callback);
+  void RequestGoToDeclarationAsync(std::string uri, Position pos, LocationCallback callback);
+
   // Async textDocument/references.
   void RequestFindReferencesAsync(std::string uri, Position pos, bool include_declaration,
                                    LocationCallback callback);

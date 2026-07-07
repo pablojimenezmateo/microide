@@ -292,6 +292,18 @@ bool WorkspaceActionContext::GoToLspDefinition(std::string* error_message) {
   return operations_.go_to_lsp_definition(error_message);
 }
 
+bool WorkspaceActionContext::GoToLspTypeDefinition(std::string* error_message) {
+  return operations_.go_to_lsp_type_definition(error_message);
+}
+
+bool WorkspaceActionContext::GoToLspImplementation(std::string* error_message) {
+  return operations_.go_to_lsp_implementation(error_message);
+}
+
+bool WorkspaceActionContext::GoToLspDeclaration(std::string* error_message) {
+  return operations_.go_to_lsp_declaration(error_message);
+}
+
 bool WorkspaceActionContext::FormatActiveDocument(std::string* error_message) {
   return operations_.format_active_document(error_message);
 }

@@ -215,6 +215,9 @@ while True:
                     "completionProvider": {},
                     "codeActionProvider": True,
                     "definitionProvider": True,
+                    "typeDefinitionProvider": True,
+                    "implementationProvider": True,
+                    "declarationProvider": True,
                     "referencesProvider": True,
                 }
             },
@@ -276,6 +279,44 @@ while True:
                 "range": {
                     "start": {"line": 0, "character": 0},
                     "end": {"line": 0, "character": 10},
+                },
+            },
+        })
+    elif method == "textDocument/typeDefinition":
+        write_message({
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": {
+                "uri": file_uri(project_root / "refs.md"),
+                "range": {
+                    "start": {"line": 2, "character": 0},
+                    "end": {"line": 2, "character": 9},
+                },
+            },
+        })
+    elif method == "textDocument/implementation":
+        write_message({
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": [
+                {
+                    "uri": file_uri(project_root / "refs.md"),
+                    "range": {
+                        "start": {"line": 1, "character": 0},
+                        "end": {"line": 1, "character": 10},
+                    },
+                }
+            ],
+        })
+    elif method == "textDocument/declaration":
+        write_message({
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": {
+                "uri": file_uri(project_root / "refs.md"),
+                "range": {
+                    "start": {"line": 0, "character": 3},
+                    "end": {"line": 0, "character": 9},
                 },
             },
         })
@@ -435,6 +476,22 @@ return ide.plugin({
              WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 0 &&
              WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 0,
          "goto-definition should open the returned location and move the caret");
+
+  // typeDefinition / implementation / declaration each navigate to their own
+  // distinct location, proving the request routes to the right server method.
+  const auto expect_nav_to = [&](const char* command, std::size_t line, std::size_t column) {
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, command),
+           std::string(command) + " should execute");
+    Expect(WaitForLspCondition(shell, [&] {
+             const auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+             return editor.path().lexically_normal() == refs && editor.cursor_line() == line &&
+                    editor.cursor_column() == column;
+           }),
+           std::string(command) + " should navigate to its returned location");
+  };
+  expect_nav_to("goto-type-definition", 2, 0);
+  expect_nav_to("goto-implementation", 1, 0);
+  expect_nav_to("goto-declaration", 0, 3);
 }
 
 void TestPhase5LspMergeBuffersPublishDiagnosticsAndBufferHooks() {
