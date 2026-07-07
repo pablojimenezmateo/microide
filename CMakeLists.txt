@@ -525,6 +525,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceSidebarRegistry.cpp
   src/workspace/WorkspaceThemeRegistry.cpp
   src/workspace/WorkspaceFileIconRegistry.cpp
+  src/workspace/LspClientTrace.cpp
   src/workspace/LspPositionEncoding.cpp
   src/workspace/LspProtocol.cpp
   src/workspace/LspService.cpp

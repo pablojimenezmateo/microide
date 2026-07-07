@@ -24,76 +24,9 @@
 #endif
 
 #include "util/StartupTrace.h"
+#include "workspace/LspClientTrace.h"
 
 namespace microide::workspace {
-
-namespace {
-
-bool LspLifecycleTraceEnabled() {
-  static const bool enabled = []() {
-    const char* value = std::getenv("MICROIDE_TRACE_LSP_LIFECYCLE");
-    return value != nullptr && value[0] != '\0' && value[0] != '0';
-  }();
-  return enabled;
-}
-
-// Milliseconds since the first traced event, so a lifecycle trace reads as a
-// timeline ("[lsp] +0ms ... / +2400ms ...") that shows exactly where the seconds
-// between spawn and Ready go, without a wall-clock the reader has to subtract.
-long LspTraceElapsedMs() {
-  static const std::chrono::steady_clock::time_point epoch = std::chrono::steady_clock::now();
-  return static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                               std::chrono::steady_clock::now() - epoch)
-                               .count());
-}
-
-void TraceLspLifecycle(std::string_view language_id,
-                       int pid,
-                       std::string_view phase,
-                       std::string_view detail = {}) {
-  if (!LspLifecycleTraceEnabled()) {
-    return;
-  }
-  if (detail.empty()) {
-    std::fprintf(stderr, "[lsp] +%ldms %.*s pid=%d %.*s\n", LspTraceElapsedMs(),
-                 static_cast<int>(language_id.size()), language_id.data(), pid,
-                 static_cast<int>(phase.size()), phase.data());
-    return;
-  }
-  std::fprintf(stderr, "[lsp] +%ldms %.*s pid=%d %.*s | %.*s\n", LspTraceElapsedMs(),
-               static_cast<int>(language_id.size()), language_id.data(), pid,
-               static_cast<int>(phase.size()), phase.data(), static_cast<int>(detail.size()),
-               detail.data());
-}
-
-// A request that gets no response within this deadline is failed synthetically so
-// the UI's loading state clears instead of hanging forever on a silent server.
-// LSP requests here are all post-initialize interactive queries (hover, completion,
-// definition, formatting, …); a single generous deadline fits them all. The
-// blocking initialize handshake runs on its own thread and is not swept here.
-constexpr std::chrono::milliseconds kLspRequestTimeout{30000};
-
-// OOM backstop for the outbound/deferred queues. In normal operation the I/O thread
-// drains outbound continuously, so this is never approached. The queues only grow
-// without bound if the server stops consuming its stdin while staying alive — a
-// wedged server. At that point the session is effectively dead (document sync is
-// already broken because the server isn't reading), so we refuse further messages
-// rather than silently DROP queued protocol messages (which would corrupt sync on a
-// healthy stream) or grow until the whole IDE OOMs. Refused requests fail cleanly via
-// the send-failure path; the timeout sweep clears anything already pending.
-constexpr std::size_t kMaxQueuedMessages = 50000;
-
-// Language servers are external, possibly-buggy or hostile processes. Bound a
-// single decoded message body and, with slack, the whole read-accumulation
-// buffer. Without this, a server can declare a near-INT_MAX Content-Length, or
-// stream bytes that never frame a message (no newline / an undelivered body), and
-// the accumulation buffer grows without limit -> OOM. A body over the message cap
-// is rejected; a read buffer past the buffer cap tears the (already-broken)
-// session down. 64 MiB dwarfs any real LSP message.
-constexpr std::size_t kMaxLspMessageBytes = 64ull * 1024 * 1024;
-constexpr std::size_t kMaxLspReadBufferBytes = kMaxLspMessageBytes + (1ull * 1024 * 1024);
-
-}  // namespace
 
 // ---------------------------------------------------------------------------
 // Internal buffer — avoids O(n) prefix-erasure on every line read.
