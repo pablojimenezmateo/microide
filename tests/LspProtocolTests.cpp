@@ -288,6 +288,25 @@ void TestLspProtocolParsesSignatureHelp() {
   Expect(none.signatures.empty(), "missing signatures array yields no signatures");
 }
 
+void TestLspProtocolParsesWorkspaceSymbols() {
+  const auto symbols = codec::ParseWorkspaceSymbols(Json(R"json([
+      {"name":"Widget","kind":5,"containerName":"ui",
+       "location":{"uri":"file:///w.cpp",
+                   "range":{"start":{"line":9,"character":6},"end":{"line":9,"character":12}}}},
+      {"name":"main","kind":12,
+       "location":{"uri":"file:///m.cpp",
+                   "range":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}}}}])json"));
+  Expect(symbols.size() == 2, "both workspace symbols parse");
+  Expect(symbols[0].name == "Widget" && symbols[0].container_name == "ui" && symbols[0].kind == 5,
+         "name / containerName / kind parsed");
+  Expect(symbols[0].location.uri == "file:///w.cpp" && symbols[0].location.range.start.line == 9,
+         "symbol location parsed");
+  Expect(symbols[1].container_name.empty(), "absent containerName is empty");
+
+  // Non-array yields nothing.
+  Expect(codec::ParseWorkspaceSymbols(Json("{}")).empty(), "non-array yields no symbols");
+}
+
 void TestLspProtocolParsesPrepareRename() {
   // `{ range, placeholder }` shape.
   const LspClient::PrepareRename with_placeholder = codec::ParsePrepareRename(Json(
@@ -337,6 +356,7 @@ void TestLspProtocolParsesTextEdits() {
 void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspProtocol/ParsesWorkspaceEdit", TestLspProtocolParsesWorkspaceEdit);
   AddTest(tests, "LspProtocol/ParsesSignatureHelp", TestLspProtocolParsesSignatureHelp);
+  AddTest(tests, "LspProtocol/ParsesWorkspaceSymbols", TestLspProtocolParsesWorkspaceSymbols);
   AddTest(tests, "LspProtocol/ParsesPrepareRename", TestLspProtocolParsesPrepareRename);
   AddTest(tests, "LspProtocol/ParsesTextEdits", TestLspProtocolParsesTextEdits);
   AddTest(tests, "LspProtocol/ParsesHoverContents", TestLspProtocolParsesHoverContents);

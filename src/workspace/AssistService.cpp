@@ -1019,6 +1019,58 @@ void AssistService::PublishReferenceMerge(const std::shared_ptr<NavigationMerge>
   }
 }
 
+bool AssistService::ShowWorkspaceSymbols(const std::string& query, std::string* error_message) {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  editor::TextViewport* viewport = RequireActiveEditableViewport(error_message);
+  if (viewport == nullptr) {
+    return false;
+  }
+  // workspace/symbol is project-wide; query the active buffer's server (the project
+  // it belongs to). PrepareLspRequest resolves the client + begins the tracked req.
+  LspClient* client = PrepareLspRequest(*viewport, error_message);
+  if (client == nullptr) {
+    return false;
+  }
+  // Ensure the channel exists and show progress synchronously so the host can
+  // surface it immediately; the response rebuilds it.
+  output_channels_->Clear("lsp.workspaceSymbols");
+  output_channels_->AppendLine("lsp.workspaceSymbols", "Workspace Symbols",
+                               "Searching for \"" + query + "\"…");
+  client->RequestWorkspaceSymbolAsync(
+      query, [this, query](std::optional<std::vector<LspClient::WorkspaceSymbol>> symbols) {
+        operations_.finish_tracked_lsp_request();
+        output_channels_->Clear("lsp.workspaceSymbols");
+        if (!symbols.has_value() || symbols->empty()) {
+          output_channels_->AppendLine("lsp.workspaceSymbols", "Workspace Symbols",
+                                       "No symbols matching \"" + query + "\"");
+          return;
+        }
+        // Render each symbol as a name/container header plus a navigable
+        // file:line:col entry with context (reusing the references formatter).
+        std::map<std::filesystem::path, std::vector<std::string>> file_line_cache;
+        for (std::size_t i = 0; i < symbols->size(); ++i) {
+          const LspClient::WorkspaceSymbol& symbol = (*symbols)[i];
+          const std::optional<std::filesystem::path> path = PathFromFileUri(symbol.location.uri);
+          if (!path.has_value()) {
+            continue;
+          }
+          std::string header = symbol.name;
+          if (!symbol.container_name.empty()) {
+            header += "  ·  " + symbol.container_name;
+          }
+          output_channels_->AppendLine("lsp.workspaceSymbols", "Workspace Symbols", header);
+          EmitReferenceEntry(
+              "lsp.workspaceSymbols", "Workspace Symbols", *path,
+              static_cast<std::size_t>(std::max(symbol.location.range.start.line, 0)) + 1,
+              static_cast<std::size_t>(std::max(symbol.location.range.start.character, 0)) + 1,
+              i + 1 < symbols->size(), file_line_cache);
+        }
+      });
+  return true;
+}
+
 namespace {
 bool IsIdentifierByte(char ch) {
   return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||

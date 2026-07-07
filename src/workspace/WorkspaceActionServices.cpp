@@ -316,6 +316,11 @@ bool WorkspaceActionContext::FindLspReferences(std::string* error_message) {
   return operations_.find_lsp_references(error_message);
 }
 
+bool WorkspaceActionContext::ShowWorkspaceSymbols(const std::string& query,
+                                                  std::string* error_message) {
+  return operations_.show_workspace_symbols(query, error_message);
+}
+
 bool WorkspaceActionContext::ShowSignatureHelp(std::string* error_message) {
   return operations_.show_signature_help(error_message);
 }

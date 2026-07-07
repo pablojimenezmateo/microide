@@ -393,6 +393,17 @@ void LspClient::ClearTestPrepareRenameHandler() {
   impl_->test_prepare_rename_handler = nullptr;
 }
 
+void LspClient::SetTestWorkspaceSymbolHandler(
+    std::function<void(std::string query, WorkspaceSymbolCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_workspace_symbol_handler = std::move(handler);
+}
+
+void LspClient::ClearTestWorkspaceSymbolHandler() {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_workspace_symbol_handler = nullptr;
+}
+
 void LspClient::SetTestSemanticTokensHandler(
     std::function<void(std::string uri, SemanticTokensCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);

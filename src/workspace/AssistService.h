@@ -134,6 +134,9 @@ class AssistService {
   // textDocument/rename, applying the returned workspace edit across open buffers.
   bool RenameSymbol(const std::string& new_name, std::string* error_message = nullptr);
   bool ShowSignatureHelp(std::string* error_message = nullptr);
+  // Project-wide symbol search via workspace/symbol; renders navigable results into
+  // the "lsp.workspaceSymbols" output channel.
+  bool ShowWorkspaceSymbols(const std::string& query, std::string* error_message = nullptr);
 
  private:
   struct EditSideEffectsSnapshot {

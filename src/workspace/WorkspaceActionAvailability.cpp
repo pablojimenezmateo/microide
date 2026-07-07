@@ -45,6 +45,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::GoToTypeDefinition:
     case ActionId::GoToImplementation:
     case ActionId::GoToDeclaration:
+    case ActionId::WorkspaceSymbol:
       // LSP-only actions; offered whenever a saved editable buffer is active. The
       // executor reports "no language server" as feedback on invocation.
       return active_editable_viewport != nullptr && !active_editable_viewport->path().empty();

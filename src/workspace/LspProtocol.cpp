@@ -131,6 +131,28 @@ LspClient::DocumentSymbol ParseDocumentSymbol(const JsonValue& value) {
   return ParseDocumentSymbolAtDepth(value, 0, remaining);
 }
 
+std::vector<LspClient::WorkspaceSymbol> ParseWorkspaceSymbols(const JsonValue& result) {
+  std::vector<LspClient::WorkspaceSymbol> symbols;
+  if (!result.IsArray()) {
+    return symbols;
+  }
+  const auto& items = result.AsArray();
+  // Reuse the location cap: each symbol materializes strings + a location, and the
+  // host builds a navigable list from them on the UI thread.
+  const std::size_t count = std::min(items.size(), kMaxLspLocations);
+  symbols.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    const JsonValue& item = items[i];
+    LspClient::WorkspaceSymbol symbol;
+    symbol.name = item["name"].AsString();
+    symbol.container_name = item["containerName"].AsString();
+    symbol.kind = static_cast<int>(item["kind"].AsInt(1));
+    symbol.location = ParseLocation(item["location"]);
+    symbols.push_back(std::move(symbol));
+  }
+  return symbols;
+}
+
 std::vector<LspClient::DocumentSymbol> ParseDocumentSymbols(const JsonValue& result) {
   std::vector<LspClient::DocumentSymbol> symbols;
   if (!result.IsArray()) {

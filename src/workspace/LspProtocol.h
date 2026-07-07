@@ -29,6 +29,11 @@ std::vector<LspClient::TextEdit> ParseTextEdits(const util::JsonValue& result,
 LspClient::DocumentSymbol ParseDocumentSymbol(const util::JsonValue& value);
 std::vector<LspClient::DocumentSymbol> ParseDocumentSymbols(const util::JsonValue& result);
 
+// Parse a `workspace/symbol` result (SymbolInformation[] / WorkspaceSymbol[]): each
+// carries name, kind, optional containerName, and a location (uri + optional range).
+// The count is bounded so a hostile server cannot force an unbounded allocation.
+std::vector<LspClient::WorkspaceSymbol> ParseWorkspaceSymbols(const util::JsonValue& result);
+
 // Parse a `textDocument/prepareRename` result. Handles all wire shapes: a bare
 // Range, `{range, placeholder}`, `{defaultBehavior}`, and JSON null (position not
 // renameable → can_rename=false). Callers distinguish "no provider" (nullopt at

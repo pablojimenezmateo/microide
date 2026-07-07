@@ -102,6 +102,14 @@ class LspClient {
     std::vector<DocumentSymbol> children;
   };
 
+  // One `workspace/symbol` result: a project-wide symbol with its location.
+  struct WorkspaceSymbol {
+    std::string name;
+    std::string container_name;
+    int kind = 1;
+    Location location;
+  };
+
   struct SignatureParameter {
     std::string label;
     std::string documentation;
@@ -150,6 +158,8 @@ class LspClient {
   using SemanticTokensCallback =
       std::function<void(std::optional<std::vector<SemanticToken>>)>;
   using SignatureHelpCallback = std::function<void(std::optional<SignatureHelp>)>;
+  using WorkspaceSymbolCallback =
+      std::function<void(std::optional<std::vector<WorkspaceSymbol>>)>;
 
   LspClient();
   ~LspClient();
@@ -291,6 +301,9 @@ class LspClient {
   // Async textDocument/documentSymbol.
   void RequestDocumentSymbolAsync(std::string uri, DocumentSymbolCallback callback);
 
+  // Async workspace/symbol — project-wide symbol search for `query`.
+  void RequestWorkspaceSymbolAsync(std::string query, WorkspaceSymbolCallback callback);
+
   // Async textDocument/semanticTokens/full. The callback receives tokens decoded
   // to absolute ranges; map the `token_type` index through SemanticTokenLegend().
   void RequestSemanticTokensAsync(std::string uri, SemanticTokensCallback callback);
@@ -334,6 +347,10 @@ class LspClient {
   void SetTestPrepareRenameHandler(
       std::function<void(std::string uri, Position pos, PrepareRenameCallback cb)> handler);
   void ClearTestPrepareRenameHandler();
+  // Unit tests: feed a canned workspace/symbol response.
+  void SetTestWorkspaceSymbolHandler(
+      std::function<void(std::string query, WorkspaceSymbolCallback cb)> handler);
+  void ClearTestWorkspaceSymbolHandler();
   // Unit tests: drive the server-request path (as the I/O thread would) so a
   // simulated workspace/applyEdit exercises the real dispatch → main-thread apply.
   // The reply is enqueued to the outbound queue (swallowed in stub mode).

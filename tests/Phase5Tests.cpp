@@ -219,6 +219,7 @@ while True:
                     "implementationProvider": True,
                     "declarationProvider": True,
                     "referencesProvider": True,
+                    "workspaceSymbolProvider": True,
                 }
             },
         })
@@ -339,6 +340,26 @@ while True:
                         "end": {"line": 1, "character": 10},
                     },
                 },
+            ],
+        })
+    elif method == "workspace/symbol":
+        query = msg.get("params", {}).get("query", "")
+        write_message({
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": [
+                {
+                    "name": "Widget" + query,
+                    "kind": 5,
+                    "containerName": "ui",
+                    "location": {
+                        "uri": file_uri(project_root / "refs.md"),
+                        "range": {
+                            "start": {"line": 1, "character": 0},
+                            "end": {"line": 1, "character": 10},
+                        },
+                    },
+                }
             ],
         })
     elif method == "shutdown":
@@ -492,6 +513,18 @@ return ide.plugin({
   expect_nav_to("goto-type-definition", 2, 0);
   expect_nav_to("goto-implementation", 1, 0);
   expect_nav_to("goto-declaration", 0, 3);
+
+  // workspace/symbol renders navigable results into the workspace-symbols channel.
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "workspace-symbol Wid"),
+         "workspace-symbol should execute with a query");
+  Expect(WaitForLspCondition(shell, [&] {
+           const auto* channel =
+               WorkspaceShellTestAccess::OutputChannelEntries(shell, "lsp.workspaceSymbols");
+           if (channel == nullptr) return false;
+           // The server echoes the query into the name: "WidgetWid".
+           return std::find(channel->begin(), channel->end(), "WidgetWid  ·  ui") != channel->end();
+         }),
+         "workspace-symbol should list the returned symbol with its container");
 }
 
 void TestPhase5LspMergeBuffersPublishDiagnosticsAndBufferHooks() {

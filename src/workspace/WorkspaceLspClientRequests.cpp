@@ -393,6 +393,34 @@ void LspClient::RequestDocumentSymbolAsync(std::string uri, DocumentSymbolCallba
       });
 }
 
+void LspClient::RequestWorkspaceSymbolAsync(std::string query, WorkspaceSymbolCallback callback) {
+  if (!callback) return;
+  {
+    std::lock_guard lock(impl_->mutex);
+    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
+      auto handler = impl_->test_workspace_symbol_handler;
+      impl_->main_mailbox.PostWithoutWake(
+          [handler, query = std::move(query), cb = std::move(callback)]() mutable {
+            if (handler) {
+              handler(std::move(query), std::move(cb));
+            } else {
+              cb(std::nullopt);
+            }
+          });
+      return;
+    }
+  }
+  using namespace util;
+  JsonObject params;
+  params["query"] = JsonValue(std::move(query));
+  impl_->DispatchResultRequest(
+      "workspace/symbol", JsonValue(std::move(params)), std::move(callback),
+      [](const util::JsonValue& result) {
+        return std::optional<std::vector<WorkspaceSymbol>>(
+            lsp_protocol::ParseWorkspaceSymbols(result));
+      });
+}
+
 void LspClient::RequestSemanticTokensAsync(std::string uri, SemanticTokensCallback callback) {
   if (!callback) return;
   {

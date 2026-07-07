@@ -30,6 +30,7 @@ enum class ActionId {
   Files,
   Find,
   FindReferences,
+  WorkspaceSymbol,
   Focus,
   GoToDefinition,
   GoToTypeDefinition,

@@ -52,6 +52,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Go to Implementation", "Ctrl+F12"},
       ActionSpec{ActionId::GoToDeclaration, "goto-declaration", "goto-declaration",
                  "Go to Declaration", ""},
+      ActionSpec{ActionId::WorkspaceSymbol, "workspace-symbol", "workspace-symbol <query>",
+                 "Search Workspace Symbols…", ""},
       ActionSpec{ActionId::SignatureHelp, "signature-help", "signature-help",
                  "Signature Help", "Ctrl+Shift+Space"},
       ActionSpec{ActionId::Goto, "goto", "goto <line[:col]>", "Go to Line", "Ctrl+G"},

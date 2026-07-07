@@ -82,6 +82,7 @@ class WorkspaceActionContext {
     std::function<bool(std::string*)> go_to_lsp_implementation;
     std::function<bool(std::string*)> go_to_lsp_declaration;
     std::function<bool(std::string*)> find_lsp_references;
+    std::function<bool(const std::string&, std::string*)> show_workspace_symbols;
     std::function<bool(std::string*)> format_active_document;
     std::function<std::string()> symbol_at_cursor;
     std::function<bool(const std::string&, std::string*)> rename_symbol;
@@ -316,6 +317,7 @@ class WorkspaceActionContext {
   bool GoToLspDeclaration(std::string* error_message);
   bool ShowSignatureHelp(std::string* error_message);
   bool FindLspReferences(std::string* error_message);
+  bool ShowWorkspaceSymbols(const std::string& query, std::string* error_message);
   bool FormatActiveDocument(std::string* error_message);
   bool RenameSymbol(const std::string& new_name, std::string* error_message);
   bool DiscoverTestsForActiveBuffer(std::string* error_message);
