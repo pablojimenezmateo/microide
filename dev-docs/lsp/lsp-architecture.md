@@ -35,7 +35,7 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
 | `WorkspaceLspClientTransport.cpp` | I/O thread body (`IoMain`), outbound send/drain (`DrainOutbound`, `SendMessageImmediate`, `SendMessageBuilderAfterInitialize`), `WaitStdoutReadable`. |
 | `WorkspaceLspClientDispatch.cpp` | Inbound routing (`DispatchMessage`), server-request replies (`HandleServerRequest`, `SendResponse*`), timeout sweep (`FailPendingRequests`). |
 | `WorkspaceLspClientLifecycle.cpp` | Blocking initialize handshake (`DoInitializeBlocking`), shutdown (`DoShutdown`/`BeginShutdown`/`WaitForShutdown`), readiness (`SetProgressReadiness`). |
-| `WorkspaceLspClientRequests.cpp` | Interactive request methods (hover/completion/codeAction/formatting/definition/references/rename/documentSymbol/semanticTokens). |
+| `WorkspaceLspClientRequests.cpp` | Interactive request methods (hover/completion/signatureHelp/codeAction/formatting/rangeFormatting/definition/typeDefinition/implementation/declaration/references/prepareRename/rename/documentSymbol/workspaceSymbol/semanticTokens). definition + the three sibling navigations share one templated `DispatchLocationRequest`. |
 | `LspMessageFraming.{h,cpp}` | `LspMessageFramer`: the `Content-Length` JSON-RPC codec as a pure, unit-tested value type (partial-frame + oversized-skip state). |
 | `LspClientTrace.{h,cpp}` | `TraceLspLifecycle` (opt-in via `MICROIDE_TRACE_LSP_LIFECYCLE`) + transport tuning constants (`kLspRequestTimeout`, queue/message/read-buffer caps). |
 | `WorkspaceLspManager.{h,cpp}` | `LspManager`: one subprocess per canonical language id (aliases share one), non-blocking retiring-clients drain. |
@@ -84,6 +84,19 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
   publish a ranked, de-duplicated union (LSP-first for served languages) as each
   source arrives; go-to-definition waits for the authoritative server and falls back
   to the plugin only when the server returns empty. Never serial plugin-first.
+- **Signature help / navigation are LSP-primary too.** `textDocument/signatureHelp`
+  is fired concurrently with the plugin provider and chosen LSP-first (via
+  `ChooseNavigation`) into the caret-anchored popup. `typeDefinition` /
+  `implementation` / `declaration` reuse definition's `ParseLocations` +
+  `NavigateToLspLocation` (LSP-only, single-source). `workspace/symbol` is a
+  query-driven command (`workspace-symbol <query>`) that renders navigable results
+  into the `lsp.workspaceSymbols` output channel — no picker overlay.
+- **prepareRename refines the rename prompt.** The prompt opens instantly with the
+  heuristic identifier seed; `textDocument/prepareRename` then (async, best-effort,
+  gated on the server's `renameProvider.prepareProvider`) prefills the server
+  placeholder — only while the user has not typed over the seed — or dismisses the
+  prompt for a non-renameable position. Range formatting (`textDocument/
+  rangeFormatting`) formats the selection when there is one, else the whole document.
 - **Rename across unopened files applies silently on disk** (VSCode-style). The
   closed-file applier (`LspService::ApplyLspEditsToClosedFilesOnDisk`) loads each
   file into a throwaway `TextViewport` (reusing line-ending / BOM / encoding
@@ -109,6 +122,14 @@ backstops: bounded message/read-buffer sizes with oversized-frame skip-and-resyn
   round-trips, and direct `LspMessageFramer` framing units.
 - `AssistServiceTests` — pure provider-merge units (`RankedUnion` ordering/de-dup,
   `ChooseNavigation` LSP-wins/wait/fallback) plus the stale-result guard.
+- `LspProtocolTests` also covers the newer parsers: `ParseSignatureHelp` (string +
+  `[start,end]` offset labels), `ParsePrepareRename` (all wire shapes incl. null),
+  `ParseTextEdits`, and `ParseWorkspaceSymbols`.
+- Not yet implemented (deferred): inlay hints (`textDocument/inlayHint` — needs
+  mid-line virtual-text layout; `EolDecorationLayout` is EOL-only today), automatic
+  document highlight (`textDocument/documentHighlight` — the editor already ships
+  automatic *lexical* occurrence highlighting), on-type formatting, and semantic
+  tokens range/delta (a re-request-cost optimization; `full` only today).
 - `WorkspaceShellPluginTests` — dual-source completion merge (LSP-first + de-dup),
   silent on-disk rename (closed file written, no tab), and server-initiated
   `workspace/applyEdit` (open buffer + closed file) via the simulate-request hook.

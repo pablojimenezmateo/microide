@@ -538,6 +538,10 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `find-references`
 - `focus <editor|sidebar|panel>`
 - `goto-definition`
+- `goto-type-definition`
+- `goto-implementation`
+- `goto-declaration`
+- `workspace-symbol <query>`
 - `signature-help`
 - `goto <line[:col]>`
 - `git-refresh`
