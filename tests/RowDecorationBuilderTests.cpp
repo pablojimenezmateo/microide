@@ -390,6 +390,17 @@ void TestInlayHintsShiftRunsAndDrawGlyph() {
   Expect(spans.front().cell_width == 4, "\" i32\" occupies 4 cells");
   Expect(total_cells == 4, "total line phantom cells");
 
+  // A plugin/semantic underline on bytes [6, 10) ("= 5;"), i.e. to the RIGHT of the
+  // hint, must follow the shifted glyphs (uniform underline post-pass).
+  std::vector<editor::TextStyleDecoration> text_styles;
+  editor::TextStyleDecoration ul;
+  ul.line = 0;
+  ul.start_column = 6;
+  ul.end_column = 10;
+  ul.line_color = SDL_Color{200, 40, 40, 255};
+  ul.flags = editor::kDecorationUnderline;
+  text_styles.push_back(ul);
+
   const float text_x = 10.0f;
   RowDecorationInput input;
   input.text_x = text_x;
@@ -402,6 +413,7 @@ void TestInlayHintsShiftRunsAndDrawGlyph() {
   input.tokens = &tokens;
   input.plain_color = theme.text_secondary;
   input.layout = &layout;
+  input.text_styles = text_styles;
   input.inlay = editor::InlayRowDisplacement(spans);
   input.inlay_inline_texts = inline_texts;
   input.inlay_color = theme.text_disabled;
@@ -429,6 +441,12 @@ void TestInlayHintsShiftRunsAndDrawGlyph() {
   Expect(glyph->x == text_x + 5.0f * char_width, "hint draws at the phantom region start");
   Expect(right->x == text_x + (5.0f + 4.0f) * char_width,
          "text right of the hint shifts by the hint's cell width");
+
+  // The underline starts at byte 6 (visual col 6, right of the hint at 5) and must
+  // shift by the hint's 4 cells: base x = text_x + 6*8, shifted x = + 4*8.
+  Expect(row.underlines.size() == 1, "one underline emitted");
+  Expect(row.underlines.front().rect.x == text_x + (6.0f + 4.0f) * char_width,
+         "an underline right of the hint follows the shifted glyphs");
 }
 
 }  // namespace

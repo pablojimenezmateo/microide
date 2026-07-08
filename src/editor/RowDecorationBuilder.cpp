@@ -137,13 +137,13 @@ void AppendChangedSpanUnderlinesGrid(DecoratedTextRow& row, const RowDecorationI
     if (visible_end <= visible_start) {
       continue;
     }
-    const std::size_t display_start = DisplayColumn(in, visible_start);
-    const std::size_t display_end = DisplayColumn(in, visible_end);
+    // Inlay displacement is applied uniformly to every underline in a single
+    // post-pass in BuildDecoratedRow, so this stays grid-plain.
     row.underlines.push_back(DecoratedUnderline{
         .rect = SDL_FRect{
-            in.text_x + static_cast<float>(display_start) * in.char_width,
+            in.text_x + static_cast<float>(visible_start - in.row_visual_start) * in.char_width,
             in.y + in.line_height - 2.0f,
-            static_cast<float>(display_end - display_start) * in.char_width,
+            static_cast<float>(visible_end - visible_start) * in.char_width,
             1.0f},
         .color = color,
     });
@@ -290,6 +290,24 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
     }
 
     AppendTextStyleUnderlines(row, in);
+  }
+
+  // Mid-line inlay hints shift the real glyphs right; every underline (diagnostic
+  // squiggle, semantic/plugin under/strike) must follow the token it sits under.
+  // Fills and runs are already displaced at construction; underlines are the one
+  // family built with proportional geometry across several appenders, so shift them
+  // here in one uniform pass keyed on each underline's start column. Identity (and
+  // skipped) when the row has no hints.
+  if (!in.inlay.empty() && in.char_width > 0.0f) {
+    for (DecoratedUnderline& underline : row.underlines) {
+      const float local_cells = (underline.rect.x - in.text_x) / in.char_width;
+      if (local_cells < 0.0f) {
+        continue;
+      }
+      const std::size_t local_visual = static_cast<std::size_t>(local_cells + 0.5f);
+      underline.rect.x +=
+          static_cast<float>(in.inlay.CellsInsertedBefore(local_visual)) * in.char_width;
+    }
   }
 }
 
