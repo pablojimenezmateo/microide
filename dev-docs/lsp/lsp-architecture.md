@@ -35,7 +35,8 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
 | `WorkspaceLspClientTransport.cpp` | I/O thread body (`IoMain`), outbound send/drain (`DrainOutbound`, `SendMessageImmediate`, `SendMessageBuilderAfterInitialize`), `WaitStdoutReadable`. |
 | `WorkspaceLspClientDispatch.cpp` | Inbound routing (`DispatchMessage`), server-request replies (`HandleServerRequest`, `SendResponse*`), timeout sweep (`FailPendingRequests`). |
 | `WorkspaceLspClientLifecycle.cpp` | Blocking initialize handshake (`DoInitializeBlocking`), shutdown (`DoShutdown`/`BeginShutdown`/`WaitForShutdown`), readiness (`SetProgressReadiness`). |
-| `WorkspaceLspClientRequests.cpp` | Interactive request methods (hover/completion/signatureHelp/codeAction/formatting/rangeFormatting/definition/typeDefinition/implementation/declaration/references/prepareRename/rename/documentSymbol/workspaceSymbol/semanticTokens). definition + the three sibling navigations share one templated `DispatchLocationRequest`. |
+| `WorkspaceLspClientRequests.cpp` | Interactive request methods (hover/completion/signatureHelp/codeAction/formatting/rangeFormatting/definition/typeDefinition/implementation/declaration/references/prepareRename/rename/documentSymbol/workspaceSymbol/semanticTokens/inlayHint). definition + the three sibling navigations share one templated `DispatchLocationRequest`. |
+| `editor/InlayHintColumns.{h,cpp}` | Pure per-row inlay-hint grid displacement (**under `src/editor/`, not `src/workspace/`**): `InlayRowDisplacement` (cells-before / next-anchor / hit-test inverse), `BuildInlayRowSpans` (line decorations → row-local spans), and `RealVisualColumnForDisplayColumn` (the mouse inverse). |
 | `LspMessageFraming.{h,cpp}` | `LspMessageFramer`: the `Content-Length` JSON-RPC codec as a pure, unit-tested value type (partial-frame + oversized-skip state). |
 | `LspClientTrace.{h,cpp}` | `TraceLspLifecycle` (opt-in via `MICROIDE_TRACE_LSP_LIFECYCLE`) + transport tuning constants (`kLspRequestTimeout`, queue/message/read-buffer caps). |
 | `WorkspaceLspManager.{h,cpp}` | `LspManager`: one subprocess per canonical language id (aliases share one), non-blocking retiring-clients drain. |
@@ -91,6 +92,20 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
   `NavigateToLspLocation` (LSP-only, single-source). `workspace/symbol` is a
   query-driven command (`workspace-symbol <query>`) that renders navigable results
   into the `lsp.workspaceSymbols` output channel — no picker overlay.
+- **Inlay hints render as mid-line virtual text.** `textDocument/inlayHint` is
+  requested for the whole document on the same pull triggers as semantic tokens
+  (didOpen, save, and clean-landing undo/redo — never per keystroke) and gated on
+  `editor.inlay_hints.enabled` + the server's `inlayHintProvider`. Results publish
+  as `lsp:inlay` `InlineTextDecoration`s anchored at the hint's byte column (LSP
+  padding baked into the label text). The editor grid renders them mid-line via a
+  pure per-row displacement primitive (`editor/InlayHintColumns.h`): every
+  column→x consumer on the row (text runs — split + shifted at each anchor — plus
+  selection/search/bracket fills, changed-span/diagnostic underlines, whitespace,
+  both carets, and the end-of-line anchor) adds the phantom-cell shift, and the
+  three editor click hit-tests invert it so clicks land on the intended glyph. The
+  displacement is generation-guarded like semantic tokens and identity (≈zero
+  cost) on a row with no hints. **v1 limitation:** hints are suppressed on
+  soft-wrapped lines (cross-wrap-row displacement is out of scope).
 - **prepareRename refines the rename prompt.** The prompt opens instantly with the
   heuristic identifier seed; `textDocument/prepareRename` then (async, best-effort,
   gated on the server's `renameProvider.prepareProvider`) prefills the server
@@ -125,11 +140,26 @@ backstops: bounded message/read-buffer sizes with oversized-frame skip-and-resyn
 - `LspProtocolTests` also covers the newer parsers: `ParseSignatureHelp` (string +
   `[start,end]` offset labels), `ParsePrepareRename` (all wire shapes incl. null),
   `ParseTextEdits`, and `ParseWorkspaceSymbols`.
-- Not yet implemented (deferred): inlay hints (`textDocument/inlayHint` — needs
-  mid-line virtual-text layout; `EolDecorationLayout` is EOL-only today), automatic
-  document highlight (`textDocument/documentHighlight` — the editor already ships
-  automatic *lexical* occurrence highlighting), on-type formatting, and semantic
-  tokens range/delta (a re-request-cost optimization; `full` only today).
+- `InlayHintColumnsTests` — the pure per-row displacement primitive (cells-before,
+  next-anchor, and the hit-test inverse incl. phantom-region snapping).
+- `RowDecorationBuilderTests` — a mid-line inlay hint splits + shifts the real runs
+  and draws its glyph in the reserved phantom cells (grid-exact geometry).
+- `WorkspaceShellPluginTests` also covers the inlay end-to-end: a stub server's
+  `textDocument/inlayHint` publishes an `lsp:inlay` mid-line decoration at the right
+  byte column with padding baked into the label.
+- Not yet implemented (deferred): automatic document highlight
+  (`textDocument/documentHighlight` — the editor already ships automatic *lexical*
+  occurrence highlighting), on-type formatting, and semantic tokens range/delta.
+  **Semantic range/delta was profiled and rejected**, not merely deferred: the
+  client-side parse+publish of a whole-document `full` response is sub-millisecond
+  and one-shot (≈126µs at 30k tokens / ≈782µs at 100k tokens on the reference
+  workstation) and fires only on didOpen/save/clean-undo — never during typing —
+  so it is never a bottleneck. `delta`/`range` would only shrink the server
+  recompute + wire round-trip (out of process) at that low frequency, while forcing
+  partial-overlay reconciliation against today's atomic full-replace model — real
+  new desync risk for a bounded, off-hot-path win. Revisit only if a concrete
+  very-large-file profile shows the server round-trip dominating interactive
+  latency.
 - `WorkspaceShellPluginTests` — dual-source completion merge (LSP-first + de-dup),
   silent on-disk rename (closed file written, no tab), and server-initiated
   `workspace/applyEdit` (open buffer + closed file) via the simulate-request hook.

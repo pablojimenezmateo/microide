@@ -42,6 +42,9 @@ class LspService {
     // ApplyLspWorkspaceEdit). Used by the server-initiated workspace/applyEdit
     // path; closed files are written on disk by LspService itself.
     std::function<bool(const std::vector<CodeActionEdit>&)> apply_workspace_edit_to_open_buffers;
+    // Read a boolean user setting (e.g. gate inlay-hint requests on
+    // editor.inlay_hints.enabled). Null => treated as enabled.
+    std::function<bool(std::string_view id)> is_setting_enabled;
   };
 
   LspService() = default;
@@ -101,6 +104,16 @@ class LspService {
                                 lsp_encoding::PositionEncoding encoding,
                                 std::vector<std::string> legend,
                                 std::vector<LspClient::SemanticToken> tokens);
+  // Request textDocument/inlayHint for `viewport`'s document and publish the
+  // resulting mid-line virtual text under owner "lsp:inlay". Gated on
+  // editor.inlay_hints.enabled and the server's inlayHintProvider. Generation-
+  // guarded exactly like semantic tokens so a response the buffer has moved past
+  // is dropped rather than positioned against stale text.
+  void RequestLspInlayHints(const editor::TextViewport& viewport, LspClient& client);
+  void PublishLspInlayHints(ProjectWorkspaceState& state, std::string uri,
+                            std::uint64_t request_generation,
+                            lsp_encoding::PositionEncoding encoding,
+                            std::vector<LspClient::InlayHint> hints);
   void SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
                                       const std::vector<std::string>& after_lines);
   // Full-document re-sync for an arbitrary edited buffer (not necessarily the
@@ -156,12 +169,16 @@ class LspService {
   };
   std::optional<BufferSyncTarget> ResolveOpenDocumentForSync(const editor::TextViewport& viewport);
 
-  // Per-URI semantic-token generation guard. NextSemanticGeneration bumps and
+  // Per-URI overlay generation guard, shared by the semantic-token and inlay-hint
+  // overlays (each owns its own generation map). NextOverlayGeneration bumps and
   // returns the current value (captured in a request's response closure);
-  // SemanticGenerationCurrent reports whether a captured value is still the latest,
+  // OverlayGenerationCurrent reports whether a captured value is still the latest,
   // i.e. not superseded by a later request or a clear.
-  std::uint64_t NextSemanticGeneration(const std::string& uri);
-  bool SemanticGenerationCurrent(const std::string& uri, std::uint64_t generation) const;
+  static std::uint64_t NextOverlayGeneration(
+      std::unordered_map<std::string, std::uint64_t>& generations, const std::string& uri);
+  static bool OverlayGenerationCurrent(
+      const std::unordered_map<std::string, std::uint64_t>& generations, const std::string& uri,
+      std::uint64_t generation);
 
   // Apply `transform` to every stored "lsp" diagnostic range for `viewport`'s file
   // (single-sources the owner tag + path). Instantiated only in LspService.cpp.
@@ -184,6 +201,10 @@ class LspService {
   // wrong colors once the buffer returns to a clean, render-visible state.
   void ClearLspSemanticTokensForFile(const editor::TextViewport& viewport);
 
+  // Drop the "lsp:inlay" mid-line virtual text for `viewport`'s file (mirrors the
+  // semantic overlay: any content edit invalidates the absolute hint positions).
+  void ClearLspInlayHintsForFile(const editor::TextViewport& viewport);
+
   WorkspaceContext* context_ = nullptr;
   CompletionRegistry* completion_registry_ = nullptr;
   CodeActionRegistry* code_action_registry_ = nullptr;
@@ -196,6 +217,10 @@ class LspService {
   // drops any response whose captured generation is no longer current (superseded
   // by a later request because the buffer changed).
   std::unordered_map<std::string, std::uint64_t> semantic_token_generation_;
+  // Per-URI monotonic generation for inlay-hint requests (same stale-response
+  // guard as semantic tokens). Shares NextSemanticGeneration's helper pattern via
+  // a dedicated map so the two overlays never invalidate each other.
+  std::unordered_map<std::string, std::uint64_t> inlay_hint_generation_;
 };
 
 }  // namespace microide::workspace

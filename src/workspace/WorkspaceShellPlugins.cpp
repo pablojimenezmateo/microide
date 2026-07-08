@@ -168,6 +168,8 @@ WorkspaceShell::WorkspaceShell() {
               [this](const std::vector<CodeActionEdit>& edits) {
                 return ApplyLspWorkspaceEdit(edits);
               },
+          .is_setting_enabled =
+              [this](std::string_view id) { return SettingFlagEnabled(GetSettingValue(id)); },
       });
   // Live theme pointer for baking semantic-token recolor decorations (theme_'s
   // address is stable; a theme switch mutates it in place).
@@ -964,6 +966,9 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
   // (the server never pushes them), so without this the identifiers would keep the
   // lexical-only colors until the next unrelated re-request.
   lsp_service_.RequestLspSemanticTokens(*viewport, *client);
+  // Inlay hints are equally pull-based; re-request for the saved content so they
+  // reappear after the edit path cleared them.
+  lsp_service_.RequestLspInlayHints(*viewport, *client);
 }
 
 void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {

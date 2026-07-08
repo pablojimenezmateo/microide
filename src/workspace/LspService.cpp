@@ -369,6 +369,8 @@ void LspService::EnsureLspDocumentOpen(const editor::TextViewport& viewport, Lsp
   client.DidOpen(uri, std::string(language_id), SerializeViewportText(viewport));
   // Pull semantic tokens for the freshly-opened document so identifiers recolor.
   RequestLspSemanticTokens(viewport, client);
+  // Pull inlay hints for the freshly-opened document (mid-line type/param hints).
+  RequestLspInlayHints(viewport, client);
 }
 
 void LspService::PublishLspDiagnostics(ProjectWorkspaceState& state, std::string uri,
@@ -417,7 +419,7 @@ void LspService::RequestLspSemanticTokens(const editor::TextViewport& viewport, 
   if (legend.empty()) {
     return;
   }
-  const std::uint64_t generation = NextSemanticGeneration(uri);
+  const std::uint64_t generation = NextOverlayGeneration(semantic_token_generation_, uri);
   const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(client);
   client.RequestSemanticTokensAsync(
       uri, [this, project, uri, generation, encoding, legend = std::move(legend)](
@@ -442,7 +444,7 @@ void LspService::PublishLspSemanticTokens(ProjectWorkspaceState& state, std::str
   // bumped the URI's generation (or cleared it), so painting these absolute
   // positions would corrupt the current text. Mirrors the revision guard in
   // TextViewport::InstallPrefetchedHighlights.
-  if (!SemanticGenerationCurrent(uri, request_generation)) {
+  if (!OverlayGenerationCurrent(semantic_token_generation_, uri, request_generation)) {
     return;
   }
   const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
@@ -497,6 +499,94 @@ void LspService::ClearLspSemanticTokensForFile(const editor::TextViewport& viewp
     return;  // Nothing published yet -> nothing to invalidate.
   }
   if (presentation->decorations.ClearOwnerFile("lsp:semantic", viewport.path())) {
+    state.MaybeReleasePluginPresentation();
+    operations_.request_editor_surface_redraw();
+  }
+}
+
+void LspService::RequestLspInlayHints(const editor::TextViewport& viewport, LspClient& client) {
+  if (viewport.path().empty() || !client.SupportsInlayHints()) {
+    return;
+  }
+  // User gate: skip the round-trip entirely when inlay hints are disabled.
+  if (operations_.is_setting_enabled &&
+      !operations_.is_setting_enabled("editor.inlay_hints.enabled")) {
+    return;
+  }
+  ProjectWorkspaceState* const project = &CurrentProjectState();
+  std::string uri = FileUriForPath(viewport.path());
+  // Whole-document range: start of file to one past the last line. Servers clamp
+  // the end; line boundaries need no per-column position-encoding conversion.
+  const std::size_t line_count = viewport.lines().size();
+  LspClient::Range range{
+      .start = LspClient::Position{0, 0},
+      .end = LspClient::Position{static_cast<int>(line_count), 0},
+  };
+  const std::uint64_t generation = NextOverlayGeneration(inlay_hint_generation_, uri);
+  const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(client);
+  client.RequestInlayHintsAsync(
+      uri, range,
+      [this, project, uri, generation, encoding](
+          std::optional<std::vector<LspClient::InlayHint>> hints) mutable {
+        if (!hints.has_value()) {
+          return;
+        }
+        PublishLspInlayHints(*project, std::move(uri), generation, encoding, std::move(*hints));
+      });
+}
+
+void LspService::PublishLspInlayHints(ProjectWorkspaceState& state, std::string uri,
+                                      std::uint64_t request_generation,
+                                      lsp_encoding::PositionEncoding encoding,
+                                      std::vector<LspClient::InlayHint> hints) {
+  // Drop a response the buffer has already moved past (same guard as semantic
+  // tokens): the absolute hint positions would otherwise land on shifted text.
+  if (!OverlayGenerationCurrent(inlay_hint_generation_, uri, request_generation)) {
+    return;
+  }
+  const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
+  if (!path.has_value()) {
+    return;
+  }
+  const editor::TextViewport* file_viewport = FindOpenEditorViewport(state, *path);
+  editor::PluginDecorationData data;
+  data.inline_texts.reserve(hints.size());
+  for (const LspClient::InlayHint& hint : hints) {
+    if (hint.position.line < 0 || hint.position.character < 0) {
+      continue;
+    }
+    const std::size_t line = static_cast<std::size_t>(hint.position.line);
+    const std::size_t byte_column =
+        LspInboundColumn(file_viewport, line, hint.position.character, encoding);
+    editor::InlineTextDecoration inl;
+    inl.line = static_cast<std::uint32_t>(line);
+    inl.anchor_column = static_cast<std::uint32_t>(byte_column);
+    // Bake padding into the drawn text so the grid cell-width measurement (and the
+    // hit-test) account for it uniformly. Labels like "name:" / ": i32" already
+    // read naturally; padding just adds a space of separation from the code.
+    inl.text.reserve(hint.label.size() + 2);
+    if (hint.padding_left) inl.text.push_back(' ');
+    inl.text += hint.label;
+    if (hint.padding_right) inl.text.push_back(' ');
+    inl.color = theme_ != nullptr ? theme_->text_disabled : SDL_Color{128, 128, 128, 255};
+    data.inline_texts.push_back(std::move(inl));
+  }
+  if (state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("lsp:inlay", *path,
+                                                                       std::move(data))) {
+    operations_.request_editor_surface_redraw();
+  }
+}
+
+void LspService::ClearLspInlayHintsForFile(const editor::TextViewport& viewport) {
+  if (viewport.path().empty()) {
+    return;
+  }
+  ProjectWorkspaceState& state = CurrentProjectState();
+  auto* presentation = state.plugin_presentation.get();
+  if (presentation == nullptr) {
+    return;
+  }
+  if (presentation->decorations.ClearOwnerFile("lsp:inlay", viewport.path())) {
     state.MaybeReleasePluginPresentation();
     operations_.request_editor_surface_redraw();
   }
@@ -585,14 +675,16 @@ std::optional<LspService::BufferSyncTarget> LspService::ResolveOpenDocumentForSy
   return target;
 }
 
-std::uint64_t LspService::NextSemanticGeneration(const std::string& uri) {
-  return ++semantic_token_generation_[uri];
+std::uint64_t LspService::NextOverlayGeneration(
+    std::unordered_map<std::string, std::uint64_t>& generations, const std::string& uri) {
+  return ++generations[uri];
 }
 
-bool LspService::SemanticGenerationCurrent(const std::string& uri,
-                                           std::uint64_t generation) const {
-  const auto it = semantic_token_generation_.find(uri);
-  return it != semantic_token_generation_.end() && it->second == generation;
+bool LspService::OverlayGenerationCurrent(
+    const std::unordered_map<std::string, std::uint64_t>& generations, const std::string& uri,
+    std::uint64_t generation) {
+  const auto it = generations.find(uri);
+  return it != generations.end() && it->second == generation;
 }
 
 template <typename Transform>
@@ -622,6 +714,7 @@ void LspService::SyncLspForBufferChange(const editor::TextViewport& viewport,
   // overlay is now stale -> drop it (the lexical layer keeps painting). Done
   // before the client early-out so a stale overlay is cleared even with no server.
   ClearLspSemanticTokensForFile(viewport);
+  ClearLspInlayHintsForFile(viewport);
 
   // Keep diagnostics positioned for the dirty buffer until the server republishes.
   // Runs before the client early-out so a dead/absent server never strands them.
@@ -647,6 +740,7 @@ void LspService::SyncLspForBufferChange(const editor::TextViewport& viewport,
   // by the next clean transition anyway.
   if (!viewport.dirty()) {
     RequestLspSemanticTokens(viewport, *target->client);
+    RequestLspInlayHints(viewport, *target->client);
   }
 }
 
@@ -663,6 +757,7 @@ void LspService::SyncLspForActiveEditableLastChange() {
   // the buffer is dirty the overlay is render-suppressed anyway; the clean-branch
   // re-request below repopulates it when an undo/redo lands on the saved point.
   ClearLspSemanticTokensForFile(*viewport);
+  ClearLspInlayHintsForFile(*viewport);
 
   // Slide stored diagnostics through this keystroke so they stay on their text while
   // the buffer is dirty, until the server republishes authoritative ranges. Runs
@@ -722,6 +817,7 @@ void LspService::SyncLspForActiveEditableLastChange() {
   // stays request-free; the overlay is render-suppressed while dirty regardless.
   if (!viewport->dirty()) {
     RequestLspSemanticTokens(*viewport, *client);
+    RequestLspInlayHints(*viewport, *client);
   }
 }
 

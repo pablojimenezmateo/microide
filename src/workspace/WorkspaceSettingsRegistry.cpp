@@ -536,6 +536,19 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Editor → Essentials → Block Structure",
       },
       SettingSpec{
+          .id = "editor.inlay_hints.enabled",
+          .label = "Inlay Hints",
+          .description = "Show inline type and parameter-name hints from the language server "
+                         "(mid-line virtual text). When off, no inlay hints are requested or "
+                         "rendered.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Editor → View",
+      },
+      SettingSpec{
           .id = "editor.blame.inline.enabled",
           .label = "Inline Git Blame",
           .description = "Show the git blame overlay (author/commit per line) to the right of the "

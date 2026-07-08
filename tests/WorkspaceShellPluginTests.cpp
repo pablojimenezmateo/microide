@@ -1934,6 +1934,78 @@ return ide.plugin({
          "the language server's signature must win over the plugin's for a served language");
 }
 
+// Inlay hints flow LSP -> mid-line virtual text: opening a served document
+// requests textDocument/inlayHint and publishes each result as an "lsp:inlay"
+// InlineText decoration anchored at the hint's byte column (padding baked into
+// the label), which the editor renders mid-line via the InlayRowDisplacement path.
+void TestWorkspaceShellInlayHintsPublishMidLineDecorations() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path md_file = project / "notes.md";
+  WriteFile(md_file, "let value = compute()\n");
+
+  WritePluginInit(plugins_root, "mdinlay",
+                  R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "mdinlay",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "md-lsp-server" } })
+  end
+})
+)lua");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "inlay fixture should open the project");
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  stub->EnableTestStubMode();
+  stub->SetTestInlayHintHandler(
+      [](std::string, workspace::LspClient::Range, workspace::LspClient::InlayHintCallback cb) {
+        cb(std::vector<workspace::LspClient::InlayHint>{
+            workspace::LspClient::InlayHint{.position = workspace::LspClient::Position{0, 9},
+                                            .label = ": number",
+                                            .kind = 1,
+                                            .padding_left = true,
+                                            .padding_right = false}});
+      });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
+         "fixture should attach a stub markdown client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, md_file);
+  // Opening the document on the server (via the hover kickoff) fires the inlay
+  // request as a side effect; the helper drains the async response.
+  (void)WorkspaceShellTestAccess::ResolveLspHoverForTesting(shell, md_file, 1, 1);
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+
+  const auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  const auto* presentation = state.plugin_presentation_if_present();
+  Expect(presentation != nullptr, "an inlay overlay should be published");
+  const auto* decorations =
+      presentation != nullptr ? presentation->decorations.FindByPath(md_file) : nullptr;
+  Expect(decorations != nullptr && !decorations->inline_texts.empty(),
+         "the inlay hint should publish an inline-text decoration");
+  if (decorations != nullptr) {
+    const auto hints = decorations->InlineTextsForLine(0);
+    Expect(hints.size() == 1, "one mid-line hint on line 0");
+    Expect(hints[0].anchor_column == 9, "anchored at the hint's byte column");
+    Expect(hints[0].anchor_column != microide::editor::kInlineTextEndOfLine,
+           "the hint is mid-line, not end-of-line");
+    Expect(hints[0].text == " : number", "padding_left baked a leading space into the label");
+  }
+}
+
 // prepareRename refines the just-opened Rename Symbol prompt: it prefills the
 // server's placeholder, and rejects positions the server reports as not renameable.
 void TestWorkspaceShellPrepareRenameRefinesPrompt() {
@@ -4245,6 +4317,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompletionMergesPluginAndLspSources);
   AddTest(tests, "WorkspaceShell/SignatureHelpPrefersLspOverPlugin",
           TestWorkspaceShellSignatureHelpPrefersLspOverPlugin);
+  AddTest(tests, "WorkspaceShell/InlayHintsPublishMidLineDecorations",
+          TestWorkspaceShellInlayHintsPublishMidLineDecorations);
   AddTest(tests, "WorkspaceShell/PrepareRenameRefinesPrompt",
           TestWorkspaceShellPrepareRenameRefinesPrompt);
   AddTest(tests, "WorkspaceShell/ServerApplyEditEditsOpenAndClosedFiles",

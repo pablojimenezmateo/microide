@@ -727,6 +727,46 @@ void TestWorkspaceLspClientSemanticTokensStubRoundTrip() {
          "the delivered token preserves its fields");
 }
 
+void TestWorkspaceLspClientInlayHintStubRoundTrip() {
+  LspClient client;
+  client.EnableTestStubMode();
+  // The stub handler marks the capability supported.
+  LspClient::Range requested_range{};
+  client.SetTestInlayHintHandler(
+      [&](std::string uri, LspClient::Range range, LspClient::InlayHintCallback cb) {
+        (void)uri;
+        requested_range = range;
+        cb(std::vector<LspClient::InlayHint>{
+            LspClient::InlayHint{.position = LspClient::Position{4, 10},
+                                 .label = ": i32",
+                                 .kind = 1,
+                                 .padding_left = true,
+                                 .padding_right = false}});
+      });
+
+  Expect(client.SupportsInlayHints(), "the stub handler marks the server inlay-capable");
+
+  std::optional<std::vector<LspClient::InlayHint>> received;
+  client.RequestInlayHintsAsync("file:///s.cpp", LspClient::Range{{0, 0}, {20, 0}},
+                                [&](auto hints) { received = std::move(hints); });
+  client.DrainCallbacks();
+
+  Expect(received.has_value() && received->size() == 1, "the stubbed hint is delivered");
+  Expect((*received)[0].label == ": i32" && (*received)[0].position.line == 4,
+         "the delivered hint preserves its fields");
+  Expect(requested_range.end.line == 20, "the request forwards the whole-document range");
+
+  // Clearing the handler drops the capability advertisement path (still stub mode,
+  // so a fresh request with no handler reports nullopt).
+  client.ClearTestInlayHintHandler();
+  std::optional<std::vector<LspClient::InlayHint>> after_clear;
+  bool called = false;
+  client.RequestInlayHintsAsync("file:///s.cpp", LspClient::Range{{0, 0}, {1, 0}},
+                                [&](auto hints) { after_clear = std::move(hints); called = true; });
+  client.DrainCallbacks();
+  Expect(called && !after_clear.has_value(), "with no handler the stub reports no hints");
+}
+
 // Regression: formatting must deliver the FULL TextEdit[] to the caller. A prior
 // implementation returned only edits.front().newText, silently dropping every edit
 // after the first — corrupting the buffer for the common whole-document reformat
@@ -953,6 +993,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestFileUriEncodesSpecialCharsAndRoundTrips);
   AddTest(tests, "WorkspaceLspClient/SemanticTokensStubRoundTrip",
           TestWorkspaceLspClientSemanticTokensStubRoundTrip);
+  AddTest(tests, "WorkspaceLspClient/InlayHintStubRoundTrip",
+          TestWorkspaceLspClientInlayHintStubRoundTrip);
   AddTest(tests, "WorkspaceLspClient/FormattingReturnsAllEdits",
           TestWorkspaceLspClientFormattingReturnsAllEdits);
   AddTest(tests, "WorkspaceLspClient/ShutdownDoesNotRaceInitialization",
