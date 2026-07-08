@@ -112,6 +112,15 @@ struct RowDecorationInput {
   // underline/strike. Empty => skipped (zero overhead for the common case).
   std::span<const TextStyleDecoration> text_styles;
 
+  // Mid-line inlay hints for this row. `inlay` (row-local, built by
+  // BuildInlayRowSpans into caller scratch) shifts every column->x on the row so
+  // real glyphs move right past the hints; `inlay_inline_texts` is the line's
+  // decoration slice the hint glyphs are drawn from. Empty inlay => identity, so a
+  // row without hints (the common case) pays only an emptiness branch.
+  InlayRowDisplacement inlay;
+  std::span<const InlineTextDecoration> inlay_inline_texts;
+  SDL_Color inlay_color{};  // fallback hint foreground when a hint carries none
+
   const render::TextRenderer* text_renderer = nullptr;
   const render::Theme* theme = nullptr;
 };

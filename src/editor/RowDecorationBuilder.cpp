@@ -73,6 +73,13 @@ std::size_t ResolveVisualColumn(const RowDecorationInput& in, std::size_t column
   return column;
 }
 
+// Row-local display column of an absolute visual column, counting any phantom
+// inlay-hint cells inserted before it. Identity when the row has no inlay hints.
+std::size_t DisplayColumn(const RowDecorationInput& in, std::size_t absolute_visual) {
+  const std::size_t local = absolute_visual - in.row_visual_start;
+  return local + in.inlay.CellsInsertedBefore(local);
+}
+
 void AppendColumnFill(DecoratedTextRow& row, const RowDecorationInput& in, const RowFillSpan& span) {
   if (span.geometry == RowFillSpan::Geometry::kSingleCell) {
     const std::size_t cell_visual = ResolveVisualColumn(in, span.start_column);
@@ -81,7 +88,7 @@ void AppendColumnFill(DecoratedTextRow& row, const RowDecorationInput& in, const
     }
     row.fills.push_back(DecoratedTextFill{
         .rect = SDL_FRect{
-            in.text_x + static_cast<float>(cell_visual - in.row_visual_start) * in.char_width,
+            in.text_x + static_cast<float>(DisplayColumn(in, cell_visual)) * in.char_width,
             in.y - 1.0f,
             in.char_width,
             in.line_height,
@@ -98,11 +105,13 @@ void AppendColumnFill(DecoratedTextRow& row, const RowDecorationInput& in, const
   if (visible_end <= visible_start) {
     return;
   }
+  const std::size_t display_start = DisplayColumn(in, visible_start);
+  const std::size_t display_end = DisplayColumn(in, visible_end);
   row.fills.push_back(DecoratedTextFill{
       .rect = SDL_FRect{
-          in.text_x + static_cast<float>(visible_start - in.row_visual_start) * in.char_width,
+          in.text_x + static_cast<float>(display_start) * in.char_width,
           in.y - 1.0f,
-          static_cast<float>(visible_end - visible_start) * in.char_width,
+          static_cast<float>(display_end - display_start) * in.char_width,
           in.line_height,
       },
       .color = span.color,
@@ -128,11 +137,13 @@ void AppendChangedSpanUnderlinesGrid(DecoratedTextRow& row, const RowDecorationI
     if (visible_end <= visible_start) {
       continue;
     }
+    const std::size_t display_start = DisplayColumn(in, visible_start);
+    const std::size_t display_end = DisplayColumn(in, visible_end);
     row.underlines.push_back(DecoratedUnderline{
         .rect = SDL_FRect{
-            in.text_x + static_cast<float>(visible_start - in.row_visual_start) * in.char_width,
+            in.text_x + static_cast<float>(display_start) * in.char_width,
             in.y + in.line_height - 2.0f,
-            static_cast<float>(visible_end - visible_start) * in.char_width,
+            static_cast<float>(display_end - display_start) * in.char_width,
             1.0f},
         .color = color,
     });
@@ -245,7 +256,12 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
   if (in.text_renderer != nullptr && in.theme != nullptr) {
     if (in.layout != nullptr) {
       AppendLayoutSyntaxTextRuns(row, *in.text_renderer, *in.theme, in.text_x, in.y, *in.layout,
-                                 in.plain_color, tokens, in.text_styles);
+                                 in.plain_color, tokens, in.text_styles, in.inlay);
+      // Draw the hint glyphs in the phantom cells the displacement reserved.
+      if (!in.inlay.empty()) {
+        AppendInlayHintRuns(row, *in.text_renderer, in.text_x, in.y, in.char_width, in.line_height,
+                            in.inlay_inline_texts, in.inlay.spans(), in.inlay_color);
+      }
     } else {
       const std::size_t visible_columns =
           in.row_visual_end > in.row_visual_start ? in.row_visual_end - in.row_visual_start : 0;

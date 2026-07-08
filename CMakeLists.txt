@@ -198,6 +198,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/PluginDecorationStore.cpp
   src/editor/GutterIconRegistry.cpp
   src/editor/EolDecorationLayout.cpp
+  src/editor/InlayHintColumns.cpp
   src/editor/PluginSurfaceStore.cpp
   src/editor/EditorRowYLayout.cpp
   src/editor/EditorInsetLayout.cpp
@@ -756,6 +757,7 @@ add_executable(microide_tests
   tests/EditorRowYLayoutTests.cpp
   tests/EditorInsetLayoutTests.cpp
   tests/EolDecorationLayoutTests.cpp
+  tests/InlayHintColumnsTests.cpp
   tests/DirectoryTreeTests.cpp
   tests/DirtyRegionPolicyTests.cpp
   tests/FilesystemTests.cpp
@@ -1114,6 +1116,7 @@ add_executable(microide_diff_bench
   src/editor/PluginDecorationStore.cpp
   src/editor/GutterIconRegistry.cpp
   src/editor/EolDecorationLayout.cpp
+  src/editor/InlayHintColumns.cpp
   src/editor/EditorRowYLayout.cpp
   src/editor/EditorViewRenderer.cpp
   src/editor/ExecutionLineRender.cpp

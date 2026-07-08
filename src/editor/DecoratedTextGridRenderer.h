@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/InlayHintColumns.h"
 #include "editor/PluginDecorationStore.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
@@ -69,7 +70,23 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
                                 const LayoutLine& layout,
                                 SDL_Color plain_color,
                                 const std::vector<SyntaxTokenKind>& full_tokens,
-                                std::span<const TextStyleDecoration> foreground_overrides = {});
+                                std::span<const TextStyleDecoration> foreground_overrides = {},
+                                const InlayRowDisplacement& inlay = {});
+
+// Append the glyph runs (and optional background fills) for a row's mid-line inlay
+// hints, positioned in the phantom cells the displacement reserved for them.
+// `inline_texts` is the line's decoration slice; `spans` are the row-local
+// InlayCellSpans produced by BuildInlayRowSpans (parallel to the mid-line entries
+// in `inline_texts`, in the same order). Draws nothing when `spans` is empty.
+void AppendInlayHintRuns(DecoratedTextRow& row,
+                         const render::TextRenderer& text_renderer,
+                         float x,
+                         float y,
+                         float char_width,
+                         float line_height,
+                         std::span<const InlineTextDecoration> inline_texts,
+                         std::span<const InlayCellSpan> spans,
+                         SDL_Color fallback_color);
 
 class DecoratedTextGridRenderer {
  public:

@@ -658,6 +658,30 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     // first rows and non-wrapped rows, so this is a no-op there.
     const float row_text_x =
         metrics.text_x + static_cast<float>(row_meta.indent) * char_width_px;
+    // Mid-line inlay hints for this row. Suppressed on soft-wrapped lines in v1
+    // (cross-wrap-row displacement is out of scope); those lines still render,
+    // just without their hints. Built once here and reused by the whitespace,
+    // caret, decorated-row and end-of-line passes so they all stay grid-aligned
+    // with the shifted glyphs. Empty (the common case) => identity, ~zero cost.
+    std::span<const InlineTextDecoration> row_inline_texts;
+    InlayRowDisplacement row_inlay;
+    std::size_t row_inlay_total_cells = 0;
+    if (plugin_decorations != nullptr && !soft_wrap) {
+      row_inline_texts =
+          plugin_decorations->InlineTextsForLine(static_cast<std::uint32_t>(line_index));
+      BuildInlayRowSpans(row_inline_texts, &row_layout, nullptr, row_visual_origin,
+                         row_meta.visual_end, text_renderer, char_width_px, inlay_span_scratch_,
+                         &row_inlay_total_cells);
+      row_inlay = InlayRowDisplacement(inlay_span_scratch_);
+    }
+    const auto inlay_shift_px = [&](std::size_t absolute_visual) -> float {
+      if (row_inlay.empty() || absolute_visual < row_visual_origin) {
+        return 0.0f;
+      }
+      return static_cast<float>(
+                 row_inlay.CellsInsertedBefore(absolute_visual - row_visual_origin)) *
+             char_width_px;
+    };
     const bool selected = line_index == cursor_line;
     const bool is_execution_line = view_model != nullptr &&
                                    view_model->execution_line_index.has_value() &&
@@ -822,7 +846,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           // to this row by construction; no per-glyph row-bounds filter needed.
           const float cell_x =
               row_text_x + static_cast<float>(glyph.cell_visual_start - row_start_visual) *
-                               char_width;
+                               char_width +
+              inlay_shift_px(glyph.cell_visual_start);
           const float cell_w = static_cast<float>(glyph.cell_visual_extent) * char_width;
           PushWhitespaceMarker(prepositioned_fill_scratch_, glyph.is_tab_rule, cell_x, char_width,
                                cell_w, y, metrics.line_height, theme.text_disabled);
@@ -844,7 +869,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           if (visual_col > row_end_visual) continue;
           const float cell_x =
               row_text_x +
-              static_cast<float>(cell_start - row_start_visual) * char_width;
+              static_cast<float>(cell_start - row_start_visual) * char_width +
+              inlay_shift_px(cell_start);
           if (c == ' ' || c == '\t') {
             const float cell_w = static_cast<float>(cell_width) * char_width;
             PushWhitespaceMarker(prepositioned_fill_scratch_, c == '\t', cell_x, char_width,
@@ -891,6 +917,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       row_input.text_styles =
           plugin_decorations->TextStylesForLine(static_cast<std::uint32_t>(line_index));
     }
+    row_input.inlay = row_inlay;
+    row_input.inlay_inline_texts = row_inline_texts;
+    row_input.inlay_color = theme.text_disabled;
     row_input.diagnostics = diagnostics;
     row_input.diagnostic_line_index = line_index;
     row_input.diagnostic_horizontal_scroll = row_meta.visual_start;
@@ -971,7 +1000,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
 
     if (draw_caret && selected && row_caret.visible) {
-      const float caret_x = row_text_x + static_cast<float>(row_caret.column) * char_width_px;
+      const float caret_x = row_text_x + static_cast<float>(row_caret.column) * char_width_px +
+                            inlay_shift_px(row_visual_origin + row_caret.column);
       DrawCaret(renderer, caret_x, y, metrics.line_height, theme.cursor);
       // Ghost-text tail: the suggestion's first line, drawn dimmed starting at the
       // caret. Below-caret rows (if any) render as a Below inset gap by the shell.
@@ -1000,7 +1030,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           continue;
         }
         const float caret_x =
-            row_text_x + static_cast<float>(visual_column - row_start_visual_sc) * char_width_px;
+            row_text_x + static_cast<float>(visual_column - row_start_visual_sc) * char_width_px +
+            inlay_shift_px(visual_column);
         DrawCaret(renderer, caret_x, y, metrics.line_height, theme.cursor);
       }
     }
@@ -1026,8 +1057,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         const std::size_t full_line_visual_columns =
             soft_wrap ? viewport.VisibleLineLayoutRef(line_index).visual_columns
                       : row_layout.visual_columns;
+        // Push the anchor past the line's mid-line inlay hints so end-of-line
+        // decorations still sit beyond the visually-last glyph.
         const float anchor_x =
-            metrics.text_x + static_cast<float>(full_line_visual_columns) * char_width_px;
+            metrics.text_x +
+            static_cast<float>(full_line_visual_columns + row_inlay_total_cells) * char_width_px;
         const float right_limit = rect.x + rect.w - 12.0f;
         BuildEolDecorationSegments(text_renderer, inline_texts, code_lenses, anchor_x, y,
                                    metrics.line_height, right_limit, eol_decoration_scratch_);

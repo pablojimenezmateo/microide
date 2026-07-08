@@ -237,6 +237,7 @@ class EditorViewRenderer {
   // allocation-free; the geometry matches WorkspaceShell's click hit-test, which
   // calls the same BuildEolDecorationSegments helper.
   mutable std::vector<EolDecorationSegment> eol_decoration_scratch_;
+  mutable std::vector<InlayCellSpan> inlay_span_scratch_;
   mutable std::vector<std::size_t> visible_rows_for_guides_scratch_;
   mutable std::string lowered_search_query_scratch_;
   mutable std::string lowered_line_scratch_;

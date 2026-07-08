@@ -356,9 +356,86 @@ void TestChangedSpanUnderlinesUseGridWhenLayoutSet() {
   Expect(rect.w == 6.0f * 8.0f, "underline width must span the changed cells on the grid");
 }
 
+// A mid-line inlay hint must (a) split and shift the real text runs to its right
+// by its whole-cell width, (b) leave text to its left untouched, and (c) emit its
+// own glyph run in the reserved phantom cells. Backend-less TextRenderer => 8px
+// cells and MeasureWidth == 8*len, so the geometry below is exact.
+void TestInlayHintsShiftRunsAndDrawGlyph() {
+  oracle::EnsureDummyVideo();
+  oracle::OracleCanvas init_canvas(kCanvasWidth, kCanvasHeight);
+  render::TextRenderer text_renderer;
+  text_renderer.EnsureInitialized(init_canvas.renderer());
+  const render::Theme& theme = OracleTheme();
+  const float char_width = text_renderer.CharWidth();  // 8
+  Expect(char_width == 8.0f, "backend-less cell width is 8px");
+
+  const std::string text = "let x = 5;";  // col 5 is the space after 'x'
+  const LayoutLine layout = TextLayout::BuildVisibleLine(text, 0, 40, kTabSize);
+  const std::vector<SyntaxTokenKind> tokens;  // one plain color -> one run without hints
+
+  // Type hint " i32" (4 glyphs => 4 cells) anchored before column 5.
+  std::vector<editor::InlineTextDecoration> inline_texts;
+  editor::InlineTextDecoration hint;
+  hint.anchor_column = 5;
+  hint.text = " i32";
+  hint.color = SDL_Color{120, 120, 120, 255};
+  inline_texts.push_back(hint);
+
+  std::vector<editor::InlayCellSpan> spans;
+  std::size_t total_cells = 0;
+  editor::BuildInlayRowSpans(inline_texts, &layout, nullptr, 0, 40, text_renderer, char_width, spans,
+                             &total_cells);
+  Expect(spans.size() == 1, "one mid-line hint span");
+  Expect(spans.front().anchor_visual_column == 5, "anchor at visual column 5");
+  Expect(spans.front().cell_width == 4, "\" i32\" occupies 4 cells");
+  Expect(total_cells == 4, "total line phantom cells");
+
+  const float text_x = 10.0f;
+  RowDecorationInput input;
+  input.text_x = text_x;
+  input.y = 5.0f;
+  input.char_width = char_width;
+  input.line_height = 16.0f;
+  input.row_visual_start = 0;
+  input.row_visual_end = 40;
+  input.text = &text;
+  input.tokens = &tokens;
+  input.plain_color = theme.text_secondary;
+  input.layout = &layout;
+  input.inlay = editor::InlayRowDisplacement(spans);
+  input.inlay_inline_texts = inline_texts;
+  input.inlay_color = theme.text_disabled;
+  input.text_renderer = &text_renderer;
+  input.theme = &theme;
+
+  DecoratedTextRow row;
+  editor::BuildDecoratedRow(row, input);
+
+  // Locate the three expected runs by their text.
+  const editor::DecoratedTextRun* left = nullptr;
+  const editor::DecoratedTextRun* right = nullptr;
+  const editor::DecoratedTextRun* glyph = nullptr;
+  for (const editor::DecoratedTextRun& run : row.runs) {
+    if (run.text == "let x") left = &run;
+    else if (run.text == " = 5;") right = &run;
+    else if (run.text == " i32") glyph = &run;
+  }
+  Expect(left != nullptr, "unshifted run left of the hint is emitted");
+  Expect(right != nullptr, "run right of the hint is emitted");
+  Expect(glyph != nullptr, "the hint glyph run is emitted");
+  // Left run stays at the origin; right run shifts by 4 cells (32px); the hint
+  // sits in the 4 phantom cells between them (display cols 5..8 -> x=text_x+40).
+  Expect(left->x == text_x, "text left of the hint is not shifted");
+  Expect(glyph->x == text_x + 5.0f * char_width, "hint draws at the phantom region start");
+  Expect(right->x == text_x + (5.0f + 4.0f) * char_width,
+         "text right of the hint shifts by the hint's cell width");
+}
+
 }  // namespace
 
 void RegisterRowDecorationBuilderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RowDecorationBuilder inlay hints shift runs and draw the glyph",
+          TestInlayHintsShiftRunsAndDrawGlyph);
   AddTest(tests, "RowDecorationBuilder changed-span underlines use the grid under a layout",
           TestChangedSpanUnderlinesUseGridWhenLayoutSet);
   AddTest(tests, "RowDecorationBuilder layout path matches legacy editor row assembly",

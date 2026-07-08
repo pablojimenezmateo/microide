@@ -374,13 +374,33 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
                   .hit.row;
       }
       const float text_offset_x = std::max(0.0f, event.button.x - metrics.text_x);
-      const std::size_t visual_column =
+      std::size_t visual_column =
           viewport->horizontal_scroll() +
           static_cast<std::size_t>(std::max(
               0L, std::lround(text_offset_x / std::max(1.0f, text_renderer_.CharWidth()))));
       const int visual_row = static_cast<int>(viewport->scroll_line() + row);
+      // Undo the mid-line inlay-hint display shift so the retargeted caret lands on
+      // the glyph under the cursor (identity when no hints / soft-wrapped).
+      if (pres != nullptr && !viewport->soft_wrap() &&
+          static_cast<std::size_t>(visual_row) < viewport->visual_line_count()) {
+        const std::size_t line_index =
+            viewport->VisualRowLineIndex(static_cast<std::size_t>(visual_row));
+        const editor::FileDecorations* file_dec =
+            pres->decorations.FindByPath(viewport->path());
+        const auto inline_texts =
+            file_dec != nullptr ? file_dec->InlineTextsForLine(static_cast<std::uint32_t>(line_index))
+                                : std::span<const editor::InlineTextDecoration>{};
+        if (!inline_texts.empty()) {
+          const editor::LayoutLine& layout = viewport->VisibleLineLayoutRef(line_index);
+          const std::size_t row_start = viewport->horizontal_scroll();
+          visual_column = editor::RealVisualColumnForDisplayColumn(
+              inline_texts, &layout, nullptr, row_start, row_start + viewport->visible_columns(),
+              text_renderer_, text_renderer_.CharWidth(), visual_column);
+        }
+      }
+      const int visual_row_hit = visual_row;
       const editor::LogicalPosition hit =
-          viewport->LogicalPositionForVisualHit(visual_row, static_cast<int>(visual_column));
+          viewport->LogicalPositionForVisualHit(visual_row_hit, static_cast<int>(visual_column));
       viewport->MoveCursorToVisualColumn(hit.line, visual_column, false);
       return true;
     }();

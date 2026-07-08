@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include <optional>
 #include <span>
@@ -156,7 +157,8 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
                                 const LayoutLine& layout,
                                 SDL_Color plain_color,
                                 const std::vector<SyntaxTokenKind>& full_tokens,
-                                std::span<const TextStyleDecoration> foreground_overrides) {
+                                std::span<const TextStyleDecoration> foreground_overrides,
+                                const InlayRowDisplacement& inlay) {
   const std::size_t visible_cells =
       std::min(layout.source_columns.size(), layout.text_offsets.size());
   if (layout.text.empty() || visible_cells == 0) {
@@ -176,11 +178,21 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
     return SyntaxTokenColor(theme, kind, plain_color);
   };
 
+  const float char_width = text_renderer.CharWidth();
+  const bool has_inlay = !inlay.empty();
+
   for (std::size_t segment_start = 0; segment_start < visible_cells;) {
     const SDL_Color color = effective_color_at(segment_start);
 
+    // A mid-line inlay hint inserts phantom cells before its anchor, so a run must
+    // never span an anchor (the cells after it shift further right). Cap the run at
+    // the next anchor strictly after segment_start; the next run picks up there
+    // with the larger displacement.
+    const std::size_t split_limit =
+        has_inlay ? inlay.NextAnchorAtOrAfter(segment_start + 1)
+                  : std::numeric_limits<std::size_t>::max();
     std::size_t segment_end = segment_start + 1;
-    while (segment_end < visible_cells) {
+    while (segment_end < visible_cells && segment_end < split_limit) {
       if (!SameColor(effective_color_at(segment_end), color)) {
         break;
       }
@@ -193,13 +205,53 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
                                                  : layout.text.size();
     const std::string_view segment_text(layout.text.data() + segment_text_start,
                                         segment_text_end - segment_text_start);
+    const float inlay_shift =
+        has_inlay ? static_cast<float>(inlay.CellsInsertedBefore(segment_start)) * char_width : 0.0f;
     row.runs.push_back(DecoratedTextRun{
-        .x = x + static_cast<float>(segment_start) * text_renderer.CharWidth(),
+        .x = x + static_cast<float>(segment_start) * char_width + inlay_shift,
         .y = y,
         .color = color,
         .text = segment_text,
     });
     segment_start = segment_end;
+  }
+}
+
+void AppendInlayHintRuns(DecoratedTextRow& row,
+                         const render::TextRenderer& text_renderer,
+                         float x,
+                         float y,
+                         float char_width,
+                         float line_height,
+                         std::span<const InlineTextDecoration> inline_texts,
+                         std::span<const InlayCellSpan> spans,
+                         SDL_Color fallback_color) {
+  (void)text_renderer;
+  // Walk the sorted spans left-to-right, tracking the running display column so
+  // stacked hints at the same anchor lay out consecutively. Each hint occupies
+  // display cells [disp_col, disp_col + cell_width) — the phantom region reserved
+  // before its anchor's real glyph.
+  std::size_t real_col = 0;   // row-local visual column
+  std::size_t disp_col = 0;   // display column of the real glyph at real_col
+  for (const InlayCellSpan& span : spans) {
+    disp_col += span.anchor_visual_column - real_col;  // 1:1 gap up to the anchor
+    real_col = span.anchor_visual_column;
+    if (span.source_index >= inline_texts.size()) {
+      disp_col += span.cell_width;
+      continue;
+    }
+    const InlineTextDecoration& inl = inline_texts[span.source_index];
+    const float hint_left = x + static_cast<float>(disp_col) * char_width;
+    if (inl.background.a != 0) {
+      row.fills.push_back(DecoratedTextFill{
+          .rect = SDL_FRect{hint_left, y - 1.0f, static_cast<float>(span.cell_width) * char_width,
+                            line_height},
+          .color = inl.background,
+      });
+    }
+    const SDL_Color fg = inl.color.a != 0 ? inl.color : fallback_color;
+    row.runs.push_back(DecoratedTextRun{.x = hint_left, .y = y, .color = fg, .text = inl.text});
+    disp_col += span.cell_width;  // consume the phantom cells
   }
 }
 
