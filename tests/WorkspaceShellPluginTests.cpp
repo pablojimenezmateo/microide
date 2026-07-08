@@ -3730,6 +3730,48 @@ void TestWorkspaceShellLspSemanticOverlayClearedOnEditAndUndo() {
          "undo must clear the stale lsp:semantic overlay (the reported corruption)");
 }
 
+// Regression: LSP inlay hints publish as absolute-positioned mid-line virtual
+// text. Unlike the semantic overlay they render in EVERY buffer state, so an edit
+// that shifts the geometry MUST drop them (they are re-requested on the next clean
+// transition); otherwise a stale hint paints mid-line at a pre-edit column.
+void TestWorkspaceShellLspInlayOverlayClearedOnEdit() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.cpp";
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "inlay-overlay fixture should open the project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto seed = [&]() {
+    auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+    microide::editor::PluginDecorationData data;
+    microide::editor::InlineTextDecoration hint;
+    hint.line = 1;
+    hint.anchor_column = 2;  // mid-line, not the end-of-line sentinel
+    hint.text = " : int";
+    data.inline_texts.push_back(hint);
+    state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("lsp:inlay", source,
+                                                                     std::move(data));
+  };
+  auto has_inlay = [&]() {
+    const auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+    const auto* presentation = state.plugin_presentation_if_present();
+    if (presentation == nullptr) return false;
+    const auto* decorations = presentation->decorations.FindByPath(source);
+    return decorations != nullptr && !decorations->inline_texts.empty();
+  };
+
+  seed();
+  Expect(has_inlay(), "seeded lsp:inlay overlay should be present before editing");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "x"),
+         "typing into an editable buffer should be handled");
+  Expect(!has_inlay(), "a content edit must clear the stale lsp:inlay overlay");
+}
+
 // The applied-edit diagnostic shift must run even when no language server serves
 // the buffer. Phase-1.4 moved ShiftLspDiagnosticsForAppliedEdit ahead of the
 // client early-out in SyncLspForActiveEditableLastChange, so stored "lsp"
@@ -4252,6 +4294,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginApplyEditsClampsOutOfBounds);
   AddTest(tests, "WorkspaceShell/LspSemanticOverlayClearedOnEditAndUndo",
           TestWorkspaceShellLspSemanticOverlayClearedOnEditAndUndo);
+  AddTest(tests, "WorkspaceShell/LspInlayOverlayClearedOnEdit",
+          TestWorkspaceShellLspInlayOverlayClearedOnEdit);
   AddTest(tests, "WorkspaceShell/LspDiagnosticsShiftOnEditWithoutServer",
           TestWorkspaceShellLspDiagnosticsShiftOnEditWithoutServer);
   AddTest(tests, "WorkspaceShell/GhostTextPublishStoresAndSplits",

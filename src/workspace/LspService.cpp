@@ -581,6 +581,13 @@ void LspService::ClearLspInlayHintsForFile(const editor::TextViewport& viewport)
   if (viewport.path().empty()) {
     return;
   }
+  // Bump the generation FIRST, unconditionally: unlike the semantic overlay (which
+  // the renderer suppresses while the buffer is dirty), inlay-hint InlineText
+  // decorations paint in every state, so an in-flight response captured before this
+  // edit would otherwise re-add hints at pre-edit positions on the now-shifted
+  // buffer. Invalidating the generation makes PublishLspInlayHints drop it even if
+  // there is currently no overlay to clear.
+  NextOverlayGeneration(inlay_hint_generation_, FileUriForPath(viewport.path()));
   ProjectWorkspaceState& state = CurrentProjectState();
   auto* presentation = state.plugin_presentation.get();
   if (presentation == nullptr) {
