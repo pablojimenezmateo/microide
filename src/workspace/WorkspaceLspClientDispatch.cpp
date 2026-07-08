@@ -139,11 +139,24 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
       util::StartupTrace::Scope scope("LspClient::DispatchDiagnostics");
       const auto& params = msg["params"];
       std::string uri = params["uri"].AsString();
+      const util::JsonValue& version_val = params["version"];
       std::vector<Diagnostic> diags = lsp_protocol::ParseDiagnostics(params["diagnostics"]);
       TraceLspLifecycle(language_id, proc.pid(), "publishDiagnostics", uri);
       OnPublishDiagnostics cb;
       {
         std::lock_guard lock(mutex);
+        // Drop diagnostics computed against a document version we have already
+        // superseded with a newer edit. The server may still be reporting on
+        // v_old while the user has typed on to v_new; applying v_old ranges to
+        // the v_new buffer paints squiggles on the wrong spans until the v_new
+        // diagnostics arrive. Only gate when the server sent a version and the
+        // document is still open (tracked) at a strictly newer version.
+        if (version_val.IsInt()) {
+          const auto it = document_versions.find(uri);
+          if (it != document_versions.end() && version_val.AsInt() < it->second) {
+            return;
+          }
+        }
         cb = diagnostics_callback;
       }
       if (cb) {

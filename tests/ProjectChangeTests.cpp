@@ -131,6 +131,37 @@ void TestGitRepositoryMetadataTrackerDetectsHeadChanges() {
          "HEAD updates should be classified as head changes");
 }
 
+// Regression: a linked worktree (or submodule) has a `.git` *file* that points
+// at the real git directory via `gitdir: <path>`. The tracker used to stat
+// `<root>/.git/HEAD` as if `.git` were a directory, silently producing a
+// {head:0, index:0} tick that never changes — so commits/stages in a worktree
+// never triggered an auto-refresh. The tracker now follows the pointer.
+void TestGitRepositoryMetadataTrackerFollowsWorktreeGitFile() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "worktree";
+  const std::filesystem::path real_gitdir = temp_dir.path() / "main/.git/worktrees/wt";
+  std::filesystem::create_directories(root);
+  std::filesystem::create_directories(real_gitdir);
+  WriteFile(real_gitdir / "HEAD", "ref: refs/heads/main\n");
+  WriteFile(real_gitdir / "index", "index\n");
+  // A linked worktree's `.git` is a FILE pointing at the real gitdir.
+  WriteFile(root / ".git", "gitdir: " + real_gitdir.string() + "\n");
+
+  project::GitRepositoryMetadataTracker tracker;
+  tracker.SetProjectRoot(root);
+  Expect(tracker.SampleChanges().empty(),
+         "worktree baseline should be established from the resolved gitdir");
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  WriteFile(real_gitdir / "HEAD", "ref: refs/heads/feature\n");
+  const std::vector<project::RepositoryChange> changes = tracker.SampleChanges();
+  Expect(std::any_of(changes.begin(), changes.end(),
+                     [](const project::RepositoryChange& change) {
+                       return change.kind == project::RepositoryChangeKind::HeadChanged;
+                     }),
+         "a HEAD change in a worktree's resolved gitdir must be detected");
+}
+
 }  // namespace
 
 void RegisterProjectChangeTests(std::vector<TestCase>& tests) {
@@ -140,6 +171,8 @@ void RegisterProjectChangeTests(std::vector<TestCase>& tests) {
           TestProjectChangeCoalescerCollapsesFloodToRescan);
   AddTest(tests, "ProjectChange/CoalescerGeneration", TestProjectChangeCoalescerSuppressesStaleGeneration);
   AddTest(tests, "ProjectChange/GitMetadataHeadChange", TestGitRepositoryMetadataTrackerDetectsHeadChanges);
+  AddTest(tests, "ProjectChange/GitMetadataWorktreeGitFile",
+          TestGitRepositoryMetadataTrackerFollowsWorktreeGitFile);
 }
 
 }  // namespace microide::tests

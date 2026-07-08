@@ -382,6 +382,69 @@ void TestPatchGeneratorIgnoresSpuriousAlignmentRows() {
          "hunk header counts should match stageable lines");
 }
 
+// Regression: staging a hunk whose context includes an interior blank line
+// after an earlier insertion shifted the line numbering. The blank Unchanged
+// row then has left_line != right_line (both > 0); the old `real_blank_line`
+// gate required equality, so it dropped the blank from the body while the @@
+// header still counted it — desyncing the header line numbers against the real
+// file. `git apply --check` (run by the preflight) then rejected the hunk. The
+// fix keys phantom-trailing-EOF suppression on the globally-last row instead of
+// line-number equality, so genuine interior blanks are emitted.
+void TestPatchStageHunkWithShiftedBlankContextApplies() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  std::filesystem::create_directories(repo_path);
+  InitializeGitRepo(repo_path);
+  const auto file_path = repo_path / "tracked.txt";
+  // Committed content has an interior blank line (line 2) before the target.
+  const std::string committed = "keep\n\ntarget_old\n";
+  WriteFile(file_path, committed);
+  CommitAll(repo_path, "base", "base");
+
+  // Working content inserts a line at the very top (shifting every following
+  // line's right-side number by one) AND changes the target line.
+  const std::string working = "inserted\nkeep\n\ntarget_new\n";
+  WriteFile(file_path, working);
+
+  const CompareModel model = BuildCompareModel(committed, working);
+  // Locate the hunk that carries the target modification (not the top insert).
+  int target_hunk = -1;
+  for (const CompareRow& row : model.rows) {
+    if (row.kind == CompareRowKind::Modified && row.left_text == "target_old") {
+      target_hunk = row.hunk;
+      break;
+    }
+  }
+  Expect(target_hunk >= 0, "expected a modified hunk for the target line");
+
+  const auto patch = GenerateComparePatch(model, "tracked.txt", target_hunk);
+  Expect(patch.has_value(), "target-hunk patch should be generated");
+  // The interior blank line must survive as a space-only context line...
+  Expect(patch->find("\n \n") != std::string::npos,
+         "shifted interior blank line must be emitted as a context line");
+  // ...and the phantom trailing-EOL blank must NOT be appended as a bogus line.
+  Expect(PatchHunkCountsMatchBody(*patch), "hunk header counts should match the emitted body");
+
+  PatchApplyRequest request{
+      .operation = PatchOperationKind::StageHunk,
+      .target{
+          .repository_root = repo_path,
+          .relative_path = std::filesystem::path("tracked.txt"),
+          .hunk = std::nullopt,
+          .line_selection = std::nullopt,
+      },
+      .model = model,
+  };
+  const auto result = ApplyPatchRequest(request, *patch);
+  Expect(result.category == PatchApplyResultCategory::Success,
+         "staging a hunk with a shifted interior blank line must apply cleanly");
+
+  GitRepository repo(repo_path);
+  const auto staged = repo.Execute({"diff", "--cached", "--", "tracked.txt"});
+  Expect(staged.success() && staged.output.find("+target_new") != std::string::npos,
+         "staged diff should contain the changed target line");
+}
+
 void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
   tests.push_back({"PatchApply/UnifiedDiff", TestPatchGeneratorProducesUnifiedDiff});
   tests.push_back({"PatchApply/SelectedLines", TestPatchGeneratorSelectedLinesIncludeContext});
@@ -402,6 +465,8 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
   tests.push_back({"PatchApply/StageDeletedFileDevNull", TestPatchStageDeletedFileUsesDevNull});
   tests.push_back({"PatchApply/PreserveMissingFinalNewline",
                    TestPatchStagePreservesMissingFinalNewline});
+  tests.push_back({"PatchApply/StageHunkShiftedBlankContext",
+                   TestPatchStageHunkWithShiftedBlankContextApplies});
 }
 
 }  // namespace microide::tests

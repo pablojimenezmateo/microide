@@ -1,6 +1,10 @@
 #include "project/GitRepositoryMetadataTracker.h"
 
+#include <fstream>
+#include <string>
 #include <system_error>
+
+#include "util/StringUtil.h"
 
 namespace microide::project {
 namespace {
@@ -15,6 +19,45 @@ std::optional<std::uint64_t> FileModificationTick(const std::filesystem::path& p
     return std::nullopt;
   }
   return static_cast<std::uint64_t>(tick.time_since_epoch().count());
+}
+
+// Resolve the real git directory for a project root. For an ordinary checkout
+// `<root>/.git` is a directory. For a linked worktree or a submodule it is a
+// regular *file* containing `gitdir: <path>` (that gitdir holds this
+// worktree's own HEAD and index). Statting `<root>/.git/HEAD` then silently
+// fails and change detection dies. Follow the pointer so commit/stage still
+// triggers an auto-refresh.
+std::optional<std::filesystem::path> ResolveGitDir(const std::filesystem::path& project_root) {
+  const std::filesystem::path git_marker = project_root / ".git";
+  std::error_code error;
+  if (!std::filesystem::exists(git_marker, error)) {
+    return std::nullopt;
+  }
+  if (std::filesystem::is_directory(git_marker, error)) {
+    return git_marker;
+  }
+
+  std::ifstream stream(git_marker);
+  if (!stream) {
+    return std::nullopt;
+  }
+  std::string line;
+  std::getline(stream, line);
+  const std::string trimmed = util::TrimAsciiWhitespace(line);
+  constexpr std::string_view kPrefix = "gitdir:";
+  if (std::string_view(trimmed).substr(0, kPrefix.size()) != kPrefix) {
+    return std::nullopt;
+  }
+  const std::string target =
+      util::TrimAsciiWhitespace(std::string_view(trimmed).substr(kPrefix.size()));
+  if (target.empty()) {
+    return std::nullopt;
+  }
+  std::filesystem::path resolved(target);
+  if (resolved.is_relative()) {
+    resolved = project_root / resolved;
+  }
+  return resolved.lexically_normal();
 }
 
 }  // namespace
@@ -53,11 +96,11 @@ GitRepositoryMetadataTracker::ReadCurrentTicks() const {
     return std::nullopt;
   }
 
-  const std::filesystem::path git_dir = project_root_ / ".git";
-  std::error_code error;
-  if (!std::filesystem::exists(git_dir, error)) {
+  const std::optional<std::filesystem::path> git_dir_opt = ResolveGitDir(project_root_);
+  if (!git_dir_opt.has_value()) {
     return std::nullopt;
   }
+  const std::filesystem::path& git_dir = *git_dir_opt;
 
   MetadataTick tick;
   if (const auto head_tick = FileModificationTick(git_dir / "HEAD"); head_tick.has_value()) {

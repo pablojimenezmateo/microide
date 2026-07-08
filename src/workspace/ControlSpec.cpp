@@ -64,6 +64,13 @@ ControlSpec ParseControlSpec(std::string_view json) {
     const util::JsonValue& settings = (*parsed)["settings"];
     if (settings.IsObject()) {
       for (const auto& [id, value] : settings.AsObject()) {
+        // Reject an empty setting id to match the array form's `pair[0].empty()`
+        // guard below; an empty key would otherwise flow downstream as a
+        // silently-ignored ("", value) override.
+        if (id.empty()) {
+          spec.parse_error = "\"settings\" ids must be non-empty";
+          return spec;
+        }
         if (!value.IsString()) {
           spec.parse_error = "\"settings\" values must be strings";
           return spec;

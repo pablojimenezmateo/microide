@@ -935,6 +935,211 @@ while True:
 #endif
 }
 
+// A frame that arrives before the initialize response must be dispatched, not
+// dropped. The init loop used to `continue` on any non-init frame — but
+// framer_.Next() had already consumed the bytes, so early server pushes
+// (window/logMessage, $/progress) were lost and pre-init server requests went
+// unanswered (a request-blocking server then hangs). Here the server pushes a
+// diagnostics notification *before* the initialize response; the client must
+// still deliver it. Mirrors the DAP client's pre-initialize dispatch.
+void TestWorkspaceLspClientDispatchesPreInitializeFrames() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#else
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(
+      server_path,
+      std::string(R"py(import json
+import sys
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        # Push a diagnostics notification BEFORE the initialize response.
+        write_message({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {
+                "uri": "file:///tmp/pre.txt",
+                "diagnostics": [{
+                    "range": {"start": {"line": 0, "character": 0},
+                              "end": {"line": 0, "character": 1}},
+                    "message": "preinit-hello",
+                    "severity": 1,
+                }],
+            },
+        })
+        write_message({
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": {"capabilities": {"textDocumentSync": 1}},
+        })
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+
+  LspClient client;
+  bool got_preinit_diag = false;
+  client.SetDiagnosticsCallback(
+      [&](std::string /*uri*/, std::vector<LspClient::Diagnostic> diags) {
+        if (!diags.empty() && diags.front().message == "preinit-hello") {
+          got_preinit_diag = true;
+        }
+      });
+  Expect(client.Start({"python3", server_path.string()}, "file:///tmp", "python"),
+         "pre-initialize fixture should start");
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < deadline && !got_preinit_diag) {
+    client.DrainCallbacks();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(got_preinit_diag,
+         "a frame arriving before the initialize response must be dispatched, not dropped");
+  client.Shutdown();
+#endif
+}
+
+// Diagnostics computed against a document version the client has already
+// superseded with a newer edit must be dropped — applying stale ranges to the
+// newer buffer paints squiggles on the wrong spans. The server replies to the
+// v2 didChange with a stale (v1) push followed by a fresh (v2) push; only the
+// fresh one may reach the callback.
+void TestWorkspaceLspClientDropsStaleDiagnosticsVersion() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#else
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(
+      server_path,
+      std::string(R"py(import json
+import sys
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+def diag(version, message):
+    write_message({
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {
+            "uri": "file:///tmp/stale.py",
+            "version": version,
+            "diagnostics": [{
+                "range": {"start": {"line": 0, "character": 0},
+                          "end": {"line": 0, "character": 1}},
+                "message": message,
+                "severity": 1,
+            }],
+        },
+    })
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        write_message({
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": {"capabilities": {"textDocumentSync": 1}},
+        })
+    elif method == "textDocument/didChange":
+        version = msg["params"]["textDocument"]["version"]
+        if version == 2:
+            diag(1, "stale-v1")   # superseded — must be dropped by the client
+            diag(2, "fresh-v2")   # current — must be delivered
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+
+  LspClient client;
+  std::vector<std::string> received;
+  client.SetDiagnosticsCallback(
+      [&](std::string /*uri*/, std::vector<LspClient::Diagnostic> diags) {
+        if (!diags.empty()) {
+          received.push_back(diags.front().message);
+        }
+      });
+  Expect(client.Start({"python3", server_path.string()}, "file:///tmp", "python"),
+         "stale-diagnostics fixture should start");
+  Expect(WaitForLspReadinessState(client, LspClient::ReadinessSnapshot::State::Ready, 2000) ||
+             client.IsInitialized(),
+         "stale-diagnostics fixture should initialize");
+
+  const std::string uri = "file:///tmp/stale.py";
+  Expect(client.DidOpen(uri, "python", "first"), "didOpen should enqueue (version 1)");
+  Expect(client.DidChange(uri, "second"), "didChange should enqueue (version 2)");
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < deadline &&
+         std::find(received.begin(), received.end(), "fresh-v2") == received.end()) {
+    client.DrainCallbacks();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  // Give any stale push that slipped through a chance to surface before asserting.
+  client.DrainCallbacks();
+  Expect(std::find(received.begin(), received.end(), "fresh-v2") != received.end(),
+         "current-version diagnostics must be delivered");
+  Expect(std::find(received.begin(), received.end(), "stale-v1") == received.end(),
+         "superseded-version diagnostics must be dropped");
+  client.Shutdown();
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // LspMessageFramer — direct, subprocess-free unit coverage of the wire codec.
 // The parser is a hot path and a hostile-input surface; these exercise its
@@ -1228,6 +1433,10 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestLspManagerSharesOneSubprocessAcrossLanguageIds);
   AddTest(tests, "WorkspaceLspClient/SkipsOversizedFrameAndResyncs",
           TestWorkspaceLspClientSkipsOversizedFrameAndResyncs);
+  AddTest(tests, "WorkspaceLspClient/DispatchesPreInitializeFrames",
+          TestWorkspaceLspClientDispatchesPreInitializeFrames);
+  AddTest(tests, "WorkspaceLspClient/DropsStaleDiagnosticsVersion",
+          TestWorkspaceLspClientDropsStaleDiagnosticsVersion);
   AddTest(tests, "WorkspaceLspClient/FramerSplitFrameAcrossChunks",
           TestLspMessageFramerSplitFrameAcrossChunks);
   AddTest(tests, "WorkspaceLspClient/FramerMultipleFramesInOneChunk",

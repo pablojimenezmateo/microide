@@ -274,7 +274,21 @@ void LspClient::Impl::DoInitializeBlocking() {
         continue;
       }
       const auto& resp = *resp_opt;
-      if (!resp.HasKey("id") || resp["id"].AsInt() != init_id) continue;
+      const bool is_init_response = resp.HasKey("id") && !resp.HasKey("method") &&
+                                    resp["id"].IsInt() && resp["id"].AsInt() == init_id;
+      if (!is_init_response) {
+        // Not the initialize response. A server may push notifications
+        // (window/logMessage, $/progress) or requests
+        // (window/workDoneProgress/create) before or around the initialize
+        // response. `framer_.Next()` has already consumed this frame's bytes, so
+        // a bare `continue` would silently drop it — losing early logs/progress
+        // and leaving a server request unanswered (a request-blocking server then
+        // hangs forever). Dispatch it instead; any reply queues in
+        // deferred_messages and flushes once `initialized` is sent. Mirrors the
+        // DAP client's pre-initialize dispatch (WorkspaceDapClientInternal.h).
+        DispatchMessage(std::move(*resp_opt));
+        continue;
+      }
 
       if (resp.HasKey("result")) {
         const auto& result = resp["result"];

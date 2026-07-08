@@ -139,6 +139,12 @@ void TestParseSettingsRejectsBadShape() {
          "non-string settings value should be rejected");
   Expect(!ParseControlSpec(R"({"settings": "nope"})").valid,
          "scalar settings should be rejected");
+  // Parity with the array form's empty-id guard: an empty object key is rejected
+  // rather than flowing downstream as a silently-ignored ("", value) override.
+  Expect(!ParseControlSpec(R"({"settings": {"": "true"}})").valid,
+         "empty object-form setting id should be rejected");
+  Expect(!ParseControlSpec(R"({"settings": [["", "true"]]})").valid,
+         "empty array-form setting id should be rejected");
 }
 
 }  // namespace

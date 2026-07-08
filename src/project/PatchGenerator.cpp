@@ -139,11 +139,22 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
         const std::string_view context_text =
             compare_row.left_text.empty() ? std::string_view(compare_row.right_text)
                                           : std::string_view(compare_row.left_text);
-        const bool real_blank_line = context_text.empty() && compare_row.left_line > 0 &&
-                                     compare_row.right_line > 0 &&
-                                     compare_row.left_line == compare_row.right_line;
-        if (context_text.empty() && !real_blank_line) {
-          break;
+        // An empty Unchanged row is either a genuine blank line — which must be
+        // emitted as a context line — or the phantom trailing element that
+        // SplitLineViews appends for a file ending in a newline, which is not a
+        // real line and must be dropped. The phantom is uniquely the globally
+        // last row on both axes, and exists only when both sides ended in a
+        // newline. A genuine blank line's left/right numbering DIVERGES after an
+        // earlier insertion or deletion, so `left_line == right_line` is NOT a
+        // valid "real line" test: using it dropped interior blank context lines
+        // and desynced the @@ header (making `git apply --check` reject the hunk).
+        if (context_text.empty()) {
+          const bool is_phantom_trailing_eol =
+              compare_row.left_line == last_left_line && !model.left_final_newline_missing &&
+              compare_row.right_line == last_right_line && !model.right_final_newline_missing;
+          if (is_phantom_trailing_eol) {
+            break;
+          }
         }
         body_lines.push_back(PatchBodyLine{' ', context_text,
                                            left_no_newline(compare_row.left_line) ||
