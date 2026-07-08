@@ -10,6 +10,7 @@
 #include "util/StringUtil.h"
 #include "workspace/ControlSpec.h"
 #include "workspace/FileUri.h"
+#include "workspace/LspFeatureFlags.h"
 #include "workspace/LspViewportPositions.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceCommandLineCoordinator.h"
@@ -154,6 +155,11 @@ void WorkspaceShell::QueryLspDocumentSymbolsForOutline(const editor::TextViewpor
     // on the transient coordinator that issued the request.
     MakeSidebarCoordinator().ApplyLspOutlineResult(path, error, nodes);
   };
+  const auto get_setting = [this](std::string_view id) { return GetSettingValue(id); };
+  if (!LspFeatureEnabled(get_setting, "lsp.document_symbols.enabled")) {
+    apply(request_path, plugin_error, {});
+    return;
+  }
   std::string language_id;
   LspClient* client = LspClientForViewport(viewport, &language_id);
   if (client == nullptr) {

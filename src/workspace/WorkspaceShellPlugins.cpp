@@ -168,8 +168,7 @@ WorkspaceShell::WorkspaceShell() {
               [this](const std::vector<CodeActionEdit>& edits) {
                 return ApplyLspWorkspaceEdit(edits);
               },
-          .is_setting_enabled =
-              [this](std::string_view id) { return SettingFlagEnabled(GetSettingValue(id)); },
+          .get_setting_value = [this](std::string_view id) { return GetSettingValue(id); },
       });
   // Live theme pointer for baking semantic-token recolor decorations (theme_'s
   // address is stable; a theme switch mutates it in place).

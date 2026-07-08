@@ -88,6 +88,53 @@ void TestSettingsCatalogProjectTabHideToggle() {
   Expect(on != nullptr && *on, "project-tab hide toggle defaults to on");
 }
 
+void TestSettingsCatalogLspToggles() {
+  // Master + per-feature toggles, all Bool / User-scoped and defaulting on.
+  constexpr std::array<std::string_view, 14> kLspToggleIds = {
+      "lsp.enabled",
+      "lsp.completion.enabled",
+      "lsp.hover.enabled",
+      "lsp.diagnostics.enabled",
+      "lsp.code_actions.enabled",
+      "lsp.formatting.enabled",
+      "lsp.rename.enabled",
+      "lsp.goto_definition.enabled",
+      "lsp.find_references.enabled",
+      "lsp.navigation.enabled",
+      "lsp.workspace_symbol.enabled",
+      "lsp.signature_help.enabled",
+      "lsp.semantic_tokens.enabled",
+      "lsp.document_symbols.enabled",
+  };
+  for (std::string_view id : kLspToggleIds) {
+    const SettingSpec* spec = FindBuiltinSettingSpec(id);
+    Expect(spec != nullptr, "every LSP toggle should be registered");
+    Expect(spec->type == SettingType::Bool, "LSP toggles are boolean settings");
+    Expect(spec->scope == microide::workspace::SettingScope::User,
+           "LSP toggles are user-scoped preferences");
+    Expect(!spec->label.empty() && !spec->description.empty(),
+           "LSP toggles should have labels and descriptions");
+    const microide::workspace::SettingValue value = DefaultSettingValue(*spec);
+    const auto* on = std::get_if<bool>(&value);
+    Expect(on != nullptr && *on, "LSP toggles default to on");
+  }
+  // The master lives at the "LSP" top level; the features nest under "LSP → …".
+  Expect(FindBuiltinSettingSpec("lsp.enabled")->group == "LSP",
+         "the LSP master switch sits at the LSP category root");
+  Expect(FindBuiltinSettingSpec("lsp.hover.enabled")->group.rfind("LSP", 0) == 0,
+         "per-feature LSP toggles group under the LSP category");
+}
+
+void TestSettingsOverlayDerivesLspCategory() {
+  SettingsOverlayService service;
+  service.OpenSettings();
+  service.RebuildSettingsRows(microide::workspace::AllSettingInfos(microide::plugin::PluginHost{}),
+                              {}, {});
+  const auto& categories = service.Categories();
+  Expect(std::find(categories.begin(), categories.end(), "LSP") != categories.end(),
+         "the LSP settings group should derive an LSP category");
+}
+
 void TestSettingsCatalogSaveDefaultsAndDedup() {
   // The stale duplicate keys were removed in favor of the wired editor.save.* pair.
   Expect(FindBuiltinSettingSpec("editor.trim_trailing_whitespace") == nullptr,
@@ -469,6 +516,9 @@ void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
           TestSettingsCatalogSaveDefaultsAndDedup);
   AddTest(tests, "WorkspaceSettingsRegistry/ProjectTabHideToggle",
           TestSettingsCatalogProjectTabHideToggle);
+  AddTest(tests, "WorkspaceSettingsRegistry/LspToggles", TestSettingsCatalogLspToggles);
+  AddTest(tests, "WorkspaceSettingsOverlay/DerivesLspCategory",
+          TestSettingsOverlayDerivesLspCategory);
   AddTest(tests, "WorkspaceSettingsRegistry/DefaultsRoundTrip",
           TestSettingsCatalogDefaultsRoundTrip);
   AddTest(tests, "WorkspaceSettingsRegistry/EdgeValuesRoundTrip",

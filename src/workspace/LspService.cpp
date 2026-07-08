@@ -16,6 +16,7 @@
 #include "util/StringUtil.h"
 #include "workspace/FileUri.h"
 #include "workspace/LanguageDetection.h"
+#include "workspace/LspFeatureFlags.h"
 #include "workspace/LspPositionEncoding.h"
 #include "workspace/LspViewportPositions.h"
 #include "workspace/WorkspaceCodeActionRegistry.h"
@@ -162,6 +163,87 @@ void LspService::SetWakeEventType(Uint32 event_type) { wake_event_type_ = event_
 
 void LspService::SetTheme(const render::Theme* theme) { theme_ = theme; }
 
+void LspService::ReconcileFeatureSettings() {
+  if (!operations_.get_setting_value) {
+    return;
+  }
+  const auto& get = operations_.get_setting_value;
+  const bool master = LspMasterEnabled(get);
+  const bool diagnostics = master && SettingFlagEnabled(get("lsp.diagnostics.enabled"), true);
+  const bool semantic = master && SettingFlagEnabled(get("lsp.semantic_tokens.enabled"), true);
+
+  // Treat the first reconcile as a transition from "all on", so any feature that
+  // starts disabled is cleared once, and only actual flips do work thereafter.
+  const bool first = !last_feature_enablement_.has_value();
+  const FeatureEnablement prev =
+      last_feature_enablement_.value_or(FeatureEnablement{true, true, true});
+  last_feature_enablement_ = FeatureEnablement{master, diagnostics, semantic};
+
+  ProjectWorkspaceState& state = CurrentProjectState();
+
+  if (!master) {
+    // Master flipped off: stop the project's servers and drop every LSP-owned
+    // decoration so nothing stale lingers. Lazy start resumes through
+    // LspClientForViewport once the master is turned back on. Act only on entry.
+    if (prev.master) {
+      if (state.lsp_manager != nullptr) {
+        state.lsp_manager->ShutdownAll();
+      }
+      semantic_token_generation_.clear();
+      bool changed = state.diagnostics_store.ClearOwner("lsp");
+      if (state.plugin_presentation != nullptr &&
+          state.plugin_presentation->decorations.ClearOwner("lsp:semantic")) {
+        state.MaybeReleasePluginPresentation();
+        changed = true;
+      }
+      if (changed) {
+        operations_.refresh_problems_sidebar();
+        operations_.request_editor_surface_redraw();
+      }
+    }
+    return;
+  }
+
+  editor::TextViewport* viewport = operations_.active_editable_viewport();
+  const bool has_active = viewport != nullptr && !viewport->path().empty();
+
+  // Master just turned back on: re-open the active document so the server starts and
+  // republishes diagnostics + semantic tokens (EnsureLspDocumentOpen requests them).
+  const bool master_turned_on = !first && !prev.master;
+  if (master_turned_on && has_active) {
+    std::string language_id;
+    if (LspClient* client = LspClientForViewport(*viewport, &language_id); client != nullptr) {
+      EnsureLspDocumentOpen(*viewport, *client, language_id);
+    }
+  }
+
+  // Diagnostics turned off: clear stored "lsp" diagnostics (re-enable repopulates on
+  // the next server publish / reopen).
+  if (!diagnostics && prev.diagnostics) {
+    if (state.diagnostics_store.ClearOwner("lsp")) {
+      operations_.refresh_problems_sidebar();
+      operations_.request_editor_surface_redraw();
+    }
+  }
+
+  // Semantic highlighting: clear on disable; re-request on enable (unless the master
+  // off->on reopen above already covered it).
+  if (!semantic && prev.semantic) {
+    semantic_token_generation_.clear();
+    if (state.plugin_presentation != nullptr &&
+        state.plugin_presentation->decorations.ClearOwner("lsp:semantic")) {
+      state.MaybeReleasePluginPresentation();
+      operations_.request_editor_surface_redraw();
+    }
+  } else if (semantic && !prev.semantic && !master_turned_on && has_active) {
+    std::string language_id;
+    if (LspClient* client = LspClientForViewport(*viewport, &language_id); client != nullptr) {
+      EnsureLspDocumentOpen(*viewport, *client, language_id);
+      RequestLspSemanticTokens(*viewport, *client);
+    }
+  }
+}
+
 ProjectWorkspaceState& LspService::CurrentProjectState() {
   return context_->current_project_state;
 }
@@ -203,6 +285,12 @@ LspClient::ReadinessSnapshot LspService::ActiveLspReadinessSnapshot(bool ensure_
   ExpireTrackedLspRequestIfNeeded();
 
   LspClient::ReadinessSnapshot snapshot;
+  // Master off: report "Off" without starting a server. State stays at its default
+  // (never Ready), so LSP-driven menu items that key off readiness stay inert.
+  if (operations_.get_setting_value && !LspMasterEnabled(operations_.get_setting_value)) {
+    snapshot.message = "Off";
+    return snapshot;
+  }
   editor::TextViewport* viewport = operations_.active_editable_viewport();
   if (viewport == nullptr || viewport->path().empty()) {
     snapshot.message = "Idle";
@@ -255,6 +343,11 @@ std::string LspService::ActiveLspStatusTooltip(bool ensure_started) {
 
 void LspService::ActiveLspStatusStrings(bool ensure_started, std::string& text,
                                         std::string& tooltip) {
+  if (operations_.get_setting_value && !LspMasterEnabled(operations_.get_setting_value)) {
+    text = "LSP: Off";
+    tooltip = "Language Server Protocol disabled in settings";
+    return;
+  }
   const LspClient::ReadinessSnapshot snapshot = ActiveLspReadinessSnapshot(ensure_started);
   if (CurrentProjectState().lsp.request_in_flight) {
     text = "LSP: working...";
@@ -314,6 +407,15 @@ const LspManager& LspService::CurrentLspManager() const {
 
 LspClient* LspService::LspClientForViewport(const editor::TextViewport& viewport,
                                             std::string* language_id) {
+  // Master switch off: no client, so no DidOpen, no requests, and no lazy server
+  // start. This is the single choke point every feature/hover/outline/semantic
+  // request routes through, so gating here disables the whole subsystem.
+  if (operations_.get_setting_value && !LspMasterEnabled(operations_.get_setting_value)) {
+    if (language_id != nullptr) {
+      language_id->clear();
+    }
+    return nullptr;
+  }
   if (!CurrentLspManager().HasRegisteredServers()) {
     if (language_id != nullptr) {
       language_id->clear();
@@ -381,6 +483,17 @@ void LspService::PublishLspDiagnostics(ProjectWorkspaceState& state, std::string
     return;
   }
 
+  // Diagnostics disabled (or master off): drop the push and clear any stale
+  // "lsp" diagnostics already painted for this file.
+  if (operations_.get_setting_value &&
+      !LspFeatureEnabled(operations_.get_setting_value, "lsp.diagnostics.enabled")) {
+    if (state.diagnostics_store.ClearOwnerFile("lsp", *path)) {
+      operations_.refresh_problems_sidebar();
+      operations_.request_editor_surface_redraw();
+    }
+    return;
+  }
+
   // Resolve the file's buffer for position-encoding conversion (server `character`
   // units -> editor byte columns). Null (file not open / utf-8) passes through.
   const editor::TextViewport* file_viewport = FindOpenEditorViewport(state, *path);
@@ -403,6 +516,10 @@ void LspService::PublishLspDiagnostics(ProjectWorkspaceState& state, std::string
 
 void LspService::RequestLspSemanticTokens(const editor::TextViewport& viewport, LspClient& client) {
   if (theme_ == nullptr || viewport.path().empty() || !client.SupportsSemanticTokens()) {
+    return;
+  }
+  if (operations_.get_setting_value &&
+      !LspFeatureEnabled(operations_.get_setting_value, "lsp.semantic_tokens.enabled")) {
     return;
   }
   ProjectWorkspaceState* const project = &CurrentProjectState();
@@ -518,9 +635,11 @@ void LspService::RequestLspInlayHints(const editor::TextViewport& viewport, LspC
   if (viewport.path().empty() || !client.SupportsInlayHints()) {
     return;
   }
-  // User gate: skip the round-trip entirely when inlay hints are disabled.
-  if (operations_.is_setting_enabled &&
-      !operations_.is_setting_enabled("editor.inlay_hints.enabled")) {
+  // User gate: skip the round-trip entirely when inlay hints are disabled or the
+  // LSP master switch is off.
+  if (operations_.get_setting_value &&
+      (!LspMasterEnabled(operations_.get_setting_value) ||
+       !SettingFlagEnabled(operations_.get_setting_value("editor.inlay_hints.enabled")))) {
     return;
   }
   ProjectWorkspaceState* const project = &CurrentProjectState();

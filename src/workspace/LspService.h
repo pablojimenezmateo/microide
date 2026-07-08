@@ -42,9 +42,10 @@ class LspService {
     // ApplyLspWorkspaceEdit). Used by the server-initiated workspace/applyEdit
     // path; closed files are written on disk by LspService itself.
     std::function<bool(const std::vector<CodeActionEdit>&)> apply_workspace_edit_to_open_buffers;
-    // Read a boolean user setting (e.g. gate inlay-hint requests on
-    // editor.inlay_hints.enabled). Null => treated as enabled.
-    std::function<bool(std::string_view id)> is_setting_enabled;
+    // Resolve a setting value (project-over-user) for LSP feature gating: the lsp.*
+    // toggles plus inlay-hint gating (editor.inlay_hints.enabled). Bound to
+    // WorkspaceShell::GetSettingValue; null in headless setups (treated as "on").
+    std::function<std::optional<std::string>(std::string_view)> get_setting_value;
   };
 
   LspService() = default;
@@ -56,6 +57,13 @@ class LspService {
   // (the address is stable; a theme switch mutates it in place). Optional: when
   // null, semantic-token publishing is skipped.
   void SetTheme(const render::Theme* theme);
+
+  // Reconcile running state to the current `lsp.*` feature settings. Called from
+  // WorkspaceShell::ApplyLiveSettings when the settings revision changes. When the
+  // master switch is off it stops the active project's servers and drops all
+  // LSP-owned diagnostics/semantic decorations; when on it clears or re-requests the
+  // two decoration-backed features (diagnostics, semantic tokens) to match. Idempotent.
+  void ReconcileFeatureSettings();
 
   // Provider-presence queries for the active editable viewport.
   std::string ActiveLanguageIdForProvider() const;
@@ -235,6 +243,16 @@ class LspService {
   // guard as semantic tokens). Shares NextSemanticGeneration's helper pattern via
   // a dedicated map so the two overlays never invalidate each other.
   std::unordered_map<std::string, std::uint64_t> inlay_hint_generation_;
+
+  // Last feature-enablement state applied by ReconcileFeatureSettings, so it acts
+  // only on actual transitions (shut down / clear / re-request) instead of redoing
+  // work on every unrelated settings mutation.
+  struct FeatureEnablement {
+    bool master = false;
+    bool diagnostics = false;
+    bool semantic = false;
+  };
+  std::optional<FeatureEnablement> last_feature_enablement_;
 };
 
 }  // namespace microide::workspace

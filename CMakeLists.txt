@@ -745,6 +745,7 @@ add_executable(microide_tests
   tests/ControlSpecTests.cpp
   tests/ControlChannelServiceTests.cpp
   tests/WorkspaceShellControlSettingsTests.cpp
+  tests/WorkspaceShellLspSettingsTests.cpp
   tests/CompareModelTests.cpp
   tests/CompareReviewTests.cpp
   tests/BranchReviewStateTests.cpp

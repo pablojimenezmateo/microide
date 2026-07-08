@@ -70,6 +70,9 @@ std::span<const MenuSpec> WorkspaceMenuSpecs();
 const MenuSpec* FindWorkspaceMenuSpec(MenuId id);
 std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKind target);
 bool IsLspDrivenMenuAction(ActionId id);
+// Feature-setting id ("lsp.*.enabled") gating a menu-present LSP action, or empty
+// for non-LSP menu actions. Drives hiding the entry when its feature is disabled.
+std::string_view LspMenuActionFeatureId(ActionId id);
 bool IsLspMenuActionReady(const LspClient::ReadinessSnapshot& snapshot);
 std::string LspDrivenMenuActionLabel(ActionId id,
                                      std::string_view ready_label,

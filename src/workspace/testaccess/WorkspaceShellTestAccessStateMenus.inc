@@ -270,6 +270,20 @@
     }
     return std::nullopt;
   }
+  // Non-separator labels of a menu's assembled item list, read straight from
+  // MenuItems (no popup/layout needed). Reflects LSP hide filtering, so useful for
+  // asserting which entries survive for a given feature/provider state.
+  static std::vector<std::string> MenuItemLabels(const WorkspaceShell& shell,
+                                                 WorkspaceShell::MenuId id) {
+    std::vector<std::string> labels;
+    for (const auto& item : shell.MenuItems(id)) {
+      if (item.separator) {
+        continue;
+      }
+      labels.push_back(shell.MenuItemLabel(item));
+    }
+    return labels;
+  }
   static std::vector<std::string> SidebarModeMenuLabels(WorkspaceShell& shell) {
     return VisiblePopupMenuLabels(shell, WorkspaceShell::MenuId::SidebarMode);
   }

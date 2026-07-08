@@ -10,6 +10,7 @@
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "workspace/FileUri.h"
+#include "workspace/LspFeatureFlags.h"
 #include "workspace/LspProtocol.h"
 #include "workspace/LspViewportPositions.h"
 #include "workspace/RenderViewModelBuilder.h"
@@ -640,6 +641,11 @@ void WorkspaceShell::KickOffLspHover(const std::filesystem::path& path, std::siz
     QueueEditorHoverRefresh();
     RequestFocusedEditorRedraw();
   };
+  const auto get_setting = [this](std::string_view id) { return GetSettingValue(id); };
+  if (!LspFeatureEnabled(get_setting, "lsp.hover.enabled")) {
+    fail();
+    return;
+  }
   editor::TextViewport* viewport = ActiveEditorViewport();
   if (viewport == nullptr || viewport->path() != path) {
     fail();

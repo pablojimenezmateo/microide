@@ -5,6 +5,7 @@
 
 #include "editor/GutterIconRegistry.h"
 
+#include "workspace/LspFeatureFlags.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspaceShellBootstrapper.h"
@@ -187,7 +188,54 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
   }
 
   const auto contributed = ContributedMenuItems(id, plugin_runtime_.Host());
-  if (contributed.empty()) {
+
+  // Hide (not merely grey) an LSP-driven menu item when its feature toggle or the
+  // master switch is off, or when no server/plugin provider is configured for the
+  // active file. A provider that exists but is only starting stays visible and is
+  // greyed by IsMenuItemEnabled's readiness check. Filtering here — the single
+  // assembly point every render/hit-test/geometry consumer routes through — keeps
+  // item indices consistent everywhere.
+  const auto is_lsp_hidden = [this](const MenuItemSpec& item) {
+    if (item.separator) {
+      return false;
+    }
+    const ActionSpec* command_action =
+        item.command_name.empty() ? nullptr : FindActionByCommand(item.command_name);
+    const ActionId action = command_action != nullptr ? command_action->id : item.action;
+    const std::string_view feature_id = LspMenuActionFeatureId(action);
+    if (feature_id.empty()) {
+      return false;  // not an LSP-driven menu action
+    }
+    const auto get_setting = [this](std::string_view id) { return GetSettingValue(id); };
+    if (!LspFeatureEnabled(get_setting, feature_id)) {
+      return true;  // master switch or this feature is off
+    }
+    switch (action) {  // feature on: hide when nothing is configured to serve it
+      case ActionId::GoToDefinition:
+      case ActionId::GoToTypeDefinition:
+      case ActionId::GoToImplementation:
+      case ActionId::GoToDeclaration:
+        return !HasActiveDefinitionProvider();
+      case ActionId::FindReferences:
+        return !HasActiveReferencesProvider();
+      case ActionId::CodeActions:
+        return !HasActiveCodeActionProvider();
+      case ActionId::Completion:
+        return !HasActiveCompletionProvider();
+      default:
+        return false;
+    }
+  };
+
+  bool any_hidden = false;
+  for (const MenuItemSpec& item : menu->items) {
+    if (is_lsp_hidden(item)) {
+      any_hidden = true;
+      break;
+    }
+  }
+
+  if (contributed.empty() && !any_hidden) {
     return menu->items;
   }
 
@@ -198,13 +246,24 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
   entries.reserve(contributed.size());
   items.reserve(menu->items.size() + contributed.size() * 2);
 
-  for (const MenuItemSpec& item : menu->items) {
+  // Push while collapsing leading/consecutive separators, so removing a hidden LSP
+  // group never leaves a doubled or leading divider.
+  const auto push_item = [&items](const MenuItemSpec& item) {
+    if (item.separator && (items.empty() || items.back().separator)) {
+      return;
+    }
     items.push_back(item);
+  };
+
+  for (const MenuItemSpec& item : menu->items) {
+    if (is_lsp_hidden(item)) {
+      continue;
+    }
+    push_item(item);
   }
   for (const auto& contributed_item : contributed) {
-    if (contributed_item.separator_before &&
-        (items.empty() || !items.back().separator)) {
-      items.push_back(MenuItemSpec{
+    if (contributed_item.separator_before) {
+      push_item(MenuItemSpec{
           .action = ActionId::Colorscheme,
           .label = {},
           .accelerator = {},
@@ -224,7 +283,7 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
     });
     const auto& entry = entries.back();
     const ActionSpec* contributed_action = FindActionByCommand(entry.command_name);
-    items.push_back(MenuItemSpec{
+    push_item(MenuItemSpec{
         .action = contributed_action != nullptr ? contributed_action->id : ActionId::Colorscheme,
         .label = entry.label,
         .accelerator = entry.accelerator,
@@ -235,6 +294,11 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
         .submenu = MenuId::None,
         .command_name = entry.command_name,
     });
+  }
+
+  // Drop a trailing separator left dangling when the hidden items were last.
+  if (!items.empty() && items.back().separator) {
+    items.pop_back();
   }
 
   return items;

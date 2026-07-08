@@ -51,6 +51,25 @@ bool IsLspDrivenMenuAction(ActionId id) {
          id == ActionId::FindReferences;
 }
 
+std::string_view LspMenuActionFeatureId(ActionId id) {
+  switch (id) {
+    case ActionId::GoToDefinition:
+      return "lsp.goto_definition.enabled";
+    case ActionId::GoToTypeDefinition:
+    case ActionId::GoToImplementation:
+    case ActionId::GoToDeclaration:
+      return "lsp.navigation.enabled";
+    case ActionId::FindReferences:
+      return "lsp.find_references.enabled";
+    case ActionId::CodeActions:
+      return "lsp.code_actions.enabled";
+    case ActionId::Completion:
+      return "lsp.completion.enabled";
+    default:
+      return {};
+  }
+}
+
 bool IsLspMenuActionReady(const LspClient::ReadinessSnapshot& snapshot) {
   return snapshot.state == LspClient::ReadinessSnapshot::State::Ready;
 }

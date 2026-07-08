@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "workspace/GitSidebarCommandCenter.h"
+#include "workspace/LspFeatureFlags.h"
 #include "workspace/SettingFlags.h"
 
 namespace microide::workspace {
@@ -19,6 +20,16 @@ bool SettingEnabled(const ActionAvailability::Operations& operations,
     return default_value;
   }
   return SettingFlagEnabled(operations.get_setting_value(id), default_value);
+}
+
+// An LSP feature is available only when both the master switch (`lsp.enabled`) and
+// the feature's own toggle are on. Absent getter (headless setups) => available.
+bool LspFeatureAvailable(const ActionAvailability::Operations& operations,
+                         std::string_view feature_id) {
+  if (!operations.get_setting_value) {
+    return true;
+  }
+  return LspFeatureEnabled(operations.get_setting_value, feature_id);
 }
 
 }  // namespace
@@ -39,30 +50,45 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
   const bool active_single_line_selection = operations_.active_single_line_text_has_selection();
   switch (id) {
     case ActionId::CodeActions:
-      return active_viewport != nullptr && operations_.active_code_actions_available();
+      return active_viewport != nullptr && operations_.active_code_actions_available() &&
+             LspFeatureAvailable(operations_, "lsp.code_actions.enabled");
     case ActionId::FormatDocument:
+      // LSP-only action; offered whenever a saved editable buffer is active and the
+      // feature is enabled. The executor reports "no language server" on invocation.
+      return active_editable_viewport != nullptr && !active_editable_viewport->path().empty() &&
+             LspFeatureAvailable(operations_, "lsp.formatting.enabled");
     case ActionId::RenameSymbol:
+      return active_editable_viewport != nullptr && !active_editable_viewport->path().empty() &&
+             LspFeatureAvailable(operations_, "lsp.rename.enabled");
     case ActionId::GoToTypeDefinition:
     case ActionId::GoToImplementation:
     case ActionId::GoToDeclaration:
-    case ActionId::WorkspaceSymbol:
-      // LSP-only actions; offered whenever a saved editable buffer is active. The
+      // Extended LSP navigation; offered when a saved editable buffer is active. The
       // executor reports "no language server" as feedback on invocation.
-      return active_editable_viewport != nullptr && !active_editable_viewport->path().empty();
+      return active_editable_viewport != nullptr && !active_editable_viewport->path().empty() &&
+             LspFeatureAvailable(operations_, "lsp.navigation.enabled");
+    case ActionId::WorkspaceSymbol:
+      return active_editable_viewport != nullptr && !active_editable_viewport->path().empty() &&
+             LspFeatureAvailable(operations_, "lsp.workspace_symbol.enabled");
     case ActionId::Completion:
-      return active_viewport != nullptr && operations_.active_completion_available();
+      return active_viewport != nullptr && operations_.active_completion_available() &&
+             LspFeatureAvailable(operations_, "lsp.completion.enabled");
     case ActionId::InsertSnippet:
       return active_editable_viewport != nullptr &&
              SettingEnabled(operations_, "editor.snippets.enabled", true) &&
              !active_editable_viewport->path().empty();
     case ActionId::FindReferences:
-      return active_viewport != nullptr && operations_.active_references_available();
+      return active_viewport != nullptr && operations_.active_references_available() &&
+             LspFeatureAvailable(operations_, "lsp.find_references.enabled");
     case ActionId::GoToDefinition:
-      return active_viewport != nullptr && operations_.active_definition_available();
+      return active_viewport != nullptr && operations_.active_definition_available() &&
+             LspFeatureAvailable(operations_, "lsp.goto_definition.enabled");
     case ActionId::SignatureHelp:
-      // Always offered when an editor is focused; the provider query (and its
-      // graceful "no signature help available" reject) runs on invocation.
-      return active_viewport != nullptr;
+      // Offered when an editor is focused and the feature is enabled; the provider
+      // query (and its graceful "no signature help available" reject) runs on
+      // invocation.
+      return active_viewport != nullptr &&
+             LspFeatureAvailable(operations_, "lsp.signature_help.enabled");
     case ActionId::InlineCompletion:
       return active_viewport != nullptr;
     case ActionId::Colorscheme:

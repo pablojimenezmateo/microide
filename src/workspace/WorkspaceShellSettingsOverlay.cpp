@@ -457,6 +457,12 @@ void WorkspaceShell::ApplyLiveSettings() {
     ApplyEditorPreferencesToAllTabs();
     last_live_settings_editor_snapshot_ = snapshot;
   }
+
+  // Reconcile the LSP subsystem to the current lsp.* toggles: stop servers + clear
+  // decorations when the master switch is off, clear/re-request diagnostics and
+  // semantic tokens on feature flips. Transition-guarded internally, so this only
+  // does work when an lsp.* setting actually changed.
+  lsp_service_.ReconcileFeatureSettings();
 }
 
 bool WorkspaceShell::ResetSettingValue(std::string_view id) {

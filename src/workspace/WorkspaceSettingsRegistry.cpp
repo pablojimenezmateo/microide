@@ -822,6 +822,145 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .enum_values = {},
           .group = "Editor → Essentials → Shaping And Save",
       },
+      // Language Server Protocol. `lsp.enabled` is the master switch (mirrors
+      // `debug.enabled`): when off, no language server subprocess is started, all
+      // features go dark, and LSP menu entries hide. Each per-feature toggle below
+      // gates one capability while the master stays on. All default on.
+      SettingSpec{
+          .id = "lsp.enabled",
+          .label = "Enable Language Server Protocol",
+          .description =
+              "Master switch for LSP. When off, no language server is started (or a running "
+              "one is stopped), and completion, hover, diagnostics, code actions, formatting, "
+              "rename, go-to-definition, find-references, signature help, semantic highlighting, "
+              "and the document outline are all unavailable. When on, the per-feature toggles "
+              "below decide which capabilities are active.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP",
+      },
+      SettingSpec{
+          .id = "lsp.completion.enabled",
+          .label = "Completion",
+          .description = "Offer language-server code completion (Ctrl+Space).",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
+          .id = "lsp.hover.enabled",
+          .label = "Hover",
+          .description = "Show language-server hover documentation when the pointer rests on a symbol.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
+          .id = "lsp.diagnostics.enabled",
+          .label = "Diagnostics",
+          .description = "Display language-server diagnostics (errors/warnings) inline and in the "
+                         "Problems panel.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
+          .id = "lsp.code_actions.enabled",
+          .label = "Code Actions / Quick Fix",
+          .description = "Offer language-server code actions and quick fixes (Ctrl+.).",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
+          .id = "lsp.formatting.enabled",
+          .label = "Formatting",
+          .description = "Allow the language server to format the active document (Ctrl+Shift+I).",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
+          .id = "lsp.rename.enabled",
+          .label = "Rename Symbol",
+          .description = "Allow language-server symbol rename across the workspace (F2).",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
+          .id = "lsp.goto_definition.enabled",
+          .label = "Go to Definition",
+          .description = "Enable language-server go-to-definition (F12).",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
+          .id = "lsp.find_references.enabled",
+          .label = "Find References",
+          .description = "Enable language-server find-all-references (Shift+F12).",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
+          .id = "lsp.navigation.enabled",
+          .label = "Extended Navigation",
+          .description = "Enable language-server go-to type definition, implementation, and "
+                         "declaration.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
+          .id = "lsp.workspace_symbol.enabled",
+          .label = "Workspace Symbol Search",
+          .description = "Enable language-server project-wide symbol search (workspace/symbol).",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
+          .id = "lsp.signature_help.enabled",
+          .label = "Signature Help",
+          .description = "Show language-server parameter/signature hints while typing a call "
+                         "(Ctrl+Shift+Space).",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
+          .id = "lsp.semantic_tokens.enabled",
+          .label = "Semantic Highlighting",
+          .description = "Recolor identifiers using language-server semantic tokens. When off, the "
+                         "built-in lexical highlighter is used alone.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
+          .id = "lsp.document_symbols.enabled",
+          .label = "Document Outline",
+          .description = "Populate the Outline sidebar view from language-server document symbols.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
   });
   return kSpecs;
 }
