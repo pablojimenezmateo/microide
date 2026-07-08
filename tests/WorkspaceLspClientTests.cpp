@@ -457,7 +457,13 @@ while True:
         })
     elif method == "textDocument/didOpen":
         text = msg["params"]["textDocument"]["text"]
-        marker_path.write_text(str(len(text)) + "\n" + text[:32], encoding="utf-8")
+        # Write atomically: the test's poll loop breaks on marker existence, so a
+        # non-atomic write would let it read an empty/partial file (create-then-fill
+        # race). Fill a temp file, then os.replace onto the marker (atomic on the
+        # same filesystem) so existence implies the full payload is present.
+        tmp_path = marker_path.with_name(marker_path.name + ".tmp")
+        tmp_path.write_text(str(len(text)) + "\n" + text[:32], encoding="utf-8")
+        tmp_path.replace(marker_path)
     elif method == "shutdown":
         write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
     elif method == "exit":
@@ -513,6 +519,15 @@ init_marker = pathlib.Path(sys.argv[1])
 config_marker = pathlib.Path(sys.argv[2])
 error_marker = pathlib.Path(sys.argv[3])
 
+def write_marker(path, text):
+    # The test polls for marker existence, then reads + inspects its content, so a
+    # plain write_text (create-then-fill) would let the reader see an empty/partial
+    # file. Fill a temp then os.replace onto the marker (atomic on the same
+    # filesystem) so existence implies the full payload is present.
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+
 def read_message():
     content_length = None
     while True:
@@ -542,7 +557,7 @@ while True:
         break
     method = msg.get("method")
     if method == "initialize":
-        init_marker.write_text(json.dumps(msg.get("params", {})), encoding="utf-8")
+        write_marker(init_marker, json.dumps(msg.get("params", {})))
         write_message({"jsonrpc": "2.0", "id": msg["id"],
                        "result": {"capabilities": {"textDocumentSync": 1}}})
         # Server -> client requests: the client must reply to both.
@@ -551,9 +566,9 @@ while True:
         write_message({"jsonrpc": "2.0", "id": 1001, "method": "some/unknownRequest",
                        "params": {}})
     elif method is None and msg.get("id") == 1000:
-        config_marker.write_text(json.dumps(msg), encoding="utf-8")
+        write_marker(config_marker, json.dumps(msg))
     elif method is None and msg.get("id") == 1001:
-        error_marker.write_text(json.dumps(msg), encoding="utf-8")
+        write_marker(error_marker, json.dumps(msg))
     elif method == "shutdown":
         write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
     elif method == "exit":
