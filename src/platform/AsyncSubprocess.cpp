@@ -263,7 +263,20 @@ bool AsyncSubprocess::Write(std::string_view data) {
       return false;
     }
 
-    const ssize_t written = write(stdin_fd, ptr, remaining);
+    // Perform the write syscall under state_mutex, re-reading stdin_fd, so a
+    // concurrent CloseStdin() on another thread (e.g. the reader hitting EOF
+    // during shutdown) cannot close — and let the OS reuse — the descriptor
+    // between the poll above and this write. stdin_fd is non-blocking, so a full
+    // pipe surfaces as EAGAIN below and we re-poll without holding the lock;
+    // holding it here therefore cannot stall other state_mutex users.
+    ssize_t written = -1;
+    {
+      std::lock_guard lock(impl_->state_mutex);
+      if (!impl_->running.load(std::memory_order_acquire) || impl_->stdin_fd < 0) {
+        return false;
+      }
+      written = write(impl_->stdin_fd, ptr, remaining);
+    }
     if (written > 0) {
       ptr += written;
       remaining -= static_cast<std::size_t>(written);
@@ -335,7 +348,18 @@ std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int time
 
     std::string result;
     result.resize(max_bytes);
-    const ssize_t n = read(stdout_fd, result.data(), max_bytes);
+    // Read under state_mutex, re-checking stdout_fd, so a concurrent Close()
+    // (e.g. Shutdown() on another thread) cannot close — and let the OS reuse —
+    // the descriptor between the poll above and this read. stdout_fd is
+    // non-blocking, so this cannot stall other state_mutex users.
+    ssize_t n = -1;
+    {
+      std::lock_guard lock(impl_->state_mutex);
+      if (impl_->stdout_fd != stdout_fd) {
+        return std::nullopt;  // closed/replaced underneath us
+      }
+      n = read(stdout_fd, result.data(), max_bytes);
+    }
     if (n > 0) {
       result.resize(static_cast<std::size_t>(n));
       return result;
@@ -397,7 +421,16 @@ std::optional<std::string> AsyncSubprocess::ReadExact(std::size_t n, int timeout
     }
     const std::size_t old_size = result.size();
     result.resize(old_size + remaining);
-    const ssize_t bytes_read = read(stdout_fd, result.data() + old_size, remaining);
+    // Read under state_mutex, re-checking stdout_fd, so a concurrent Close()
+    // cannot close (and the OS reuse) the descriptor between poll and read.
+    ssize_t bytes_read = -1;
+    {
+      std::lock_guard lock(impl_->state_mutex);
+      if (impl_->stdout_fd != stdout_fd) {
+        return std::nullopt;
+      }
+      bytes_read = read(stdout_fd, result.data() + old_size, remaining);
+    }
     if (bytes_read > 0) {
       result.resize(old_size + static_cast<std::size_t>(bytes_read));
       continue;

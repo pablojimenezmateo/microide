@@ -246,7 +246,6 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
 
   const ViewState before_state = CaptureViewState();
   const std::string lowered_needle = util::ToLowerAscii(needle);
-  const std::string lowered_replacement = util::ToLowerAscii(replacement);
   std::size_t replacements = 0;
   std::size_t first_changed_line = document_->lines.size();
   std::size_t last_changed_line = 0;
@@ -273,8 +272,12 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
       new_line.append(replacement);
       copy_from = offset + needle.size();
       ++replacements;
-      lowered_line.replace(offset, needle.size(), lowered_replacement);
-      offset = lowered_line.find(lowered_needle, offset + replacement.size());
+      // Search the unmodified lowered_line from copy_from so match offsets stay
+      // in source-string coordinates (used to index current_line above). Mutating
+      // lowered_line and resuming from the mutated position would desync the two
+      // coordinate systems whenever replacement.size() != needle.size(), silently
+      // corrupting every match after the first.
+      offset = lowered_line.find(lowered_needle, copy_from);
     }
     new_line.append(current_line, copy_from);
     if (first_changed_line == document_->lines.size()) {

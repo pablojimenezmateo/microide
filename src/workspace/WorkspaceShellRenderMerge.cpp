@@ -509,10 +509,18 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                        render::BlendColors(theme_.editor_background, theme_.diff_modified, 0.18f));
         for (std::size_t line = 0; line < preview_lines.size(); ++line) {
           std::array<char, 20> line_number_buf;
+          // Content row `conflict.start_line + line` maps to screen Y relative to
+          // the first visible line. Rows scrolled above the viewport are skipped
+          // rather than clamped to the top, which would desync the preview text
+          // from its (correctly clipped) preview_rect when the conflict starts
+          // above scroll_line.
+          const std::size_t content_line = conflict.start_line + line;
+          if (content_line < interaction.result.lines.scroll_line) {
+            continue;
+          }
           const float y =
               interaction.result.lines.first_line_y +
-              static_cast<float>(std::max(conflict.start_line, interaction.result.lines.scroll_line) -
-                                 interaction.result.lines.scroll_line + line) *
+              static_cast<float>(content_line - interaction.result.lines.scroll_line) *
                   interaction.result.lines.line_height;
           text_renderer_.DrawStringOn(renderer, interaction.result.rect.x, y, theme_.line_number,
                                       theme_.editor_background,

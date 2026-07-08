@@ -25,7 +25,10 @@ bool LooksBinary(std::string_view text) {
 }
 
 bool SubmodulePointerContent(std::string_view text, std::string* oid) {
-  if (text.size() != 41 || text[0] != '-' || text.back() != '\n') {
+  // Format is '-' + 40 hex OID chars + '\n' = 42 bytes. A size of 41 made the
+  // 40-char body span the trailing '\n', so the '\n' back-check and the hex
+  // all_of check contradicted each other and the function never returned true.
+  if (text.size() != 42 || text[0] != '-' || text.back() != '\n') {
     return false;
   }
   const std::string_view body = text.substr(1, 40);

@@ -119,12 +119,15 @@ struct DapClient::Impl {
   platform::AsyncSubprocess proc;
   std::mutex mutex;
   std::mutex send_mutex;
-  // Serializes every proc.Write so stdin is never written by two threads. A
-  // timed_mutex so the shutdown path can bound its acquisition: the io_thread can
-  // hold this across a proc.Write that blocks indefinitely on a wedged-but-alive
+  // Serializes every proc.Write so stdin is never written by two threads. The
+  // shutdown path bounds its acquisition (see SendMessageImmediate): the io_thread
+  // can hold this across a proc.Write that blocks indefinitely on a wedged-but-alive
   // adapter, and the shutdown's force-kill (which unblocks that write) must not be
-  // gated behind acquiring this lock. Mirrors the LSP client.
-  std::timed_mutex write_mutex;
+  // gated behind acquiring this lock. A plain std::mutex with a try_lock poll rather
+  // than std::timed_mutex::try_lock_for: ThreadSanitizer models try_lock correctly
+  // but not pthread_mutex_timedlock, which otherwise yields spurious
+  // "unlock of an unlocked mutex" reports. Mirrors the LSP client.
+  std::mutex write_mutex;
 
   // Single I/O thread: reads stdout / writes stdin, blocking in poll() over
   // stdout + a self-pipe wake, so an idle adapter makes no fixed-cadence wakeups.
@@ -245,9 +248,17 @@ struct DapClient::Impl {
     }
     const std::string serialized = SerializeMessage(msg);
     if (lock_timeout > std::chrono::milliseconds::zero()) {
-      std::unique_lock wlock(write_mutex, std::defer_lock);
-      if (!wlock.try_lock_for(lock_timeout)) {
-        return false;  // io_thread stuck writing to a wedged adapter; caller force-kills
+      // Bounded acquisition via try_lock polling (not timed_mutex::try_lock_for,
+      // which ThreadSanitizer mis-models). If the io_thread is stuck writing to a
+      // wedged adapter it holds write_mutex; we give up after lock_timeout and the
+      // caller force-kills, which unblocks that write so the io_thread can be joined.
+      std::unique_lock<std::mutex> wlock(write_mutex, std::defer_lock);
+      const auto deadline = std::chrono::steady_clock::now() + lock_timeout;
+      while (!wlock.try_lock()) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+          return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
       return proc.Write(serialized);
     }
@@ -769,7 +780,14 @@ struct DapClient::Impl {
       if (init_thread.joinable()) {
         init_thread.join();
       }
+      // The init thread's success path may have observed our shutdown request too
+      // late: it resets stop_io to false and spawns io_thread after we set stop_io
+      // above (a lost-signal window). Re-assert the stop and wake io_thread so it
+      // terminates promptly instead of relying on the force-kill making the adapter
+      // hit EOF. io_thread is only joinable when init opened the wake pipe.
       if (io_thread.joinable()) {
+        stop_io.store(true, std::memory_order_release);
+        Wake();
         io_thread.join();
       }
       ClearDeferredMessages();

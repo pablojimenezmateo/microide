@@ -43,9 +43,16 @@ bool LspClient::Impl::SendMessageImmediate(const util::JsonValue& msg, bool allo
   }
   const std::string serialized = SerializeMessage(msg);
   if (lock_timeout > std::chrono::milliseconds::zero()) {
-    std::unique_lock wlock(write_mutex, std::defer_lock);
-    if (!wlock.try_lock_for(lock_timeout)) {
-      return false;  // io_thread stuck writing to a wedged server; caller force-kills
+    // Bounded acquisition via try_lock polling (not timed_mutex::try_lock_for,
+    // which ThreadSanitizer mis-models). On timeout the caller force-kills, which
+    // unblocks a wedged proc.Write so the io_thread can be joined.
+    std::unique_lock<std::mutex> wlock(write_mutex, std::defer_lock);
+    const auto deadline = std::chrono::steady_clock::now() + lock_timeout;
+    while (!wlock.try_lock()) {
+      if (std::chrono::steady_clock::now() >= deadline) {
+        return false;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     return proc.Write(serialized);
   }

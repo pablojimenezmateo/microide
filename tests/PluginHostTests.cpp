@@ -1317,6 +1317,93 @@ return ide.plugin({
          "auth providers should be registered with plugin-prefixed ids");
 }
 
+// Regression: the scm/auth shorthand and the save-participant parser used raising
+// luaL_check* calls that could longjmp over live C++ std::string locals (UB + heap
+// leak). Bad arguments must now surface as a clean setup error, never crash, and
+// register nothing. The ASAN run additionally proves no allocation leaks here.
+void TestPluginHostShorthandRejectsBadArgsWithoutLongjmp() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  struct Case {
+    std::string plugin_id;
+    std::string setup_body;
+    std::string expected_error_fragment;
+  };
+  const std::vector<Case> cases = {
+      {"scm-bad", R"(ctx.scm.add("only-id"))", "requires string arguments"},
+      {"auth-bad", R"(ctx.auth.add("only-id"))", "requires string arguments"},
+      {"save-bad-id", R"(ctx.save_participants.add(true, function() end))",
+       "requires a string id"},
+      {"save-bad-fn", R"(ctx.save_participants.add("id", "not-a-function"))",
+       "requires a function handler"},
+  };
+
+  for (const Case& test_case : cases) {
+    TemporaryDirectory temp_dir;
+    const std::filesystem::path config_home = temp_dir.path() / "config";
+    const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+    const std::filesystem::path project_root = temp_dir.path() / "project";
+    WriteFile(project_root / "README.md", "shorthand bad-arg fixture\n");
+
+    WritePluginInit(global_plugins, test_case.plugin_id,
+                    "local ide = require(\"microide\")\n"
+                    "return ide.plugin({\n"
+                    "  id = \"" + test_case.plugin_id + "\",\n"
+                    "  setup = function(ctx)\n"
+                    "    " + test_case.setup_body + "\n"
+                    "  end\n"
+                    "})\n");
+
+    ScopedPluginConfigHomeEnv config_env(config_home);
+    PluginHost host;
+    host.SetCallbacks(MakePluginHostCallbacks());
+
+    // Must not crash; a bad-argument shorthand is a setup failure, not a load.
+    Expect(!host.Reload(project_root),
+           "a shorthand registration with bad arguments should fail plugin setup");
+    bool matched = false;
+    for (const std::string& error : host.Errors()) {
+      if (error.find(test_case.expected_error_fragment) != std::string::npos) {
+        matched = true;
+        break;
+      }
+    }
+    Expect(matched, "the bad-argument setup error should describe the argument requirement");
+    Expect(host.ContributedScmProviders().empty() && host.ContributedAuthProviders().empty(),
+           "a rejected shorthand registration must not contribute a provider");
+  }
+
+  // Sanity: the well-formed shorthand still registers after the fixes.
+  {
+    TemporaryDirectory temp_dir;
+    const std::filesystem::path config_home = temp_dir.path() / "config";
+    const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+    const std::filesystem::path project_root = temp_dir.path() / "project";
+    WriteFile(project_root / "README.md", "shorthand good-arg fixture\n");
+    WritePluginInit(global_plugins, "scm-good",
+                    R"(local ide = require("microide")
+return ide.plugin({
+  id = "scm-good",
+  setup = function(ctx)
+    ctx.scm.add("sample", "Sample SCM")
+    ctx.auth.add("github", "GitHub")
+  end
+})
+)");
+    ScopedPluginConfigHomeEnv config_env(config_home);
+    PluginHost host;
+    host.SetCallbacks(MakePluginHostCallbacks());
+    Expect(host.Reload(project_root), "a well-formed shorthand plugin should still load");
+    Expect(host.ContributedScmProviders().size() == 1 &&
+               host.ContributedScmProviders().front().id == "scm-good.sample",
+           "the well-formed scm shorthand should register after the longjmp fix");
+    Expect(host.ContributedAuthProviders().size() == 1 &&
+               host.ContributedAuthProviders().front().id == "scm-good.github",
+           "the well-formed auth shorthand should register after the longjmp fix");
+  }
+}
+
 void TestPluginHostPhase5WorkspaceApis() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2969,6 +3056,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/SaveParticipantsBoundedRoundTrip",
           TestPluginHostSaveParticipantsBoundedRoundTrip);
   AddTest(tests, "PluginHost/Phase4ContributionApis", TestPluginHostPhase4ContributionApis);
+  AddTest(tests, "PluginHost/ShorthandRejectsBadArgsWithoutLongjmp",
+          TestPluginHostShorthandRejectsBadArgsWithoutLongjmp);
   AddTest(tests, "PluginHost/Phase5WorkspaceApis", TestPluginHostPhase5WorkspaceApis);
   AddTest(tests, "PluginHost/Phase5LspApis", TestPluginHostPhase5LspApis);
   AddTest(tests, "PluginHost/DebugAdapterRegistration", TestPluginHostDebugAdapterRegistration);

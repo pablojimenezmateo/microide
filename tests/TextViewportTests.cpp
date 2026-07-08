@@ -1327,6 +1327,38 @@ void TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument() {
          "redo should reapply sparse replace-all changes");
 }
 
+void TestTextViewportReplaceAllMultiMatchRespectsUnequalLengths() {
+  // Regression for a coordinate-system desync: the per-line loop used to mutate its
+  // lowered scratch line and resume searching from the mutated position while still
+  // indexing the unmodified source line, so every match after the first was placed
+  // wrong whenever replacement.size() != needle.size().
+  {
+    TextViewport viewport;
+    viewport.LoadContent("axaxa", "/tmp/replace-grow.txt");
+    const std::size_t replaced = viewport.ReplaceAll("x", "yy");
+    Expect(replaced == 2, "replace-all should count both matches with a longer replacement");
+    Expect(viewport.lines()[0] == "ayyayya",
+           "replace-all with a longer replacement must not drop later matches");
+  }
+  {
+    TextViewport viewport;
+    viewport.LoadContent("aaaa", "/tmp/replace-shrink.txt");
+    const std::size_t replaced = viewport.ReplaceAll("aa", "b");
+    Expect(replaced == 2, "replace-all should count both non-overlapping matches");
+    Expect(viewport.lines()[0] == "bb",
+           "replace-all with a shorter replacement must not corrupt source bytes");
+  }
+  {
+    // Multiple lines, replacement longer than needle, matches also at line edges.
+    TextViewport viewport;
+    viewport.LoadContent("xax\nbxb", "/tmp/replace-multiline.txt");
+    const std::size_t replaced = viewport.ReplaceAll("x", "zz");
+    Expect(replaced == 3, "replace-all should count matches across lines");
+    Expect(viewport.lines()[0] == "zzazz" && viewport.lines()[1] == "bzzb",
+           "replace-all must rewrite every line correctly with unequal lengths");
+  }
+}
+
 void TestRuntimeSyntaxDetectFiletypeDisambiguatesCppHeader() {
   const std::vector<std::string> lines = {
       "#pragma once",
@@ -2749,6 +2781,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportTrivialWrappedLayoutFastPath);
   AddTest(tests, "TextViewport/ReplaceAllUndoRedoHandlesLargeSparseDocument",
           TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument);
+  AddTest(tests, "TextViewport/ReplaceAllMultiMatchRespectsUnequalLengths",
+          TestTextViewportReplaceAllMultiMatchRespectsUnequalLengths);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeDisambiguatesCppHeader",
           TestRuntimeSyntaxDetectFiletypeDisambiguatesCppHeader);
   AddTest(tests, "TextViewport/RuntimeSyntaxCarriesRegionAcrossBlankLine",

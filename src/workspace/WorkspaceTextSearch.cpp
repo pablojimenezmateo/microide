@@ -237,7 +237,10 @@ std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_coun
           .start = editor::TextPosition{line_index, offset},
           .end = editor::TextPosition{line_index, offset + lowered_query.size()},
       });
-      offset = lowered_line.find(lowered_query, offset + 1);
+      // Advance past the whole match so self-overlapping needles (e.g. "aa" in
+      // "aaaa") yield non-overlapping ranges, matching find-next/replace which
+      // advance by the needle length (see ReplaceLiteralMatchesInText).
+      offset = lowered_line.find(lowered_query, offset + lowered_query.size());
     }
   }
 

@@ -72,6 +72,29 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                             "NUL bytes should classify as binary");
                    }});
 
+  tests.push_back({"CompareReview/SemanticSubmodulePointerMetadata",
+                   [] {
+                     // Regression: the pointer classifier required size 41, which is
+                     // impossible ('-' + 40 hex + '\n' is 42), so submodule changes
+                     // were never detected.
+                     const std::string left = "-" + std::string(40, 'a') + "\n";
+                     const std::string right = "-" + std::string(40, 'b') + "\n";
+                     const auto metadata = InferCompareSemanticFileMetadata(CompareSemanticMetadataInput{
+                         .path = "vendor/lib",
+                         .left_content = left,
+                         .right_content = right,
+                         .git_entry = std::nullopt,
+                         .old_path = {},
+                     });
+                     Expect(metadata.file_kind == CompareSemanticFileKind::Submodule,
+                            "a '-'+40hex+newline pointer pair should classify as a submodule");
+                     Expect(metadata.submodule_pointer_changed,
+                            "differing submodule OIDs should mark the pointer as changed");
+                     Expect(metadata.old_submodule_oid == std::string(40, 'a') &&
+                                metadata.new_submodule_oid == std::string(40, 'b'),
+                            "submodule OIDs should be extracted from the pointer body");
+                   }});
+
   tests.push_back({"CompareReview/SemanticRenameAndModeMetadata",
                    [] {
                      const auto metadata = InferCompareSemanticFileMetadata(CompareSemanticMetadataInput{

@@ -40,12 +40,14 @@ struct LspClient::Impl {
   platform::AsyncSubprocess proc;
   std::mutex mutex;
   std::mutex send_mutex;   // guards the outbound/deferred queues
-  // Serializes every proc.Write so stdin is never written by two threads. A
-  // timed_mutex so the shutdown path can bound its acquisition: the io_thread can
-  // hold this across a proc.Write that blocks indefinitely on a wedged-but-alive
+  // Serializes every proc.Write so stdin is never written by two threads. The
+  // shutdown path bounds its acquisition (see SendMessageImmediate): the io_thread
+  // can hold this across a proc.Write that blocks indefinitely on a wedged-but-alive
   // server, and the shutdown's force-kill (which unblocks that write) must not be
-  // gated behind acquiring this lock.
-  std::timed_mutex write_mutex;
+  // gated behind acquiring this lock. A plain std::mutex with a try_lock poll rather
+  // than std::timed_mutex::try_lock_for, which ThreadSanitizer mis-models (spurious
+  // "unlock of an unlocked mutex"). Mirrors the DAP client.
+  std::mutex write_mutex;
 
   // Single I/O thread state. One thread per server reads stdout and writes stdin;
   // it blocks in poll() over stdout + a self-pipe wakeup, so it makes no

@@ -491,8 +491,22 @@ bool ParseSaveParticipantRegistration(lua_State* state,
     }
     return false;
   }
-  const char* id = luaL_checkstring(state, 1);
-  luaL_checktype(state, 2, LUA_TFUNCTION);
+  // Validate without raising: luaL_checkstring/luaL_checktype would longjmp over
+  // the caller's live std::string error_message. Report via error_message so the
+  // wrapper raises only after that local has destructed.
+  if (!lua_isstring(state, 1)) {
+    if (error_message != nullptr) {
+      *error_message = "save participant registration requires a string id";
+    }
+    return false;
+  }
+  if (lua_type(state, 2) != LUA_TFUNCTION) {
+    if (error_message != nullptr) {
+      *error_message = "save participant registration requires a function handler";
+    }
+    return false;
+  }
+  const char* id = lua_tostring(state, 1);
   lua_pushvalue(state, 2);
   const int function_ref = luaL_ref(state, LUA_REGISTRYINDEX);
   out->contributed = PluginHost::ContributedSaveParticipant{

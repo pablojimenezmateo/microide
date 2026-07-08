@@ -611,10 +611,19 @@
                 state, plugin->id, &host->scm_providers, &host->scm_provider_runtimes,
                 error_message);
           }
-          // Shorthand form: register_scm_provider("id", "label").
+          // Shorthand form: register_scm_provider("id", "label"). Validate via a
+          // non-raising check and route failures through error_message: raising
+          // (luaL_checkstring) here would longjmp over the live C++ locals in this
+          // frame and RegisterTableContribution's error_message.
+          if (!lua_isstring(state, 1) || !lua_isstring(state, 2)) {
+            *error_message = "register_scm_provider(id, label) requires string arguments";
+            return false;
+          }
+          const char* id = lua_tostring(state, 1);
+          const char* label = lua_tostring(state, 2);
           host->scm_providers.push_back(PluginHost::ContributedScmProvider{
-              .id = plugin->id + "." + std::string(luaL_checkstring(state, 1)),
-              .label = std::string(luaL_checkstring(state, 2)),
+              .id = plugin->id + "." + id,
+              .label = label,
               .plugin_id = plugin->id,
           });
           return true;
@@ -642,10 +651,18 @@
                 state, plugin->id, &host->auth_providers, &host->auth_provider_runtimes,
                 error_message);
           }
-          // Shorthand form: register_auth_provider("id", "label").
+          // Shorthand form: register_auth_provider("id", "label"). See the scm
+          // provider path above: validate without raising so a bad argument cannot
+          // longjmp over the live C++ locals in this frame.
+          if (!lua_isstring(state, 1) || !lua_isstring(state, 2)) {
+            *error_message = "register_auth_provider(id, label) requires string arguments";
+            return false;
+          }
+          const char* id = lua_tostring(state, 1);
+          const char* label = lua_tostring(state, 2);
           host->auth_providers.push_back(PluginHost::ContributedAuthProvider{
-              .id = plugin->id + "." + std::string(luaL_checkstring(state, 1)),
-              .label = std::string(luaL_checkstring(state, 2)),
+              .id = plugin->id + "." + id,
+              .label = label,
               .plugin_id = plugin->id,
           });
           return true;

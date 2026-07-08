@@ -200,6 +200,32 @@ void TestWorkspaceSharedLiteralSearchHelpers() {
          "literal replace helper should keep replacement offsets correct when replacement is shorter");
 }
 
+void TestWorkspaceSharedLiteralSearchDoesNotOverlap() {
+  // Regression: the find-all scan resumed one byte past the match start, so a
+  // self-overlapping needle produced overlapping ranges and inflated the count,
+  // diverging from find-next/replace which advance by the needle length.
+  const std::vector<std::string> lines = {"aaaa", "banana"};
+  const auto matches = FindLiteralSearchMatches(lines, "aa");
+  Expect(matches.size() == 2,
+         "literal find-all should return non-overlapping matches for a self-overlapping needle");
+  Expect(matches[0].start.line == 0 && matches[0].start.column == 0 &&
+             matches[0].end.column == 2,
+         "first non-overlapping match should cover [0,2)");
+  Expect(matches[1].start.line == 0 && matches[1].start.column == 2 &&
+             matches[1].end.column == 4,
+         "second non-overlapping match should cover [2,4)");
+
+  const auto ana = FindLiteralSearchMatches(lines, "ana");
+  Expect(ana.size() == 1,
+         "literal find-all should not double-count the overlapping 'ana' in 'banana'");
+
+  // The find-all count must match what replace actually rewrites.
+  std::string content = "aaaa";
+  Expect(ReplaceLiteralMatchesInText(content, "aa", "aa", false) == 2 &&
+             FindLiteralSearchMatches({content}, "aa").size() == 2,
+         "find-all count and replace count must agree for overlapping needles");
+}
+
 void TestWorkspaceSharedLiteralReplaceModeHelpers() {
   Expect(QuerySupportsLiteralReplace("alpha"),
          "literal replace helper should accept plain queries");
@@ -421,6 +447,8 @@ void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedGitSidebarDirectoryCollapse);
   AddTest(tests, "WorkspaceTextSearch/LiteralSearchHelpers",
           TestWorkspaceSharedLiteralSearchHelpers);
+  AddTest(tests, "WorkspaceTextSearch/LiteralSearchDoesNotOverlap",
+          TestWorkspaceSharedLiteralSearchDoesNotOverlap);
   AddTest(tests, "WorkspaceTextSearch/LiteralReplaceModeHelpers",
           TestWorkspaceSharedLiteralReplaceModeHelpers);
   AddTest(tests, "WorkspaceTextSearch/LiteralNeedleScanCaseModeInLine",
