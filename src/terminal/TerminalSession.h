@@ -251,7 +251,10 @@ class TerminalSession {
   std::deque<TerminalLine> lines_ = {TerminalLine{}};
   ScreenState primary_screen_;
   ScreenState alternate_screen_;
-  std::unique_ptr<platform::TerminalBackend> backend_;
+  // shared_ptr (not unique_ptr) so Resize()/SendBytes() can copy it under the lock
+  // and keep the backend alive across the unlocked Write()/Resize() call even if a
+  // concurrent Stop() moves it out — closing a use-after-free on the raw pointer.
+  std::shared_ptr<platform::TerminalBackend> backend_;
   std::filesystem::path working_directory_;
   std::string default_launch_label_;
   std::string launch_label_;

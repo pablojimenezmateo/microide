@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 #if MICROIDE_HAS_LUA_PLUGINS
@@ -10,6 +11,17 @@
 #endif
 
 namespace microide::plugin {
+
+// Thrown by the installed lua_atpanic handler when a Lua error is raised with no
+// protected frame above it (e.g. a metamethod raising during post-PCall result
+// harvesting on the worker). The C build of Lua would otherwise abort() the whole
+// process; converting to a C++ exception lets the worker's exception firewall log
+// and abandon the offending job instead. Unlike a longjmp this unwinds C++ frames
+// normally, so it never skips a live destructor.
+class LuaPanicError : public std::runtime_error {
+ public:
+  explicit LuaPanicError(const std::string& message) : std::runtime_error(message) {}
+};
 
 class LuaRuntime {
  public:

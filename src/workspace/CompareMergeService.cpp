@@ -168,10 +168,6 @@ void CompareMergeService::ToggleMergeBasePane() {
   interactions_.ToggleMergeBasePane();
 }
 
-void CompareMergeService::ToggleMergeRawMarkers() {
-  interactions_.ToggleMergeRawMarkers();
-}
-
 void CompareMergeService::CopyMergeSideSnippet(bool incoming) {
   interactions_.CopyMergeSideSnippet(incoming);
 }

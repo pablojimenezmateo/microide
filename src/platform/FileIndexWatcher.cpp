@@ -124,19 +124,22 @@ bool ShouldIgnoreTrackedRelativePath(const std::filesystem::path& root,
 // Build an initial IndexUpdateBatch by scanning root recursively, pruning excluded
 // directories (VCS/build/deps/nested-.gitignore) and files, and stopping once
 // `max_entries` kept files have been collected (batch.truncated is then set).
-IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
-                                   project::ProjectTraversalFilter* filter,
-                                   std::size_t max_entries,
-                                   const std::atomic<bool>* stop_requested = nullptr) {
-  IndexUpdateBatch batch;
-  batch.is_initial = true;
-
+// Shared tree walk: append a CreatedOrModified change for every tracked regular file
+// under `walk_root`, with paths relative to `index_root`, stopping once `changes`
+// reaches `max_entries`. Returns true if that budget was hit (truncated). Both the
+// initial full scan and the incremental subtree scans (moved-in dir, overflow
+// recovery) go through here so the ignore/prune/relative-path rules stay identical.
+bool CollectTrackedCreations(const std::filesystem::path& walk_root,
+                             const std::filesystem::path& index_root,
+                             project::ProjectTraversalFilter* filter,
+                             std::size_t max_entries,
+                             const std::atomic<bool>* stop_requested,
+                             std::vector<IndexUpdateBatch::Change>* changes) {
   std::error_code error;
   constexpr auto options = std::filesystem::directory_options::skip_permission_denied;
-  for (std::filesystem::recursive_directory_iterator it(root, options, error), end;
+  for (std::filesystem::recursive_directory_iterator it(walk_root, options, error), end;
        !error && it != end; it.increment(error)) {
-    if (stop_requested != nullptr &&
-        stop_requested->load(std::memory_order_acquire)) {
+    if (stop_requested != nullptr && stop_requested->load(std::memory_order_acquire)) {
       break;
     }
     std::error_code status_error;
@@ -156,34 +159,51 @@ IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
     }
     const std::filesystem::path abs_path = it->path().lexically_normal();
     std::filesystem::path rel;
-    if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
+    if (!TryBuildTrackedRelativePath(abs_path, index_root, rel)) {
       continue;
     }
     // File-level ignore check (parity with the finder/tree): an ignored file whose
     // parent directory was not itself pruned is still excluded from the index.
-    if (filter != nullptr &&
-        !filter->Includes(abs_path, platform::PathType::RegularFile)) {
+    if (filter != nullptr && !filter->Includes(abs_path, platform::PathType::RegularFile)) {
       continue;
     }
-    if (batch.changes.size() >= max_entries) {
-      batch.truncated = true;
-      break;
+    if (changes->size() >= max_entries) {
+      return true;
     }
-
     std::error_code mtime_error;
     const auto mtime = std::filesystem::last_write_time(abs_path, mtime_error);
     std::error_code size_error;
     const auto size = std::filesystem::file_size(abs_path, size_error);
-
     IndexUpdateBatch::Change change;
     change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
     change.entry.relative_path = rel;
     change.entry.mtime = mtime_error ? std::filesystem::file_time_type{} : mtime;
     change.entry.size = size_error ? 0 : size;
-    batch.changes.push_back(std::move(change));
+    changes->push_back(std::move(change));
   }
+  return false;
+}
 
+IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
+                                   project::ProjectTraversalFilter* filter,
+                                   std::size_t max_entries,
+                                   const std::atomic<bool>* stop_requested = nullptr) {
+  IndexUpdateBatch batch;
+  batch.is_initial = true;
+  batch.truncated =
+      CollectTrackedCreations(root, root, filter, max_entries, stop_requested, &batch.changes);
   return batch;
+}
+
+// Append creations for the pre-existing files inside a directory that was created or
+// moved into the tree: inotify emits no per-file events for them, so without this
+// bounded walk they never enter the index until a full rescan.
+void AppendSubtreeCreations(const std::filesystem::path& dir,
+                            const std::filesystem::path& root,
+                            project::ProjectTraversalFilter* filter,
+                            std::size_t max_entries,
+                            std::vector<IndexUpdateBatch::Change>* changes) {
+  CollectTrackedCreations(dir, root, filter, max_entries, /*stop_requested=*/nullptr, changes);
 }
 
 }  // namespace
@@ -511,6 +531,7 @@ struct FileIndexWatcher::Impl {
 
       // Read all available inotify events
       std::vector<IndexUpdateBatch::Change> changes;
+      bool overflow_detected = false;
       {
         alignas(alignof(struct inotify_event)) std::array<char, 4096> buf{};
         while (true) {
@@ -527,6 +548,13 @@ struct FileIndexWatcher::Impl {
             const struct inotify_event* ev =
                 reinterpret_cast<const struct inotify_event*>(buf.data() + offset);
             offset += static_cast<ssize_t>(sizeof(struct inotify_event) + ev->len);
+
+            // Kernel queue overflow (wd == -1): an unknown set of events was dropped,
+            // so anything read this cycle is untrustworthy. Flag it and resync fully.
+            if ((ev->mask & IN_Q_OVERFLOW) != 0) {
+              overflow_detected = true;
+              continue;
+            }
 
             const bool is_dir = (ev->mask & IN_ISDIR) != 0;
 
@@ -547,7 +575,23 @@ struct FileIndexWatcher::Impl {
                 // shares the filter's mutable cache with another walk.
                 project::ProjectTraversalFilter filter(root, exclude_globs);
                 AddWatchRecursive(abs_path, &filter);
-                // No file change to report
+                // A moved-in directory can already be populated, and inotify emits no
+                // per-file events for files that existed before the move. Walk the new
+                // subtree and enqueue creations so those files enter the index instead
+                // of staying invisible until a full rescan.
+                AppendSubtreeCreations(abs_path, root, &filter, entry_budget, &changes);
+              } else if (is_dir && (ev->mask & (IN_DELETE | IN_MOVED_FROM)) != 0) {
+                // A subdirectory was deleted or moved out. inotify sends no per-file
+                // deletion for its contents, so emit one recursive deletion and let the
+                // index drop every entry beneath it (otherwise they linger as ghosts).
+                std::filesystem::path rel;
+                if (TryBuildTrackedRelativePath(abs_path, root, rel)) {
+                  IndexUpdateBatch::Change change;
+                  change.kind = IndexUpdateBatch::Kind::Deleted;
+                  change.entry.relative_path = rel;
+                  change.recursive = true;
+                  changes.push_back(std::move(change));
+                }
               } else if (!is_dir) {
                 std::filesystem::path rel;
                 if (TryBuildTrackedRelativePath(abs_path, root, rel)) {
@@ -570,7 +614,17 @@ struct FileIndexWatcher::Impl {
                 }
               }
             } else if ((ev->mask & (IN_DELETE_SELF | IN_MOVE_SELF)) != 0) {
-              // The watched directory itself was removed/moved; remove from map
+              // The watched directory itself was removed/moved. Drop the watch AND
+              // emit a recursive deletion for it, or every file it contained lingers
+              // in the index as a ghost until a full rescan.
+              std::filesystem::path rel;
+              if (TryBuildTrackedRelativePath(dir, root, rel)) {
+                IndexUpdateBatch::Change change;
+                change.kind = IndexUpdateBatch::Kind::Deleted;
+                change.entry.relative_path = rel;
+                change.recursive = true;
+                changes.push_back(std::move(change));
+              }
               if (inotify_fd >= 0) {
                 inotify_rm_watch(inotify_fd, ev->wd);
               }
@@ -582,6 +636,20 @@ struct FileIndexWatcher::Impl {
             break;
           }
         }
+      }
+
+      if (overflow_detected) {
+        // Recover from a dropped-event window: re-register watches (directories may
+        // have appeared during the gap) and resync the whole index with a fresh full
+        // scan. is_initial=true makes the consumer replace the index wholesale, so the
+        // partial `changes` gathered this cycle are intentionally discarded.
+        project::ProjectTraversalFilter watch_filter(root, exclude_globs);
+        AddWatchRecursive(root, &watch_filter);
+        if (callback) {
+          project::ProjectTraversalFilter scan_filter(root, exclude_globs);
+          callback(BuildInitialBatch(root, &scan_filter, entry_budget, &stop_initial_scan));
+        }
+        continue;
       }
 
       if (!changes.empty() && callback) {

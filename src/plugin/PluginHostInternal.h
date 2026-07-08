@@ -243,8 +243,15 @@ struct PluginHost::Impl {
     // so every referent outlives the call (which is also why a deadline here would be
     // unsafe -- a late job would touch freed stack locals).
     worker_->Post([this, &snapshot, &fn, &done]() {
+      // Release the UI-thread waiter on EVERY exit path, including a throw from
+      // `fn`. The SerialWorkQueue firewall swallows worker exceptions, so without
+      // this guard a throwing job would leave `done` unsatisfied and the
+      // finished.wait() below would deadlock the UI forever.
+      struct ReleaseWaiter {
+        std::promise<void>& promise;
+        ~ReleaseWaiter() { promise.set_value(); }
+      } release_waiter{done};
       ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true, fn);
-      done.set_value();
     });
     finished.wait();
   }

@@ -23,6 +23,17 @@ bool MergeResultContainsConflictMarkers(std::string_view text) {
   return util::ContainsCompleteConflictMarkers(text);
 }
 
+bool ResolvedResultShouldExist(const MergeTabState& merge_tab) {
+  if (!merge_tab.file_conflict.requires_existence_choice) {
+    return true;
+  }
+  // Existence-choice conflict: an empty serialized result means the user accepted
+  // the deletion, so the file should not exist. Non-empty content means keep it.
+  const std::string serialized =
+      util::SerializeLines(merge_tab.result_viewport.lines().Snapshot(), merge_tab.result_line_ending);
+  return !serialized.empty();
+}
+
 std::size_t CountRemainingMergeConflicts(std::span<const MergeTrackedConflict> conflicts) {
   std::size_t remaining = 0;
   for (const MergeTrackedConflict& conflict : conflicts) {

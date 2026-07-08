@@ -21,6 +21,10 @@ struct IndexUpdateBatch {
   struct Change {
     Kind kind;
     IndexFileEntry entry;  // relative_path always set; mtime/size only for CreatedOrModified
+    // Deleted only: relative_path is a directory and every indexed file beneath it
+    // should be removed. Set when a watched/nested directory is deleted or moved out,
+    // since the OS sends no per-file deletion for its contents.
+    bool recursive = false;
   };
   std::vector<Change> changes;
   bool is_initial = false;  // true for first full-scan batch on Watch()

@@ -65,6 +65,12 @@ class PluginThread {
   // UI thread: run every queued mailbox action. Returns the number drained.
   int DrainMainThreadActions() { return mailbox_.Drain(); }
 
+  // UI thread: discard every queued mailbox action WITHOUT running it. Used on
+  // project-switch teardown so a previous project's deferred plugin mutations
+  // (diagnostics, decorations, surfaces, open_file, …) never drain into the newly
+  // active project's state.
+  void ClearMainThreadActions() { mailbox_.Clear(); }
+
   // Lockless fast-path gate for the scheduled-wake poll: non-zero only while
   // mailbox actions await draining.
   int PendingMainThreadActionCount() const { return mailbox_.PendingCount(); }
@@ -74,6 +80,12 @@ class PluginThread {
   void Shutdown(std::chrono::milliseconds deadline = std::chrono::milliseconds(2000)) {
     inbound_.Shutdown(deadline);
   }
+
+  // Quiesce the worker without stopping it: cancel queued jobs and wait for the
+  // in-flight job to finish. Used by project-switch host teardown, which frees the
+  // lua_State on the UI thread and must not race a worker job, yet keeps the worker
+  // alive to serve the next project's reload.
+  void Drain() { inbound_.Drain(); }
 
  private:
   // Inbound queue (UI -> worker); lazy so an unused host spawns no thread.

@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdio>
+#include <exception>
+#include <future>
 #include <utility>
 
 namespace microide::util {
@@ -85,6 +88,39 @@ void SerialWorkQueue::Cancel() {
   }
 }
 
+void SerialWorkQueue::Drain() {
+  std::promise<void> barrier;
+  std::future<void> drained = barrier.get_future();
+  {
+    std::lock_guard lock(mutex_);
+    if (stop_ || !started_.load(std::memory_order_acquire)) {
+      // Never started (no worker will ever run the barrier) or already stopped:
+      // there is no in-flight job to wait for. Cancel any queued jobs for symmetry
+      // and balance their enqueue hooks so the counter stays exact.
+      if (hooks_.on_complete) {
+        for (std::size_t i = queue_.size(); i > 0; --i) {
+          hooks_.on_complete();
+        }
+      }
+      queue_.clear();
+      return;
+    }
+    for (auto& job : queue_) {
+      job.cancelled = true;
+    }
+    // Trailing, non-cancelled barrier: it runs after the current in-flight job and
+    // all the now-skipped queued jobs, so its completion means the worker is idle.
+    if (hooks_.on_enqueue) {
+      hooks_.on_enqueue();
+    }
+    queue_.push_back(Job{.key = {},
+                         .task = [&barrier]() { barrier.set_value(); },
+                         .cancelled = false});
+  }
+  cv_.notify_one();
+  drained.wait();
+}
+
 void SerialWorkQueue::Shutdown(std::chrono::milliseconds deadline) {
   {
     std::lock_guard lock(mutex_);
@@ -131,7 +167,19 @@ void SerialWorkQueue::WorkerMain() {
       queue_.pop_front();
     }
     if (!job.cancelled && job.task) {
-      job.task();
+      // Exception firewall: a job that escapes with a C++ exception must never
+      // propagate out of the worker functor (that is a std::terminate for the
+      // whole app). Swallow it here and keep the worker draining. Jobs that need
+      // to signal a waiter (RunOnWorkerBlocking) set their promise inside their
+      // own body's try/catch so a throw cannot strand a UI-thread wait; this is
+      // the last-resort net for everything else (plugin harvest bad_alloc, etc).
+      try {
+        job.task();
+      } catch (const std::exception& ex) {
+        std::fprintf(stderr, "[work-queue] job threw std::exception: %s\n", ex.what());
+      } catch (...) {
+        std::fprintf(stderr, "[work-queue] job threw a non-standard exception\n");
+      }
     }
     if (hooks_.on_complete) {
       hooks_.on_complete();

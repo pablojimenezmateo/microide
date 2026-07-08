@@ -83,10 +83,26 @@ bool OpenPipe(bool enabled, std::array<UniqueFd, 2>* pipe_fds) {
     return true;
   }
 
+  // Create the pipe close-on-exec. Without this, a pipe fd created here can be
+  // inherited by an UNRELATED child that another thread fork()s during the window
+  // before this spawn's child closes its copies — and because the fd is not
+  // close-on-exec, that other child holds the write/read end open for its whole
+  // lifetime, so our reader never sees EOF (spurious git timeouts; a language
+  // server whose stdin never closes). This spawn's own child re-establishes stdio
+  // via dup2 onto fds 0/1/2, which clears CLOEXEC on those duplicates, so the child
+  // keeps working while every stray inherited copy auto-closes at exec.
   int raw_pipe[2] = {-1, -1};
+#if defined(__linux__)
+  if (pipe2(raw_pipe, O_CLOEXEC) != 0) {
+    return false;
+  }
+#else
   if (pipe(raw_pipe) != 0) {
     return false;
   }
+  (void)fcntl(raw_pipe[0], F_SETFD, fcntl(raw_pipe[0], F_GETFD, 0) | FD_CLOEXEC);
+  (void)fcntl(raw_pipe[1], F_SETFD, fcntl(raw_pipe[1], F_GETFD, 0) | FD_CLOEXEC);
+#endif
   (*pipe_fds)[0].Reset(raw_pipe[0]);
   (*pipe_fds)[1].Reset(raw_pipe[1]);
   return true;
@@ -520,8 +536,9 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
   stderr_pipe[1].Reset();
   stdin_pipe[0].Reset();
 
+  const auto wait_start = std::chrono::steady_clock::now();
   bool output_truncated = false;
-  const bool timed_out =
+  bool timed_out =
       PumpChildIo(&stdin_pipe[1], options.stdin_text,
                   options.capture_stdout ? &stdout_pipe[0] : nullptr, &result.stdout_text,
                   options.capture_stderr ? &stderr_pipe[0] : nullptr, &result.stderr_text,
@@ -529,6 +546,36 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
   stdin_pipe[1].Reset();
   stdout_pipe[0].Reset();
   stderr_pipe[0].Reset();
+
+  // A child can close/redirect its stdio and then keep running (or hang). PumpChildIo
+  // returns once the pipes drain, NOT when the process exits, so without this the
+  // blocking waitpid below would ignore timeout_ms entirely. Enforce the remaining
+  // deadline with a non-blocking waitpid poll; the common case (child exits when its
+  // stdio closes) is caught by the very first WNOHANG with no sleep.
+  if (!timed_out && !output_truncated && options.timeout_ms > 0) {
+    const auto deadline = wait_start + std::chrono::milliseconds(options.timeout_ms);
+    while (true) {
+      int probe_status = 0;
+      const pid_t probed = waitpid(pid, &probe_status, WNOHANG);
+      if (probed == pid) {
+        if (WIFEXITED(probe_status)) {
+          result.exit_code = WEXITSTATUS(probe_status);
+        } else if (WIFSIGNALED(probe_status)) {
+          result.exit_code = 128 + WTERMSIG(probe_status);
+        }
+        return result;
+      }
+      if (probed < 0 && errno != EINTR) {
+        result.exit_code = -1;
+        return result;
+      }
+      if (std::chrono::steady_clock::now() >= deadline) {
+        timed_out = true;
+        break;
+      }
+      poll(nullptr, 0, 5);  // brief sleep; only reached while the child lingers
+    }
+  }
 
   if (timed_out || output_truncated) {
     // Deadline exceeded or capture ceiling hit: kill the child so the

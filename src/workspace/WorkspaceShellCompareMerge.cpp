@@ -389,10 +389,6 @@ void WorkspaceShell::ToggleMergeBasePane() {
   MakeCompareMergeService().ToggleMergeBasePane();
 }
 
-void WorkspaceShell::ToggleMergeRawMarkers() {
-  MakeCompareMergeService().ToggleMergeRawMarkers();
-}
-
 void WorkspaceShell::CopyMergeIncomingSnippet() {
   MakeCompareMergeService().CopyMergeSideSnippet(true);
 }

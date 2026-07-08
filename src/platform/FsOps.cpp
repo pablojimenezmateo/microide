@@ -16,40 +16,17 @@ bool CopyPath(const std::filesystem::path& source, const std::filesystem::path& 
     if (error) {
       return false;
     }
-    std::filesystem::create_directories(destination, error);
-    if (error) {
-      return false;
-    }
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(source, error)) {
-      if (error) {
-        return false;
-      }
-      const std::filesystem::path relative = std::filesystem::relative(entry.path(), source, error);
-      if (error) {
-        return false;
-      }
-      const std::filesystem::path target = destination / relative;
-      if (entry.is_directory(error)) {
-        if (error) {
-          return false;
-        }
-        std::filesystem::create_directories(target, error);
-        if (error) {
-          return false;
-        }
-        continue;
-      }
-
-      std::filesystem::create_directories(target.parent_path(), error);
-      if (error) {
-        return false;
-      }
-      std::filesystem::copy_file(entry.path(), target, std::filesystem::copy_options::none, error);
-      if (error) {
-        return false;
-      }
-    }
-    return true;
+    // Use the error_code overload of the recursive copy rather than hand-rolling a
+    // recursive_directory_iterator loop: the range-for form advances with the
+    // THROWING operator++, so a permission-denied subdirectory or an entry removed
+    // mid-walk would throw std::filesystem_error straight out of here (and out of
+    // MovePath's cross-device fallback / RenamePath). copy_symlinks preserves
+    // symlinks instead of dereferencing them into real files/dirs.
+    std::filesystem::copy(
+        source, destination,
+        std::filesystem::copy_options::recursive | std::filesystem::copy_options::copy_symlinks,
+        error);
+    return !error;
   }
 
   std::filesystem::create_directories(destination.parent_path(), error);

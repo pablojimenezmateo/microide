@@ -76,13 +76,15 @@ void PersistenceCoordinator::SaveDebugState() {
   persisted.exception_filters_seeded = state.debug_breakpoints_panel.Seeded();
   persisted.exception_filter_conditions = state.debug_breakpoints_panel.FilterConditions();
 
-  // Avoid leaving a stale file when there is nothing to persist.
+  // Avoid leaving stale state when there is nothing to persist. Delete BOTH the
+  // primary file and its backup through the service — removing only the primary
+  // would let the reader fall back to `debug.bak` and resurrect cleared
+  // breakpoints / launch configs / watches on the next restore.
   if (persisted.files.empty() && persisted.launch_configs.empty() &&
       persisted.watch_expressions.empty() && persisted.enabled_exception_filters.empty() &&
       persisted.function_breakpoints.empty() && persisted.exception_filter_conditions.empty() &&
       !persisted.exception_filters_seeded) {
-    std::error_code error;
-    std::filesystem::remove(debug_path, error);
+    operations_.persistence_service->DeleteState(debug_path);
     return;
   }
   operations_.persistence_service->SaveDebugState(debug_path, persisted);

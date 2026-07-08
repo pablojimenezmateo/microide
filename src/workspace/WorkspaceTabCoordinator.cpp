@@ -13,6 +13,7 @@
 #include "util/StartupTrace.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
+#include "workspace/MergeResultValidation.h"
 #include "workspace/TabReorder.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -133,6 +134,12 @@ bool TabCoordinator::Save(std::size_t index) {
     }
     merge_tab.persisted_output_baseline =
         util::SerializeLines(merge_tab.result_viewport.lines().Snapshot(), merge_tab.result_line_ending);
+    // Our own atomic write+rename bumps the mtime; sync disk_result_tick to it and
+    // clear any prior external-stale flag so the async file-change event does not
+    // misread this save as an external modification. Without this, saving the merge
+    // result would permanently lock out "Mark Resolved" for the tab.
+    merge_tab.disk_result_tick = FileModificationTick(merge_tab.result_viewport.path());
+    merge_tab.external_result_stale = false;
     refresh_directory_tree();
     operations_.notify_plugin_buffer_save(merge_tab.result_viewport.path());
     return true;

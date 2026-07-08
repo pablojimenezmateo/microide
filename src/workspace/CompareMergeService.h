@@ -66,7 +66,6 @@ class CompareMergeService {
   void ResetMergeHunk();
   void JumpNextUnresolvedMergeConflict();
   void ToggleMergeBasePane();
-  void ToggleMergeRawMarkers();
   void CopyMergeSideSnippet(bool incoming);
   void MarkMergeResolved();
 

@@ -188,9 +188,54 @@ void TestFileIndexInitialBatchAbortsWhenCancelled() {
          "a completed initial bulk load should populate every file");
 }
 
+// A recursive Deleted change (a directory removed or moved out) must drop the
+// directory and every file beneath it — not just an exact path match — otherwise
+// the removed subtree's files linger in the index as ghosts.
+void TestFileIndexRecursiveDeleteRemovesSubtree() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred), "index root initializes");
+
+  IndexUpdateBatch initial;
+  initial.is_initial = true;
+  initial.changes.push_back(MakeCreateChange("keep.txt"));
+  initial.changes.push_back(MakeCreateChange("sub/a.cpp"));
+  initial.changes.push_back(MakeCreateChange("sub/nested/b.cpp"));
+  initial.changes.push_back(MakeCreateChange("subtly/kept.cpp"));  // prefix-similar, must survive
+  Expect(index.ApplyBatch(initial), "initial batch populates");
+  Expect(index.Snapshot().size() == 4, "four files indexed");
+
+  IndexUpdateBatch remove;
+  IndexUpdateBatch::Change dir_delete = MakeDeleteChange("sub");
+  dir_delete.recursive = true;
+  remove.changes.push_back(dir_delete);
+  Expect(index.ApplyBatch(remove), "recursive directory delete should mutate the index");
+
+  const auto files = index.Snapshot();
+  Expect(files.size() == 2, "the whole 'sub' subtree should be removed");
+  bool has_keep = false;
+  bool has_subtly = false;
+  bool has_sub_file = false;
+  for (const auto& file : files) {
+    if (file.relative_path == std::filesystem::path("keep.txt")) has_keep = true;
+    if (file.relative_path == std::filesystem::path("subtly/kept.cpp")) has_subtly = true;
+    const auto rel = file.relative_path.lexically_relative("sub");
+    if (!rel.empty() && *rel.begin() != "..") has_sub_file = true;
+  }
+  Expect(has_keep, "unrelated files survive a recursive delete");
+  Expect(has_subtly,
+         "a prefix-similar sibling directory ('subtly') must NOT be removed by deleting 'sub'");
+  Expect(!has_sub_file, "no file under the deleted directory should remain");
+}
+
 }  // namespace
 
 void RegisterFileIndexTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileIndex/RecursiveDeleteRemovesSubtree",
+          TestFileIndexRecursiveDeleteRemovesSubtree);
   AddTest(tests, "FileIndex/InitialBatchPopulatesSortedUniqueFilesAndVersion",
           TestFileIndexInitialBatchPopulatesSortedUniqueFilesAndVersion);
   AddTest(tests, "FileIndex/IncrementalBatchVersionChangesOnlyOnRealMutations",

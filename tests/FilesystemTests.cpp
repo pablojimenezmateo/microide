@@ -2,12 +2,15 @@
 
 #include "platform/FileWatcher.h"
 #include "platform/Filesystem.h"
+#include "platform/FsOps.h"
 
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
+#include <system_error>
 #include <thread>
 
 namespace microide::tests {
@@ -263,9 +266,45 @@ void TestFileWatcherDeferredInitialSnapshotArmsWithoutReportingIgnoredWake() {
 #endif  // _WIN32
 #endif  // __linux__ || __APPLE__ || _WIN32
 
+#if defined(__unix__) || defined(__APPLE__)
+// CopyPath must not throw when the tree contains a symlink (previously it walked
+// with a throwing recursive_directory_iterator and dereferenced symlinks). It
+// should copy symlinks as symlinks, not follow them into real files/dirs.
+void TestCopyPathPreservesSymlinksAndDoesNotThrow() {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path base = fs::temp_directory_path(ec) / "microide_copypath_test";
+  fs::remove_all(base, ec);
+  const fs::path source = base / "src";
+  const fs::path outside = base / "outside";
+  fs::create_directories(source / "sub", ec);
+  fs::create_directories(outside, ec);
+  { std::ofstream(source / "file.txt") << "hello"; }
+  { std::ofstream(outside / "target.txt") << "external"; }
+  // A symlink pointing outside the copied tree: dereferencing would copy the
+  // external file's contents; copy_symlinks must reproduce it as a symlink.
+  fs::create_symlink(outside / "target.txt", source / "link.txt", ec);
+  Expect(!ec, "symlink fixture created");
+
+  const fs::path destination = base / "dst";
+  const bool ok = microide::platform::CopyPath(source, destination);
+  Expect(ok, "CopyPath copies a directory containing a symlink without throwing");
+  Expect(fs::exists(destination / "file.txt"), "regular file copied");
+  Expect(fs::exists(destination / "sub"), "subdirectory copied");
+  Expect(fs::is_symlink(destination / "link.txt"),
+         "symlink is copied as a symlink, not dereferenced into a real file");
+
+  fs::remove_all(base, ec);
+}
+#endif
+
 }  // namespace
 
 void RegisterFilesystemTests(std::vector<TestCase>& tests) {
+#if defined(__unix__) || defined(__APPLE__)
+  AddTest(tests, "Filesystem/CopyPathPreservesSymlinksAndDoesNotThrow",
+          TestCopyPathPreservesSymlinksAndDoesNotThrow);
+#endif
   AddTest(tests, "Filesystem/ListDirectorySortsAndClassifiesEntries",
           TestFilesystemListDirectorySortsAndClassifiesEntries);
   AddTest(tests, "FileWatcher/DetectsNestedCreatesUpdatesAndDeletes",

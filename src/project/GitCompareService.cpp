@@ -332,21 +332,24 @@ std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::files
     return {};
   }
 
-  const auto result =
-      repo.Execute({"diff-tree", "--no-commit-id", "--name-only", "-r", std::string(commit_hash)});
+  // `-z`: NUL-delimited, unquoted output. Without it a path containing a newline
+  // splits into bogus entries and non-ASCII names come back C-quoted, so lookups by
+  // the real path fail (and the wrong file gets opened/diffed/staged).
+  const auto result = repo.Execute(
+      {"diff-tree", "--no-commit-id", "--name-only", "-r", "-z", std::string(commit_hash)});
   if (!result.success() || result.output.empty()) {
     return {};
   }
 
   std::vector<std::filesystem::path> paths;
-  for (const std::string_view line : util::SplitLineViews(result.output)) {
+  for (const std::string_view record : util::SplitNulDelimited(result.output)) {
     if (paths.size() >= kMaxGitCollectionEntries) {
       break;
     }
-    if (line.empty()) {
+    if (record.empty()) {
       continue;
     }
-    paths.push_back(std::filesystem::path(line).lexically_normal());
+    paths.push_back(std::filesystem::path(record).lexically_normal());
   }
   std::sort(paths.begin(), paths.end());
   paths.erase(std::unique(paths.begin(), paths.end()), paths.end());

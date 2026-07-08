@@ -91,7 +91,12 @@ const char* ParseProcessRunArgs(lua_State* state,
       }
       lua_pushnil(state);
       while (lua_next(state, -2) != 0) {
-        if (!lua_isstring(state, -2)) {
+        // Strict string check on the KEY: lua_isstring() is also true for numbers,
+        // and calling lua_tostring() on a numeric key converts it in place, which
+        // corrupts the running lua_next() iteration (Lua raises "invalid key to
+        // 'next'"). That raise longjmps over the live ProcessRunArgs local. Reject
+        // non-string keys before touching them, matching the theme parser.
+        if (lua_type(state, -2) != LUA_TSTRING) {
           lua_pop(state, 2);
           return "process env keys must be strings";
         }

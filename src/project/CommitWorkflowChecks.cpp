@@ -5,6 +5,7 @@
 #include "project/GitRepository.h"
 #include "util/GitConflictMarkers.h"
 #include "util/Parse.h"
+#include "util/StringUtil.h"
 
 namespace microide::project {
 namespace {
@@ -66,8 +67,10 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
   }
 
   GitRepository repo(repository_state.repository_root);
+  // `-z`: NUL-delimited, unquoted. Without it a path containing a newline splits
+  // into bogus rows and a rename shows up as one mangled "old => new" path.
   const GitRepository::CommandResult numstat =
-      repo.Execute({"diff", "--cached", "--numstat"}, true);
+      repo.Execute({"diff", "--cached", "--numstat", "-z"}, true);
   if (!numstat.success() || numstat.output.empty()) {
     for (const GitRepositoryEntry& entry : repository_state.entries) {
       if (!entry.staged) {
@@ -81,40 +84,41 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
     return summary;
   }
 
-  std::string_view remaining = numstat.output;
-  while (!remaining.empty()) {
-    const std::size_t line_end = remaining.find('\n');
-    const std::string_view line =
-        line_end == std::string_view::npos ? remaining : remaining.substr(0, line_end);
-    if (!line.empty()) {
-      const std::size_t first_tab = line.find('\t');
-      const std::size_t second_tab =
-          first_tab == std::string_view::npos ? std::string_view::npos : line.find('\t', first_tab + 1);
-      if (first_tab != std::string_view::npos && second_tab != std::string_view::npos) {
-        CommitStagedFileSummary file_summary;
-        const std::string_view added_text = line.substr(0, first_tab);
-        const std::string_view deleted_text = line.substr(first_tab + 1, second_tab - first_tab - 1);
-        const std::string_view path_text = line.substr(second_tab + 1);
-        if (added_text != "-") {
-          if (const auto parsed = util::ParseInt(added_text)) {
-            file_summary.added_lines = std::max(0, *parsed);
-          }
-        }
-        if (deleted_text != "-") {
-          if (const auto parsed = util::ParseInt(deleted_text)) {
-            file_summary.deleted_lines = std::max(0, *parsed);
-          }
-        }
-        file_summary.relative_path = std::filesystem::path(path_text);
-        summary.added_lines += file_summary.added_lines;
-        summary.deleted_lines += file_summary.deleted_lines;
-        summary.files.push_back(std::move(file_summary));
+  // Each numstat record is `<added>\t<deleted>\t<path>` in its own NUL-delimited
+  // field. For a rename/copy the path field after the second tab is EMPTY and the
+  // old and new paths follow as the next two NUL fields (git emits `... \t \0 old
+  // \0 new`); we report the new path.
+  const std::vector<std::string_view> fields = util::SplitNulDelimited(numstat.output);
+  for (std::size_t i = 0; i < fields.size(); ++i) {
+    const std::string_view field = fields[i];
+    const std::size_t first_tab = field.find('\t');
+    const std::size_t second_tab =
+        first_tab == std::string_view::npos ? std::string_view::npos : field.find('\t', first_tab + 1);
+    if (first_tab == std::string_view::npos || second_tab == std::string_view::npos) {
+      continue;
+    }
+    CommitStagedFileSummary file_summary;
+    const std::string_view added_text = field.substr(0, first_tab);
+    const std::string_view deleted_text = field.substr(first_tab + 1, second_tab - first_tab - 1);
+    std::string_view path_text = field.substr(second_tab + 1);
+    if (path_text.empty() && i + 2 < fields.size()) {
+      path_text = fields[i + 2];  // rename: [i+1]=old, [i+2]=new
+      i += 2;
+    }
+    if (added_text != "-") {
+      if (const auto parsed = util::ParseInt(added_text)) {
+        file_summary.added_lines = std::max(0, *parsed);
       }
     }
-    if (line_end == std::string_view::npos) {
-      break;
+    if (deleted_text != "-") {
+      if (const auto parsed = util::ParseInt(deleted_text)) {
+        file_summary.deleted_lines = std::max(0, *parsed);
+      }
     }
-    remaining.remove_prefix(line_end + 1);
+    file_summary.relative_path = std::filesystem::path(path_text);
+    summary.added_lines += file_summary.added_lines;
+    summary.deleted_lines += file_summary.deleted_lines;
+    summary.files.push_back(std::move(file_summary));
   }
 
   if (summary.files.empty()) {

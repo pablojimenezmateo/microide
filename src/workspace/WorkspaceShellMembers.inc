@@ -923,7 +923,8 @@
       compare::MergeModel& model,
       const std::vector<std::string>& result_lines,
       std::span<const std::vector<std::string>> conflict_line_hints = {},
-      std::span<const compare::MergeChoice> choice_hints = {}) const;
+      std::span<const compare::MergeChoice> choice_hints = {},
+      std::span<const std::uint8_t> resolved_hints = {}) const;
   void UpdateMergeMaxVisualColumns(MergeTabState& merge_tab,
                                    std::span<const std::string> result_lines) const;
   void PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab,
@@ -986,7 +987,6 @@
   void ResetMergeHunk();
   void JumpNextUnresolvedMergeConflict();
   void ToggleMergeBasePane();
-  void ToggleMergeRawMarkers();
   void CopyMergeIncomingSnippet();
   void CopyMergeCurrentSnippet();
   void MarkMergeResolved();

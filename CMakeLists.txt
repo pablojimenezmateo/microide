@@ -844,6 +844,7 @@ add_executable(microide_tests
   tests/EditorEssentialsTests.cpp
   tests/EditorRenderViewModelAllocationTests.cpp
   tests/PluginPresentationAllocationTests.cpp
+  tests/PluginPathContainmentTests.cpp
   tests/EditorSnippetTests.cpp
   tests/FoldingModelTests.cpp
   tests/EditorFoldingTests.cpp

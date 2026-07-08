@@ -63,6 +63,15 @@ class SerialWorkQueue {
   // cancelled jobs are still popped (and still fire on_complete) but not run.
   void Cancel();
 
+  // Block until the worker is idle WITHOUT stopping it: cancel every queued job,
+  // then wait for the job currently mid-flight (if any) plus a trailing barrier to
+  // drain. On return the worker is quiescent but still accepts new jobs. This is
+  // the teardown-before-reload seam: a lua_State is about to be destroyed on the
+  // caller's thread and no worker job may be touching it, yet the same worker must
+  // serve the next project's reload (so a permanent Shutdown() is wrong here).
+  // Must be called from a thread other than the worker. No-op if never started.
+  void Drain();
+
   // Cancel queued jobs and join the worker, waiting up to `deadline` (see note
   // above on why the join is unconditional in practice).
   void Shutdown(std::chrono::milliseconds deadline = std::chrono::milliseconds(2000));

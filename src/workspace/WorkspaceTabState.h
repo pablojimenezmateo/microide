@@ -156,7 +156,6 @@ struct MergeTabState {
   std::uint64_t open_index_generation = 0;
   std::optional<std::uint64_t> disk_result_tick;
   bool base_pane_visible = false;
-  bool show_raw_markers = false;
   bool marked_resolved = false;
   bool index_stale = false;
   bool external_result_stale = false;

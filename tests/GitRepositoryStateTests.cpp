@@ -53,6 +53,26 @@ void TestPorcelainV2WorkingTreeFixture() {
          "tree status map should include modified file");
 }
 
+// A tracked file whose name begins with a space must keep that space: the parser
+// previously trimmed leading spaces after the fixed token fields, so " leading.cpp"
+// was reported as "leading.cpp" and stage/diff/discard would target the wrong path.
+void TestPorcelainV2PathWithLeadingSpace() {
+  // "1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>"; the path here is " leading.cpp",
+  // so there are two spaces after "def": the field delimiter plus the path's own
+  // leading space.
+  std::string output = "1 .M. N... 100644 100644 100644 abc def  leading.cpp";
+  output.push_back('\0');
+  const auto state = GitPorcelainV2Parser::Parse(output, "/repo", 1, 0);
+  bool saw_leading_space = false;
+  for (const auto& entry : state.entries) {
+    if (entry.path.relative_path == std::filesystem::path(" leading.cpp")) {
+      saw_leading_space = true;
+    }
+  }
+  Expect(saw_leading_space,
+         "a path beginning with a space must be preserved verbatim, not trimmed");
+}
+
 void TestPorcelainV2RenamePair() {
   std::string output =
       "2 .R. N... 100644 100644 100644 abc def 100 new-name.txt";
@@ -189,6 +209,8 @@ void TestRefreshFailureClassification() {
 void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitRepositoryState/PorcelainV2WorkingTreeFixture",
           TestPorcelainV2WorkingTreeFixture);
+  AddTest(tests, "GitRepositoryState/PorcelainV2PathWithLeadingSpace",
+          TestPorcelainV2PathWithLeadingSpace);
   AddTest(tests, "GitRepositoryState/PorcelainV2RenamePair", TestPorcelainV2RenamePair);
   AddTest(tests, "GitRepositoryState/PorcelainV2RenamePathWithSpaces",
           TestPorcelainV2RenamePathWithSpaces);

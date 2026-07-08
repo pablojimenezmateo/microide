@@ -201,7 +201,9 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
       continue;
     }
     if (change.kind == platform::IndexUpdateBatch::Kind::Deleted) {
-      changed = RemoveProjectFileLocked(relative_path) || changed;
+      changed = (change.recursive ? RemoveProjectSubtreeLocked(relative_path)
+                                  : RemoveProjectFileLocked(relative_path)) ||
+                changed;
       continue;
     }
     ProjectFile file = ToProjectFile(change.entry);
@@ -326,6 +328,17 @@ bool FileIndex::RemoveProjectFileLocked(const std::filesystem::path& relative_pa
     return true;
   }
   return false;
+}
+
+bool FileIndex::RemoveProjectSubtreeLocked(const std::filesystem::path& relative_dir) {
+  const std::size_t before = files_.size();
+  std::erase_if(files_, [&relative_dir](const ProjectFile& file) {
+    // lexically_relative returns a path with no leading ".." exactly when file is at
+    // or below relative_dir (the directory's own path yields ".", still under it).
+    const std::filesystem::path rel = file.relative_path.lexically_relative(relative_dir);
+    return !rel.empty() && *rel.begin() != "..";
+  });
+  return files_.size() != before;
 }
 
 void FileIndex::RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache) const {

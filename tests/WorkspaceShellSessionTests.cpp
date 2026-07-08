@@ -1513,6 +1513,80 @@ void TestWorkspaceShellMergeConflictTrackingShiftsAfterInsertion() {
          "later conflict accepts should follow the shifted tracked span");
 }
 
+// Opening a file whose conflict markers are still UNTOUCHED (each side equals the
+// model) must NOT silently collapse the conflict to base and mark it resolved. The
+// conflict must remain valid and unresolved so the user still has to pick a side.
+void TestWorkspaceShellRawConflictMarkersOpenUnresolved() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base, "zero\none\ntwo\n");
+  WriteFile(incoming, "zero\none incoming\ntwo\n");
+  WriteFile(current, "zero\none current\ntwo\n");
+  // Raw, unedited conflict markers whose sides exactly equal the model.
+  WriteFile(output,
+            "zero\n"
+            "<<<<<<< HEAD\n"
+            "one current\n"
+            "=======\n"
+            "one incoming\n"
+            ">>>>>>> feature\n"
+            "two\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for raw-marker fixture");
+
+  const auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(merge.conflicts.size() == 1, "the untouched marker block maps to one conflict");
+  Expect(merge.conflicts.front().valid,
+         "an untouched raw conflict must remain actionable");
+  Expect(!merge.conflicts.front().resolved,
+         "an untouched raw conflict must NOT be auto-marked resolved (data-loss regression)");
+  Expect(!merge.marked_resolved, "the file must not be auto-marked resolved on open");
+  const bool has_remaining = merge.conflicts.front().valid && !merge.conflicts.front().resolved;
+  Expect(has_remaining,
+         "the untouched conflict must count as remaining, not silently resolved to base");
+}
+
+// Inserting at column 0 of a conflict's first result line inserts BEFORE the
+// conflict, so its tracking must shift down, not be invalidated (the pure-insertion
+// branch must use >= like the general edit branch).
+void TestWorkspaceShellInsertionAtConflictStartKeepsTracking() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base, "zero\none\ntwo\n");
+  WriteFile(incoming, "zero\none incoming\ntwo\n");
+  WriteFile(current, "zero\none current\ntwo\n");
+  WriteFile(output, "zero\none\ntwo\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for insertion-at-start fixture");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(merge.conflicts.size() == 1 && merge.conflicts.front().start_line == 1,
+         "the conflict starts on the second result line");
+
+  // Caret at column 0 of the conflict's first line, then insert a new line before it.
+  merge.result_viewport.MoveCursorTo(1, 0);
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "merge result should accept a line insert");
+
+  Expect(merge.conflicts.size() == 1 && merge.conflicts.front().valid,
+         "inserting before the conflict must not invalidate its tracking");
+  Expect(merge.conflicts.front().start_line == 2,
+         "the conflict span should shift down by the inserted line");
+}
+
 void TestWorkspaceShellMergeHoverPreviewDoesNotCommitState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2186,6 +2260,10 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeEditorUsesWorkingTreeConflictMarkers);
   AddTest(tests, "WorkspaceShell/MergeEditorParsesLargeWorkingTreeConflictBlock",
           TestWorkspaceShellMergeEditorParsesLargeWorkingTreeConflictBlock);
+  AddTest(tests, "WorkspaceShell/RawConflictMarkersOpenUnresolved",
+          TestWorkspaceShellRawConflictMarkersOpenUnresolved);
+  AddTest(tests, "WorkspaceShell/InsertionAtConflictStartKeepsTracking",
+          TestWorkspaceShellInsertionAtConflictStartKeepsTracking);
   AddTest(tests, "WorkspaceShell/MergeBothOrdersAndBaseToggle",
           TestWorkspaceShellMergeBothOrdersAndBaseToggle);
   AddTest(tests, "WorkspaceShell/MergeChoicePreservesManualEditsAroundConflicts",

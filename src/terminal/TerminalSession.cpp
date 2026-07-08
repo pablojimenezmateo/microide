@@ -103,7 +103,16 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     ResetScrollRegionLocked();
   }
 
-  auto backend = platform::CreateTerminalBackend();
+  std::shared_ptr<platform::TerminalBackend> backend = platform::CreateTerminalBackend();
+  platform::TerminalBackend* backend_ptr = backend.get();
+  // Publish the backend BEFORE starting it. The backend's on_output callback can fire
+  // synchronously during Start() (a shell that immediately answers a DSR/DA query), and
+  // FlushPendingReply()->SendBytes() needs to find backend_ to write the reply — if we
+  // assigned it only after Start(), that early reply would be silently dropped.
+  {
+    std::scoped_lock lock(mutex_);
+    backend_ = backend;
+  }
   auto callbacks = platform::TerminalBackendCallbacks{
       .on_output =
           [this](std::string_view output) {
@@ -135,18 +144,17 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
             PushWakeEvent();
           },
   };
-  const auto result = backend->Start(platform::TerminalStartRequest{
-                                         .working_directory = working_directory,
-                                         .command = std::string(command),
-                                         .shell = shell_str,
-                                         .rows = rows_,
-                                         .columns = columns_,
-                                     },
-                                     std::move(callbacks));
+  const auto result = backend_ptr->Start(platform::TerminalStartRequest{
+                                             .working_directory = working_directory,
+                                             .command = std::string(command),
+                                             .shell = shell_str,
+                                             .rows = rows_,
+                                             .columns = columns_,
+                                         },
+                                         std::move(callbacks));
 
   {
     std::scoped_lock lock(mutex_);
-    backend_ = std::move(backend);
     default_launch_label_ = result.launch_label.empty() ? default_launch_label_ : result.launch_label;
     launch_label_ = default_launch_label_;
     child_pid_ = result.child_process_id;
@@ -209,7 +217,7 @@ bool TerminalSession::StartPlaceholderForTesting(const std::filesystem::path& wo
 }
 
 void TerminalSession::Stop() {
-  std::unique_ptr<platform::TerminalBackend> backend;
+  std::shared_ptr<platform::TerminalBackend> backend;
   int child_pid = -1;
   {
     std::scoped_lock lock(mutex_);
@@ -314,10 +322,10 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
     AdvanceSnapshotGenerationLocked();
   }
 
-  platform::TerminalBackend* backend = nullptr;
+  std::shared_ptr<platform::TerminalBackend> backend;
   {
     std::scoped_lock lock(mutex_);
-    backend = backend_.get();
+    backend = backend_;  // copy keeps it alive across the unlocked Resize()
   }
   if (backend != nullptr) {
     backend->Resize(clamped_rows, clamped_columns);
@@ -335,10 +343,10 @@ void TerminalSession::SendBytes(std::string_view bytes) {
       return;
     }
   }
-  platform::TerminalBackend* backend = nullptr;
+  std::shared_ptr<platform::TerminalBackend> backend;
   {
     std::scoped_lock lock(mutex_);
-    backend = backend_.get();
+    backend = backend_;  // copy keeps it alive across the unlocked Write()
   }
   if (!backend) {
     if (UsePlaceholderTerminalsForTesting()) {

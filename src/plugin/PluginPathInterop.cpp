@@ -1,6 +1,8 @@
 #include "plugin/PluginPathInterop.h"
 
 #include <system_error>
+#include <utility>
+#include <vector>
 
 namespace microide::plugin::path_interop {
 namespace {
@@ -18,6 +20,34 @@ bool WithinRoot(const std::filesystem::path& normalized, const std::filesystem::
   }
   return !(relative.begin() != relative.end() &&
            *relative.begin() == std::filesystem::path(".."));
+}
+
+// weakly_canonical(root) is a realpath syscall, and ContainPath runs it for every
+// allowed root on every sandboxed plugin filesystem call — but the roots (project
+// root, plugin data dir) are stable for a session. Memoize per root in a small
+// thread_local cache (plugin fs calls are single-threaded on the worker). `ok` is
+// false when canonicalization failed, so the caller skips that root exactly as
+// before. A bounded size keeps a pathological caller from growing it unboundedly.
+struct CanonicalRoot {
+  std::filesystem::path path;
+  bool ok = false;
+};
+
+const CanonicalRoot& CanonicalRootCached(const std::filesystem::path& root) {
+  thread_local std::vector<std::pair<std::filesystem::path, CanonicalRoot>> cache;
+  for (const auto& [key, value] : cache) {
+    if (key == root) {
+      return value;
+    }
+  }
+  std::error_code error;
+  std::filesystem::path canonical = std::filesystem::weakly_canonical(root, error);
+  CanonicalRoot resolved{.path = std::move(canonical), .ok = !error};
+  if (cache.size() >= 16) {
+    cache.clear();
+  }
+  cache.emplace_back(root, std::move(resolved));
+  return cache.back().second;
 }
 
 }  // namespace
@@ -57,24 +87,24 @@ std::optional<std::filesystem::path> ContainPath(
     return std::nullopt;
   }
 
-  // Tier 2: symlink containment. Only runs once the lexical test passed and the target
-  // exists, so missing write targets stay allowed and escapes already cost nothing.
-  std::error_code exists_error;
-  if (!std::filesystem::exists(normalized, exists_error) || exists_error) {
-    return normalized;
-  }
+  // Tier 2: symlink containment. std::filesystem::weakly_canonical resolves symlinks
+  // in the EXISTING prefix of the path and appends any non-existent leaf lexically,
+  // so it must run even for a MISSING target: creating `link/new.txt`, where the
+  // existing parent `link` is a symlink pointing outside the project, would otherwise
+  // pass the lexical test (no `..`) and then be written beside the followed symlink
+  // target — a containment escape. Canonicalizing the deepest existing parent closes
+  // that hole.
   std::error_code canon_error;
   const std::filesystem::path canonical = std::filesystem::weakly_canonical(normalized, canon_error);
   if (canon_error) {
     return normalized;  // Lexical test already passed; tolerate transient canonicalization errors.
   }
   for (const std::filesystem::path& root : allowed_roots) {
-    std::error_code root_error;
-    const std::filesystem::path canonical_root = std::filesystem::weakly_canonical(root, root_error);
-    if (root_error) {
+    const CanonicalRoot& canonical_root = CanonicalRootCached(root);
+    if (!canonical_root.ok) {
       continue;
     }
-    if (WithinRoot(canonical, canonical_root)) {
+    if (WithinRoot(canonical, canonical_root.path)) {
       return canonical;
     }
   }

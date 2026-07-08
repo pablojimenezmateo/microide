@@ -327,6 +327,30 @@ void TestSubprocessTimeoutKillsHungChild() {
          "timeout should return promptly after the deadline, not wait for the child to exit");
 }
 
+// A child that CLOSES its stdout/stderr and then hangs must still be bounded by
+// timeout_ms. Draining the pipes returns as soon as they close, so the timeout has
+// to be enforced against process exit, not just against the pipes going quiet.
+void TestSubprocessTimeoutKillsChildThatClosedStdioThenHung() {
+  const auto start = std::chrono::steady_clock::now();
+  // Close fds 1 and 2, then sleep far past the timeout with no output at all.
+  const auto result = RunSubprocess({"sh", "-c", "exec 1>&- 2>&-; sleep 30"},
+                                    SubprocessOptions{
+                                        .cwd = {},
+                                        .stdin_text = {},
+                                        .environment_overrides = {},
+                                        .capture_stdout = true,
+                                        .capture_stderr = true,
+                                        .silence_stderr = false,
+                                        .timeout_ms = 200,
+                                    });
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+  Expect(result.timed_out,
+         "a child that closes stdio and then hangs must still hit the timeout");
+  Expect(elapsed.count() < 5000,
+         "the timeout must fire promptly, not block on the closed-stdio child forever");
+}
+
 // A child that floods stdout without end must not grow the capture buffer until
 // the host OOMs. The capture ceiling truncates the stream, marks the result
 // truncated, and tears the child down promptly instead of reading forever.
@@ -423,6 +447,8 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Subprocess/LargeStdinDoesNotDeadlock",
           TestSubprocessLargeStdinDoesNotDeadlock);
   AddTest(tests, "Subprocess/TimeoutKillsHungChild", TestSubprocessTimeoutKillsHungChild);
+  AddTest(tests, "Subprocess/TimeoutKillsChildThatClosedStdioThenHung",
+          TestSubprocessTimeoutKillsChildThatClosedStdioThenHung);
   AddTest(tests, "Subprocess/CaptureCapTruncatesFirehose",
           TestSubprocessCaptureCapTruncatesFirehose);
   AddTest(tests, "Subprocess/TimeoutDoesNotTripFastCommand",

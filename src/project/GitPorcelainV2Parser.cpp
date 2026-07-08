@@ -27,9 +27,10 @@ std::string_view PathAfterLeadingTokens(std::string_view body, std::size_t token
     }
     ++offset;
   }
-  while (offset < body.size() && body[offset] == ' ') {
-    ++offset;
-  }
+  // Do NOT trim leading spaces here: porcelain v2 fields are single-space delimited,
+  // so `offset` already points at the first character of the path. Skipping spaces
+  // would corrupt a tracked file whose name legitimately begins with a space (e.g.
+  // " leading.cpp" would be reported as "leading.cpp").
   return body.substr(offset);
 }
 

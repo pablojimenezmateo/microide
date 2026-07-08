@@ -424,14 +424,16 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
     return;
   }
 
+  std::size_t failed_write_count = 0;
   for (const auto& change : pending) {
-    std::ofstream output(change.absolute_path, std::ios::binary | std::ios::trunc);
-    if (!output) {
-      return;
-    }
-    output.write(change.content.data(), static_cast<std::streamsize>(change.content.size()));
-    if (!output.good()) {
-      return;
+    // Atomic temp-file + rename, never an in-place truncating write: a failed write
+    // (disk full, I/O error) must leave the original file intact rather than emptied
+    // or half-written. On failure keep going and collect it — a bare early return
+    // here left earlier files already overwritten, the current file corrupt, no error
+    // surfaced, and the search state unrefreshed.
+    if (!util::WriteTextFileAtomically(change.absolute_path, change.content)) {
+      ++failed_write_count;
+      continue;
     }
 
     for (std::size_t i = 0; i < context_.current_project_state.focused_group().open_tabs.size(); ++i) {
@@ -497,6 +499,16 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   }
   RequestAutomaticGitSidebarRefresh();
   RefreshProjectSearch();
+  if (failed_write_count > 0) {
+    // Surface a precise partial-apply result: some files were rewritten, some were
+    // not. The successfully written files above are already reflected in the index /
+    // reopened tabs; this tells the user the operation did not fully complete.
+    context_.current_project_state.overlay.workflow.project_search.error =
+        "Replace-all wrote " + std::to_string(pending.size() - failed_write_count) + " of " +
+        std::to_string(pending.size()) + " files; " + std::to_string(failed_write_count) +
+        " could not be written.";
+    RequestSidebarRedraw();
+  }
 }
 
 std::vector<int> WorkspaceShell::BuildProjectSearchLineMap() const {

@@ -13,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -207,6 +208,70 @@ void TestNeverStartedHookBalance() {
          "a never-started queue still balances enqueue hooks at shutdown");
 }
 
+// A job that throws must not escape the worker functor (that is a std::terminate
+// for the whole process). The worker survives, on_complete still fires for the
+// throwing job, and later jobs keep running.
+void TestThrowingJobDoesNotKillWorker() {
+  std::atomic<int> completed{0};
+  SerialWorkQueue::Hooks hooks{
+      .on_enqueue = []() {},
+      .on_complete = [&completed]() { completed.fetch_add(1); },
+  };
+  SerialWorkQueue queue(SerialWorkQueue::StartMode::kEager, std::move(hooks));
+  std::atomic<bool> ran_after{false};
+
+  queue.Post([]() { throw std::runtime_error("boom"); });
+  queue.Post([]() { throw 42; });  // non-std exception
+  queue.Post([&ran_after]() { ran_after.store(true); });
+
+  Expect(WaitFor([&ran_after]() { return ran_after.load(); }),
+         "a job posted after throwing jobs still runs (worker survived)");
+  Expect(WaitFor([&completed]() { return completed.load() == 3; }),
+         "on_complete fires once per job even when the job throws");
+}
+
+// Drain quiesces the worker (in-flight job finishes, queued jobs are cancelled)
+// WITHOUT stopping it: new jobs posted afterwards still run.
+void TestDrainQuiescesButKeepsWorkerUsable() {
+  SerialWorkQueue queue(SerialWorkQueue::StartMode::kEager);
+  std::atomic<bool> gate_started{false};
+  std::atomic<bool> release{false};
+  std::atomic<int> queued_ran{0};
+  std::atomic<bool> in_flight_done{false};
+
+  // In-flight gate + queued jobs that Drain must cancel.
+  queue.Post([&gate_started, &release, &in_flight_done]() {
+    gate_started.store(true);
+    while (!release.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    in_flight_done.store(true);
+  });
+  for (int i = 0; i < 4; ++i) {
+    queue.Post([&queued_ran]() { queued_ran.fetch_add(1); });
+  }
+
+  // The gate must be genuinely in-flight before Drain(): Drain cancels every
+  // QUEUED job, so if the worker hadn't dequeued the gate yet it would be
+  // cancelled too and in_flight_done would never be set.
+  Expect(WaitFor([&gate_started]() { return gate_started.load(); }),
+         "gate job started running before Drain");
+  std::thread releaser([&release]() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    release.store(true);
+  });
+  queue.Drain();  // blocks until the gate finishes + the barrier drains
+  releaser.join();
+
+  Expect(in_flight_done.load(), "Drain waits for the in-flight job to finish");
+  Expect(queued_ran.load() == 0, "Drain cancels queued (not yet running) jobs");
+
+  std::atomic<bool> post_drain{false};
+  queue.Post([&post_drain]() { post_drain.store(true); });
+  Expect(WaitFor([&post_drain]() { return post_drain.load(); }),
+         "the worker is still usable after Drain (not permanently stopped)");
+}
+
 }  // namespace
 
 void RegisterSerialWorkQueueTests(std::vector<TestCase>& tests) {
@@ -219,6 +284,9 @@ void RegisterSerialWorkQueueTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SerialWorkQueue/CancelSkipsQueuedJobs", TestCancelSkipsQueuedJobs);
   AddTest(tests, "SerialWorkQueue/HookBalanceAcrossAllPaths", TestHookBalanceAcrossAllPaths);
   AddTest(tests, "SerialWorkQueue/NeverStartedHookBalance", TestNeverStartedHookBalance);
+  AddTest(tests, "SerialWorkQueue/ThrowingJobDoesNotKillWorker", TestThrowingJobDoesNotKillWorker);
+  AddTest(tests, "SerialWorkQueue/DrainQuiescesButKeepsWorkerUsable",
+          TestDrainQuiescesButKeepsWorkerUsable);
 }
 
 }  // namespace microide::tests

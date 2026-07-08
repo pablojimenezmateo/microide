@@ -1800,6 +1800,12 @@ return ide.plugin({
     ctx.commands.add("proc.bad-env-value", function(ctx, args)
       ctx.process.run({"true"}, { env = { BAD = {} } })
     end)
+    ctx.commands.add("proc.bad-env-key", function(ctx, args)
+      -- A numeric env key: lua_isstring() is true for numbers, so the old code
+      -- called lua_tostring() on it mid-lua_next, corrupting the iteration and
+      -- longjmping over the live ProcessRunArgs. Must fail cleanly instead.
+      ctx.process.run({"true"}, { env = { [1] = "x" } })
+    end)
     ctx.commands.add("diag.bad-path", function(ctx, args)
       ctx.diagnostics.publish({}, {})
     end)
@@ -1834,6 +1840,12 @@ return ide.plugin({
   Expect(command_error.find("process env values must be strings or false") != std::string::npos,
          "bad env value should preserve the descriptive error message");
 
+  command_error.clear();
+  Expect(!host.ExecuteCommand("proc.bad-env-key", {}, &command_error),
+         "numeric env keys should fail the command, not corrupt lua_next");
+  Expect(command_error.find("process env keys must be strings") != std::string::npos,
+         "bad env key should preserve the descriptive error message");
+
   // The remaining cases exercise the other delegating wrappers (diagnostics /
   // files / workspace), whose null-host ternary fallbacks previously materialized
   // a std::filesystem::path or Callbacks temporary that the inner longjmp leaked.
@@ -1854,6 +1866,35 @@ return ide.plugin({
   Expect(command_error.empty(), "successful command should clear the error output");
   Expect(!host.Messages().empty() && host.Messages().back() == "proc.errors: proc-ok:0",
          "the Lua stack must remain intact across deferred-raise error paths");
+}
+
+// A Lua error raised with no protected frame above it (e.g. a raising metamethod
+// during post-PCall result harvesting on the worker) must not reach the C build's
+// default panic, which calls abort() and takes down the editor. The installed
+// lua_atpanic handler converts it to a catchable LuaPanicError instead.
+void TestLuaRuntimePanicThrowsInsteadOfAbort() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  std::string create_error;
+  auto runtime = microide::plugin::LuaRuntime::Create(&create_error);
+  Expect(runtime != nullptr, "lua runtime should create");
+  lua_State* state = runtime->state();
+  Expect(luaL_loadstring(state, "error('unprotected boom')") == LUA_OK, "chunk should load");
+  bool threw_panic = false;
+  try {
+    // Unprotected call (lua_call, NOT lua_pcall): with no error-jump frame the
+    // raise reaches the panic handler.
+    lua_call(state, 0, 0);
+  } catch (const microide::plugin::LuaPanicError& error) {
+    threw_panic = true;
+    Expect(std::string(error.what()).find("unprotected boom") != std::string::npos,
+           "the panic error should carry the Lua message");
+  }
+  Expect(threw_panic,
+         "an unprotected Lua error must throw LuaPanicError rather than abort() the process");
+  // The state is now unusable per the Lua contract; drop it without further calls.
+  runtime.reset();
 }
 
 // Locks the batched ordered-view rebuild: registration only flips a dirty bit, so a
@@ -2942,6 +2983,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestRepoCppLspPluginRegistersClangdForCLikeLanguages);
   AddTest(tests, "PluginHost/ProcessRunReportsArgumentErrorsWithoutCorruptingState",
           TestPluginHostProcessRunReportsArgumentErrorsWithoutCorruptingState);
+  AddTest(tests, "PluginHost/LuaRuntimePanicThrowsInsteadOfAbort",
+          TestLuaRuntimePanicThrowsInsteadOfAbort);
   AddTest(tests, "PluginHost/BatchedCommandRegistrationSortsOnce",
           TestPluginHostBatchedCommandRegistrationSortsOnce);
   AddTest(tests, "PluginHost/CommandReturnsFeedback", TestPluginHostCommandReturnsFeedback);

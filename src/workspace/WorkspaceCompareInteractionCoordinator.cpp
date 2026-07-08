@@ -6,8 +6,10 @@
 #include "util/TextFileIO.h"
 #include "workspace/MergeResultValidation.h"
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -472,6 +474,10 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
   }
   operations_.update_merge_max_visual_columns(*merge_tab, replacement_lines);
   merge_tab->hover_state.reset();
+  // Accepting a side rewrote this conflict's span and shifted every following one,
+  // so the cached overview-ruler markers (keyed on model_revision) are stale.
+  // Invalidate them or the scrollbar keeps pointing markers at pre-accept rows/colors.
+  merge_tab->scrollbar_marker_cache_valid = false;
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
   operations_.reveal_active_merge_selection();
@@ -529,15 +535,6 @@ void CompareInteractionCoordinator::ToggleMergeBasePane() {
   operations_.request_editor_surface_redraw();
 }
 
-void CompareInteractionCoordinator::ToggleMergeRawMarkers() {
-  MergeTabState* merge_tab = operations_.active_merge_tab();
-  if (merge_tab == nullptr) {
-    return;
-  }
-  merge_tab->show_raw_markers = !merge_tab->show_raw_markers;
-  operations_.request_editor_surface_redraw();
-}
-
 void CompareInteractionCoordinator::CopyMergeSideSnippet(bool incoming) {
   MergeTabState* merge_tab = operations_.active_merge_tab();
   if (merge_tab == nullptr || merge_tab->conflicts.empty() || !operations_.write_clipboard_text) {
@@ -564,6 +561,56 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
     operations_.request_editor_surface_redraw();
     return;
   }
+
+  const bool result_should_exist = ResolvedResultShouldExist(*merge_tab);
+
+  // Delete resolution: a modify/delete-class conflict reduced to an empty result
+  // means the user accepted the deletion. Remove the working file and stage that
+  // removal instead of writing (and staging) an empty file. This is the only way
+  // such a conflict can naturally resolve to "deleted".
+  if (!result_should_exist) {
+    std::error_code remove_error;
+    std::filesystem::remove(merge_tab->output_path, remove_error);
+    // The file is gone; the buffer is no longer the source of truth. Mark it clean
+    // so a later Save cannot resurrect the file, and drop the disk tick / stale flag.
+    merge_tab->result_viewport.SetDirty(false);
+    merge_tab->disk_result_tick = std::nullopt;
+    merge_tab->external_result_stale = false;
+
+    const MergeValidationResult delete_validation = ValidateMergeResult(MergeValidationRequest{
+        .merge_tab = *merge_tab,
+        .project_root = state_.root,
+        .repository_generation = merge_tab->open_index_generation,
+        .allow_conflict_marker_override = merge_tab->allow_conflict_marker_override,
+        .result_should_exist = false,
+    });
+    if (!delete_validation.ok) {
+      merge_tab->status_message = delete_validation.message;
+      merge_tab->index_stale =
+          delete_validation.issue == MergeValidationIssue::StaleIndexGeneration;
+      merge_tab->external_result_stale =
+          delete_validation.issue == MergeValidationIssue::ExternalModification;
+      operations_.request_editor_surface_redraw();
+      return;
+    }
+    if (!operations_.stage_merge_result_path ||
+        !operations_.stage_merge_result_path(merge_tab->output_path)) {
+      merge_tab->status_message = "Git could not mark the file resolved.";
+      operations_.request_editor_surface_redraw();
+      return;
+    }
+    merge_tab->marked_resolved = true;
+    merge_tab->marker_override_prompt_pending = false;
+    merge_tab->allow_conflict_marker_override = false;
+    merge_tab->status_message = "Marked resolved (deleted).";
+    if (operations_.refresh_git_sidebar) {
+      operations_.refresh_git_sidebar();
+    }
+    operations_.request_tab_strip_redraw();
+    operations_.request_editor_surface_redraw();
+    return;
+  }
+
   if (operations_.save_active_merge_tab && !operations_.save_active_merge_tab()) {
     merge_tab->status_message = "Could not save merge result.";
     operations_.request_editor_surface_redraw();
@@ -576,10 +623,13 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
   // otherwise reject every Mark Resolved and never stage the file.
   if (!merge_tab->output_path.empty()) {
     merge_tab->disk_result_tick = FileModificationTick(merge_tab->output_path);
+    // We have just reconciled disk_result_tick to our own write, so any prior
+    // "changed on disk" flag is stale — clearing it is required, otherwise the
+    // boolean guard in ValidateMergeResult short-circuits before the (now matching)
+    // tick comparison and rejects every Mark Resolved for the life of the tab.
+    merge_tab->external_result_stale = false;
   }
 
-  const bool result_should_exist = !merge_tab->file_conflict.requires_existence_choice ||
-                                   !merge_tab->result_viewport.lines().empty();
   MergeValidationRequest request{
       .merge_tab = *merge_tab,
       .project_root = state_.root,

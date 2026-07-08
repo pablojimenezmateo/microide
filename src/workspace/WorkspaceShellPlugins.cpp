@@ -677,12 +677,18 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
   // rebuilt contribution snapshot is published, so it lives in the completion. With no
   // worker wired the completion fires inline and the whole flow stays synchronous.
   const std::uint64_t generation = reload_plugins_invocation_count_;
+  const std::filesystem::path project_root = context_.current_project_state.root;
   plugin_runtime_.ReloadAsync(
-      context_.current_project_state.root, request.syntax_definitions,
-      [this, request, generation](bool clean_reload) {
-        // Drop a stale completion: a newer reload has superseded this one and its own
-        // completion will rebuild against the live snapshot.
-        if (generation != reload_plugins_invocation_count_) {
+      project_root, request.syntax_definitions,
+      [this, request, generation, project_root](bool clean_reload) {
+        // Drop a stale completion. Two independent guards:
+        //  - generation: a newer reload superseded this one (its completion rebuilds).
+        //  - project_root: the active project changed between dispatch and completion.
+        //    A warm reactivation switches projects WITHOUT bumping the generation
+        //    counter, so the counter alone would let a previous project's late reload
+        //    publish its registries/sidebars/diagnostics into the now-active project.
+        if (generation != reload_plugins_invocation_count_ ||
+            project_root != context_.current_project_state.root) {
           return;
         }
         ConsumeReloadResult(request, clean_reload);

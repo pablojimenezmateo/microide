@@ -105,6 +105,9 @@ class FileIndex {
   void EnsureFresh(ProjectFileScanMode mode) const;
   bool UpsertProjectFileLocked(const ProjectFile& file);
   bool RemoveProjectFileLocked(const std::filesystem::path& relative_path);
+  // Remove the directory `relative_dir` and every indexed file beneath it. Used for
+  // recursive deletions (a watched/nested directory removed or moved out).
+  bool RemoveProjectSubtreeLocked(const std::filesystem::path& relative_dir);
   void RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache) const;
 
   std::filesystem::path root_;

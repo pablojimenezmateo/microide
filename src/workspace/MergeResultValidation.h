@@ -46,6 +46,16 @@ struct MergeValidationRequest {
   bool result_should_exist = true;
 };
 
+// Whether a resolved merge result should leave a file on disk. For an ordinary
+// conflict the answer is always yes. For a modify/delete-class conflict
+// (requires_existence_choice — DeletedByUs/Them, RenameDelete) the user expresses
+// "accept the deletion" by reducing the result to empty content, so an empty
+// serialized result means the file should NOT exist. This is derived from the
+// serialized content, NOT from result_viewport.lines().empty(): a text buffer is
+// normalized to one empty line, so lines().empty() is always false and can never
+// signal a delete resolution.
+bool ResolvedResultShouldExist(const MergeTabState& merge_tab);
+
 bool MergeResultContainsConflictMarkers(std::string_view text);
 MergeResultState ComputeMergeResultState(const MergeTabState& merge_tab,
                                          const compare::MergeFileConflictMetadata& metadata);

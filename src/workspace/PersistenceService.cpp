@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <optional>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #include "persistence/PersistedRecordReader.h"
@@ -166,6 +167,17 @@ bool PersistenceService::SaveMruState(const std::filesystem::path& target_path,
   std::vector<std::byte> body;
   return EncodeMruRecord(state, &body) &&
          persistence::PersistedRecordWriter::WriteFile(target_path, body, 6u);
+}
+
+void PersistenceService::DeleteState(const std::filesystem::path& target_path) const {
+  if (target_path.empty()) {
+    return;
+  }
+  std::error_code error;
+  std::filesystem::remove(target_path, error);
+  // Also remove the backup, or the reader would fall back to it and resurrect the
+  // state this call is meant to clear.
+  std::filesystem::remove(persistence::PersistedRecordWriter::BackupPathFor(target_path), error);
 }
 
 }  // namespace microide::workspace

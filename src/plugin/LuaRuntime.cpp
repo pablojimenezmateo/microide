@@ -25,6 +25,20 @@ constexpr int kHookInstructionBatch = 100000;
 // of taking the process down.
 constexpr std::size_t kLuaMemoryLimitBytes = 256ull * 1024 * 1024;
 
+// Panic handler installed via lua_atpanic. Lua calls this only when an error is
+// raised with NO protected frame on the stack — the C build's default then calls
+// abort(). That can happen when interop C++ reads plugin-supplied result tables
+// after a PCall returns and a field access triggers a raising `__index`
+// metamethod (see PluginProviderQueryInterop harvesting). Throwing here converts
+// the would-be abort into a normal C++ exception that unwinds back to the worker
+// loop's firewall, which logs it and abandons the job. On the platforms we ship,
+// the intervening Lua C frames carry unwind tables, so the throw propagates
+// cleanly and runs C++ destructors on the way out (unlike a longjmp).
+[[noreturn]] int LuaPanic(lua_State* state) {
+  const char* message = lua_tostring(state, -1);
+  throw LuaPanicError(message != nullptr ? message : "unprotected Lua error");
+}
+
 }  // namespace
 #endif
 
@@ -41,6 +55,10 @@ std::unique_ptr<LuaRuntime> LuaRuntime::Create(std::string* error_message) {
     }
     return nullptr;
   }
+  // Replace the C build's abort()-on-panic with a throwing handler so an
+  // unprotected Lua error (e.g. a raising metamethod during result harvesting)
+  // becomes a catchable C++ exception instead of killing the editor.
+  lua_atpanic(runtime->state_, &LuaPanic);
 
   // Expose only a narrow baseline stdlib set.
   luaL_requiref(runtime->state_, "_G", luaopen_base, 1);

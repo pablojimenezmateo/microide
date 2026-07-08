@@ -5,6 +5,9 @@
 #include "compare/MergeModel.h"
 #include "workspace/MergeResultValidation.h"
 
+#include <filesystem>
+#include <system_error>
+
 namespace microide::tests {
 namespace {
 
@@ -147,9 +150,82 @@ void TestMarkResolvedRefreshesDiskTick() {
   Expect(refreshed.ok, "after refreshing the disk tick, validation accepts the saved result");
 }
 
+// A modify/delete conflict resolves to deletion when the user reduces the result to
+// empty content. ResolvedResultShouldExist must derive this from the serialized
+// content, not from result_viewport.lines().empty() (always false), so the delete
+// path is reachable and ValidateMergeResult accepts a non-existent file.
+void TestDeleteConflictResolvesByDeletion() {
+  MergeTabState merge_tab;
+  merge_tab.file_conflict.requires_existence_choice = true;
+
+  // Non-empty content: keep the file.
+  merge_tab.result_viewport.LoadContent("kept content\n", {}, merge_tab.result_line_ending);
+  Expect(microide::workspace::ResolvedResultShouldExist(merge_tab),
+         "a non-empty existence-choice result should keep the file");
+
+  // Empty content: accept the deletion. lines() is still non-empty ({\"\"}) here, so
+  // this specifically exercises the serialized-content path.
+  merge_tab.result_viewport.LoadContent("", {}, merge_tab.result_line_ending);
+  Expect(!merge_tab.result_viewport.lines().empty(),
+         "an emptied buffer is normalized to one line (why lines().empty() cannot signal delete)");
+  Expect(!microide::workspace::ResolvedResultShouldExist(merge_tab),
+         "an empty existence-choice result should resolve to deletion");
+
+  // With result_should_exist=false and no file on disk, validation must pass (the
+  // delete path removes the file before staging).
+  merge_tab.result_viewport.SetDirty(false);
+  merge_tab.output_path = std::filesystem::temp_directory_path() / "microide-merge-deleted-xyz.txt";
+  std::error_code ec;
+  std::filesystem::remove(merge_tab.output_path, ec);
+  const MergeValidationResult validation = ValidateMergeResult(MergeValidationRequest{
+      .merge_tab = merge_tab,
+      .project_root = {},
+      .result_should_exist = false,
+  });
+  Expect(validation.ok,
+         "a delete resolution validates when the file is absent and result_should_exist is false");
+
+  // An ordinary conflict always expects the file to exist.
+  MergeTabState ordinary;
+  ordinary.result_viewport.LoadContent("", {}, ordinary.result_line_ending);
+  Expect(microide::workspace::ResolvedResultShouldExist(ordinary),
+         "a non-existence-choice conflict always expects the file to exist");
+}
+
+// After the app's own Save, the file-change watcher can flag external_result_stale.
+// The tick re-sync must clear that flag, otherwise the boolean guard short-circuits
+// before the (now matching) tick comparison and rejects Mark Resolved forever.
+void TestExternalStaleClearedAfterSelfSave() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path result_path = temp_dir.path() / "resolved.txt";
+  WriteFile(result_path, "clean\n");
+
+  MergeTabState merge_tab;
+  merge_tab.result_viewport.LoadContent("clean\n", {}, merge_tab.result_line_ending);
+  merge_tab.result_viewport.SetDirty(false);
+  merge_tab.output_path = result_path;
+  merge_tab.disk_result_tick = microide::workspace::FileModificationTick(result_path);
+  merge_tab.external_result_stale = true;  // as the watcher would set after our own save
+
+  const MergeValidationResult stale = ValidateMergeResult(MergeValidationRequest{
+      .merge_tab = merge_tab, .project_root = {}, .result_should_exist = true});
+  Expect(!stale.ok && stale.issue == MergeValidationIssue::ExternalModification,
+         "the latched external-stale flag blocks Mark Resolved");
+
+  // The save path / MarkMergeResolved tick re-sync clears the flag.
+  merge_tab.external_result_stale = false;
+  const MergeValidationResult cleared = ValidateMergeResult(MergeValidationRequest{
+      .merge_tab = merge_tab, .project_root = {}, .result_should_exist = true});
+  Expect(cleared.ok, "clearing external_result_stale after reconciling the tick unblocks Mark Resolved");
+}
+
 }  // namespace
 
 void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "MergeConflict/DeleteConflictResolvesByDeletion",
+          TestDeleteConflictResolvesByDeletion);
+  AddTest(tests, "MergeConflict/ExternalStaleClearedAfterSelfSave",
+          TestExternalStaleClearedAfterSelfSave);
   AddTest(tests, "MergeConflict/MarkResolvedRefreshesDiskTick",
           TestMarkResolvedRefreshesDiskTick);
   AddTest(tests, "MergeConflict/BothModifiedClassification", TestBothModifiedClassification);

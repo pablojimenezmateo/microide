@@ -24,6 +24,22 @@ namespace microide::platform {
 
 #if defined(__unix__) || defined(__APPLE__)
 
+namespace {
+// Create a pipe whose fds are close-on-exec, atomically where possible.
+bool MakeCloexecPipe(int fds[2]) {
+#if defined(__linux__)
+  return pipe2(fds, O_CLOEXEC) == 0;
+#else
+  if (pipe(fds) != 0) {
+    return false;
+  }
+  (void)fcntl(fds[0], F_SETFD, fcntl(fds[0], F_GETFD, 0) | FD_CLOEXEC);
+  (void)fcntl(fds[1], F_SETFD, fcntl(fds[1], F_GETFD, 0) | FD_CLOEXEC);
+  return true;
+#endif
+}
+}  // namespace
+
 struct AsyncSubprocess::Impl {
   std::mutex state_mutex;
   std::atomic<pid_t> pid{-1};
@@ -128,10 +144,14 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
   int stdin_pipe[2] = {-1, -1};
   int stdout_pipe[2] = {-1, -1};
 
-  if (pipe(stdin_pipe) != 0) {
+  // Close-on-exec so a concurrently-forked UNRELATED child cannot inherit and pin
+  // these pipe ends open for its lifetime (which would keep this child's stdin from
+  // ever seeing EOF, or this process from ever seeing the child's stdout EOF). The
+  // child below re-establishes stdio via dup2 onto 0/1, clearing CLOEXEC on those.
+  if (!MakeCloexecPipe(stdin_pipe)) {
     return false;
   }
-  if (pipe(stdout_pipe) != 0) {
+  if (!MakeCloexecPipe(stdout_pipe)) {
     close(stdin_pipe[0]);
     close(stdin_pipe[1]);
     return false;

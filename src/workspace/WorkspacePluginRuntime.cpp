@@ -154,7 +154,21 @@ std::string WorkspacePluginRuntime::ReloadSummary() const {
 }
 
 void WorkspacePluginRuntime::ShutdownHost() {
+  // Project switch: quiesce the worker so no in-flight/queued plugin job is
+  // touching the lua_State while the host runs on_project_close / shutdown
+  // callbacks and destroys plugin state on this (UI) thread. Unlike full
+  // Shutdown() we keep the worker ALIVE — the next project's reload posts to it —
+  // so we Drain() rather than permanently Shutdown() the queue. Host teardown
+  // itself runs plugin callbacks inline (g_exec.executing), so any synchronous
+  // host API they call takes the inline branch instead of re-posting to the
+  // worker, leaving the worker quiescent for the whole teardown.
+  plugin_thread_.Drain();
   plugin_host_.Shutdown();
+  // Discard any deferred plugin→UI mutations still queued for the project we just
+  // tore down (including any posted by the on_project_close/shutdown callbacks
+  // above). Otherwise the next mailbox drain would replay the old project's
+  // diagnostics / decorations / surfaces / open_file into the newly active project.
+  plugin_thread_.ClearMainThreadActions();
 }
 
 void WorkspacePluginRuntime::Shutdown() {

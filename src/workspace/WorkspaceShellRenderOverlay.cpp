@@ -230,7 +230,10 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
       label += ":";
       AppendUnsigned(label, result.column + 1);
       label += "  ";
-      label += TruncateLabel(result.preview, overlay.w - 220.0f);
+      // TruncateLabelView returns a view into result.preview (allocation-free when it
+      // fits) and is appended straight into the reused `label` buffer, avoiding the
+      // per-row temporary std::string that TruncateLabel would allocate every frame.
+      label += TruncateLabelView(result.preview, overlay.w - 220.0f);
       draw_overlay_row(row,
                        static_cast<int>(overlay_state.workflow.project_search.selected_index) -
                            overlay_vm.scroll_row,

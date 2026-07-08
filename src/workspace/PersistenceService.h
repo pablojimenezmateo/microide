@@ -37,6 +37,13 @@ class PersistenceService {
                     PersistedMruState* state) const;
   bool SaveMruState(const std::filesystem::path& target_path,
                     const PersistedMruState& state) const;
+
+  // Remove a persisted record entirely: both the primary file AND its `.bak`
+  // sibling. Callers that clear state (e.g. debug state with nothing left to
+  // persist) must use this rather than removing only the primary — the reader
+  // falls back to the backup when the primary is missing, so a lone primary
+  // remove would let stale state resurrect on the next restore.
+  void DeleteState(const std::filesystem::path& target_path) const;
 };
 
 }  // namespace microide::workspace

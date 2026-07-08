@@ -1,6 +1,8 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <span>
 #include <string_view>
 
 #include "compare/MergeConflictKind.h"
@@ -61,13 +63,16 @@ struct ParsedGitConflictBlock {
 struct SelectedGitConflictBlock {
   std::vector<std::string> lines;
   compare::MergeChoice choice = compare::MergeChoice::Base;
+  // False when the parsed block is still an untouched raw conflict (the user has
+  // not picked a side yet). Such a block must be tracked as UNRESOLVED, never
+  // collapsed to a resolved choice.
+  bool resolved = true;
 };
 
 SelectedGitConflictBlock SelectGitConflictBlock(const compare::MergeHunk& hunk,
                                                 const ParsedGitConflictBlock& block) {
   const bool current_matches = block.current_lines == hunk.current_lines;
   const bool incoming_matches = block.incoming_lines == hunk.incoming_lines;
-  const bool base_matches = !block.has_base || block.base_lines == hunk.base_lines;
 
   if (!current_matches && !incoming_matches) {
     std::vector<std::string> lines = block.current_lines;
@@ -82,17 +87,26 @@ SelectedGitConflictBlock SelectGitConflictBlock(const compare::MergeHunk& hunk,
     return SelectedGitConflictBlock{.lines = block.incoming_lines,
                                     .choice = compare::MergeChoice::Incoming};
   }
-  if (!base_matches) {
-    return SelectedGitConflictBlock{.lines = block.base_lines,
-                                    .choice = compare::MergeChoice::Base};
-  }
-  return SelectedGitConflictBlock{.lines = hunk.base_lines, .choice = compare::MergeChoice::Base};
+  // Both sides still equal the model (any base-section difference is only diff3
+  // informational): this is an untouched raw conflict block. Previously it fell
+  // through to {base_lines, Base} and was marked resolved, silently collapsing an
+  // unedited conflict to base content — a data-loss merge bug. Instead present the
+  // model's default choice as the preview (matching how a marker-free file opens)
+  // and flag it UNRESOLVED so the user must still pick a side.
+  return SelectedGitConflictBlock{.lines = compare::MergeChoiceLines(hunk, hunk.choice),
+                                  .choice = hunk.choice,
+                                  .resolved = false};
 }
 
 struct ParsedGitConflictOutput {
   std::vector<std::string> result_lines;
   std::vector<std::vector<std::string>> conflict_lines;
   std::vector<compare::MergeChoice> conflict_choices;
+  // Per-conflict "already resolved" flag, parallel to conflict_choices. 0 means the
+  // block is still raw/untouched and must be tracked unresolved. std::uint8_t (not
+  // std::vector<bool>) so it can be handed to BuildMergeTrackedConflictsForResult as
+  // a contiguous std::span.
+  std::vector<std::uint8_t> conflict_resolved;
 };
 
 struct ParsedGitConflictSegment {
@@ -260,9 +274,16 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
                                  selected.lines.end());
       parsed.conflict_lines.push_back(selected.lines);
       parsed.conflict_choices.push_back(selected.choice);
+      parsed.conflict_resolved.push_back(selected.resolved ? 1 : 0);
       ++conflict_segment_index;
     }
   } else {
+    // The number of marker blocks does not match the model's conflict hunks — this
+    // is the "one large git block spanning several model hunks" case. Reduce each
+    // block to its current/HEAD side (BuildMergeTrackedConflictsForResult then maps
+    // it back onto the individual hunks and infers per-hunk choices). Taking the
+    // current side is a deterministic default here; see the large-conflict-block
+    // regression test.
     for (const auto& segment : segments) {
       if (!segment.conflict) {
         parsed.result_lines.insert(parsed.result_lines.end(), segment.plain_lines.begin(),
@@ -325,7 +346,8 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
     compare::MergeModel& model,
     const std::vector<std::string>& result_lines,
     std::span<const std::vector<std::string>> conflict_line_hints,
-    std::span<const compare::MergeChoice> choice_hints) const {
+    std::span<const compare::MergeChoice> choice_hints,
+    std::span<const std::uint8_t> resolved_hints) const {
   std::vector<MergeTrackedConflict> conflicts;
   std::size_t incoming_line = 0;
   std::size_t current_line = 0;
@@ -356,10 +378,16 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
 
       std::vector<std::string> committed_lines;
       bool valid = false;
+      bool resolved = false;
       if (conflict_index < conflict_line_hints.size() && conflict_index < choice_hints.size()) {
         hunk.choice = choice_hints[conflict_index];
         committed_lines = conflict_line_hints[conflict_index];
         valid = true;
+        // A hint is a real committed span, so it is valid geometry — but only
+        // "resolved" if the parser said so. An untouched raw block reports
+        // resolved=0 and must stay a pending conflict (default true keeps back-compat
+        // for callers that pass no resolved_hints).
+        resolved = conflict_index >= resolved_hints.size() || resolved_hints[conflict_index] != 0;
       } else {
         committed_lines = compare::MergeChoiceLines(hunk, hunk.choice);
         for (const compare::MergeChoice choice : PreferredMergeChoices(hunk)) {
@@ -383,9 +411,15 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
           valid = true;
           break;
         }
-        if (!valid) {
+        // Fall back to anchoring the committed span on the next base context. Guard
+        // on a NON-EMPTY post_context: FindSequence returns `start` for an empty
+        // needle, so an empty post_context (last conflict, or adjacent conflicts with
+        // no base between them) would otherwise match at result_line and produce a
+        // zero-length span that gets marked resolved — dropping the user's manual
+        // edit from conflict tracking. With no anchor we leave it unresolved instead.
+        if (!valid && !post_context.empty()) {
           if (const auto next_context = FindSequence(result_lines, result_line, post_context);
-              next_context.has_value() && *next_context >= result_line) {
+              next_context.has_value()) {
             committed_lines = std::vector<std::string>(
                 result_lines.begin() + static_cast<std::ptrdiff_t>(result_line),
                 result_lines.begin() + static_cast<std::ptrdiff_t>(*next_context));
@@ -393,6 +427,8 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
             valid = true;
           }
         }
+        // Inferred spans (no hint) are resolved exactly when we could pin them down.
+        resolved = valid;
       }
 
       conflicts.push_back(MergeTrackedConflict{
@@ -406,7 +442,7 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
           .last_choice = hunk.choice,
           .bootstrap_choice = hunk.bootstrap_choice,
           .valid = valid,
-          .resolved = valid,
+          .resolved = resolved,
       });
       result_line += committed_lines.size();
       ++conflict_index;
@@ -520,7 +556,11 @@ void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(
       if (conflict.end_line <= insertion_anchor_line) {
         continue;
       }
-      if (conflict.start_line > insertion_anchor_line) {
+      // Use >= (matching the general-edit branch below): an insertion whose anchor
+      // is exactly the conflict's first result line happens BEFORE the conflict
+      // (caret at column 0), so the conflict should shift down, not be invalidated.
+      // With a bare > the boundary case destroyed the conflict's tracking.
+      if (conflict.start_line >= insertion_anchor_line) {
         conflict.start_line = static_cast<std::size_t>(
             static_cast<long long>(conflict.start_line) + line_delta);
         conflict.end_line = static_cast<std::size_t>(
@@ -557,6 +597,10 @@ void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(
   }
 
   merge_tab.hover_state.reset();
+  // Conflict spans / validity just moved, so the cached overview-ruler markers
+  // (keyed on model_revision) are stale — invalidate them or the scrollbar keeps
+  // drawing markers at pre-edit rows and colors until an unrelated full refresh.
+  merge_tab.scrollbar_marker_cache_valid = false;
   merge_tab.scroll_row = static_cast<int>(merge_tab.result_viewport.scroll_line());
   merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
 }
@@ -660,7 +704,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
     if (parsed_output.has_value()) {
       merge_tab.conflicts = BuildMergeTrackedConflictsForResult(
           merge_tab.model, merge_tab.result_viewport.lines().Snapshot(), parsed_output->conflict_lines,
-          parsed_output->conflict_choices);
+          parsed_output->conflict_choices, parsed_output->conflict_resolved);
     } else {
       merge_tab.conflicts =
           BuildMergeTrackedConflictsForResult(merge_tab.model, merge_tab.result_viewport.lines().Snapshot());

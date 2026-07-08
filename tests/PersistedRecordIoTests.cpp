@@ -11,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace microide::tests {
@@ -220,9 +221,39 @@ void TestPrimitiveReaderSanitizesNonFiniteF32() {
   Expect(finite_value == 288.0f, "finite F32 must round-trip unchanged");
 }
 
+// Clearing persisted state by removing only the primary file lets it resurrect from
+// the backup on the next read. Removing BOTH primary and backup (what
+// PersistenceService::DeleteState does) prevents the resurrection — the mechanism
+// behind the cleared-debug-state fix.
+void TestRemovingOnlyPrimaryResurrectsFromBackup() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "state" / "debug.bin";
+
+  PersistedRecordWriterError write_error = PersistedRecordWriterError::None;
+  Expect(PersistedRecordWriter::WriteFile(path, BytesFromText("v1"), 3u, &write_error),
+         "first write succeeds");
+  Expect(PersistedRecordWriter::WriteFile(path, BytesFromText("v2"), 3u, &write_error),
+         "second write succeeds and rotates a backup");
+  const std::filesystem::path backup = PersistedRecordWriter::BackupPathFor(path);
+  Expect(std::filesystem::exists(backup), "backup exists after the second write");
+
+  // Buggy clear: remove only the primary. The reader falls back to the backup.
+  std::error_code ec;
+  std::filesystem::remove(path, ec);
+  Expect(PersistedRecordReader::ReadFile(path).has_value(),
+         "removing only the primary resurrects state from the backup");
+
+  // Correct clear (DeleteState): remove both. Now the read finds nothing.
+  std::filesystem::remove(backup, ec);
+  Expect(!PersistedRecordReader::ReadFile(path).has_value(),
+         "removing both primary and backup fully clears the state");
+}
+
 }  // namespace
 
 void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PersistedRecordIo/RemovingOnlyPrimaryResurrectsFromBackup",
+          TestRemovingOnlyPrimaryResurrectsFromBackup);
   AddTest(tests, "PersistedRecordIo/PrimitiveReaderSanitizesNonFiniteF32",
           TestPrimitiveReaderSanitizesNonFiniteF32);
   AddTest(tests, "PersistedRecordIo/WriterRoundTripsWithAtomicBackupFlow",
