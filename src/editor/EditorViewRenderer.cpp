@@ -1042,8 +1042,13 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     // hit-test (shared BuildEolDecorationSegments) so a click lands exactly where
     // the code-lens affordance was painted.
     if (plugin_decorations != nullptr && IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
+      // Non-wrapped rows already resolved this exact line slice for the mid-line
+      // inlay pass above (row_inline_texts); reuse it instead of a second
+      // binary search. Only the soft-wrap head (where row_inline_texts is left
+      // empty) needs a fresh lookup.
       const std::span<const InlineTextDecoration> inline_texts =
-          plugin_decorations->InlineTextsForLine(static_cast<std::uint32_t>(line_index));
+          soft_wrap ? plugin_decorations->InlineTextsForLine(static_cast<std::uint32_t>(line_index))
+                    : row_inline_texts;
       // Phase E2: when above-line code lenses are active they render as inset
       // strips, so suppress the end-of-line affordance for the same lenses.
       const std::span<const CodeLensDecoration> code_lenses =
