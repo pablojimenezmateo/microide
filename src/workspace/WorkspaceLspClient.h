@@ -139,6 +139,17 @@ class LspClient {
     int token_type = 0;
   };
 
+  // One textDocument/inlayHint result: inline virtual text at `position`. `label`
+  // is flattened from the string-or-parts wire shape; `kind` is 1=Type, 2=Parameter,
+  // 0=unspecified; padding_left/right request a space of separation on that side.
+  struct InlayHint {
+    Position position;
+    std::string label;
+    int kind = 0;
+    bool padding_left = false;
+    bool padding_right = false;
+  };
+
   using OnPublishDiagnostics = std::function<void(std::string uri, std::vector<Diagnostic>)>;
 
   // One text edit: a document range plus its replacement text (server encoding).
@@ -157,6 +168,7 @@ class LspClient {
       std::function<void(std::optional<std::vector<DocumentSymbol>>)>;
   using SemanticTokensCallback =
       std::function<void(std::optional<std::vector<SemanticToken>>)>;
+  using InlayHintCallback = std::function<void(std::optional<std::vector<InlayHint>>)>;
   using SignatureHelpCallback = std::function<void(std::optional<SignatureHelp>)>;
   using WorkspaceSymbolCallback =
       std::function<void(std::optional<std::vector<WorkspaceSymbol>>)>;
@@ -314,6 +326,11 @@ class LspClient {
   std::vector<std::string> SemanticTokenLegend() const;
   bool SupportsSemanticTokens() const;
 
+  // Async textDocument/inlayHint for `range` (a whole-document or visible range).
+  // Reports nullopt when the server advertises no inlayHint provider.
+  void RequestInlayHintsAsync(std::string uri, Range range, InlayHintCallback callback);
+  bool SupportsInlayHints() const;
+
   // True when the server advertised renameProvider.prepareProvider — i.e. a
   // textDocument/prepareRename request is worth sending.
   bool SupportsPrepareRename() const;
@@ -360,6 +377,11 @@ class LspClient {
   void SetTestSemanticTokensHandler(
       std::function<void(std::string uri, SemanticTokensCallback cb)> handler);
   void SetTestSemanticTokenLegend(std::vector<std::string> legend);
+  // Unit tests: feed a canned inlayHint response (also marks the capability
+  // supported so the request is not short-circuited).
+  void SetTestInlayHintHandler(
+      std::function<void(std::string uri, Range range, InlayHintCallback cb)> handler);
+  void ClearTestInlayHintHandler();
 
   // Shutdown and close connection (blocks until complete).
   void BeginShutdown();

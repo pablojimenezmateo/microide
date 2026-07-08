@@ -351,9 +351,31 @@ void TestLspProtocolParsesTextEdits() {
   Expect(capped.size() == 1, "the edit cap truncates");
 }
 
+void TestLspProtocolParsesInlayHints() {
+  const auto hints = codec::ParseInlayHints(Json(R"json([
+      {"position":{"line":3,"character":8},"label":": i32","kind":1,"paddingLeft":true},
+      {"position":{"line":5,"character":10},
+       "label":[{"value":"name"},{"value":":"}],"kind":2,"paddingRight":true},
+      {"position":{"line":6,"character":0},"label":""}])json"));
+  Expect(hints.size() == 2, "empty-label hint is dropped, leaving two");
+  Expect(hints[0].label == ": i32" && hints[0].kind == 1, "string label + kind parsed");
+  Expect(hints[0].position.line == 3 && hints[0].position.character == 8, "position parsed");
+  Expect(hints[0].padding_left && !hints[0].padding_right, "paddingLeft parsed");
+  Expect(hints[1].label == "name:" && hints[1].kind == 2, "label parts flattened by value");
+  Expect(hints[1].padding_right, "paddingRight parsed");
+
+  // Non-array yields nothing; the cap truncates.
+  Expect(codec::ParseInlayHints(Json("null")).empty(), "non-array yields no hints");
+  const auto capped = codec::ParseInlayHints(Json(R"json([
+      {"position":{"line":0,"character":0},"label":"a"},
+      {"position":{"line":1,"character":0},"label":"b"}])json"), /*max_hints=*/1);
+  Expect(capped.size() == 1, "the hint cap truncates");
+}
+
 }  // namespace
 
 void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "LspProtocol/ParsesInlayHints", TestLspProtocolParsesInlayHints);
   AddTest(tests, "LspProtocol/ParsesWorkspaceEdit", TestLspProtocolParsesWorkspaceEdit);
   AddTest(tests, "LspProtocol/ParsesSignatureHelp", TestLspProtocolParsesSignatureHelp);
   AddTest(tests, "LspProtocol/ParsesWorkspaceSymbols", TestLspProtocolParsesWorkspaceSymbols);

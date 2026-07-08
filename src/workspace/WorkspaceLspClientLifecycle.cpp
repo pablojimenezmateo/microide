@@ -172,6 +172,11 @@ void LspClient::Impl::DoInitializeBlocking() {
   text_document_caps["rangeFormatting"] = JsonValue(std::move(range_formatting_caps));
   text_document_caps["documentSymbol"] = JsonValue(std::move(document_symbol_caps));
   text_document_caps["semanticTokens"] = JsonValue(std::move(semantic_tokens_caps));
+  {
+    JsonObject inlay_hint_caps;
+    inlay_hint_caps["dynamicRegistration"] = JsonValue(false);
+    text_document_caps["inlayHint"] = JsonValue(std::move(inlay_hint_caps));
+  }
 
   JsonObject workspace_caps;
   workspace_caps["configuration"] = JsonValue(true);
@@ -324,6 +329,14 @@ void LspClient::Impl::DoInitializeBlocking() {
             }
           }
 
+          // inlayHintProvider may be a bare bool or an object (resolveProvider);
+          // either truthy shape means the server serves textDocument/inlayHint.
+          if (server_caps.HasKey("inlayHintProvider")) {
+            const auto& provider = server_caps["inlayHintProvider"];
+            const bool provided = provider.IsObject() || provider.AsBool(false);
+            supports_inlay_hints.store(provided, std::memory_order_release);
+          }
+
           // renameProvider may be a bare bool (plain rename) or an object that can
           // carry prepareProvider (textDocument/prepareRename support).
           if (server_caps.HasKey("renameProvider")) {
@@ -427,6 +440,7 @@ void LspClient::Impl::DoShutdown() {
       test_signature_help_handler = nullptr;
       test_prepare_rename_handler = nullptr;
       test_workspace_symbol_handler = nullptr;
+      test_inlay_hint_handler = nullptr;
       apply_edit_handler = nullptr;
     }
     initialized.store(false, std::memory_order_release);

@@ -408,6 +408,52 @@ std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const JsonValue& r
   return tokens;
 }
 
+std::vector<LspClient::InlayHint> ParseInlayHints(const JsonValue& result, std::size_t max_hints) {
+  std::vector<LspClient::InlayHint> hints;
+  if (!result.IsArray()) {
+    return hints;
+  }
+  // Cap the label a single hint can carry: inlay labels are short annotations
+  // (": i32", "name:"), so a huge one is a hostile/degenerate response we clamp
+  // rather than materialize and try to render mid-line.
+  constexpr std::size_t kMaxLabelBytes = 512;
+  const auto& array = result.AsArray();
+  const std::size_t count = std::min(array.size(), max_hints);
+  hints.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    const JsonValue& entry = array[i];
+    if (!entry.IsObject()) {
+      continue;
+    }
+    LspClient::InlayHint hint;
+    hint.position = ParsePosition(entry["position"]);
+    // label is either a plain string or an InlayHintLabelPart[]; flatten parts by
+    // concatenating each part's `value`.
+    const JsonValue& label = entry["label"];
+    if (label.IsString()) {
+      hint.label = label.AsString();
+    } else if (label.IsArray()) {
+      for (const JsonValue& part : label.AsArray()) {
+        if (hint.label.size() >= kMaxLabelBytes) {
+          break;
+        }
+        hint.label += part["value"].AsString();
+      }
+    }
+    if (hint.label.size() > kMaxLabelBytes) {
+      hint.label.resize(kMaxLabelBytes);
+    }
+    if (hint.label.empty()) {
+      continue;  // nothing to render
+    }
+    hint.kind = static_cast<int>(entry["kind"].AsInt(0));
+    hint.padding_left = entry["paddingLeft"].AsBool(false);
+    hint.padding_right = entry["paddingRight"].AsBool(false);
+    hints.push_back(std::move(hint));
+  }
+  return hints;
+}
+
 JsonValue MakePosition(const LspClient::Position& position) {
   JsonObject object;
   object["line"] = JsonValue(static_cast<std::int64_t>(position.line));

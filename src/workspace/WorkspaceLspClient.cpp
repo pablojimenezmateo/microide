@@ -381,6 +381,22 @@ bool LspClient::SupportsPrepareRename() const {
   return impl_->supports_prepare_rename.load(std::memory_order_acquire);
 }
 
+bool LspClient::SupportsInlayHints() const {
+  return impl_->supports_inlay_hints.load(std::memory_order_acquire);
+}
+
+void LspClient::SetTestInlayHintHandler(
+    std::function<void(std::string uri, Range range, InlayHintCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_inlay_hint_handler = std::move(handler);
+  impl_->supports_inlay_hints.store(true, std::memory_order_release);
+}
+
+void LspClient::ClearTestInlayHintHandler() {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_inlay_hint_handler = nullptr;
+}
+
 void LspClient::SetTestPrepareRenameHandler(
     std::function<void(std::string uri, Position pos, PrepareRenameCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);

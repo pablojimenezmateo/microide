@@ -453,4 +453,36 @@ void LspClient::RequestSemanticTokensAsync(std::string uri, SemanticTokensCallba
       });
 }
 
+void LspClient::RequestInlayHintsAsync(std::string uri, Range range, InlayHintCallback callback) {
+  if (!callback) return;
+  {
+    std::lock_guard lock(impl_->mutex);
+    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
+      auto handler = impl_->test_inlay_hint_handler;
+      impl_->main_mailbox.PostWithoutWake(
+          [handler, uri = std::move(uri), range, cb = std::move(callback)]() mutable {
+            if (handler) {
+              handler(std::move(uri), range, std::move(cb));
+            } else {
+              cb(std::nullopt);
+            }
+          });
+      return;
+    }
+  }
+  if (!impl_->supports_inlay_hints.load(std::memory_order_acquire)) {
+    callback(std::nullopt);
+    return;
+  }
+  using namespace util;
+  JsonObject params;
+  params["textDocument"] = lsp_protocol::MakeTextDocumentIdentifier(uri);
+  params["range"] = lsp_protocol::MakeRange(range);
+  impl_->DispatchResultRequest(
+      "textDocument/inlayHint", JsonValue(std::move(params)), std::move(callback),
+      [](const util::JsonValue& result) {
+        return std::optional<std::vector<InlayHint>>(lsp_protocol::ParseInlayHints(result));
+      });
+}
+
 }  // namespace microide::workspace

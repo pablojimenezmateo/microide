@@ -71,6 +71,14 @@ std::string ParseHoverContents(const util::JsonValue& hover_result);
 std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const util::JsonValue& result,
                                                               std::size_t max_tokens = 500000);
 
+// Decode a `textDocument/inlayHint` result (an InlayHint[]). Flattens `label`
+// from either a string or an InlayHintLabelPart[] (parts joined by their `value`),
+// reads `position`, `kind`, `paddingLeft`/`paddingRight`. Non-array input yields
+// no hints; `max_hints` caps the result and each label is length-bounded so a
+// hostile/huge response cannot force an unbounded allocation.
+std::vector<LspClient::InlayHint> ParseInlayHints(const util::JsonValue& result,
+                                                  std::size_t max_hints = 20000);
+
 // ---- Encode (LSP structs -> wire JSON) ------------------------------------
 util::JsonValue MakePosition(const LspClient::Position& position);
 util::JsonValue MakeRange(const LspClient::Range& range);
