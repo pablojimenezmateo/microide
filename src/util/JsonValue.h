@@ -81,6 +81,20 @@ struct JsonValue {
   const JsonValue& operator[](std::size_t idx) const;
 
   bool HasKey(std::string_view key) const;
+
+  // Mutable accessors (additive; the const API above is unchanged). Opt-in for
+  // consumers that own the JsonValue and want to move data out instead of copying —
+  // e.g. an LSP response parser moving result strings out on the main thread. Each
+  // returns nullptr when the stored alternative does not match.
+  JsonValue* MutableAt(std::string_view key) {
+    if (auto* o = std::get_if<JsonObject>(&v)) {
+      auto it = o->find(key);  // transparent lookup: no temporary std::string
+      if (it != o->end()) return &it->second;
+    }
+    return nullptr;
+  }
+  JsonArray* MutableArray() { return std::get_if<JsonArray>(&v); }
+  std::string* MutableString() { return std::get_if<std::string>(&v); }
 };
 
 // Parse JSON text; returns nullopt on parse error.

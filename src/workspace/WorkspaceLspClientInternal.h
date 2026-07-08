@@ -100,16 +100,22 @@ struct LspClient::Impl {
 
   // When true, the client behaves as a connected server for unit tests (no subprocess).
   std::atomic<bool> test_stub_mode{false};
-  std::function<void(std::string, DocumentSymbolCallback)> test_document_symbol_handler;
-  std::function<void(std::string, SemanticTokensCallback)> test_semantic_tokens_handler;
-  std::function<void(std::string, HoverCallback)> test_hover_handler;
-  std::function<void(std::string, FormattingCallback)> test_formatting_handler;
-  std::function<void(std::string, std::string, RenameCallback)> test_rename_handler;
-  std::function<void(std::string, Position, CompletionCallback)> test_completion_handler;
-  std::function<void(std::string, Position, SignatureHelpCallback)> test_signature_help_handler;
-  std::function<void(std::string, Position, PrepareRenameCallback)> test_prepare_rename_handler;
-  std::function<void(std::string, WorkspaceSymbolCallback)> test_workspace_symbol_handler;
-  std::function<void(std::string, Range, InlayHintCallback)> test_inlay_hint_handler;
+  // Grouped so teardown is a single Reset() and setters/clearers cannot drift out of
+  // sync with the teardown list (a stale hand-maintained list once forgot one).
+  struct TestHandlers {
+    std::function<void(std::string, DocumentSymbolCallback)> document_symbol;
+    std::function<void(std::string, SemanticTokensCallback)> semantic_tokens;
+    std::function<void(std::string, HoverCallback)> hover;
+    std::function<void(std::string, FormattingCallback)> formatting;
+    std::function<void(std::string, std::string, RenameCallback)> rename;
+    std::function<void(std::string, Position, CompletionCallback)> completion;
+    std::function<void(std::string, Position, SignatureHelpCallback)> signature_help;
+    std::function<void(std::string, Position, PrepareRenameCallback)> prepare_rename;
+    std::function<void(std::string, WorkspaceSymbolCallback)> workspace_symbol;
+    std::function<void(std::string, Range, InlayHintCallback)> inlay_hint;
+    void Reset() { *this = TestHandlers{}; }
+  };
+  TestHandlers test_handlers;
 
   // Server semantic-token legend (index -> type name), captured at initialize.
   // Guarded by `mutex`. Empty when the server advertises no semanticTokens provider.
@@ -183,6 +189,16 @@ struct LspClient::Impl {
     msg["jsonrpc"] = JsonValue("2.0");
     msg["method"] = JsonValue(method);
     msg["params"] = params;
+    return JsonValue(std::move(msg));
+  }
+
+  // Seed for a server-request reply envelope; callers add "result" or "error".
+  // `id` is echoed verbatim (int or string per JSON-RPC).
+  util::JsonValue MakeResponse(const util::JsonValue& id) {
+    using namespace util;
+    JsonObject msg;
+    msg["jsonrpc"] = JsonValue("2.0");
+    msg["id"] = id;
     return JsonValue(std::move(msg));
   }
 
@@ -267,13 +283,14 @@ struct LspClient::Impl {
   bool SendMessageImmediate(const util::JsonValue& msg, bool allow_during_shutdown = false,
                             std::chrono::milliseconds lock_timeout = std::chrono::milliseconds::zero());
 
-  bool SendMessageAfterInitialize(const util::JsonValue& msg) {
-    return SendSerializedMessageAfterInitialize(SerializeMessage(msg));
-  }
-
-  bool SendSerializedMessageAfterInitialize(std::string serialized) {
+  // Defer serialization to the I/O thread: move the message into the outbound
+  // builder so SerializeMessage (const, no shared state) runs during DrainOutbound
+  // rather than on the calling (often UI) thread. Ordering is fixed at enqueue time
+  // under send_mutex, so lazy serialization never reorders. The shutdown/initialize
+  // paths use SendMessageImmediate instead and stay eager.
+  bool SendMessageAfterInitialize(util::JsonValue msg) {
     return SendMessageBuilderAfterInitialize(
-        [serialized = std::move(serialized)]() mutable { return std::move(serialized); });
+        [this, msg = std::move(msg)]() { return SerializeMessage(msg); });
   }
 
   // Queue a message for the I/O thread (deferred until initialized). Refuses on a
@@ -384,6 +401,32 @@ struct LspClient::Impl {
   // response handler degrades to its no-result path.
   void FailPendingRequests(bool only_expired);
 
+  // Test-stub fast path shared by every interactive request. Returns true when the
+  // client is in stub mode (the caller then returns): posts a main-thread task that
+  // calls the installed handler with the request's args, or delivers std::nullopt
+  // when no handler is installed. Collapses the per-request lock + test_stub_mode
+  // check + PostWithoutWake boilerplate. `args` are forwarding references and are
+  // consumed ONLY on the stub branch, so `callback`/`uri` remain intact for the real
+  // request path when this returns false.
+  template <typename Handler, typename Callback, typename... Args>
+  bool DispatchTestStub(const Handler& handler_member, Callback& callback, Args&&... args) {
+    std::lock_guard lock(mutex);
+    if (!test_stub_mode.load(std::memory_order_acquire)) {
+      return false;
+    }
+    Handler handler = handler_member;  // copy under lock, as the per-method code did
+    main_mailbox.PostWithoutWake(
+        [handler = std::move(handler), cb = std::move(callback),
+         ... args = std::forward<Args>(args)]() mutable {
+          if (handler) {
+            handler(std::move(args)..., std::move(cb));
+          } else {
+            cb(std::nullopt);
+          }
+        });
+    return true;
+  }
+
   // Shared scaffolding for every async request: register the response handler,
   // send the request, and on send failure clean up and invoke the failure path.
   // Keeps the per-method code to "build params" + "parse result".
@@ -414,11 +457,16 @@ struct LspClient::Impl {
         method, std::move(params),
         [cb = std::move(callback), parse_result = std::move(parse_result)](
             util::JsonValue resp) mutable {
-          if (!resp.HasKey("result")) {
+          // The response is owned here, so hand the `result` subtree to the parser
+          // as a mutable lvalue: hot parsers (completion/code-action) move their
+          // strings out instead of copying. MutableAt is non-null iff the key is
+          // present (matches the old HasKey guard, incl. a null `result`).
+          util::JsonValue* result = resp.MutableAt("result");
+          if (result == nullptr) {
             cb({});
             return;
           }
-          cb(parse_result(resp["result"]));
+          cb(parse_result(*result));
         },
         [failure = std::move(failure)]() mutable { failure({}); });
   }

@@ -1202,3 +1202,24 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(microide_search_bench PRIVATE -Werror)
   endif()
 endif()
+
+# Deterministic microbench for the per-keystroke LSP didChange serialization cost
+# that Track A moved off the UI thread (uses only public util::JsonValue).
+add_executable(microide_lsp_serialize_bench
+  src/util/JsonValue.cpp
+  src/util/Parse.cpp
+  src/util/StringUtil.cpp
+  src/util/TextFileIO.cpp
+  src/util/DurableFile.cpp
+  tools/LspSerializationBench.cpp
+)
+
+target_include_directories(microide_lsp_serialize_bench PRIVATE src)
+target_link_libraries(microide_lsp_serialize_bench PRIVATE ${MICROIDE_SDL3_TARGET})
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(microide_lsp_serialize_bench PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
+  if(MICROIDE_WARNINGS_AS_ERRORS)
+    target_compile_options(microide_lsp_serialize_bench PRIVATE -Werror)
+  endif()
+endif()

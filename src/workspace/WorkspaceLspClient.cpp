@@ -181,24 +181,31 @@ bool LspClient::DidOpen(std::string uri, std::string language_id, std::string te
 }
 
 bool LspClient::DidChange(const std::string& uri, const std::string& text) {
-  using namespace util;
   int version = 0;
   {
     std::lock_guard lock(impl_->mutex);
     version = ++impl_->document_versions[uri];
   }
-  JsonObject text_doc;
-  text_doc["uri"] = JsonValue(uri);
-  text_doc["version"] = JsonValue(static_cast<std::int64_t>(version));
-  JsonObject change;
-  change["text"] = JsonValue(text);
-  JsonArray changes;
-  changes.push_back(JsonValue(std::move(change)));
-  JsonObject params;
-  params["textDocument"] = JsonValue(std::move(text_doc));
-  params["contentChanges"] = JsonValue(std::move(changes));
-  return impl_->SendMessageAfterInitialize(
-      impl_->MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
+  // Defer to the I/O thread: the whole-document copy into the JsonValue and the
+  // serialization (both proportional to document size) run off the UI thread. The
+  // version was bumped eagerly above so ordering/monotonicity is unaffected. `text`
+  // must be captured by value — the caller owns the buffer only for this call.
+  return impl_->SendMessageBuilderAfterInitialize(
+      [impl = impl_, uri, text, version]() mutable {
+        using namespace util;
+        JsonObject text_doc;
+        text_doc["uri"] = JsonValue(uri);
+        text_doc["version"] = JsonValue(static_cast<std::int64_t>(version));
+        JsonObject change;
+        change["text"] = JsonValue(std::move(text));
+        JsonArray changes;
+        changes.push_back(JsonValue(std::move(change)));
+        JsonObject params;
+        params["textDocument"] = JsonValue(std::move(text_doc));
+        params["contentChanges"] = JsonValue(std::move(changes));
+        return impl->SerializeMessage(
+            impl->MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
+      });
 }
 
 bool LspClient::DidChangeIncremental(const std::string& uri,
@@ -207,28 +214,28 @@ bool LspClient::DidChangeIncremental(const std::string& uri,
   if (!impl_->supports_incremental_sync) {
     return false;
   }
-  using namespace util;
   int version = 0;
   {
     std::lock_guard lock(impl_->mutex);
     version = ++impl_->document_versions[uri];
   }
-  JsonObject text_doc;
-  text_doc["uri"] = JsonValue(uri);
-  text_doc["version"] = JsonValue(static_cast<std::int64_t>(version));
-
-  JsonObject change;
-  change["range"] = lsp_protocol::MakeRange(changed_range);
-  change["text"] = JsonValue(new_text);
-
-  JsonArray changes;
-  changes.push_back(JsonValue(std::move(change)));
-
-  JsonObject params;
-  params["textDocument"] = JsonValue(std::move(text_doc));
-  params["contentChanges"] = JsonValue(std::move(changes));
-  return impl_->SendMessageAfterInitialize(
-      impl_->MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
+  return impl_->SendMessageBuilderAfterInitialize(
+      [impl = impl_, uri, changed_range, new_text, version]() mutable {
+        using namespace util;
+        JsonObject text_doc;
+        text_doc["uri"] = JsonValue(uri);
+        text_doc["version"] = JsonValue(static_cast<std::int64_t>(version));
+        JsonObject change;
+        change["range"] = lsp_protocol::MakeRange(changed_range);
+        change["text"] = JsonValue(std::move(new_text));
+        JsonArray changes;
+        changes.push_back(JsonValue(std::move(change)));
+        JsonObject params;
+        params["textDocument"] = JsonValue(std::move(text_doc));
+        params["contentChanges"] = JsonValue(std::move(changes));
+        return impl->SerializeMessage(
+            impl->MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
+      });
 }
 
 bool LspClient::DidSave(const std::string& uri) {
@@ -285,72 +292,72 @@ void LspClient::EnableTestStubMode() {
 void LspClient::DisableTestStubMode() {
   std::lock_guard lock(impl_->mutex);
   impl_->test_stub_mode.store(false, std::memory_order_release);
-  impl_->test_document_symbol_handler = nullptr;
+  impl_->test_handlers.document_symbol = nullptr;
 }
 
 void LspClient::SetTestDocumentSymbolHandler(
     std::function<void(std::string uri, DocumentSymbolCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_document_symbol_handler = std::move(handler);
+  impl_->test_handlers.document_symbol = std::move(handler);
 }
 
 void LspClient::ClearTestDocumentSymbolHandler() {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_document_symbol_handler = nullptr;
+  impl_->test_handlers.document_symbol = nullptr;
 }
 
 void LspClient::SetTestHoverHandler(std::function<void(std::string uri, HoverCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_hover_handler = std::move(handler);
+  impl_->test_handlers.hover = std::move(handler);
 }
 
 void LspClient::ClearTestHoverHandler() {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_hover_handler = nullptr;
+  impl_->test_handlers.hover = nullptr;
 }
 
 void LspClient::SetTestFormattingHandler(
     std::function<void(std::string uri, FormattingCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_formatting_handler = std::move(handler);
+  impl_->test_handlers.formatting = std::move(handler);
 }
 
 void LspClient::ClearTestFormattingHandler() {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_formatting_handler = nullptr;
+  impl_->test_handlers.formatting = nullptr;
 }
 
 void LspClient::SetTestRenameHandler(
     std::function<void(std::string uri, std::string new_name, RenameCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_rename_handler = std::move(handler);
+  impl_->test_handlers.rename = std::move(handler);
 }
 
 void LspClient::ClearTestRenameHandler() {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_rename_handler = nullptr;
+  impl_->test_handlers.rename = nullptr;
 }
 
 void LspClient::SetTestCompletionHandler(
     std::function<void(std::string uri, Position pos, CompletionCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_completion_handler = std::move(handler);
+  impl_->test_handlers.completion = std::move(handler);
 }
 
 void LspClient::ClearTestCompletionHandler() {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_completion_handler = nullptr;
+  impl_->test_handlers.completion = nullptr;
 }
 
 void LspClient::SetTestSignatureHelpHandler(
     std::function<void(std::string uri, Position pos, SignatureHelpCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_signature_help_handler = std::move(handler);
+  impl_->test_handlers.signature_help = std::move(handler);
 }
 
 void LspClient::ClearTestSignatureHelpHandler() {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_signature_help_handler = nullptr;
+  impl_->test_handlers.signature_help = nullptr;
 }
 
 void LspClient::SetApplyEditHandler(std::function<bool(WorkspaceEdit)> handler) {
@@ -388,42 +395,42 @@ bool LspClient::SupportsInlayHints() const {
 void LspClient::SetTestInlayHintHandler(
     std::function<void(std::string uri, Range range, InlayHintCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_inlay_hint_handler = std::move(handler);
+  impl_->test_handlers.inlay_hint = std::move(handler);
   impl_->supports_inlay_hints.store(true, std::memory_order_release);
 }
 
 void LspClient::ClearTestInlayHintHandler() {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_inlay_hint_handler = nullptr;
+  impl_->test_handlers.inlay_hint = nullptr;
 }
 
 void LspClient::SetTestPrepareRenameHandler(
     std::function<void(std::string uri, Position pos, PrepareRenameCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_prepare_rename_handler = std::move(handler);
+  impl_->test_handlers.prepare_rename = std::move(handler);
   impl_->supports_prepare_rename.store(true, std::memory_order_release);
 }
 
 void LspClient::ClearTestPrepareRenameHandler() {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_prepare_rename_handler = nullptr;
+  impl_->test_handlers.prepare_rename = nullptr;
 }
 
 void LspClient::SetTestWorkspaceSymbolHandler(
     std::function<void(std::string query, WorkspaceSymbolCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_workspace_symbol_handler = std::move(handler);
+  impl_->test_handlers.workspace_symbol = std::move(handler);
 }
 
 void LspClient::ClearTestWorkspaceSymbolHandler() {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_workspace_symbol_handler = nullptr;
+  impl_->test_handlers.workspace_symbol = nullptr;
 }
 
 void LspClient::SetTestSemanticTokensHandler(
     std::function<void(std::string uri, SemanticTokensCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
-  impl_->test_semantic_tokens_handler = std::move(handler);
+  impl_->test_handlers.semantic_tokens = std::move(handler);
   impl_->supports_semantic_tokens.store(true, std::memory_order_release);
 }
 

@@ -10,20 +10,8 @@ namespace microide::workspace {
 
 void LspClient::RequestHoverAsync(std::string uri, Position pos, HoverCallback callback) {
   if (!callback) return;
-  {
-    std::lock_guard lock(impl_->mutex);
-    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
-      auto handler = impl_->test_hover_handler;
-      impl_->main_mailbox.PostWithoutWake(
-          [handler, uri = std::move(uri), cb = std::move(callback)]() mutable {
-            if (handler) {
-              handler(std::move(uri), std::move(cb));
-            } else {
-              cb(std::nullopt);
-            }
-          });
-      return;
-    }
+  if (impl_->DispatchTestStub(impl_->test_handlers.hover, callback, std::move(uri))) {
+    return;
   }
   // Hover delivers the raw `result` JSON; the consumer parses the contents shape.
   impl_->DispatchResultRequest(
@@ -34,58 +22,58 @@ void LspClient::RequestHoverAsync(std::string uri, Position pos, HoverCallback c
 
 void LspClient::RequestCompletionAsync(std::string uri, Position pos, CompletionCallback callback) {
   if (!callback) return;
-  {
-    std::lock_guard lock(impl_->mutex);
-    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
-      auto handler = impl_->test_completion_handler;
-      impl_->main_mailbox.PostWithoutWake(
-          [handler, uri = std::move(uri), pos, cb = std::move(callback)]() mutable {
-            if (handler) {
-              handler(std::move(uri), pos, std::move(cb));
-            } else {
-              cb(std::nullopt);
-            }
-          });
-      return;
-    }
+  if (impl_->DispatchTestStub(impl_->test_handlers.completion, callback, std::move(uri), pos)) {
+    return;
   }
   impl_->DispatchResultRequest(
       "textDocument/completion", lsp_protocol::MakeTextDocumentPositionParams(uri, pos),
       std::move(callback),
-      [](const util::JsonValue& result) -> std::optional<std::vector<CompletionItem>> {
+      [](util::JsonValue& result) -> std::optional<std::vector<CompletionItem>> {
         std::vector<CompletionItem> items;
-        const auto& arr = result.IsArray() ? result.AsArray() : result["items"].AsArray();
-        // Cap the item count: this list is materialized twice (here and in the
-        // AssistService session) on the main thread on every keystroke that
-        // triggers completion, so a server returning a huge list would stall the
-        // UI. The overlay is windowed and a human never scrolls past a few
-        // thousand candidates.
+        // Accept either a bare CompletionItem[] or a CompletionList{items:[...]}.
+        util::JsonArray* arr = result.MutableArray();
+        if (arr == nullptr) {
+          if (util::JsonValue* list = result.MutableAt("items")) arr = list->MutableArray();
+        }
+        if (arr == nullptr) {
+          return items;
+        }
+        // Move each string field out of the owned response instead of copying: this
+        // list is materialized again in the AssistService session on the main thread
+        // on every keystroke that triggers completion, so per-item copies add up.
+        // Cap the item count so a huge/hostile list cannot stall the UI; the overlay
+        // is windowed and a human never scrolls past a few thousand candidates.
         constexpr std::size_t kMaxCompletionItems = 5000;
-        for (const auto& item : arr) {
+        const auto take = [](util::JsonValue& obj, std::string_view key) -> std::string {
+          if (util::JsonValue* v = obj.MutableAt(key)) {
+            if (std::string* s = v->MutableString()) return std::move(*s);
+          }
+          return {};
+        };
+        for (util::JsonValue& item : *arr) {
           if (items.size() >= kMaxCompletionItems) {
             break;
           }
           CompletionItem ci;
-          ci.label = item["label"].AsString();
-          ci.kind = item["kind"].AsInt(1);
-          ci.detail = item["detail"].AsString();
-          ci.documentation = item["documentation"].AsString();
-          ci.insert_text = item["insertText"].AsString();
-          ci.insert_text_format = item["insertTextFormat"].AsInt(1);
+          ci.label = take(item, "label");
+          ci.kind = static_cast<int>(item["kind"].AsInt(1));
+          ci.detail = take(item, "detail");
+          ci.documentation = take(item, "documentation");
+          ci.insert_text = take(item, "insertText");
+          ci.insert_text_format = static_cast<int>(item["insertTextFormat"].AsInt(1));
           // Prefer the server's textEdit: its range is authoritative (it knows the
           // token being completed, so a member/path completion extends the
           // qualifier instead of a heuristic clobbering it), and its newText wins
           // over insertText. Supports both TextEdit{range,newText} and
           // InsertReplaceEdit{insert,replace,newText}; we use the replace range so
           // accepting mid-identifier overwrites the whole token.
-          if (item.HasKey("textEdit")) {
-            const auto& text_edit = item["textEdit"];
-            if (text_edit.HasKey("range")) {
-              ci.replace_range = lsp_protocol::ParseRange(text_edit["range"]);
-            } else if (text_edit.HasKey("replace")) {
-              ci.replace_range = lsp_protocol::ParseRange(text_edit["replace"]);
+          if (util::JsonValue* text_edit = item.MutableAt("textEdit")) {
+            if (text_edit->HasKey("range")) {
+              ci.replace_range = lsp_protocol::ParseRange((*text_edit)["range"]);
+            } else if (text_edit->HasKey("replace")) {
+              ci.replace_range = lsp_protocol::ParseRange((*text_edit)["replace"]);
             }
-            std::string new_text = text_edit["newText"].AsString();
+            std::string new_text = take(*text_edit, "newText");
             if (!new_text.empty()) ci.insert_text = std::move(new_text);
           }
           if (ci.insert_text.empty()) ci.insert_text = ci.label;
@@ -98,20 +86,8 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
 void LspClient::RequestSignatureHelpAsync(std::string uri, Position pos,
                                           SignatureHelpCallback callback) {
   if (!callback) return;
-  {
-    std::lock_guard lock(impl_->mutex);
-    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
-      auto handler = impl_->test_signature_help_handler;
-      impl_->main_mailbox.PostWithoutWake(
-          [handler, uri = std::move(uri), pos, cb = std::move(callback)]() mutable {
-            if (handler) {
-              handler(std::move(uri), pos, std::move(cb));
-            } else {
-              cb(std::nullopt);
-            }
-          });
-      return;
-    }
+  if (impl_->DispatchTestStub(impl_->test_handlers.signature_help, callback, std::move(uri), pos)) {
+    return;
   }
   impl_->DispatchResultRequest(
       "textDocument/signatureHelp", lsp_protocol::MakeTextDocumentPositionParams(uri, pos),
@@ -137,33 +113,46 @@ void LspClient::RequestCodeActionAsync(std::string uri, Range range,
   params["context"] = JsonValue(std::move(context));
   impl_->DispatchResultRequest(
       "textDocument/codeAction", JsonValue(std::move(params)), std::move(callback),
-      [](const util::JsonValue& result) -> std::optional<std::vector<CodeAction>> {
-        if (!result.IsArray()) {
+      [](util::JsonValue& result) -> std::optional<std::vector<CodeAction>> {
+        util::JsonArray* result_array = result.MutableArray();
+        if (result_array == nullptr) {
           return std::nullopt;
         }
         std::vector<CodeAction> actions;
         // Cap the code-action list: a hostile server can pack a huge array into
-        // one 64 MiB message; each action (with a copied arguments array) is
-        // re-materialized into a session item on the UI thread. Mirrors the
-        // completion 5000 cap. A usable lightbulb menu never approaches this.
+        // one 64 MiB message; each action is re-materialized into a session item on
+        // the UI thread. Mirrors the completion 5000 cap. A usable lightbulb menu
+        // never approaches this. Move title/command/arguments out of the owned
+        // response instead of copying.
         constexpr std::size_t kMaxCodeActions = 5000;
-        const auto& result_array = result.AsArray();
-        const std::size_t action_count = std::min(result_array.size(), kMaxCodeActions);
+        const std::size_t action_count = std::min(result_array->size(), kMaxCodeActions);
         actions.reserve(action_count);
-        for (std::size_t i = 0; i < action_count; ++i) {
-          const auto& action = result_array[i];
-          CodeAction ca;
-          ca.title = action["title"].AsString();
-          if (action["command"].IsString()) {
-            ca.command = action["command"].AsString();
-            ca.arguments = action["arguments"].AsArray();
-          } else if (action["command"].HasKey("command")) {
-            const auto& command = action["command"];
-            ca.command = command["command"].AsString();
-            ca.arguments = command["arguments"].AsArray();
+        const auto take = [](util::JsonValue& obj, std::string_view key) -> std::string {
+          if (util::JsonValue* v = obj.MutableAt(key)) {
+            if (std::string* s = v->MutableString()) return std::move(*s);
           }
-          if (action.HasKey("edit")) {
-            ca.edit = lsp_protocol::ParseWorkspaceEdit(action["edit"]);
+          return {};
+        };
+        const auto take_array = [](util::JsonValue& obj, std::string_view key) -> util::JsonArray {
+          if (util::JsonValue* v = obj.MutableAt(key)) {
+            if (util::JsonArray* a = v->MutableArray()) return std::move(*a);
+          }
+          return {};
+        };
+        for (std::size_t i = 0; i < action_count; ++i) {
+          util::JsonValue& action = (*result_array)[i];
+          CodeAction ca;
+          ca.title = take(action, "title");
+          util::JsonValue* command = action.MutableAt("command");
+          if (command != nullptr && command->IsString()) {
+            ca.command = take(action, "command");
+            ca.arguments = take_array(action, "arguments");
+          } else if (command != nullptr && command->HasKey("command")) {
+            ca.command = take(*command, "command");
+            ca.arguments = take_array(*command, "arguments");
+          }
+          if (util::JsonValue* edit = action.MutableAt("edit")) {
+            ca.edit = lsp_protocol::ParseWorkspaceEdit(*edit);
             ca.has_edit = !ca.edit.changes.empty();
           }
           actions.push_back(std::move(ca));
@@ -175,20 +164,8 @@ void LspClient::RequestCodeActionAsync(std::string uri, Range range,
 void LspClient::RequestFormattingAsync(std::string uri, int tab_size, bool insert_spaces,
                                        FormattingCallback callback) {
   if (!callback) return;
-  {
-    std::lock_guard lock(impl_->mutex);
-    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
-      auto handler = impl_->test_formatting_handler;
-      impl_->main_mailbox.PostWithoutWake(
-          [handler, uri = std::move(uri), cb = std::move(callback)]() mutable {
-            if (handler) {
-              handler(std::move(uri), std::move(cb));
-            } else {
-              cb(std::nullopt);
-            }
-          });
-      return;
-    }
+  if (impl_->DispatchTestStub(impl_->test_handlers.formatting, callback, std::move(uri))) {
+    return;
   }
   using namespace util;
   JsonObject options;
@@ -213,21 +190,9 @@ void LspClient::RequestFormattingAsync(std::string uri, int tab_size, bool inser
 void LspClient::RequestRangeFormattingAsync(std::string uri, Range range, int tab_size,
                                             bool insert_spaces, FormattingCallback callback) {
   if (!callback) return;
-  {
-    std::lock_guard lock(impl_->mutex);
-    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
-      // Range formatting shares the formatting stub handler (same TextEdit[] shape).
-      auto handler = impl_->test_formatting_handler;
-      impl_->main_mailbox.PostWithoutWake(
-          [handler, uri = std::move(uri), cb = std::move(callback)]() mutable {
-            if (handler) {
-              handler(std::move(uri), std::move(cb));
-            } else {
-              cb(std::nullopt);
-            }
-          });
-      return;
-    }
+  // Range formatting shares the formatting stub handler (same TextEdit[] shape).
+  if (impl_->DispatchTestStub(impl_->test_handlers.formatting, callback, std::move(uri))) {
+    return;
   }
   using namespace util;
   JsonObject options;
@@ -302,20 +267,8 @@ void LspClient::RequestFindReferencesAsync(std::string uri, Position pos,
 void LspClient::RequestPrepareRenameAsync(std::string uri, Position pos,
                                           PrepareRenameCallback callback) {
   if (!callback) return;
-  {
-    std::lock_guard lock(impl_->mutex);
-    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
-      auto handler = impl_->test_prepare_rename_handler;
-      impl_->main_mailbox.PostWithoutWake(
-          [handler, uri = std::move(uri), pos, cb = std::move(callback)]() mutable {
-            if (handler) {
-              handler(std::move(uri), pos, std::move(cb));
-            } else {
-              cb(std::nullopt);
-            }
-          });
-      return;
-    }
+  if (impl_->DispatchTestStub(impl_->test_handlers.prepare_rename, callback, std::move(uri), pos)) {
+    return;
   }
   // Skip the round-trip when the server has no prepareRename provider: the caller
   // then keeps its heuristic seed rather than provoking a server error per rename.
@@ -333,21 +286,9 @@ void LspClient::RequestPrepareRenameAsync(std::string uri, Position pos,
 void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string new_name,
                                    RenameCallback callback) {
   if (!callback) return;
-  {
-    std::lock_guard lock(impl_->mutex);
-    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
-      auto handler = impl_->test_rename_handler;
-      impl_->main_mailbox.PostWithoutWake([handler, uri = std::move(uri),
-                                           new_name = std::move(new_name),
-                                           cb = std::move(callback)]() mutable {
-        if (handler) {
-          handler(std::move(uri), std::move(new_name), std::move(cb));
-        } else {
-          cb(std::nullopt);
-        }
-      });
-      return;
-    }
+  if (impl_->DispatchTestStub(impl_->test_handlers.rename, callback, std::move(uri),
+                              std::move(new_name))) {
+    return;
   }
   using namespace util;
   JsonObject params;
@@ -367,20 +308,8 @@ void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string ne
 
 void LspClient::RequestDocumentSymbolAsync(std::string uri, DocumentSymbolCallback callback) {
   if (!callback) return;
-  {
-    std::lock_guard lock(impl_->mutex);
-    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
-      auto handler = impl_->test_document_symbol_handler;
-      impl_->main_mailbox.PostWithoutWake(
-          [handler, uri = std::move(uri), cb = std::move(callback)]() mutable {
-            if (handler) {
-              handler(std::move(uri), std::move(cb));
-            } else {
-              cb(std::nullopt);
-            }
-          });
-      return;
-    }
+  if (impl_->DispatchTestStub(impl_->test_handlers.document_symbol, callback, std::move(uri))) {
+    return;
   }
   using namespace util;
   JsonObject params;
@@ -395,20 +324,8 @@ void LspClient::RequestDocumentSymbolAsync(std::string uri, DocumentSymbolCallba
 
 void LspClient::RequestWorkspaceSymbolAsync(std::string query, WorkspaceSymbolCallback callback) {
   if (!callback) return;
-  {
-    std::lock_guard lock(impl_->mutex);
-    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
-      auto handler = impl_->test_workspace_symbol_handler;
-      impl_->main_mailbox.PostWithoutWake(
-          [handler, query = std::move(query), cb = std::move(callback)]() mutable {
-            if (handler) {
-              handler(std::move(query), std::move(cb));
-            } else {
-              cb(std::nullopt);
-            }
-          });
-      return;
-    }
+  if (impl_->DispatchTestStub(impl_->test_handlers.workspace_symbol, callback, std::move(query))) {
+    return;
   }
   using namespace util;
   JsonObject params;
@@ -423,20 +340,8 @@ void LspClient::RequestWorkspaceSymbolAsync(std::string query, WorkspaceSymbolCa
 
 void LspClient::RequestSemanticTokensAsync(std::string uri, SemanticTokensCallback callback) {
   if (!callback) return;
-  {
-    std::lock_guard lock(impl_->mutex);
-    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
-      auto handler = impl_->test_semantic_tokens_handler;
-      impl_->main_mailbox.PostWithoutWake(
-          [handler, uri = std::move(uri), cb = std::move(callback)]() mutable {
-            if (handler) {
-              handler(std::move(uri), std::move(cb));
-            } else {
-              cb(std::nullopt);
-            }
-          });
-      return;
-    }
+  if (impl_->DispatchTestStub(impl_->test_handlers.semantic_tokens, callback, std::move(uri))) {
+    return;
   }
   if (!impl_->supports_semantic_tokens.load(std::memory_order_acquire)) {
     callback(std::nullopt);
@@ -455,20 +360,8 @@ void LspClient::RequestSemanticTokensAsync(std::string uri, SemanticTokensCallba
 
 void LspClient::RequestInlayHintsAsync(std::string uri, Range range, InlayHintCallback callback) {
   if (!callback) return;
-  {
-    std::lock_guard lock(impl_->mutex);
-    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
-      auto handler = impl_->test_inlay_hint_handler;
-      impl_->main_mailbox.PostWithoutWake(
-          [handler, uri = std::move(uri), range, cb = std::move(callback)]() mutable {
-            if (handler) {
-              handler(std::move(uri), range, std::move(cb));
-            } else {
-              cb(std::nullopt);
-            }
-          });
-      return;
-    }
+  if (impl_->DispatchTestStub(impl_->test_handlers.inlay_hint, callback, std::move(uri), range)) {
+    return;
   }
   if (!impl_->supports_inlay_hints.load(std::memory_order_acquire)) {
     callback(std::nullopt);

@@ -130,11 +130,35 @@ silent server never strands a request (and its UI loading state). Hostile-input
 backstops: bounded message/read-buffer sizes with oversized-frame skip-and-resync
 (`LspMessageFramer`), and a bounded outbound queue that refuses on a wedged server.
 
+- **Serialization is deferred to the I/O thread.** `SendMessageAfterInitialize`
+  moves the message into the outbound builder (`QueuedMessage::build_serialized`),
+  so `SerializeMessage` (JSON + Content-Length production) runs in `DrainOutbound`
+  on the I/O thread, not on the calling (usually UI) thread. `DidChange`/
+  `DidChangeIncremental` likewise capture the buffer into the builder (version bumped
+  eagerly under `mutex` to keep ordering monotonic), so the whole-document copy of a
+  full-sync edit also lands off the UI thread. Order is fixed at enqueue time under
+  `send_mutex`, so lazy serialization never reorders. The shutdown/initialize path
+  (`SendMessageImmediate`) stays eager — it runs before the I/O thread exists or as
+  teardown drains it, and its bounded `write_mutex` timeout is load-bearing. Measured
+  win (`microide_lsp_serialize_bench` on the reference workstation): a whole-document
+  full-sync `didChange` serialization is ≈245µs at 5k lines / ≈1.04ms at 20k lines —
+  that per-keystroke cost is now off the UI thread for utf-16 servers (utf-8 servers
+  use ranged incremental sync, so the payload is tiny either way).
+
 ## Testing
 
 - `LspProtocolTests` / `LspPositionEncodingTests` — wire codec + encoding units.
 - `WorkspaceLspClientTests` — lifecycle/shutdown races, stub-mode request
-  round-trips, and direct `LspMessageFramer` framing units.
+  round-trips, direct `LspMessageFramer` framing units, the deferred-serialization
+  FIFO-order + full-payload guard (`DidChangePreservesOrderAndPayload`, against a
+  real Python server), and the real (non-stub) completion-parse path
+  (`CompletionParsesJsonResult` — the stub path bypasses the JSON parser, so this is
+  the only unit coverage of the move-out completion parser).
+- `JsonValueTests` — the additive `MutableAt`/`MutableArray`/`MutableString` accessors
+  (presence/type guards + move-out) the completion/code-action parsers use to move
+  result strings out instead of copying them on the main thread.
+- `microide_lsp_serialize_bench` — standalone microbench (not baseline-gated) for the
+  per-keystroke `didChange` serialization cost moved off the UI thread by Track A.
 - `AssistServiceTests` — pure provider-merge units (`RankedUnion` ordering/de-dup,
   `ChooseNavigation` LSP-wins/wait/fallback) plus the stale-result guard.
 - `LspProtocolTests` also covers the newer parsers: `ParseSignatureHelp` (string +

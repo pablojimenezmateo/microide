@@ -21,11 +21,9 @@ namespace microide::workspace {
 // so these flow through the normal outbound queue.
 void LspClient::Impl::SendResponseResult(const util::JsonValue& id, util::JsonValue result) {
   using namespace util;
-  JsonObject msg;
-  msg["jsonrpc"] = JsonValue("2.0");
-  msg["id"] = id;
-  msg["result"] = std::move(result);
-  SendMessageAfterInitialize(JsonValue(std::move(msg)));
+  JsonValue msg = MakeResponse(id);
+  std::get<JsonObject>(msg.v)["result"] = std::move(result);
+  SendMessageAfterInitialize(std::move(msg));
 }
 
 void LspClient::Impl::SendResponseError(const util::JsonValue& id, int code, std::string message) {
@@ -33,11 +31,9 @@ void LspClient::Impl::SendResponseError(const util::JsonValue& id, int code, std
   JsonObject error;
   error["code"] = JsonValue(static_cast<std::int64_t>(code));
   error["message"] = JsonValue(std::move(message));
-  JsonObject msg;
-  msg["jsonrpc"] = JsonValue("2.0");
-  msg["id"] = id;
-  msg["error"] = JsonValue(std::move(error));
-  SendMessageAfterInitialize(JsonValue(std::move(msg)));
+  JsonValue msg = MakeResponse(id);
+  std::get<JsonObject>(msg.v)["error"] = JsonValue(std::move(error));
+  SendMessageAfterInitialize(std::move(msg));
 }
 
 // Server -> client requests must always get a reply, or chatty servers

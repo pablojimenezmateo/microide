@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceLspManager.h"
 
+#include <utility>
+
 #include "util/StartupTrace.h"
 
 namespace microide::workspace {
@@ -28,12 +30,7 @@ void LspManager::SetWakeEventType(Uint32 event_type) {
 }
 
 LspManager::ServerEntry* LspManager::ResolveEntry(const std::string& language_id) {
-  auto alias_it = alias_.find(language_id);
-  if (alias_it == alias_.end()) {
-    return nullptr;
-  }
-  auto it = servers_.find(alias_it->second);
-  return it == servers_.end() ? nullptr : &it->second;
+  return const_cast<ServerEntry*>(std::as_const(*this).ResolveEntry(language_id));
 }
 
 const LspManager::ServerEntry* LspManager::ResolveEntry(const std::string& language_id) const {

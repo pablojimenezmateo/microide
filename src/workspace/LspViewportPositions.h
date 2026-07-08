@@ -75,4 +75,17 @@ inline editor::SelectionRange LspRangeToEditorRange(const editor::TextViewport& 
   return editor::SelectionRange{.start = to_position(range.start), .end = to_position(range.end)};
 }
 
+// Same as above but for a possibly-null viewport (the file-not-open publish case):
+// each column short-circuits through LspInboundColumn (nullptr / utf-8 => raw byte
+// offset). Lets the diagnostics/overlay publish paths share one converter.
+inline editor::SelectionRange LspRangeToEditorRange(const editor::TextViewport* viewport,
+                                                    const LspClient::Range& range,
+                                                    lsp_encoding::PositionEncoding encoding) {
+  const auto to_position = [&](const LspClient::Position& p) {
+    const std::size_t line = static_cast<std::size_t>(std::max(0, p.line));
+    return editor::TextPosition{line, LspInboundColumn(viewport, line, p.character, encoding)};
+  };
+  return editor::SelectionRange{.start = to_position(range.start), .end = to_position(range.end)};
+}
+
 }  // namespace microide::workspace

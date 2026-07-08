@@ -384,20 +384,12 @@ void LspService::PublishLspDiagnostics(ProjectWorkspaceState& state, std::string
   // Resolve the file's buffer for position-encoding conversion (server `character`
   // units -> editor byte columns). Null (file not open / utf-8) passes through.
   const editor::TextViewport* file_viewport = FindOpenEditorViewport(state, *path);
-  const auto to_position = [&](const LspClient::Position& p) {
-    const std::size_t line = static_cast<std::size_t>(std::max(p.line, 0));
-    return editor::TextPosition{line, LspInboundColumn(file_viewport, line, p.character, encoding)};
-  };
 
   std::vector<editor::Diagnostic> converted;
   converted.reserve(diagnostics.size());
   for (const auto& diagnostic : diagnostics) {
     converted.push_back(editor::Diagnostic{
-        .range =
-            editor::SelectionRange{
-                .start = to_position(diagnostic.range.start),
-                .end = to_position(diagnostic.range.end),
-            },
+        .range = LspRangeToEditorRange(file_viewport, diagnostic.range, encoding),
         .severity = DiagnosticSeverityFromLsp(diagnostic.severity),
         .message = diagnostic.message,
     });
@@ -432,6 +424,34 @@ void LspService::RequestLspSemanticTokens(const editor::TextViewport& viewport, 
       });
 }
 
+template <typename Item, typename Build>
+void LspService::PublishGuardedOverlay(ProjectWorkspaceState& state, std::string_view owner_key,
+                                       std::unordered_map<std::string, std::uint64_t>& generations,
+                                       const std::string& uri, std::uint64_t request_generation,
+                                       lsp_encoding::PositionEncoding encoding,
+                                       std::vector<Item> items, Build build) {
+  // Drop a response the buffer has already moved past: any edit since this request
+  // bumped the URI's generation (or cleared it), so painting these absolute
+  // positions would corrupt the current text. Mirrors the revision guard in
+  // TextViewport::InstallPrefetchedHighlights.
+  if (!OverlayGenerationCurrent(generations, uri, request_generation)) {
+    return;
+  }
+  const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
+  if (!path.has_value()) {
+    return;
+  }
+  // Resolve the file's buffer once for position-encoding conversion (item positions
+  // are in the server's encoding units; overlays store byte columns). Null (file not
+  // open / utf-8) => LspInboundColumn passes through.
+  const editor::TextViewport* file_viewport = FindOpenEditorViewport(state, *path);
+  editor::PluginDecorationData data = build(file_viewport, encoding, items);
+  if (state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile(owner_key, *path,
+                                                                       std::move(data))) {
+    operations_.request_editor_surface_redraw();
+  }
+}
+
 void LspService::PublishLspSemanticTokens(ProjectWorkspaceState& state, std::string uri,
                                           std::uint64_t request_generation,
                                           lsp_encoding::PositionEncoding encoding,
@@ -440,53 +460,43 @@ void LspService::PublishLspSemanticTokens(ProjectWorkspaceState& state, std::str
   if (theme_ == nullptr) {
     return;
   }
-  // Drop a response the buffer has already moved past: any edit since this request
-  // bumped the URI's generation (or cleared it), so painting these absolute
-  // positions would corrupt the current text. Mirrors the revision guard in
-  // TextViewport::InstallPrefetchedHighlights.
-  if (!OverlayGenerationCurrent(semantic_token_generation_, uri, request_generation)) {
-    return;
-  }
-  const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
-  if (!path.has_value()) {
-    return;
-  }
-  // Resolve the file's buffer once for position-encoding conversion (token
-  // start_char/length are in the server's encoding units; the overlay stores byte
-  // columns). Null (file not open / utf-8) => LspInboundColumn passes through.
-  const editor::TextViewport* file_viewport = FindOpenEditorViewport(state, *path);
-  const SDL_Color plain = theme_->text_primary;
-  editor::PluginDecorationData data;
-  data.text_styles.reserve(tokens.size());
-  for (const LspClient::SemanticToken& token : tokens) {
-    if (token.token_type < 0 ||
-        static_cast<std::size_t>(token.token_type) >= legend.size() || token.length <= 0) {
-      continue;
-    }
-    const editor::SyntaxTokenKind kind = SyntaxKindForSemanticType(legend[token.token_type]);
-    if (kind == editor::SyntaxTokenKind::Plain) {
-      continue;  // no distinct color -> leave the lexical highlighting in place
-    }
-    editor::TextStyleDecoration style;
-    style.line = static_cast<std::uint32_t>(token.line);
-    const std::size_t line = static_cast<std::size_t>(token.line);
-    const std::size_t start_byte = LspInboundColumn(file_viewport, line, token.start_char, encoding);
-    // ParseSemanticTokensData bounds start_char/length to [0, INT_MAX] each, but
-    // their sum can overflow a signed int; compute the end unit in int64 and clamp.
-    const std::int64_t end_units =
-        std::min<std::int64_t>(static_cast<std::int64_t>(token.start_char) + token.length,
-                               std::numeric_limits<int>::max());
-    const std::size_t end_byte =
-        LspInboundColumn(file_viewport, line, static_cast<int>(end_units), encoding);
-    style.start_column = static_cast<std::uint32_t>(start_byte);
-    style.end_column = static_cast<std::uint32_t>(std::max(start_byte, end_byte));
-    style.foreground = editor::SyntaxTokenColor(*theme_, kind, plain);  // a!=0 => recolor
-    data.text_styles.push_back(style);
-  }
-  if (state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("lsp:semantic", *path,
-                                                                       std::move(data))) {
-    operations_.request_editor_surface_redraw();
-  }
+  PublishGuardedOverlay(
+      state, "lsp:semantic", semantic_token_generation_, uri, request_generation, encoding,
+      std::move(tokens),
+      [this, legend = std::move(legend)](const editor::TextViewport* file_viewport,
+                                         lsp_encoding::PositionEncoding encoding,
+                                         std::vector<LspClient::SemanticToken>& tokens) {
+        const SDL_Color plain = theme_->text_primary;
+        editor::PluginDecorationData data;
+        data.text_styles.reserve(tokens.size());
+        for (const LspClient::SemanticToken& token : tokens) {
+          if (token.token_type < 0 ||
+              static_cast<std::size_t>(token.token_type) >= legend.size() || token.length <= 0) {
+            continue;
+          }
+          const editor::SyntaxTokenKind kind = SyntaxKindForSemanticType(legend[token.token_type]);
+          if (kind == editor::SyntaxTokenKind::Plain) {
+            continue;  // no distinct color -> leave the lexical highlighting in place
+          }
+          editor::TextStyleDecoration style;
+          style.line = static_cast<std::uint32_t>(token.line);
+          const std::size_t line = static_cast<std::size_t>(token.line);
+          const std::size_t start_byte =
+              LspInboundColumn(file_viewport, line, token.start_char, encoding);
+          // ParseSemanticTokensData bounds start_char/length to [0, INT_MAX] each, but
+          // their sum can overflow a signed int; compute the end unit in int64 and clamp.
+          const std::int64_t end_units =
+              std::min<std::int64_t>(static_cast<std::int64_t>(token.start_char) + token.length,
+                                     std::numeric_limits<int>::max());
+          const std::size_t end_byte =
+              LspInboundColumn(file_viewport, line, static_cast<int>(end_units), encoding);
+          style.start_column = static_cast<std::uint32_t>(start_byte);
+          style.end_column = static_cast<std::uint32_t>(std::max(start_byte, end_byte));
+          style.foreground = editor::SyntaxTokenColor(*theme_, kind, plain);  // a!=0 => recolor
+          data.text_styles.push_back(style);
+        }
+        return data;
+      });
 }
 
 void LspService::ClearLspSemanticTokensForFile(const editor::TextViewport& viewport) {
@@ -539,42 +549,35 @@ void LspService::PublishLspInlayHints(ProjectWorkspaceState& state, std::string 
                                       std::uint64_t request_generation,
                                       lsp_encoding::PositionEncoding encoding,
                                       std::vector<LspClient::InlayHint> hints) {
-  // Drop a response the buffer has already moved past (same guard as semantic
-  // tokens): the absolute hint positions would otherwise land on shifted text.
-  if (!OverlayGenerationCurrent(inlay_hint_generation_, uri, request_generation)) {
-    return;
-  }
-  const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
-  if (!path.has_value()) {
-    return;
-  }
-  const editor::TextViewport* file_viewport = FindOpenEditorViewport(state, *path);
-  editor::PluginDecorationData data;
-  data.inline_texts.reserve(hints.size());
-  for (const LspClient::InlayHint& hint : hints) {
-    if (hint.position.line < 0 || hint.position.character < 0) {
-      continue;
-    }
-    const std::size_t line = static_cast<std::size_t>(hint.position.line);
-    const std::size_t byte_column =
-        LspInboundColumn(file_viewport, line, hint.position.character, encoding);
-    editor::InlineTextDecoration inl;
-    inl.line = static_cast<std::uint32_t>(line);
-    inl.anchor_column = static_cast<std::uint32_t>(byte_column);
-    // Bake padding into the drawn text so the grid cell-width measurement (and the
-    // hit-test) account for it uniformly. Labels like "name:" / ": i32" already
-    // read naturally; padding just adds a space of separation from the code.
-    inl.text.reserve(hint.label.size() + 2);
-    if (hint.padding_left) inl.text.push_back(' ');
-    inl.text += hint.label;
-    if (hint.padding_right) inl.text.push_back(' ');
-    inl.color = theme_ != nullptr ? theme_->text_disabled : SDL_Color{128, 128, 128, 255};
-    data.inline_texts.push_back(std::move(inl));
-  }
-  if (state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("lsp:inlay", *path,
-                                                                       std::move(data))) {
-    operations_.request_editor_surface_redraw();
-  }
+  PublishGuardedOverlay(
+      state, "lsp:inlay", inlay_hint_generation_, uri, request_generation, encoding,
+      std::move(hints),
+      [this](const editor::TextViewport* file_viewport, lsp_encoding::PositionEncoding encoding,
+             std::vector<LspClient::InlayHint>& hints) {
+        editor::PluginDecorationData data;
+        data.inline_texts.reserve(hints.size());
+        for (const LspClient::InlayHint& hint : hints) {
+          if (hint.position.line < 0 || hint.position.character < 0) {
+            continue;
+          }
+          const std::size_t line = static_cast<std::size_t>(hint.position.line);
+          const std::size_t byte_column =
+              LspInboundColumn(file_viewport, line, hint.position.character, encoding);
+          editor::InlineTextDecoration inl;
+          inl.line = static_cast<std::uint32_t>(line);
+          inl.anchor_column = static_cast<std::uint32_t>(byte_column);
+          // Bake padding into the drawn text so the grid cell-width measurement (and the
+          // hit-test) account for it uniformly. Labels like "name:" / ": i32" already
+          // read naturally; padding just adds a space of separation from the code.
+          inl.text.reserve(hint.label.size() + 2);
+          if (hint.padding_left) inl.text.push_back(' ');
+          inl.text += hint.label;
+          if (hint.padding_right) inl.text.push_back(' ');
+          inl.color = theme_ != nullptr ? theme_->text_disabled : SDL_Color{128, 128, 128, 255};
+          data.inline_texts.push_back(std::move(inl));
+        }
+        return data;
+      });
 }
 
 void LspService::ClearLspInlayHintsForFile(const editor::TextViewport& viewport) {
@@ -932,16 +935,8 @@ LspService::DiskEditResult LspService::ApplyLspEditsToClosedFilesOnDisk(
 }
 
 bool LspService::IsPathOpenInProject(const std::filesystem::path& normalized) const {
-  for (const auto& group : CurrentProjectState().editor_groups) {
-    for (const auto& tab : group.open_tabs) {
-      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
-          !tab.editor_state->needs_restore &&
-          tab.editor_state->viewport.path().lexically_normal() == normalized) {
-        return true;
-      }
-    }
-  }
-  return false;
+  // Same scan as FindOpenEditorViewport (which re-normalizes idempotently).
+  return FindOpenEditorViewport(CurrentProjectState(), normalized) != nullptr;
 }
 
 bool LspService::ApplyServerWorkspaceEdit(LspClient::WorkspaceEdit edit) {

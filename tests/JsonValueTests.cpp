@@ -139,9 +139,40 @@ void TestNonFiniteDoubleSerializesAsNull() {
          "serialized non-finite output must be parseable");
 }
 
+// The additive mutable accessors let owners move data out instead of copying (the
+// LSP completion/code-action parsers use them). They must match the const API's
+// presence semantics and return nullptr on a type mismatch.
+void TestMutableAccessorsMoveOutAndTypeGuard() {
+  JsonValue root = ParseJson(R"({"items":[{"label":"alpha","n":3}],"name":"root"})").value();
+
+  // MutableAt: present key -> pointer; absent key / non-object -> nullptr.
+  Expect(root.MutableAt("missing") == nullptr, "MutableAt returns nullptr for an absent key");
+  JsonValue* name = root.MutableAt("name");
+  Expect(name != nullptr && name->IsString(), "MutableAt resolves a present key");
+
+  // MutableString on the wrong alternative is nullptr; on a string it aliases it.
+  Expect(root.MutableAt("items")->MutableString() == nullptr,
+         "MutableString returns nullptr for a non-string");
+  std::string moved = std::move(*name->MutableString());
+  Expect(moved == "root", "MutableString exposes the stored string for moving");
+  Expect(root["name"].AsString().empty(), "the moved-from string is left empty in place");
+
+  // MutableArray + nested move-out from an element.
+  JsonValue* items = root.MutableAt("items");
+  Expect(items != nullptr && items->MutableArray() != nullptr, "MutableArray resolves an array");
+  Expect(root.MutableAt("name")->MutableArray() == nullptr,
+         "MutableArray returns nullptr for a non-array");
+  JsonValue& first = (*items->MutableArray())[0];
+  std::string label = std::move(*first.MutableAt("label")->MutableString());
+  Expect(label == "alpha", "an element's string field moves out via the mutable chain");
+  Expect(first["n"].AsInt() == 3, "unrelated fields are untouched by the move-out");
+}
+
 }  // namespace
 
 void RegisterJsonValueTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "JsonValue/MutableAccessorsMoveOutAndTypeGuard",
+          TestMutableAccessorsMoveOutAndTypeGuard);
   AddTest(tests, "JsonValue/DeeplyNestedArrayRejected", TestDeeplyNestedArrayRejected);
   AddTest(tests, "JsonValue/DeeplyNestedObjectRejected", TestDeeplyNestedObjectRejected);
   AddTest(tests, "JsonValue/ModestNestingStillParses", TestModestNestingStillParses);

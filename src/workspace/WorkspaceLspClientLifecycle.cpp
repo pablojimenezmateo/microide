@@ -244,10 +244,7 @@ void LspClient::Impl::DoInitializeBlocking() {
   }
   init_params["capabilities"] = JsonValue(std::move(caps));
 
-  const int init_id = [&]() {
-    std::lock_guard lock(mutex);
-    return next_id++;
-  }();
+  const int init_id = GetNextId();
   const auto req = MakeRequest(init_id, "initialize", JsonValue(std::move(init_params)));
   if (!SendMessageImmediate(req)) {
     SetLastError("failed to send initialize request to language server");
@@ -432,15 +429,7 @@ void LspClient::Impl::DoShutdown() {
     ResetProtocolState();
     {
       std::lock_guard hook_lock(mutex);
-      test_document_symbol_handler = nullptr;
-      test_hover_handler = nullptr;
-      test_formatting_handler = nullptr;
-      test_rename_handler = nullptr;
-      test_completion_handler = nullptr;
-      test_signature_help_handler = nullptr;
-      test_prepare_rename_handler = nullptr;
-      test_workspace_symbol_handler = nullptr;
-      test_inlay_hint_handler = nullptr;
+      test_handlers.Reset();
       apply_edit_handler = nullptr;
     }
     initialized.store(false, std::memory_order_release);

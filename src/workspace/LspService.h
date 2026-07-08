@@ -169,6 +169,20 @@ class LspService {
   };
   std::optional<BufferSyncTarget> ResolveOpenDocumentForSync(const editor::TextViewport& viewport);
 
+  // Shared publish scaffolding for the generation-guarded absolute-position overlays
+  // (semantic tokens, inlay hints): drop a superseded response, resolve the file's
+  // path + open viewport, let `build` produce the decoration payload from `items`
+  // (the only per-overlay part), then replace it under `owner_key` and redraw. The
+  // `build` callable is `(const editor::TextViewport*, lsp_encoding::PositionEncoding,
+  // std::vector<Item>&) -> editor::PluginDecorationData`. Defined in LspService.cpp
+  // (only instantiated there).
+  template <typename Item, typename Build>
+  void PublishGuardedOverlay(ProjectWorkspaceState& state, std::string_view owner_key,
+                             std::unordered_map<std::string, std::uint64_t>& generations,
+                             const std::string& uri, std::uint64_t request_generation,
+                             lsp_encoding::PositionEncoding encoding, std::vector<Item> items,
+                             Build build);
+
   // Per-URI overlay generation guard, shared by the semantic-token and inlay-hint
   // overlays (each owns its own generation map). NextOverlayGeneration bumps and
   // returns the current value (captured in a request's response closure);

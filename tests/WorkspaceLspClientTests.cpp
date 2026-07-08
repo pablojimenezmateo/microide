@@ -6,6 +6,7 @@
 #include "workspace/WorkspaceLspClient.h"
 #include "workspace/WorkspaceLspManager.h"
 
+#include <algorithm>
 #include <chrono>
 #include <optional>
 #include <string>
@@ -1003,7 +1004,200 @@ void TestLspMessageFramerOversizedFrameSkips() {
   Expect(framer.BufferedBytes() == 0, "drained skip bytes leave the buffer empty");
 }
 
+// Track A regression: serialization is deferred to the I/O thread (the outbound
+// builder runs SerializeMessage lazily). This must preserve FIFO order and the full
+// per-change payload — a reorder or a captured-by-reference bug would corrupt sync.
+void TestWorkspaceLspClientDidChangePreservesOrderAndPayload() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto log_path = temp_dir.path() / "didchange.log";
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(server_path, std::string(R"py(import json
+import pathlib
+import sys
+
+log_path = pathlib.Path(sys.argv[1])
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        write_message({"jsonrpc": "2.0", "id": msg["id"],
+                       "result": {"capabilities": {"textDocumentSync": 1}}})
+    elif method == "textDocument/didChange":
+        version = msg["params"]["textDocument"]["version"]
+        text = msg["params"]["contentChanges"][0]["text"]
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(f"{version}:{len(text)}:{text[:24]}\n")
+            handle.flush()
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+
+  LspClient client;
+  const bool started = client.Start({"python3", server_path.string(), log_path.string()},
+                                    "file:///tmp", "python");
+  Expect(started, "didChange order fixture should start");
+
+  constexpr int kChanges = 6;
+  std::vector<std::string> texts;
+  for (int i = 1; i <= kChanges; ++i) {
+    texts.push_back("CHANGE_" + std::to_string(i) + "_" + std::string(2000, 'x'));
+    Expect(client.DidChange("file:///tmp/s.py", texts.back()), "didChange should enqueue");
+  }
+
+  std::string expected;
+  for (int i = 0; i < kChanges; ++i) {
+    expected += std::to_string(i + 1) + ":" + std::to_string(texts[static_cast<std::size_t>(i)].size()) +
+                ":" + texts[static_cast<std::size_t>(i)].substr(0, 24) + "\n";
+  }
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  std::string contents;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (std::filesystem::exists(log_path)) {
+      contents = ReadFile(log_path);
+      const auto newlines = static_cast<std::size_t>(std::count(contents.begin(), contents.end(), '\n'));
+      if (newlines >= static_cast<std::size_t>(kChanges)) {
+        break;
+      }
+    }
+    if (!client.IsRunning()) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+
+  // Exact match asserts both FIFO order (versions 1..N in sequence) and full payload
+  // integrity through the deferred builder.
+  Expect(contents == expected,
+         "didChange order + full payload must survive deferred serialization");
+  client.Shutdown();
+}
+
+// Track A' coverage: drive the real (non-stub) completion parser against a server
+// that returns a JSON CompletionList. The stub path bypasses the parser, so this is
+// the only place the move-out parsing of label/detail/insertText/textEdit runs.
+void TestWorkspaceLspClientCompletionParsesJsonResult() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(server_path, std::string(R"py(import json
+import sys
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        write_message({"jsonrpc": "2.0", "id": msg["id"],
+                       "result": {"capabilities": {"completionProvider": {}}}})
+    elif method == "textDocument/completion":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": {"items": [
+            {"label": "alpha", "detail": "int", "insertText": "alpha", "kind": 6},
+            {"label": "beta", "textEdit": {
+                "range": {"start": {"line": 1, "character": 2},
+                          "end": {"line": 1, "character": 5}},
+                "newText": "beta_x"}},
+        ]}})
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+
+  LspClient client;
+  const bool started =
+      client.Start({"python3", server_path.string()}, "file:///tmp", "python");
+  Expect(started, "completion fixture should start");
+
+  std::optional<std::vector<LspClient::CompletionItem>> received;
+  client.RequestCompletionAsync("file:///tmp/s.py", LspClient::Position{0, 0},
+                                [&](auto items) { received = std::move(items); });
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline && !received.has_value()) {
+    client.DrainCallbacks();
+    if (!client.IsRunning()) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+
+  Expect(received.has_value(), "completion result should be delivered");
+  Expect(received->size() == 2, "both completion items should parse");
+  Expect((*received)[0].label == "alpha" && (*received)[0].insert_text == "alpha" &&
+             (*received)[0].detail == "int",
+         "plain item fields parse (moved out of the JSON)");
+  Expect((*received)[1].label == "beta" && (*received)[1].insert_text == "beta_x",
+         "textEdit.newText wins over insertText and is moved out");
+  Expect((*received)[1].replace_range.has_value() &&
+             (*received)[1].replace_range->start.character == 2 &&
+             (*received)[1].replace_range->end.character == 5,
+         "textEdit.range becomes the authoritative replace range");
+  client.Shutdown();
+}
+
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceLspClient/DidChangePreservesOrderAndPayload",
+          TestWorkspaceLspClientDidChangePreservesOrderAndPayload);
+  AddTest(tests, "WorkspaceLspClient/CompletionParsesJsonResult",
+          TestWorkspaceLspClientCompletionParsesJsonResult);
   AddTest(tests, "WorkspaceLspClient/FileUriEncodesSpecialCharsAndRoundTrips",
           TestFileUriEncodesSpecialCharsAndRoundTrips);
   AddTest(tests, "WorkspaceLspClient/SemanticTokensStubRoundTrip",

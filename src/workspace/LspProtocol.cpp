@@ -253,8 +253,10 @@ LspClient::PrepareRename ParsePrepareRename(const JsonValue& result) {
 }
 
 namespace {
-// A `documentation` field: either a bare string or MarkupContent ({kind, value}).
-std::string ParseDocumentationString(const JsonValue& value) {
+// A field carried as either a bare string or an object with a `value` string:
+// covers both `documentation` (MarkupContent {kind, value}) and a MarkedString
+// hover element ({language, value}).
+std::string StringOrValueField(const JsonValue& value) {
   if (value.IsString()) {
     return value.AsString();
   }
@@ -283,7 +285,7 @@ LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
     const JsonValue& signature = signatures[i];
     LspClient::SignatureInformation info;
     info.label = signature["label"].AsString();
-    info.documentation = ParseDocumentationString(signature["documentation"]);
+    info.documentation = StringOrValueField(signature["documentation"]);
     info.active_parameter = signature.HasKey("activeParameter")
                                 ? static_cast<int>(signature["activeParameter"].AsInt(-1))
                                 : -1;
@@ -312,7 +314,7 @@ LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
         } else {
           out_parameter.label = label.AsString();
         }
-        out_parameter.documentation = ParseDocumentationString(parameter["documentation"]);
+        out_parameter.documentation = StringOrValueField(parameter["documentation"]);
         info.parameters.push_back(std::move(out_parameter));
       }
     }
@@ -320,19 +322,6 @@ LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
   }
   return help;
 }
-
-namespace {
-// One MarkedString element: either a bare string or {language, value}.
-std::string MarkedStringValue(const JsonValue& value) {
-  if (value.IsString()) {
-    return value.AsString();
-  }
-  if (value.HasKey("value")) {
-    return value["value"].AsString();
-  }
-  return {};
-}
-}  // namespace
 
 std::string ParseHoverContents(const JsonValue& hover_result) {
   if (!hover_result.HasKey("contents")) {
@@ -348,7 +337,7 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
   if (contents.IsArray()) {
     std::string out;
     for (const auto& element : contents.AsArray()) {
-      const std::string piece = MarkedStringValue(element);
+      const std::string piece = StringOrValueField(element);
       if (piece.empty()) {
         continue;
       }
