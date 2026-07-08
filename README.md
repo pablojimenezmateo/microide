@@ -13,7 +13,7 @@ otherwise).
 
 For the authoritative in-scope / non-goal list see `openspec/specs/product-vision/spec.md`.
 
-> **Status: stable.** Tagged `v2.6.5` (see [CHANGELOG](CHANGELOG.md)) and actively developed.
+> **Status: stable.** Tagged `v2.6.6` (see [CHANGELOG](CHANGELOG.md)) and actively developed.
 > Release binaries are GPG-signed — verify them per [Verifying releases](#verifying-releases).
 > No third-party comparative benchmarks yet. Read [Known Limitations](#known-limitations) and
 > [Security & Trust Model](#security--trust-model) before using on a real project.
@@ -142,7 +142,7 @@ Current validation flow is still intentionally narrow and practical:
 
 ## Release Status
 
-- Tagged `v2.6.5`. The published Debian package is GPG-signed; verify the signature and checksum
+- Tagged `v2.6.6`. The published Debian package is GPG-signed; verify the signature and checksum
   before installing — see [Verifying releases](#verifying-releases). You can also build from source
   or create a local Debian package from this repository. See [CHANGELOG](CHANGELOG.md) for what
   shipped.
@@ -161,8 +161,8 @@ release page (fingerprint `0E32 39B7 1B0F 9598 B71A  FB7B 6D33 9CCB FC51 5D70`).
 gpg --import microide-signing-key.asc
 
 # verify the package signature and checksum
-gpg --verify microide_2.6.5_amd64.deb.asc microide_2.6.5_amd64.deb
-sha256sum -c microide_2.6.5_amd64.deb.sha256
+gpg --verify microide_2.6.6_amd64.deb.asc microide_2.6.6_amd64.deb
+sha256sum -c microide_2.6.6_amd64.deb.sha256
 ```
 
 A "Good signature" line plus a matching checksum means the package is authentic and intact.

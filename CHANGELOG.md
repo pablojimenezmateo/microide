@@ -6,6 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.6.6] - 2026-07-08
+
+An **LSP feature + performance** cycle on top of 2.6.5. It rounds out the built-in
+language-server integration with a batch of new capabilities, moves the provider
+model to a concurrent LSP-primary merge, and takes the per-keystroke serialization
+work off the UI thread — all on top of a broad internal consolidation of the LSP
+client.
+
+### Added
+
+- **Inlay hints** — mid-line virtual text (parameter names, inferred types) rendered
+  in the editor grid, pulled on open/save/clean-undo (never per keystroke) and gated
+  on `editor.inlay_hints.enabled` plus the server's `inlayHintProvider`.
+- **Signature help** (`textDocument/signatureHelp`) surfaced into the caret-anchored
+  popup as an LSP-primary source.
+- **Project-wide symbol search** (`workspace/symbol`) via a `workspace-symbol <query>`
+  command that renders navigable results into an output channel.
+- **Go to type definition / implementation / declaration** for the symbol under the
+  cursor.
+- **Prepare-rename refinement** (the server's placeholder seeds the rename prompt) and
+  **range formatting** (format the current selection, else the whole document).
+- **Rename across unopened files** applies silently on disk (VSCode-style), and
+  server-initiated `workspace/applyEdit` is now wired end to end.
+
+### Changed
+
+- **Concurrent LSP-primary providers.** Completion, code actions, go-to-definition, and
+  find-references now fire the plugin worker and the language server at the same time
+  and merge LSP-first, replacing the previous serial plugin-first path. Signature help
+  and navigation are LSP-primary too.
+- **Serialization is off the UI thread.** JSON-RPC message serialization — and the
+  whole-document copy of a full-sync `didChange` — now runs on the per-server I/O
+  thread instead of the calling thread, removing roughly 0.25–1 ms of per-keystroke
+  UI-thread work on large files served over the utf-16 position encoding.
+- **Fewer main-thread copies** parsing completion and code-action results (strings are
+  moved out of the decoded response rather than copied).
+
+### Internal
+
+- Broad consolidation of the LSP client: the transport header was split into focused
+  translation units, the `Content-Length` wire codec was extracted into a unit-tested
+  `LspMessageFramer`, trace/tuning constants were hoisted, and repeated sync/guard and
+  test-stub-dispatch boilerplate was deduplicated. Adds an opt-in real-clangd
+  end-to-end harness and a deterministic `didChange`-serialization microbench. Clean
+  under ASan/UBSan/TSan.
+
 ## [2.6.5] - 2026-07-05
 
 ### Added
