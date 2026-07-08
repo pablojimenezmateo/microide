@@ -5,7 +5,6 @@
 #include "terminal/TerminalInternalConstants.h"
 #include "terminal/TerminalMouseEncoder.h"
 #include "terminal/TerminalOscClipboard.h"
-#include "terminal/TerminalProcessControl.h"
 #include "platform/TerminalBackend.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"

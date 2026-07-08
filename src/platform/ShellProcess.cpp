@@ -1,6 +1,7 @@
-#include "terminal/TerminalProcessControl.h"
+#include "platform/ShellProcess.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <thread>
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -10,7 +11,26 @@
 #include <unistd.h>
 #endif
 
-namespace microide::terminal {
+namespace microide::platform {
+
+std::string DefaultShellPath() {
+#if defined(_WIN32)
+  if (const char* shell = std::getenv("COMSPEC"); shell != nullptr && shell[0] != '\0') {
+    return shell;
+  }
+  return "C:\\Windows\\System32\\cmd.exe";
+#else
+  if (const char* shell = std::getenv("SHELL"); shell != nullptr && shell[0] != '\0') {
+    return shell;
+  }
+  return "/bin/sh";
+#endif
+}
+
+std::string ShellProgramName(const std::string& shell_path) {
+  const std::size_t slash = shell_path.find_last_of("/\\");
+  return slash == std::string::npos ? shell_path : shell_path.substr(slash + 1);
+}
 
 namespace {
 
@@ -91,4 +111,4 @@ void RequestTerminalChildShutdown(int child_pid) {
 #endif
 }
 
-}  // namespace microide::terminal
+}  // namespace microide::platform

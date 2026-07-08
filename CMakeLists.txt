@@ -248,11 +248,13 @@ set(MICROIDE_CORE_SOURCES
   src/platform/FileIndexWatcher.cpp
   src/platform/FileWatcher.cpp
   src/platform/Filesystem.cpp
+  src/platform/FsOps.cpp
   src/platform/HostIntegration.cpp
   src/platform/HostPlatform.cpp
   src/platform/RuntimePaths.cpp
   src/platform/Subprocess.cpp
   src/platform/SubprocessSandbox.cpp
+  src/platform/ShellProcess.cpp
   src/platform/TerminalBackend.cpp
   src/platform/Trash.cpp
   src/persistence/PersistedRecord.cpp
@@ -344,7 +346,6 @@ set(MICROIDE_CORE_SOURCES
   src/terminal/TerminalCsiParser.cpp
   src/terminal/TerminalMouseEncoder.cpp
   src/terminal/TerminalOscClipboard.cpp
-  src/terminal/TerminalProcessControl.cpp
   src/util/DebugTrace.cpp
   src/util/DurableFile.cpp
   src/util/JsonValue.cpp
@@ -1009,7 +1010,7 @@ if(MICROIDE_FUZZ)
     src/terminal/TerminalCsiParser.cpp
     src/terminal/TerminalMouseEncoder.cpp
     src/terminal/TerminalOscClipboard.cpp
-    src/terminal/TerminalProcessControl.cpp
+    src/platform/ShellProcess.cpp
     src/platform/TerminalBackend.cpp
     src/render/AnsiPalette.cpp
     src/util/Parse.cpp

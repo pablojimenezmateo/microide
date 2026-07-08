@@ -2,8 +2,10 @@
 
 #include "workspace/DapProtocol.h"
 #include "workspace/WorkspaceDapClient.h"
+#include "workspace/StdioClientQueue.h"
 #include "util/DebugTrace.h"
 #include "util/MainThreadMailbox.h"
+#include "util/WakePipe.h"
 
 #include <atomic>
 #include <charconv>
@@ -112,22 +114,17 @@ struct DapReadBuf {
 };
 
 struct DapClient::Impl {
-  struct QueuedMessage {
-    std::string serialized;
-    std::function<std::string()> build_serialized;
-
-    std::string TakeSerialized() && {
-      if (!serialized.empty()) {
-        return std::move(serialized);
-      }
-      return build_serialized ? build_serialized() : std::string{};
-    }
-  };
+  using QueuedMessage = StdioQueuedMessage;
 
   platform::AsyncSubprocess proc;
   std::mutex mutex;
   std::mutex send_mutex;
-  std::mutex write_mutex;
+  // Serializes every proc.Write so stdin is never written by two threads. A
+  // timed_mutex so the shutdown path can bound its acquisition: the io_thread can
+  // hold this across a proc.Write that blocks indefinitely on a wedged-but-alive
+  // adapter, and the shutdown's force-kill (which unblocks that write) must not be
+  // gated behind acquiring this lock. Mirrors the LSP client.
+  std::timed_mutex write_mutex;
 
   // Single I/O thread: reads stdout / writes stdin, blocking in poll() over
   // stdout + a self-pipe wake, so an idle adapter makes no fixed-cadence wakeups.
@@ -139,8 +136,7 @@ struct DapClient::Impl {
   std::size_t skip_body_bytes_ = 0;
   std::thread io_thread;
   std::atomic<bool> stop_io{false};
-  std::mutex wake_mutex;
-  int wake_pipe_[2] = {-1, -1};
+  util::WakePipe wake_pipe_;  // self-pipe that breaks the I/O thread's poll() on demand
   int cached_stdout_fd_ = -1;
 
   std::thread init_thread;
@@ -210,59 +206,12 @@ struct DapClient::Impl {
   }
 
   // --- self-pipe wakeup -----------------------------------------------------
-  void OpenWakePipe() {
-#if defined(__unix__) || defined(__APPLE__)
-    std::lock_guard lock(wake_mutex);
-    if (wake_pipe_[0] >= 0) {
-      return;
-    }
-    int fds[2] = {-1, -1};
-    if (::pipe(fds) != 0) {
-      return;
-    }
-    ::fcntl(fds[0], F_SETFL, O_NONBLOCK);
-    ::fcntl(fds[1], F_SETFL, O_NONBLOCK);
-    wake_pipe_[0] = fds[0];
-    wake_pipe_[1] = fds[1];
-#endif
-  }
-
-  void CloseWakePipe() {
-#if defined(__unix__) || defined(__APPLE__)
-    std::lock_guard lock(wake_mutex);
-    if (wake_pipe_[1] >= 0) {
-      ::close(wake_pipe_[1]);
-      wake_pipe_[1] = -1;
-    }
-    if (wake_pipe_[0] >= 0) {
-      ::close(wake_pipe_[0]);
-      wake_pipe_[0] = -1;
-    }
-#endif
-  }
-
-  void Wake() {
-#if defined(__unix__) || defined(__APPLE__)
-    std::lock_guard lock(wake_mutex);
-    if (wake_pipe_[1] < 0) {
-      return;
-    }
-    const char byte = 1;
-    ssize_t written = ::write(wake_pipe_[1], &byte, 1);
-    (void)written;
-#endif
-  }
-
-  void DrainWakePipe() {
-#if defined(__unix__) || defined(__APPLE__)
-    if (wake_pipe_[0] < 0) {
-      return;
-    }
-    char scratch[64];
-    while (::read(wake_pipe_[0], scratch, sizeof(scratch)) > 0) {
-    }
-#endif
-  }
+  // The I/O thread polls wake_pipe_.read_fd() alongside stdout; Wake() breaks that
+  // poll immediately. See util::WakePipe.
+  void OpenWakePipe() { wake_pipe_.Open(); }
+  void CloseWakePipe() { wake_pipe_.Close(); }
+  void Wake() { wake_pipe_.Wake(); }
+  void DrainWakePipe() { wake_pipe_.Drain(); }
 
   // --- outbound queue (I/O thread only) -------------------------------------
   void DrainOutbound() {
@@ -284,11 +233,24 @@ struct DapClient::Impl {
     }
   }
 
-  bool SendMessageImmediate(const util::JsonValue& msg, bool allow_during_shutdown = false) {
+  // lock_timeout > 0 bounds how long we wait for write_mutex before giving up: the
+  // io_thread can be stuck in a proc.Write to a wedged-but-alive adapter while
+  // holding it, so a shutdown-path send must not block teardown forever. On
+  // timeout it returns false and the caller falls through to the force-kill (which
+  // unblocks that write so the io_thread can be joined).
+  bool SendMessageImmediate(const util::JsonValue& msg, bool allow_during_shutdown = false,
+                            std::chrono::milliseconds lock_timeout = std::chrono::milliseconds::zero()) {
     if (!allow_during_shutdown && shutting_down.load(std::memory_order_acquire)) {
       return false;
     }
     const std::string serialized = SerializeMessage(msg);
+    if (lock_timeout > std::chrono::milliseconds::zero()) {
+      std::unique_lock wlock(write_mutex, std::defer_lock);
+      if (!wlock.try_lock_for(lock_timeout)) {
+        return false;  // io_thread stuck writing to a wedged adapter; caller force-kills
+      }
+      return proc.Write(serialized);
+    }
     std::lock_guard wlock(write_mutex);
     return proc.Write(serialized);
   }
@@ -436,9 +398,9 @@ struct DapClient::Impl {
       fds[nfds].events = POLLIN | POLLHUP;
       ++nfds;
       int wake_index = -1;
-      if (wake_pipe_[0] >= 0) {
+      if (const int wake_read_fd = wake_pipe_.read_fd(); wake_read_fd >= 0) {
         wake_index = nfds;
-        fds[nfds].fd = wake_pipe_[0];
+        fds[nfds].fd = wake_read_fd;
         fds[nfds].events = POLLIN;
         ++nfds;
       }
@@ -836,9 +798,13 @@ struct DapClient::Impl {
     }
     JsonObject disconnect_args;
     disconnect_args["restart"] = JsonValue(false);
+    // Bounded lock acquisition: if the io_thread is stuck in a proc.Write to a
+    // wedged-but-alive adapter (holding write_mutex), this returns false quickly
+    // rather than blocking teardown forever, and we fall through to the force-kill
+    // below — which unblocks that write so io_thread can be joined.
     const bool sent_disconnect = SendMessageImmediate(
         dap_protocol::MakeRequest(disconnect_seq, "disconnect", JsonValue(std::move(disconnect_args))),
-        true);
+        true, std::chrono::milliseconds(1000));
     TraceDapLifecycle(adapter_id, proc.pid(), "disconnect-request",
                       sent_disconnect ? "sent" : "send-failed");
     if (sent_disconnect) {

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "editor/SyntaxHighlighter.h"
+#include "util/PathMatch.h"
 #include "workspace/WorkspacePathUtils.h"
 
 namespace microide::workspace {
@@ -29,7 +30,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       const std::filesystem::path current_path = operations_.editor_view_path(editor_state);
       if (!current_path.empty() && PathEqualsOrWithin(current_path, old_path)) {
         const std::filesystem::path updated_path =
-            ReplacePathPrefix(current_path, old_path, new_path).lexically_normal();
+            util::ReplacePathPrefix(current_path, old_path, new_path).lexically_normal();
 
         if (!preserve_unsaved_state && !editor_state.needs_restore &&
             editor_state.viewport.dirty()) {
@@ -84,14 +85,14 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
     if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
         PathEqualsOrWithin(tab.compare->path.lexically_normal(), old_path)) {
       const std::filesystem::path updated_path =
-          ReplacePathPrefix(tab.compare->path, old_path, new_path);
+          util::ReplacePathPrefix(tab.compare->path, old_path, new_path);
       if (preserve_unsaved_state && tab.compare->right_editable &&
           tab.compare->right_viewport.dirty()) {
         tab.compare->path = updated_path.lexically_normal();
         if (tab.compare->right_ref == "WORKTREE" &&
             PathEqualsOrWithin(tab.compare->right_path.lexically_normal(), old_path)) {
           tab.compare->right_path =
-              ReplacePathPrefix(tab.compare->right_path, old_path, new_path).lexically_normal();
+              util::ReplacePathPrefix(tab.compare->right_path, old_path, new_path).lexically_normal();
           tab.compare->right_viewport.SetPath(tab.compare->right_path);
         }
         tab.compare->title = "compare: " + tab.compare->path.filename().string();
@@ -113,7 +114,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       if (updated_compare.right_ref == "WORKTREE" &&
           PathEqualsOrWithin(updated_compare.right_path.lexically_normal(), old_path)) {
         updated_compare.right_path =
-            ReplacePathPrefix(updated_compare.right_path, old_path, new_path).lexically_normal();
+            util::ReplacePathPrefix(updated_compare.right_path, old_path, new_path).lexically_normal();
       }
       auto rebuilt = operations_.build_compare_tab_entry(updated_path, updated_compare);
       if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
@@ -130,7 +131,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
 
     auto update_merge_path = [&](const std::filesystem::path& path) {
       return PathEqualsOrWithin(path.lexically_normal(), old_path)
-                 ? ReplacePathPrefix(path, old_path, new_path).lexically_normal()
+                 ? util::ReplacePathPrefix(path, old_path, new_path).lexically_normal()
                  : path.lexically_normal();
     };
     if (!PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), old_path) &&
@@ -209,7 +210,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
   if (!state.overlay.workflow.compare_picker.path.empty() &&
       PathEqualsOrWithin(state.overlay.workflow.compare_picker.path, old_path)) {
     state.overlay.workflow.compare_picker.path =
-        ReplacePathPrefix(state.overlay.workflow.compare_picker.path, old_path, new_path);
+        util::ReplacePathPrefix(state.overlay.workflow.compare_picker.path, old_path, new_path);
     if (state.overlay.visible && state.overlay.mode == OverlayMode::CommitPicker) {
       // Hide via the focus-safe helper so input does not strand on the dismissed
       // commit picker when its file is renamed/deleted out from under it.

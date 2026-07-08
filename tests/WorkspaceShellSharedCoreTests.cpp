@@ -5,6 +5,7 @@
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspaceMenuRegistry.h"
+#include "util/PathMatch.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
@@ -57,8 +58,8 @@ using microide::workspace::PersistedProjectSessionState;
 using microide::workspace::PersistedUserConfigState;
 using microide::workspace::PersistedWorkspaceSessionState;
 using microide::workspace::QuoteCommandArg;
+using microide::util::ReplacePathPrefix;
 using microide::workspace::RelativePathLabel;
-using microide::workspace::ReplacePathPrefix;
 using microide::workspace::SidebarViewIds;
 using microide::workspace::SidebarViewRequest;
 using microide::workspace::SidebarViewSpec;

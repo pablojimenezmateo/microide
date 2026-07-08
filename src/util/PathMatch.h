@@ -43,4 +43,30 @@ namespace microide::util {
   return relative_text != "." && relative_text != ".." && relative_text.rfind("../", 0) != 0;
 }
 
+// Rewrite `path` so a leading `old_prefix` becomes `new_prefix`, returning the
+// normalized result. Paths outside `old_prefix` are returned unchanged (still
+// normalized). Purely lexical like PathEqualsOrWithin — no filesystem access, no
+// symlink resolution — so it is safe to call once per stored path when remapping
+// after a rename without incurring a syscall per entry.
+[[nodiscard]] inline std::filesystem::path ReplacePathPrefix(
+    const std::filesystem::path& path,
+    const std::filesystem::path& old_prefix,
+    const std::filesystem::path& new_prefix) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_old_prefix = old_prefix.lexically_normal();
+  const std::filesystem::path normalized_new_prefix = new_prefix.lexically_normal();
+  if (!PathEqualsOrWithin(normalized_path, normalized_old_prefix)) {
+    return normalized_path;
+  }
+  if (normalized_path == normalized_old_prefix) {
+    return normalized_new_prefix;
+  }
+  const std::filesystem::path relative =
+      normalized_path.lexically_relative(normalized_old_prefix);
+  if (relative.empty()) {
+    return normalized_path;
+  }
+  return (normalized_new_prefix / relative).lexically_normal();
+}
+
 }  // namespace microide::util

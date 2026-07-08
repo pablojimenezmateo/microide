@@ -5,8 +5,8 @@
 #include "terminal/TerminalInternalConstants.h"
 #include "terminal/TerminalMouseEncoder.h"
 #include "terminal/TerminalOscClipboard.h"
-#include "terminal/TerminalProcessControl.h"
 #include "terminal/TerminalSessionInputEncoding.h"
+#include "platform/ShellProcess.h"
 #include "platform/TerminalBackend.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
@@ -31,17 +31,9 @@ namespace {
 // a plain bool is sufficient.
 bool g_use_placeholder_terminals_for_testing = false;
 
-std::string DefaultShellPath() {
-  if (const char* shell = std::getenv("SHELL"); shell != nullptr && shell[0] != '\0') {
-    return shell;
-  }
-  return "/bin/sh";
-}
-
-std::string ShellProgramName(const std::string& shell_path) {
-  const std::size_t slash = shell_path.find_last_of("/\\");
-  return slash == std::string::npos ? shell_path : shell_path.substr(slash + 1);
-}
+using platform::DefaultShellPath;
+using platform::RequestTerminalChildShutdown;
+using platform::ShellProgramName;
 
 }  // namespace
 

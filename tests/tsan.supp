@@ -13,12 +13,14 @@ deadlock:libdbus-1
 race:libgallium
 
 # False-positive "unlock of an unlocked mutex (or by a wrong thread)" on the LSP
-# shutdown send path. GCC 13's libtsan does not intercept pthread_mutex_timedlock
-# (the mechanism behind std::timed_mutex::try_lock_for), so a *successful* timed
-# acquisition is never recorded and the subsequent correct same-thread unlock is
-# misreported. Confirmed with a minimal single-threaded try_lock_for repro under
-# this exact toolchain (g++ 13.3, libtsan.so.2). The bounded write_mutex acquire
-# in SendMessageImmediate is correct — it early-returns without unlocking when the
-# timed lock is not acquired and only ever unlocks on the acquiring thread. Scope
-# the suppression to that one function so genuine races elsewhere still surface.
+# and DAP shutdown send paths. GCC 13's libtsan does not intercept
+# pthread_mutex_timedlock (the mechanism behind std::timed_mutex::try_lock_for),
+# so a *successful* timed acquisition is never recorded and the subsequent correct
+# same-thread unlock is misreported. Confirmed with a minimal single-threaded
+# try_lock_for repro under this exact toolchain (g++ 13.3, libtsan.so.2). The
+# bounded write_mutex acquire in each SendMessageImmediate is correct — it
+# early-returns without unlocking when the timed lock is not acquired and only ever
+# unlocks on the acquiring thread. Scope the suppression to those two functions so
+# genuine races elsewhere still surface.
 mutex:microide::workspace::LspClient::Impl::SendMessageImmediate
+mutex:microide::workspace::DapClient::Impl::SendMessageImmediate

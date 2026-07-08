@@ -2,7 +2,9 @@
 
 #include "workspace/WorkspaceLspClient.h"
 #include "workspace/LspProtocol.h"
+#include "workspace/StdioClientQueue.h"
 #include "util/MainThreadMailbox.h"
+#include "util/WakePipe.h"
 
 #include <algorithm>
 #include <atomic>
@@ -33,17 +35,7 @@ namespace microide::workspace {
 // Impl
 // ---------------------------------------------------------------------------
 struct LspClient::Impl {
-  struct QueuedMessage {
-    std::string serialized;
-    std::function<std::string()> build_serialized;
-
-    std::string TakeSerialized() && {
-      if (!serialized.empty()) {
-        return std::move(serialized);
-      }
-      return build_serialized ? build_serialized() : std::string{};
-    }
-  };
+  using QueuedMessage = StdioQueuedMessage;
 
   platform::AsyncSubprocess proc;
   std::mutex mutex;
@@ -65,8 +57,7 @@ struct LspClient::Impl {
   LspMessageFramer framer_;
   std::thread io_thread;
   std::atomic<bool> stop_io{false};
-  std::mutex wake_mutex;          // guards wake_pipe_ open/close/Wake (brief, non-blocking)
-  int wake_pipe_[2] = {-1, -1};  // [0]=read (polled by I/O thread), [1]=write (Wake())
+  util::WakePipe wake_pipe_;  // self-pipe that breaks the I/O thread's poll() on demand
   int cached_stdout_fd_ = -1;
 
   // Initialization thread state
@@ -213,61 +204,12 @@ struct LspClient::Impl {
     return rfc;
   }
 
-  // Self-pipe wakeup: the I/O thread blocks in poll() over stdout + wake_pipe_[0];
-  // enqueuing outbound work writes a byte here to break the poll immediately.
-  void OpenWakePipe() {
-#if defined(__unix__) || defined(__APPLE__)
-    std::lock_guard lock(wake_mutex);
-    if (wake_pipe_[0] >= 0) {
-      return;
-    }
-    int fds[2] = {-1, -1};
-    if (::pipe(fds) != 0) {
-      return;
-    }
-    ::fcntl(fds[0], F_SETFL, O_NONBLOCK);
-    ::fcntl(fds[1], F_SETFL, O_NONBLOCK);
-    wake_pipe_[0] = fds[0];
-    wake_pipe_[1] = fds[1];
-#endif
-  }
-
-  void CloseWakePipe() {
-#if defined(__unix__) || defined(__APPLE__)
-    std::lock_guard lock(wake_mutex);
-    if (wake_pipe_[1] >= 0) {
-      ::close(wake_pipe_[1]);
-      wake_pipe_[1] = -1;
-    }
-    if (wake_pipe_[0] >= 0) {
-      ::close(wake_pipe_[0]);
-      wake_pipe_[0] = -1;
-    }
-#endif
-  }
-
-  void Wake() {
-#if defined(__unix__) || defined(__APPLE__)
-    std::lock_guard lock(wake_mutex);
-    if (wake_pipe_[1] < 0) {
-      return;
-    }
-    const char byte = 1;
-    ssize_t written = ::write(wake_pipe_[1], &byte, 1);
-    (void)written;  // a full pipe already means a wake is pending
-#endif
-  }
-
-  void DrainWakePipe() {
-#if defined(__unix__) || defined(__APPLE__)
-    if (wake_pipe_[0] < 0) {
-      return;
-    }
-    char scratch[64];
-    while (::read(wake_pipe_[0], scratch, sizeof(scratch)) > 0) {
-    }
-#endif
-  }
+  // Self-pipe wakeup: the I/O thread blocks in poll() over stdout + wake_pipe_.read_fd();
+  // enqueuing outbound work calls Wake() to break the poll immediately. See util::WakePipe.
+  void OpenWakePipe() { wake_pipe_.Open(); }
+  void CloseWakePipe() { wake_pipe_.Close(); }
+  void Wake() { wake_pipe_.Wake(); }
+  void DrainWakePipe() { wake_pipe_.Drain(); }
 
   // Flush every queued outbound message. Runs only on the I/O thread; holds
   // write_mutex across the proc.Write calls so it never races a shutdown-time

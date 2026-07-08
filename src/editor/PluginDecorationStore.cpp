@@ -4,7 +4,6 @@
 #include "util/PathMatch.h"
 
 #include <algorithm>
-#include <system_error>
 #include <utility>
 
 namespace microide::editor {
@@ -12,27 +11,7 @@ namespace microide::editor {
 namespace {
 
 using util::PathEqualsOrWithin;
-
-std::filesystem::path ReplacePathPrefix(const std::filesystem::path& path,
-                                        const std::filesystem::path& old_prefix,
-                                        const std::filesystem::path& new_prefix) {
-  const std::filesystem::path normalized_path = path.lexically_normal();
-  const std::filesystem::path normalized_old_prefix = old_prefix.lexically_normal();
-  const std::filesystem::path normalized_new_prefix = new_prefix.lexically_normal();
-  if (!PathEqualsOrWithin(normalized_path, normalized_old_prefix)) {
-    return normalized_path;
-  }
-  if (normalized_path == normalized_old_prefix) {
-    return normalized_new_prefix;
-  }
-  std::error_code error;
-  const std::filesystem::path relative =
-      std::filesystem::relative(normalized_path, normalized_old_prefix, error);
-  if (error || relative.empty()) {
-    return normalized_path;
-  }
-  return (normalized_new_prefix / relative).lexically_normal();
-}
+using util::ReplacePathPrefix;
 
 // Sort the four decoration vectors of `decorations` into the per-line render
 // order the slice lookups rely on. Works on both PluginDecorationData (per-owner,

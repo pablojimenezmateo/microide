@@ -113,9 +113,9 @@ bool LspClient::Impl::WaitStdoutReadable(int timeout_ms) {
     fds[nfds].events = POLLIN | POLLHUP;
     ++nfds;
     int wake_index = -1;
-    if (wake_pipe_[0] >= 0) {
+    if (const int wake_read_fd = wake_pipe_.read_fd(); wake_read_fd >= 0) {
       wake_index = nfds;
-      fds[nfds].fd = wake_pipe_[0];
+      fds[nfds].fd = wake_read_fd;
       fds[nfds].events = POLLIN;
       ++nfds;
     }
