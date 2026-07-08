@@ -14,6 +14,18 @@ std::size_t InlayHintCellWidth(const render::TextRenderer& text_renderer, std::s
   return std::max<std::size_t>(1, cells);
 }
 
+std::size_t InlayLineTotalCells(std::span<const InlineTextDecoration> inline_texts,
+                                const render::TextRenderer& text_renderer, float char_width) {
+  std::size_t total = 0;
+  for (const InlineTextDecoration& inl : inline_texts) {
+    if (inl.anchor_column == kInlineTextEndOfLine) {
+      continue;
+    }
+    total += InlayHintCellWidth(text_renderer, inl.text, char_width);
+  }
+  return total;
+}
+
 namespace {
 
 std::size_t ResolveInlayVisualColumn(const LayoutLine* layout,

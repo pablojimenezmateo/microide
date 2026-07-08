@@ -64,6 +64,13 @@ class InlayRowDisplacement {
 std::size_t InlayHintCellWidth(const render::TextRenderer& text_renderer, std::string_view text,
                                float char_width);
 
+// Total phantom cells across every mid-line inlay hint on a line (EOL-anchored
+// inline texts ignored). Layout-independent; used to push the end-of-line
+// decoration anchor — in both the renderer and its hit-test — past the shifted
+// glyphs so the two agree.
+std::size_t InlayLineTotalCells(std::span<const InlineTextDecoration> inline_texts,
+                                const render::TextRenderer& text_renderer, float char_width);
+
 // Resolve a logical line's mid-line inlay-hint decorations (those with
 // anchor_column != kInlineTextEndOfLine) into row-local InlayCellSpans for the
 // visible window [row_visual_start, row_visual_end). EOL-anchored inline texts are

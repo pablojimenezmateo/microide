@@ -9,6 +9,7 @@
 #include "editor/DiagnosticsRender.h"
 #include "editor/DiagnosticsStore.h"
 #include "editor/EolDecorationLayout.h"
+#include "editor/InlayHintColumns.h"
 #include "editor/TextLayout.h"
 #include "util/DebugTrace.h"
 #include "util/PerformanceTrace.h"
@@ -99,9 +100,16 @@ std::optional<std::string> CodeLensCommandForViewport(const render::TextRenderer
   const float line_y =
       interaction.first_line_y +
       static_cast<float>(*line_index - interaction.scroll_line) * interaction.line_height;
+  // Push the anchor past any mid-line inlay hints exactly as the renderer does, so
+  // the code-lens hit rect stays aligned with the painted lens. Suppressed on
+  // soft-wrapped lines to match the render path (which omits hints there in v1).
+  const std::size_t inlay_total_cells =
+      viewport.soft_wrap()
+          ? 0
+          : editor::InlayLineTotalCells(inline_texts, text_renderer, text_renderer.CharWidth());
   const float anchor_x =
       interaction.text_x +
-      static_cast<float>(viewport.VisibleLineLayout(*line_index).visual_columns) *
+      static_cast<float>(viewport.VisibleLineLayout(*line_index).visual_columns + inlay_total_cells) *
           text_renderer.CharWidth();
   const float right_limit = interaction.rect.x + interaction.rect.w - 12.0f;
   std::vector<editor::EolDecorationSegment> segments;
