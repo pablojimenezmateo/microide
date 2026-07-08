@@ -51,6 +51,61 @@ void TestBothAddedClassification() {
          "add/add content should classify as both added");
 }
 
+void TestSingleSideAddWithoutBaseIsNotDelete() {
+  // No base means a side that has the file *added* it; the existence-fallback used
+  // to mislabel these as deletes (offering a spurious existence choice) because it
+  // ignored base_exists.
+  const auto us = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .base_exists = false,
+      .incoming_exists = false,
+      .current_exists = true,
+      .base_content = {},
+      .incoming_content = {},
+      .current_content = "current added\n",
+  });
+  Expect(us.kind == MergeFileConflictKind::AddedByUs,
+         "no base + only current present should classify as added-by-us");
+  Expect(!us.requires_existence_choice, "an add is not a delete: no existence choice");
+
+  const auto them = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .base_exists = false,
+      .incoming_exists = true,
+      .current_exists = false,
+      .base_content = {},
+      .incoming_content = "incoming added\n",
+      .current_content = {},
+  });
+  Expect(them.kind == MergeFileConflictKind::AddedByThem,
+         "no base + only incoming present should classify as added-by-them");
+  Expect(!them.requires_existence_choice, "an add is not a delete: no existence choice");
+}
+
+void TestSingleSideDeleteWithBaseStillClassifiesAsDelete() {
+  const auto them = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .base_exists = true,
+      .incoming_exists = false,
+      .current_exists = true,
+      .base_content = "base\n",
+      .incoming_content = {},
+      .current_content = "current change\n",
+  });
+  Expect(them.kind == MergeFileConflictKind::DeletedByThem,
+         "base present + incoming missing should stay deleted-by-them");
+  Expect(them.requires_existence_choice, "a real delete still needs an existence choice");
+
+  const auto us = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .base_exists = true,
+      .incoming_exists = true,
+      .current_exists = false,
+      .base_content = "base\n",
+      .incoming_content = "incoming change\n",
+      .current_content = {},
+  });
+  Expect(us.kind == MergeFileConflictKind::DeletedByUs,
+         "base present + current missing should stay deleted-by-us");
+  Expect(us.requires_existence_choice, "a real delete still needs an existence choice");
+}
+
 void TestBinaryClassification() {
   std::string binary(8, '\0');
   const auto metadata = ClassifyMergeFileConflict(MergeConflictClassificationInput{
@@ -230,6 +285,10 @@ void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
           TestMarkResolvedRefreshesDiskTick);
   AddTest(tests, "MergeConflict/BothModifiedClassification", TestBothModifiedClassification);
   AddTest(tests, "MergeConflict/BothAddedClassification", TestBothAddedClassification);
+  AddTest(tests, "MergeConflict/SingleSideAddWithoutBaseIsNotDelete",
+          TestSingleSideAddWithoutBaseIsNotDelete);
+  AddTest(tests, "MergeConflict/SingleSideDeleteWithBaseStillClassifiesAsDelete",
+          TestSingleSideDeleteWithBaseStillClassifiesAsDelete);
   AddTest(tests, "MergeConflict/BinaryClassification", TestBinaryClassification);
   AddTest(tests, "MergeConflict/BothMergeOrders", TestBothMergeOrders);
   AddTest(tests, "MergeConflict/ValidationBlocksConflictMarkers",

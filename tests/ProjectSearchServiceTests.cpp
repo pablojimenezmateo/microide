@@ -201,6 +201,27 @@ void TestProjectSearchServiceRegexModeAndInvalidRegex() {
   Expect(invalid_regex.results.empty(), "invalid regex project search should not publish matches");
 }
 
+void TestProjectSearchServiceRegexEmptyMatchDoesNotHideRealMatch() {
+  // Regression: the empty-match branch used to advance one byte and abandon the
+  // offset entirely. For an alternation whose earlier branch matches empty at the
+  // same position a later branch matches non-empty (`x?|foo` at "foo": `x?` wins
+  // leftmost with an empty match at 0, but `foo` also starts at 0), the real match
+  // was silently dropped. The anchored retry must recover it.
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  WriteFile(root / "alt.txt", "foo\n");
+
+  ProjectSearchOptions regex_options;
+  regex_options.pattern_mode = ProjectSearchPatternMode::Regex;
+  const auto result = RunProjectSearch(root, "x?|foo", regex_options);
+  Expect(result.finished, "empty-match regex search should finish");
+  Expect(result.error.empty(), "empty-match regex search should not error");
+  Expect(result.results.size() == 1,
+         "a non-empty alternative sharing an offset with an empty match must be found");
+  Expect(result.results[0].column == 0 && result.results[0].match_preview_length == 3,
+         "the recovered match should be the non-empty `foo` at column 0");
+}
+
 void TestProjectSearchServiceHiddenAndBinaryFiles() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -570,6 +591,8 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServiceNormalizesPreviewWhitespace);
   AddTest(tests, "ProjectSearchService/RegexModeAndInvalidRegex",
           TestProjectSearchServiceRegexModeAndInvalidRegex);
+  AddTest(tests, "ProjectSearchService/RegexEmptyMatchDoesNotHideRealMatch",
+          TestProjectSearchServiceRegexEmptyMatchDoesNotHideRealMatch);
   AddTest(tests, "ProjectSearchService/HiddenAndBinaryFiles",
           TestProjectSearchServiceHiddenAndBinaryFiles);
   AddTest(tests, "ProjectSearchService/ExcludesIgnoredFilesByDefault",

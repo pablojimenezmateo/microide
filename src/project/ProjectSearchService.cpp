@@ -61,6 +61,22 @@ bool FindNextRegexMatch(const util::CompiledRegex& pattern,
       return false;
     }
     if (range.start == range.end) {
+      // PCRE2 returned the leftmost match and it is empty. There is no match of
+      // any kind before range.start, but a non-empty alternative may begin at the
+      // SAME offset (e.g. `x?|foo` on "foo": the leftmost `x?` matches empty at 0,
+      // yet `foo` also starts at 0). The naive "advance one byte" idiom loses it.
+      // Retry anchored at range.start rejecting an empty match to recover it.
+      const int anchored_rc = pattern.Match(line, range.start, *match_data,
+                                            PCRE2_NOTEMPTY_ATSTART | PCRE2_ANCHORED);
+      util::RegexMatchRange anchored;
+      if (anchored_rc >= 0 && pattern.CaptureRange(*match_data, line.size(), &anchored) &&
+          anchored.start != anchored.end) {
+        *match_start = anchored.start;
+        *match_end = anchored.end;
+        *search_from = anchored.end;
+        return true;
+      }
+      // No non-empty match here; skip the pure empty match and advance one byte.
       *search_from = range.end < line.size() ? range.end + 1 : line.size() + 1;
       continue;
     }

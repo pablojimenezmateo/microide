@@ -1359,6 +1359,50 @@ void TestTextViewportReplaceAllMultiMatchRespectsUnequalLengths() {
   }
 }
 
+void TestTextViewportReplaceAllMultiLineReplacementSplitsLines() {
+  // Regression: a replacement containing a newline used to be stuffed into a single
+  // logical line via SetLine, leaving the PieceTree's line_count disagreeing with
+  // the buffer (an embedded '\n' inside one "line"), which corrupts later edits and
+  // undo. It must splice in as real physical lines instead.
+  {
+    TextViewport viewport;
+    viewport.LoadContent("x", "/tmp/replace-newline.txt");
+    const std::size_t replaced = viewport.ReplaceAll("x", "a\nb");
+    Expect(replaced == 1, "single match with a multi-line replacement counts once");
+    Expect(viewport.line_count() == 2, "a newline replacement must expand into two lines");
+    Expect(viewport.lines()[0] == "a" && viewport.lines()[1] == "b",
+           "multi-line replacement must produce real lines, not an embedded newline");
+    // Line views never contain a newline when line_count is consistent.
+    Expect(std::string(viewport.lines()[0]).find('\n') == std::string::npos &&
+               std::string(viewport.lines()[1]).find('\n') == std::string::npos,
+           "no line should hide an embedded newline");
+  }
+  {
+    // Across several source lines, and CRLF in the replacement is normalized.
+    TextViewport viewport;
+    viewport.LoadContent("foo\nbar\nfoo", "/tmp/replace-newline-multi.txt");
+    const std::size_t replaced = viewport.ReplaceAll("foo", "one\r\ntwo");
+    Expect(replaced == 2, "both foo matches replaced");
+    Expect(viewport.line_count() == 5,
+           "two single->double line expansions plus the untouched middle line");
+    Expect(viewport.lines()[0] == "one" && viewport.lines()[1] == "two" &&
+               viewport.lines()[2] == "bar" && viewport.lines()[3] == "one" &&
+               viewport.lines()[4] == "two",
+           "multi-line replacements must splice correctly around unchanged lines");
+  }
+  {
+    // Undo must restore the original buffer exactly after a multi-line replace.
+    TextViewport viewport;
+    viewport.LoadContent("x\ny", "/tmp/replace-newline-undo.txt");
+    viewport.ReplaceAll("x", "a\nb");
+    Expect(viewport.line_count() == 3, "replacement expanded the first line");
+    viewport.Undo();
+    Expect(viewport.line_count() == 2 && viewport.lines()[0] == "x" &&
+               viewport.lines()[1] == "y",
+           "undo must restore the pre-replacement buffer exactly");
+  }
+}
+
 void TestRuntimeSyntaxDetectFiletypeDisambiguatesCppHeader() {
   const std::vector<std::string> lines = {
       "#pragma once",
@@ -2783,6 +2827,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument);
   AddTest(tests, "TextViewport/ReplaceAllMultiMatchRespectsUnequalLengths",
           TestTextViewportReplaceAllMultiMatchRespectsUnequalLengths);
+  AddTest(tests, "TextViewport/ReplaceAllMultiLineReplacementSplitsLines",
+          TestTextViewportReplaceAllMultiLineReplacementSplitsLines);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeDisambiguatesCppHeader",
           TestRuntimeSyntaxDetectFiletypeDisambiguatesCppHeader);
   AddTest(tests, "TextViewport/RuntimeSyntaxCarriesRegionAcrossBlankLine",

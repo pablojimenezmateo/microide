@@ -12,8 +12,10 @@
 #include <chrono>
 #include <condition_variable>
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -263,14 +265,21 @@ struct LspClient::Impl {
       if (!std::isdigit(static_cast<unsigned char>(text[i]))) {
         continue;
       }
-      int value = 0;
+      // Accumulate in 64-bit and saturate: the digit run comes from
+      // server-controlled $/progress text, so a long run would overflow a plain
+      // int (signed-overflow UB). Clamp to INT_MAX — the exact count past that is
+      // meaningless for a readiness heuristic.
+      std::int64_t value = 0;
       std::size_t cursor = i;
       while (cursor < text.size() &&
              std::isdigit(static_cast<unsigned char>(text[cursor]))) {
         value = value * 10 + (text[cursor] - '0');
+        if (value > std::numeric_limits<int>::max()) {
+          value = std::numeric_limits<int>::max();
+        }
         ++cursor;
       }
-      return value;
+      return static_cast<int>(value);
     }
     return 0;
   }

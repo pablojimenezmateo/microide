@@ -55,6 +55,13 @@ constexpr std::size_t kMaxInboundQueued = 4096;
 // and poll set without sending a byte.
 constexpr std::size_t kMaxConnections = 128;
 
+// Upper bound on a single connection's pending write buffer. A client that stops
+// reading (or reads slowly) while the host keeps broadcasting — e.g. a chatty
+// debug session streaming stdout via EmitEvent/Broadcast — otherwise grows
+// write_buf without limit once the socket send buffer fills and every send()
+// returns EAGAIN. At the cap we shed the connection, mirroring the read side.
+constexpr std::size_t kMaxWriteBufferBytes = 8u << 20;
+
 void SetNonBlocking(int fd) {
   const int flags = ::fcntl(fd, F_GETFL, 0);
   if (flags >= 0) {
@@ -79,6 +86,10 @@ struct ControlSocketServer::Impl {
     // read_closed / linger_deadline are I/O-thread-only.
     std::atomic<int> in_flight{0};
     bool read_closed = false;  // peer closed its write side; flush then reap
+    // Set (release) by SendLine/Broadcast when write_buf would exceed
+    // kMaxWriteBufferBytes; the I/O thread observes it (acquire) and reaps the
+    // connection. A slow/stalled reader must not grow host memory without bound.
+    std::atomic<bool> write_overflow{false};
     std::chrono::steady_clock::time_point linger_deadline{};
   };
 
@@ -264,6 +275,10 @@ struct ControlSocketServer::Impl {
         }
         if ((revents & POLLHUP) != 0 && conn->read_buf.empty()) {
           conn->read_closed = true;
+        }
+        // A stalled reader that overflowed its write buffer is shed here.
+        if (!hard_drop && conn->write_overflow.load(std::memory_order_acquire)) {
+          hard_drop = true;
         }
         // Always attempt to flush; send() on a non-writable socket is a cheap
         // EAGAIN. A hard write error means the peer is gone for good.
@@ -512,8 +527,14 @@ void ControlSocketServer::SendLine(std::uint64_t connection_id, const std::strin
   }
   {
     std::lock_guard<std::mutex> lock(conn->out_mutex);
-    conn->write_buf.append(line);
-    conn->write_buf.push_back('\n');
+    if (conn->write_buf.size() + line.size() + 1 > kMaxWriteBufferBytes) {
+      // Reader is stalled; shed rather than grow host memory without bound. Drop
+      // this reply and flag the connection for reap on the I/O thread.
+      conn->write_overflow.store(true, std::memory_order_release);
+    } else {
+      conn->write_buf.append(line);
+      conn->write_buf.push_back('\n');
+    }
   }
   // One reply per accepted request: balance the IngestReadBuffer increment so a
   // half-closed connection can be reaped once its replies have all been queued.
@@ -532,6 +553,12 @@ void ControlSocketServer::Broadcast(const std::string& line) {
   }
   for (const std::shared_ptr<Impl::Connection>& conn : snapshot) {
     std::lock_guard<std::mutex> lock(conn->out_mutex);
+    if (conn->write_buf.size() + line.size() + 1 > kMaxWriteBufferBytes) {
+      // Slow/stalled reader: drop the event and flag for reap rather than grow
+      // host memory. A chatty debug session must not OOM the host on one client.
+      conn->write_overflow.store(true, std::memory_order_release);
+      continue;
+    }
     conn->write_buf.append(line);
     conn->write_buf.push_back('\n');
   }

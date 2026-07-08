@@ -15,10 +15,13 @@ std::string ToSlash(const std::filesystem::path& path) {
   return path.lexically_normal().generic_string();
 }
 
-// Glob matcher honoring fnmatch's FNM_PATHNAME semantics: '*' and '?' do not
-// cross '/' boundaries, '[...]' classes match a single non-separator char,
-// and '\\' escapes the next pattern character. Implemented in-tree because
-// MinGW/UCRT does not ship <fnmatch.h>.
+// Glob matcher honoring fnmatch's FNM_PATHNAME semantics: a single '*' and '?' do
+// not cross '/' boundaries, '[...]' classes match a single non-separator char, and
+// '\\' escapes the next pattern character. A segment-anchored '**' (git's "match
+// across any number of directories" wildcard — at pattern start, at end, or bounded
+// by '/' on both sides) does cross '/', and a '**/' prefix/segment may also match
+// zero directories. Implemented in-tree because MinGW/UCRT does not ship
+// <fnmatch.h>.
 bool GlobMatches(std::string_view pattern, std::string_view text) {
   const std::size_t plen = pattern.size();
   const std::size_t tlen = text.size();
@@ -26,13 +29,31 @@ bool GlobMatches(std::string_view pattern, std::string_view text) {
   std::size_t ti = 0;
   std::size_t star_pi = std::string_view::npos;
   std::size_t star_ti = 0;
+  bool star_cross_slash = false;  // the pending '*' backtrack may consume '/'
 
   while (ti < tlen) {
     if (pi < plen) {
       const char pc = pattern[pi];
       if (pc == '*') {
-        star_pi = ++pi;
+        // Consume the whole run of '*'. A run of two or more that forms a complete
+        // path segment ('**') matches across '/'; anything else behaves as '*'.
+        const std::size_t star_start = pi;
+        std::size_t star_count = 0;
+        while (pi < plen && pattern[pi] == '*') {
+          ++pi;
+          ++star_count;
+        }
+        const bool before_ok = star_start == 0 || pattern[star_start - 1] == '/';
+        const bool after_ok = pi == plen || pattern[pi] == '/';
+        const bool segment_doublestar = star_count >= 2 && before_ok && after_ok;
+        if (segment_doublestar && pi < plen && pattern[pi] == '/') {
+          // '**/' can match zero directories: fold the following '/' into the
+          // wildcard so the pattern can resume with nothing consumed from text.
+          ++pi;
+        }
+        star_pi = pi;
         star_ti = ti;
+        star_cross_slash = segment_doublestar;
         continue;
       }
       if (pc == '?') {
@@ -98,7 +119,7 @@ bool GlobMatches(std::string_view pattern, std::string_view text) {
         }
       }
     }
-    if (star_pi != std::string_view::npos && text[star_ti] != '/') {
+    if (star_pi != std::string_view::npos && (star_cross_slash || text[star_ti] != '/')) {
       pi = star_pi;
       ti = ++star_ti;
       continue;

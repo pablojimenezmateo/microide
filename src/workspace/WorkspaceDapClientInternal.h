@@ -299,7 +299,11 @@ struct DapClient::Impl {
     if (test_stub_mode.load(std::memory_order_acquire)) {
       return true;
     }
-    if (!proc.IsRunning()) {
+    // Refuse once the io_thread has stopped draining. An adapter that closes its
+    // stdout but stays alive makes IoMain exit on EOF while proc.IsRunning() stays
+    // true; without the stop_io check we would keep queuing requests no thread will
+    // ever send or time out, so their callbacks (and the UI loading state) hang.
+    if (stop_io.load(std::memory_order_acquire) || !proc.IsRunning()) {
       return false;
     }
     outbound_messages.push_back(QueuedMessage{.serialized = {},
@@ -480,6 +484,12 @@ struct DapClient::Impl {
       FailPendingRequests(/*only_expired=*/false);
       main_mailbox.PushWake();
     }
+    // The io_thread is exiting (EOF / fatal read / runaway buffer). Signal that no
+    // thread is draining outbound anymore so the send path refuses further requests
+    // instead of stranding them — covers an adapter that closed stdout but is still
+    // alive, where proc.IsRunning() alone would keep accepting sends. DoInitialize
+    // resets this to false before spawning a fresh io_thread on restart.
+    stop_io.store(true, std::memory_order_release);
   }
 
   // --- dispatch -------------------------------------------------------------

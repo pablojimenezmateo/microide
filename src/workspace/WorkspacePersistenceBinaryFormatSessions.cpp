@@ -174,7 +174,10 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                    if (!reader.ReadU32(&value) || reader.remaining() != 0) {
                      return false;
                    }
-                   state->sidebar_scroll_row = static_cast<int>(value);
+                   // Encode clamps to >= 0 then writes u32; a forged 0xFFFFFFFF
+                   // must not decode to a negative row. Cap at INT_MAX.
+                   state->sidebar_scroll_row = static_cast<int>(
+                       std::min(value, static_cast<std::uint32_t>(std::numeric_limits<int>::max())));
                    return true;
                  }
                  case ProjectSessionTag::SidebarViewId:

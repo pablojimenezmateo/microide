@@ -93,6 +93,38 @@ void TestIgnoreMatcherExcludeGlobsAndReinclude() {
 
 }  // namespace
 
+void TestIgnoreMatcherDoubleStarCrossesDirectories() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root);
+  // `**/build` must match build at any depth (git semantics), including the repo
+  // root; a nested `a/**/b` must match across zero or more directories; `logs/**`
+  // must match everything under logs. A single '*' must still stay in one segment.
+  WriteFile(root / ".gitignore",
+            "**/build\nsrc/**/generated\nlogs/**\ndocs/*.md\n");
+
+  IgnoreMatcher matcher;
+  matcher.SetRoot(root);
+
+  Expect(matcher.Ignored("build", true), "**/build should match build at the repo root");
+  Expect(matcher.Ignored("a/build", true), "**/build should match a depth-1 build");
+  Expect(matcher.Ignored("a/b/build", true), "**/build should match a deeply nested build");
+
+  Expect(matcher.Ignored("src/generated", true), "a/**/b should match with zero directories");
+  Expect(matcher.Ignored("src/x/generated", true), "a/**/b should match one directory");
+  Expect(matcher.Ignored("src/x/y/generated", true), "a/**/b should match many directories");
+  Expect(!matcher.Ignored("other/generated", false),
+         "src/**/generated must not match a different top segment");
+
+  Expect(matcher.Ignored("logs/today.txt", false), "logs/** should match a direct child");
+  Expect(matcher.Ignored("logs/2026/07/today.txt", false),
+         "logs/** should match a deeply nested child");
+
+  Expect(matcher.Ignored("docs/readme.md", false), "docs/*.md should match a direct child");
+  Expect(!matcher.Ignored("docs/sub/readme.md", false),
+         "a single '*' must not cross a '/' boundary");
+}
+
 void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests) {
   AddTest(tests, "IgnoreMatcher/NestedGitignoreBasePrefix",
           TestIgnoreMatcherNestedGitignoreBasePrefix);
@@ -102,6 +134,8 @@ void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests) {
           TestIgnoreMatcherDefaultRulesGrayVcsAndBuildDirs);
   AddTest(tests, "IgnoreMatcher/ExcludeGlobsAndReinclude",
           TestIgnoreMatcherExcludeGlobsAndReinclude);
+  AddTest(tests, "IgnoreMatcher/DoubleStarCrossesDirectories",
+          TestIgnoreMatcherDoubleStarCrossesDirectories);
 }
 
 }  // namespace microide::tests

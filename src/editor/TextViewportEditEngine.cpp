@@ -246,14 +246,22 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
 
   const ViewState before_state = CaptureViewState();
   const std::string lowered_needle = util::ToLowerAscii(needle);
+  // A replacement carrying a line break turns one source line into several
+  // physical lines. Splitting it (below) keeps the PieceTree line_count consistent
+  // instead of stuffing an embedded '\n' inside a single logical line — which
+  // would leave LineCount() disagreeing with the buffer and corrupt later edits.
+  const bool replacement_has_break =
+      replacement.find('\n') != std::string_view::npos ||
+      replacement.find('\r') != std::string_view::npos;
   std::size_t replacements = 0;
   std::size_t first_changed_line = document_->lines.size();
   std::size_t last_changed_line = 0;
   std::vector<std::string> before_changed_lines;
+  std::vector<std::string> after_changed_lines;
 
-  // Build the final document state in one pass per line, bypassing ApplyRangeEdit
-  // so that InvalidateDerivedCaches / RefreshEncoding are called once at the end
-  // rather than once per replacement.
+  // Build the final content of the changed span in one pass, then apply it with a
+  // single ReplaceLineRange so InvalidateDerivedCaches / RefreshEncoding run once
+  // and multi-line replacements splice in as real lines.
   std::string new_line;
   std::string lowered_line;  // reused across lines to avoid a per-line allocation
   for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
@@ -280,19 +288,32 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
       offset = lowered_line.find(lowered_needle, copy_from);
     }
     new_line.append(current_line, copy_from);
+
     if (first_changed_line == document_->lines.size()) {
       first_changed_line = line_index;
-    } else if (line_index > last_changed_line + 1) {
+    } else {
+      // Carry the unchanged gap lines between the previous changed line and this
+      // one so the before/after spans stay contiguous for a single range edit.
       for (std::size_t gap = last_changed_line + 1; gap < line_index; ++gap) {
-        before_changed_lines.emplace_back(document_->lines.LineView(gap));
+        std::string gap_line(document_->lines.LineView(gap));
+        before_changed_lines.push_back(gap_line);
+        after_changed_lines.push_back(std::move(gap_line));
       }
     }
     before_changed_lines.push_back(std::move(current_line));
+    if (replacement_has_break) {
+      for (std::string& piece : util::SplitLines(new_line)) {
+        after_changed_lines.push_back(std::move(piece));
+      }
+    } else {
+      after_changed_lines.push_back(new_line);
+    }
     last_changed_line = line_index;
-    document_->lines.SetLine(line_index, std::move(new_line));
   }
 
   if (replacements > 0) {
+    document_->lines.ReplaceLineRange(first_changed_line, before_changed_lines.size(),
+                                      after_changed_lines);
     document_->dirty = true;
     undo_history_.ClearRedo();
     RefreshEncoding();
@@ -302,7 +323,7 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
     PushHistoryEntry(HistoryEntry{
         .start_line = first_changed_line,
         .before_lines = std::move(before_changed_lines),
-        .after_lines = document_->lines.SliceLines(first_changed_line, last_changed_line + 1),
+        .after_lines = std::move(after_changed_lines),
         .before_state = before_state,
         .after_state = after_state,
     });

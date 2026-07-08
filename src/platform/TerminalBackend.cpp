@@ -269,8 +269,16 @@ class PosixTerminalBackend final : public TerminalBackend {
       break;
     }
 
-    int status = 0;
-    while (waitpid(child_pid, &status, 0) < 0 && errno == EINTR) {
+    // Reap only on a natural exit. When Stop() drives shutdown it sets
+    // stop_requested_ (release) before waking us and then reaps the child itself
+    // via RequestTerminalChildShutdown; calling waitpid here too would run a
+    // second reaper on the same pid concurrently (and risk a reap-then-signal
+    // pid-reuse window). stop_requested_ is set before the wake that unblocked
+    // poll(), so an acquire load here observes it whenever Stop() is the reaper.
+    if (!stop_requested_.load(std::memory_order_acquire)) {
+      int status = 0;
+      while (waitpid(child_pid, &status, 0) < 0 && errno == EINTR) {
+      }
     }
 
     running_.store(false, std::memory_order_release);

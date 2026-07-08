@@ -49,6 +49,7 @@ class PrimitiveWriter {
   bool WriteU32(std::uint32_t value);
   bool WriteI32(std::int32_t value);
   bool WriteI64(std::int64_t value);
+  bool WriteU64(std::uint64_t value);
   bool WriteF32(float value);
   bool WriteBool(bool value);
   bool WriteString(std::string_view value);
@@ -88,6 +89,7 @@ class PrimitiveReader {
   bool ReadU32(std::uint32_t* value);
   bool ReadI32(std::int32_t* value);
   bool ReadI64(std::int64_t* value);
+  bool ReadU64(std::uint64_t* value);
   bool ReadF32(float* value);
   bool ReadBool(bool* value);
   bool ReadString(std::string* value);

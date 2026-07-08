@@ -169,6 +169,14 @@ bool PrimitiveWriter::WriteI64(std::int64_t value) {
   return true;
 }
 
+bool PrimitiveWriter::WriteU64(std::uint64_t value) {
+  if (out_ == nullptr) {
+    return false;
+  }
+  AppendLe<std::uint64_t>(out_, value);
+  return true;
+}
+
 bool PrimitiveWriter::WriteF32(float value) {
   std::uint32_t encoded = 0;
   static_assert(sizeof(encoded) == sizeof(value));
@@ -201,7 +209,9 @@ bool PrimitiveWriter::WritePath(const std::filesystem::path& path) {
 }
 
 bool PrimitiveReader::ReadBytes(std::span<std::byte> target) {
-  if (offset_ + target.size() > input_.size()) {
+  // offset_ <= input_.size() is an invariant, so subtract rather than add: on a
+  // 32-bit size_t, offset_ + size could wrap and pass a naive check.
+  if (target.size() > input_.size() - offset_) {
     return false;
   }
   std::copy_n(input_.begin() + static_cast<std::ptrdiff_t>(offset_), target.size(),
@@ -251,6 +261,13 @@ bool PrimitiveReader::ReadI64(std::int64_t* value) {
   return true;
 }
 
+bool PrimitiveReader::ReadU64(std::uint64_t* value) {
+  if (value == nullptr) {
+    return false;
+  }
+  return ReadLe<std::uint64_t>(input_, &offset_, value);
+}
+
 bool PrimitiveReader::ReadF32(float* value) {
   if (value == nullptr) {
     return false;
@@ -290,7 +307,8 @@ bool PrimitiveReader::ReadString(std::string* value) {
     return false;
   }
   std::uint32_t size = 0;
-  if (!ReadU32(&size) || offset_ + size > input_.size()) {
+  // offset_ <= input_.size() invariant → subtract to avoid a 32-bit size_t wrap.
+  if (!ReadU32(&size) || size > input_.size() - offset_) {
     return false;
   }
   // Bounds checked above (offset_ + size <= input_.size()); copy the run in one shot.

@@ -142,10 +142,15 @@ MergeFileConflictMetadata ClassifyMergeFileConflict(
   if (kind == MergeFileConflictKind::Unknown) {
     if (!input.base_exists && input.incoming_exists && input.current_exists) {
       kind = MergeFileConflictKind::BothAdded;
-    } else if (!input.incoming_exists && input.current_exists) {
+    } else if (input.base_exists && !input.incoming_exists && input.current_exists) {
       kind = MergeFileConflictKind::DeletedByThem;
-    } else if (input.incoming_exists && !input.current_exists) {
+    } else if (input.base_exists && input.incoming_exists && !input.current_exists) {
       kind = MergeFileConflictKind::DeletedByUs;
+    } else if (!input.base_exists && !input.incoming_exists && input.current_exists) {
+      // No base: a side that has the file added it — this is not a delete.
+      kind = MergeFileConflictKind::AddedByUs;
+    } else if (!input.base_exists && input.incoming_exists && !input.current_exists) {
+      kind = MergeFileConflictKind::AddedByThem;
     } else if (input.incoming_exists && input.current_exists) {
       kind = MergeFileConflictKind::BothModified;
     }

@@ -86,6 +86,48 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "reloaded review state should restore reviewed file");
                    }});
 
+  tests.push_back({"BranchReviewState/HighBitContentHashSurvivesRoundTrip",
+                   [] {
+                     // Regression: content_hash is a full-range std::hash result, so
+                     // its top bit is set ~half the time. It must survive binary
+                     // encode/decode; a signed >= 0 guard on decode used to reject a
+                     // high-bit hash and discard the ENTIRE project-config record.
+                     const BranchReviewTargetIdentity target =
+                         MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 7);
+                     compare::BranchReviewHunkIdentity identity;
+                     identity.path = std::filesystem::path("hi.cpp");
+                     identity.old_start = 1;
+                     identity.old_count = 2;
+                     identity.new_start = 3;
+                     identity.new_count = 4;
+                     identity.content_hash = 0x8000000000000001ULL;  // top bit set
+
+                     BranchReviewStateService service;
+                     service.MarkHunkReviewed(target, identity);
+
+                     PersistedProjectConfigState persisted{
+                         .project_base_color = std::nullopt,
+                         .settings = {},
+                         .sidebar_policies = {},
+                         .commit_draft = std::nullopt,
+                         .branch_review = ToPersistedBranchReviewState(service),
+                     };
+                     std::vector<std::byte> encoded;
+                     Expect(EncodeProjectConfigRecord(persisted, &encoded),
+                            "project config with reviewed hunk should encode");
+
+                     PersistedProjectConfigState decoded;
+                     Expect(DecodeProjectConfigRecord(encoded, &decoded),
+                            "high-bit content_hash must not fail whole-record decode");
+                     Expect(decoded.branch_review.targets.size() == 1,
+                            "target should round-trip");
+                     Expect(decoded.branch_review.targets[0].reviewed_hunks.size() == 1,
+                            "reviewed hunk should round-trip");
+                     Expect(decoded.branch_review.targets[0].reviewed_hunks[0].identity.content_hash ==
+                                0x8000000000000001ULL,
+                            "high-bit content_hash must be preserved exactly");
+                   }});
+
   tests.push_back({"BranchReviewState/ClearTargetPreservesOtherTargets",
                    [] {
                      const BranchReviewTargetIdentity active =

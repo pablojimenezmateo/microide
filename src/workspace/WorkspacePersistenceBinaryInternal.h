@@ -846,7 +846,7 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
          AppendRecord(BranchReviewHunkIdentityTag::NewCount,
                       [&](PrimitiveWriter& w) { return w.WriteI32(identity.new_count); }, out) &&
          AppendRecord(BranchReviewHunkIdentityTag::ContentHash,
-                      [&](PrimitiveWriter& w) { return w.WriteI64(identity.content_hash); }, out);
+                      [&](PrimitiveWriter& w) { return w.WriteU64(identity.content_hash); }, out);
 }
 
 [[maybe_unused]] bool DecodeBranchReviewHunkIdentity(std::span<const std::byte> input,
@@ -869,11 +869,12 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
             return reader.ReadI32(&identity->new_start) && reader.remaining() == 0;
           case BranchReviewHunkIdentityTag::NewCount:
             return reader.ReadI32(&identity->new_count) && reader.remaining() == 0;
-          case BranchReviewHunkIdentityTag::ContentHash: {
-            std::int64_t hash = 0;
-            return reader.ReadI64(&hash) && reader.remaining() == 0 && hash >= 0 &&
-                   (identity->content_hash = static_cast<std::uint64_t>(hash), true);
-          }
+          case BranchReviewHunkIdentityTag::ContentHash:
+            // content_hash is a full-range std::hash result; the top bit is set
+            // ~half the time. Read it as unsigned so a high-bit hash is preserved
+            // instead of failing a signed >= 0 guard and discarding the whole
+            // project-config record. Wire bytes match the prior WriteI64 memcpy.
+            return reader.ReadU64(&identity->content_hash) && reader.remaining() == 0;
         }
         return true;
       });
