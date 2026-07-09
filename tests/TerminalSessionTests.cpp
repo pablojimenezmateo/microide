@@ -926,6 +926,20 @@ void TestTerminalMouseEncodingUsesExactByteSequences() {
   Expect(EncodeTerminalMouseEvent(request, bytes), "SGR mouse encoding should emit CSI sequences");
   Expect(bytes == "\x1b[<6;7;5M",
          "SGR mouse encoding should include button code, column, row, and trailing M");
+
+  // SGR (1006) release must PRESERVE the button number in Pb and signal release
+  // via the trailing 'm' — unlike the legacy encoding, it must not collapse to the
+  // ambiguous button-3 code. Left release stays button 0; the 'm' distinguishes it.
+  request.mouse_sgr_ext_mode = true;
+  request.button = TerminalMouseButton::Left;
+  request.pressed = false;
+  request.motion = false;
+  request.row = 4;
+  request.column = 6;
+  request.modifiers = SDL_KMOD_NONE;
+  Expect(EncodeTerminalMouseEvent(request, bytes), "SGR mouse release should encode");
+  Expect(bytes == "\x1b[<0;7;5m",
+         "SGR mouse release must keep the real button (0) and use trailing m, not code 3");
 }
 
 void TestTerminalSessionMouseEncodingUsesExactByteSequences() {
@@ -1159,6 +1173,60 @@ void TestTerminalSessionEraseSavedLinesKeepsVisibleScreen() {
   Expect(after.back().cells.size() >= 2 && after.back().cells[0].ascii_character() == 'L' &&
              after.back().cells[1].ascii_character() == '5',
          "3J must preserve the last visible line ('L5')");
+}
+
+// IL/DL outside the vertical scroll margins must be a no-op on the alternate
+// screen (DEC STD 070). Regression for the fall-through that ran the primary-screen
+// insert, growing the fixed-height alt grid past rows_ and eventually trimming real
+// content off the top.
+void TestTerminalSessionInsertLineOutsideRegionIsNoOpOnAltScreen() {
+  microide::terminal::TerminalSession session;
+  ResetAlternateScreenFixture(session);  // 4-row alt grid: A,B,C,D
+
+  // Scroll region rows 2..3 (1-based) => 0-based [1,2]; put the cursor on row 0
+  // (above the region), then issue IL. It must do nothing.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;3r\x1b[1;1H\x1b[L");
+  auto lines = session.SnapshotLines();
+  Expect(lines.size() == 4, "IL above the scroll margins must not grow the alt grid");
+  ExpectLineText(lines, 0, "A", "IL outside the region must leave row 0 untouched");
+  ExpectLineText(lines, 3, "D", "IL outside the region must leave the bottom row untouched");
+
+  // Same for DL below the region: cursor on row 3 (below [1,2]) then DL.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[4;1H\x1b[M");
+  lines = session.SnapshotLines();
+  Expect(lines.size() == 4, "DL below the scroll margins must not shrink/resize the alt grid");
+  ExpectLineText(lines, 0, "A", "DL outside the region must leave row 0 untouched");
+  ExpectLineText(lines, 3, "D", "DL outside the region must leave the bottom row untouched");
+}
+
+// DSR/CPR (`CSI 6n`) at the pending-wrap (LCF) column, where cursor_column_ ==
+// columns_, must report the last on-screen column, never one past the right edge.
+void TestTerminalSessionReportsPendingWrapColumnClamped() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  // Move to the last column (80, 1-based) and print a glyph; without autowrap
+  // advancing the row this leaves the cursor in the pending-wrap state at col 80.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;80HX\x1b[6n");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[1;80R",
+         "CPR at the pending-wrap column must report column 80, not 81");
+}
+
+// HTS-set custom tab stops must survive a resize (xterm behaviour); only the
+// newly-exposed columns get the default every-8 stops. Regression for the resize
+// path unconditionally rebuilding the tab-stop table.
+void TestTerminalSessionResizePreservesCustomTabStops() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  // Set a custom tab stop at column 3 (1-based col 4) via HTS (ESC H), which is not
+  // a default every-8 stop.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;4H\x1bH");
+  session.Resize(24, 100);
+  // From column 0 the next tab must still land on the custom stop at column 3.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;1H\t");
+  Expect(session.cursor_column() == 3,
+         "a resize must preserve custom HTS tab stops, not reset to every-8");
 }
 
 // Resilience: IL (`CSI Ps L`) inserts blank lines; a huge parameter must not
@@ -1413,6 +1481,12 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionEraseSavedLinesKeepsVisibleScreen);
   AddTest(tests, "TerminalSession/InsertLinesClampsToHeight",
           TestTerminalSessionInsertLinesClampsToHeight);
+  AddTest(tests, "TerminalSession/InsertLineOutsideRegionIsNoOpOnAltScreen",
+          TestTerminalSessionInsertLineOutsideRegionIsNoOpOnAltScreen);
+  AddTest(tests, "TerminalSession/ReportsPendingWrapColumnClamped",
+          TestTerminalSessionReportsPendingWrapColumnClamped);
+  AddTest(tests, "TerminalSession/ResizePreservesCustomTabStops",
+          TestTerminalSessionResizePreservesCustomTabStops);
   AddTest(tests, "TerminalSession/CursorDownClampsPrimaryScreen",
           TestTerminalSessionCursorDownClampsPrimaryScreen);
   AddTest(tests, "TerminalSession/MouseRoutingRequiresTrackingMode",

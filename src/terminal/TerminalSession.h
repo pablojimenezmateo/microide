@@ -211,6 +211,7 @@ class TerminalSession {
   int QueryPrivateModeStateLocked(int mode) const;
   bool ConsumeWakeDecisionLocked();
   void ResetTabStopsLocked();
+  void ResizeTabStopsLocked();
   std::size_t NextTabStopLocked(std::size_t column) const;
   std::size_t PreviousTabStopLocked(std::size_t column) const;
   void SendBytesLocked(std::string_view bytes);

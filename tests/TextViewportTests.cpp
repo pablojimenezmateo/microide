@@ -2663,7 +2663,35 @@ void TestTextViewportDoubleSaveRebaselines() {
   std::filesystem::remove(path);
 }
 
+// Regression: vertical caret movement must preserve the target column even when
+// the view is horizontally scrolled. The non-soft-wrap branch of
+// ResolveSoftWrapCursorColumnForTargetRow used to add horizontal_scroll_ to the
+// (already absolute) preferred column, double-counting the scroll and marching the
+// caret to end-of-line. Invisible whenever horizontal_scroll_ == 0.
+void TestTextViewportVerticalMovePreservesColumnWhenScrolled() {
+  TextViewport viewport;
+  const std::string long_line(200, 'a');
+  viewport.LoadContent(long_line + "\n" + long_line + "\n" + long_line + "\n", "/tmp/wide.txt");
+  viewport.SetSoftWrap(false);
+  viewport.SetViewportSize(10, 80);
+
+  viewport.MoveCursorTo(1, 150);
+  Expect(viewport.horizontal_scroll() > 0,
+         "a caret past the viewport width should force a non-zero horizontal scroll");
+
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 150,
+         "moving down while horizontally scrolled must preserve the target column (150)");
+
+  viewport.MoveCursorTo(1, 150);
+  viewport.MoveCursorVertical(-1);
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 150,
+         "moving up while horizontally scrolled must preserve the target column (150)");
+}
+
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextViewport/VerticalMovePreservesColumnWhenScrolled",
+          TestTextViewportVerticalMovePreservesColumnWhenScrolled);
   AddTest(tests, "TextViewport/UndoPastSaveMarksDirty",
           TestTextViewportUndoPastSaveMarksDirty);
   AddTest(tests, "TextViewport/SaveAboveUndoneEditsDirtiesRedo",

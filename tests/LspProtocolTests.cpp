@@ -68,6 +68,14 @@ void TestLspProtocolParsesDiagnosticSeverityDefault() {
       Json(R"({"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":2}},
                "message":"oops"})");
   Expect(codec::ParseDiagnostic(no_severity).severity == 1, "missing severity defaults to error");
+
+  // LSP Diagnostic.code is `integer | string`. A numeric code (e.g. TypeScript's
+  // 2304) must be captured as text, not silently dropped by AsString().
+  const JsonValue int_code =
+      Json(R"({"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":2}},
+               "message":"cannot find name","severity":1,"code":2304})");
+  Expect(codec::ParseDiagnostic(int_code).code == "2304",
+         "integer diagnostic code must be preserved as its decimal string");
 }
 
 void TestLspProtocolParsesDocumentSymbolShapes() {

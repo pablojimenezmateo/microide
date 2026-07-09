@@ -71,7 +71,11 @@ LspClient::Diagnostic ParseDiagnostic(const JsonValue& value) {
   diagnostic.range = ParseRange(value["range"]);
   diagnostic.message = value["message"].AsString();
   diagnostic.severity = static_cast<int>(value["severity"].AsInt(1));
-  diagnostic.code = value["code"].AsString();
+  // LSP `Diagnostic.code` is `integer | string`. Many servers (TypeScript's 2304,
+  // and most compiler-backed servers) report a numeric code; AsString() yields ""
+  // for those, silently dropping the code from the UI. Capture the int form too.
+  const JsonValue& code = value["code"];
+  diagnostic.code = code.IsInt() ? std::to_string(code.AsInt()) : code.AsString();
   return diagnostic;
 }
 

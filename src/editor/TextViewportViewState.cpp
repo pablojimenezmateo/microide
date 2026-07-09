@@ -394,7 +394,11 @@ std::size_t TextViewport::ResolveSoftWrapCursorColumnForTargetRow(
   const std::size_t clamped_row = std::min(target_row, row_count - 1);
   const WrappedRowLayout target = WrappedRowAt(clamped_row);
   if (!soft_wrap_) {
-    return horizontal_scroll_ + preferred_column;
+    // preferred_column is already an ABSOLUTE visual column (PreferredColumnForCaret
+    // returns the absolute visual in the non-wrap case), so it must be returned as
+    // is. Adding horizontal_scroll_ double-counted the scroll offset and marched the
+    // caret past the intended column — invisible only while horizontal_scroll_ == 0.
+    return preferred_column;
   }
   if (target.visual_end <= target.visual_start) {
     return target.visual_start;

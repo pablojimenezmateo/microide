@@ -65,8 +65,13 @@ bool EncodeTerminalMouseEvent(const TerminalMouseEncodeRequest& request, std::st
       break;
   }
 
-  if (!request.pressed && !request.motion && request.button != TerminalMouseButton::WheelUp &&
+  if (!request.mouse_sgr_ext_mode && !request.pressed && !request.motion &&
+      request.button != TerminalMouseButton::WheelUp &&
       request.button != TerminalMouseButton::WheelDown) {
+    // Legacy X10/normal encoding cannot distinguish which button was released, so
+    // it collapses every release to the ambiguous button-3 code. SGR (1006) mode
+    // must NOT: it signals release via the trailing 'm' and keeps the real button
+    // number in Pb, so gate this override off when SGR extended reporting is on.
     code = 3;
   }
   if (request.motion) {

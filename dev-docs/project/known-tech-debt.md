@@ -72,6 +72,10 @@ as benign/cosmetic or as design constraints rather than live defects:
   incremental-sync path to fix an inconsistency with no demonstrable wrong-position
   outcome (speed is the priority). **Blocked on:** a demonstrated corruption case, or
   doing the transform only when `line_ending() == CRLF` if a case ever surfaces.
+  (Re-confirmed by an independent 2026-07-09 fifth-pass hunter as a real server-mirror
+  desync, but it again could not exhibit a concrete wrong-*position* outcome, and no
+  LF→CRLF string helper exists, so the guarded send-site re-encode stays deferred
+  pending a demonstrated corruption case — the disciplined call given speed is priority.)
   (Note: the sibling "cross-language go-to-definition uses the source server's encoding"
   suspicion was investigated and is NOT a bug — a `definition` response's `character`
   is in the responding/source server's encoding regardless of the target file, which is
@@ -87,6 +91,55 @@ as benign/cosmetic or as design constraints rather than live defects:
   and incorrect per spec for multi-threaded ones. **Blocked on:** a decision to support
   per-thread stop/resume state, which would re-key `BreakpointStore` and add per-thread
   run state.
+
+The 2026-07-09 fifth-pass sweep surfaced these, deferred as latent/broad rather
+than live defects (the pass fixed nine concrete bugs outright — terminal SGR mouse
+release, IL/DL alt-screen margins, CPR pending-wrap column, resize tab-stop loss;
+the editor horizontal-scroll caret double-count; the LSP pre-init shutdown drift and
+dropped integer diagnostic code; the plugin string-array raw read; and the
+ProjectFileScanner symlink-cycle crash):
+
+- **Plugin metamethod reads can longjmp over live C++ destructors (same invariant,
+  different trigger than `luaL_error`).** Plugin-controlled tables are harvested with
+  the metamethod-capable `lua_getfield`/`lua_geti` while non-trivial C++ locals are
+  alive — representative sites `src/plugin/PluginDiagnosticsInterop.cpp` (`ReadDiagnosticTable`,
+  with `std::vector<Diagnostic>`/`std::filesystem::path` live), the `Read*Field` helpers
+  in `src/plugin/PluginLuaInterop.cpp`, and the provider/registration parsers. A plugin
+  that puts a raising `__index` metamethod (`setmetatable`+`error` are in the exposed
+  base lib) on a harvested table makes the field read `longjmp` to the enclosing
+  `LuaRuntime::PCall`, skipping those destructors (heap leak + UB) — the same hard
+  invariant `luaL_error` is banned to protect. Reachable, but leak-only and requires a
+  self-sabotaging plugin. NOT a clean drop-in fix: a blind `lua_getfield`→`lua_rawget`
+  swap would break well-behaved plugins that legitimately use an `__index` metatable
+  for field defaults; the correct fix is to harvest each plugin table inside a nested
+  protected call (`lua_pcall`) so a metamethod raise is caught before it crosses the
+  C++ frame. (The one *sequence* read where raw is unambiguously correct —
+  `ReadStringArrayField` — was converted to `lua_rawgeti` this pass.) **Blocked on:**
+  a protected-harvest helper (or a decision that raw field reads are acceptable),
+  applied across ~13 interop TUs.
+
+- **In-buffer regex "find next" is uncancellable on a pathological single-line file.**
+  `src/project/ProjectSearchService.cpp:50` (`FindNextRegexMatch` empty-match advance
+  loop). Cancellation is checked once per *line* (`:367`), never inside the per-offset
+  empty-match loop, so a pattern that matches empty at every offset (e.g. `x?`) against
+  a very large single-line file (up to the 512 MiB read cap) spins ~N PCRE2 `Match`
+  calls one byte at a time before returning — PCRE2's `match_limit`/`depth_limit` bound
+  a single match, not the *count* of separate `Match` calls, so `Stop()` cannot
+  interrupt it. Responsiveness/soft-DoS bounded by line length, not corruption.
+  **Blocked on:** a measured per-line iteration/token check that does not slow the hot
+  search path (speed is the priority), so deferred rather than rushed.
+
+- **`PieceTree` `add_` buffer offset is truncated to `uint32` with no guard.**
+  `src/editor/PieceTree.cpp` (`AppendToAdd`). `RebuildFromOriginal` deliberately guards
+  the `original_` buffer against exceeding `UINT32_MAX`, but the append-only `add_`
+  buffer (which every `InsertText` grows and which is compacted only on a full
+  `Reset`/`ResetFromText`) has no equivalent guard: once cumulative inserted bytes in
+  one session reach 4 GiB, `start = static_cast<uint32_t>(add_.size())` wraps and later
+  pieces reference wrong offsets → silent text corruption. Latent — needs a multi-GiB
+  cumulative-insert session with no intervening reload, so not practically demonstrable
+  today. **Blocked on:** nothing external; add a parity guard (compact/rebuild or refuse
+  the insert) when `add_.size()` would exceed the 32-bit range, next time PieceTree is
+  touched.
 
 The **timing-dependent test flakiness** item (added 2026-06-21) is now closed. The
 single-check-after-a-fixed-`sleep_for` anti-pattern was audited across every

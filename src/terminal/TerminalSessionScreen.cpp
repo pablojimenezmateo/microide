@@ -359,6 +359,23 @@ void TerminalSession::ResetTabStopsLocked() {
   }
 }
 
+void TerminalSession::ResizeTabStopsLocked() {
+  // A resize must preserve custom HTS/TBC tab stops in the surviving columns
+  // (xterm behaviour); only newly-exposed columns get the default every-8 stops.
+  const std::size_t width = std::max<std::size_t>(1, columns_);
+  if (tab_stops_.empty()) {
+    ResetTabStopsLocked();
+    return;
+  }
+  const std::size_t old_size = tab_stops_.size();
+  tab_stops_.resize(width, false);
+  for (std::size_t column = 8; column < width; column += 8) {
+    if (column >= old_size) {
+      tab_stops_[column] = true;
+    }
+  }
+}
+
 std::size_t TerminalSession::NextTabStopLocked(std::size_t column) const {
   const std::size_t width = std::max<std::size_t>(1, columns_);
   if (tab_stops_.empty()) {

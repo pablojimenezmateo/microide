@@ -39,19 +39,30 @@ void CollectFiles(const std::filesystem::path& root,
     }
     ++visited;
     const std::filesystem::path path = iterator->path();
-    const bool is_directory = iterator->is_directory();
+    // Use the non-throwing overloads: is_directory()/is_regular_file() follow the
+    // symlink and stat it, which THROWS filesystem_error on ELOOP (a symlink cycle
+    // or an over-40-deep chain). The scan runs on the shell thread with no catch, so
+    // the throwing overload turned a self-referential symlink — input the codebase
+    // explicitly expects, hence SymlinkLoopGuard — into a std::terminate. Classify
+    // safely and skip the entry on error, mirroring DirectoryTree::AppendDirectory.
+    std::error_code type_error;
+    const bool is_directory = iterator->is_directory(type_error);
+    if (type_error) {
+      iterator.increment(error);
+      continue;
+    }
 
     // .git/.svn/build-output/etc. are pruned by the seeded matcher below (default
     // rules), so no name is special-cased here.
     const std::filesystem::path relative =
         path.lexically_normal().lexically_relative(root.lexically_normal());
     if (relative.empty()) {
-      ++iterator;
+      iterator.increment(error);
       continue;
     }
 
     if (mode == ProjectFileScanMode::ExcludeHidden && IsHiddenName(path)) {
-      ++iterator;
+      iterator.increment(error);
       continue;
     }
 
@@ -59,7 +70,7 @@ void CollectFiles(const std::filesystem::path& root,
       IgnoreMatcher child_matcher = matcher;
       child_matcher.LoadIgnoreFile(path / ".gitignore");
       if (child_matcher.Ignored(relative, true)) {
-        ++iterator;
+        iterator.increment(error);
         continue;
       }
       std::error_code link_error;
@@ -68,19 +79,20 @@ void CollectFiles(const std::filesystem::path& root,
       if (scope.entered()) {
         CollectFiles(root, path, child_matcher, mode, files, loop_guard, depth + 1, visited);
       }
-      ++iterator;
+      iterator.increment(error);
       continue;
     }
 
     if (matcher.Ignored(relative, false)) {
-      ++iterator;
+      iterator.increment(error);
       continue;
     }
 
-    if (iterator->is_regular_file()) {
+    std::error_code regular_error;
+    if (iterator->is_regular_file(regular_error) && !regular_error) {
       files.push_back(relative.lexically_normal());
     }
-    ++iterator;
+    iterator.increment(error);
   }
 }
 

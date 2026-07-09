@@ -313,7 +313,7 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
         columns_ > 0 ? std::min(alternate_screen_.saved_cursor_column, columns_ - 1)
                      : alternate_screen_.saved_cursor_column;
     ClampScrollRegionLocked();
-    ResetTabStopsLocked();
+    ResizeTabStopsLocked();
     if (use_alternate_screen_) {
       lines_.resize(std::max<std::size_t>(1, rows_));
     }

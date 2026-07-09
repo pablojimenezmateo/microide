@@ -121,6 +121,34 @@ void TestScannerFollowsSymlinkToDotDotPrefixedInRootDir() {
 #endif
 }
 
+// Regression: a symlink cycle makes directory_entry::is_directory() throw
+// filesystem_error (ELOOP) when it stats through the loop. The scan runs on the
+// shell thread with no try/catch, so the throwing overload turned a symlink loop —
+// input the scanner explicitly expects (SymlinkLoopGuard) — into a std::terminate.
+// The scan must classify safely, skip the looping entry, and still index real files.
+void TestScannerSurvivesSymlinkCycle() {
+#if defined(_WIN32)
+  return;
+#else
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project = temp_dir.path() / "project";
+  std::filesystem::create_directories(project);
+  WriteFile(project / "real.txt", "r");
+
+  std::error_code ec;
+  // loopa -> loopb -> loopa: resolving either through status() yields ELOOP.
+  std::filesystem::create_directory_symlink(project / "loopb", project / "loopa", ec);
+  Expect(!ec, "loop symlink 'loopa' should be created");
+  std::filesystem::create_directory_symlink(project / "loopa", project / "loopb", ec);
+  Expect(!ec, "loop symlink 'loopb' should be created");
+
+  // Must not throw/terminate; real files must still be indexed.
+  const auto files = CollectProjectFiles(project, ProjectFileScanMode::ExcludeHidden);
+  Expect(ContainsName(files, "real.txt"),
+         "a symlink cycle must not crash the scan or drop real files");
+#endif
+}
+
 // Without any .gitignore, the scanner must still prune VCS metadata and build
 // output via the built-in defaults, and honor a user exclude glob.
 void TestScannerPrunesDefaultsAndUserExcludes() {
@@ -159,6 +187,8 @@ void RegisterProjectFileScannerTests(std::vector<TestCase>& tests) {
           TestScannerFollowsRootEscapingSymlinkWhenOptedIn);
   AddTest(tests, "ProjectFileScanner/FollowsSymlinkToDotDotPrefixedInRootDir",
           TestScannerFollowsSymlinkToDotDotPrefixedInRootDir);
+  AddTest(tests, "ProjectFileScanner/SurvivesSymlinkCycle",
+          TestScannerSurvivesSymlinkCycle);
 }
 
 }  // namespace microide::tests

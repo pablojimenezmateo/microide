@@ -464,8 +464,14 @@ void LspClient::Impl::DoShutdown() {
       init_thread.join();
     }
     // The init thread may have just promoted itself to the running state and
-    // launched the I/O thread between our check and here; join it if so.
+    // launched the I/O thread between our check and here; join it if so. The
+    // success path resets stop_io to false and spawns io_thread after we set
+    // stop_io above (a lost-signal window), so re-assert the stop and wake the
+    // io_thread — mirroring the DAP client — instead of relying on the force-kill
+    // making the server hit EOF up to a poll cycle later.
     if (io_thread.joinable()) {
+      stop_io.store(true, std::memory_order_release);
+      Wake();
       io_thread.join();
     }
     ClearDeferredMessages();

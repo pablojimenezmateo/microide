@@ -122,13 +122,17 @@ std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
     lua_pop(state, 1);
     return std::nullopt;
   }
-  // Cap the drain so a plugin returning an accidentally-huge (or, via a metatable
-  // __index, effectively unbounded) sequence cannot grow this vector without
-  // bound and hang/OOM the host. 100000 is far beyond any real string-array field.
+  // Cap the drain so a plugin returning an accidentally-huge sequence cannot grow
+  // this vector without bound and hang/OOM the host. 100000 is far beyond any real
+  // string-array field. Elements are read *raw* (lua_rawgeti, not lua_geti): a
+  // sequence never legitimately resolves elements through __index, and a raising
+  // __index metamethod on lua_geti would longjmp over the live `values` vector to
+  // the enclosing pcall, skipping its destructor (the no-longjmp-over-C++-locals
+  // invariant). Raw access also sidesteps the unbounded-__index drain entirely.
   constexpr lua_Integer kMaxLuaStringArrayItems = 100000;
   std::vector<std::string> values;
   for (lua_Integer i = 1; i <= kMaxLuaStringArrayItems; ++i) {
-    lua_geti(state, -1, i);
+    lua_rawgeti(state, -1, i);
     if (lua_isnil(state, -1)) {
       lua_pop(state, 1);
       break;

@@ -68,8 +68,12 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     } else if (final == 'n') {
       for (const int mode : params) {
         if (mode == 6) {
+          // At the pending-wrap (LCF) column cursor_column_ == columns_; a real
+          // terminal reports the last on-screen column, never one past the edge.
+          const std::size_t reported_column =
+              columns_ > 0 ? std::min(cursor_column_, columns_ - 1) : cursor_column_;
           SendBytesLocked("\x1b[?" + std::to_string(cursor_row_ + 1) + ";" +
-                          std::to_string(cursor_column_ + 1) + "R");
+                          std::to_string(reported_column + 1) + "R");
         }
       }
     }
@@ -154,8 +158,11 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
         const std::size_t scroll_region_bottom = ActiveScrollRegionBottomLocked();
         if (cursor_row_ >= scroll_region_top && cursor_row_ <= scroll_region_bottom) {
           ScrollRegionDownLocked(cursor_row_, scroll_region_bottom, count);
-          return;
         }
+        // On the fixed-height alt grid, IL outside the scroll margins is a no-op
+        // (DEC STD 070). Falling through to the primary insert would grow the alt
+        // deque past rows_ and eventually trim real content off the top.
+        return;
       }
       lines_.insert(lines_.begin() + static_cast<std::ptrdiff_t>(cursor_row_), count,
                     TerminalLine{});
@@ -170,8 +177,9 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
         const std::size_t scroll_region_bottom = ActiveScrollRegionBottomLocked();
         if (cursor_row_ >= scroll_region_top && cursor_row_ <= scroll_region_bottom) {
           ScrollRegionUpLocked(cursor_row_, scroll_region_bottom, count);
-          return;
         }
+        // DL outside the scroll margins is a no-op on the alt grid (see IL above).
+        return;
       }
       const std::size_t erase_end = std::min(lines_.size(), cursor_row_ + count);
       lines_.erase(lines_.begin() + static_cast<std::ptrdiff_t>(cursor_row_),
@@ -298,8 +306,12 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
         if (params.front() == 5) {
           SendBytesLocked("\x1b[0n");
         } else if (params.front() == 6) {
+          // Clamp the pending-wrap column (cursor_column_ == columns_) to the last
+          // on-screen column so CPR never reports one past the right edge.
+          const std::size_t reported_column =
+              columns_ > 0 ? std::min(cursor_column_, columns_ - 1) : cursor_column_;
           SendBytesLocked("\x1b[" + std::to_string(cursor_row_ + 1) + ";" +
-                          std::to_string(cursor_column_ + 1) + "R");
+                          std::to_string(reported_column + 1) + "R");
         }
       }
       return;
