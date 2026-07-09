@@ -54,6 +54,16 @@ char32_t DecodeUtf8Codepoint(std::string_view glyph) {
     }
     codepoint = (codepoint << 6) | (byte & 0x3Fu);
   }
+  // Reject non-shortest-form (overlong) encodings, UTF-16 surrogates, and
+  // out-of-range scalars — the lead-byte-only length classification above does
+  // not enforce the second-byte range checks that IsValidUtf8 applies, so these
+  // must be caught here to avoid decoding an invalid scalar (e.g. ED A0 80 ->
+  // U+D800, E0 80 80 -> overlong U+0000, F4 BF BF BF -> U+13FFFF).
+  static constexpr char32_t kMinForLength[] = {0, 0, 0x80, 0x800, 0x10000};
+  if (codepoint < kMinForLength[length] || codepoint > 0x10FFFF ||
+      (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+    return 0xFFFD;
+  }
   return codepoint;
 }
 
@@ -430,6 +440,14 @@ std::string CollapseAsciiWhitespaceTrackingMatch(std::string_view text,
     if (saw_whitespace) {
       collapsed.push_back(' ');
       saw_whitespace = false;
+    }
+    // The match can end within a whitespace run that collapses to this single
+    // space: match_end then points at THIS non-whitespace byte while the last
+    // matched byte was whitespace. Map the exclusive end to just after the flushed
+    // space so the collapsed space stays inside the match (otherwise mapped_end was
+    // missed entirely and the highlight collapsed to zero length).
+    if (i == match_end && mapped_end == std::string::npos) {
+      mapped_end = collapsed.size();
     }
     if (i == match_start && mapped_start == std::string::npos) {
       mapped_start = collapsed.size();

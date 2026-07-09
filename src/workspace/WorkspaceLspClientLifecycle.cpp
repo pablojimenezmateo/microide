@@ -279,8 +279,14 @@ void LspClient::Impl::DoInitializeBlocking() {
         continue;
       }
       const auto& resp = *resp_opt;
-      const bool is_init_response = resp.HasKey("id") && !resp.HasKey("method") &&
-                                    resp["id"].IsInt() && resp["id"].AsInt() == init_id;
+      // Accept the id echoed as a JSON float (e.g. 1.0) as well as an integer:
+      // some servers round-trip our integer id through a float. AsInt() truncates
+      // 1.0 -> 1. Mirrors the steady-state gate in WorkspaceLspClientDispatch.cpp;
+      // without it a float-echoing server's initialize response is never matched
+      // and startup times out (the server is then killed — no LSP for that language).
+      const bool is_init_response =
+          resp.HasKey("id") && !resp.HasKey("method") &&
+          (resp["id"].IsInt() || resp["id"].IsDouble()) && resp["id"].AsInt() == init_id;
       if (!is_init_response) {
         // Not the initialize response. A server may push notifications
         // (window/logMessage, $/progress) or requests

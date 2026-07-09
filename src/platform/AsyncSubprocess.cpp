@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <mutex>
 
@@ -237,8 +238,18 @@ bool AsyncSubprocess::IsRunning() const {
 }
 
 bool AsyncSubprocess::Write(std::string_view data) {
+  if (impl_ == nullptr) {
+    return false;
+  }
   const char* ptr = data.data();
   std::size_t remaining = data.size();
+  // Bound the total time we will wait on a stalled-but-alive child that has
+  // stopped draining its stdin (a full pipe with POLLOUT never ready). Without
+  // this the loop spins forever, hanging the calling transport thread. The
+  // deadline resets whenever bytes are written, so a legitimately slow consumer
+  // that keeps making progress on a large payload still completes.
+  constexpr auto kWriteStallTimeout = std::chrono::seconds(30);
+  auto stall_deadline = std::chrono::steady_clock::now() + kWriteStallTimeout;
   while (remaining > 0) {
     int stdin_fd = -1;
     {
@@ -259,6 +270,11 @@ bool AsyncSubprocess::Write(std::string_view data) {
       return false;
     }
     if (ready == 0) {
+      // poll timed out with no progress; give up once the stall budget elapses.
+      if (std::chrono::steady_clock::now() >= stall_deadline) {
+        CloseStdin();
+        return false;
+      }
       continue;
     }
     if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
@@ -283,6 +299,7 @@ bool AsyncSubprocess::Write(std::string_view data) {
     if (written > 0) {
       ptr += written;
       remaining -= static_cast<std::size_t>(written);
+      stall_deadline = std::chrono::steady_clock::now() + kWriteStallTimeout;
       continue;
     }
     if (written < 0 && errno == EINTR) {
@@ -510,16 +527,27 @@ void AsyncSubprocess::Shutdown(int timeout_ms) {
 }
 
 int AsyncSubprocess::pid() const {
+  // Check null before locking: a moved-from object has impl_ == nullptr, so
+  // locking impl_->state_mutex first would dereference null.
+  if (impl_ == nullptr) {
+    return -1;
+  }
   std::lock_guard lock(impl_->state_mutex);
-  return impl_ != nullptr ? static_cast<int>(impl_->pid.load(std::memory_order_acquire)) : -1;
+  return static_cast<int>(impl_->pid.load(std::memory_order_acquire));
 }
 
 std::optional<int> AsyncSubprocess::exit_code() const {
+  if (impl_ == nullptr) {
+    return std::nullopt;
+  }
   std::lock_guard lock(impl_->state_mutex);
-  return impl_ != nullptr ? impl_->exit_code : std::nullopt;
+  return impl_->exit_code;
 }
 
 int AsyncSubprocess::stdout_fd() const {
+  if (impl_ == nullptr) {
+    return -1;
+  }
   std::lock_guard lock(impl_->state_mutex);
   return impl_->stdout_fd;
 }

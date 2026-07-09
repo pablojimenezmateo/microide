@@ -101,8 +101,8 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
   const bool has_method = msg.HasKey("method") && msg["method"].IsString();
   const bool has_id = msg.HasKey("id") && !msg["id"].IsNull();
   if (shutting_down.load(std::memory_order_acquire)) {
-    if (has_id && !has_method && msg["id"].IsInt()) {
-      const int id = msg["id"].AsInt();
+    if (has_id && !has_method && (msg["id"].IsInt() || msg["id"].IsDouble())) {
+      const int id = static_cast<int>(msg["id"].AsInt());
       std::lock_guard lock(mutex);
       if (id == shutdown_request_id) {
         shutdown_response_received = true;
@@ -115,8 +115,11 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
     HandleServerRequest(msg["id"], msg["method"].AsString(), msg["params"]);
     return;
   }
-  if (has_id && !has_method && msg["id"].IsInt()) {
-    const int id = msg["id"].AsInt();
+  // Accept the id echoed as a JSON float (e.g. "id": 5.0) as well as an integer:
+  // some servers round-trip our integer ids through a float. AsInt() truncates
+  // 5.0 -> 5. Mirrors the DAP client's request_seq gate.
+  if (has_id && !has_method && (msg["id"].IsInt() || msg["id"].IsDouble())) {
+    const int id = static_cast<int>(msg["id"].AsInt());
     std::function<void(util::JsonValue)> cb;
     {
       std::lock_guard lock(mutex);

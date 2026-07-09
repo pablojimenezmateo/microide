@@ -148,6 +148,40 @@ void TestBreakpointStoreApplyBreakpointEvent() {
          "a path-less event should match by adapter id across all files");
 }
 
+// Regression: a `breakpoint` event whose id belongs to a *function* breakpoint
+// (gdb resolves `break foo` to a concrete source line and emits an event carrying
+// that line) must not clobber a line breakpoint that happens to sit at the same
+// resolved line. The line fallback only binds still-unbound breakpoints.
+void TestBreakpointStoreEventForeignIdDoesNotClobberBoundBreakpoint() {
+  BreakpointStore store;
+  const std::filesystem::path path = "/tmp/project/main.cpp";
+  store.Toggle(path, 9);  // 0-based line 9 → 1-based 10
+  // Bind it to adapter id 5 (as setBreakpoints would).
+  store.ApplyVerification(path, {VerifiedBreakpoint{.id = 5, .verified = true, .line = 10}});
+  Expect((*store.FindByPath(path))[0].adapter_id == 5, "line breakpoint is bound to id 5");
+
+  // A function breakpoint (id 99) resolves to the same line and emits an event.
+  store.ApplyBreakpointEvent(
+      path, VerifiedBreakpoint{.id = 99, .verified = false, .line = 10, .message = "func bp"});
+
+  const auto* bps = store.FindByPath(path);
+  Expect(bps != nullptr && bps->size() == 1, "the line breakpoint still exists");
+  Expect((*bps)[0].adapter_id == 5,
+         "a foreign-id event must not rewrite the bound breakpoint's adapter id");
+  Expect((*bps)[0].verified && (*bps)[0].verify_message.empty(),
+         "a foreign-id event must not overwrite the bound breakpoint's verify state");
+
+  // But an event carrying the still-unbound breakpoint's real id still binds it.
+  store.Toggle(path, 20);  // a fresh, unbound breakpoint at 1-based line 21
+  store.ApplyBreakpointEvent(path,
+                             VerifiedBreakpoint{.id = 42, .verified = true, .line = 21});
+  const auto* after = store.FindByPath(path);
+  const auto bound = std::find_if(after->begin(), after->end(),
+                                  [](const auto& bp) { return bp.line == 20; });
+  Expect(bound != after->end() && bound->adapter_id == 42 && bound->verified,
+         "the line fallback still binds an as-yet-unbound breakpoint");
+}
+
 void TestBreakpointStoreToggleEnabled() {
   BreakpointStore store;
   const std::filesystem::path path = "/tmp/project/main.py";
@@ -316,6 +350,8 @@ void RegisterBreakpointStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "BreakpointStore/ApplyVerificationMatchesByLineNotIndex",
           TestBreakpointStoreApplyVerificationMatchesByLineNotIndex);
   AddTest(tests, "BreakpointStore/ApplyBreakpointEvent", TestBreakpointStoreApplyBreakpointEvent);
+  AddTest(tests, "BreakpointStore/EventForeignIdDoesNotClobberBoundBreakpoint",
+          TestBreakpointStoreEventForeignIdDoesNotClobberBoundBreakpoint);
   AddTest(tests, "BreakpointStore/ToggleEnabled", TestBreakpointStoreToggleEnabled);
   AddTest(tests, "BreakpointStore/ReplaceAllResetsTransientState",
           TestBreakpointStoreReplaceAllResetsTransientState);

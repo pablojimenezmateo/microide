@@ -304,13 +304,28 @@ class PosixTerminalBackend final : public TerminalBackend {
 
     // Reap only on a natural exit. When Stop() drives shutdown it sets
     // stop_requested_ (release) before waking us and then reaps the child itself
-    // via RequestTerminalChildShutdown; calling waitpid here too would run a
-    // second reaper on the same pid concurrently (and risk a reap-then-signal
-    // pid-reuse window). stop_requested_ is set before the wake that unblocked
-    // poll(), so an acquire load here observes it whenever Stop() is the reaper.
+    // via RequestTerminalChildShutdown; reaping here too would run a second reaper
+    // on the same pid concurrently. On the wake-pipe path an acquire load observes
+    // Stop()'s store, but the natural-EOF path is unblocked by master_fd (POLLHUP),
+    // NOT the wake pipe, so there is no synchronization edge with a concurrent
+    // Stop(). A *blocking* waitpid here would then race Stop()'s reap and, if the
+    // pid is recycled by another of the app's forks in between, block on that
+    // unrelated child until it exits — hanging Stop()'s join. Use a bounded
+    // non-blocking reap instead: it collects the (already-dead) child in the
+    // common case and can never latch onto a reused pid.
     if (!stop_requested_.load(std::memory_order_acquire)) {
       int status = 0;
-      while (waitpid(child_pid, &status, 0) < 0 && errno == EINTR) {
+      for (int attempt = 0; attempt < 100; ++attempt) {
+        const pid_t reaped = waitpid(child_pid, &status, WNOHANG);
+        if (reaped == child_pid || (reaped < 0 && errno != EINTR)) {
+          break;  // reaped, or already gone (ECHILD) — either way done
+        }
+        if (stop_requested_.load(std::memory_order_acquire)) {
+          break;  // Stop() has taken ownership of reaping
+        }
+        // reaped == 0: exit not yet visible; pause briefly (1ms) and retry.
+        struct pollfd none {};
+        poll(&none, 0, 1);
       }
     }
 

@@ -251,8 +251,15 @@ void BreakpointStore::ApplyBreakpointEvent(const std::filesystem::path& path,
     }
     if (target == nullptr && result.line > 0) {
       const std::size_t line = static_cast<std::size_t>(result.line - 1);
+      // The line fallback exists solely for the pre-binding window, where a line
+      // breakpoint has not yet been assigned its adapter id. Restrict it to
+      // still-unbound breakpoints (adapter_id == 0): once a breakpoint has an id it
+      // is matched by id above, so an event carrying a FOREIGN id (e.g. a function
+      // breakpoint that resolved to this same source line) must not clobber it here.
       const auto it = std::find_if(breakpoints.begin(), breakpoints.end(),
-                                   [line](const Breakpoint& bp) { return bp.line == line; });
+                                   [line](const Breakpoint& bp) {
+                                     return bp.line == line && bp.adapter_id == 0;
+                                   });
       if (it != breakpoints.end()) {
         target = &(*it);
       }

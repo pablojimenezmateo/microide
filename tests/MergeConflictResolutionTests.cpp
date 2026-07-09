@@ -118,6 +118,44 @@ void TestBinaryClassification() {
   Expect(!metadata.text_hunks_available, "binary conflicts should disable text hunks");
 }
 
+void TestBothDeletedClassification() {
+  // base present, both sides absent: a real git "DD" conflict. The existence
+  // fallback used to omit this combination and leave the kind Unknown, which
+  // wrongly offered a text-hunk view and suppressed the keep/delete choice.
+  const auto metadata = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .base_exists = true,
+      .incoming_exists = false,
+      .current_exists = false,
+      .base_content = "base\n",
+      .incoming_content = {},
+      .current_content = {},
+  });
+  Expect(metadata.kind == MergeFileConflictKind::BothDeleted,
+         "base present + both sides absent should classify as both-deleted");
+  Expect(metadata.requires_existence_choice,
+         "both-deleted needs the keep/delete existence choice");
+  Expect(!metadata.text_hunks_available, "both-deleted has no text hunks to show");
+}
+
+void TestBinaryDoesNotClobberExistenceChoice() {
+  // A delete/modify conflict whose surviving side is binary must keep its
+  // existence-choice kind; the unconditional binary override used to overwrite it
+  // with Binary, stripping the keep-vs-delete decision the user needs.
+  std::string binary(8, '\0');
+  const auto them = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .base_exists = true,
+      .incoming_exists = false,
+      .current_exists = true,
+      .base_content = "base\n",
+      .incoming_content = {},
+      .current_content = binary,
+  });
+  Expect(them.kind == MergeFileConflictKind::DeletedByThem,
+         "binary surviving content must not downgrade a delete/modify to Binary");
+  Expect(them.requires_existence_choice,
+         "the existence choice must survive the binary check");
+}
+
 void TestBothMergeOrders() {
   microide::compare::MergeModel model = microide::compare::BuildMergeModel(
       "base\n", "incoming\n", "current\n");
@@ -290,6 +328,9 @@ void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MergeConflict/SingleSideDeleteWithBaseStillClassifiesAsDelete",
           TestSingleSideDeleteWithBaseStillClassifiesAsDelete);
   AddTest(tests, "MergeConflict/BinaryClassification", TestBinaryClassification);
+  AddTest(tests, "MergeConflict/BothDeletedClassification", TestBothDeletedClassification);
+  AddTest(tests, "MergeConflict/BinaryDoesNotClobberExistenceChoice",
+          TestBinaryDoesNotClobberExistenceChoice);
   AddTest(tests, "MergeConflict/BothMergeOrders", TestBothMergeOrders);
   AddTest(tests, "MergeConflict/ValidationBlocksConflictMarkers",
           TestValidationBlocksConflictMarkers);

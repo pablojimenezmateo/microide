@@ -72,7 +72,15 @@ bool RegisterTheme(lua_State* state,
   if (themes == nullptr) {
     return false;
   }
-  luaL_checktype(state, 1, LUA_TTABLE);
+  // Non-raising type check: luaL_checktype would longjmp over the caller's live
+  // std::string error_message (RegisterTableContribution), violating the
+  // "no longjmp over live C++ locals" invariant.
+  if (lua_type(state, 1) != LUA_TTABLE) {
+    if (error_message != nullptr) {
+      *error_message = "theme registration expects a table argument";
+    }
+    return false;
+  }
   auto full_id = ReadHostNamespacedId(state, plugin_id, error_message, "theme");
   if (!full_id) {
     return false;
@@ -135,7 +143,13 @@ bool RegisterFileIconTheme(lua_State* state,
   if (themes == nullptr) {
     return false;
   }
-  luaL_checktype(state, 1, LUA_TTABLE);
+  // Non-raising type check: see RegisterTheme for the longjmp-over-locals rationale.
+  if (lua_type(state, 1) != LUA_TTABLE) {
+    if (error_message != nullptr) {
+      *error_message = "file icon theme registration expects a table argument";
+    }
+    return false;
+  }
   auto full_id = ReadHostNamespacedId(state, plugin_id, error_message, "file icon theme");
   if (!full_id) {
     return false;

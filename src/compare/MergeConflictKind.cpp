@@ -146,6 +146,8 @@ MergeFileConflictMetadata ClassifyMergeFileConflict(
       kind = MergeFileConflictKind::DeletedByThem;
     } else if (input.base_exists && input.incoming_exists && !input.current_exists) {
       kind = MergeFileConflictKind::DeletedByUs;
+    } else if (input.base_exists && !input.incoming_exists && !input.current_exists) {
+      kind = MergeFileConflictKind::BothDeleted;
     } else if (!input.base_exists && !input.incoming_exists && input.current_exists) {
       // No base: a side that has the file added it — this is not a delete.
       kind = MergeFileConflictKind::AddedByUs;
@@ -156,8 +158,14 @@ MergeFileConflictMetadata ClassifyMergeFileConflict(
     }
   }
 
-  if (MergeContentLooksBinary(input.base_content) || MergeContentLooksBinary(input.incoming_content) ||
-      MergeContentLooksBinary(input.current_content)) {
+  // Only downgrade content-diff conflicts to Binary. Existence-choice kinds
+  // (deleted-by-us/them, both-deleted, rename-delete) must keep their kind so the
+  // resolver still offers the keep-vs-delete choice the user needs; overwriting
+  // them with Binary would suppress that choice and disable resolution.
+  if (!RequiresExistenceChoice(kind) &&
+      (MergeContentLooksBinary(input.base_content) ||
+       MergeContentLooksBinary(input.incoming_content) ||
+       MergeContentLooksBinary(input.current_content))) {
     kind = MergeFileConflictKind::Binary;
   } else if (kind == MergeFileConflictKind::BothModified &&
              MergeContentIsLineEndingHeavy(input.base_content, input.incoming_content,

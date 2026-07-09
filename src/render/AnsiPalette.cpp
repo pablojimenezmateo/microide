@@ -31,7 +31,10 @@ SDL_Color BasicAnsiColor(int index, bool bright) {
 }
 
 SDL_Color Ansi256Color(int index) {
-  if (index < 0) {
+  // The 256-colour palette is only defined for 0..255. Out-of-range indices
+  // (e.g. an over-large theme token or an SGR 38;5;N with N > 255) would otherwise
+  // fall through to the unclamped grayscale ramp and wrap via Uint8 truncation.
+  if (index < 0 || index > 255) {
     return BasicAnsiColor(0, false);
   }
   if (index < 8) {

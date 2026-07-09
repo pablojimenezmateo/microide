@@ -277,7 +277,13 @@ bool IgnoreMatcher::Rule::Matches(std::string_view relative_path, bool is_direct
 }
 
 bool IgnoreMatcher::ParseRule(std::string base_relative, std::string line, Rule& out_rule) {
-  line = util::TrimAsciiWhitespace(line);
+  // gitignore(5): only TRAILING whitespace is stripped; leading whitespace is
+  // significant (a pattern like "  build.log" matches a name that begins with
+  // spaces). Trimming both ends over-normalized leading-space patterns.
+  while (!line.empty() && (line.back() == ' ' || line.back() == '\t' ||
+                           line.back() == '\r' || line.back() == '\n')) {
+    line.pop_back();
+  }
   if (line.empty() || line.starts_with('#')) {
     return false;
   }

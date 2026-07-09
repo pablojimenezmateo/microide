@@ -39,6 +39,11 @@ struct SettingSpec {
   int max_int = std::numeric_limits<int>::max();
   int int_step = 1;
   float default_float = 0.0f;
+  // Inclusive range for SettingType::Float. The default sentinels leave the value
+  // unbounded; set them so ParseSettingValue clamps at store time (mirroring the
+  // Int range) and the stored/displayed value cannot diverge from the applied one.
+  float min_float = std::numeric_limits<float>::lowest();
+  float max_float = std::numeric_limits<float>::max();
   std::string_view default_string;
   std::span<const SettingEnumValue> enum_values;
   // Optional grouping path used by the Settings overlay to organize related

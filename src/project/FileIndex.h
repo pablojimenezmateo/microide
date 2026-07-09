@@ -63,6 +63,9 @@ class FileIndex {
   void SetFollowOutOfRootSymlinks(bool follow) {
     follow_out_of_root_symlinks_.store(follow, std::memory_order_relaxed);
   }
+  bool FollowOutOfRootSymlinks() const {
+    return follow_out_of_root_symlinks_.load(std::memory_order_relaxed);
+  }
   // User/project-configured ignore globs folded into the full-rescan (Refresh) via
   // CollectProjectFiles, alongside the built-in defaults. The background watcher
   // carries its own copy (FileIndexWatcher::SetExcludeGlobs); this covers the

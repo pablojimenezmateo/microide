@@ -287,6 +287,38 @@ void TestTextViewportSaveAppliesNormalization() {
          "saved file should be trimmed and end with a single newline");
 }
 
+void TestTextViewportSaveNormalizationPreservesCaret() {
+  // Regression: a normalizing save mirrored the trimmed content via a whole-document
+  // ReplaceLines, snapping the caret/selection/scroll to (0,0). VS Code preserves the
+  // caret across format-on-save; the caret must stay where the user left it.
+  {
+    TemporaryDirectory tmp;
+    std::filesystem::path path = tmp.path() / "caret.txt";
+    WriteFile(path, "alpha\nbeta  \ngamma  \ndelta\nepsilon");
+    TextViewport viewport;
+    Expect(viewport.OpenFile(path), "OpenFile should succeed");
+    viewport.SetSaveTrimTrailingWhitespace(true);
+    viewport.SetSaveEnsureFinalNewline(true);
+    viewport.MoveCursorTo(3, 4);  // inside "delta", a line unaffected by trimming
+    Expect(viewport.Save(), "Save should succeed");
+    Expect(viewport.cursor_line() == 3 && viewport.cursor_column() == 4,
+           "the caret must be preserved across a normalizing save, not reset to (0,0)");
+  }
+  {
+    // A caret sitting in now-trimmed trailing whitespace is clamped to the new end.
+    TemporaryDirectory tmp;
+    std::filesystem::path path = tmp.path() / "caret-trim.txt";
+    WriteFile(path, "alpha\nbeta  \ngamma");
+    TextViewport viewport;
+    Expect(viewport.OpenFile(path), "OpenFile should succeed");
+    viewport.SetSaveTrimTrailingWhitespace(true);
+    viewport.MoveCursorTo(1, 6);  // end of "beta  " (col 6, inside the trailing spaces)
+    Expect(viewport.Save(), "Save should succeed");
+    Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 4,
+           "a caret in trimmed trailing whitespace clamps to the shortened line end");
+  }
+}
+
 void TestTextViewportDetectsDiskConflict() {
   using DiskConflict = TextViewport::DiskConflict;
   TemporaryDirectory tmp;
@@ -1083,6 +1115,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestSaveNormalizationTrim);
   AddTest(tests, "EditorEssentials/Save/TextViewportAppliesNormalization",
           TestTextViewportSaveAppliesNormalization);
+  AddTest(tests, "EditorEssentials/Save/NormalizationPreservesCaret",
+          TestTextViewportSaveNormalizationPreservesCaret);
   AddTest(tests, "EditorEssentials/Save/EnsureFinalNewline",
           TestSaveNormalizationEnsureFinalNewline);
   AddTest(tests, "EditorEssentials/Save/DetectsDiskConflict",

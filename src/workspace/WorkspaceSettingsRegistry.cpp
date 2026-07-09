@@ -6,6 +6,7 @@
 
 #include "plugin/PluginHost.h"
 #include "util/Parse.h"
+#include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceTabState.h"
 
@@ -137,6 +138,8 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_bool = false,
           .default_int = 0,
           .default_float = 1.0f,
+          .min_float = kMinUiScale,
+          .max_float = kMaxUiScale,
           .default_string = {},
           .enum_values = {},
           .group = {},
@@ -1042,7 +1045,14 @@ std::optional<SettingValue> ParseSettingValue(const SettingSpec& spec, std::stri
     }
 
     case SettingType::Float: {
-      return util::ParseFloat(text);
+      const std::optional<float> value = util::ParseFloat(text);
+      if (!value.has_value()) {
+        return std::nullopt;
+      }
+      // Clamp to the spec's inclusive range at store time (mirrors the Int case)
+      // so e.g. `set-setting ui.scale 999` stores the applied max, not 999. Specs
+      // with no explicit range keep the lowest..max sentinels, so this is a no-op.
+      return std::clamp(*value, spec.min_float, spec.max_float);
     }
 
     case SettingType::String:

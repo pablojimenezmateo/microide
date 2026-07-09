@@ -1399,6 +1399,86 @@ while True:
   client.Shutdown();
 }
 
+// Regression: a server that echoes the integer request id as a JSON float (e.g.
+// "id": 1.0) — common when the id round-trips through a float-typed JSON layer —
+// must still correlate to its pending request. The dispatch gate used to accept
+// only IsInt(), silently dropping float-id responses and hanging the request.
+void TestWorkspaceLspClientAcceptsFloatEchoedResponseId() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "float-id-server.py";
+  WriteFile(server_path, std::string(R"py(import json
+import sys
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        # Echo the id as a float on the init handshake AND on feature responses, so
+        # both the init-response gate and the steady-state dispatch gate are exercised.
+        write_message({"jsonrpc": "2.0", "id": float(msg["id"]),
+                       "result": {"capabilities": {"completionProvider": {}}}})
+    elif method == "textDocument/completion":
+        write_message({"jsonrpc": "2.0", "id": float(msg["id"]),
+                       "result": {"items": [{"label": "gamma", "insertText": "gamma"}]}})
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": float(msg["id"]), "result": None})
+    elif method == "exit":
+        break
+)py"));
+
+  LspClient client;
+  const bool started =
+      client.Start({"python3", server_path.string()}, "file:///tmp", "python");
+  Expect(started, "float-id fixture should start");
+
+  std::optional<std::vector<LspClient::CompletionItem>> received;
+  client.RequestCompletionAsync("file:///tmp/s.py", LspClient::Position{0, 0},
+                                [&](auto items) { received = std::move(items); });
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline && !received.has_value()) {
+    client.DrainCallbacks();
+    if (!client.IsRunning()) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+
+  Expect(received.has_value(),
+         "a completion response with a float-echoed id must still be delivered");
+  Expect(received.has_value() && received->size() == 1 && (*received)[0].label == "gamma",
+         "the float-id response body parses normally");
+  client.Shutdown();
+}
+
 void TestWorkspaceLspClientInitFailureFailsPendingRequest() {
 #if !defined(__unix__) && !defined(__APPLE__)
   return;
@@ -1456,6 +1536,8 @@ time.sleep(0.3)
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceLspClient/InitFailureFailsPendingRequest",
           TestWorkspaceLspClientInitFailureFailsPendingRequest);
+  AddTest(tests, "WorkspaceLspClient/AcceptsFloatEchoedResponseId",
+          TestWorkspaceLspClientAcceptsFloatEchoedResponseId);
   AddTest(tests, "WorkspaceLspClient/DidChangePreservesOrderAndPayload",
           TestWorkspaceLspClientDidChangePreservesOrderAndPayload);
   AddTest(tests, "WorkspaceLspClient/CompletionParsesJsonResult",

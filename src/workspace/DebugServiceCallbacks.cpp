@@ -265,22 +265,29 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
       };
   callbacks.on_breakpoint_changed = [this](const std::filesystem::path& path,
                                            const dap_protocol::DapBreakpoint& breakpoint) {
-    CurrentProjectState().breakpoint_store.ApplyBreakpointEvent(
-        path, editor::VerifiedBreakpoint{
-                  .id = breakpoint.id,
-                  .verified = breakpoint.verified,
-                  .line = breakpoint.line,
-                  .message = breakpoint.message,
-              });
-    // A function breakpoint binds asynchronously too (gdb reports it `pending` in the
-    // setFunctionBreakpoints response, then verifies it via a `breakpoint` event).
-    // Match by adapter id; a line event simply finds no function breakpoint.
-    CurrentProjectState().function_breakpoint_store.ApplyBreakpointEvent(
-        editor::VerifiedFunctionBreakpoint{
-            .id = breakpoint.id,
-            .verified = breakpoint.verified,
-            .message = breakpoint.message,
-        });
+    // A DAP `breakpoint` event's adapter id belongs to exactly one store. A
+    // function breakpoint binds asynchronously too (gdb reports it `pending` in the
+    // setFunctionBreakpoints response, then verifies it via a `breakpoint` event
+    // carrying source.path + line). Try the function-breakpoint store first: if it
+    // claims the event by id, it must NOT also flow into the line store, whose
+    // line-match fallback would otherwise clobber a coincident line breakpoint at
+    // the function's resolved line (rewriting its adapter id and verify state).
+    const bool claimed_by_function_bp =
+        CurrentProjectState().function_breakpoint_store.ApplyBreakpointEvent(
+            editor::VerifiedFunctionBreakpoint{
+                .id = breakpoint.id,
+                .verified = breakpoint.verified,
+                .message = breakpoint.message,
+            });
+    if (!claimed_by_function_bp) {
+      CurrentProjectState().breakpoint_store.ApplyBreakpointEvent(
+          path, editor::VerifiedBreakpoint{
+                    .id = breakpoint.id,
+                    .verified = breakpoint.verified,
+                    .line = breakpoint.line,
+                    .message = breakpoint.message,
+                });
+    }
     SyncBreakpointsPanel();
     if (operations_.request_editor_redraw) {
       operations_.request_editor_redraw();

@@ -459,7 +459,10 @@ struct FileIndexWatcher::Impl {
       return false;
     }
 
-    if (pipe(control_pipe) != 0) {
+    // Control pipe must be close-on-exec so an unrelated fork()+exec() on another
+    // thread cannot inherit and hold these fds open for its lifetime (matches the
+    // Subprocess/AsyncSubprocess inherited-pipe hardening).
+    if (pipe2(control_pipe, O_CLOEXEC) != 0) {
       CloseIfValid(inotify_fd);
       inotify_fd = -1;
       return false;

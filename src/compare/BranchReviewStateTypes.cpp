@@ -65,7 +65,10 @@ std::uint64_t HashHunkContent(const CompareModel& model, const CompareHunk& hunk
     }
     const CompareRow& compare_row = model.rows[static_cast<std::size_t>(row)];
     stream << static_cast<int>(compare_row.kind) << '\n';
-    stream << compare_row.left_text << compare_row.right_text;
+    // Length-prefix each field so left/right can't merge into an ambiguous byte
+    // stream: ("hello","world") and ("hell","oworld") must hash differently.
+    stream << compare_row.left_text.size() << ':' << compare_row.left_text << '\n';
+    stream << compare_row.right_text.size() << ':' << compare_row.right_text << '\n';
   }
   return HashString(stream.str());
 }

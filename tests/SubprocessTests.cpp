@@ -212,6 +212,23 @@ void TestSubprocessWithoutExplicitStdinDoesNotInheritParentStdin() {
          "stdin inheritance regression fixture should not emit stderr");
 }
 
+void TestAsyncSubprocessMovedFromAccessorsDoNotCrash() {
+  // Regression: pid()/exit_code()/stdout_fd() used to lock impl_->state_mutex
+  // before the null check, so calling them on a moved-from object (impl_ ==
+  // nullptr) dereferenced null. They must now return safe defaults.
+  microide::platform::AsyncSubprocess process;
+  Expect(process.Start({"cat"}), "moved-from fixture should start a process");
+  microide::platform::AsyncSubprocess moved(std::move(process));
+  // `process` is now moved-from (impl_ == nullptr); accessors must not crash.
+  Expect(process.pid() == -1, "moved-from pid() should return -1, not crash");
+  Expect(!process.exit_code().has_value(),
+         "moved-from exit_code() should return nullopt, not crash");
+  Expect(process.stdout_fd() == -1, "moved-from stdout_fd() should return -1, not crash");
+  // The live object still works.
+  Expect(moved.pid() > 0, "the moved-to object retains a valid pid");
+  moved.Shutdown();
+}
+
 void TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite() {
   microide::platform::AsyncSubprocess process;
   Expect(process.Start({"cat"}),
@@ -467,6 +484,8 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
           TestSubprocessWithoutExplicitStdinDoesNotInheritParentStdin);
   AddTest(tests, "Subprocess/AsyncReadTimeoutDoesNotBlockConcurrentWrite",
           TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite);
+  AddTest(tests, "Subprocess/AsyncMovedFromAccessorsDoNotCrash",
+          TestAsyncSubprocessMovedFromAccessorsDoNotCrash);
   AddTest(tests, "Subprocess/IgnoreBrokenPipeSignalPreventsCrash",
           TestIgnoreBrokenPipeSignalPreventsCrash);
   AddTest(tests, "Subprocess/LargeStdinDoesNotDeadlock",

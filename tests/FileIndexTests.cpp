@@ -233,7 +233,34 @@ void TestFileIndexRecursiveDeleteRemovesSubtree() {
 
 }  // namespace
 
+// Regression: the hand-rolled FileIndex move ctor/assignment (required by the
+// files_mutex_) dropped the follow_out_of_root_symlinks_ atomic, so a project
+// switch (which move-assigns FileIndex) silently reverted a user who enabled
+// following out-of-root symlinks back to containment-enforced.
+void TestFileIndexMovePreservesFollowSymlinksFlag() {
+  FileIndex source;
+  source.SetFollowOutOfRootSymlinks(true);
+  Expect(source.FollowOutOfRootSymlinks(), "source starts with the flag set");
+
+  FileIndex moved_ctor(std::move(source));
+  Expect(moved_ctor.FollowOutOfRootSymlinks(),
+         "the move constructor must carry the follow-symlinks flag");
+
+  FileIndex moved_assign;
+  moved_assign = std::move(moved_ctor);
+  Expect(moved_assign.FollowOutOfRootSymlinks(),
+         "the move assignment must carry the follow-symlinks flag");
+
+  // A false flag must also survive (guards against unconditionally forcing true).
+  FileIndex off;
+  off.SetFollowOutOfRootSymlinks(false);
+  FileIndex off_moved(std::move(off));
+  Expect(!off_moved.FollowOutOfRootSymlinks(), "a cleared flag must also survive the move");
+}
+
 void RegisterFileIndexTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileIndex/MovePreservesFollowSymlinksFlag",
+          TestFileIndexMovePreservesFollowSymlinksFlag);
   AddTest(tests, "FileIndex/RecursiveDeleteRemovesSubtree",
           TestFileIndexRecursiveDeleteRemovesSubtree);
   AddTest(tests, "FileIndex/InitialBatchPopulatesSortedUniqueFilesAndVersion",

@@ -347,17 +347,25 @@ TextLayoutCache::WrappedRow TextLayoutCache::WrappedRowAt(std::size_t visual_row
 
 std::pair<std::size_t, std::size_t> TextLayoutCache::WrappedRowRangeForLine(
     std::size_t line_index, std::size_t lines_size) const {
+  (void)lines_size;
   const std::size_t first = WrappedLineRowOffset(line_index);
   if (wrapped_row_layouts_.empty()) {
     return {first, first};
   }
   const std::size_t row_count = wrapped_row_layouts_.size();
-  std::size_t last = line_index + 1 < lines_size ? WrappedLineRowOffset(line_index + 1) : row_count;
-  // Hidden lines reuse the previous visible row offset, so the next line's
-  // offset can equal `first`. Clamp so the range is always [first, >= first].
-  last = last > first ? last - 1 : first;
-  last = std::min(last, row_count - 1);
-  return {first, last};
+  const std::size_t clamped_first = std::min(first, row_count - 1);
+  // A line's wrapped rows are contiguous and all tagged with its line_index; the
+  // next row belongs to a different (visible) line. Scan this line's own rows to
+  // find its last row directly. Inferring `last` from the next logical line's
+  // offset was wrong when that line is hidden by a collapsed fold: hidden lines
+  // contribute no rows and reuse the opener's offset, so a soft-wrapped fold
+  // opener (rows [R, R+k-1]) collapsed to {R, R}, sticking vertical motion on it.
+  const std::size_t owner_line = wrapped_row_layouts_[clamped_first].line_index;
+  std::size_t last = clamped_first;
+  while (last + 1 < row_count && wrapped_row_layouts_[last + 1].line_index == owner_line) {
+    ++last;
+  }
+  return {clamped_first, last};
 }
 
 std::size_t TextLayoutCache::WrappedRowCount(std::size_t lines_size) const {

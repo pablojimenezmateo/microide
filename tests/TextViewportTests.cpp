@@ -843,6 +843,38 @@ void TestTextViewportSoftWrapMoveCursorVerticalUsesWrappedRows() {
          "moving back onto the short continuation row should clamp again while preserving the target column");
 }
 
+// Regression: with soft-wrap on, a collapsed fold whose opener line wraps into
+// multiple visual rows used to report a single-row range ({R, R}) for the opener,
+// so vertical motion got stuck on it and never crossed the fold.
+void TestTextViewportSoftWrapCollapsedFoldOpenerVerticalMotionEscapes() {
+  TextViewport viewport;
+  viewport.LoadContent(
+      "top\nvoid aaaaaaaaaaaaaaaaaaaaaaaa() {\n  x();\n  y();\n}\nbottom\n",
+      "/tmp/soft-wrap-fold.cpp");
+  viewport.SetViewportSize(6, 8);  // narrow: the long opener wraps into several rows
+  viewport.SetSoftWrap(true);
+
+  FoldingModel folding_model;
+  FoldingModel::ComputeOptions fold_options;
+  fold_options.bracket_pairs = {{'{', '}'}};
+  fold_options.use_indent_source = true;
+  fold_options.tab_size = 4;
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), fold_options),
+         "fold compute should complete for the soft-wrap fold fixture");
+  Expect(folding_model.Collapse(1), "the wrapping function opener should collapse");
+  viewport.SetFoldingModel(&folding_model);
+
+  // Caret at the end of the collapsed opener (its last wrapped visual row).
+  viewport.MoveCursorTo(1, 1000);
+  Expect(viewport.cursor_line() == 1, "caret starts on the collapsed opener line");
+
+  // Moving down must leave the opener and land on the line after the folded body,
+  // not stay stuck cycling the opener's own wrapped rows.
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_line() == 5,
+         "down from a collapsed soft-wrapped opener must cross the fold to the next visible line");
+}
+
 void TestTextViewportSoftWrapPageMovesByVisibleRows() {
   TextViewport viewport;
   viewport.LoadContent("abcdefghijklmnopqrst\nABCDEFGH12345678\nxyz\n", "/tmp/soft-wrap-page.txt");
@@ -1206,6 +1238,34 @@ void TestTextViewportCollapsedFoldRowSpansTrackHorizontalScroll() {
   const auto scrolled = viewport.WrappedVisualRowLayout(0);
   Expect(scrolled.visual_start == 9 && scrolled.visual_end == 17,
          "the span should update with the live horizontal scroll, not return a stale baked value");
+}
+
+void TestTextViewportHorizontalMotionCrossesLineBoundaries() {
+  TextViewport viewport;
+  viewport.LoadContent("abc\nde\nf", "/tmp/hmotion.cpp");  // no trailing newline: 3 lines
+
+  // Right at end-of-line steps to the start of the next line (VS Code semantics).
+  viewport.MoveCursorTo(0, 3);  // end of "abc"
+  viewport.MoveCursorHorizontal(1);
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 0,
+         "Right at end-of-line should move to the start of the next line");
+
+  // Left at column 0 steps to the end of the previous line.
+  viewport.MoveCursorHorizontal(-1);
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 3,
+         "Left at column 0 should move to the end of the previous line");
+
+  // Left at the very start of the document is a no-op (nothing before it).
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorHorizontal(-1);
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 0,
+         "Left at the document start should stay put");
+
+  // Right at the very end of the last line is a no-op (does not fall off buffer).
+  viewport.MoveCursorTo(2, 1);  // end of "f"
+  viewport.MoveCursorHorizontal(1);
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 1,
+         "Right at the document end should stay put");
 }
 
 void TestTextViewportCollapsedFoldVerticalMotionSkipsHiddenLines() {
@@ -2832,6 +2892,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSoftWrapExposesVisualRowsAndWrappedCaret);
   AddTest(tests, "TextViewport/SoftWrapMoveCursorVerticalUsesWrappedRows",
           TestTextViewportSoftWrapMoveCursorVerticalUsesWrappedRows);
+  AddTest(tests, "TextViewport/SoftWrapCollapsedFoldOpenerVerticalMotionEscapes",
+          TestTextViewportSoftWrapCollapsedFoldOpenerVerticalMotionEscapes);
   AddTest(tests, "TextViewport/SoftWrapPageMovesByVisibleRows",
           TestTextViewportSoftWrapPageMovesByVisibleRows);
   AddTest(tests, "TextViewport/SoftWrapMovesSecondaryCaretsByVisibleRows",
@@ -2868,6 +2930,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportCollapsedFoldHidesBodyRows);
   AddTest(tests, "TextViewport/CollapsedFoldRowSpansTrackHorizontalScroll",
           TestTextViewportCollapsedFoldRowSpansTrackHorizontalScroll);
+  AddTest(tests, "TextViewport/HorizontalMotionCrossesLineBoundaries",
+          TestTextViewportHorizontalMotionCrossesLineBoundaries);
   AddTest(tests, "TextViewport/CollapsedFoldVerticalMotionSkipsHiddenLines",
           TestTextViewportCollapsedFoldVerticalMotionSkipsHiddenLines);
   AddTest(tests, "TextViewport/CollapsedFoldPageMovesByVisibleRows",

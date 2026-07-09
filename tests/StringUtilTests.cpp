@@ -19,6 +19,28 @@ using microide::util::SerializeLines;
 using microide::util::SplitLines;
 using microide::util::Utf8SequenceLength;
 
+void TestStringUtilDecodeUtf8CodepointRejectsInvalidScalars() {
+  using microide::util::DecodeUtf8Codepoint;
+  // Well-formed sequences decode to their scalar value.
+  Expect(DecodeUtf8Codepoint("A") == U'A', "ASCII decodes to itself");
+  Expect(DecodeUtf8Codepoint("\xC3\xA9") == 0x00E9, "2-byte é decodes correctly");
+  Expect(DecodeUtf8Codepoint("\xE2\x82\xAC") == 0x20AC, "3-byte € decodes correctly");
+  Expect(DecodeUtf8Codepoint("\xF0\x9F\x98\x80") == 0x1F600, "4-byte 😀 decodes correctly");
+
+  // Regression: the lead-byte-only length classification used to accept these
+  // malformed encodings and yield an invalid scalar. They must all map to U+FFFD.
+  Expect(DecodeUtf8Codepoint("\xED\xA0\x80") == 0xFFFD,
+         "UTF-16 high surrogate U+D800 must be rejected");
+  Expect(DecodeUtf8Codepoint("\xE0\x80\x80") == 0xFFFD,
+         "overlong 3-byte encoding of U+0000 must be rejected");
+  Expect(DecodeUtf8Codepoint("\xC0\x80") == 0xFFFD,
+         "overlong 2-byte encoding of U+0000 must be rejected");
+  Expect(DecodeUtf8Codepoint("\xF4\xBF\xBF\xBF") == 0xFFFD,
+         "codepoint above U+10FFFF must be rejected");
+  Expect(DecodeUtf8Codepoint("\xF0\x80\x80\x80") == 0xFFFD,
+         "overlong 4-byte encoding must be rejected");
+}
+
 void TestStringUtilUtf8SequenceLengthHandlesAsciiAndEmoji() {
   const std::string text = "a😀z";
   Expect(Utf8SequenceLength(text, 0) == 1,
@@ -130,6 +152,17 @@ void TestStringUtilCollapseWhitespaceTracksMatchRange() {
       "alpha", 100, 100, &empty_start, &empty_length);
   Expect(empty == "alpha" && empty_length == 0 && empty_start <= empty.size(),
          "an out-of-range match should clamp to a safe zero-length highlight");
+
+  // Regression: a match whose last byte is whitespace and that consumes the whole
+  // trailing whitespace run (match_end points at the next word) used to lose its end
+  // (highlight collapsed to zero length). "a  b" -> "a b"; match "a  " maps to "a ".
+  std::size_t trail_start = 99;
+  std::size_t trail_length = 99;
+  const std::string trail = microide::util::CollapseAsciiWhitespaceTrackingMatch(
+      "a  b", 0, 3, &trail_start, &trail_length);
+  Expect(trail == "a b", "adjacent whitespace collapses to a single space");
+  Expect(trail_start == 0 && trail_length == 2 && trail.substr(trail_start, trail_length) == "a ",
+         "a match ending in a consumed whitespace run keeps the collapsed space");
 }
 
 void TestStringUtilAppendUtf8EncodesAllSequenceLengths() {
@@ -255,6 +288,8 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Hex/PercentDecode", TestPercentDecode);
   AddTest(tests, "StringUtil/CollapseWhitespaceTracksMatchRange",
           TestStringUtilCollapseWhitespaceTracksMatchRange);
+  AddTest(tests, "StringUtil/DecodeUtf8CodepointRejectsInvalidScalars",
+          TestStringUtilDecodeUtf8CodepointRejectsInvalidScalars);
   AddTest(tests, "StringUtil/Utf8SequenceLengthHandlesAsciiAndEmoji",
           TestStringUtilUtf8SequenceLengthHandlesAsciiAndEmoji);
   AddTest(tests, "StringUtil/Utf8ValidationRejectsBrokenSequences",

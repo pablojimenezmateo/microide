@@ -43,6 +43,13 @@ FileIndex::FileIndex(FileIndex&& other) noexcept {
   truncated_ = other.truncated_;
   files_ = std::move(other.files_);
   version_ = other.version_;
+  // The symlink-containment flag is per-project state applied at root config time,
+  // not re-applied on activation — so it MUST survive the move (a project switch
+  // move-assigns FileIndex). Dropping it silently reverts to containment-enforced,
+  // hiding out-of-root-symlinked files for users who enabled following them.
+  follow_out_of_root_symlinks_.store(
+      other.follow_out_of_root_symlinks_.load(std::memory_order_relaxed),
+      std::memory_order_relaxed);
   exclude_hidden_cache_ = std::move(other.exclude_hidden_cache_);
   include_hidden_cache_ = std::move(other.include_hidden_cache_);
 }
@@ -58,6 +65,10 @@ FileIndex& FileIndex::operator=(FileIndex&& other) noexcept {
   truncated_ = other.truncated_;
   files_ = std::move(other.files_);
   version_ = other.version_;
+  // See the move constructor: this per-project flag must survive the move.
+  follow_out_of_root_symlinks_.store(
+      other.follow_out_of_root_symlinks_.load(std::memory_order_relaxed),
+      std::memory_order_relaxed);
   exclude_hidden_cache_ = std::move(other.exclude_hidden_cache_);
   include_hidden_cache_ = std::move(other.include_hidden_cache_);
   return *this;

@@ -6,6 +6,7 @@
 #include <thread>
 
 #if defined(__linux__)
+#include <fcntl.h>
 #include <poll.h>
 #include <sys/inotify.h>
 #include <unistd.h>
@@ -29,6 +30,22 @@ void CloseIfValid(int fd) {
   if (fd >= 0) {
     close(fd);
   }
+}
+
+// Create the control pipe close-on-exec. Without CLOEXEC an unrelated child that
+// another thread fork()+exec()s inherits and holds these fds open for its whole
+// lifetime — the same inherited-pipe hazard Subprocess/AsyncSubprocess guard.
+bool MakeCloexecPipe(int fds[2]) {
+#if defined(__linux__)
+  return pipe2(fds, O_CLOEXEC) == 0;
+#else
+  if (pipe(fds) != 0) {
+    return false;
+  }
+  (void)fcntl(fds[0], F_SETFD, fcntl(fds[0], F_GETFD, 0) | FD_CLOEXEC);
+  (void)fcntl(fds[1], F_SETFD, fcntl(fds[1], F_GETFD, 0) | FD_CLOEXEC);
+  return true;
+#endif
 }
 #endif
 
@@ -212,7 +229,7 @@ struct FileTreeWatcher::NativeBackend {
       return false;
     }
 
-    if (pipe(control_pipe_) != 0) {
+    if (!MakeCloexecPipe(control_pipe_)) {
       CloseIfValid(inotify_fd_);
       inotify_fd_ = -1;
       return false;
@@ -320,7 +337,7 @@ struct FileTreeWatcher::NativeBackend {
     if (kqueue_fd_ < 0) {
       return false;
     }
-    if (pipe(control_pipe_) != 0) {
+    if (!MakeCloexecPipe(control_pipe_)) {
       return false;
     }
 

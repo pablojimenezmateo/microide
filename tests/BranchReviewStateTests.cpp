@@ -50,6 +50,39 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "edited hunk content should mark changed since reviewed");
                    }});
 
+  tests.push_back({"BranchReviewState/HunkContentHashSeparatesLeftAndRight",
+                   [] {
+                     // Two hunks with identical row kind and line ranges whose per-row
+                     // left+right byte concatenation is the same, but split differently:
+                     // ("hello","world") vs ("hell","oworld"). The old undelimited hash
+                     // collided on these; the length-prefixed hash must tell them apart.
+                     auto make_model = [](std::string left, std::string right) {
+                       compare::CompareModel model;
+                       compare::CompareRow row;
+                       row.kind = compare::CompareRowKind::Modified;
+                       row.left_text = std::move(left);
+                       row.right_text = std::move(right);
+                       row.left_line = 1;
+                       row.right_line = 1;
+                       model.rows.push_back(std::move(row));
+                       model.hunks.push_back(compare::CompareHunk{.start_row = 0, .end_row = 0});
+                       return model;
+                     };
+                     const auto model_a = make_model("hello", "world");
+                     const auto model_b = make_model("hell", "oworld");
+                     const auto id_a = ComputeBranchReviewHunkIdentity(
+                         model_a, 0, std::filesystem::path("a.cpp"));
+                     const auto id_b = ComputeBranchReviewHunkIdentity(
+                         model_b, 0, std::filesystem::path("a.cpp"));
+                     Expect(id_a.old_start == id_b.old_start && id_a.new_start == id_b.new_start &&
+                                id_a.old_count == id_b.old_count && id_a.new_count == id_b.new_count,
+                            "the two hunks share identical line ranges");
+                     Expect(id_a.content_hash != id_b.content_hash,
+                            "differently-split left/right text must not share a content hash");
+                     Expect(!(id_a == id_b),
+                            "the hunk identities must differ so a changed hunk is not stale-reviewed");
+                   }});
+
   tests.push_back({"BranchReviewState/FileReviewSurvivesTargetReload",
                    [] {
                      const BranchReviewTargetIdentity target =

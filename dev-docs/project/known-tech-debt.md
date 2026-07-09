@@ -63,6 +63,128 @@ regression worse than the defect. Recorded here so they are not silently lost.
 > The plugin-metamethod, file-index-scan-race, and AsyncSubprocess-wake-pipe items were
 > reviewed and deliberately kept deferred (see their refreshed entries below).
 
+> **Resolved 2026-07-09 (ninth pass — cross-subsystem bug hunt):** a fan-out
+> bug-hunt across every subsystem landed the following fixes, each with regression
+> coverage; the full suite stays green (SAN run at session end):
+> - **Left/Right arrow now crosses line boundaries** (`TextViewportViewState.cpp`
+>   `AdvanceCaretHorizontal`) — it only mutated `caret.column`, so Left at column 0 and
+>   Right at end-of-line were no-ops instead of moving to the adjacent line (VS Code parity).
+> - **`Ansi256Color` clamps out-of-range indices** (`render/AnsiPalette.cpp`) — indices > 255
+>   fell through the grayscale ramp with no upper bound and wrapped via `Uint8` truncation.
+> - **`DecodeUtf8Codepoint` rejects overlong forms, UTF-16 surrogates, and > U+10FFFF**
+>   (`util/StringUtil.cpp`) — it sized sequences with the lead-byte-only classifier and
+>   accepted invalid scalars (`ED A0 80`→U+D800, `E0 80 80`→overlong, `F4 BF BF BF`→>U+10FFFF).
+> - **Merge conflict `BothDeleted` fallback** (`compare/MergeConflictKind.cpp`) — the
+>   existence fallback omitted base-present/both-absent, leaving a real "DD" conflict `Unknown`
+>   (offered an empty text view, suppressed the keep/delete choice).
+> - **Binary override no longer clobbers existence-choice kinds** (same file) — a
+>   delete/modify conflict with binary surviving content was overwritten to `Binary`, stripping
+>   the keep-vs-delete decision. Now gated on `!RequiresExistenceChoice(kind)`.
+> - **Branch-review hunk content hash length-prefixes left/right** (`compare/
+>   BranchReviewStateTypes.cpp`) — the undelimited concat collided (`"hello"+"world"` ==
+>   `"hell"+"oworld"`), so a changed hunk could stay marked reviewed.
+> - **LSP accepts a float-echoed response id** (`workspace/WorkspaceLspClientDispatch.cpp`) —
+>   the `IsInt()`-only gate dropped responses whose id was echoed as `5.0`; now accepts
+>   `IsDouble()` too, mirroring the DAP `request_seq` gate.
+> - **Plugin theme/file-icon registration rejects non-table args without longjmp**
+>   (`plugin/PluginPresentationRegistrationParsers.cpp`) — replaced the internal
+>   `luaL_checktype` (which longjmps over the caller's live `std::string error_message`) with
+>   a non-raising type check, upholding the "no longjmp over live C++ locals" invariant.
+> - **Plugin teardown releases all lifecycle refs** (`plugin/PluginStateTeardownInterop.cpp`) —
+>   `on_buffer_change/on_cursor_move/on_selection_change/on_buffer_close` refs were not
+>   `luaL_unref`'d (latent registry leak if teardown ever reuses the `lua_State`).
+> - **PTY reader natural-EOF reaper no longer blocks on a reused pid**
+>   (`platform/TerminalBackend.cpp`) — the EOF path had no sync edge with `Stop()`'s reaper, so a
+>   blocking `waitpid` could latch onto a recycled pid and hang the join; now a bounded WNOHANG reap.
+> - **File-watcher + file-index-watcher control pipes are CLOEXEC**
+>   (`platform/FileWatcher.cpp`, `platform/FileIndexWatcher.cpp`) — bare `pipe()` leaked the
+>   control fds into every forked child, contrary to the Subprocess/AsyncSubprocess hardening.
+> - **`AsyncSubprocess` moved-from accessors + `Write` hardened**
+>   (`platform/AsyncSubprocess.cpp`) — `pid()/exit_code()/stdout_fd()` locked `impl_->state_mutex`
+>   before the null check (null-deref on a moved-from object); `Write` had no deadline and could
+>   spin forever on a stalled-but-alive child (now a progress-resetting 30s stall budget).
+>
+> Second (deeper) round of the same pass added:
+> - **Function-breakpoint event no longer corrupts a coincident line breakpoint**
+>   (`workspace/DebugServiceCallbacks.cpp` + `editor/BreakpointStore.cpp`) — a DAP `breakpoint`
+>   event was applied to BOTH stores; when a function bp resolved to a line holding a user line bp,
+>   the line store's line-match fallback rewrote that bp's adapter id/verify state. Fixed by routing
+>   the event to the function store first and skipping the line store when it claims the id by id,
+>   and by restricting the line fallback to still-unbound (`adapter_id == 0`) breakpoints.
+> - **Save-normalization preserves the caret/selection/scroll** (`editor/TextViewportFileIO.cpp`) —
+>   the whole-document mirror `ReplaceLines` snapped them to (0,0)/top; the pre-normalization view is
+>   captured and restored, with carets clamped into the trimmed content (VS Code format-on-save parity).
+> - **Session restore remaps the active-project index after culling missing projects**
+>   (`workspace/WorkspacePersistenceCoordinatorWorkspaceSession.cpp`) — the saved index (into the
+>   original root list) was only clamped, so a missing project before the active one activated the
+>   wrong project; it is now remapped to the surviving entry.
+> - **Float settings clamp at store time** (`workspace/WorkspaceSettingsRegistry.{h,cpp}`) — added
+>   `min_float`/`max_float` to `SettingSpec` and clamped `ui.scale` in `ParseSettingValue`, mirroring
+>   the Int-clamp contract so the stored value can't diverge from the applied one.
+> - **gitignore leading whitespace is significant** (`project/IgnoreMatcher.cpp`) — `ParseRule`
+>   trimmed both ends; per gitignore(5) only trailing whitespace is stripped.
+>
+> Reviewed and left as LOW / deferred (no live MEDIUM+ trigger): `DebugValueTree` duplicate
+> `variablesReference` aliasing (`DebugValueTree.cpp` — one of two aliased rows never populates
+> children; adapter-dependent); several terminal escape-sequence deviations (OSC/DCS not aborted on
+> an interrupting bare ESC; multi-byte charset-designator leftover byte; SU/SD no-op on the primary
+> screen; combining marks dropped after a wide glyph) — all cosmetic/malformed-input only; and the
+> merge/compare preview `SliceVisibleColumns` visual-vs-codepoint slice for tab-bearing lines
+> (`DecoratedTextGridRenderer.cpp`, unconfirmed unit mismatch, outside the main editor grid path).
+
+> **Resolved 2026-07-09 (third deep round of the ninth pass):** three more MEDIUMs, each with
+> regression coverage:
+> - **Soft-wrapped collapsed-fold opener vertical motion** (`editor/TextLayoutCache.cpp`
+>   `WrappedRowRangeForLine`) — the opener's row range was inferred from the next logical line's
+>   offset, but a collapsed fold's hidden lines reuse the opener's offset, so a wrapping opener
+>   collapsed to a single-row range `{R, R}` and down-arrow got stuck on it. Now the opener's last
+>   row is found by scanning its own contiguous rows (tagged by `line_index`), robust to hidden lines.
+> - **LSP float-echoed id dropped at the INIT handshake** (`workspace/WorkspaceLspClientLifecycle.cpp`)
+>   — the prior pass fixed the steady-state dispatch gate but left the initialize-response gate on
+>   `IsInt()` only, so a float-echoing server's init response was never matched and startup timed out
+>   (server killed). Now accepts `IsInt() || IsDouble()` at both sites.
+> - **`FileIndex` move ops dropped the `follow_out_of_root_symlinks_` atomic**
+>   (`project/FileIndex.cpp`) — the hand-rolled move ctor/assignment (required by `files_mutex_`)
+>   omitted the flag, so a project switch (which move-assigns `FileIndex`) silently reverted a user
+>   who enabled following out-of-root symlinks to containment-enforced. Both move ops now carry it;
+>   a `FollowOutOfRootSymlinks()` getter was added for coverage.
+> - Also hardened the workspace-session save/restore to emit `active_project_index` in the same
+>   filtered index space as `project_roots` (was entries-space; masked by the non-empty-root
+>   invariant) so the Pass-2 restore remap stays correct regardless of that invariant.
+> - **Search-preview highlight no longer collapses to zero length** (`util/StringUtil.cpp`
+>   `CollapseAsciiWhitespaceTrackingMatch`) — a match whose last byte was whitespace and that
+>   consumed the whole trailing run (match_end at the next word) missed `mapped_end`; now the
+>   exclusive end maps to just after the flushed collapsed space.
+>
+> **Fourth (deepest) round — verdict: only LOW remains.** Deep passes over editor/render,
+> project/DAP, and compare/util/persistence found no further HIGH/MEDIUM. Remaining LOW leads left
+> as deferred (niche trigger and/or self-healing, or intentional v1 limitations):
+> - inotify leaks descendant watches when a watched subdirectory is moved OUT of the tree
+>   (`platform/FileIndexWatcher.cpp` — only the directly-moved dir gets `IN_MOVE_SELF`; grandchild
+>   watches leak with stale in-tree paths, bounded by `kMaxIndexWatchEntries` and self-heals on the
+>   next `IN_Q_OVERFLOW` full rescan);
+> - plugin end-of-line decorations and tab whitespace-markers on the wrapped HEAD row of a
+>   soft-wrapped line anchor past the visible glyphs (`render/EditorViewRenderer.cpp`) — cosmetic,
+>   matches the same-file inlay-suppression v1 limitation;
+> - `FileIndex::Refresh()` does not refresh `truncated_`, and `FileIndex::files()` returns a bare
+>   reference into shared_ptr-owned storage (no live caller) — latent footguns, not live defects.
+
+- **Dirty-tab detection (autosave / save-all / quit prompt) only walks the focused
+  editor group.** `src/workspace/WorkspaceTabCoordinator.cpp` (`DirtyIndices`,
+  `DirtyIndicesForProject`) enumerate dirty tabs only in `state_.focused_group()`. A
+  file open *only* in the non-focused split group and dirtied there is skipped by
+  `MaybeAutosaveDirtyTabs`, the quit-prompt count, and `SaveDirtyTabs(DirtyIndices())`,
+  so "Save all"/autosave does not flush it to disk (a file open in *both* groups shares
+  one `DocumentState`, so that case is covered). **Not data loss** — the always-on
+  session-flush snapshot iterates every group, so content survives to the session file;
+  only the disk-flush contract is violated. **Deferred (ninth pass):** the `Save(index)`
+  / `SaveDirtyTabs(span<index>)` contract is index-into-focused-group throughout, so a
+  correct fix means threading (group, index) pairs through the save + dirty-prompt paths
+  — a non-trivial refactor whose regression risk outweighs the narrow, no-data-loss gap.
+  **Blocked on:** a group-aware save/index API (`SaveGroupTab(group_index, index)` plus
+  an all-groups dirty enumerator) that the autosave and dirty-prompt coordinators route
+  through.
+
 - **Branch-review cross-generation `ChangedSinceReviewed` status is effectively
   unreachable.** `src/compare/BranchReviewStateService.cpp` /
   `src/compare/BranchReviewStateTypes.h` (`BranchReviewMarkerStatus::ChangedSinceReviewed`).

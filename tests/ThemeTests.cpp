@@ -175,6 +175,26 @@ void ExpectSharedAnsiPaletteParity() {
   }
 }
 
+void ExpectAnsi256ColorClampsOutOfRangeIndices() {
+  const auto same = [](SDL_Color a, SDL_Color b) {
+    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+  };
+  const SDL_Color fallback = render::Ansi256Color(-1);
+  // Regression: indices above 255 used to fall through the grayscale ramp with no
+  // upper bound and wrap via Uint8 truncation (e.g. 257 -> near-black, 256 ->
+  // near-white). They must now resolve to the same out-of-range fallback as < 0.
+  Expect(same(render::Ansi256Color(256), fallback),
+         "index 256 is out of range and must not wrap into the grayscale ramp");
+  Expect(same(render::Ansi256Color(300), fallback),
+         "index 300 is out of range and must clamp to the fallback colour");
+  Expect(same(render::Ansi256Color(1'000'000), fallback),
+         "a very large index must clamp rather than overflow the ramp math");
+  // The last valid grayscale index (255) stays a bright gray, distinct from fallback.
+  const SDL_Color last_gray = render::Ansi256Color(255);
+  Expect(last_gray.r == 238 && last_gray.g == 238 && last_gray.b == 238,
+         "index 255 remains the top of the grayscale ramp (0xEE)");
+}
+
 void ExpectSelfIncludingThemeLoadsWithoutRecursion() {
   // A colorscheme that includes itself must terminate via the include-cycle
   // guard rather than recursing forever, and still apply its own color-links.
@@ -235,6 +255,8 @@ void RegisterThemeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Theme built-in light is selectable and readable",
           ExpectBuiltinLightThemeIsSelectableAndReadable);
   AddTest(tests, "Theme shared ANSI palette parity", ExpectSharedAnsiPaletteParity);
+  AddTest(tests, "Theme ANSI 256 colour clamps out-of-range indices",
+          ExpectAnsi256ColorClampsOutOfRangeIndices);
   AddTest(tests, "Theme self-including colorscheme loads without recursion",
           ExpectSelfIncludingThemeLoadsWithoutRecursion);
   AddTest(tests, "Theme default foregrounds preserve readable contrast",

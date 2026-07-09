@@ -210,6 +210,52 @@ void TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects() {
          "restored first project should preserve compare horizontal scroll");
 }
 
+// Regression: `active_project_index` indexes the ORIGINAL saved project list. If a
+// project positioned BEFORE the active one is missing on restore, it is culled and
+// every later project shifts down — so the active index must be remapped, not just
+// clamped, or the wrong project activates on startup.
+void TestWorkspaceShellRestoreRemapsActiveIndexAfterMissingProjectCulled() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path first_root = temp_dir.path() / "alpha";
+  const std::filesystem::path second_root = temp_dir.path() / "beta";
+  const std::filesystem::path third_root = temp_dir.path() / "gamma";
+  WriteFile(first_root / "a.txt", "a\n");
+  WriteFile(second_root / "b.txt", "b\n");
+  WriteFile(third_root / "c.txt", "c\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, first_root, false, false), "open alpha");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, second_root, false, false), "open beta");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, third_root, false, false), "open gamma");
+  // Activate the MIDDLE project (beta, original index 1).
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 1, false), "activate beta");
+  Expect(WorkspaceShellTestAccess::ActiveProjectIndex(shell) == 1, "beta is active pre-save");
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+  WorkspaceShellTestAccess::SaveWorkspaceSession(shell);
+
+  // The first project vanishes between sessions.
+  std::filesystem::remove_all(first_root);
+
+  WorkspaceShell restored;
+  Expect(WorkspaceShellTestAccess::RestoreWorkspaceSession(restored), "restore should succeed");
+  Expect(WorkspaceShellTestAccess::ProjectCount(restored) == 2,
+         "the two surviving projects are restored");
+  // beta must still be the active project (now at index 0), not gamma.
+  Expect(WorkspaceShellTestAccess::ProjectRoot(restored) == second_root.lexically_normal(),
+         "the originally-active project (beta) must stay active after culling alpha");
+  Expect(WorkspaceShellTestAccess::ActiveProjectIndex(restored) == 0,
+         "beta's remapped active index is 0 after the missing predecessor is culled");
+}
+
 void TestWorkspaceShellRestoredProjectTabBadgeColorsHydrateOnStartup() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path first_root = temp_dir.path() / "alpha-project";
@@ -2300,6 +2346,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionPreservesOutgoingBaseChoice);
   AddTest(tests, "WorkspaceShell/RestoreWorkspaceSessionAcrossProjects",
           TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects);
+  AddTest(tests, "WorkspaceShell/RestoreRemapsActiveIndexAfterMissingProjectCulled",
+          TestWorkspaceShellRestoreRemapsActiveIndexAfterMissingProjectCulled);
   AddTest(tests, "WorkspaceShell/RestoredProjectTabBadgeColorsHydrateOnStartup",
           TestWorkspaceShellRestoredProjectTabBadgeColorsHydrateOnStartup);
   AddTest(tests, "WorkspaceShell/ShutdownPreservesDistinctWorkspaceProjectRoots",

@@ -430,21 +430,35 @@ void TextViewport::AdvanceCaretHorizontal(TextPosition& caret, int delta) const 
   if (caret.line >= document_->lines.size()) {
     caret.line = document_->lines.size() - 1;
   }
-  const std::string& line = document_->lines[caret.line];
-  caret.column = std::min(caret.column, line.size());
+  caret.column = std::min(caret.column, document_->lines[caret.line].size());
   if (delta < 0) {
     for (int i = delta; i < 0; ++i) {
-      caret.column = TextLayout::PreviousTextColumn(line, caret.column);
       if (caret.column == 0) {
-        break;
+        // At the start of a line, step back to the end of the previous line
+        // (VS Code semantics). Stop only at the very start of the document.
+        if (caret.line == 0) {
+          break;
+        }
+        --caret.line;
+        caret.column = document_->lines[caret.line].size();
+        continue;
       }
+      caret.column = TextLayout::PreviousTextColumn(document_->lines[caret.line], caret.column);
     }
   } else {
     for (int i = 0; i < delta; ++i) {
-      caret.column = TextLayout::NextTextColumn(line, caret.column);
+      const std::string& line = document_->lines[caret.line];
       if (caret.column >= line.size()) {
-        break;
+        // At the end of a line, step forward to the start of the next line.
+        // Stop only at the very end of the document.
+        if (caret.line + 1 >= document_->lines.size()) {
+          break;
+        }
+        ++caret.line;
+        caret.column = 0;
+        continue;
       }
+      caret.column = TextLayout::NextTextColumn(line, caret.column);
     }
   }
 }

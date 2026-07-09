@@ -33,6 +33,10 @@ void DestroyPluginState(runtime_types::PluginInstance* plugin) {
   unref(&plugin->on_project_close_ref);
   unref(&plugin->on_buffer_open_ref);
   unref(&plugin->on_buffer_save_ref);
+  unref(&plugin->on_buffer_change_ref);
+  unref(&plugin->on_cursor_move_ref);
+  unref(&plugin->on_selection_change_ref);
+  unref(&plugin->on_buffer_close_ref);
   unref(&plugin->shutdown_ref);
   plugin->runtime.reset();
   plugin->state = nullptr;

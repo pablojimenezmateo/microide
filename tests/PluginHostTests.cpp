@@ -2999,7 +2999,50 @@ return ide.plugin({
          "OnBufferSave must dispatch to a buffer_save subscriber");
 }
 
+void TestPluginHostThemeRegisterRejectsNonTableWithoutCrash() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "theme fixture\n");
+
+  // setup() passes a non-table to ctx.themes.add. This used to reach an internal
+  // luaL_checktype that longjmps over the caller's live std::string error_message
+  // (invariant violation / UB). The non-raising type check must instead surface a
+  // clean error and leave the host usable.
+  WritePluginInit(global_plugins, "bad-theme", R"(local ide = require("microide")
+return ide.plugin({
+  id = "badtheme.sample",
+  setup = function(ctx)
+    ctx.themes.add(42)
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  std::vector<std::string> sink_errors;
+  PluginHost host;
+  auto callbacks = MakePluginHostCallbacks();
+  callbacks.error_sink = [&](const std::string& error) { sink_errors.push_back(error); };
+  host.SetCallbacks(std::move(callbacks));
+
+  // Must not crash; the malformed theme must not be registered.
+  host.Reload(project_root);
+  Expect(host.ContributedThemes().empty(),
+         "a non-table theme argument must not register a theme");
+  const bool mentions_table =
+      std::any_of(sink_errors.begin(), sink_errors.end(), [](const std::string& e) {
+        return e.find("table") != std::string::npos;
+      });
+  Expect(mentions_table, "the rejection should surface a clear 'expects a table' error");
+}
+
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PluginHost/ThemeRegisterRejectsNonTableWithoutCrash",
+          TestPluginHostThemeRegisterRejectsNonTableWithoutCrash);
   AddTest(tests, "PluginHost/BufferLifecycleInterestGate",
           TestPluginHostBufferLifecycleInterestGate);
   AddTest(tests, "PluginHost/FilesystemSandbox", TestPluginHostFilesystemSandbox);
