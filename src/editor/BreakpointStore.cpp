@@ -1,7 +1,10 @@
 #include "editor/BreakpointStore.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <utility>
+
+#include "editor/EditTypes.h"
 
 namespace microide::editor {
 
@@ -300,6 +303,63 @@ void BreakpointStore::ResetVerification() {
   if (changed) {
     BumpRevision();
   }
+}
+
+bool BreakpointStore::ShiftForAppliedEdit(const std::filesystem::path& path,
+                                          const AppliedEdit& edit) {
+  const auto entry_it = by_path_.find(PathKey(path));
+  if (entry_it == by_path_.end() || entry_it->second.breakpoints.empty()) {
+    return false;
+  }
+  // Normalize the pre-edit range (start <= end) exactly like the diagnostics shift.
+  TextPosition before_start = edit.range_before.start;
+  TextPosition before_end = edit.range_before.end;
+  if (before_end.line < before_start.line ||
+      (before_end.line == before_start.line && before_end.column < before_start.column)) {
+    std::swap(before_start, before_end);
+  }
+  const std::size_t s = before_start.line;
+  const std::size_t e = before_end.line;
+  const std::size_t newline_count = static_cast<std::size_t>(
+      std::count(edit.replacement_text.begin(), edit.replacement_text.end(), '\n'));
+  const std::size_t new_end_line = s + newline_count;
+  if (s == e && new_end_line == e) {
+    return false;  // in-line edit with no net line change: nothing moves.
+  }
+  const std::ptrdiff_t delta =
+      static_cast<std::ptrdiff_t>(new_end_line) - static_cast<std::ptrdiff_t>(e);
+
+  std::vector<Breakpoint>& breakpoints = entry_it->second.breakpoints;
+  bool changed = false;
+  for (Breakpoint& bp : breakpoints) {
+    const std::size_t line = bp.line;
+    std::size_t next = line;
+    if (line <= s) {
+      next = line;  // at or above the edit's first line: unchanged
+    } else if (line > e) {
+      const std::ptrdiff_t shifted = static_cast<std::ptrdiff_t>(line) + delta;
+      next = shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
+    } else {
+      next = new_end_line;  // inside the replaced span: slide to its last line
+    }
+    if (next != line) {
+      bp.line = next;
+      changed = true;
+    }
+  }
+  if (!changed) {
+    return false;
+  }
+  // A shift can collide two breakpoints onto one line; keep the first so the
+  // sorted-unique-by-line invariant the rest of the store relies on still holds.
+  std::stable_sort(breakpoints.begin(), breakpoints.end(),
+                   [](const Breakpoint& a, const Breakpoint& b) { return a.line < b.line; });
+  breakpoints.erase(
+      std::unique(breakpoints.begin(), breakpoints.end(),
+                  [](const Breakpoint& a, const Breakpoint& b) { return a.line == b.line; }),
+      breakpoints.end());
+  BumpRevision();
+  return true;
 }
 
 void BreakpointStore::ReplaceAll(std::vector<FileBreakpoints> files) {

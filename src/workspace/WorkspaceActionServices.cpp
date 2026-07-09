@@ -764,6 +764,14 @@ std::string WorkspaceActionContext::CopySelectionText() const {
     return operations_.selected_text_at_active_single_line_text_surface();
   }
   if (const auto* viewport = operations_.active_navigable_viewport(); viewport != nullptr) {
+    // VSCode multi-caret copy: each caret's selection joined by newline, so a
+    // Ctrl-D multi-select copies every occurrence, not just the primary.
+    if (viewport->has_multiple_carets()) {
+      if (std::optional<std::string> multi = viewport->MultiCaretSelectedText();
+          multi.has_value()) {
+        return *multi;
+      }
+    }
     if (viewport->has_selection()) {
       return viewport->SelectedText();
     }
@@ -787,9 +795,15 @@ void WorkspaceActionContext::CutSelection() {
   }
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
     const bool was_dirty = viewport->dirty();
+    // VSCode multi-caret cut: aggregate every caret's selection for the clipboard
+    // and delete them all in one undo step. Falls back to primary selection / line.
+    const std::optional<std::string> multi_text =
+        viewport->has_multiple_carets() ? viewport->MultiCaretSelectedText() : std::nullopt;
     const bool has_selection = viewport->has_selection();
     const std::string text =
-        has_selection ? viewport->SelectedText() : viewport->CurrentLineTextForClipboard();
+        multi_text.has_value()
+            ? *multi_text
+            : (has_selection ? viewport->SelectedText() : viewport->CurrentLineTextForClipboard());
     if (!text.empty() && operations_.write_clipboard_text(text)) {
       operations_.write_primary_selection_text(text);
       const std::size_t cursor_before_line = viewport->cursor_line();
@@ -802,7 +816,9 @@ void WorkspaceActionContext::CutSelection() {
         selection_before = viewport->selection_range();
         cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
       }
-      if (has_selection) {
+      if (multi_text.has_value()) {
+        viewport->DeleteMultiCaretSelections();
+      } else if (has_selection) {
         viewport->DeleteSelectedText();
       } else {
         viewport->DeleteCurrentLine();
@@ -833,7 +849,7 @@ void WorkspaceActionContext::CutSelection() {
 void WorkspaceActionContext::PasteClipboard() {
   if (std::optional<std::string> clipboard_text = operations_.read_clipboard_text();
       clipboard_text.has_value()) {
-    InsertTextIntoActiveSurface(std::move(*clipboard_text));
+    InsertTextIntoActiveSurface(std::move(*clipboard_text), /*distribute_across_carets=*/true);
   }
 }
 
@@ -841,7 +857,8 @@ void WorkspaceActionContext::InsertText(std::string text) {
   InsertTextIntoActiveSurface(std::move(text));
 }
 
-void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text) {
+void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
+                                                         bool distribute_across_carets) {
   // Cap a pathologically large insertion before it is normalized, line-split
   // (one std::string per line), inserted, and stored in the undo history. A
   // multi-hundred-MB paste or `type` payload would otherwise amplify into a
@@ -870,7 +887,11 @@ void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text) {
       selection_before = viewport->selection_range();
       cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
     }
-    viewport->InsertText(text);
+    if (distribute_across_carets) {
+      viewport->PasteText(text);
+    } else {
+      viewport->InsertText(text);
+    }
     if (auto* compare_tab = operations_.active_compare_tab();
         compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
       operations_.refresh_compare_tab_derived_state(*compare_tab);

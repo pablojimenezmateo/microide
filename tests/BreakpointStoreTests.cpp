@@ -1,16 +1,30 @@
 #include "TestSupport.h"
 
 #include "editor/BreakpointStore.h"
+#include "editor/EditTypes.h"
 
 #include <filesystem>
+#include <string>
 #include <vector>
 
 namespace microide::tests {
 namespace {
 
+using microide::editor::AppliedEdit;
 using microide::editor::Breakpoint;
 using microide::editor::BreakpointStore;
+using microide::editor::SelectionRange;
+using microide::editor::TextPosition;
 using microide::editor::VerifiedBreakpoint;
+
+// Build an AppliedEdit that replaced [start_line,start_col .. end_line,end_col)
+// with `replacement`.
+AppliedEdit MakeEdit(std::size_t start_line, std::size_t start_col, std::size_t end_line,
+                     std::size_t end_col, std::string replacement) {
+  return AppliedEdit{SelectionRange{TextPosition{start_line, start_col},
+                                    TextPosition{end_line, end_col}},
+                     std::move(replacement)};
+}
 
 void TestBreakpointStoreToggleAddsAndRemoves() {
   BreakpointStore store;
@@ -207,9 +221,89 @@ void TestBreakpointStoreModifierSetters() {
   Expect(store.revision() == before_noop, "an unchanged modifier does not bump the revision");
 }
 
+void TestBreakpointStoreShiftInsertLineAboveMovesDown() {
+  BreakpointStore store;
+  const std::filesystem::path path = "/tmp/project/main.py";
+  store.Toggle(path, 10);
+  // Insert a blank line at line 2 (a newline before line 2's content).
+  Expect(store.ShiftForAppliedEdit(path, MakeEdit(2, 0, 2, 0, "\n")),
+         "inserting a line above a breakpoint should shift it");
+  Expect(store.HasBreakpoint(path, 11) && !store.HasBreakpoint(path, 10),
+         "the breakpoint should move from line 10 to 11");
+}
+
+void TestBreakpointStoreShiftDeleteLineAboveMovesUp() {
+  BreakpointStore store;
+  const std::filesystem::path path = "/tmp/project/main.py";
+  store.Toggle(path, 10);
+  // Delete line 2 entirely: replace [2,0 .. 3,0) with nothing.
+  Expect(store.ShiftForAppliedEdit(path, MakeEdit(2, 0, 3, 0, "")),
+         "deleting a line above a breakpoint should shift it");
+  Expect(store.HasBreakpoint(path, 9) && !store.HasBreakpoint(path, 10),
+         "the breakpoint should move from line 10 to 9");
+}
+
+void TestBreakpointStoreShiftEditBelowLeavesItPut() {
+  BreakpointStore store;
+  const std::filesystem::path path = "/tmp/project/main.py";
+  store.Toggle(path, 5);
+  Expect(!store.ShiftForAppliedEdit(path, MakeEdit(20, 0, 20, 0, "\n")),
+         "an edit below the breakpoint should not move it (returns false)");
+  Expect(store.HasBreakpoint(path, 5), "the breakpoint stays on line 5");
+}
+
+void TestBreakpointStoreShiftInlineEditIsNoop() {
+  BreakpointStore store;
+  const std::filesystem::path path = "/tmp/project/main.py";
+  store.Toggle(path, 5);
+  // Replace two chars within line 5 with one char: no net line change.
+  Expect(!store.ShiftForAppliedEdit(path, MakeEdit(5, 2, 5, 4, "x")),
+         "an in-line edit with no line delta should be a no-op");
+  Expect(store.HasBreakpoint(path, 5), "the breakpoint stays on line 5");
+}
+
+void TestBreakpointStoreShiftDeletedLineSlidesToEditEnd() {
+  BreakpointStore store;
+  const std::filesystem::path path = "/tmp/project/main.py";
+  store.Toggle(path, 5);
+  store.Toggle(path, 9);
+  // Delete lines 4..6 (replace [4,0 .. 7,0) with nothing). The breakpoint on the
+  // interior line 5 slides to the edit's end line (4); the one at 9 shifts up by 3.
+  Expect(store.ShiftForAppliedEdit(path, MakeEdit(4, 0, 7, 0, "")),
+         "a multi-line delete spanning a breakpoint should shift the set");
+  Expect(store.HasBreakpoint(path, 4), "the breakpoint on a removed line slides to the edit end");
+  Expect(store.HasBreakpoint(path, 6) && !store.HasBreakpoint(path, 9),
+         "the breakpoint below the delete shifts up by the removed line count");
+}
+
+void TestBreakpointStoreShiftCollisionDedupes() {
+  BreakpointStore store;
+  const std::filesystem::path path = "/tmp/project/main.py";
+  store.Toggle(path, 4);
+  store.Toggle(path, 5);
+  // Delete line 4 (replace [4,0 .. 5,0)): line 4 stays put, line 5 slides onto 4.
+  Expect(store.ShiftForAppliedEdit(path, MakeEdit(4, 0, 5, 0, "")),
+         "the shift should report a change");
+  const auto* bps = store.FindByPath(path);
+  Expect(bps != nullptr && bps->size() == 1 && (*bps)[0].line == 4,
+         "two breakpoints colliding on one line dedupe to a single breakpoint");
+}
+
 }  // namespace
 
 void RegisterBreakpointStoreTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "BreakpointStore/ShiftInsertLineAboveMovesDown",
+          TestBreakpointStoreShiftInsertLineAboveMovesDown);
+  AddTest(tests, "BreakpointStore/ShiftDeleteLineAboveMovesUp",
+          TestBreakpointStoreShiftDeleteLineAboveMovesUp);
+  AddTest(tests, "BreakpointStore/ShiftEditBelowLeavesItPut",
+          TestBreakpointStoreShiftEditBelowLeavesItPut);
+  AddTest(tests, "BreakpointStore/ShiftInlineEditIsNoop",
+          TestBreakpointStoreShiftInlineEditIsNoop);
+  AddTest(tests, "BreakpointStore/ShiftDeletedLineSlidesToEditEnd",
+          TestBreakpointStoreShiftDeletedLineSlidesToEditEnd);
+  AddTest(tests, "BreakpointStore/ShiftCollisionDedupes",
+          TestBreakpointStoreShiftCollisionDedupes);
   AddTest(tests, "BreakpointStore/ModifierSetters", TestBreakpointStoreModifierSetters);
   AddTest(tests, "BreakpointStore/ToggleAddsAndRemoves", TestBreakpointStoreToggleAddsAndRemoves);
   AddTest(tests, "BreakpointStore/KeepsLinesSorted", TestBreakpointStoreKeepsLinesSorted);

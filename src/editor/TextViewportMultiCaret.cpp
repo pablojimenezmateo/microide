@@ -12,7 +12,10 @@
 
 #include <algorithm>
 #include <limits>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "editor/TextLayout.h"
 
@@ -118,7 +121,8 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
 }
 
 bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view insert_text,
-                                       bool record_undo) {
+                                       bool record_undo,
+                                       const std::vector<std::string>* per_caret_insert) {
   last_applied_edit_.reset();
   EnsureDocument();
   if (document_->lines.empty()) {
@@ -154,7 +158,8 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   // Plan each caret's edit from the pre-edit buffer. Returns nullopt when the
   // caret cannot edit (backspace at doc start, delete at doc end).
   const auto plan_edit = [&](std::size_t line, std::size_t column,
-                             const std::optional<SelectionRange>& selection)
+                             const std::optional<SelectionRange>& selection,
+                             std::string_view caret_insert)
       -> std::optional<PlannedCaretEdit> {
     // Selection-aware path: replace the selection (empty replacement for the
     // delete kinds, the inserted text otherwise), exactly as the single-caret
@@ -164,12 +169,12 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
       const SelectionRange removed{clamp_position(selection->start),
                                    clamp_position(selection->end)};
       if (kind == MultiCaretEditKind::Insert) {
-        if (insert_text == "\n") {
+        if (caret_insert == "\n") {
           return PlannedCaretEdit{
               removed, "\n" + AutoIndentForNewline(removed.start.line, removed.start.column),
               std::nullopt};
         }
-        return PlannedCaretEdit{removed, std::string(insert_text), std::nullopt};
+        return PlannedCaretEdit{removed, std::string(caret_insert), std::nullopt};
       }
       return PlannedCaretEdit{removed, "", std::nullopt};
     }
@@ -179,7 +184,7 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
         // across three lines and lands on the inner-indent line (mirrors the
         // single-caret TryInsertNewlineSplitBraces path); other carets fall back
         // to a plain newline + auto-indent.
-        if (insert_text == "\n") {
+        if (caret_insert == "\n") {
           if (std::optional<NewlineBraceSplit> split = ComputeNewlineBraceSplit(line, column);
               split.has_value()) {
             return PlannedCaretEdit{
@@ -193,7 +198,7 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
         }
         return PlannedCaretEdit{
             SelectionRange{TextPosition{line, column}, TextPosition{line, column}},
-            std::string(insert_text), std::nullopt};
+            std::string(caret_insert), std::nullopt};
       }
       case MultiCaretEditKind::Backspace: {
         if (column > 0) {
@@ -230,16 +235,27 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     return std::nullopt;
   };
 
+  // Distribute one supplied string per caret (in sorted order) only when the
+  // caller passed exactly one per deduped caret on an Insert; otherwise every
+  // caret gets `insert_text`. The dedup above can shrink the set, so re-check
+  // sizes here rather than trusting the pre-dedup caller count.
+  const bool distribute = per_caret_insert != nullptr &&
+                          kind == MultiCaretEditKind::Insert &&
+                          per_caret_insert->size() == carets.size();
+
   std::vector<std::optional<PlannedCaretEdit>> planned;
   planned.reserve(carets.size());
   std::size_t affected_start = std::numeric_limits<std::size_t>::max();
   std::size_t affected_end = 0;
   bool has_candidate_edit = false;
-  for (const MultiCaretSite& caret : carets) {
+  for (std::size_t caret_index = 0; caret_index < carets.size(); ++caret_index) {
+    const MultiCaretSite& caret = carets[caret_index];
     const std::size_t line = std::min(caret.position.line, document_->lines.size() - 1);
     const std::size_t column =
         TextLayout::ClampTextColumn(document_->lines[line], caret.position.column);
-    std::optional<PlannedCaretEdit> edit = plan_edit(line, column, caret.selection);
+    const std::string_view caret_insert =
+        distribute ? std::string_view((*per_caret_insert)[caret_index]) : insert_text;
+    std::optional<PlannedCaretEdit> edit = plan_edit(line, column, caret.selection, caret_insert);
     if (edit.has_value()) {
       affected_start = std::min(affected_start, edit->removed.start.line);
       affected_end = std::max(affected_end, edit->removed.end.line + 1);
@@ -327,6 +343,91 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   } else {
     undo_history_.ClearRedo();
   }
+  return true;
+}
+
+namespace {
+
+// Collect primary + secondary carets as sorted, position-deduped sites, each
+// carrying its normalized selection. Shared by the multi-caret copy and the
+// distribute-paste line split so both agree on caret order.
+std::vector<MultiCaretSite> CollectSortedCaretSites(
+    const TextPosition& primary, const std::optional<TextPosition>& primary_anchor,
+    const std::vector<TextViewportUndoHistory::SecondaryCaret>& secondaries) {
+  std::vector<MultiCaretSite> carets;
+  carets.reserve(secondaries.size() + 1);
+  for (const TextViewportUndoHistory::SecondaryCaret& secondary : secondaries) {
+    carets.push_back(
+        {secondary.position, NormalizedSelection(secondary.position, secondary.selection_anchor)});
+  }
+  carets.push_back({primary, NormalizedSelection(primary, primary_anchor)});
+  std::sort(carets.begin(), carets.end(), [](const MultiCaretSite& lhs, const MultiCaretSite& rhs) {
+    return detail::PositionLess(lhs.position, rhs.position);
+  });
+  carets.erase(std::unique(carets.begin(), carets.end(),
+                           [](const MultiCaretSite& lhs, const MultiCaretSite& rhs) {
+                             return lhs.position == rhs.position;
+                           }),
+               carets.end());
+  return carets;
+}
+
+}  // namespace
+
+std::optional<std::string> TextViewport::MultiCaretSelectedText() const {
+  if (secondary_carets_.empty()) {
+    return std::nullopt;  // single caret: caller uses SelectedText()
+  }
+  const std::vector<MultiCaretSite> carets = CollectSortedCaretSites(
+      TextPosition{cursor_line_, cursor_column_}, selection_anchor_, secondary_carets_);
+  // Only aggregate when every caret contributes a real selection (the Ctrl-D
+  // case). Mixed selection/no-selection sets fall back to single-caret copy.
+  for (const MultiCaretSite& caret : carets) {
+    if (!caret.selection.has_value()) {
+      return std::nullopt;
+    }
+  }
+  std::string out;
+  for (std::size_t i = 0; i < carets.size(); ++i) {
+    if (i != 0) {
+      out.push_back('\n');
+    }
+    out += TextInRange(*carets[i].selection);
+  }
+  return out;
+}
+
+bool TextViewport::DeleteMultiCaretSelections(bool record_undo) {
+  // Each caret has a selection (caller guarantee), so the Backspace fan-out
+  // replaces every selection with "" in one aggregate undo entry and never
+  // touches a caret without a selection.
+  return ApplyMultiCaretEdit(MultiCaretEditKind::Backspace, "", record_undo);
+}
+
+bool TextViewport::PasteText(std::string_view text, bool record_undo) {
+  if (!has_multiple_carets()) {
+    InsertText(text, record_undo);
+    return true;
+  }
+  // Split the clipboard into lines (tolerating CRLF), then distribute one line
+  // per caret only when the counts match; otherwise insert the whole payload at
+  // every caret (ApplyMultiCaretEdit re-checks the count against the deduped set).
+  std::vector<std::string> parts;
+  std::size_t start = 0;
+  for (std::size_t i = 0; i <= text.size(); ++i) {
+    if (i == text.size() || text[i] == '\n') {
+      std::string_view line = text.substr(start, i - start);
+      if (!line.empty() && line.back() == '\r') {
+        line.remove_suffix(1);
+      }
+      parts.emplace_back(line);
+      start = i + 1;
+    }
+  }
+  if (parts.size() == secondary_carets_.size() + 1) {
+    return ApplyMultiCaretEdit(MultiCaretEditKind::Insert, text, record_undo, &parts);
+  }
+  InsertText(text, record_undo);
   return true;
 }
 

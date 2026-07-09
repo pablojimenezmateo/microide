@@ -538,14 +538,9 @@ std::optional<SelectionRange> TextViewport::selection_range() const {
   return SelectionRange{cursor, *selection_anchor_};
 }
 
-std::string TextViewport::SelectedText() const {
-  const auto range = selection_range();
-  if (!range.has_value()) {
-    return {};
-  }
-
-  const auto& start = range->start;
-  const auto& end = range->end;
+std::string TextViewport::TextInRange(const SelectionRange& range) const {
+  const auto& start = range.start;
+  const auto& end = range.end;
   if (start.line == end.line) {
     return document_->lines[start.line].substr(start.column, end.column - start.column);
   }
@@ -566,6 +561,14 @@ std::string TextViewport::SelectedText() const {
   }
   text += document_->lines[end.line].substr(0, end.column);
   return text;
+}
+
+std::string TextViewport::SelectedText() const {
+  const auto range = selection_range();
+  if (!range.has_value()) {
+    return {};
+  }
+  return TextInRange(*range);
 }
 
 std::string TextViewport::CurrentLineTextForClipboard() const {

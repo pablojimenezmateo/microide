@@ -698,6 +698,9 @@ struct DapClient::Impl {
     if (!SendMessageImmediate(req)) {
       SetLastError("failed to send initialize request to debug adapter");
       ShutdownProcessOnce();
+      // Fail (don't silently drop) any request registered during init so its UI
+      // loading state resolves instead of stranding — symmetric with the LSP client.
+      FailPendingRequests(false);
       ClearDeferredMessages();
       initializing.store(false, std::memory_order_release);
       return;
@@ -708,6 +711,7 @@ struct DapClient::Impl {
     for (int attempts = 0; attempts < 120; ++attempts) {
       if (stop_init.load(std::memory_order_acquire)) {
         ShutdownProcessOnce();
+        FailPendingRequests(false);
         ClearDeferredMessages();
         initializing.store(false, std::memory_order_release);
         return;
@@ -742,6 +746,7 @@ struct DapClient::Impl {
             message_val.IsString() ? message_val.AsString() : "initialize failed";
         SetLastError("debug adapter rejected initialize: " + message);
         ShutdownProcessOnce();
+        FailPendingRequests(false);
         ClearDeferredMessages();
         initializing.store(false, std::memory_order_release);
         return;
@@ -763,6 +768,7 @@ struct DapClient::Impl {
         SetLastError("timed out waiting for initialize response from debug adapter");
       }
       ShutdownProcessOnce();
+      FailPendingRequests(false);
       ClearDeferredMessages();
       initializing.store(false, std::memory_order_release);
       return;

@@ -491,8 +491,10 @@ class WorkspaceActionContext {
   // text input, or the active editable viewport) with the matching redraw
   // requests. Shared by PasteClipboard and InsertText so the insertion +
   // merge/compare-tracking + redraw idiom lives in exactly one place. Caps
-  // pathologically large payloads before line-splitting/undo storage.
-  void InsertTextIntoActiveSurface(std::string text);
+  // pathologically large payloads before line-splitting/undo storage. When
+  // `distribute_across_carets` is set (paste), a multi-line payload split N ways
+  // is distributed one line per caret if the counts match (VSCode paste).
+  void InsertTextIntoActiveSurface(std::string text, bool distribute_across_carets = false);
 
   ProjectCatalogState& project_catalog_;
   ProjectWorkspaceState& state_;

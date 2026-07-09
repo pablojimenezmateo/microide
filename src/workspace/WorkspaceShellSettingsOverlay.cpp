@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
+#include <limits>
 #include <unordered_map>
 
 #include "workspace/WorkspaceStartupOptions.h"
@@ -205,26 +206,15 @@ std::string NextSettingValue(const SettingSpec& spec,
     case SettingType::Int: {
       const auto parsed = util::ParseInt(current);
       int value = parsed.value_or(spec.default_int);
-      if (spec.id == "ui.layout_compact_breakpoint_px") {
-        value = WrapSteppedInt(value, 600, 2000, 20, direction);
-      } else if (spec.id == "editor.hover_delay_ms") {
-        value = WrapSteppedInt(value, 0, 2000, 50, direction);
-      } else if (spec.id == "editor.tab_size" || spec.id == "editor.indent_width") {
-        value = WrapSteppedInt(value, 1, 16, 1, direction);
-      } else if (spec.id == "editor.font_size" || spec.id == "terminal.font_size") {
-        value = WrapSteppedInt(value, 8, 32, 1, direction);
-      } else if (spec.id == "terminal.scrollback_lines") {
-        value = WrapSteppedInt(value, 200, 100000, 1000, direction);
-      } else if (spec.id == "editor.caret_blink.interval_ms") {
-        value = WrapSteppedInt(value, 100, 2000, 50, direction);
-      } else if (spec.id == "editor.autosave.delay_ms") {
-        value = WrapSteppedInt(value, 200, 60000, 250, direction);
-      } else if (spec.id == "editor.fold.sticky_scroll.max_depth") {
-        value = WrapSteppedInt(value, 1, 8, 1, direction);
+      const bool bounded = spec.min_int != std::numeric_limits<int>::min() ||
+                           spec.max_int != std::numeric_limits<int>::max();
+      if (bounded) {
+        // Single source of truth: the spec owns each setting's range + step, so the
+        // stepper and the store-time clamp (ParseSettingValue) never disagree.
+        value = WrapSteppedInt(value, spec.min_int, spec.max_int, spec.int_step, direction);
       } else {
-        // Fallback for any future Int setting without an explicit range. The real
-        // per-setting ranges above must stay in sync with each consumer's clamp;
-        // this default±20 window is a safety net, not a correct range.
+        // Fallback for any future Int setting without an explicit range: a
+        // default±20 safety-net window, not a correct range.
         value = WrapSteppedInt(value, spec.default_int - 20, spec.default_int + 20, 1, direction);
       }
       return std::to_string(value);

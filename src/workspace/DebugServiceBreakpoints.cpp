@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "editor/EditTypes.h"
 #include "util/DebugTrace.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceProjectState.h"
@@ -115,6 +116,21 @@ void DebugService::ResendExceptionFiltersAndSync() {
   if (operations_.request_debug_pane_redraw) {
     operations_.request_debug_pane_redraw();
   }
+}
+
+bool DebugService::ShiftBreakpointsForAppliedEdit(const std::filesystem::path& path,
+                                                  const editor::AppliedEdit& edit) {
+  if (path.empty()) {
+    return false;
+  }
+  if (!CurrentProjectState().breakpoint_store.ShiftForAppliedEdit(path, edit)) {
+    return false;
+  }
+  SyncBreakpointsPanel();
+  // Live re-send so an active session rebinds the moved lines immediately; no-op
+  // when no session is running.
+  ResendBreakpointsForFile(path);
+  return true;
 }
 
 void DebugService::SyncBreakpointsPanel() {

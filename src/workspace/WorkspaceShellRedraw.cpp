@@ -314,6 +314,13 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
     SyncLspForActiveEditableLastChange();
   }
   const auto& applied_edit = viewport->last_applied_edit();
+  // Slide stored line breakpoints through this edit so a line inserted/removed
+  // above a breakpoint keeps it on its statement (VSCode-style). Cheap no-op for
+  // files without breakpoints; requests a gutter repaint only when a disc moved.
+  if (applied_edit.has_value() &&
+      debug_service_.ShiftBreakpointsForAppliedEdit(viewport->path(), *applied_edit)) {
+    RequestFocusedEditorRedraw();
+  }
   if (!applied_edit.has_value()) {
     util::PerformanceTrace::Scope scope(
         "WorkspaceShell::RequestActiveEditableLastChangeRedraw::FallbackFullRedraw");

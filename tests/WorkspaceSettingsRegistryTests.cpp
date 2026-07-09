@@ -178,6 +178,29 @@ void TestSettingsCatalogEdgeValuesRoundTrip() {
   }
 }
 
+void TestSettingsIntValuesClampAtStoreTime() {
+  const SettingSpec* spec = FindBuiltinSettingSpec("editor.font_size");
+  Expect(spec != nullptr, "font_size spec should exist");
+  // The store-time clamp keeps the stored/displayed value in sync with the value
+  // the editor actually applies (font size range is 8..32).
+  const auto high = ParseSettingValue(*spec, "999");
+  Expect(high.has_value() && std::get<int>(*high) == 32,
+         "an out-of-range-high int must be clamped to max at store time, not stored verbatim");
+  const auto low = ParseSettingValue(*spec, "1");
+  Expect(low.has_value() && std::get<int>(*low) == 8,
+         "an out-of-range-low int must be clamped to min at store time");
+  const auto ok = ParseSettingValue(*spec, "16");
+  Expect(ok.has_value() && std::get<int>(*ok) == 16, "an in-range int should pass through");
+
+  // A setting without an explicit range keeps the unbounded sentinels: no clamp.
+  const SettingSpec* unranged = FindBuiltinSettingSpec("editor.soft_tabs");
+  if (unranged != nullptr && unranged->type == SettingType::Int) {
+    const auto big = ParseSettingValue(*unranged, "1000000");
+    Expect(big.has_value() && std::get<int>(*big) == 1000000,
+           "an int setting with no declared range must not be clamped");
+  }
+}
+
 void TestSettingsCatalogRejectsInvalidEnums() {
   for (std::string_view id : kNewSettingIds) {
     const SettingSpec* spec = FindBuiltinSettingSpec(id);
@@ -523,6 +546,8 @@ void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
           TestSettingsCatalogDefaultsRoundTrip);
   AddTest(tests, "WorkspaceSettingsRegistry/EdgeValuesRoundTrip",
           TestSettingsCatalogEdgeValuesRoundTrip);
+  AddTest(tests, "WorkspaceSettingsRegistry/IntValuesClampAtStoreTime",
+          TestSettingsIntValuesClampAtStoreTime);
   AddTest(tests, "WorkspaceSettingsRegistry/RejectsInvalidEnums",
           TestSettingsCatalogRejectsInvalidEnums);
   AddTest(tests, "WorkspaceSettingsOverlay/FiltersAndPreservesScopes",

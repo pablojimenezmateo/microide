@@ -7,6 +7,7 @@
 #include "workspace/WorkspaceLspManager.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <optional>
 #include <string>
@@ -1398,7 +1399,63 @@ while True:
   client.Shutdown();
 }
 
+void TestWorkspaceLspClientInitFailureFailsPendingRequest() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "stall-server.py";
+  // Consume the initialize request, then stall briefly and exit WITHOUT ever
+  // responding, so the client's init loop hits EOF and takes the !got_init
+  // failure path. The stall gives the test time to register a pending request
+  // before init fails.
+  WriteFile(server_path, std::string(R"py(import sys
+import time
+
+content_length = None
+while True:
+    line = sys.stdin.buffer.readline()
+    if not line:
+        break
+    if line in (b"\r\n", b"\n"):
+        break
+    if line.lower().startswith(b"content-length:"):
+        content_length = int(line.split(b":", 1)[1].strip())
+if content_length:
+    sys.stdin.buffer.read(content_length)
+time.sleep(0.3)
+)py"));
+
+  LspClient client;
+  const bool started = client.Start({"python3", server_path.string()}, "file:///tmp", "python");
+  Expect(started, "init-failure fixture should start");
+
+  // Issue a feature request while the client is still initializing: it registers a
+  // pending request and queues the wire message. When init fails, the request must
+  // be failed (callback invoked with no result), not silently dropped -> otherwise
+  // its UI loading state strands forever.
+  std::atomic<bool> hover_called{false};
+  client.RequestHoverAsync("file:///tmp/a.py", LspClient::Position{0, 0},
+                           [&hover_called](std::optional<util::JsonValue>) {
+                             hover_called.store(true, std::memory_order_release);
+                           });
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (std::chrono::steady_clock::now() < deadline &&
+         !hover_called.load(std::memory_order_acquire)) {
+    client.DrainCallbacks();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  client.DrainCallbacks();
+  Expect(!client.IsInitialized(), "init should have failed (server never responded)");
+  Expect(hover_called.load(std::memory_order_acquire),
+         "a request registered during a failed init must have its callback failed, not dropped");
+  client.Shutdown();
+}
+
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceLspClient/InitFailureFailsPendingRequest",
+          TestWorkspaceLspClientInitFailureFailsPendingRequest);
   AddTest(tests, "WorkspaceLspClient/DidChangePreservesOrderAndPayload",
           TestWorkspaceLspClientDidChangePreservesOrderAndPayload);
   AddTest(tests, "WorkspaceLspClient/CompletionParsesJsonResult",

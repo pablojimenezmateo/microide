@@ -16,6 +16,10 @@
 #include "workspace/LaunchConfig.h"
 #include "workspace/WorkspaceDapManager.h"
 
+namespace microide::editor {
+struct AppliedEdit;  // editor/EditTypes.h
+}  // namespace microide::editor
+
 namespace microide::workspace {
 
 struct WorkspaceContext;
@@ -102,6 +106,14 @@ class DebugService {
   // Re-send `setBreakpoints` for one file to the active session (no-op when no
   // session is active). Used when the user toggles a breakpoint mid-session.
   void ResendBreakpointsForFile(const std::filesystem::path& path);
+
+  // Shift stored line breakpoints in `path` to follow an editor edit (so a line
+  // inserted/removed above a breakpoint keeps it on its statement, VSCode-style),
+  // rebuild the Breakpoints panel, and live re-send to the active session. Cheap
+  // no-op when the file has no breakpoints. Returns true when anything moved (so
+  // the caller can repaint the gutter).
+  bool ShiftBreakpointsForAppliedEdit(const std::filesystem::path& path,
+                                      const editor::AppliedEdit& edit);
 
   // Execution control (Phase 3). No-ops when no session is active; the session
   // itself guards on the correct state (Stopped for continue/step, Running for

@@ -147,6 +147,32 @@ void TestShapingMoveLineUpMultiCaretSingleUndoStep() {
          "undo should restore the original line order atomically");
 }
 
+void TestShapingMoveLineDownRedoPreservesMultiCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("aaa\nbbb\nccc\nddd", "/tmp/sample.txt");
+  viewport.MoveCursorTo(0, 2);
+  viewport.AddSecondaryCaret(2, 2);
+  Expect(microide::editor::MoveLineDown(viewport), "MoveLineDown should succeed");
+  // Block [aaa,bbb,ccc] moves below ddd; carets follow (+1 line, same column).
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 2,
+         "primary caret should follow the moved block and keep its column");
+  Expect(viewport.secondary_carets().size() == 1 &&
+             viewport.secondary_carets()[0].line == 3 &&
+             viewport.secondary_carets()[0].column == 2,
+         "secondary caret should follow the moved block");
+
+  Expect(viewport.Undo(), "undo should succeed");
+  Expect(viewport.Redo(), "redo should succeed");
+  Expect(viewport.lines()[0] == "ddd" && viewport.lines()[1] == "aaa",
+         "redo should re-apply the line move");
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 2,
+         "redo should restore the primary caret line AND column (regression: snapped to col 0)");
+  Expect(viewport.secondary_carets().size() == 1 &&
+             viewport.secondary_carets()[0].line == 3 &&
+             viewport.secondary_carets()[0].column == 2,
+         "redo should restore the secondary caret (regression: secondaries were dropped)");
+}
+
 void TestShapingMoveLineUpAtTopIsNoop() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\n", "/tmp/sample.txt");
@@ -1033,6 +1059,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingMoveLineDown);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDownMultiCaretSingleUndoStep",
           TestShapingMoveLineDownMultiCaretSingleUndoStep);
+  AddTest(tests, "EditorEssentials/Shaping/MoveLineDownRedoPreservesMultiCaret",
+          TestShapingMoveLineDownRedoPreservesMultiCaret);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineUpMultiCaretSingleUndoStep",
           TestShapingMoveLineUpMultiCaretSingleUndoStep);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineUpAtTop",

@@ -13,6 +13,7 @@ using microide::editor::SnippetSessionState;
 using microide::editor::SnippetOnCaretMoved;
 using microide::editor::SnippetNavigateTab;
 using microide::editor::SnippetTryInsertText;
+using microide::editor::SnippetTryBackspace;
 using microide::editor::ExpandSnippetAtSelection;
 using microide::editor::ParseSnippetBody;
 using microide::editor::TextViewport;
@@ -150,10 +151,70 @@ void TestSnippetCrossTabShiftOnInsert() {
          "later lands on the moved placeholder, not a stale column");
 }
 
+void TestSnippetCrossTabShiftOnBackspace() {
+  TextViewport viewport;
+  viewport.LoadContent("--", "/tmp/snippet.cpp");
+  viewport.MoveCursorTo(0, 0);
+  SnippetSessionState session;
+  viewport.BeginUndoGroup();
+  SelectionRange trigger{{0, 0}, {0, 2}};
+  Expect(ExpandSnippetAtSelection(viewport, session, trigger, "${1:index} ${2:n}$0"),
+         "two tab stops on one line should expand");
+  Expect(viewport.lines()[0] == "index n", "placeholders expand to 'index n'");
+  Expect(session.ranges_by_tab[2][0].start.column == 6u, "tab 2 starts at column 6");
+
+  // Caret sits at the end of $1 ('index'); backspace removes the trailing 'x'.
+  Expect(SnippetTryBackspace(viewport, session), "backspace inside $1 should delete one char");
+  Expect(viewport.lines()[0] == "inde n", "backspace shrinks $1 to 'inde'");
+  Expect(session.ranges_by_tab[2][0].start.column == 5u,
+         "deleting in tab 1 must shift tab 2's recorded start (6 -> 5), not leave it stale");
+}
+
+void TestSnippetCrossTabShiftOnChoice() {
+  TextViewport viewport;
+  viewport.LoadContent("--", "/tmp/snippet.cpp");
+  viewport.MoveCursorTo(0, 0);
+  SnippetSessionState session;
+  viewport.BeginUndoGroup();
+  SelectionRange trigger{{0, 0}, {0, 2}};
+  Expect(ExpandSnippetAtSelection(viewport, session, trigger, "${1:|short,longer|} ${2:x}$0"),
+         "a choice tab stop plus a second tab stop should expand");
+  Expect(viewport.lines()[0] == "short x", "first choice fills $1: 'short x'");
+  Expect(session.ranges_by_tab[2][0].start.column == 6u, "tab 2 starts at column 6");
+
+  // Cycling the choice grows $1 from 'short' (5) to 'longer' (6).
+  Expect(SnippetNavigateTab(viewport, session, false), "cycling the choice should apply 'longer'");
+  Expect(viewport.lines()[0] == "longer x", "second choice grows $1: 'longer x'");
+  Expect(session.ranges_by_tab[2][0].start.column == 7u,
+         "a choice that changes $1's length must shift tab 2's recorded start (6 -> 7)");
+}
+
+void TestSnippetLoneCarriageReturnBodyPositions() {
+  TextViewport viewport;
+  viewport.LoadContent("--", "/tmp/snippet.cpp");
+  viewport.MoveCursorTo(0, 0);
+  SnippetSessionState session;
+  viewport.BeginUndoGroup();
+  SelectionRange trigger{{0, 0}, {0, 2}};
+  Expect(ExpandSnippetAtSelection(viewport, session, trigger, "${1:a}\r${2:b}$0"),
+         "snippet body with a lone CR should expand");
+  // ReplaceRange normalizes the lone CR to a newline, so the body spans two lines.
+  Expect(viewport.lines().size() == 2 && viewport.lines()[0] == "a" && viewport.lines()[1] == "b",
+         "a lone CR should split the inserted text into two lines");
+  Expect(session.ranges_by_tab[2].size() == 1u &&
+             session.ranges_by_tab[2][0].start.line == 1u &&
+             session.ranges_by_tab[2][0].start.column == 0u,
+         "tab 2 must map onto the normalized second line, not a stale column on line 0");
+}
+
 }  // namespace
 
 void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorSnippet/CrossTabShiftOnInsert", TestSnippetCrossTabShiftOnInsert);
+  AddTest(tests, "EditorSnippet/CrossTabShiftOnBackspace", TestSnippetCrossTabShiftOnBackspace);
+  AddTest(tests, "EditorSnippet/CrossTabShiftOnChoice", TestSnippetCrossTabShiftOnChoice);
+  AddTest(tests, "EditorSnippet/LoneCarriageReturnBodyPositions",
+          TestSnippetLoneCarriageReturnBodyPositions);
   AddTest(tests, "EditorSnippet/SimpleExpansion", TestSnippetSimpleExpansion);
   AddTest(tests, "EditorSnippet/MultiOccurrenceLinkedTab", TestSnippetMultiOccurrenceLinkedTab);
   AddTest(tests, "EditorSnippet/MultiOccurrenceLinkedTabMultiKeystroke",

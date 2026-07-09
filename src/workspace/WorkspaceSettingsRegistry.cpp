@@ -65,6 +65,9 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .scope = SettingScope::Project,
           .default_bool = false,
           .default_int = 4,
+          .min_int = 1,
+          .max_int = 16,
+          .int_step = 1,
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
@@ -78,6 +81,9 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .scope = SettingScope::Project,
           .default_bool = false,
           .default_int = 4,
+          .min_int = 1,
+          .max_int = 16,
+          .int_step = 1,
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
@@ -157,6 +163,9 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .scope = SettingScope::Project,
           .default_bool = false,
           .default_int = 13,
+          .min_int = 8,
+          .max_int = 32,
+          .int_step = 1,
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
@@ -209,6 +218,9 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .scope = SettingScope::User,
           .default_bool = false,
           .default_int = 1000,
+          .min_int = 200,
+          .max_int = 60000,
+          .int_step = 250,
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
@@ -222,6 +234,9 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .scope = SettingScope::User,
           .default_bool = false,
           .default_int = 350,
+          .min_int = 0,
+          .max_int = 2000,
+          .int_step = 50,
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
@@ -248,6 +263,9 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .scope = SettingScope::User,
           .default_bool = false,
           .default_int = static_cast<int>(kWorkspaceLayoutCompactBreakpointDefault),
+          .min_int = 600,
+          .max_int = 2000,
+          .int_step = 20,
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
@@ -348,6 +366,9 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .scope = SettingScope::User,
           .default_bool = false,
           .default_int = 13,
+          .min_int = 8,
+          .max_int = 32,
+          .int_step = 1,
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
@@ -374,6 +395,9 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .type = SettingType::Int,
           .scope = SettingScope::User,
           .default_int = 2000,
+          .min_int = 200,
+          .max_int = 100000,
+          .int_step = 1000,
           .default_string = {},
           .enum_values = {},
           .group = {},
@@ -449,6 +473,9 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .type = SettingType::Int,
           .scope = SettingScope::User,
           .default_int = 530,
+          .min_int = 100,
+          .max_int = 2000,
+          .int_step = 50,
           .default_string = {},
           .enum_values = {},
           .group = "Editor → View",
@@ -520,6 +547,9 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .type = SettingType::Int,
           .scope = SettingScope::User,
           .default_int = 3,
+          .min_int = 1,
+          .max_int = 8,
+          .int_step = 1,
           .default_string = {},
           .enum_values = {},
           .group = "Editor → Essentials → Block Structure",
@@ -1004,7 +1034,11 @@ std::optional<SettingValue> ParseSettingValue(const SettingSpec& spec, std::stri
       if (ec != std::errc{} || ptr != text.data() + text.size()) {
         return std::nullopt;
       }
-      return value;
+      // Clamp to the spec's inclusive range at store time so the stored/displayed
+      // value never diverges from the clamped value the editor actually applies
+      // (e.g. `set-setting editor.font_size 999` stores 32, not 999). Specs with
+      // no explicit range keep the INT_MIN..INT_MAX sentinels, so this is a no-op.
+      return std::clamp(value, spec.min_int, spec.max_int);
     }
 
     case SettingType::Float: {

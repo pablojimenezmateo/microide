@@ -218,11 +218,18 @@ bool MoveLineUp(TextViewport& viewport) {
   updated.reserve(range.last - range.first + 2);
   for (std::size_t i = range.first; i <= range.last; ++i) updated.push_back(lines[i]);
   updated.push_back(lines[range.first - 1]);
+  // Wrap the replace + caret restore in one undo group so the aggregate entry's
+  // after_state is captured AFTER RestoreCaretsAfterLineMove — otherwise the
+  // ReplaceLines entry snaps after_state to (range_first, 0) and redo loses the
+  // real column and every secondary caret.
+  viewport.BeginUndoGroup();
   if (!viewport.ReplaceLines(range.first - 1, range.last + 1, updated,
                              /*record_undo=*/true)) {
+    viewport.EndUndoGroup();
     return false;
   }
   RestoreCaretsAfterLineMove(viewport, snapshot, range.first, range.last, -1);
+  viewport.EndUndoGroup();
   return true;
 }
 
@@ -235,10 +242,14 @@ bool MoveLineDown(TextViewport& viewport) {
   updated.reserve(range.last - range.first + 2);
   updated.push_back(lines[range.last + 1]);
   for (std::size_t i = range.first; i <= range.last; ++i) updated.push_back(lines[i]);
+  // See MoveLineUp: group the replace + caret restore so redo keeps the carets.
+  viewport.BeginUndoGroup();
   if (!viewport.ReplaceLines(range.first, range.last + 2, updated, /*record_undo=*/true)) {
+    viewport.EndUndoGroup();
     return false;
   }
   RestoreCaretsAfterLineMove(viewport, snapshot, range.first, range.last, +1);
+  viewport.EndUndoGroup();
   return true;
 }
 

@@ -5,6 +5,7 @@
 #include "workspace/WorkspaceDapClient.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <string>
@@ -297,9 +298,59 @@ void TestWorkspaceDapClientStubModeAnswersRequestsAndInjectsEvents() {
   client.Shutdown();
 }
 
+void TestWorkspaceDapClientInitFailureFailsPendingRequest() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "stall-adapter.py";
+  // Consume the initialize request, then stall briefly and exit WITHOUT ever
+  // responding, so the client's init loop hits EOF and takes the !got_init
+  // failure path. The stall gives the test time to register a pending request
+  // before init fails.
+  WriteFile(server_path, std::string(R"py(import sys
+import time
+
+content_length = None
+while True:
+    line = sys.stdin.buffer.readline()
+    if not line:
+        break
+    if line in (b"\r\n", b"\n"):
+        break
+    if line.lower().startswith(b"content-length:"):
+        content_length = int(line.split(b":", 1)[1].strip())
+if content_length:
+    sys.stdin.buffer.read(content_length)
+time.sleep(0.3)
+)py"));
+
+  DapClient client;
+  Expect(client.Start({"python3", server_path.string()}, "mock"),
+         "stall adapter should start");
+
+  // Issue a request while the client is still initializing. When init fails, the
+  // request must be failed (callback invoked with success=false), not dropped.
+  std::atomic<bool> responded{false};
+  bool success = true;
+  client.SendRequestAsync("threads", JsonValue(nullptr),
+                          [&](const codec::DapResponse& response) {
+                            success = response.success;
+                            responded.store(true, std::memory_order_release);
+                          });
+
+  Expect(PollUntil(client, [&]() { return responded.load(std::memory_order_acquire); }),
+         "a request registered during a failed init must have its callback failed, not dropped");
+  Expect(!client.IsInitialized(), "init should have failed (adapter never responded)");
+  Expect(!success, "the failed request should report success=false");
+  client.Shutdown();
+}
+
 }  // namespace
 
 void RegisterWorkspaceDapClientTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceDapClient/InitFailureFailsPendingRequest",
+          TestWorkspaceDapClientInitFailureFailsPendingRequest);
   AddTest(tests, "WorkspaceDapClient/InitializeHandshakeReportsCapabilities",
           TestWorkspaceDapClientInitializeHandshakeReportsCapabilities);
   AddTest(tests, "WorkspaceDapClient/CorrelatesResponsesBySeq",

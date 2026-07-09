@@ -249,6 +249,10 @@ void LspClient::Impl::DoInitializeBlocking() {
   if (!SendMessageImmediate(req)) {
     SetLastError("failed to send initialize request to language server");
     ShutdownProcessOnce();
+    // A feature request registered during init (before `initialized`) would
+    // otherwise strand its UI loading state — fail it so the handler runs its
+    // no-result path instead of being silently dropped by teardown.
+    FailPendingRequests(false);
     ClearDeferredMessages();
     initializing.store(false, std::memory_order_release);
     return;
@@ -261,6 +265,7 @@ void LspClient::Impl::DoInitializeBlocking() {
     for (int attempts = 0; attempts < 60; ++attempts) {
       if (stop_init.load(std::memory_order_acquire)) {
         ShutdownProcessOnce();
+        FailPendingRequests(false);
         ClearDeferredMessages();
         initializing.store(false, std::memory_order_release);
         return;
@@ -376,11 +381,13 @@ void LspClient::Impl::DoInitializeBlocking() {
       SetLastError("timed out waiting for initialize response from language server");
     }
     ShutdownProcessOnce();
+    FailPendingRequests(false);
     ClearDeferredMessages();
     initializing.store(false, std::memory_order_release);
     return;
   }
 
+  bool initialized_send_failed = false;
   {
     std::lock_guard lock(send_mutex);
     // No I/O thread is running yet, so this is the only writer — write directly.
@@ -393,26 +400,34 @@ void LspClient::Impl::DoInitializeBlocking() {
     if (!sent_initialized) {
       SetLastError("failed to send initialized notification to language server");
       deferred_messages.clear();
-      ShutdownProcessOnce();
-      initializing.store(false, std::memory_order_release);
-      return;
+      initialized_send_failed = true;
+    } else {
+      initialized.store(true, std::memory_order_release);
+      // Push configuration before any queued didOpen so servers that read
+      // settings (clangd, OmniSharp/Roslyn) see them before touching documents.
+      if (settings.IsObject()) {
+        JsonObject config_params;
+        config_params["settings"] = settings;
+        outbound_messages.push_back(QueuedMessage{
+            .serialized = SerializeMessage(MakeNotification(
+                "workspace/didChangeConfiguration", JsonValue(std::move(config_params)))),
+            .build_serialized = {},
+        });
+      }
+      for (QueuedMessage& message : deferred_messages) {
+        outbound_messages.push_back(std::move(message));
+      }
+      deferred_messages.clear();
     }
-    initialized.store(true, std::memory_order_release);
-    // Push configuration before any queued didOpen so servers that read
-    // settings (clangd, OmniSharp/Roslyn) see them before touching documents.
-    if (settings.IsObject()) {
-      JsonObject config_params;
-      config_params["settings"] = settings;
-      outbound_messages.push_back(QueuedMessage{
-          .serialized = SerializeMessage(MakeNotification(
-              "workspace/didChangeConfiguration", JsonValue(std::move(config_params)))),
-          .build_serialized = {},
-      });
-    }
-    for (QueuedMessage& message : deferred_messages) {
-      outbound_messages.push_back(std::move(message));
-    }
-    deferred_messages.clear();
+  }
+
+  if (initialized_send_failed) {
+    // send_mutex is released above; FailPendingRequests takes the protocol mutex,
+    // so failing pending requests here avoids nesting send_mutex -> mutex.
+    ShutdownProcessOnce();
+    FailPendingRequests(false);
+    initializing.store(false, std::memory_order_release);
+    return;
   }
 
   OpenWakePipe();

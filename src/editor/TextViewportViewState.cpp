@@ -118,6 +118,7 @@ void TextViewport::MoveCursorVertical(int delta, bool extend_selection) {
     return;
   }
 
+  undo_history_.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   TextPosition primary{cursor_line_, cursor_column_};
   AdvanceCaretVertical(primary, preferred_column_, delta);
@@ -135,6 +136,7 @@ void TextViewport::MoveCursorHorizontal(int delta, bool extend_selection) {
     return;
   }
 
+  undo_history_.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   TextPosition primary{cursor_line_, cursor_column_};
   AdvanceCaretHorizontal(primary, delta);
@@ -149,6 +151,7 @@ void TextViewport::MoveCursorHorizontal(int delta, bool extend_selection) {
 }
 
 void TextViewport::MoveCursorLineStart(bool extend_selection) {
+  undo_history_.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   PlacePrimaryCaret(cursor_line_, 0);
   for (SecondaryCaret& caret : secondary_carets_) {
@@ -160,6 +163,7 @@ void TextViewport::MoveCursorLineStart(bool extend_selection) {
 }
 
 void TextViewport::MoveCursorLineEnd(bool extend_selection) {
+  undo_history_.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   PlacePrimaryCaret(cursor_line_, CurrentLineLength());
   for (SecondaryCaret& caret : secondary_carets_) {

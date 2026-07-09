@@ -359,17 +359,31 @@ bool Application::Initialize() {
     // the project to open, overriding the positional path / cwd.
     workspace::ControlSpec control_spec;
     if (startup_options_.control_spec_path.has_value()) {
-      std::ifstream in(*startup_options_.control_spec_path);
-      if (in) {
-        const std::string json((std::istreambuf_iterator<char>(in)),
-                               std::istreambuf_iterator<char>());
-        control_spec = workspace::ParseControlSpec(json);
-        if (!control_spec.valid) {
-          SDL_Log("control spec parse error: %s", control_spec.parse_error.c_str());
-        }
-      } else {
-        SDL_Log("could not read control spec: %s",
+      // Bound the slurp like the control-channel descriptor reads: a spec file is
+      // operator-supplied, but capping it keeps the cold-start path from OOMing on a
+      // mistakenly-huge path. Mirrors ControlChannelService's kMaxDescriptorFileBytes.
+      constexpr std::uintmax_t kMaxControlSpecBytes = 1u << 20;  // 1 MiB
+      std::error_code size_ec;
+      const std::uintmax_t spec_size =
+          std::filesystem::file_size(*startup_options_.control_spec_path, size_ec);
+      if (!size_ec && spec_size > kMaxControlSpecBytes) {
+        SDL_Log("control spec too large (%llu bytes > %llu cap): %s",
+                static_cast<unsigned long long>(spec_size),
+                static_cast<unsigned long long>(kMaxControlSpecBytes),
                 startup_options_.control_spec_path->string().c_str());
+      } else {
+        std::ifstream in(*startup_options_.control_spec_path);
+        if (in) {
+          const std::string json((std::istreambuf_iterator<char>(in)),
+                                 std::istreambuf_iterator<char>());
+          control_spec = workspace::ParseControlSpec(json);
+          if (!control_spec.valid) {
+            SDL_Log("control spec parse error: %s", control_spec.parse_error.c_str());
+          }
+        } else {
+          SDL_Log("could not read control spec: %s",
+                  startup_options_.control_spec_path->string().c_str());
+        }
       }
     }
 

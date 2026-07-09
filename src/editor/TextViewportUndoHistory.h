@@ -106,6 +106,12 @@ class TextViewportUndoHistory {
   // reports the buffer as differing from disk.
   void MarkSaved();
 
+  // End any open typing/deletion coalesce run so the next edit starts a fresh
+  // undo entry. Called when the user explicitly moves the caret (arrow keys,
+  // Home/End): without it, typing `a`, moving away and back to the same column,
+  // then typing `b` would merge `a`+`b` into one undo step.
+  void NotifyCursorMoved() { EndCoalesceRun(); }
+
   // Pure helpers -------------------------------------------------------
   static void ApplyEntryToLines(std::vector<std::string>& lines, const Entry& entry,
                                  bool forward);

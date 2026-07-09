@@ -1,5 +1,6 @@
 #pragma once
 
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -30,6 +31,13 @@ struct SettingSpec {
   SettingScope scope = SettingScope::Project;
   bool default_bool = false;
   int default_int = 0;
+  // Inclusive range for SettingType::Int, and the stepper increment. The default
+  // sentinels leave the value unbounded (no store-time clamp; the stepper falls
+  // back to a default_int +/- window). Set them so ParseSettingValue clamps at
+  // store time AND the Settings-overlay stepper share one source of truth.
+  int min_int = std::numeric_limits<int>::min();
+  int max_int = std::numeric_limits<int>::max();
+  int int_step = 1;
   float default_float = 0.0f;
   std::string_view default_string;
   std::span<const SettingEnumValue> enum_values;

@@ -139,6 +139,10 @@ class TextViewport {
   void Page(int direction);
   void InsertCharacter(char character);
   void InsertText(std::string_view text, bool record_undo = true);
+  // Paste with VSCode multi-caret semantics: with N carets and clipboard text of
+  // exactly N lines, insert line i at caret i (position order); otherwise insert
+  // the whole text at every caret. Single-caret pastes defer to InsertText.
+  bool PasteText(std::string_view text, bool record_undo = true);
   void InsertNewline();
   void InsertTab();
   void Backspace();
@@ -313,8 +317,17 @@ class TextViewport {
   std::optional<SelectionRange> selection_range() const;
   const std::optional<AppliedEdit>& last_applied_edit() const { return last_applied_edit_; }
   std::string SelectedText() const;
+  // VSCode-style multi-caret copy: each caret's selection text joined by '\n' in
+  // caret position order. Returns nullopt unless there are multiple carets and
+  // every caret has a non-empty selection (the Ctrl-D case) — callers then fall
+  // back to the single-caret SelectedText()/line-copy behavior.
+  std::optional<std::string> MultiCaretSelectedText() const;
   std::string CurrentLineTextForClipboard() const;
   bool DeleteSelectedText();
+  // Delete every caret's selection atomically (one undo entry). The caller must
+  // guarantee every caret has a selection (pairs with MultiCaretSelectedText for
+  // multi-caret cut).
+  bool DeleteMultiCaretSelections(bool record_undo = true);
   bool DeleteCurrentLine();
   void ClearSelection();
   void SelectAll();
@@ -435,11 +448,17 @@ class TextViewport {
   // per caret with position remap, then commit one aggregate undo entry). Only
   // the per-caret edit differs, so they route through ApplyMultiCaretEdit.
   enum class MultiCaretEditKind { Insert, Backspace, DeleteForward };
+  // `per_caret_insert`, when non-null and sized to the deduped caret set on an
+  // Insert, supplies a distinct string per caret in sorted order (distribute-
+  // paste); otherwise every caret gets `insert_text`.
   bool ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view insert_text,
-                           bool record_undo);
+                           bool record_undo,
+                           const std::vector<std::string>* per_caret_insert = nullptr);
   bool ApplyMultiCaretInsert(std::string_view text, bool record_undo);
   bool ApplyMultiCaretBackspace(bool record_undo);
   bool ApplyMultiCaretDeleteForward(bool record_undo);
+  // Extract the document text spanned by a normalized (start <= end) range.
+  std::string TextInRange(const SelectionRange& range) const;
   bool ApplyRangeEdit(const SelectionRange& range, std::string_view replacement, bool record_undo,
                       CoalesceHint hint = CoalesceHint{});
   bool ApplyLineEdit(std::size_t start_line,

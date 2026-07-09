@@ -115,7 +115,18 @@ TextPosition PositionAfterOffsetInExpanded(TextPosition trigger_start,
   std::size_t line = trigger_start.line;
   std::size_t col = trigger_start.column;
   for (std::size_t k = 0; k < offset && k < expanded_flat.size(); ++k) {
-    if (expanded_flat[k] == '\n') {
+    const char c = expanded_flat[k];
+    if (c == '\r') {
+      // ReplaceRange inserts NormalizeLineEndings(expanded), which collapses both
+      // a lone \r and a \r\n pair to a single \n. Mirror that here so tab-stop
+      // positions computed against the raw body land on the inserted text: treat
+      // \r as a line break and swallow a following \n (within the counted range).
+      ++line;
+      col = 0;
+      if (k + 1 < offset && k + 1 < expanded_flat.size() && expanded_flat[k + 1] == '\n') {
+        ++k;
+      }
+    } else if (c == '\n') {
       ++line;
       col = 0;
     } else {
@@ -212,16 +223,6 @@ static void ShiftPlaceholdersAtOrAfter(SnippetSessionState& session, const TextP
   }
 }
 
-static void ExtendPlaceholderRanges(SnippetSessionState& session, int tab, std::ptrdiff_t delta) {
-  auto& vec = session.ranges_by_tab[tab];
-  for (auto& r : vec) {
-    if (static_cast<std::ptrdiff_t>(r.end.column) + delta < 0) {
-      continue;
-    }
-    r.end.column = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(r.end.column) + delta);
-  }
-}
-
 static void ApplyChoiceForTab(TextViewport& viewport,
                               SnippetSessionState& session,
                               int tab,
@@ -242,7 +243,15 @@ static void ApplyChoiceForTab(TextViewport& viewport,
   for (std::size_t idx : order) {
     SelectionRange r = ranges[idx];
     viewport.ReplaceRange(r, text, false);
+    const std::ptrdiff_t delta = static_cast<std::ptrdiff_t>(text.size()) -
+                                 (static_cast<std::ptrdiff_t>(r.end.column) -
+                                  static_cast<std::ptrdiff_t>(r.start.column));
     ranges[idx].end.column = r.start.column + text.size();
+    // A choice can change the placeholder's length; every OTHER placeholder after
+    // this mirror on the same line (a different tab stop, or a sibling mirror) must
+    // shift by that delta or its recorded range goes stale. `r.end` is the pre-edit
+    // end, so start >= r.end catches exactly what moved.
+    ShiftPlaceholdersAtOrAfter(session, r.end, delta, tab, idx);
   }
 }
 
@@ -500,8 +509,13 @@ bool SnippetTryBackspace(TextViewport& viewport, SnippetSessionState& session) {
       continue;
     }
     viewport.ReplaceRange(SelectionRange{del, TextPosition{del.line, del.column + 1}}, "", false);
+    ranges[idx].end.column -= 1;
+    // Mirror SnippetTryInsertText: the deletion pulls every column at/after `del`
+    // on this line one to the left, so every OTHER placeholder there (a same-tab
+    // mirror or a different tab stop sharing the line) must shift too, or its
+    // recorded range goes stale and FocusTabStop later jumps to the wrong column.
+    ShiftPlaceholdersAtOrAfter(session, del, -1, tab, idx);
   }
-  ExtendPlaceholderRanges(session, tab, -1);
   FocusTabStop(viewport, session, tab);
   return true;
 }
@@ -547,8 +561,11 @@ bool SnippetTryDeleteForward(TextViewport& viewport, SnippetSessionState& sessio
       continue;
     }
     viewport.ReplaceRange(SelectionRange{del, TextPosition{del.line, del.column + 1}}, "", false);
+    ranges[idx].end.column -= 1;
+    // See SnippetTryBackspace: shift every other placeholder at/after `del` on this
+    // line left so cross-tab and sibling-mirror ranges stay accurate.
+    ShiftPlaceholdersAtOrAfter(session, del, -1, tab, idx);
   }
-  ExtendPlaceholderRanges(session, tab, -1);
   FocusTabStop(viewport, session, tab);
   return true;
 }

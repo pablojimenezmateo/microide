@@ -396,6 +396,71 @@ void TestMultiCaretPasteReplacesEachSelection() {
          "multi-caret paste should replace each selection with the pasted text");
 }
 
+void TestMultiCaretCopyAggregatesSelections() {
+  TextViewport viewport;
+  viewport.LoadContent("foo foo", "/tmp/mc-copy.cpp");
+  viewport.MoveCursorTo(0, 1);
+  viewport.SelectWordAtCursor();  // primary selection over the first "foo"
+  viewport.AddSecondaryCaretWithRange(
+      microide::editor::SelectionRange{TextPosition{0, 4}, TextPosition{0, 7}});
+  const auto text = viewport.MultiCaretSelectedText();
+  Expect(text.has_value() && *text == "foo\nfoo",
+         "multi-caret copy should join each caret's selection in position order");
+}
+
+void TestMultiCaretCopyRequiresAllSelections() {
+  TextViewport viewport;
+  viewport.LoadContent("foo foo", "/tmp/mc-copy-partial.cpp");
+  viewport.MoveCursorTo(0, 1);
+  viewport.SelectWordAtCursor();     // primary HAS a selection
+  viewport.AddSecondaryCaret(0, 5);  // secondary has NO selection
+  Expect(!viewport.MultiCaretSelectedText().has_value(),
+         "aggregate copy should decline (nullopt) when any caret lacks a selection");
+}
+
+void TestMultiCaretDistributePasteOneLinePerCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("foo foo", "/tmp/mc-dist-paste.cpp");
+  viewport.MoveCursorTo(0, 1);
+  viewport.SelectWordAtCursor();
+  viewport.AddSecondaryCaretWithRange(
+      microide::editor::SelectionRange{TextPosition{0, 4}, TextPosition{0, 7}});
+  // Clipboard has exactly two lines for two carets -> one line per caret.
+  viewport.PasteText("AAA\nBBB");
+  Expect(viewport.lines().size() == 1 && viewport.lines()[0] == "AAA BBB",
+         "distribute-paste should place line 1 at the first caret, line 2 at the second");
+}
+
+void TestMultiCaretPasteCountMismatchInsertsFullTextAtEachCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("foo foo", "/tmp/mc-mismatch-paste.cpp");
+  viewport.MoveCursorTo(0, 1);
+  viewport.SelectWordAtCursor();
+  viewport.AddSecondaryCaretWithRange(
+      microide::editor::SelectionRange{TextPosition{0, 4}, TextPosition{0, 7}});
+  // Three clipboard lines but two carets: insert the whole block at every caret
+  // (NOT distribute) -> each 3-line block adds two newlines, so 5 lines total.
+  viewport.PasteText("A\nB\nC");
+  Expect(viewport.lines().size() == 5,
+         "a caret/line count mismatch must insert the full payload at each caret, not distribute");
+}
+
+void TestMultiCaretDeleteSelectionsRemovesAllAndUndoesAtomically() {
+  TextViewport viewport;
+  viewport.LoadContent("foo foo", "/tmp/mc-cut.cpp");
+  viewport.MoveCursorTo(0, 1);
+  viewport.SelectWordAtCursor();
+  viewport.AddSecondaryCaretWithRange(
+      microide::editor::SelectionRange{TextPosition{0, 4}, TextPosition{0, 7}});
+  const auto text = viewport.MultiCaretSelectedText();
+  Expect(text.has_value() && *text == "foo\nfoo", "cut should aggregate both selections");
+  Expect(viewport.DeleteMultiCaretSelections(), "deleting all caret selections should succeed");
+  Expect(viewport.lines().size() == 1 && viewport.lines()[0] == " ",
+         "both selections removed, leaving the separating space");
+  Expect(viewport.Undo() && viewport.lines()[0] == "foo foo",
+         "the multi-caret cut deletion should undo in one step");
+}
+
 }  // namespace
 
 void TestPlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine() {
@@ -447,6 +512,16 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestMultiCaretBackspaceReplacesEachSelection);
   AddTest(tests, "EditorMultiCaret/MultiCaretPasteReplacesEachSelection",
           TestMultiCaretPasteReplacesEachSelection);
+  AddTest(tests, "EditorMultiCaret/CopyAggregatesSelections",
+          TestMultiCaretCopyAggregatesSelections);
+  AddTest(tests, "EditorMultiCaret/CopyRequiresAllSelections",
+          TestMultiCaretCopyRequiresAllSelections);
+  AddTest(tests, "EditorMultiCaret/DistributePasteOneLinePerCaret",
+          TestMultiCaretDistributePasteOneLinePerCaret);
+  AddTest(tests, "EditorMultiCaret/PasteCountMismatchInsertsFullTextAtEachCaret",
+          TestMultiCaretPasteCountMismatchInsertsFullTextAtEachCaret);
+  AddTest(tests, "EditorMultiCaret/DeleteSelectionsRemovesAllAndUndoesAtomically",
+          TestMultiCaretDeleteSelectionsRemovesAllAndUndoesAtomically);
 }
 
 }  // namespace microide::tests

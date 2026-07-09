@@ -13,6 +13,8 @@
 
 namespace microide::editor {
 
+struct AppliedEdit;  // editor/EditTypes.h
+
 // One source-line breakpoint. Lines are 0-based buffer line indices (matching
 // FoldGutterMark.line_index and TextViewport line addressing); the DAP wire is
 // 1-based, so the +1 conversion lives only in the setBreakpoints encoder.
@@ -113,6 +115,16 @@ class BreakpointStore {
   void ApplyBreakpointEvent(const std::filesystem::path& path, const VerifiedBreakpoint& result);
   // Drop all transient verification state (e.g. when a session terminates).
   void ResetVerification();
+
+  // Shift the breakpoint lines in `path` to follow a single applied edit (the
+  // same AppliedEdit the LSP diagnostics shift consumes), so an insert/delete of
+  // lines above a breakpoint keeps it anchored to its statement — matching VSCode.
+  // Mirrors the diagnostics AdjustPositionForReplace: breakpoints at/above the
+  // edit's first line stay; those below move by the net line delta; a breakpoint
+  // inside the replaced span slides to the edit's last line. Collisions dedupe to
+  // one breakpoint per line. Bumps the revision and returns true when anything
+  // moved. `condition`/`enabled`/etc. ride along with the moved line.
+  bool ShiftForAppliedEdit(const std::filesystem::path& path, const AppliedEdit& edit);
 
   // Replace the entire store (used by persistence restore). Resets verification.
   void ReplaceAll(std::vector<FileBreakpoints> files);

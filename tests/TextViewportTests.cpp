@@ -680,6 +680,26 @@ void TestTextViewportCaretJumpBreaksTypingCoalesce() {
          "the original contiguous run should undo as one step");
 }
 
+void TestTextViewportCaretRoundTripBreaksTypingCoalesce() {
+  TextViewport viewport;
+  viewport.LoadContent("Z", "/tmp/undo-coalesce-roundtrip.txt");
+  viewport.MoveCursorTo(0, 0);
+
+  viewport.InsertCharacter('a');  // "aZ", caret between 'a' and 'Z' at column 1
+  // Arrow right past 'Z' then back returns the caret to the exact same column.
+  // The run must break on the explicit navigation; otherwise 'a' and 'b' coalesce
+  // into one undo step even though the user moved the caret in between.
+  viewport.MoveCursorHorizontal(1);
+  viewport.MoveCursorHorizontal(-1);
+  viewport.InsertCharacter('b');  // "abZ"
+  Expect(viewport.lines()[0] == "abZ", "fixture should type 'ab' around a caret round-trip");
+
+  Expect(viewport.Undo() && viewport.lines()[0] == "aZ",
+         "a same-column caret round-trip should isolate 'b' in its own undo step");
+  Expect(viewport.Undo() && viewport.lines()[0] == "Z",
+         "the first character should undo separately");
+}
+
 void TestTextViewportBackspaceCoalescesIntoWordUndoSteps() {
   TextViewport viewport;
   viewport.LoadContent("foo bar", "/tmp/undo-coalesce-backspace.txt");
@@ -2796,6 +2816,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportTypedCharactersCoalesceIntoWordUndoSteps);
   AddTest(tests, "TextViewport/CaretJumpBreaksTypingCoalesce",
           TestTextViewportCaretJumpBreaksTypingCoalesce);
+  AddTest(tests, "TextViewport/CaretRoundTripBreaksTypingCoalesce",
+          TestTextViewportCaretRoundTripBreaksTypingCoalesce);
   AddTest(tests, "TextViewport/BackspaceCoalescesIntoWordUndoSteps",
           TestTextViewportBackspaceCoalescesIntoWordUndoSteps);
   AddTest(tests, "TextViewport/MultiCaretInsertAndUndoAreAtomic",
