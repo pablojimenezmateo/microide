@@ -128,15 +128,11 @@ class TextViewportUndoHistory {
   struct UndoGroupFrame {
     ViewState state;
     std::optional<Entry> aggregate_entry;
-    std::vector<Entry> child_entries;
     bool using_fallback = false;
     std::vector<std::string> fallback_lines;
   };
 
   static std::optional<Entry> TryMergeGroupEntry(const Entry& aggregate, const Entry& next);
-  static std::vector<std::string> ReconstructFallbackLines(
-      const std::vector<std::string>& current_lines,
-      const std::vector<Entry>& child_entries);
   // Attempts to fold `next` into the current undo-stack top as a continuation
   // of an open typing/deletion run. Returns true (and mutates the top entry)
   // on success; false means the caller should push `next` as a fresh entry.

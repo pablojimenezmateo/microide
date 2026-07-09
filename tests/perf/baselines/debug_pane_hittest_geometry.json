@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":2,"p50_allocations":2,"p95_allocations":2,"p95_wall_ms":0.16449064999999999,"max_wall_ms":0.16985600000000001,"p50_wall_ms":0.109706},"scenario":"debug_pane_hittest_geometry"}

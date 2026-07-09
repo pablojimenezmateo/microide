@@ -1057,6 +1057,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     tests/perf/GitWorkstationPerfScenarios.cpp
     tests/perf/EditorEssentialsPerfScenarios.cpp
     tests/perf/DebugPerfScenarios.cpp
+    tests/perf/LspPerfScenarios.cpp
     tests/perf/PerfMain.cpp
   )
 

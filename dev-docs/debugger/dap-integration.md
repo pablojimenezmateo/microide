@@ -1276,8 +1276,11 @@ Debugger perf scenarios: `tests/perf/DebugPerfScenarios.cpp` (built into
 perf-coverage parity with the editor. Six pure-unit micro-benchmarks measure the
 hot paths the step/render loop consumes — value-tree expand/rebuild/paging, DAP
 encode/decode, breakpoints-model rebuild, pane hit-test geometry — plus one live
-mock-adapter session scenario (`debug_session_stop_to_variables`). They are
-**advisory** (not in `--smoke`, no committed baseline); run them explicitly:
+mock-adapter session scenario (`debug_session_stop_to_variables`). The six
+pure-unit scenarios are now **gated** (`smoke = true, baseline_gated = true`)
+with committed reference-runner baselines under `tests/perf/baselines/`; the live
+mock-adapter session stays **advisory** (not in `--smoke`, no committed baseline,
+subprocess-noisy). Run any of them explicitly:
 
 ```bash
 cmake -S . -B build-perf -DMICROIDE_PERF_HARNESS_BUILD=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo

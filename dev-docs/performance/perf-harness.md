@@ -78,27 +78,46 @@ coverage and a clear owner.
 | Terminal and output | `terminal_scroll_long_output` | p50/p95/max wall time, allocation counts | terminal panel, scroll and redraw integration |
 | Idle and long soak | `idle_soak_30s`, `long_soak_8h`, `switch_and_idle` | wake-up count, wall time, allocation counts | event loop, scheduled wake handling, watchers |
 | Debugger / DAP | `debug_value_tree_expand_large`, `debug_value_tree_rebuild`, `debug_value_tree_paging`, `dap_protocol_encode_decode`, `debug_breakpoints_model_rebuild`, `debug_pane_hittest_geometry`, `debug_session_stop_to_variables` | p50/p95/max wall time, allocation counts | `DebugValueTree`, `DapProtocol`, `DebugBreakpointsModel`, debug pane geometry, `DebugService`/`DebugSession` |
+| LSP / language server | `lsp_semantic_tokens_decode`, `lsp_publish_diagnostics_parse`, `lsp_document_symbols_parse`, `lsp_message_framing` | p50/p95/max wall time, allocation counts | `lsp_protocol` decode helpers, `LspMessageFramer` transport framing |
 
 When a hotspot class has no deterministic coverage, add a scenario + baseline in the same change
 before closing the performance pass.
 
 ### Debugger / DAP scenarios
 
-Live in `tests/perf/DebugPerfScenarios.cpp`. They are **advisory** (`smoke = false`,
-`baseline_gated = false`): they run only when named explicitly or in a full non-smoke pass, are
-not compared against a committed baseline, and need no machine-specific baseline file. Six are
-pure-unit micro-benchmarks that construct the real data structures directly and measure the hot
-paths the step/render loop consumes — `debug_value_tree_rebuild` is literally the render-ready
-flat row list the bottom-panel render TU draws, and it is allocation-stable (zero in-phase
-allocations on steady state). One (`debug_session_stop_to_variables`) drives a real
-`DapManager` + `DebugSession` against an embedded Python DAP adapter and measures the
-stop → stackTrace → scopes → variables latency; it is subprocess-backed (noisier) and skips
-gracefully when `python3` is unavailable.
+Live in `tests/perf/DebugPerfScenarios.cpp`. Two flavors, split by determinism:
+
+- **Six pure-unit micro-benchmarks** (`debug_value_tree_expand_large`, `debug_value_tree_rebuild`,
+  `debug_value_tree_paging`, `dap_protocol_encode_decode`, `debug_breakpoints_model_rebuild`,
+  `debug_pane_hittest_geometry`) construct the real data structures directly and measure the hot
+  paths the step/render loop consumes — `debug_value_tree_rebuild` is literally the render-ready
+  flat row list the bottom-panel render TU draws, and it is allocation-stable (zero in-phase
+  allocations on steady state). These are **gated** (`smoke = true, baseline_gated = true`) with
+  committed reference-runner baselines under `tests/perf/baselines/`.
+- **One live mock-adapter session scenario** (`debug_session_stop_to_variables`) drives a real
+  `DapManager` + `DebugSession` against an embedded Python DAP adapter and measures the
+  stop → stackTrace → scopes → variables latency; it is subprocess-backed (noisier), skips
+  gracefully when `python3` is unavailable, and stays **advisory** (`smoke = false,
+  baseline_gated = false`).
+
+### LSP / language-server scenarios
+
+Live in `tests/perf/LspPerfScenarios.cpp`. All four are pure-unit micro-benchmarks over the LSP
+wire path — the decode helpers in the `lsp_protocol` namespace and the `LspMessageFramer` framing
+codec — so they are deterministic and **gated** (`smoke = true, baseline_gated = true`) with
+committed baselines. They cover: `lsp_semantic_tokens_decode` (resolve a large delta-encoded
+`semanticTokens/full` run into absolute tokens, re-run on every edit), `lsp_publish_diagnostics_parse`
+(re-materialize a full `publishDiagnostics` array on every publish), `lsp_document_symbols_parse`
+(walk a recursive `DocumentSymbol[]` outline on every save), and `lsp_message_framing` (drain a
+chatty `Content-Length`-delimited stream fed in partial chunks — the transport hot path and resync
+surface). The completion-item decode path is not yet covered here because it is an inline lambda in
+`WorkspaceLspClientRequests.cpp` rather than a shared `lsp_protocol` helper; extract it before adding
+a scenario.
 
 Promotion path ("advisory first, promote later"): once a deterministic scenario's numbers are
 stable, set `baseline_gated = true` (and `smoke = true` to gate CI) and capture its baseline on
-the reference runner with `--update-baseline`. The pure-unit scenarios are the promotion
-candidates; keep the live-session scenario advisory (its subprocess timing is inherently noisy).
+the reference runner with `--update-baseline`. Pure-unit scenarios are the promotion candidates;
+keep live-session scenarios advisory (their subprocess timing is inherently noisy).
 
 ## Known Coverage Gaps
 

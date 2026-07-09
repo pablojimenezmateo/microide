@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":110603,"p50_allocations":110603,"p95_allocations":110603,"p95_wall_ms":9.6430751499999996,"max_wall_ms":9.7329819999999998,"p50_wall_ms":9.404637000000001},"scenario":"debug_breakpoints_model_rebuild"}

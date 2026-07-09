@@ -65,15 +65,25 @@ void TextViewportUndoHistory::RecordEntry(Entry entry,
     return;
   }
 
-  // A grouped edit owns its own aggregation; never coalesce across it.
+  // A grouped edit owns its own aggregation; never coalesce across it. The
+  // aggregate entry is the single source of truth per frame: merge-clean edits
+  // fold into it, and a merge conflict reconstructs the pre-group buffer from it
+  // rather than from a retained per-child copy. Keeping only the aggregate (not
+  // a `child_entries` list) matters on the hot path: a grouped line-move over a
+  // wide multi-caret range records one entry holding hundreds of line slices, so
+  // an extra deep copy per edit is what regressed `editor_shaping_multi_caret`.
   active_run_kind_ = CoalesceKind::None;
-  for (UndoGroupFrame& frame : group_stack_) {
+  const std::size_t frame_count = group_stack_.size();
+  for (std::size_t fi = 0; fi < frame_count; ++fi) {
+    UndoGroupFrame& frame = group_stack_[fi];
+    // Only the innermost (last) frame may consume `entry` by move: outer frames
+    // are processed first and still read it; after the loop `entry` is dead.
+    const bool can_move = (fi + 1 == frame_count);
     if (frame.using_fallback) {
-      continue;
+      continue;  // fallback mode captures the final buffer snapshot at finish
     }
-    frame.child_entries.push_back(entry);
     if (!frame.aggregate_entry.has_value()) {
-      frame.aggregate_entry = entry;
+      frame.aggregate_entry = can_move ? std::move(entry) : entry;
       continue;
     }
     std::optional<Entry> merged = TryMergeGroupEntry(*frame.aggregate_entry, entry);
@@ -81,9 +91,16 @@ void TextViewportUndoHistory::RecordEntry(Entry entry,
       frame.aggregate_entry = std::move(merged);
       continue;
     }
-    frame.fallback_lines = ReconstructFallbackLines(current_lines.Snapshot(), frame.child_entries);
+    // Merge conflict: drop to whole-buffer-snapshot mode. Reconstruct the
+    // pre-group document by reverse-applying the failing entry and then the
+    // aggregate-so-far onto the current buffer. This equals reverse-applying
+    // every child edit in turn (the aggregate is exactly their contiguous
+    // merge), but without retaining a per-entry copy of each grouped edit.
+    std::vector<std::string> reconstructed = current_lines.Snapshot();
+    ApplyEntryToLines(reconstructed, entry, /*forward=*/false);
+    ApplyEntryToLines(reconstructed, *frame.aggregate_entry, /*forward=*/false);
+    frame.fallback_lines = std::move(reconstructed);
     frame.aggregate_entry.reset();
-    frame.child_entries.clear();
     frame.using_fallback = true;
   }
 }
@@ -142,7 +159,7 @@ TextViewportUndoHistory::FinishActiveGroup(const TextBuffer& current_lines,
     agg = BuildEntryForDocumentChange(frame.fallback_lines, frame.state, current_lines.Snapshot(),
                                       std::move(after_state));
   } else if (frame.aggregate_entry.has_value()) {
-    agg = *frame.aggregate_entry;
+    agg = std::move(*frame.aggregate_entry);  // frame is local + popped; safe to move out
     agg.before_state = frame.state;
     agg.after_state = std::move(after_state);
   } else {
@@ -388,15 +405,6 @@ TextViewportUndoHistory::TryMergeGroupEntry(const Entry& aggregate, const Entry&
   merged.after_lines.insert(merged.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_start),
                              next.after_lines.begin(), next.after_lines.end());
   return merged;
-}
-
-std::vector<std::string> TextViewportUndoHistory::ReconstructFallbackLines(
-    const std::vector<std::string>& current_lines, const std::vector<Entry>& child_entries) {
-  std::vector<std::string> reconstructed = current_lines;
-  for (auto it = child_entries.rbegin(); it != child_entries.rend(); ++it) {
-    ApplyEntryToLines(reconstructed, *it, /*forward=*/false);
-  }
-  return reconstructed;
 }
 
 }  // namespace microide::editor

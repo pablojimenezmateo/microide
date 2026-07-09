@@ -1307,10 +1307,16 @@ int main(int argc, char** argv) {
   std::size_t run_index = 0;
   for (const Scenario& scenario : PerfHarness::RegisteredScenarios()) {
     PerfHarness::RunOptions probe = run_options;
+    // Mirror ShouldRunScenario exactly: with no explicit --scenarios list, an
+    // opt-in scenario (run_by_default=false, e.g. editor_moby_dick_workout whose
+    // fixture is a network fetch) is NOT selected. Without this the bare full
+    // run marked it selected while RunScenario skipped it, so the missing
+    // aggregate was misread as "scenario failed to run" and aborted the gate.
     const bool name_selected =
-        probe.scenario_names.empty() ||
-        std::find(probe.scenario_names.begin(), probe.scenario_names.end(), scenario.name) !=
-            probe.scenario_names.end();
+        probe.scenario_names.empty()
+            ? scenario.run_by_default
+            : std::find(probe.scenario_names.begin(), probe.scenario_names.end(), scenario.name) !=
+                  probe.scenario_names.end();
     const bool selected = name_selected && (!probe.smoke_only || scenario.smoke);
     if (selected) {
       ++selected_count;

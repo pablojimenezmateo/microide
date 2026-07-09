@@ -2,23 +2,21 @@
 //
 // These bring the debug subsystem to perf-coverage parity with the editor,
 // which previously had ~10 smoke + ~13 gated scenarios while debug had none.
-// All scenarios here are advisory (smoke = false, baseline_gated = false): they
-// are measured and logged but not compared against a committed baseline and do
-// not gate CI yet, so they need no machine-specific baseline file. Promote the
-// stable deterministic ones (the pure-unit value-tree / protocol scenarios) by
-// setting baseline_gated = true and capturing a reference-runner baseline once
-// the numbers settle — see dev-docs/performance/perf-harness.md.
 //
 // Two flavors:
 //   * Pure-unit micro-benchmarks construct the real data structures directly and
 //     measure the hot paths the render/step loop consumes (value-tree rebuild is
 //     literally the render-ready row list the bottom-panel render TU draws). They
-//     ignore the app driver, so they are deterministic and allocation-stable.
+//     ignore the app driver, so they are deterministic and allocation-stable —
+//     which is why the six of them are now promoted to gated
+//     (`smoke = true, baseline_gated = true`) with committed reference-runner
+//     baselines, per the promotion path in dev-docs/performance/perf-harness.md.
 //   * One live mock-adapter session scenario drives a real DebugService stack
 //     (DapManager + DebugSession + a Python DAP adapter) and measures the
 //     stop -> stackTrace -> scopes -> variables latency end to end. It is
 //     inherently noisier (subprocess + IPC) and is skipped gracefully when the
-//     platform has no python3.
+//     platform has no python3, so it stays advisory
+//     (`smoke = false, baseline_gated = false`).
 #include "perf/PerfHarness.h"
 
 #include "editor/BreakpointStore.h"
@@ -470,38 +468,38 @@ void RunDebugSessionStopToVariables(ScenarioContext& context) {
 
 const ScenarioRegistration g_perf_debug_value_tree_expand_large({Scenario{
     .name = "debug_value_tree_expand_large",
-    .smoke = false,
-    .baseline_gated = false,  // advisory: reference-runner baseline pending; promote later
+    .smoke = true,
+    .baseline_gated = true,
     .run = RunDebugValueTreeExpandLarge,
 }});
 const ScenarioRegistration g_perf_debug_value_tree_rebuild({Scenario{
     .name = "debug_value_tree_rebuild",
-    .smoke = false,
-    .baseline_gated = false,  // advisory: reference-runner baseline pending; promote later
+    .smoke = true,
+    .baseline_gated = true,
     .run = RunDebugValueTreeRebuild,
 }});
 const ScenarioRegistration g_perf_debug_value_tree_paging({Scenario{
     .name = "debug_value_tree_paging",
-    .smoke = false,
-    .baseline_gated = false,  // advisory: reference-runner baseline pending; promote later
+    .smoke = true,
+    .baseline_gated = true,
     .run = RunDebugValueTreePaging,
 }});
 const ScenarioRegistration g_perf_dap_protocol_encode_decode({Scenario{
     .name = "dap_protocol_encode_decode",
-    .smoke = false,
-    .baseline_gated = false,  // advisory: reference-runner baseline pending; promote later
+    .smoke = true,
+    .baseline_gated = true,
     .run = RunDapProtocolEncodeDecode,
 }});
 const ScenarioRegistration g_perf_debug_breakpoints_model_rebuild({Scenario{
     .name = "debug_breakpoints_model_rebuild",
-    .smoke = false,
-    .baseline_gated = false,  // advisory: reference-runner baseline pending; promote later
+    .smoke = true,
+    .baseline_gated = true,
     .run = RunDebugBreakpointsModelRebuild,
 }});
 const ScenarioRegistration g_perf_debug_pane_hittest_geometry({Scenario{
     .name = "debug_pane_hittest_geometry",
-    .smoke = false,
-    .baseline_gated = false,  // advisory: reference-runner baseline pending; promote later
+    .smoke = true,
+    .baseline_gated = true,
     .run = RunDebugPaneHittestGeometry,
 }});
 const ScenarioRegistration g_perf_debug_session_stop_to_variables({Scenario{
