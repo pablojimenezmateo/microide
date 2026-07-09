@@ -445,7 +445,80 @@ void TestPatchStageHunkWithShiftedBlankContextApplies() {
          "staged diff should contain the changed target line");
 }
 
+// Appending lines to a file that has no trailing newline: the shared last line must
+// become a delete/add pair so git's `\ No newline` marker lands on the old side's
+// final line only. Regression for the corruption where the marker on a *context*
+// line made git treat it as EOF and fuse the following added content onto it.
+void TestPatchStageAppendAfterMissingFinalNewline() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  std::filesystem::create_directories(repo_path);
+  InitializeGitRepo(repo_path);
+  const auto file_path = repo_path / "nonl.txt";
+  WriteFile(file_path, "line1\nline2");        // committed: no trailing newline
+  CommitAll(repo_path, "base", "base");
+  WriteFile(file_path, "line1\nline2\nline3\n");  // append a line (now newline-terminated)
+
+  const CompareModel model = BuildCompareModel("line1\nline2", "line1\nline2\nline3\n");
+  const auto patch = GenerateComparePatch(model, "nonl.txt", 0);
+  Expect(patch.has_value(), "append-after-no-newline patch should be generated");
+
+  PatchApplyRequest request{
+      .operation = PatchOperationKind::StageHunk,
+      .target{.repository_root = repo_path,
+              .relative_path = std::filesystem::path("nonl.txt"),
+              .hunk = std::nullopt,
+              .line_selection = std::nullopt},
+      .model = model,
+  };
+  const auto result = ApplyPatchRequest(request, *patch);
+  Expect(result.category == PatchApplyResultCategory::Success,
+         "append-after-no-newline patch should apply to the index");
+  GitRepository repo(repo_path);
+  const auto staged = repo.Execute({"show", ":nonl.txt"});
+  Expect(staged.success() && staged.output == "line1\nline2\nline3\n",
+         "staged blob must be exactly the appended content (line2 and line3 not fused)");
+}
+
+// Deleting the trailing lines of a newline-terminated file, leaving a new content
+// with no final newline. Previously the marker was misplaced on a context line and
+// git rejected the patch (could not stage/discard the hunk).
+void TestPatchStageDeleteTrailingLeavesMissingFinalNewline() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  std::filesystem::create_directories(repo_path);
+  InitializeGitRepo(repo_path);
+  const auto file_path = repo_path / "nonl.txt";
+  WriteFile(file_path, "line1\nline2\nline3\n");  // committed: newline-terminated
+  CommitAll(repo_path, "base", "base");
+  WriteFile(file_path, "line1");                  // keep only line1, no trailing newline
+
+  const CompareModel model = BuildCompareModel("line1\nline2\nline3\n", "line1");
+  const auto patch = GenerateComparePatch(model, "nonl.txt", 0);
+  Expect(patch.has_value(), "delete-trailing patch should be generated");
+
+  PatchApplyRequest request{
+      .operation = PatchOperationKind::StageHunk,
+      .target{.repository_root = repo_path,
+              .relative_path = std::filesystem::path("nonl.txt"),
+              .hunk = std::nullopt,
+              .line_selection = std::nullopt},
+      .model = model,
+  };
+  const auto result = ApplyPatchRequest(request, *patch);
+  Expect(result.category == PatchApplyResultCategory::Success,
+         "delete-trailing patch should apply to the index");
+  GitRepository repo(repo_path);
+  const auto staged = repo.Execute({"show", ":nonl.txt"});
+  Expect(staged.success() && staged.output == "line1",
+         "staged blob must be exactly 'line1' with no added trailing newline");
+}
+
 void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
+  tests.push_back({"PatchApply/AppendAfterMissingFinalNewline",
+                   TestPatchStageAppendAfterMissingFinalNewline});
+  tests.push_back({"PatchApply/DeleteTrailingLeavesMissingFinalNewline",
+                   TestPatchStageDeleteTrailingLeavesMissingFinalNewline});
   tests.push_back({"PatchApply/UnifiedDiff", TestPatchGeneratorProducesUnifiedDiff});
   tests.push_back({"PatchApply/SelectedLines", TestPatchGeneratorSelectedLinesIncludeContext});
   tests.push_back({"PatchApply/StageHunk", TestPatchStageHunkInRepository});

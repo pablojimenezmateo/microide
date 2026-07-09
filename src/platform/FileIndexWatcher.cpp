@@ -563,6 +563,19 @@ struct FileIndexWatcher::Impl {
             if (it == wd_to_path.end()) {
               continue;
             }
+
+            // IN_IGNORED: the kernel auto-removed this watch because its directory
+            // was deleted or moved out. When a subtree is removed via the PARENT's
+            // IN_DELETE/IN_MOVED_FROM the child descriptors are not cleaned up
+            // anywhere else, so without this every removed subdirectory leaks a
+            // wd_to_path entry until the watch cap (kMaxIndexWatchEntries) is hit and
+            // the watcher silently degrades to partial-tree mode. The recursive
+            // deletion was already emitted by the parent event, so just drop the
+            // stale mapping (the watch is already gone — no inotify_rm_watch needed).
+            if ((ev->mask & IN_IGNORED) != 0) {
+              wd_to_path.erase(it);
+              continue;
+            }
             const std::filesystem::path& dir = it->second;
 
             if (ev->len > 0 && ev->name[0] != '\0') {

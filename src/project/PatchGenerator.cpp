@@ -156,17 +156,51 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
             break;
           }
         }
-        body_lines.push_back(PatchBodyLine{' ', context_text,
-                                           left_no_newline(compare_row.left_line) ||
-                                               right_no_newline(compare_row.right_line)});
+        // The `\ No newline at end of file` marker is only valid on the final
+        // emitted line of a side. When this shared line is the old file's last line
+        // (no trailing newline) but the new side extends past it — or vice versa —
+        // emitting it as a marked *context* line makes git treat it as EOF and fuse
+        // the following content onto it (silent data corruption on stage/discard).
+        // git instead represents such a line as a delete/add pair so the marker
+        // lands on the terminating side only; mirror that.
+        const bool left_last_no_nl = left_no_newline(compare_row.left_line);
+        const bool right_last_no_nl = right_no_newline(compare_row.right_line);
+        const bool new_side_continues = compare_row.right_line < last_right_line;
+        const bool old_side_continues = compare_row.left_line < last_left_line;
+        if (left_last_no_nl && new_side_continues) {
+          body_lines.push_back(PatchBodyLine{'-', context_text, true});
+          body_lines.push_back(PatchBodyLine{'+', context_text, right_last_no_nl});
+          has_change = true;
+          break;
+        }
+        if (right_last_no_nl && old_side_continues) {
+          body_lines.push_back(PatchBodyLine{'-', context_text, false});
+          body_lines.push_back(PatchBodyLine{'+', context_text, true});
+          has_change = true;
+          break;
+        }
+        body_lines.push_back(
+            PatchBodyLine{' ', context_text, left_last_no_nl || right_last_no_nl});
         break;
       }
       case CompareRowKind::Deleted:
+        // Drop the old side's trailing phantom: SplitLineViews appends one empty
+        // element after a file that ends in '\n'. It is not real content, so
+        // emitting it as a deletion would add a spurious blank line to the hunk.
+        if (compare_row.left_text.empty() && compare_row.left_line == last_left_line &&
+            !model.left_final_newline_missing) {
+          break;
+        }
         body_lines.push_back(
             PatchBodyLine{'-', compare_row.left_text, left_no_newline(compare_row.left_line)});
         has_change = true;
         break;
       case CompareRowKind::Added:
+        // Drop the new side's trailing phantom (symmetric with the Deleted case).
+        if (compare_row.right_text.empty() && compare_row.right_line == last_right_line &&
+            !model.right_final_newline_missing) {
+          break;
+        }
         body_lines.push_back(
             PatchBodyLine{'+', compare_row.right_text, right_no_newline(compare_row.right_line)});
         has_change = true;

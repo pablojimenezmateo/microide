@@ -34,6 +34,30 @@ TrashOperationResult Success(const std::filesystem::path& path) {
   };
 }
 
+// The freedesktop trash spec requires the `Path` value to be stored as a URI:
+// percent-encoded per RFC 2396, with '/' left unescaped. Encoding it also makes
+// the single-line `Path=...` field robust against filenames containing newlines
+// (legal on Linux), which would otherwise inject arbitrary lines into the
+// .trashinfo file and corrupt DeletionDate or spoof fields.
+[[maybe_unused]] std::string PercentEncodeTrashPath(const std::string& path) {
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  std::string out;
+  out.reserve(path.size());
+  for (const unsigned char c : path) {
+    const bool unreserved = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' ||
+                            c == '~' || c == '/';
+    if (unreserved) {
+      out.push_back(static_cast<char>(c));
+    } else {
+      out.push_back('%');
+      out.push_back(kHex[c >> 4]);
+      out.push_back(kHex[c & 0x0F]);
+    }
+  }
+  return out;
+}
+
 std::filesystem::path UniquePathInDirectory(const std::filesystem::path& directory,
                                             const std::string& base_name) {
   const std::filesystem::path desired = directory / base_name;
@@ -100,7 +124,7 @@ TrashOperationResult MovePathToTrashLinux(const std::filesystem::path& source) {
     return Failure("Failed to write trash metadata");
   }
   info_stream << "[Trash Info]\n";
-  info_stream << "Path=" << source.generic_string() << "\n";
+  info_stream << "Path=" << PercentEncodeTrashPath(source.generic_string()) << "\n";
   info_stream << "DeletionDate=" << FormatDeletionTimestamp() << "\n";
   if (!info_stream.good()) {
     return Failure("Failed to write trash metadata");

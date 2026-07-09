@@ -73,6 +73,25 @@ void TestPorcelainV2PathWithLeadingSpace() {
          "a path beginning with a space must be preserved verbatim, not trimmed");
 }
 
+// An UNTRACKED ('?') record's body is the whole path, which may legally begin with a
+// space. The parser used to compute a leading XY field (and drop the record when it
+// was empty) for every kind — so a "? \0 leading.txt" untracked entry with a
+// leading-space name was silently discarded (no tree badge, never surfaced).
+void TestPorcelainV2UntrackedPathWithLeadingSpace() {
+  std::string output = "?  leading.txt";  // '?' + delimiter space + path " leading.txt"
+  output.push_back('\0');
+  const auto state = GitPorcelainV2Parser::Parse(output, "/repo", 1, 0);
+  bool saw_untracked_leading_space = false;
+  for (const auto& entry : state.entries) {
+    if (entry.kind == GitRepositoryEntryKind::Untracked &&
+        entry.path.relative_path == std::filesystem::path(" leading.txt")) {
+      saw_untracked_leading_space = true;
+    }
+  }
+  Expect(saw_untracked_leading_space,
+         "an untracked path beginning with a space must be preserved, not dropped");
+}
+
 void TestPorcelainV2RenamePair() {
   std::string output =
       "2 .R. N... 100644 100644 100644 abc def 100 new-name.txt";
@@ -211,6 +230,8 @@ void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
           TestPorcelainV2WorkingTreeFixture);
   AddTest(tests, "GitRepositoryState/PorcelainV2PathWithLeadingSpace",
           TestPorcelainV2PathWithLeadingSpace);
+  AddTest(tests, "GitRepositoryState/PorcelainV2UntrackedPathWithLeadingSpace",
+          TestPorcelainV2UntrackedPathWithLeadingSpace);
   AddTest(tests, "GitRepositoryState/PorcelainV2RenamePair", TestPorcelainV2RenamePair);
   AddTest(tests, "GitRepositoryState/PorcelainV2RenamePathWithSpaces",
           TestPorcelainV2RenamePathWithSpaces);

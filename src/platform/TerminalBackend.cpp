@@ -8,8 +8,11 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #if defined(__APPLE__)
 #include <util.h>
@@ -45,6 +48,10 @@ void WINAPI ClosePseudoConsole(HPCON hPC);
 }
 #endif
 
+#if defined(__unix__) || defined(__APPLE__)
+extern "C" char** environ;
+#endif
+
 namespace microide::platform {
 
 namespace {
@@ -77,6 +84,32 @@ class PosixTerminalBackend final : public TerminalBackend {
 
     const std::string shell_path = request.shell.empty() ? DefaultShellPath() : request.shell;
     const std::string shell_name = ShellProgramName(shell_path);
+
+    // Build the child environment in the PARENT: setenv() after fork() is not
+    // async-signal-safe (it allocates and takes the environ lock), so a fork racing
+    // another thread — this app always has file-watcher and background-executor
+    // threads live — could deadlock the child before exec, leaving the terminal
+    // silently dead. The child only assigns `environ` to this array (a single
+    // pointer store). `env_storage`/`env_pointers` live on this stack frame across
+    // the fork so the child's copy stays valid through exec. Mirrors Subprocess.cpp.
+    std::vector<std::string> env_storage;
+    for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
+      const std::string_view text(*entry);
+      if (text.rfind("TERM=", 0) == 0 || text.rfind("COLORTERM=", 0) == 0) {
+        continue;
+      }
+      env_storage.emplace_back(*entry);
+    }
+    env_storage.emplace_back("TERM=xterm-256color");
+    // Advertise 24-bit color so applications enable truecolor output.
+    env_storage.emplace_back("COLORTERM=truecolor");
+    std::vector<char*> env_pointers;
+    env_pointers.reserve(env_storage.size() + 1);
+    for (std::string& entry : env_storage) {
+      env_pointers.push_back(entry.data());
+    }
+    env_pointers.push_back(nullptr);
+
     const pid_t child_pid = fork();
     if (child_pid < 0) {
       close(master_fd);
@@ -104,9 +137,9 @@ class PosixTerminalBackend final : public TerminalBackend {
       if (chdir(request.working_directory.c_str()) != 0) {
         _exit(127);
       }
-      setenv("TERM", "xterm-256color", 1);
-      // Advertise 24-bit color so applications enable truecolor output.
-      setenv("COLORTERM", "truecolor", 1);
+      // Async-signal-safe pointer store instead of setenv(); the array was built in
+      // the parent above.
+      environ = env_pointers.data();
       if (request.command.empty()) {
         execl(shell_path.c_str(), shell_name.c_str(), "-i", nullptr);
       } else {

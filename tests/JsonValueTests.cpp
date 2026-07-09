@@ -83,6 +83,27 @@ void TestOutOfRangeIntegerFallsBackToDouble() {
   Expect(id.AsDouble() > 9.2e18, "double fallback should preserve rough magnitude");
 }
 
+// AsInt() on an out-of-int64-range double (produced by the integer-overflow
+// fallback above) must clamp instead of executing the undefined static_cast<int64>.
+// This is reachable for a uint64-range DAP variablesReference / handle.
+void TestAsIntClampsOutOfRangeDouble() {
+  const auto parsed = ParseJson("{\"ref\":18446744073709551615}");  // ~1.8e19, past 2^63
+  Expect(parsed.has_value(), "over-range integer document must parse");
+  const JsonValue& ref = (*parsed)["ref"];
+  Expect(ref.IsDouble(), "the over-range value should be stored as a double");
+  Expect(ref.AsInt() == std::numeric_limits<std::int64_t>::max(),
+         "AsInt() must clamp a too-large double to int64 max (no UB)");
+
+  const auto negative = ParseJson("{\"n\":-99999999999999999999}");  // past -2^63
+  Expect(negative.has_value(), "over-range negative integer document must parse");
+  Expect((*negative)["n"].AsInt() == std::numeric_limits<std::int64_t>::min(),
+         "AsInt() must clamp a too-negative double to int64 min");
+
+  // A NaN double (constructed directly) must fall through to the caller's fallback.
+  JsonValue nan_value(std::nan(""));
+  Expect(nan_value.AsInt(-7) == -7, "AsInt() on NaN must return the fallback, not trap");
+}
+
 // A lone low surrogate must be rejected, not emitted as invalid (CESU-8) UTF-8.
 // This mirrors the parser's existing rejection of a lone high surrogate and keeps
 // every host string satisfying the valid-UTF-8 invariant.
@@ -178,6 +199,7 @@ void RegisterJsonValueTests(std::vector<TestCase>& tests) {
   AddTest(tests, "JsonValue/ModestNestingStillParses", TestModestNestingStillParses);
   AddTest(tests, "JsonValue/SerializeRoundTripsModestNesting",
           TestSerializeRoundTripsModestNesting);
+  AddTest(tests, "JsonValue/AsIntClampsOutOfRangeDouble", TestAsIntClampsOutOfRangeDouble);
   AddTest(tests, "JsonValue/OutOfRangeIntegerFallsBackToDouble",
           TestOutOfRangeIntegerFallsBackToDouble);
   AddTest(tests, "JsonValue/LoneLowSurrogateRejected", TestLoneLowSurrogateRejected);

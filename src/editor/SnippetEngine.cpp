@@ -184,6 +184,34 @@ static std::size_t RelativeColumnInRange(const SelectionRange& r, const TextPosi
   return p.column - r.start.column;
 }
 
+// Shift every recorded placeholder range — across ALL tab stops, not just the one
+// being edited — that begins at/after `at` on the same line by `delta` columns. An
+// edit inside one placeholder moves the text of every later placeholder on that
+// line; without shifting the OTHER tab stops' recorded ranges too, FocusTabStop
+// would later jump to a stale column. `skip_tab`/`skip_index` names the range the
+// edit happened inside (its own end is adjusted by the caller).
+static void ShiftPlaceholdersAtOrAfter(SnippetSessionState& session, const TextPosition& at,
+                                       std::ptrdiff_t delta, int skip_tab,
+                                       std::size_t skip_index) {
+  for (auto& [tab, vec] : session.ranges_by_tab) {
+    for (std::size_t j = 0; j < vec.size(); ++j) {
+      if (tab == skip_tab && j == skip_index) {
+        continue;
+      }
+      SelectionRange& other = vec[j];
+      if (other.start.line != at.line || other.start.column < at.column) {
+        continue;
+      }
+      const auto shift = [delta](std::size_t& column) {
+        column = static_cast<std::size_t>(
+            std::max<std::ptrdiff_t>(0, static_cast<std::ptrdiff_t>(column) + delta));
+      };
+      shift(other.start.column);
+      shift(other.end.column);
+    }
+  }
+}
+
 static void ExtendPlaceholderRanges(SnippetSessionState& session, int tab, std::ptrdiff_t delta) {
   auto& vec = session.ranges_by_tab[tab];
   for (auto& r : vec) {
@@ -418,19 +446,11 @@ bool SnippetTryInsertText(TextViewport& viewport, SnippetSessionState& session, 
     viewport.ReplaceRange(SelectionRange{ins, ins}, text, false);
     ranges[idx].end.column += text.size();
     // The insertion shifts every column at or after `ins` on this line to the right.
-    // Sibling linked placeholders to the right of the insertion must have BOTH their
-    // start and end columns advanced, or their recorded ranges go stale and the next
-    // mirrored keystroke lands at the wrong column.
-    for (std::size_t j = 0; j < ranges.size(); ++j) {
-      if (j == idx) {
-        continue;
-      }
-      SelectionRange& other = ranges[j];
-      if (other.start.line == ins.line && other.start.column >= ins.column) {
-        other.start.column += text.size();
-        other.end.column += text.size();
-      }
-    }
+    // Every OTHER placeholder to the right — whether a mirror of THIS tab stop or a
+    // different tab stop sharing the line — must have BOTH its start and end columns
+    // advanced, or its recorded range goes stale and FocusTabStop later jumps to the
+    // wrong column.
+    ShiftPlaceholdersAtOrAfter(session, ins, static_cast<std::ptrdiff_t>(text.size()), tab, idx);
   }
   FocusTabStop(viewport, session, tab);
   return true;

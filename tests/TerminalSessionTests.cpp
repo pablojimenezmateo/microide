@@ -1413,9 +1413,86 @@ void TestTerminalSessionEraseWholeLineDoesNotOvergrowAtPendingWrap() {
          "erase-whole-line must span exactly the terminal width, not columns_ + 1");
 }
 
+// ED 2 (`CSI 2J`) on the primary screen must erase the visible screen in place and
+// PRESERVE scrollback — exactly what `clear`/`tput clear` (`ESC[H ESC[2J`) sends.
+// Regression for the collapse that replaced the whole deque, silently destroying all
+// history above the viewport.
+void TestTerminalSessionClearPreservesScrollback() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 3, 20);  // 3-row visible screen
+  TerminalSessionTestAccess::AppendOutput(session, "L0\r\nL1\r\nL2\r\nL3\r\nL4\r\nL5");
+  Expect(session.SnapshotLines().size() > 3, "six lines into a 3-row screen builds scrollback");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[H\x1b[2J");  // `clear`
+  const auto after = session.SnapshotLines();
+  Expect(after.size() >= 6, "2J must keep the scrollback deque, not collapse it to the screen");
+  ExpectLineText(after, 0, "L0", "2J must preserve the first scrollback line");
+  ExpectLineText(after, 1, "L1", "2J must preserve scrollback");
+  ExpectLineText(after, 2, "L2", "2J must preserve the last scrollback line");
+  Expect(LineText(after[after.size() - 1]).empty(), "2J must blank the visible screen");
+  Expect(LineText(after[after.size() - 3]).empty(), "2J must blank the whole visible screen");
+}
+
+// CSI H (CUP home) on the primary screen must target the top-left of the VISIBLE
+// screen, not absolute deque row 0 (which is scrollback). Regression for the
+// viewport-relative primary-addressing rework that ED 2 depends on.
+void TestTerminalSessionPrimaryCupIsViewportRelative() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 3, 20);
+  TerminalSessionTestAccess::AppendOutput(session, "L0\r\nL1\r\nL2\r\nL3\r\nL4\r\nL5");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[HX");  // home, then write X
+  const auto after = session.SnapshotLines();
+  ExpectLineText(after, 0, "L0", "CUP home must not reach into scrollback");
+  Expect(after.size() >= 3, "the deque must stay intact");
+  ExpectLineText(after, after.size() - 3, "X3",
+                 "CUP home targets the visible-screen top (overwrites L3's first cell -> X3)");
+}
+
+// EL 1 (`CSI 1K`, erase to start of line) at the pending-wrap column
+// (cursor_column_ == columns_) must clamp its erase end to the width, mirroring the
+// EL 2 fix, or it grows the row one cell past the right margin.
+void TestTerminalSessionEraseToLineStartDoesNotOvergrowAtPendingWrap() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "abcdefgh");  // pending wrap at column 8
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[1K");
+  const auto lines = session.SnapshotLines();
+  Expect(lines[0].cells.size() == 8,
+         "erase-to-line-start must not grow the row to columns_ + 1 at the pending-wrap column");
+}
+
+// A scroll region that spanned the full screen must re-expand to the new height when
+// the terminal grows, or LF-driven scrolling stays frozen at the old height.
+void TestTerminalSessionScrollRegionReexpandsOnGrow() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049h");  // alt screen, full-screen region
+  session.Resize(8, 8);
+  // Fill all 8 rows; if the region were still capped at row 3, rows 5..8 would never
+  // receive scrolled output.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[H");
+  for (int i = 0; i < 8; ++i) {
+    TerminalSessionTestAccess::AppendOutput(session, i == 0 ? "r0" : "\r\nr");
+  }
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[8;1Hbottom");
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 8, "the alt grid must be the full new height");
+  ExpectLineText(lines, 7, "bottom",
+                 "CUP to the new last row must address a real row after the region re-expands");
+}
+
 }  // namespace
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TerminalSession/ClearPreservesScrollback",
+          TestTerminalSessionClearPreservesScrollback);
+  AddTest(tests, "TerminalSession/PrimaryCupIsViewportRelative",
+          TestTerminalSessionPrimaryCupIsViewportRelative);
+  AddTest(tests, "TerminalSession/EraseToLineStartDoesNotOvergrowAtPendingWrap",
+          TestTerminalSessionEraseToLineStartDoesNotOvergrowAtPendingWrap);
+  AddTest(tests, "TerminalSession/ScrollRegionReexpandsOnGrow",
+          TestTerminalSessionScrollRegionReexpandsOnGrow);
   AddTest(tests, "TerminalSession/OverwritingWideGlyphClearsStalePair",
           TestTerminalSessionOverwritingWideGlyphClearsStalePair);
   AddTest(tests, "TerminalSession/IgnoresDelInOutputStream",

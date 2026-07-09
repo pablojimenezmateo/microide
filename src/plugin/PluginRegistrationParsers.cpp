@@ -543,8 +543,14 @@ bool ReadPairArrayField(lua_State* state,
   // Cap the drain so a plugin returning an unbounded/huge sequence cannot grow
   // this vector without limit and hang/OOM the host.
   constexpr lua_Integer kMaxPairArrayItems = 100000;
+  // Read entries with lua_rawgeti, never metamethod-invoking lua_geti: this parse
+  // runs inside the setup PCall with the count-hook watchdog armed, so an adversarial
+  // __index that raises would longjmp over the caller's live `contributed`
+  // (ContributedBracketSet with std::string/std::vector members) and the wrapper's
+  // error_message std::string, leaking them. A bracket-pair sequence never
+  // legitimately resolves through __index. Mirrors ReadStringArrayField.
   for (lua_Integer i = 1; i <= kMaxPairArrayItems; ++i) {
-    lua_geti(state, -1, i);
+    lua_rawgeti(state, -1, i);
     if (lua_isnil(state, -1)) {
       lua_pop(state, 1);
       break;
@@ -553,8 +559,8 @@ bool ReadPairArrayField(lua_State* state,
       lua_pop(state, 2);
       return false;
     }
-    lua_geti(state, -1, 1);
-    lua_geti(state, -2, 2);
+    lua_rawgeti(state, -1, 1);
+    lua_rawgeti(state, -2, 2);
     if (!lua_isstring(state, -2) || !lua_isstring(state, -1)) {
       lua_pop(state, 4);
       return false;

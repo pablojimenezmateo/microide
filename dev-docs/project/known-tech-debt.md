@@ -9,20 +9,16 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-These three were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
+These were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
 **deliberately deferred** — each is either entangled with a semantics decision or
 a latent API-contract hazard with no live trigger, so a rushed fix risked a
 regression worse than the defect. Recorded here so they are not silently lost.
 
-- **Terminal `ED` (`CSI 2J`) scrollback loss is entangled with primary-screen
-  absolute-row CUP.** `TerminalSession::EraseInDisplayLocked` (`src/terminal/TerminalSessionScreen.cpp:304`,
-  dispatched from `src/terminal/TerminalSessionCsi.cpp:138`). On the primary screen,
-  `CSI H` maps to absolute row 0 (no viewport-top offset — only alt-screen + origin
-  mode offsets), which entangles `2J` erase semantics with cursor origin. A naive
-  "preserve scrollback on 2J" change breaks `clear(1)`, which relies on the current
-  absolute-row behaviour. A correct fix needs viewport-relative CUP rework first,
-  which is out of scope for a bug-hunt pass. **Blocked on:** deciding viewport-relative
-  vs absolute CUP on the primary screen, then reworking `2J`/`clear` together.
+> **Resolved 2026-07-09 (seventh pass):** the terminal `ED` (`CSI 2J`) scrollback-loss
+> item that headed this list is now fixed. Primary-screen absolute-row addressing
+> (`CSI H`/`f`/`d`, DECSTBM home, CPR report) was reworked to be viewport-relative via
+> `TerminalSession::PrimaryScreenTopLocked()`, and `ED 1`/`ED 2` now preserve scrollback
+> and blank only the visible screen — so `clear` keeps history like xterm/VTE.
 
 - **Branch-review cross-generation `ChangedSinceReviewed` status is effectively
   unreachable.** `src/compare/BranchReviewStateService.cpp` /
@@ -344,6 +340,61 @@ bounded poll-until-condition shape; no changes were needed. The durable conventi
 **poll a condition until a bounded deadline for every cross-thread assertion; never
 assert state immediately after a fixed `sleep_for`** — is recorded in
 `guidelines/testing.md`.
+
+The 2026-07-09 seventh-pass sweep fixed a broad batch outright (terminal `ED 2`
+scrollback preservation + viewport-relative primary CUP, `EL 1` pending-wrap
+off-by-one, combining-mark-after-wide-glyph, scroll-region re-expand on grow;
+the `PatchGenerator` no-newline-at-EOF fuse that silently corrupted staged blobs;
+`IgnoreMatcher` leading-slash/mid-slash anchoring; `JsonValue::AsInt` out-of-range
+double UB; the plugin `lua_geti`→`lua_rawgeti` metamethod cluster;
+`FileWatcher`/`FileIndexWatcher` inotify shutdown-hang + watch-leak; `TerminalBackend`
+`setenv`-after-fork; `Trash` `.trashinfo` percent-encoding; the LSP/DAP send-failure
+double-fire; and the `SnippetEngine` cross-tab insert shift). It left these deferred:
+
+- **Combining marks / variation selectors after a double-width glyph are dropped.**
+  `TerminalSession::PutGlyphLocked` (`src/terminal/TerminalSessionScreen.cpp`). A
+  zero-width mark folds into the previous cell only if it fits the 4-byte inline
+  `TerminalCell` (`std::array<char,4>`). A double-width base glyph is always ≥3 UTF-8
+  bytes (East-Asian-Wide starts at U+1100) and every combining mark/VS is ≥2 bytes, so
+  base+mark is ≥5 bytes and never fits — the mark is dropped regardless of which cell
+  it targets. (An earlier "attach to the wide lead cell instead of the trailing
+  spacer" tweak was reverted: it pointed at the correct cell but changed nothing
+  observable because of the byte budget, while adding a branch to the hot glyph path.)
+  A real fix needs larger cell storage or an overflow side-table for grapheme
+  clusters — a terminal memory-model change the scroll-perf work is sensitive to.
+  **Blocked on:** a perf-neutral variable-length grapheme representation (same
+  constraint as the deferred BCE styled-blank-line item). Low priority — CJK-plus-
+  combining-mark is rare.
+
+- **Snippet cross-tab shift is fixed for insert but not delete/choice.**
+  `src/editor/SnippetEngine.cpp` — `SnippetTryInsertText` now shifts every other
+  placeholder (across all tab stops) on the edited line via `ShiftPlaceholdersAtOrAfter`,
+  but `SnippetTryBackspace`/`SnippetTryDeleteForward` (which call
+  `ExtendPlaceholderRanges`, current-tab `.end` only) and `ApplyChoiceForTab` still
+  leave OTHER tab stops' recorded starts stale after a delete/choice that changes
+  length. The multi-mirror reverse-order deletion interaction makes a correct signed
+  shift delicate, so it was deferred to avoid a snippet regression. Only affects
+  multiple tab stops on one line where an earlier one is shortened. **Blocked on:**
+  nothing external; extend the `ShiftPlaceholdersAtOrAfter` treatment to the delete
+  and choice paths with focused tests.
+
+- **Snippet placeholder positions desync on a lone-CR snippet body.**
+  `src/editor/SnippetEngine.cpp` (`PositionAfterOffsetInExpanded`, ~line 112). Tab-stop
+  offsets are computed against the raw body, but the inserted text is
+  `NormalizeLineEndings`-canonicalized (a bare `\r` becomes a newline), so a body
+  containing a lone CR mislocates every following tab stop. `\r\n` bodies survive
+  (the following `\n` resets the phantom column). Very low severity — snippet bodies
+  with lone CRs are near-nonexistent. **Blocked on:** compute positions against the
+  normalized expanded text (or strip CRs in `ParseSnippetBody`).
+
+- **LSP/DAP requests registered during init are dropped (not failed) if the handshake
+  fails.** `src/workspace/WorkspaceLspClientLifecycle.cpp` / `WorkspaceDapClientInternal.h`
+  init-failure paths call `ClearDeferredMessages()` and return without failing
+  `pending_requests`, so a feature request issued while `!initialized` has its handler
+  dropped by the later `ResetProtocolState()` rather than failed — a stranded UI
+  loading state. Shared by both transports (not a drift) and normally unreached because
+  requests are gated on readiness. **Blocked on:** nothing external; on init failure,
+  run the EOF-style `FailPendingRequests(false)` before resetting protocol state.
 
 ## Guardrails — rejected experiments, do not retry
 

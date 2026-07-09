@@ -135,7 +135,8 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     case 'f':
       MoveCursorLocked(
           static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 0, 1) - 1)) +
-              ((use_alternate_screen_ && origin_mode_) ? ActiveScrollRegionTopLocked() : 0),
+              (use_alternate_screen_ ? (origin_mode_ ? ActiveScrollRegionTopLocked() : 0)
+                                     : PrimaryScreenTopLocked()),
           static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 1, 1) - 1)));
       return;
     case 'J':
@@ -310,7 +311,12 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
           // on-screen column so CPR never reports one past the right edge.
           const std::size_t reported_column =
               columns_ > 0 ? std::min(cursor_column_, columns_ - 1) : cursor_column_;
-          SendBytesLocked("\x1b[" + std::to_string(cursor_row_ + 1) + ";" +
+          // Report the row relative to the visible screen: on the primary buffer
+          // cursor_row_ is an absolute deque index that includes scrollback.
+          const std::size_t screen_top = PrimaryScreenTopLocked();
+          const std::size_t reported_row =
+              cursor_row_ > screen_top ? cursor_row_ - screen_top : 0;
+          SendBytesLocked("\x1b[" + std::to_string(reported_row + 1) + ";" +
                           std::to_string(reported_column + 1) + "R");
         }
       }
@@ -318,7 +324,8 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     case 'd':
       MoveCursorLocked(
           static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 0, 1) - 1)) +
-              ((use_alternate_screen_ && origin_mode_) ? ActiveScrollRegionTopLocked() : 0),
+              (use_alternate_screen_ ? (origin_mode_ ? ActiveScrollRegionTopLocked() : 0)
+                                     : PrimaryScreenTopLocked()),
           cursor_column_);
       return;
     case 'r': {
@@ -337,7 +344,7 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       }
       scroll_region_top_ = scroll_region_top;
       scroll_region_bottom_ = scroll_region_bottom;
-      MoveCursorLocked(0, 0);
+      MoveCursorLocked(PrimaryScreenTopLocked(), 0);
       return;
     }
     case 's':

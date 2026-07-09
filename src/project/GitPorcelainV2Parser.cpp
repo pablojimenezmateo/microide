@@ -152,13 +152,18 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
     }
     const char kind = record[0];
     const std::string_view body = record.substr(2);
-    // Only the leading XY status field is consumed here; extract it directly
-    // instead of splitting the whole body into a throwaway vector per entry.
-    const std::size_t xy_end = body.find(' ');
-    const std::string_view xy =
-        body.substr(0, xy_end == std::string_view::npos ? body.size() : xy_end);
-    if (xy.empty()) {
-      continue;
+    // Only the changed-entry kinds (1/2/u) carry a leading XY status field. For
+    // '?'/'!' (untracked/ignored) records `body` is the whole path — which may
+    // legally begin with a space — and the literal "??"/"!!" is used below, so the
+    // XY extraction (and its empty-guard) must not run for them or a leading-space
+    // untracked file would be silently dropped.
+    std::string_view xy;
+    if (kind == '1' || kind == '2' || kind == 'u') {
+      const std::size_t xy_end = body.find(' ');
+      xy = body.substr(0, xy_end == std::string_view::npos ? body.size() : xy_end);
+      if (xy.empty()) {
+        continue;
+      }
     }
 
     switch (kind) {

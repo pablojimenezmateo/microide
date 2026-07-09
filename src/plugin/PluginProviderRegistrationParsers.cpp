@@ -297,7 +297,9 @@ bool ParseAiProviderRegistration(lua_State* state,
     // this vector without limit. A provider never has anywhere near this many models.
     constexpr lua_Integer kMaxProviderModels = 100000;
     for (lua_Integer i = 1; i <= kMaxProviderModels; ++i) {
-      lua_geti(state, -1, i);
+      // Raw read: metamethod-invoking lua_geti under the setup PCall could longjmp
+      // over the live `models`/`out->contributed` C++ locals. See ReadPairArrayField.
+      lua_rawgeti(state, -1, i);
       if (lua_isnil(state, -1)) {
         lua_pop(state, 1);
         break;
@@ -337,7 +339,8 @@ bool ParseExternalAgentRegistration(lua_State* state,
     // Cap the drain against an unbounded/huge plugin table (see models above).
     constexpr lua_Integer kMaxAgentCapabilities = 100000;
     for (lua_Integer i = 1; i <= kMaxAgentCapabilities; ++i) {
-      lua_geti(state, -1, i);
+      // Raw read (see models above / ReadPairArrayField).
+      lua_rawgeti(state, -1, i);
       if (lua_isnil(state, -1)) {
         lua_pop(state, 1);
         break;

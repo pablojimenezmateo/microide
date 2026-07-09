@@ -219,6 +219,13 @@ class TerminalSession {
   void EnsureCursorLineExistsLocked();
   void AdvanceCursorRowLocked(bool wrapped_from_previous = false);
   void MoveCursorLocked(std::size_t row, std::size_t column);
+  // Absolute deque row of the top of the visible screen on the primary buffer.
+  // The primary deque holds scrollback followed by the visible grid, so row-
+  // addressing CSIs (CUP/HVP/VPA/DECSTBM home, CPR report) and full-display
+  // erases must be relative to this row, not to the top of scrollback. Returns 0
+  // on the alternate screen (which has no scrollback) and whenever the deque is
+  // not yet taller than the screen.
+  std::size_t PrimaryScreenTopLocked() const;
   void PutCharacterLocked(char character);
   void PutGlyphLocked(std::string_view glyph);
   // Blank any dangling half of a previously written double-width pair that a

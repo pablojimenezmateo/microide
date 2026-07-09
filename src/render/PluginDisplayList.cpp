@@ -1,5 +1,6 @@
 #include "render/PluginDisplayList.h"
 
+#include <cmath>
 #include <cstring>
 
 namespace microide::render {
@@ -12,6 +13,11 @@ void HashBytes(std::uint64_t& h, const void* data, std::size_t size) {
     h ^= static_cast<std::uint64_t>(bytes[i]);
     h *= 0x100000001b3ULL;  // FNV-1a prime
   }
+}
+
+bool RectIsFinite(const SDL_FRect& rect) {
+  return std::isfinite(rect.x) && std::isfinite(rect.y) && std::isfinite(rect.w) &&
+         std::isfinite(rect.h);
 }
 
 }  // namespace
@@ -37,8 +43,22 @@ bool ValidateDisplayList(const PluginDisplayList& list, std::string* error) {
     return fail("display list exceeds the maximum image count");
   }
 
+  // Plugin-supplied coordinates flow straight from Lua with no finiteness check.
+  // Replay casts them to int (e.g. ToIntRect for clip rects), and static_cast<int>
+  // of a NaN/±inf or out-of-int-range float is undefined behavior (UBSAN trap; a
+  // garbage clip rect in release). Reject non-finite geometry here — validation is
+  // the sole gate replay trusts.
+  for (const SDL_FPoint& point : list.point_arena) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y)) {
+      return fail("display list has a non-finite polyline point");
+    }
+  }
+
   int clip_depth = 0;
   for (const DisplayOp& op : list.ops) {
+    if (!RectIsFinite(op.rect)) {
+      return fail("display list op has a non-finite rectangle");
+    }
     switch (op.op) {
       case DrawOp::Text: {
         // The slice must fit the arena. Even an empty (count == 0) op must have an

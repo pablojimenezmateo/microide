@@ -516,6 +516,12 @@ struct DapClient::Impl {
   }
 
   void HandleResponse(util::JsonValue msg) {
+    // Correlate only on a numeric request_seq (mirrors the LSP dispatch's id
+    // IsInt() gate). A non-conformant adapter that encodes it as a string would
+    // otherwise yield AsInt()==0, silently mis-correlating or dropping the response.
+    if (!msg["request_seq"].IsInt() && !msg["request_seq"].IsDouble()) {
+      return;
+    }
     const int request_seq = static_cast<int>(msg["request_seq"].AsInt());
     if (shutting_down.load(std::memory_order_acquire)) {
       std::lock_guard lock(mutex);
@@ -577,9 +583,13 @@ struct DapClient::Impl {
     return seq;
   }
 
-  void RemovePendingRequest(int seq) {
+  // Returns true iff this call actually removed a still-pending entry. The
+  // send-failure path uses that to avoid double-delivering a callback the I/O
+  // thread's EOF sweep (FailPendingRequests) may have already failed and erased in
+  // the window between RegisterPendingRequest and a failed SendMessageAfterInitialize.
+  bool RemovePendingRequest(int seq) {
     std::lock_guard lock(mutex);
-    pending_requests.erase(seq);
+    return pending_requests.erase(seq) != 0;
   }
 
   // Synthesize failure responses for pending requests so a non-responding adapter
@@ -624,8 +634,12 @@ struct DapClient::Impl {
     }
     const int seq = RegisterPendingRequest(std::move(response_handler), RequestTimeoutFor(command));
     if (!SendMessageAfterInitialize(dap_protocol::MakeRequest(seq, command, arguments))) {
-      RemovePendingRequest(seq);
-      on_send_failure();
+      // Only report the failure if the entry was still ours to fail. If the EOF
+      // sweep already claimed it, it also already invoked the handler — running
+      // on_send_failure() again would double-fire the callback.
+      if (RemovePendingRequest(seq)) {
+        on_send_failure();
+      }
       return false;
     }
     return true;

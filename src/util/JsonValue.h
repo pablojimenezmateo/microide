@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -51,7 +52,17 @@ struct JsonValue {
   }
   std::int64_t AsInt(std::int64_t fallback = 0) const {
     if (const auto* n = std::get_if<std::int64_t>(&v)) return *n;
-    if (const auto* d = std::get_if<double>(&v)) return static_cast<std::int64_t>(*d);
+    if (const auto* d = std::get_if<double>(&v)) {
+      // Converting a double whose truncated magnitude does not fit int64 is UB
+      // ([conv.fpint]); this is reachable because ParseNumber stores an integer
+      // literal that overflows int64 (e.g. a uint64-range DAP variablesReference)
+      // as a double. Clamp to the representable range instead of trapping. NaN
+      // (which fails both comparisons) falls through to the fallback.
+      const double d_value = *d;
+      if (d_value >= 9223372036854775808.0) return std::numeric_limits<std::int64_t>::max();
+      if (d_value < -9223372036854775808.0) return std::numeric_limits<std::int64_t>::min();
+      if (d_value >= -9223372036854775808.0) return static_cast<std::int64_t>(d_value);
+    }
     return fallback;
   }
   double AsDouble(double fallback = 0.0) const {

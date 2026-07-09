@@ -175,6 +175,14 @@ void TerminalSession::AdvanceCursorRowLocked(bool wrapped_from_previous) {
   lines_[cursor_row_].wrapped_from_previous = wrapped_from_previous;
 }
 
+std::size_t TerminalSession::PrimaryScreenTopLocked() const {
+  if (use_alternate_screen_) {
+    return 0;
+  }
+  const std::size_t visible = std::max<std::size_t>(1, rows_);
+  return lines_.size() > visible ? lines_.size() - visible : 0;
+}
+
 void TerminalSession::MoveCursorLocked(std::size_t row, std::size_t column) {
   if (use_alternate_screen_) {
     const std::size_t max_row = origin_mode_ ? ActiveScrollRegionBottomLocked()
@@ -304,9 +312,15 @@ void TerminalSession::EraseInLineLocked(int mode) {
   EnsureCursorLineExistsLocked();
   auto& line = lines_[cursor_row_];
   switch (mode) {
-    case 1:
-      ClearLineRangeLocked(line, 0, cursor_column_ + 1);
+    case 1: {
+      // Clamp the erase end to the right margin: at the pending-wrap column
+      // (cursor_column_ == columns_) a bare cursor_column_ + 1 would grow the row
+      // one cell past the terminal width, mirroring the EL 2 fix below.
+      const std::size_t end =
+          columns_ > 0 ? std::min<std::size_t>(cursor_column_ + 1, columns_) : cursor_column_ + 1;
+      ClearLineRangeLocked(line, 0, end);
       break;
+    }
     case 2: {
       // Erase the entire line: span the full terminal width, not just up to the
       // cursor. Using cursor_column_ + 1 left a line shorter than the cursor only
@@ -329,16 +343,33 @@ void TerminalSession::EraseInLineLocked(int mode) {
 void TerminalSession::EraseInDisplayLocked(int mode) {
   EnsureCursorLineExistsLocked();
   switch (mode) {
-    case 1:
-      for (std::size_t row = 0; row < cursor_row_; ++row) {
+    case 1: {
+      // Erase from the start of the *visible screen* to the cursor. On the primary
+      // buffer that start is the top of the viewport, not the top of scrollback —
+      // blanking absolute row 0 would destroy history above the screen.
+      const std::size_t top = PrimaryScreenTopLocked();
+      for (std::size_t row = top; row < cursor_row_ && row < lines_.size(); ++row) {
         lines_[row].cells.clear();
       }
       EraseInLineLocked(1);
       break;
+    }
     case 2:
-      lines_.assign(use_alternate_screen_ ? std::max<std::size_t>(1, rows_)
-                                          : std::max<std::size_t>(1, cursor_row_ + 1),
-                    TerminalLine{});
+      if (use_alternate_screen_) {
+        lines_.assign(std::max<std::size_t>(1, rows_), TerminalLine{});
+      } else {
+        // ED 2 erases the visible screen in place and MUST preserve scrollback
+        // (this is what `clear`/`tput clear`'s `ESC[2J` sends). Blank only the last
+        // `rows_` lines of the deque; everything above is history. Previously this
+        // collapsed the whole deque, silently destroying all scrollback.
+        const std::size_t visible = std::max<std::size_t>(1, rows_);
+        while (lines_.size() < visible) {
+          lines_.push_back(TerminalLine{});
+        }
+        for (std::size_t row = lines_.size() - visible; row < lines_.size(); ++row) {
+          lines_[row] = TerminalLine{};
+        }
+      }
       break;
     case 3: {
       // ED 3 (xterm "Erase Saved Lines"): drop the scrollback, leave the visible

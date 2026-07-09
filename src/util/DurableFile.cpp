@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <string>
 #include <system_error>
@@ -39,6 +40,9 @@ bool WriteAll(int fd, std::span<const std::byte> bytes) {
                              static_cast<unsigned int>(chunk));
 #else
     const ssize_t wrote = ::write(fd, bytes.data() + static_cast<std::ptrdiff_t>(offset), chunk);
+    if (wrote < 0 && errno == EINTR) {
+      continue;  // interrupted by a signal before any byte was written; retry
+    }
 #endif
     if (wrote <= 0) {
       return false;

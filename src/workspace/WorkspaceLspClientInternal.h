@@ -350,9 +350,13 @@ struct LspClient::Impl {
     return id;
   }
 
-  void RemovePendingRequest(int id) {
+  // Returns true iff this call actually removed a still-pending entry. The
+  // send-failure path uses that to avoid double-delivering a callback the I/O
+  // thread's EOF sweep (FailPendingRequests) may have already failed and erased in
+  // the window between RegisterPendingRequest and a failed SendMessageAfterInitialize.
+  bool RemovePendingRequest(int id) {
     std::lock_guard lock(mutex);
-    pending_requests.erase(id);
+    return pending_requests.erase(id) != 0;
   }
 
   // Synthesize empty responses for pending requests so a non-responding server never
@@ -397,8 +401,12 @@ struct LspClient::Impl {
                        std::function<void()> on_send_failure) {
     const int id = RegisterPendingRequest(std::move(response_handler));
     if (!SendMessageAfterInitialize(MakeRequest(id, method, std::move(params)))) {
-      RemovePendingRequest(id);
-      on_send_failure();
+      // Only report the failure if the entry was still ours to fail. If the EOF
+      // sweep already claimed it, it also already invoked the handler — running
+      // on_send_failure() again would double-fire the callback.
+      if (RemovePendingRequest(id)) {
+        on_send_failure();
+      }
     }
   }
 

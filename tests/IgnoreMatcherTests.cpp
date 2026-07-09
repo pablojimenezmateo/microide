@@ -125,7 +125,41 @@ void TestIgnoreMatcherDoubleStarCrossesDirectories() {
          "a single '*' must not cross a '/' boundary");
 }
 
+// A pattern with a slash at the beginning or middle is anchored to the .gitignore's
+// directory (gitignore(5)); only a slash-free pattern floats and matches by basename
+// at any depth. Regression for the bug where a leading '/' was stripped without
+// recording anchoring (so `/build` matched at every depth) and where mid-slash
+// patterns were floated across path suffixes (so `a/b` matched `x/a/b`).
+void TestIgnoreMatcherAnchoredPatternsDoNotFloat() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root);
+  WriteFile(root / ".gitignore", "/build\na/b\nnode_modules\n");
+
+  IgnoreMatcher matcher;
+  matcher.SetRoot(root);
+
+  // Leading-slash pattern: anchored to the root only.
+  Expect(matcher.Ignored("build", true), "/build should ignore the root build directory");
+  Expect(!matcher.Ignored("src/build", true),
+         "/build is anchored: it must NOT match a nested build directory");
+  Expect(!matcher.Ignored("packages/x/build", true),
+         "/build must not match a deeply nested build directory");
+
+  // Mid-slash pattern: anchored, must not float across suffixes.
+  Expect(matcher.Ignored("a/b", true), "a/b should match at the anchored location");
+  Expect(!matcher.Ignored("x/a/b", true),
+         "a/b is anchored: it must NOT float to match x/a/b");
+
+  // A slash-free pattern still floats by basename at any depth (unchanged behavior).
+  Expect(matcher.Ignored("node_modules", true), "node_modules matches at the root");
+  Expect(matcher.Ignored("src/node_modules", true),
+         "a slash-free pattern still matches by basename at any depth");
+}
+
 void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "IgnoreMatcher/AnchoredPatternsDoNotFloat",
+          TestIgnoreMatcherAnchoredPatternsDoNotFloat);
   AddTest(tests, "IgnoreMatcher/NestedGitignoreBasePrefix",
           TestIgnoreMatcherNestedGitignoreBasePrefix);
   AddTest(tests, "IgnoreMatcher/NegationAndDirectoryRules",

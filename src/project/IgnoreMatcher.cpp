@@ -267,20 +267,13 @@ bool IgnoreMatcher::Rule::Matches(std::string_view relative_path, bool is_direct
     return false;
   }
 
-  if (GlobMatches(pattern, relative_path)) {
-    return true;
-  }
-
-  std::size_t slash = relative_path.find('/');
-  while (slash != std::string_view::npos) {
-    const std::string_view suffix = relative_path.substr(slash + 1);
-    if (GlobMatches(pattern, suffix)) {
-      return true;
-    }
-    slash = relative_path.find('/', slash + 1);
-  }
-
-  return false;
+  // Anchored (slash-bearing) patterns are pinned to the .gitignore's directory:
+  // match against the whole base-relative path only. Any "match at any depth"
+  // semantics a pattern wants must be spelled with an explicit '**' (which
+  // GlobMatches folds, including zero directories). Do NOT float the pattern
+  // across path suffixes — git does not, and doing so over-excludes files
+  // (e.g. `a/b` must not match `x/a/b`).
+  return GlobMatches(pattern, relative_path);
 }
 
 bool IgnoreMatcher::ParseRule(std::string base_relative, std::string line, Rule& out_rule) {
@@ -299,8 +292,16 @@ bool IgnoreMatcher::ParseRule(std::string base_relative, std::string line, Rule&
   if (directory_only) {
     line.pop_back();
   }
-  if (!line.empty() && line.front() == '/') {
+  // A separator at the beginning or middle of the pattern anchors it to the
+  // .gitignore's directory (gitignore(5)); only a slash-free pattern floats and
+  // matches by basename at any depth. Detect a mid-slash before normalization,
+  // then strip a leading '/' (it only signalled anchoring).
+  bool anchored = !line.empty() && line.front() == '/';
+  if (anchored) {
     line.erase(line.begin());
+  }
+  if (line.find('/') != std::string::npos) {
+    anchored = true;
   }
 
   const std::string pattern = ToSlash(std::filesystem::path(line));
@@ -320,7 +321,7 @@ bool IgnoreMatcher::ParseRule(std::string base_relative, std::string line, Rule&
       .pattern = pattern,
       .negated = negated,
       .directory_only = directory_only,
-      .match_basename = pattern.find('/') == std::string::npos,
+      .match_basename = !anchored,
   };
   return true;
 }

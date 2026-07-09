@@ -518,7 +518,11 @@ GitFileStatus DirectoryTree::EntryGitStatus(const std::filesystem::path& path) c
     return GitFileStatus::Clean;
   }
 
-  const auto it = git_statuses_.find(relative.lexically_normal().string());
+  // Match the writer's key form (GitPorcelainParser::RecordGitStatus stores keys
+  // with generic_string(), i.e. forward slashes). Using native string() here would
+  // look up backslash-separated keys on Windows and never hit, so no dirty/modified
+  // badge would ever resolve.
+  const auto it = git_statuses_.find(relative.lexically_normal().generic_string());
   return it == git_statuses_.end() ? GitFileStatus::Clean : it->second;
 }
 

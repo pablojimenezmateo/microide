@@ -140,7 +140,10 @@ std::vector<PluginHost::LocationResult> QueryLocations(
     }
     if (lua_istable(state, -1)) {
       for (lua_Integer i = 1; i <= kMaxLocations; ++i) {
-        lua_geti(state, -1, i);
+        // Raw read: the harvest runs after PCall disarmed the count-hook watchdog,
+        // so a metamethod-invoking lua_geti over an adversarial __index/__len could
+        // spin this worker thread forever. Mirrors ReadSymbolArray.
+        lua_rawgeti(state, -1, i);
         if (lua_isnil(state, -1)) {
           lua_pop(state, 1);
           break;
@@ -201,7 +204,8 @@ bool QuerySignatureHelp(
       lua_getfield(state, -1, "signatures");
       if (lua_istable(state, -1)) {
         for (lua_Integer i = 1; i <= kMaxSignatures; ++i) {
-          lua_geti(state, -1, i);
+          // Raw read (post-PCall, watchdog disarmed); see QueryLocations above.
+          lua_rawgeti(state, -1, i);
           if (lua_isnil(state, -1)) {
             lua_pop(state, 1);
             break;
@@ -218,7 +222,8 @@ bool QuerySignatureHelp(
             lua_getfield(state, -1, "parameters");
             if (lua_istable(state, -1)) {
               for (lua_Integer p = 1; p <= kMaxParameters; ++p) {
-                lua_geti(state, -1, p);
+                // Raw read (post-PCall, watchdog disarmed); see QueryLocations above.
+                lua_rawgeti(state, -1, p);
                 if (lua_isnil(state, -1)) {
                   lua_pop(state, 1);
                   break;

@@ -125,9 +125,35 @@ void TestSnippetParseFallbackLeavesDollarLiteral() {
   Expect(parsed.occurrences.empty(), "no tab stops for invalid placeholder");
 }
 
+// Editing one tab stop must shift the recorded ranges of OTHER tab stops that sit
+// later on the same line. Regression for the bug where only the *current* tab's
+// ranges were shifted, so a second tab stop's stored column went stale and
+// FocusTabStop later jumped to the wrong position.
+void TestSnippetCrossTabShiftOnInsert() {
+  TextViewport viewport;
+  viewport.LoadContent("--", "/tmp/snippet.cpp");
+  viewport.MoveCursorTo(0, 0);
+  SnippetSessionState session;
+  viewport.BeginUndoGroup();
+  SelectionRange trigger{{0, 0}, {0, 2}};
+  Expect(ExpandSnippetAtSelection(viewport, session, trigger, "${1:i} ${2:n}$0"),
+         "two distinct tab stops on one line should expand");
+  Expect(viewport.lines()[0] == "i n", "placeholders expand to 'i n'");
+  Expect(session.ranges_by_tab[2].size() == 1u &&
+             session.ranges_by_tab[2][0].start.column == 2u,
+         "tab 2 starts at column 2 before tab 1 is edited");
+
+  Expect(SnippetTryInsertText(viewport, session, "ndex"), "grow $1 from 'i' to 'index'");
+  Expect(viewport.lines()[0] == "index n", "typing into $1 grows it in place: 'index n'");
+  Expect(session.ranges_by_tab[2][0].start.column == 6u,
+         "editing tab 1 must shift tab 2's recorded start (2 -> 6), so FocusTabStop "
+         "later lands on the moved placeholder, not a stale column");
+}
+
 }  // namespace
 
 void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorSnippet/CrossTabShiftOnInsert", TestSnippetCrossTabShiftOnInsert);
   AddTest(tests, "EditorSnippet/SimpleExpansion", TestSnippetSimpleExpansion);
   AddTest(tests, "EditorSnippet/MultiOccurrenceLinkedTab", TestSnippetMultiOccurrenceLinkedTab);
   AddTest(tests, "EditorSnippet/MultiOccurrenceLinkedTabMultiKeystroke",

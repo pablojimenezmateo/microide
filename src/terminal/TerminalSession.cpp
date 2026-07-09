@@ -287,8 +287,20 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
 
   {
     std::scoped_lock lock(mutex_);
+    const std::size_t old_rows = rows_;
+    // A scroll region that spanned the full pre-resize screen must follow the new
+    // height. ClampScrollRegionLocked only *shrinks* the bottom margin, so after a
+    // grow a default full-window region would otherwise stay frozen at the old
+    // height and confine all scrolling to the top of the enlarged screen (xterm/VTE
+    // reset margins to the full window on resize).
+    const bool region_spanned_full_screen =
+        scroll_region_top_ == 0 && old_rows > 0 && scroll_region_bottom_ == old_rows - 1;
     rows_ = clamped_rows;
     columns_ = clamped_columns;
+    if (region_spanned_full_screen && rows_ > 0) {
+      scroll_region_top_ = 0;
+      scroll_region_bottom_ = rows_ - 1;
+    }
     if (use_alternate_screen_ && rows_ > 0) {
       cursor_row_ = std::min(cursor_row_, rows_ - 1);
       saved_cursor_row_ = std::min(saved_cursor_row_, rows_ - 1);

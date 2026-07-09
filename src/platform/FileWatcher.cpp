@@ -202,7 +202,12 @@ struct FileTreeWatcher::NativeBackend {
   NativeBackend& operator=(const NativeBackend&) = delete;
 
   bool Start(const std::vector<std::filesystem::path>& watch_paths) {
-    inotify_fd_ = inotify_init1(IN_CLOEXEC);
+    // IN_NONBLOCK is essential: the drain loop below re-reads whenever a read
+    // exactly fills the 4096-byte buffer, and without it that trailing read blocks
+    // indefinitely once the queue empties — stranding the worker in read() where
+    // the control-pipe wake in RequestStop() can never reach it, hanging shutdown's
+    // worker join. (Matches FileIndexWatcher, which already sets IN_NONBLOCK.)
+    inotify_fd_ = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
     if (inotify_fd_ < 0) {
       return false;
     }

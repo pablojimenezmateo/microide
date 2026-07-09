@@ -2,6 +2,7 @@
 
 #include "render/PluginDisplayList.h"
 
+#include <limits>
 #include <string>
 
 namespace microide::tests {
@@ -132,7 +133,34 @@ void TestHashIsStableAndSensitive() {
 
 }  // namespace
 
+// Plugin-supplied coordinates flow from Lua without a finiteness check, and replay
+// casts them to int (UB on NaN/inf). ValidateDisplayList must reject non-finite
+// geometry — the sole gate replay trusts.
+void TestNonFiniteRectRejected() {
+  PluginDisplayList list;
+  list.ops.push_back(DisplayOp{.op = DrawOp::ClipPush,
+                               .rect = SDL_FRect{0.0f, 0.0f,
+                                                 std::numeric_limits<float>::quiet_NaN(), 10.0f}});
+  list.ops.push_back(DisplayOp{.op = DrawOp::ClipPop});
+  std::string error;
+  Expect(!ValidateDisplayList(list, &error), "a non-finite rectangle must be rejected");
+  Expect(!error.empty(), "rejection should report a reason");
+}
+
+void TestNonFinitePolylinePointRejected() {
+  PluginDisplayList list;
+  list.point_arena.push_back(SDL_FPoint{0.0f, 0.0f});
+  list.point_arena.push_back(SDL_FPoint{std::numeric_limits<float>::infinity(), 1.0f});
+  list.ops.push_back(DisplayOp{.op = DrawOp::Polyline, .data_offset = 0, .data_count = 2});
+  std::string error;
+  Expect(!ValidateDisplayList(list, &error), "a non-finite polyline point must be rejected");
+  Expect(!error.empty(), "rejection should report a reason");
+}
+
 void RegisterPluginDisplayListTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PluginDisplayList/NonFiniteRectRejected", TestNonFiniteRectRejected);
+  AddTest(tests, "PluginDisplayList/NonFinitePolylinePointRejected",
+          TestNonFinitePolylinePointRejected);
   AddTest(tests, "PluginDisplayList/ValidListPasses", TestValidListPasses);
   AddTest(tests, "PluginDisplayList/TextOpOutOfBoundsFails", TestTextOpOutOfBoundsFails);
   AddTest(tests, "PluginDisplayList/EmptyTextOpOutOfBoundsOffsetFails",
