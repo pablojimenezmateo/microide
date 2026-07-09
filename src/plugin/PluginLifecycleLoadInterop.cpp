@@ -18,7 +18,7 @@ using microide::plugin::LuaErrorString;
 // Reads a string capability field ("none" | "project" | "data") from the `fs` table at
 // `table_index`, leaving `fallback` in place for absent or unrecognized values.
 FsAccess ParseFsAccess(lua_State* state, int table_index, const char* field, FsAccess fallback) {
-  lua_getfield(state, table_index, field);
+  lua_interop::GetFieldProtected(state, table_index, field);
   FsAccess result = fallback;
   if (lua_isstring(state, -1)) {
     const std::string value = lua_tostring(state, -1);
@@ -42,7 +42,7 @@ bool ParseCapabilities(lua_State* state,
                        int table_index,
                        PluginCapabilities* out,
                        std::string* error_message) {
-  lua_getfield(state, table_index, "capabilities");
+  lua_interop::GetFieldProtected(state, table_index, "capabilities");
   if (lua_isnil(state, -1)) {
     lua_pop(state, 1);
     return true;
@@ -56,7 +56,7 @@ bool ParseCapabilities(lua_State* state,
   }
   const int caps_index = lua_absindex(state, -1);
 
-  lua_getfield(state, caps_index, "fs");
+  lua_interop::GetFieldProtected(state, caps_index, "fs");
   if (lua_istable(state, -1)) {
     const int fs_index = lua_absindex(state, -1);
     out->fs_read = ParseFsAccess(state, fs_index, "read", out->fs_read);
@@ -64,15 +64,15 @@ bool ParseCapabilities(lua_State* state,
   }
   lua_pop(state, 1);
 
-  lua_getfield(state, caps_index, "process");
+  lua_interop::GetFieldProtected(state, caps_index, "process");
   if (lua_istable(state, -1)) {
     const int process_index = lua_absindex(state, -1);
-    lua_getfield(state, process_index, "exec");
+    lua_interop::GetFieldProtected(state, process_index, "exec");
     if (lua_isboolean(state, -1)) {
       out->process_exec = lua_toboolean(state, -1) != 0;
     }
     lua_pop(state, 1);
-    lua_getfield(state, process_index, "allow");
+    lua_interop::GetFieldProtected(state, process_index, "allow");
     if (lua_istable(state, -1)) {
       const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, -1));
       for (lua_Integer i = 1; i <= count; ++i) {
@@ -87,7 +87,7 @@ bool ParseCapabilities(lua_State* state,
   }
   lua_pop(state, 1);
 
-  lua_getfield(state, caps_index, "network");
+  lua_interop::GetFieldProtected(state, caps_index, "network");
   if (lua_isboolean(state, -1)) {
     out->network = lua_toboolean(state, -1) != 0;
   }
@@ -114,7 +114,7 @@ void ConfigurePackage(lua_State* state,
   lua_pushnil(state);
   lua_setfield(state, -2, "loadlib");
 
-  lua_getfield(state, -1, "preload");
+  lua_interop::GetFieldProtected(state, -1, "preload");
   if (lua_istable(state, -1)) {
     lua_pushcfunction(state, open_microide);
     lua_setfield(state, -2, "microide");
@@ -127,7 +127,7 @@ int ExtractFunctionRef(lua_State* state,
                        const char* field_name,
                        const std::filesystem::path& plugin_root,
                        std::string* error_message) {
-  lua_getfield(state, table_index, field_name);
+  lua_interop::GetFieldProtected(state, table_index, field_name);
   if (lua_isnil(state, -1)) {
     lua_pop(state, 1);
     return LUA_NOREF;
@@ -194,7 +194,7 @@ bool LoadPluginDescriptor(runtime_types::PluginInstance* plugin, std::string* er
   }
 
   const int table_index = lua_absindex(plugin->state, -1);
-  lua_getfield(plugin->state, table_index, "id");
+  lua_interop::GetFieldProtected(plugin->state, table_index, "id");
   if (!lua_isstring(plugin->state, -1)) {
     if (error_message != nullptr) {
       *error_message = "plugin id must be a string: " + entry_path.string();

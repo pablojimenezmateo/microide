@@ -74,7 +74,7 @@ bool ReadDisplayOp(lua_State* state, int entry, render::PluginDisplayList* list,
   } else if (kind == "polyline") {
     op.op = render::DrawOp::Polyline;
     if (!ReadColorField(state, entry, &op.color, error)) return false;
-    lua_getfield(state, entry, "points");
+    lua_interop::GetFieldProtected(state, entry, "points");
     if (!lua_istable(state, -1)) {
       lua_pop(state, 1);
       if (error != nullptr) *error = "polyline requires a 'points' array";
@@ -116,7 +116,7 @@ bool ReadDisplayList(lua_State* state, int dl_index, render::PluginDisplayList* 
                      std::string* error) {
   list->content_width = ReadNumberField(state, dl_index, "width", 0.0f);
   list->content_height = ReadNumberField(state, dl_index, "height", 0.0f);
-  lua_getfield(state, dl_index, "ops");
+  lua_interop::GetFieldProtected(state, dl_index, "ops");
   if (!lua_istable(state, -1)) {
     lua_pop(state, 1);
     if (error != nullptr) *error = "display_list requires an 'ops' array";
@@ -169,7 +169,7 @@ bool ReadRaster(lua_State* state, int raster_index, editor::SurfaceContent* cont
     if (error != nullptr) *error = "raster format must be 'png' or 'rgba8'";
     return false;
   }
-  lua_getfield(state, raster_index, "bytes");
+  lua_interop::GetFieldProtected(state, raster_index, "bytes");
   if (!lua_isstring(state, -1)) {
     lua_pop(state, 1);
     if (error != nullptr) *error = "raster requires a 'bytes' string";
@@ -209,7 +209,7 @@ bool ReadRaster(lua_State* state, int raster_index, editor::SurfaceContent* cont
 
 bool ReadHitRegions(lua_State* state, int spec_index, editor::SurfaceContent* content,
                     std::string* error) {
-  lua_getfield(state, spec_index, "hit_regions");
+  lua_interop::GetFieldProtected(state, spec_index, "hit_regions");
   if (lua_isnil(state, -1)) {
     lua_pop(state, 1);
     return true;
@@ -248,7 +248,7 @@ bool ReadHitRegions(lua_State* state, int spec_index, editor::SurfaceContent* co
 
 editor::SurfacePreviewSlot ReadPreview(lua_State* state, int spec_index) {
   std::string slot;
-  lua_getfield(state, spec_index, "preview");
+  lua_interop::GetFieldProtected(state, spec_index, "preview");
   if (lua_isstring(state, -1)) {
     slot = lua_tostring(state, -1);
   }
@@ -261,7 +261,7 @@ editor::SurfacePreviewSlot ReadPreview(lua_State* state, int spec_index) {
 bool ReadAnchor(lua_State* state, int spec_index,
                 const std::filesystem::path& current_project_root,
                 editor::SurfaceContent* content, std::string* error) {
-  lua_getfield(state, spec_index, "anchor");
+  lua_interop::GetFieldProtected(state, spec_index, "anchor");
   if (lua_isnil(state, -1)) {
     lua_pop(state, 1);
     return true;
@@ -274,7 +274,7 @@ bool ReadAnchor(lua_State* state, int spec_index,
   const int anchor_index = lua_absindex(state, -1);
   std::string raw_path;
   ReadStringField(state, anchor_index, "path", &raw_path);
-  lua_getfield(state, anchor_index, "line");
+  lua_interop::GetFieldProtected(state, anchor_index, "line");
   const lua_Integer line = lua_isinteger(state, -1) ? lua_tointeger(state, -1) : 0;
   lua_pop(state, 1);
   lua_pop(state, 1);  // anchor
@@ -308,10 +308,10 @@ bool PublishSurface(lua_State* state, std::string_view plugin_id,
   editor::SurfaceContent content;
   ReadStringField(state, spec, "title", &content.title);
 
-  lua_getfield(state, spec, "display_list");
+  lua_interop::GetFieldProtected(state, spec, "display_list");
   const bool has_dl = lua_istable(state, -1);
   lua_pop(state, 1);
-  lua_getfield(state, spec, "raster");
+  lua_interop::GetFieldProtected(state, spec, "raster");
   const bool has_raster = lua_istable(state, -1);
   lua_pop(state, 1);
 
@@ -329,7 +329,7 @@ bool PublishSurface(lua_State* state, std::string_view plugin_id,
   }
 
   if (has_dl) {
-    lua_getfield(state, spec, "display_list");
+    lua_interop::GetFieldProtected(state, spec, "display_list");
     render::PluginDisplayList list;
     const bool ok = ReadDisplayList(state, lua_absindex(state, -1), &list, error_message);
     lua_pop(state, 1);
@@ -338,7 +338,7 @@ bool PublishSurface(lua_State* state, std::string_view plugin_id,
     content.intrinsic_height = list.content_height;
     content.body = std::move(list);
   } else {
-    lua_getfield(state, spec, "raster");
+    lua_interop::GetFieldProtected(state, spec, "raster");
     const bool ok = ReadRaster(state, lua_absindex(state, -1), &content, callbacks, error_message);
     lua_pop(state, 1);
     if (!ok) return false;

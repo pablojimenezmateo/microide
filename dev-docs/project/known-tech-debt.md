@@ -156,12 +156,45 @@ regression worse than the defect. Recorded here so they are not silently lost.
 >   `WorkspaceShell/QuitWith*NonFocusedGroupDirtyTab` tests. (The old open bullet's blocked-on
 >   group-aware save/index API is exactly what shipped.)
 >
-> The plugin-metamethod protected-harvest item (111 field-read sites across 15 TUs, needs a
-> `lua_pcall`-trampoline helper + a lint extension) was reviewed and kept deferred as too large/risky
-> for a combined session — it warrants its own pass. The `ParseFloat`/`ParseDouble` parity nit stays
+> The `ParseFloat`/`ParseDouble` parity nit stays
 > deferred (traced-benign; tightening it perturbs the JSON hot path for no live benefit). The
 > environment-blocked (Windows/macOS) and product-decision (DAP multi-thread, branch-review
 > `ChangedSinceReviewed`) items are unchanged.
+
+> **Resolved 2026-07-09 (eleventh pass — the plugin-metamethod protected-harvest, its own pass):**
+> the flagship deferred item — *"Plugin metamethod reads can longjmp over live C++ destructors"* —
+> is fixed. The clean fix turned out smaller than feared: the **only** raising Lua ops in every
+> harvest function are `lua_getfield`/`lua_geti`/`lua_gettable`; all of `lua_to*`/`lua_is*`/`lua_pop`/
+> `lua_rawgeti`/`lua_rawlen` are metamethod-free and never raise. So only the field-fetch itself
+> needs protection and every existing C++ marshaling step stays byte-for-byte unchanged.
+> - **New single primitive `lua_interop::GetFieldProtected`** (`src/plugin/PluginLuaInterop.{h,cpp}`)
+>   pushes `table[field]` through a nested `lua_pcall` (a zero-upvalue `LUA_VLCF` light-C-function
+>   trampoline — no allocation) so a raising `__index` is caught as a status and the field is reported
+>   as absent (nil) rather than longjmping over the caller's live locals. A table with **no metatable**
+>   (the universal case for plugin config tables — and for registry/globals reads) takes an
+>   allocation-free fast path identical to `lua_getfield` plus one cheap raw `lua_getmetatable` probe,
+>   so there is no measurable perf change on the diagnostics-publish path. Benign `__index` *defaults*
+>   still resolve (VSCode/JS prototype-chain parity) because the slow path uses `lua_gettable`.
+> - **All field reads routed through it:** the ~9 centralized `Read*Field` helpers + `ReadSidebarItem`
+>   were rewritten to call it (protecting the ~210 helper-mediated reads at a stroke), a new
+>   `ReadOptionalIntegerField` helper was added, and the ~90 direct `lua_getfield` sites across the 14
+>   harvest TUs were converted. The wrong "safe to call while C++ locals are live" comment on the
+>   helpers (`PluginLuaInterop.h`) was corrected.
+> - **New hard-fail lint `CheckPluginFieldReadsAreMetamethodProtected`**
+>   (`tests/architecture/PluginArchitectureRules.{h,cpp}`) bans raw
+>   `lua_getfield`/`lua_gettable`/`lua_geti` anywhere in `src/plugin` except `PluginLuaInterop.cpp`
+>   (the sanctioned home of the primitive), so backsliding fails the build. `lua_rawgeti` stays
+>   allowed. +/- fixtures added in `tests/ArchitectureInvariantsTests.cpp`.
+> - **Regression coverage** (`tests/PluginHostTests.cpp`): `GetFieldProtected` catches a raising
+>   `__index` without throwing (returns nil, stack-balanced), still resolves a benign `__index`
+>   default, and reads a metatable-free table on the fast path; and end-to-end
+>   `diagnostics_interop::PublishDiagnostics` on a list whose entry carries a raising `__index` fails
+>   cleanly (no publish, error set) without longjmping over its live `std::vector<Diagnostic>` — ASAN
+>   confirms no skipped destructor / leak. The full suite + ASAN/UBSAN/TSAN stay green.
+>
+> This retires the `lua_atpanic`→`throw` *mitigation*'s fragile "Lua C built with unwind tables"
+> assumption for the read-in direction. The write-out direction stays governed by the existing
+> `luaL_error` ban + `lua_error_util::PushMessage` idiom.
 
 > Reviewed and left as LOW / deferred (no live MEDIUM+ trigger): `DebugValueTree` duplicate
 > `variablesReference` aliasing (`DebugValueTree.cpp` — one of two aliased rows never populates
@@ -271,32 +304,14 @@ the editor horizontal-scroll caret double-count; the LSP pre-init shutdown drift
 dropped integer diagnostic code; the plugin string-array raw read; and the
 ProjectFileScanner symlink-cycle crash):
 
-- **Plugin metamethod reads can longjmp over live C++ destructors (same invariant,
-  different trigger than `luaL_error`).** Plugin-controlled tables are harvested with
-  the metamethod-capable `lua_getfield`/`lua_geti` while non-trivial C++ locals are
-  alive — representative sites `src/plugin/PluginDiagnosticsInterop.cpp` (`ReadDiagnosticTable`,
-  with `std::vector<Diagnostic>`/`std::filesystem::path` live), the `Read*Field` helpers
-  in `src/plugin/PluginLuaInterop.cpp`, and the provider/registration parsers. A plugin
-  that puts a raising `__index` metamethod (`setmetatable`+`error` are in the exposed
-  base lib) on a harvested table makes the field read `longjmp` to the enclosing
-  `LuaRuntime::PCall`, skipping those destructors (heap leak + UB) — the same hard
-  invariant `luaL_error` is banned to protect. Reachable, but leak-only and requires a
-  self-sabotaging plugin. NOT a clean drop-in fix: a blind `lua_getfield`→`lua_rawget`
-  swap would break well-behaved plugins that legitimately use an `__index` metatable
-  for field defaults; the correct fix is to harvest each plugin table inside a nested
-  protected call (`lua_pcall`) so a metamethod raise is caught before it crosses the
-  C++ frame. (The one *sequence* read where raw is unambiguously correct —
-  `ReadStringArrayField` — was converted to `lua_rawgeti` this pass.) **Reviewed 2026-07-09
-  (eighth pass) and kept deferred.** New finding: it is currently *mitigated* (not clean)
-  by `lua_atpanic`→`throw LuaPanicError` (`LuaRuntime.cpp:28-40,61`) — the raise reaches
-  the panic handler with no protected frame and is thrown as a C++ exception, which
-  unwinds the C++ destructors **only if** Lua's C is built with unwind tables (the
-  fragile assumption a protected harvest removes). A clean fix is medium-to-large: add a
-  reusable `lua_pcall`-trampoline harvest helper across the ~14 interop TUs (churn
-  concentrates in the ~6 container-building harvest loops), and ideally extend the lint
-  `CheckPluginLuaErrorDoesNotLongjmpOverCppLocals` to also flag unprotected
-  `lua_getfield`/`lua_geti`. **Blocked on:** that protected-harvest helper + design (do
-  NOT blanket-convert to `lua_rawget` — it would break `__index` field defaults).
+- **Plugin metamethod reads can longjmp over live C++ destructors — FIXED 2026-07-09
+  (eleventh pass).** The protected-harvest primitive `lua_interop::GetFieldProtected`
+  now backs every plugin field read, a hard-fail lint bans raw `lua_getfield`/`lua_gettable`/
+  `lua_geti` outside its home TU, and regression coverage exercises a raising `__index`
+  end-to-end under ASAN. See the eleventh-pass Resolved note above. Left here only as a
+  pointer; no longer open. (The design shipped exactly as this entry contemplated — a
+  nested-`lua_pcall` trampoline, NOT a blanket `lua_rawget` swap, so benign `__index`
+  defaults still resolve.)
 
 - **`PieceTree` `add_` buffer offset uint32 truncation — FIXED 2026-07-09 (sixth pass).**
   `src/editor/PieceTree.cpp` `InsertText` now guards: when `add_.size() + text.size()`
@@ -347,15 +362,16 @@ dirty-region confinement), the Linux fork async-signal-safety hazard in `RunSubp
 array and argv are built in the parent and `environ` is assigned in the child), and the
 compare/merge reveal-on-close scroll. It deferred:
 
-- **`TerminalBackend` forks the shell then calls `setenv("TERM"/"COLORTERM")` in the
-  child** (`src/platform/TerminalBackend.cpp:108-110`) — the same async-signal-unsafe
-  pattern fixed in `RunSubprocess`. Deferred, not fixed, because the real PTY fork path
-  is not exercised by the test suite here (tests use placeholder terminals via
-  `SetUsePlaceholderTerminalsForTesting`), terminal creation is usually on the main
-  thread (narrower race window), and an untested change to the interactive-shell
-  environment risks a worse regression than the latent hazard. **Blocked on:** applying
-  the parent-built-`environ` pattern (reuse `BuildChildEnvironment`) with a way to
-  validate the real shell environment.
+- **`TerminalBackend` `setenv`-after-fork — FIXED (seventh pass; entry was stale).**
+  `src/platform/TerminalBackend.cpp` no longer calls `setenv` in the child: the child
+  environment (inherited `environ` filtered of `TERM`/`COLORTERM`, plus
+  `TERM=xterm-256color`/`COLORTERM=truecolor`) is built in the **parent** (`:88-111`) and
+  the child does a single async-signal-safe pointer store `environ = env_pointers.data()`
+  (`:142`). Only residual is a marginal **dedup**: `TerminalBackend` open-codes the
+  parent-built-`environ` pattern instead of reusing `BuildChildEnvironment` (file-local
+  static in `Subprocess.cpp`, would need extraction to a shared header). Left deferred as
+  low-value — the real PTY fork path is still untested here (`SetUsePlaceholderTerminals-
+  ForTesting`), so an extraction refactor carries regression risk for no correctness gain.
 
 - **Windows `RunSubprocess` ignores `timeout_ms` and the capture ceiling** →
   `WaitForSingleObject(hProcess, INFINITE)` (`src/platform/Subprocess.cpp` Windows branch).

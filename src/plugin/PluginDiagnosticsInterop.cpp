@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "editor/DiagnosticsStore.h"
+#include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginPathInterop.h"
 #include "util/StringUtil.h"
 
@@ -52,52 +53,41 @@ bool ReadDiagnosticTable(lua_State* state,
 
   const int absolute_index = lua_absindex(state, table_index);
 
-  lua_getfield(state, absolute_index, "message");
-  if (!lua_isstring(state, -1)) {
+  const std::optional<std::string> message =
+      lua_interop::ReadOptionalStringField(state, absolute_index, "message");
+  if (!message.has_value()) {
     if (error_message != nullptr) {
       *error_message = "diagnostic message must be a string";
     }
-    lua_pop(state, 1);
     return false;
   }
-  diagnostic->message = lua_tostring(state, -1);
-  lua_pop(state, 1);
+  diagnostic->message = *message;
 
-  lua_getfield(state, absolute_index, "line");
-  if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) <= 0) {
+  const std::optional<lua_Integer> line_field =
+      lua_interop::ReadOptionalIntegerField(state, absolute_index, "line");
+  if (!line_field.has_value() || *line_field <= 0) {
     if (error_message != nullptr) {
       *error_message = "diagnostic line must be a positive integer";
     }
-    lua_pop(state, 1);
     return false;
   }
-  const lua_Integer line = lua_tointeger(state, -1);
-  lua_pop(state, 1);
+  const lua_Integer line = *line_field;
 
-  lua_getfield(state, absolute_index, "column");
-  if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) <= 0) {
+  const std::optional<lua_Integer> column_field =
+      lua_interop::ReadOptionalIntegerField(state, absolute_index, "column");
+  if (!column_field.has_value() || *column_field <= 0) {
     if (error_message != nullptr) {
       *error_message = "diagnostic column must be a positive integer";
     }
-    lua_pop(state, 1);
     return false;
   }
-  const lua_Integer column = lua_tointeger(state, -1);
-  lua_pop(state, 1);
+  const lua_Integer column = *column_field;
 
-  lua_Integer end_line = line;
-  lua_getfield(state, absolute_index, "end_line");
-  if (lua_isinteger(state, -1)) {
-    end_line = lua_tointeger(state, -1);
-  }
-  lua_pop(state, 1);
-
-  lua_Integer end_column = column + 1;
-  lua_getfield(state, absolute_index, "end_column");
-  if (lua_isinteger(state, -1)) {
-    end_column = lua_tointeger(state, -1);
-  }
-  lua_pop(state, 1);
+  const lua_Integer end_line =
+      lua_interop::ReadOptionalIntegerField(state, absolute_index, "end_line").value_or(line);
+  const lua_Integer end_column =
+      lua_interop::ReadOptionalIntegerField(state, absolute_index, "end_column")
+          .value_or(column + 1);
 
   if (end_line <= 0 || end_column <= 0) {
     if (error_message != nullptr) {
@@ -124,7 +114,7 @@ bool ReadDiagnosticTable(lua_State* state,
           },
       };
   diagnostic->severity = editor::DiagnosticSeverity::Error;
-  lua_getfield(state, absolute_index, "severity");
+  lua_interop::GetFieldProtected(state, absolute_index, "severity");
   if (lua_isnil(state, -1)) {
     lua_pop(state, 1);
     return true;

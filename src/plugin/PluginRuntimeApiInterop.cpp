@@ -207,7 +207,7 @@ int LuaEditorApplyEdits(lua_State* state,
     PluginHost::WorkspaceEditRequest request;
     ReadOptionalPathField(state, current_project_root, &request);
 
-    lua_getfield(state, 1, "edits");
+    lua_interop::GetFieldProtected(state, 1, "edits");
     if (lua_type(state, -1) == LUA_TTABLE) {
       const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, -1));
       for (lua_Integer i = 1; i <= count; ++i) {
@@ -227,7 +227,7 @@ int LuaEditorApplyEdits(lua_State* state,
     }
     lua_pop(state, 1);  // edits
 
-    lua_getfield(state, 1, "cursor");
+    lua_interop::GetFieldProtected(state, 1, "cursor");
     if (lua_type(state, -1) == LUA_TTABLE) {
       const int cursor_index = lua_gettop(state);
       request.cursor_line = ReadIndexField(state, cursor_index, "line");
@@ -236,7 +236,7 @@ int LuaEditorApplyEdits(lua_State* state,
     }
     lua_pop(state, 1);  // cursor
 
-    lua_getfield(state, 1, "selection");
+    lua_interop::GetFieldProtected(state, 1, "selection");
     if (lua_type(state, -1) == LUA_TTABLE) {
       const int selection_index = lua_gettop(state);
       request.selection_start_line = ReadIndexField(state, selection_index, "start_line");
@@ -323,7 +323,7 @@ int LuaEditorSetGhostText(lua_State* state,
   {
     PluginHost::GhostTextRequest request;
     ReadOptionalPathField(state, current_project_root, &request.path);
-    lua_getfield(state, 1, "anchor");
+    lua_interop::GetFieldProtected(state, 1, "anchor");
     if (lua_type(state, -1) == LUA_TTABLE) {
       const int anchor_index = lua_gettop(state);
       request.anchor_line = ReadIndexField(state, anchor_index, "line");

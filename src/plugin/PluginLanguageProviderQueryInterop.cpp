@@ -19,7 +19,7 @@ constexpr int kMaxSymbolDepth = 32;
 constexpr std::size_t kMaxSymbolNodes = 8192;
 
 std::size_t ReadOneBasedField(lua_State* state, int table_index, const char* field) {
-  lua_getfield(state, table_index, field);
+  lua_interop::GetFieldProtected(state, table_index, field);
   std::size_t value = 0;
   if (lua_isinteger(state, -1)) {
     const lua_Integer raw = lua_tointeger(state, -1);
@@ -85,7 +85,7 @@ void ReadSymbolArray(lua_State* state,
     node.column = ReadOneBasedField(state, -1, "column");
     if (!node.name.empty()) {
       ++(*total);
-      lua_getfield(state, -1, "children");
+      lua_interop::GetFieldProtected(state, -1, "children");
       if (lua_istable(state, -1)) {
         ReadSymbolArray(state, depth + 1, total, &node.children);
       }
@@ -196,12 +196,12 @@ bool QuerySignatureHelp(
       return false;
     }
     if (lua_istable(state, -1)) {
-      lua_getfield(state, -1, "active_signature");
+      lua_interop::GetFieldProtected(state, -1, "active_signature");
       if (lua_isinteger(state, -1)) {
         result->active_signature = static_cast<int>(lua_tointeger(state, -1));
       }
       lua_pop(state, 1);
-      lua_getfield(state, -1, "signatures");
+      lua_interop::GetFieldProtected(state, -1, "signatures");
       if (lua_istable(state, -1)) {
         for (lua_Integer i = 1; i <= kMaxSignatures; ++i) {
           // Raw read (post-PCall, watchdog disarmed); see QueryLocations above.
@@ -214,12 +214,12 @@ bool QuerySignatureHelp(
             PluginHost::SignatureInfo signature;
             signature.label = lua_interop::ReadStringField(state, -1, "label");
             signature.documentation = lua_interop::ReadStringField(state, -1, "documentation");
-            lua_getfield(state, -1, "active_parameter");
+            lua_interop::GetFieldProtected(state, -1, "active_parameter");
             if (lua_isinteger(state, -1)) {
               signature.active_parameter = static_cast<int>(lua_tointeger(state, -1));
             }
             lua_pop(state, 1);
-            lua_getfield(state, -1, "parameters");
+            lua_interop::GetFieldProtected(state, -1, "parameters");
             if (lua_istable(state, -1)) {
               for (lua_Integer p = 1; p <= kMaxParameters; ++p) {
                 // Raw read (post-PCall, watchdog disarmed); see QueryLocations above.

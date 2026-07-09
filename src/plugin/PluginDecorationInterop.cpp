@@ -27,7 +27,7 @@ constexpr lua_Integer kMaxEntriesPerKind = 100000;
 // Reads a required positive (1-based) integer field into a 0-based uint32.
 bool ReadOneBasedField(lua_State* state, int table_index, const char* key, std::uint32_t* out,
                        std::string* error_message) {
-  lua_getfield(state, table_index, key);
+  lua_interop::GetFieldProtected(state, table_index, key);
   if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) <= 0) {
     if (error_message != nullptr) {
       *error_message = std::string(key) + " must be a positive integer";
@@ -45,7 +45,7 @@ bool ReadOneBasedField(lua_State* state, int table_index, const char* key, std::
 // the returned absolute index and reports its length.
 bool BeginArrayField(lua_State* state, int table_index, const char* key, int* array_index,
                      lua_Integer* count, std::string* error_message) {
-  lua_getfield(state, table_index, key);
+  lua_interop::GetFieldProtected(state, table_index, key);
   if (lua_isnil(state, -1)) {
     lua_pop(state, 1);
     *count = 0;
@@ -150,7 +150,7 @@ bool ReadGutterMarks(lua_State* state, int table_index, editor::PluginDecoration
         if (!ReadOptionalColorField(state, entry, "color", &mark.color, error_message)) {
           ok = false;
         } else {
-          lua_getfield(state, entry, "priority");
+          lua_interop::GetFieldProtected(state, entry, "priority");
           if (lua_isinteger(state, -1)) {
             const lua_Integer p = lua_tointeger(state, -1);
             mark.priority = static_cast<std::uint8_t>(p < 0 ? 0 : (p > 255 ? 255 : p));
@@ -193,7 +193,7 @@ bool ReadInlineText(lua_State* state, int table_index, editor::PluginDecorationD
         ok = false;
       } else {
         // `eol` (default true) anchors at end of line; otherwise `col` (1-based).
-        lua_getfield(state, entry, "eol");
+        lua_interop::GetFieldProtected(state, entry, "eol");
         const bool eol = lua_isnil(state, -1) ? true : (lua_toboolean(state, -1) != 0);
         lua_pop(state, 1);
         if (eol) {

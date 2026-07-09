@@ -4,6 +4,8 @@
 #include "plugin/PluginInstallRoot.h"
 #include "plugin/PluginThread.h"
 #include "plugin/LuaRuntime.h"
+#include "plugin/PluginDiagnosticsInterop.h"
+#include "plugin/PluginLuaInterop.h"
 #include "workspace/WorkspacePluginAssetMonitor.h"
 
 #include <chrono>
@@ -1959,6 +1961,103 @@ return ide.plugin({
 // during post-PCall result harvesting on the worker) must not reach the C build's
 // default panic, which calls abort() and takes down the editor. The installed
 // lua_atpanic handler converts it to a catchable LuaPanicError instead.
+// GetFieldProtected is the single sanctioned field-fetch: it must catch a plugin's
+// raising __index metamethod (so it cannot longjmp over live C++ locals — the hard
+// invariant), still resolve benign __index defaults (VSCode/JS prototype parity), and
+// read metatable-free tables on the allocation-free fast path.
+void TestGetFieldProtectedCatchesRaisingIndexMetamethod() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  std::string create_error;
+  auto runtime = microide::plugin::LuaRuntime::Create(&create_error);
+  Expect(runtime != nullptr, "lua runtime should create");
+  lua_State* state = runtime->state();
+
+  // Hostile: any absent-field read invokes a raising __index.
+  Expect(luaL_dostring(state,
+                       "return setmetatable({}, { __index = function(_, k) "
+                       "error('hostile __index: ' .. tostring(k)) end })") == LUA_OK,
+         "hostile table chunk should evaluate");
+  const int hostile_index = lua_gettop(state);
+  const int top_before = lua_gettop(state);
+  bool threw = false;
+  try {
+    microide::plugin::lua_interop::GetFieldProtected(state, hostile_index, "message");
+  } catch (...) {
+    threw = true;
+  }
+  Expect(!threw, "GetFieldProtected must swallow a raising __index, not propagate it");
+  Expect(lua_gettop(state) == top_before + 1,
+         "GetFieldProtected must leave exactly one value on the stack");
+  Expect(lua_isnil(state, -1), "a raising field read is reported as an absent (nil) field");
+  lua_pop(state, 1);
+
+  // Benign __index defaults still resolve.
+  Expect(luaL_dostring(state,
+                       "return setmetatable({}, { __index = { message = 'defaulted' } })") == LUA_OK,
+         "benign-default table chunk should evaluate");
+  const int benign_index = lua_gettop(state);
+  microide::plugin::lua_interop::GetFieldProtected(state, benign_index, "message");
+  Expect(lua_isstring(state, -1) && std::string(lua_tostring(state, -1)) == "defaulted",
+         "a benign __index default must still resolve through GetFieldProtected");
+  lua_pop(state, 1);
+
+  // Metatable-free fast path reads the direct value / nil for absent.
+  Expect(luaL_dostring(state, "return { message = 'direct' }") == LUA_OK,
+         "plain table chunk should evaluate");
+  const int plain_index = lua_gettop(state);
+  microide::plugin::lua_interop::GetFieldProtected(state, plain_index, "message");
+  Expect(lua_isstring(state, -1) && std::string(lua_tostring(state, -1)) == "direct",
+         "the metatable-free fast path reads the field directly");
+  lua_pop(state, 1);
+  microide::plugin::lua_interop::GetFieldProtected(state, plain_index, "absent");
+  Expect(lua_isnil(state, -1), "an absent field on a plain table reads as nil");
+  lua_pop(state, 1);
+
+  runtime.reset();
+}
+
+// End-to-end: harvesting a diagnostics list whose entry carries a raising __index must
+// fail cleanly rather than longjmp over the live std::vector<Diagnostic> in
+// PublishDiagnostics. A valid entry precedes the hostile one so the harvest vector
+// genuinely holds a live std::string when the raise fires (ASAN would catch a skipped
+// destructor / leak if the read were unprotected).
+void TestPublishDiagnosticsSurvivesHostileIndexMetamethod() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  std::string create_error;
+  auto runtime = microide::plugin::LuaRuntime::Create(&create_error);
+  Expect(runtime != nullptr, "lua runtime should create");
+  lua_State* state = runtime->state();
+
+  Expect(luaL_dostring(state,
+                       "return {\n"
+                       "  { message = 'ok', line = 1, column = 1 },\n"
+                       "  setmetatable({}, { __index = function(_, k) error('boom') end }),\n"
+                       "}") == LUA_OK,
+         "hostile diagnostics list should evaluate");
+  const int list_index = lua_gettop(state);
+
+  PluginHost::Callbacks callbacks;
+  bool published = false;
+  callbacks.publish_diagnostics = [&](std::string_view, const std::filesystem::path&,
+                                      std::vector<microide::editor::Diagnostic>) {
+    published = true;
+  };
+  std::string error_message;
+  const bool ok = microide::plugin::diagnostics_interop::PublishDiagnostics(
+      state, "hostile.plugin", std::filesystem::path("/tmp/project"), "README.md", list_index,
+      callbacks, &error_message);
+  Expect(!ok, "a diagnostics list with a raising __index entry must fail cleanly");
+  Expect(!published, "no diagnostics should be published when an entry read raises");
+  Expect(!error_message.empty(), "a descriptive error message should be set on failure");
+  lua_pop(state, 1);
+
+  runtime.reset();
+}
+
 void TestLuaRuntimePanicThrowsInsteadOfAbort() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3115,6 +3214,10 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestRepoCppLspPluginRegistersClangdForCLikeLanguages);
   AddTest(tests, "PluginHost/ProcessRunReportsArgumentErrorsWithoutCorruptingState",
           TestPluginHostProcessRunReportsArgumentErrorsWithoutCorruptingState);
+  AddTest(tests, "PluginHost/GetFieldProtectedCatchesRaisingIndexMetamethod",
+          TestGetFieldProtectedCatchesRaisingIndexMetamethod);
+  AddTest(tests, "PluginHost/PublishDiagnosticsSurvivesHostileIndexMetamethod",
+          TestPublishDiagnosticsSurvivesHostileIndexMetamethod);
   AddTest(tests, "PluginHost/LuaRuntimePanicThrowsInsteadOfAbort",
           TestLuaRuntimePanicThrowsInsteadOfAbort);
   AddTest(tests, "PluginHost/BatchedCommandRegistrationSortsOnce",

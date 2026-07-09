@@ -61,12 +61,12 @@ std::vector<PluginHost::CompletionCandidate> QueryCompletions(
         if (candidate.insert_text.empty()) {
           candidate.insert_text = candidate.label;
         }
-        lua_getfield(state, -1, "is_snippet");
+        lua_interop::GetFieldProtected(state, -1, "is_snippet");
         if (lua_isboolean(state, -1)) {
           candidate.is_snippet = lua_toboolean(state, -1) != 0;
         }
         lua_pop(state, 1);
-        lua_getfield(state, -1, "snippet");
+        lua_interop::GetFieldProtected(state, -1, "snippet");
         if (lua_isboolean(state, -1) && lua_toboolean(state, -1) != 0) {
           candidate.is_snippet = true;
         }
@@ -123,7 +123,7 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
         PluginHost::CodeActionCandidate action;
         action.title = lua_interop::ReadStringField(state, -1, "title");
         action.command = lua_interop::ReadStringField(state, -1, "command");
-        lua_getfield(state, -1, "arguments");
+        lua_interop::GetFieldProtected(state, -1, "arguments");
         if (lua_istable(state, -1)) {
           const int args_index = lua_absindex(state, -1);
           const lua_Integer args_count = static_cast<lua_Integer>(lua_rawlen(state, args_index));
@@ -203,7 +203,7 @@ bool DiscoverTests(
         test.file = path.lexically_normal();
       }
       test.parent_id = lua_interop::ReadStringField(state, -1, "parent_id");
-      lua_getfield(state, -1, "line");
+      lua_interop::GetFieldProtected(state, -1, "line");
       if (lua_isinteger(state, -1)) {
         test.line = static_cast<int>(lua_tointeger(state, -1));
       }
@@ -270,7 +270,7 @@ bool RunTests(
       result.test_id = lua_interop::ReadStringField(state, -1, "test_id");
       result.state = lua_interop::ReadStringField(state, -1, "state");
       result.message = lua_interop::ReadStringField(state, -1, "message");
-      lua_getfield(state, -1, "duration_ms");
+      lua_interop::GetFieldProtected(state, -1, "duration_ms");
       if (lua_isinteger(state, -1)) {
         result.duration_ms = static_cast<int>(lua_tointeger(state, -1));
       }
@@ -320,11 +320,11 @@ bool SnapshotScm(
   if (lua_istable(state, -1)) {
     snapshot->base_ref = lua_interop::ReadStringField(state, -1, "base_ref");
     snapshot->base_label = lua_interop::ReadStringField(state, -1, "base_label");
-    lua_getfield(state, -1, "supports_mutations");
+    lua_interop::GetFieldProtected(state, -1, "supports_mutations");
     snapshot->supports_mutations = lua_toboolean(state, -1) != 0;
     lua_pop(state, 1);
 
-    lua_getfield(state, -1, "entries");
+    lua_interop::GetFieldProtected(state, -1, "entries");
     if (lua_istable(state, -1)) {
       const int entries_index = lua_absindex(state, -1);
       const lua_Integer entries_count =
@@ -342,16 +342,16 @@ bool SnapshotScm(
         entry.relative_path = relative_path.empty() ? std::filesystem::path{}
                                                     : std::filesystem::path(relative_path);
         entry.status = lua_interop::ReadStringField(state, -1, "status");
-        lua_getfield(state, -1, "conflicted");
+        lua_interop::GetFieldProtected(state, -1, "conflicted");
         entry.conflicted = lua_toboolean(state, -1) != 0;
         lua_pop(state, 1);
-        lua_getfield(state, -1, "staged");
+        lua_interop::GetFieldProtected(state, -1, "staged");
         entry.staged = lua_toboolean(state, -1) != 0;
         lua_pop(state, 1);
-        lua_getfield(state, -1, "supports_stage");
+        lua_interop::GetFieldProtected(state, -1, "supports_stage");
         entry.supports_stage = lua_toboolean(state, -1) != 0;
         lua_pop(state, 1);
-        lua_getfield(state, -1, "supports_discard");
+        lua_interop::GetFieldProtected(state, -1, "supports_discard");
         entry.supports_discard = lua_toboolean(state, -1) != 0;
         lua_pop(state, 1);
         if (!entry.path.empty()) {
@@ -407,7 +407,7 @@ std::vector<PluginHost::AnnotationLine> QueryAnnotations(
           continue;
         }
         PluginHost::AnnotationLine line;
-        lua_getfield(state, -1, "line");
+        lua_interop::GetFieldProtected(state, -1, "line");
         if (lua_isinteger(state, -1)) {
           line.line = static_cast<std::size_t>(std::max<lua_Integer>(0, lua_tointeger(state, -1)));
         }
@@ -473,7 +473,7 @@ bool LoginAuthProvider(
     session->id = lua_interop::ReadStringField(state, -1, "id");
     session->account = lua_interop::ReadStringField(state, -1, "account");
     session->access_token = lua_interop::ReadStringField(state, -1, "access_token");
-    lua_getfield(state, -1, "scopes");
+    lua_interop::GetFieldProtected(state, -1, "scopes");
     if (lua_istable(state, -1)) {
       const int scopes_index = lua_absindex(state, -1);
       const lua_Integer scopes_count = static_cast<lua_Integer>(lua_rawlen(state, scopes_index));
@@ -534,7 +534,7 @@ bool RefreshAuthSession(
     }
     session->account = lua_interop::ReadStringField(state, -1, "account");
     session->access_token = lua_interop::ReadStringField(state, -1, "access_token");
-    lua_getfield(state, -1, "scopes");
+    lua_interop::GetFieldProtected(state, -1, "scopes");
     if (lua_istable(state, -1)) {
       const int scopes_index = lua_absindex(state, -1);
       const lua_Integer scopes_count = static_cast<lua_Integer>(lua_rawlen(state, scopes_index));
@@ -620,7 +620,7 @@ bool InvokeMcpTool(
   if (lua_isstring(state, -1)) {
     *output_json = lua_tostring(state, -1);
   } else if (lua_istable(state, -1)) {
-    lua_getfield(state, -1, "output");
+    lua_interop::GetFieldProtected(state, -1, "output");
     if (lua_isstring(state, -1)) {
       *output_json = lua_tostring(state, -1);
     }
@@ -709,7 +709,7 @@ bool RunSaveParticipants(
         *text = std::string(updated, size);
       }
     } else if (lua_istable(state, -1)) {
-      lua_getfield(state, -1, "text");
+      lua_interop::GetFieldProtected(state, -1, "text");
       if (lua_isstring(state, -1)) {
         std::size_t size = 0;
         const char* updated = lua_tolstring(state, -1, &size);

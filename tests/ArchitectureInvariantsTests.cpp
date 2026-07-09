@@ -270,6 +270,23 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
             "}\n");
   Expect(architecture::CheckPluginLuaErrorDoesNotLongjmpOverCppLocals(root).violations.empty(),
          "plugin Lua-error rule should accept the PushMessage + lua_error rewrite");
+
+  WriteFile(root / "src/plugin/FieldReader.cpp",
+            "void F(lua_State* s){ lua_getfield(s, 1, \"label\"); lua_pop(s, 1); }\n");
+  Expect(!architecture::CheckPluginFieldReadsAreMetamethodProtected(root).violations.empty(),
+         "field-read rule should catch a raw lua_getfield in a plugin TU");
+  WriteFile(root / "src/plugin/FieldReader.cpp",
+            "void F(lua_State* s){ lua_interop::GetFieldProtected(s, 1, \"label\"); "
+            "lua_pop(s, 1); }\n");
+  Expect(architecture::CheckPluginFieldReadsAreMetamethodProtected(root).violations.empty(),
+         "field-read rule should accept the GetFieldProtected rewrite (and raw lua_rawgeti)");
+  // The sanctioned definition site is exempt: PluginLuaInterop.cpp may use the raw
+  // lua_getfield/lua_gettable that GetFieldProtected is built from.
+  WriteFile(root / "src/plugin/PluginLuaInterop.cpp",
+            "void G(lua_State* s){ lua_getfield(s, 1, \"x\"); lua_gettable(s, 1); }\n");
+  Expect(architecture::CheckPluginFieldReadsAreMetamethodProtected(root).violations.empty(),
+         "field-read rule should exempt PluginLuaInterop.cpp (home of GetFieldProtected)");
+
   Expect(!architecture::CheckRenderTuDoesNotMaterializeStrings(root).violations.empty(),
          "render materialization rule should catch string construction in render TU");
   Expect(!architecture::CheckTextViewportNoFullDocCopy(root).violations.empty(),

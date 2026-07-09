@@ -191,7 +191,7 @@ bool ParseTaskRegistration(lua_State* state,
     cwd = std::move(*cwd_opt);
   }
   bool run_in_shell = false;
-  lua_getfield(state, table_index, "run_in_shell");
+  lua_interop::GetFieldProtected(state, table_index, "run_in_shell");
   if (lua_isboolean(state, -1)) {
     run_in_shell = lua_toboolean(state, -1) != 0;
   }
@@ -238,7 +238,7 @@ bool ParseMenuEntryRegistration(lua_State* state,
     accelerator = std::move(*accel_opt);
   }
   bool separator_before = false;
-  lua_getfield(state, table_index, "separator_before");
+  lua_interop::GetFieldProtected(state, table_index, "separator_before");
   if (lua_isboolean(state, -1)) {
     separator_before = lua_toboolean(state, -1) != 0;
   }
@@ -333,7 +333,7 @@ bool ParseSettingRegistration(lua_State* state,
 
   std::vector<std::string> enum_values;
   if (*type_opt == "enum") {
-    lua_getfield(state, table_index, "enum_values");
+    lua_interop::GetFieldProtected(state, table_index, "enum_values");
     if (lua_istable(state, -1)) {
       const lua_Integer n = static_cast<lua_Integer>(lua_rawlen(state, -1));
       for (lua_Integer i = 1; i <= n; ++i) {
@@ -394,7 +394,7 @@ bool ParseStatusItemRegistration(lua_State* state,
     alignment = std::move(*align_opt);
   }
   int priority = 0;
-  lua_getfield(state, table_index, "priority");
+  lua_interop::GetFieldProtected(state, table_index, "priority");
   if (lua_isinteger(state, -1)) {
     priority = static_cast<int>(lua_tointeger(state, -1));
   }
@@ -412,7 +412,7 @@ bool ParseStatusItemRegistration(lua_State* state,
     command = std::move(*command_opt);
   }
   float progress = -1.0f;
-  lua_getfield(state, table_index, "progress");
+  lua_interop::GetFieldProtected(state, table_index, "progress");
   if (lua_isnumber(state, -1)) {
     progress = std::clamp(static_cast<float>(lua_tonumber(state, -1)), 0.0f, 1.0f);
   }
@@ -531,7 +531,7 @@ bool ReadPairArrayField(lua_State* state,
                         int table_index,
                         const char* field,
                         std::vector<std::pair<std::string, std::string>>* out) {
-  lua_getfield(state, table_index, field);
+  lua_interop::GetFieldProtected(state, table_index, field);
   if (lua_isnil(state, -1)) {
     lua_pop(state, 1);
     return true;  // optional

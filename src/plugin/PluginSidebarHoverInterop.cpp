@@ -23,7 +23,7 @@ bool ReadHoverResultTable(lua_State* state,
   result->title.clear();
   result->content.clear();
 
-  lua_getfield(state, absolute_index, "title");
+  lua_interop::GetFieldProtected(state, absolute_index, "title");
   if (lua_isstring(state, -1)) {
     result->title = lua_tostring(state, -1);
   } else if (!lua_isnil(state, -1)) {
@@ -36,7 +36,7 @@ bool ReadHoverResultTable(lua_State* state,
   }
   lua_pop(state, 1);
 
-  lua_getfield(state, absolute_index, "content");
+  lua_interop::GetFieldProtected(state, absolute_index, "content");
   if (lua_isstring(state, -1)) {
     result->content = lua_tostring(state, -1);
   } else if (!lua_isnil(state, -1)) {

@@ -11,6 +11,7 @@
 #include "platform/Subprocess.h"
 #include "plugin/LuaError.h"
 #include "plugin/LuaRuntime.h"
+#include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginPathInterop.h"
 
 namespace microide::plugin::process_interop {
@@ -68,14 +69,14 @@ const char* ParseProcessRunArgs(lua_State* state,
     if (lua_type(state, 2) != LUA_TTABLE) {
       return "process options must be a table";
     }
-    lua_getfield(state, 2, "cwd");
+    lua_interop::GetFieldProtected(state, 2, "cwd");
     if (lua_isstring(state, -1)) {
       out->cwd =
           ResolveRuntimePath(current_project_root, std::filesystem::path(lua_tostring(state, -1)));
     }
     lua_pop(state, 1);
 
-    lua_getfield(state, 2, "stdin");
+    lua_interop::GetFieldProtected(state, 2, "stdin");
     if (lua_isstring(state, -1)) {
       size_t length = 0;
       const char* text = lua_tolstring(state, -1, &length);
@@ -83,7 +84,7 @@ const char* ParseProcessRunArgs(lua_State* state,
     }
     lua_pop(state, 1);
 
-    lua_getfield(state, 2, "env");
+    lua_interop::GetFieldProtected(state, 2, "env");
     if (!lua_isnil(state, -1)) {
       if (lua_type(state, -1) != LUA_TTABLE) {
         lua_pop(state, 1);

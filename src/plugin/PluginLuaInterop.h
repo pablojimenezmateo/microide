@@ -20,9 +20,25 @@ namespace microide::plugin::lua_interop {
 bool IsValidIdentifier(std::string_view value);
 
 #if MICROIDE_HAS_LUA_PLUGINS
-// Centralized Lua-table field readers. None of these raise a Lua error (they use
-// only lua_getfield/lua_tostring/lua_pop/luaL_ref), so they are safe to call while
-// C++ locals are live — no longjmp over destructors. Each leaves the stack balanced.
+// Pushes `table[field]` onto the stack, protected against a raising `__index`
+// metamethod. A plugin controls the tables we harvest and can install a metatable
+// whose `__index` raises (`setmetatable`+`error` are in the exposed base lib); a bare
+// `lua_getfield` would then longjmp (Lua links as C) to the enclosing pcall, skipping
+// the caller's live C++ destructors (UB + leak — the hard "no longjmp over C++ locals"
+// invariant, from the read-in direction). This runs the metamethod-capable lookup
+// inside a nested `lua_pcall` so any raise is caught as a status; on a raise (or an
+// absent field) it pushes nil. Always leaves exactly one value on top; stack-balanced.
+// Benign `__index` *defaults* still resolve (VSCode/JS prototype-chain parity). A table
+// with no metatable takes an allocation-free fast path identical to `lua_getfield`.
+// This is the ONLY sanctioned field-fetch in src/plugin; the ban on raw
+// lua_getfield/lua_gettable/lua_geti is enforced by CheckPluginFieldReadsAre-
+// MetamethodProtected (PluginLuaInterop.cpp is the one exempt TU that defines it).
+void GetFieldProtected(lua_State* state, int table_index, const char* field);
+
+// Centralized Lua-table field readers. Each fetches its field via GetFieldProtected
+// and then uses only metamethod-free stack ops (lua_tostring/lua_toboolean/lua_pop/
+// luaL_ref/…), so they never longjmp over live C++ locals. Each leaves the stack
+// balanced.
 //
 // ReadStringField returns "" when the field is absent or not a string (matches the
 // provider-query call sites that branch on emptiness). ReadOptionalStringField
@@ -50,6 +66,13 @@ bool ReadBoolField(lua_State* state, int table_index, const char* field);
 
 // Read a numeric field; missing/non-number => `fallback`.
 float ReadNumberField(lua_State* state, int table_index, const char* field, float fallback);
+
+// Read an integer field. Returns nullopt when the field is absent or not an integer
+// (Lua distinguishes integer from float subtypes); the value is returned as-is (no
+// range/sign validation — callers that require positivity check it themselves).
+std::optional<lua_Integer> ReadOptionalIntegerField(lua_State* state,
+                                                    int table_index,
+                                                    const char* field);
 
 // Parse a `#rrggbb` or `#rrggbbaa` hex color. Returns nullopt for any other shape.
 std::optional<SDL_Color> ParseHexColor(std::string_view text);

@@ -146,7 +146,7 @@ bool RegisterSidebar(lua_State* state,
   if (ContributionLimitReached(sidebars, error_message)) {
     return false;
   }
-  lua_getfield(state, table_index, "id");
+  lua_interop::GetFieldProtected(state, table_index, "id");
   if (!lua_isstring(state, -1)) {
     if (error_message != nullptr) {
       *error_message = "sidebar id must be a string";
@@ -169,7 +169,7 @@ bool RegisterSidebar(lua_State* state,
     return false;
   }
 
-  lua_getfield(state, table_index, "label");
+  lua_interop::GetFieldProtected(state, table_index, "label");
   if (!lua_isstring(state, -1)) {
     if (error_message != nullptr) {
       *error_message = "sidebar label must be a string";
@@ -180,7 +180,7 @@ bool RegisterSidebar(lua_State* state,
   const std::string label = lua_tostring(state, -1);
   lua_pop(state, 1);
 
-  lua_getfield(state, table_index, "snapshot");
+  lua_interop::GetFieldProtected(state, table_index, "snapshot");
   if (!lua_isfunction(state, -1)) {
     if (error_message != nullptr) {
       *error_message = "sidebar snapshot must be a function";
@@ -191,7 +191,7 @@ bool RegisterSidebar(lua_State* state,
   const int snapshot_ref = luaL_ref(state, LUA_REGISTRYINDEX);
 
   int confirm_ref = LUA_NOREF;
-  lua_getfield(state, table_index, "on_confirm");
+  lua_interop::GetFieldProtected(state, table_index, "on_confirm");
   if (lua_isnil(state, -1)) {
     lua_pop(state, 1);
   } else if (lua_isfunction(state, -1)) {
@@ -206,7 +206,7 @@ bool RegisterSidebar(lua_State* state,
   }
 
   int toggle_ref = LUA_NOREF;
-  lua_getfield(state, table_index, "on_toggle");
+  lua_interop::GetFieldProtected(state, table_index, "on_toggle");
   if (lua_isnil(state, -1)) {
     lua_pop(state, 1);
   } else if (lua_isfunction(state, -1)) {
@@ -260,7 +260,7 @@ bool RegisterHoverProvider(lua_State* state,
     return false;
   }
   const int absolute_index = lua_absindex(state, table_index);
-  lua_getfield(state, absolute_index, "id");
+  lua_interop::GetFieldProtected(state, absolute_index, "id");
   if (!lua_isstring(state, -1)) {
     if (error_message != nullptr) {
       *error_message = "hover provider id must be a string";
@@ -283,7 +283,7 @@ bool RegisterHoverProvider(lua_State* state,
     return false;
   }
 
-  lua_getfield(state, absolute_index, "provide");
+  lua_interop::GetFieldProtected(state, absolute_index, "provide");
   if (!lua_isfunction(state, -1)) {
     if (error_message != nullptr) {
       *error_message = "hover provider provide must be a function";
@@ -474,31 +474,31 @@ bool ExtractStatusItemUpdate(lua_State* state,
     return false;
   }
   out->full_id = plugin->id + "." + std::string(id);
-  lua_getfield(state, 2, "text");
+  lua_interop::GetFieldProtected(state, 2, "text");
   if (lua_isstring(state, -1)) {
     out->has_text = true;
     out->text = lua_tostring(state, -1);
   }
   lua_pop(state, 1);
-  lua_getfield(state, 2, "tooltip");
+  lua_interop::GetFieldProtected(state, 2, "tooltip");
   if (lua_isstring(state, -1)) {
     out->has_tooltip = true;
     out->tooltip = lua_tostring(state, -1);
   }
   lua_pop(state, 1);
-  lua_getfield(state, 2, "icon");
+  lua_interop::GetFieldProtected(state, 2, "icon");
   if (lua_isstring(state, -1)) {
     out->has_icon = true;
     out->icon = lua_tostring(state, -1);
   }
   lua_pop(state, 1);
-  lua_getfield(state, 2, "tone");
+  lua_interop::GetFieldProtected(state, 2, "tone");
   if (lua_isstring(state, -1)) {
     out->has_tone = true;
     out->tone = lua_tostring(state, -1);
   }
   lua_pop(state, 1);
-  lua_getfield(state, 2, "progress");
+  lua_interop::GetFieldProtected(state, 2, "progress");
   if (lua_isnumber(state, -1)) {
     const double value = lua_tonumber(state, -1);
     out->has_progress = true;

@@ -291,7 +291,7 @@ bool ParseAiProviderRegistration(lua_State* state,
   if (auto value = ReadStringField(state, 1, "default_model")) {
     default_model = std::move(*value);
   }
-  lua_getfield(state, 1, "models");
+  lua_interop::GetFieldProtected(state, 1, "models");
   if (lua_istable(state, -1)) {
     // Cap the drain: a plugin table with an unbounded/huge sequence must not grow
     // this vector without limit. A provider never has anywhere near this many models.
@@ -334,7 +334,7 @@ bool ParseExternalAgentRegistration(lua_State* state,
   auto command_opt = ReadStringArrayField(state, 1, "command");
   if (!id_opt || !label_opt || !protocol_opt || !command_opt || command_opt->empty()) return false;
   std::vector<std::string> capabilities;
-  lua_getfield(state, 1, "capabilities");
+  lua_interop::GetFieldProtected(state, 1, "capabilities");
   if (lua_istable(state, -1)) {
     // Cap the drain against an unbounded/huge plugin table (see models above).
     constexpr lua_Integer kMaxAgentCapabilities = 100000;

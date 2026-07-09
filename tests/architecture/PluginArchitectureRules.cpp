@@ -218,6 +218,47 @@ RuleResult CheckPluginLuaErrorDoesNotLongjmpOverCppLocals(const std::filesystem:
   return result;
 }
 
+RuleResult CheckPluginFieldReadsAreMetamethodProtected(const std::filesystem::path& repo_root) {
+  // Companion to the luaL_error rule, from the read-in direction. A plugin controls
+  // the tables the host harvests and can install a raising __index metamethod
+  // (setmetatable+error are in the exposed base lib). The metamethod-capable field
+  // reads lua_getfield / lua_gettable / lua_geti would then longjmp (Lua links as C)
+  // to the enclosing lua_pcall, skipping the destructors of any C++ locals alive in
+  // the harvest loop (std::vector / std::string / std::filesystem::path) — the same
+  // UB + leak the luaL_error rule guards against. All field reads in src/plugin must
+  // instead go through lua_interop::GetFieldProtected, which runs the lookup inside a
+  // nested lua_pcall. Indexed sequence reads already use the raw, metamethod-free
+  // lua_rawgeti (allowed). Only PluginLuaInterop.cpp is exempt: it defines
+  // GetFieldProtected + its GetFieldTrampoline, the one sanctioned site.
+  RuleResult result;
+  result.label = "plugin field reads are metamethod-protected (no raw lua_getfield/gettable/geti)";
+  result.hard_fail = true;
+  const std::filesystem::path plugin_dir = repo_root / "src/plugin";
+  if (!std::filesystem::exists(plugin_dir)) {
+    return result;
+  }
+  const std::regex raw_field_read(R"(\blua_get(field|table|i)\s*\()");
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(plugin_dir)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::string ext = entry.path().extension().string();
+    if (ext != ".cpp" && ext != ".inc" && ext != ".h" && ext != ".hpp") {
+      continue;
+    }
+    if (entry.path().filename() == "PluginLuaInterop.cpp") {
+      continue;  // sanctioned home of GetFieldProtected / GetFieldTrampoline
+    }
+    const std::string text = ReadText(entry.path());
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, raw_field_read,
+        "harvest plugin table fields via lua_interop::GetFieldProtected; raw "
+        "lua_getfield/lua_gettable/lua_geti invoke __index and can longjmp over live "
+        "C++ locals (UB + leak). Indexed reads use lua_rawgeti. See PluginLuaInterop.h");
+  }
+  return result;
+}
+
 RuleResult CheckCoreIsNetworkFree(const std::filesystem::path& repo_root) {
   // Hard product guarantee: the microide core binary makes no network calls and
   // links no networking client libraries. Plugins may reach the network in their
@@ -263,6 +304,7 @@ std::vector<RuleResult> RunPluginArchitectureRules(const std::filesystem::path& 
   run(CheckEssentialEditorCppModulesDoNotTouchLuaState);
   run(CheckPluginTranslationUnitSize);
   run(CheckPluginLuaErrorDoesNotLongjmpOverCppLocals);
+  run(CheckPluginFieldReadsAreMetamethodProtected);
   run(CheckCoreIsNetworkFree);
   return results;
 }

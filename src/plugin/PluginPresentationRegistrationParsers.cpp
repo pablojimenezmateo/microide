@@ -58,7 +58,7 @@ void ApplyColorTable(lua_State* state, PluginHost::ContributedThemeStyle* style)
   } else if (auto background = ReadOptionalStringField(state, -1, "background")) {
     style->background = render::ParseThemeColor(*background);
   }
-  lua_getfield(state, -1, "reverse");
+  lua_interop::GetFieldProtected(state, -1, "reverse");
   style->reverse = lua_toboolean(state, -1) != 0;
   lua_pop(state, 1);
 }
@@ -91,10 +91,10 @@ bool RegisterTheme(lua_State* state,
   theme.label = ReadOptionalStringField(state, 1, "label").value_or(theme.id);
 
   // Accept either `colors` or `styles` for the group map.
-  lua_getfield(state, 1, "colors");
+  lua_interop::GetFieldProtected(state, 1, "colors");
   if (!lua_istable(state, -1)) {
     lua_pop(state, 1);
-    lua_getfield(state, 1, "styles");
+    lua_interop::GetFieldProtected(state, 1, "styles");
   }
   if (lua_istable(state, -1)) {
     const int colors_index = lua_gettop(state);
@@ -160,10 +160,10 @@ bool RegisterFileIconTheme(lua_State* state,
   theme.label = ReadOptionalStringField(state, 1, "label").value_or(theme.id);
 
   // Accept either `rules` or `icons` for the rule array.
-  lua_getfield(state, 1, "rules");
+  lua_interop::GetFieldProtected(state, 1, "rules");
   if (!lua_istable(state, -1)) {
     lua_pop(state, 1);
-    lua_getfield(state, 1, "icons");
+    lua_interop::GetFieldProtected(state, 1, "icons");
   }
   if (lua_istable(state, -1)) {
     const int rules_index = lua_gettop(state);
