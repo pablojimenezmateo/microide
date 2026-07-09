@@ -248,10 +248,12 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         break;
       }
       case '\t': {
-        const std::size_t target = NextTabStopLocked(cursor_column_);
-        while (cursor_column_ < target) {
-          PutCharacterLocked(' ');
-        }
+        // HT is pure cursor motion to the next tab stop. It must NOT write
+        // spaces over the cells it passes: real terminals (xterm/VTE) leave the
+        // underlying glyphs intact, so `ABCDEFGHIJ\r\tX` yields `ABCDEFGHXJ`, not
+        // `        XJ`. A later write past the current line length pads the gap
+        // with default-style blanks via ResizeLineLocked, so no fill is needed here.
+        cursor_column_ = NextTabStopLocked(cursor_column_);
         break;
       }
       default:

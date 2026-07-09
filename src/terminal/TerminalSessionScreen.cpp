@@ -315,6 +315,27 @@ void TerminalSession::EraseInDisplayLocked(int mode) {
                                           : std::max<std::size_t>(1, cursor_row_ + 1),
                     TerminalLine{});
       break;
+    case 3: {
+      // ED 3 (xterm "Erase Saved Lines"): drop the scrollback, leave the visible
+      // screen intact. Previously mode 3 fell through to the ED-0 path below,
+      // which erases from the cursor to the end of the display — so a bare
+      // `\x1b[3J` (not preceded by 2J) destroyed on-screen content, the opposite
+      // of the spec. On the primary screen the visible viewport is the last
+      // `rows_` lines of the deque; everything before that is scrollback. Trim it
+      // and shift the cursor bookkeeping down, mirroring TrimScrollbackLocked. The
+      // alternate screen has no scrollback, so 3J is a no-op there.
+      if (!use_alternate_screen_) {
+        const std::size_t visible = std::max<std::size_t>(1, rows_);
+        if (lines_.size() > visible) {
+          const std::size_t trim_count = lines_.size() - visible;
+          lines_.erase(lines_.begin(),
+                       lines_.begin() + static_cast<std::ptrdiff_t>(trim_count));
+          cursor_row_ = cursor_row_ > trim_count ? cursor_row_ - trim_count : 0;
+          saved_cursor_row_ = saved_cursor_row_ > trim_count ? saved_cursor_row_ - trim_count : 0;
+        }
+      }
+      break;
+    }
     case 0:
     default:
       EraseInLineLocked(0);

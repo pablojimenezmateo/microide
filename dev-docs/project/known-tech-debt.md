@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed on 2026-06-29.
+Reviewed on 2026-07-09.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
 It is deliberately short. Closed debt does not live here — it is archived (see below).
@@ -9,7 +9,84 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-_None currently open._
+These three were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
+**deliberately deferred** — each is either entangled with a semantics decision or
+a latent API-contract hazard with no live trigger, so a rushed fix risked a
+regression worse than the defect. Recorded here so they are not silently lost.
+
+- **Terminal `ED` (`CSI 2J`) scrollback loss is entangled with primary-screen
+  absolute-row CUP.** `TerminalSession::EraseInDisplayLocked` (`src/terminal/TerminalSessionScreen.cpp:304`,
+  dispatched from `src/terminal/TerminalSessionCsi.cpp:138`). On the primary screen,
+  `CSI H` maps to absolute row 0 (no viewport-top offset — only alt-screen + origin
+  mode offsets), which entangles `2J` erase semantics with cursor origin. A naive
+  "preserve scrollback on 2J" change breaks `clear(1)`, which relies on the current
+  absolute-row behaviour. A correct fix needs viewport-relative CUP rework first,
+  which is out of scope for a bug-hunt pass. **Blocked on:** deciding viewport-relative
+  vs absolute CUP on the primary screen, then reworking `2J`/`clear` together.
+
+- **Branch-review cross-generation `ChangedSinceReviewed` status is effectively
+  unreachable.** `src/compare/BranchReviewStateService.cpp` /
+  `src/compare/BranchReviewStateTypes.h` (`BranchReviewMarkerStatus::ChangedSinceReviewed`).
+  The status can only be produced if a target's snapshot generation advances while a
+  reviewed marker survives, but the current generation/identity bookkeeping never
+  reaches that combination, so the branch is dead. Resolving it is a **product
+  decision** on snapshot-generation semantics and touches the persisted
+  `BranchReviewTargetIdentity`, so it is not a mechanical fix. **Blocked on:** defining
+  the intended "changed since I reviewed it" semantics, then either wiring the
+  producer or removing the status (and migrating persisted state).
+
+- **`PieceTree::LineView` same-index re-read can dangle a previously returned view.**
+  `src/editor/PieceTree.cpp:327`. When a line spans multiple pieces, `LineView`
+  returns a `string_view` into `line_view_cache_[index]`; a second `LineView(index)`
+  call for the same index on the non-contiguous path does `cached.clear()` +
+  `CopyRange`, reallocating that slot and invalidating the earlier view. No live
+  caller holds a `LineView` result across a re-read of the *same* index today, so this
+  is a latent API-contract hazard, not a live crash — but it is a hot path, so the
+  fix (e.g. documenting single-live-view-per-index, or returning owned storage on the
+  slow path) must stay allocation-free in the common contiguous case. **Blocked on:**
+  nothing external — deferred only to avoid perturbing a hot path without a measured
+  guard; pick up when the LineView contract is next touched.
+
+The 2026-07-09 fourth-pass sweep also surfaced these lower-severity items, deferred
+as benign/cosmetic or as design constraints rather than live defects:
+
+- **Terminal background-color erase (BCE) is inconsistent across erase paths.**
+  `TerminalSession::EraseInDisplayLocked` (whole-line `cells.clear()` / `assign`) and
+  the scroll-region fills (`ScrollRegionUpLocked`/`ScrollRegionDownLocked` insert
+  default `TerminalLine{}`) drop the current SGR background, while `EraseInLineLocked`
+  honours it via `current_style_`. So `\x1b[44m\x1b[2J` on the alt screen renders with
+  the default background whereas `\x1b[44m\x1b[K` paints blue. Fixing it means filling
+  erased lines with `columns_` styled cells instead of the empty-line fast path, which
+  touches the memory model the terminal-scroll perf work relies on — measure before
+  changing. **Blocked on:** a perf-neutral styled-blank-line representation. Cosmetic
+  (BCE is an optional xterm feature) so low priority.
+
+- **LSP incremental `didChange` LF-joins replacement text on CRLF documents.**
+  `src/workspace/LspService.cpp:928-940` sends `applied_edit->replacement_text` (built
+  LF-joined in `TextViewportUndoHistory.cpp`) even for a CRLF buffer, whose `didOpen`
+  used the real CRLF ending. The server mirror's edited regions drift toward LF. Traced
+  as benign: LSP positions are line/character (never byte offsets), replacement text
+  never contains a stray `\r`, edit ranges align to line-content boundaries so a
+  `\r\n` pair is never split, and the next full sync (save/clean transition) reconciles.
+  Not fixed because the correction adds per-keystroke string work on the hot
+  incremental-sync path to fix an inconsistency with no demonstrable wrong-position
+  outcome (speed is the priority). **Blocked on:** a demonstrated corruption case, or
+  doing the transform only when `line_ending() == CRLF` if a case ever surfaces.
+  (Note: the sibling "cross-language go-to-definition uses the source server's encoding"
+  suspicion was investigated and is NOT a bug — a `definition` response's `character`
+  is in the responding/source server's encoding regardless of the target file, which is
+  exactly what `AssistService::NavigateToLspLocation` uses.)
+
+- **DAP multi-thread semantics are single-thread-simplified.** Two spots assume the
+  app's single-thread debugging focus: `DebugServiceCallbacks.cpp` records a verified
+  breakpoint at the *requested* line rather than the adapter's relocated `breakpoint.line`
+  (the store is keyed by requested line, so it structurally cannot represent a
+  relocation — the async `breakpoint`-event path uses the real line, so the two can
+  disagree), and `DebugSession.cpp:258-264` treats a `continued` event as a full resume,
+  ignoring `allThreadsContinued`/`threadId`. Both are correct for single-threaded targets
+  and incorrect per spec for multi-threaded ones. **Blocked on:** a decision to support
+  per-thread stop/resume state, which would re-key `BreakpointStore` and add per-thread
+  run state.
 
 The **timing-dependent test flakiness** item (added 2026-06-21) is now closed. The
 single-check-after-a-fixed-`sleep_for` anti-pattern was audited across every

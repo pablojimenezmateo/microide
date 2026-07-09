@@ -52,7 +52,7 @@ mode = sys.argv[1] if len(sys.argv) > 1 else ""
 # all advertise configurationDone support.
 supports_config_done = mode in ("config_done", "stop", "pause", "variables", "evaluate",
                                 "restart", "threads", "exception", "die", "thread_event",
-                                "function", "reverse", "reverse_late")
+                                "function", "reverse", "reverse_late", "stale_stack")
 supports_set_variable = (mode == "variables")
 supports_evaluate = (mode == "evaluate")
 supports_restart = (mode == "restart")
@@ -70,7 +70,11 @@ thread_started = False
 # rr / gdb `record`, which announce reverse execution after initialize).
 reverse_late = (mode == "reverse_late")
 stop_on_config = mode in ("stop", "variables", "evaluate", "restart", "threads", "exception",
-                          "thread_event", "function", "reverse", "reverse_late")
+                          "thread_event", "function", "reverse", "reverse_late", "stale_stack")
+# `stale_stack`: hold the first stackTrace response until a resume arrives, then
+# flush it late so the host must drop the stale stopped view (session Running).
+stale_stack = (mode == "stale_stack")
+deferred_stack_req = None
 running_no_stop = mode in ("pause", "die")  # stay running (die: then exit silently)
 # `die`: reach Running (respond to launch) then exit WITHOUT a terminated event, to
 # exercise the host's dead-adapter reconciliation (no zombie session).
@@ -129,6 +133,18 @@ def finish_launch():
 
 def emit_stop():
     event("stopped", {"reason": "breakpoint", "threadId": 1, "allThreadsStopped": True})
+
+def send_stack(req):
+    tid = req.get("arguments", {}).get("threadId", 1)
+    # Encode the threadId into the top frame name so a thread switch is
+    # observable (the frames differ per thread).
+    top_name = "main" if tid == 1 else "worker"
+    respond(req, {"stackFrames": [
+        {"id": tid * 10 + 1, "name": top_name, "line": 10, "column": 1,
+         "source": {"name": "main.py", "path": "/proj/main.py"}},
+        {"id": tid * 10 + 2, "name": "caller", "line": 3, "column": 1,
+         "source": {"name": "main.py", "path": "/proj/main.py"}},
+    ], "totalFrames": 2})
 
 while True:
     msg = read_message()
@@ -190,16 +206,11 @@ while True:
         else:
             finish_launch()
     elif command == "stackTrace":
-        tid = msg.get("arguments", {}).get("threadId", 1)
-        # Encode the threadId into the top frame name so a thread switch is
-        # observable (the frames differ per thread).
-        top_name = "main" if tid == 1 else "worker"
-        respond(msg, {"stackFrames": [
-            {"id": tid * 10 + 1, "name": top_name, "line": 10, "column": 1,
-             "source": {"name": "main.py", "path": "/proj/main.py"}},
-            {"id": tid * 10 + 2, "name": "caller", "line": 3, "column": 1,
-             "source": {"name": "main.py", "path": "/proj/main.py"}},
-        ], "totalFrames": 2})
+        if stale_stack and deferred_stack_req is None:
+            # Hold the first stack request; it is flushed (stale) after the resume.
+            deferred_stack_req = msg
+        else:
+            send_stack(msg)
     elif command == "restart":
         event("output", {"category": "stdout", "output": "cmd:restart\n"})
         respond(msg, {})
@@ -208,7 +219,17 @@ while True:
     elif command in ("continue", "next", "stepIn", "stepOut", "reverseContinue", "stepBack"):
         event("output", {"category": "stdout", "output": "cmd:" + command + "\n"})
         respond(msg, {"allThreadsContinued": True} if command == "continue" else {})
-        emit_stop()  # re-stop so the test can drive the next step
+        if stale_stack and deferred_stack_req is not None:
+            # The host already flipped to Running (resume is optimistic). Flush the
+            # STALE stackTrace now; a correct host drops it instead of re-projecting
+            # a stopped view. The sentinel is written AFTER it on the same pipe, so
+            # the test can wait deterministically for the stale stack to be processed
+            # without any timing assumption. Do NOT re-stop: stay running.
+            send_stack(deferred_stack_req)
+            deferred_stack_req = None
+            event("output", {"category": "stdout", "output": "stale-stack-flushed\n"})
+        else:
+            emit_stop()  # re-stop so the test can drive the next step
     elif command == "scopes":
         respond(msg, {"scopes": [
             {"name": "Locals", "variablesReference": 1000, "expensive": False},
@@ -588,6 +609,63 @@ void TestDebugSessionResolvesStackOnStopAndStepsResume() {
   Expect(PollUntil(manager,
                    [&]() { return captured.output.find("cmd:continue") != std::string::npos; }),
          "Continue should send the DAP `continue` command");
+  manager.ShutdownAll();
+}
+
+// Regression: a `stackTrace` response that resolves AFTER the user resumes must be
+// dropped, not re-projected as a stopped view. The adapter defers the first stack
+// response until it receives the resume, then flushes it late; a correct host
+// (state_ != Stopped guard in RequestStackTrace) never fires on_stopped for it.
+void TestDebugSessionDropsStaleStackResolvedAfterResume() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stale_stack"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+
+  // The adapter stops but withholds the stackTrace response, so the session
+  // reaches Stopped with on_stopped still pending (stop_count == 0).
+  Expect(PollUntil(manager,
+                   [&]() {
+                     const auto* s = manager.ActiveSession();
+                     return s != nullptr && s->CurrentState() == DebugSession::State::Stopped;
+                   }),
+         "session should reach Stopped while the stack is still pending");
+  Expect(captured.stop_count == 0, "on_stopped must not fire before the stack resolves");
+
+  // Resume before the stack resolves. Continue() flips to Running synchronously;
+  // the adapter then flushes the now-stale stack + a sentinel on the same pipe.
+  DebugSession* session = manager.ActiveSession();
+  Expect(session != nullptr, "session should be active while stopped");
+  session->Continue();
+  Expect(session->CurrentState() == DebugSession::State::Running,
+         "Continue flips the session to Running synchronously");
+
+  // The sentinel is written strictly after the stale stack on the adapter's pipe,
+  // so once we observe it the stale stack has already been received and processed
+  // — no timing assumption needed.
+  Expect(PollUntil(manager,
+                   [&]() {
+                     return captured.output.find("stale-stack-flushed") != std::string::npos;
+                   }),
+         "adapter should flush the stale stack after the resume");
+
+  Expect(captured.stop_count == 0,
+         "a stackTrace resolving after a resume must not re-project a stopped view");
+  Expect(captured.resume_count == 1, "the resume should have fired exactly once");
+  Expect(manager.ActiveSession() == nullptr ||
+             manager.ActiveSession()->CurrentState() != DebugSession::State::Stopped,
+         "the session must not be dragged back to Stopped by the stale stack");
   manager.ShutdownAll();
 }
 
@@ -2671,6 +2749,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugSessionLaunchHandshakeOrder);
   AddTest(tests, "DebugService/SessionResolvesStackOnStopAndStepsResume",
           TestDebugSessionResolvesStackOnStopAndStepsResume);
+  AddTest(tests, "DebugService/SessionDropsStaleStackResolvedAfterResume",
+          TestDebugSessionDropsStaleStackResolvedAfterResume);
   AddTest(tests, "DebugService/SessionPauseFromRunning", TestDebugSessionPauseFromRunning);
   AddTest(tests, "DebugService/SessionReverseStepAndContinue",
           TestDebugSessionReverseStepAndContinue);

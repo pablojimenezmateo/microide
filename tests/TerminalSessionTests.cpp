@@ -1107,6 +1107,60 @@ void TestTerminalSessionTabulationClampsToWidth() {
          "CSI Ps Z should saturate at column zero without work proportional to Ps");
 }
 
+// HT (`\t`) is pure cursor motion: it must move to the next tab stop WITHOUT
+// blanking the cells it passes over. Regression for the fix that replaced the
+// per-column `PutCharacterLocked(' ')` fill with a cursor move.
+void TestTerminalSessionTabDoesNotOverwriteCells() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  // Default tab stops at 8,16,... . Fill cols 0..9, CR to col 0, tab to col 8,
+  // then write 'X' at the tab stop. `ABCDEFGHIJ\r\tX` must yield `ABCDEFGHXJ`.
+  TerminalSessionTestAccess::AppendOutput(session, "ABCDEFGHIJ\r\tX");
+  const auto lines = session.SnapshotLines();
+  Expect(!lines.empty() && lines[0].cells.size() >= 10,
+         "the row should still hold all ten written cells");
+  const auto& cells = lines[0].cells;
+  const char* const preserved = "ABCDEFGH";
+  bool intact = true;
+  for (int i = 0; i < 8; ++i) {
+    if (cells[static_cast<std::size_t>(i)].ascii_character() != preserved[i]) {
+      intact = false;
+      break;
+    }
+  }
+  Expect(intact, "HT must not overwrite the glyphs it tabs across with spaces");
+  Expect(cells[8].ascii_character() == 'X',
+         "the glyph written after the tab lands at the tab stop (col 8)");
+  Expect(cells[9].ascii_character() == 'J',
+         "the cell beyond the tab stop is untouched");
+}
+
+// ED 3 (`CSI 3J`, "Erase Saved Lines") must clear the scrollback and LEAVE the
+// visible screen intact. Regression for the fix that stopped mode 3 from falling
+// through to the ED-0 path, which erased from the cursor to the end of display.
+void TestTerminalSessionEraseSavedLinesKeepsVisibleScreen() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 3, 20);  // 3-row visible screen
+  // Six CRLF-separated lines into a 3-row terminal builds three lines of
+  // scrollback (L0..L2) above the visible screen (L3..L5).
+  TerminalSessionTestAccess::AppendOutput(session, "L0\r\nL1\r\nL2\r\nL3\r\nL4\r\nL5");
+  const auto before = session.SnapshotLines();
+  Expect(before.size() > 3,
+         "six lines into a 3-row terminal should accumulate scrollback");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[3J");
+  const auto after = session.SnapshotLines();
+  Expect(after.size() == 3,
+         "CSI 3J must trim the deque to the visible screen height (scrollback gone)");
+  // The visible screen (L3..L5) must survive unharmed: 3J erases only scrollback.
+  Expect(after.front().cells.size() >= 2 && after.front().cells[0].ascii_character() == 'L' &&
+             after.front().cells[1].ascii_character() == '3',
+         "3J must preserve the first visible line ('L3')");
+  Expect(after.back().cells.size() >= 2 && after.back().cells[0].ascii_character() == 'L' &&
+             after.back().cells[1].ascii_character() == '5',
+         "3J must preserve the last visible line ('L5')");
+}
+
 // Resilience: IL (`CSI Ps L`) inserts blank lines; a huge parameter must not
 // transiently balloon the line deque to tens of thousands of entries before the
 // scrollback trim.
@@ -1353,6 +1407,10 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionInsertCharsClampsToWidth);
   AddTest(tests, "TerminalSession/TabulationClampsToWidth",
           TestTerminalSessionTabulationClampsToWidth);
+  AddTest(tests, "TerminalSession/TabDoesNotOverwriteCells",
+          TestTerminalSessionTabDoesNotOverwriteCells);
+  AddTest(tests, "TerminalSession/EraseSavedLinesKeepsVisibleScreen",
+          TestTerminalSessionEraseSavedLinesKeepsVisibleScreen);
   AddTest(tests, "TerminalSession/InsertLinesClampsToHeight",
           TestTerminalSessionInsertLinesClampsToHeight);
   AddTest(tests, "TerminalSession/CursorDownClampsPrimaryScreen",

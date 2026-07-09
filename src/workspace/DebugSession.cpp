@@ -343,13 +343,31 @@ void DebugSession::RequestStackTrace(const dap_protocol::DapStoppedEvent& stop) 
   if (!callbacks_.on_stopped) {
     return;
   }
+  // Bind this stack request to the stop it belongs to. Every other async apply
+  // path is generation-guarded — scopes/variables/watches via frame_generation_,
+  // the thread list via stop_epoch_ (RefreshThreadList) — but the stack trace,
+  // which drives the editor execution highlight, the frame focus, and the
+  // notify_stop_resolved push, was applied unconditionally. If the user
+  // resumes/steps before a slow adapter answers stackTrace, the late response
+  // would re-project a full "stopped" view onto a now-running session (spurious
+  // execution highlight + focus jump + stop-resolved broadcast) that self-heals
+  // only on the next real stop. Drop the response unless we are still stopped at
+  // the same epoch. Note a plain resume (SendResumeRequest) flips state_ to
+  // Running WITHOUT bumping stop_epoch_, so the state_ check is load-bearing on
+  // its own; the epoch check additionally drops a stack superseded by a newer stop
+  // or thread switch. Both members are only touched on the main thread (mirrors
+  // RefreshThreadList's unsynchronized stop_epoch_ read).
+  const std::uint64_t epoch = stop_epoch_;
   client_->SendRequestAsync(
       // Bound the levels requested (0 == "all frames"); a cooperative adapter then
       // caps transfer, and ParseStackFrames caps again for hostile adapters.
       "stackTrace", dap_protocol::MakeStackTraceArguments(stop.thread_id, 0, 10000),
-      [this, stop](const dap_protocol::DapResponse& response) {
+      [this, stop, epoch](const dap_protocol::DapResponse& response) {
         if (!response.success) {
           return;
+        }
+        if (state_ != State::Stopped || epoch != stop_epoch_) {
+          return;  // resumed / superseded before the stack resolved
         }
         // on_stopped is guaranteed non-null by the guard above: callbacks_ is set
         // once at session creation and never reassigned during the session.
