@@ -36,22 +36,31 @@ void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
     return;
   }
 
-  const std::vector<std::size_t> dirty_tabs = DirtyEditorTabIndicesForProject(index);
-  if (dirty_tabs.empty()) {
+  // The empty-check and count span ALL editor groups: a project whose only unsaved
+  // buffer lives in the non-focused split group must still prompt (else closing it
+  // would silently discard that buffer). ConfirmCloseProject re-derives the full
+  // all-groups set to save, so the focused-group `dirty_tabs` payload is display-only.
+  const std::size_t dirty_count = DirtyEditorGroupTabsForProject(index).size();
+  if (dirty_count == 0) {
     CloseProject(index);
     return;
   }
 
-  MakePromptSurfaceService().ShowDirtyPromptForProject(index, dirty_tabs, dirty_tabs.size());
+  const std::vector<std::size_t> dirty_tabs = DirtyEditorTabIndicesForProject(index);
+  MakePromptSurfaceService().ShowDirtyPromptForProject(index, dirty_tabs, dirty_count);
 }
 
 void WorkspaceShell::ShowDirtyPromptForQuit() {
-  std::size_t dirty_count = DirtyEditorTabIndices().size();
+  // Count unsaved buffers across ALL editor groups so a tab dirtied only in the
+  // non-focused split group is included (VSCode "Save All"). The dirty_tabs payload
+  // stays focused-group: it is display-only, and ConfirmQuit re-derives the
+  // all-groups set per project to actually save.
+  std::size_t dirty_count = DirtyEditorGroupTabs().size();
   for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
     if (HasActiveProjectCatalogEntry() && i == context_.project_catalog.active_index) {
       continue;
     }
-    dirty_count += DirtyEditorTabIndicesForProject(i).size();
+    dirty_count += DirtyEditorGroupTabsForProject(i).size();
   }
 
   MakePromptSurfaceService().ShowDirtyPromptForQuit(context_.current_project_state.focused_group().active_tab_index,

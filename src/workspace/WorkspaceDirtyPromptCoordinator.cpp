@@ -79,6 +79,15 @@ bool DirtyPromptCoordinator::SaveDirtyTabs(std::span<const std::size_t> tab_indi
   return true;
 }
 
+bool DirtyPromptCoordinator::SaveDirtyGroupTabs(std::span<const GroupTabRef> refs) {
+  for (const GroupTabRef& ref : refs) {
+    if (!editor_tabs_.SaveGroupTab(ref.group_index, ref.tab_index)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool DirtyPromptCoordinator::SwitchProjectByRoot(const std::filesystem::path& root) {
   const auto index = FindProjectIndexByRoot(root);
   return index.has_value() && operations_.switch_project(*index, false);
@@ -131,7 +140,11 @@ void DirtyPromptCoordinator::ConfirmCloseProject(const DirtyPromptState& prompt)
       return;
     }
   }
-  if (prompt.selected_action == 0 && !SaveDirtyTabs(prompt.dirty_tabs)) {
+  // Closing a project flushes every dirty buffer across ALL its editor groups
+  // (not just the focused group's tabs captured in prompt.dirty_tabs). The target
+  // is active here (already-active, or just switched above), so DirtyGroupTabs()
+  // reads the correct project.
+  if (prompt.selected_action == 0 && !SaveDirtyGroupTabs(editor_tabs_.DirtyGroupTabs())) {
     if (!target_was_active && !original_active_root.empty()) {
       SwitchProjectByRoot(original_active_root);
     }
@@ -163,17 +176,17 @@ void DirtyPromptCoordinator::ConfirmQuit(const DirtyPromptState& prompt) {
     }
 
     for (const auto& root : project_roots) {
-      // Only projects with unsaved buffers need saving. DirtyIndicesForProject
-      // inspects the catalog entry's in-memory tabs without activating it, so we
-      // avoid a full persist-out/load-in round trip for every clean project.
+      // Only projects with unsaved buffers need saving. DirtyGroupTabsForProject
+      // inspects the catalog entry's in-memory tabs (all groups) without activating
+      // it, so we avoid a full persist-out/load-in round trip for every clean project.
       const auto index = FindProjectIndexByRoot(root);
-      if (!index.has_value() || editor_tabs_.DirtyIndicesForProject(*index).empty()) {
+      if (!index.has_value() || editor_tabs_.DirtyGroupTabsForProject(*index).empty()) {
         continue;
       }
       if (!SwitchProjectByRoot(root)) {
         continue;
       }
-      if (!SaveDirtyTabs(editor_tabs_.DirtyIndices())) {
+      if (!SaveDirtyGroupTabs(editor_tabs_.DirtyGroupTabs())) {
         if (!original_active_root.empty()) {
           SwitchProjectByRoot(original_active_root);
         }

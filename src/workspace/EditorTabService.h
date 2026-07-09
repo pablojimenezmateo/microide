@@ -18,9 +18,12 @@ class EditorTabService {
 
   std::string ActiveTitle() const;
   bool Save(std::size_t index);
+  bool SaveGroupTab(std::size_t group_index, std::size_t index);
   bool IsDirty(std::size_t index) const;
   std::vector<std::size_t> DirtyIndices() const;
   std::vector<std::size_t> DirtyIndicesForProject(std::size_t project_index) const;
+  std::vector<GroupTabRef> DirtyGroupTabs() const;
+  std::vector<GroupTabRef> DirtyGroupTabsForProject(std::size_t project_index) const;
   bool ActiveTabIsEditor() const;
   TabEntry::EditorTabState* ActiveEditorTab();
   const TabEntry::EditorTabState* ActiveEditorTab() const;

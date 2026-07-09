@@ -127,6 +127,11 @@ bool WorkspaceShell::SaveTab(std::size_t index) {
   return MakeEditorTabService().Save(index);
 }
 
+bool WorkspaceShell::SaveGroupTab(std::size_t group_index, std::size_t index) {
+  std::lock_guard<std::mutex> lock(save_tab_mutex_);
+  return MakeEditorTabService().SaveGroupTab(group_index, index);
+}
+
 void WorkspaceShell::MaybeAutosaveDirtyTabs(bool on_focus_change) {
   const std::string mode = GetSettingValue("editor.autosave").value_or("off");
   const bool trigger =
@@ -140,8 +145,10 @@ void WorkspaceShell::MaybeAutosaveDirtyTabs(bool on_focus_change) {
   // duration: an autosave (focus change / after delay) must not stall the UI thread
   // on an external formatter — most visibly during window blur / alt-tab.
   autosave_suppress_format_on_save_ = true;
-  for (const std::size_t index : MakeEditorTabService().DirtyIndices()) {
-    SaveTab(index);
+  // Flush every dirty tab across ALL editor groups, not just the focused one, so a
+  // buffer dirtied in the non-focused split group is autosaved too (VSCode parity).
+  for (const GroupTabRef& ref : MakeEditorTabService().DirtyGroupTabs()) {
+    SaveGroupTab(ref.group_index, ref.tab_index);
   }
   autosave_suppress_format_on_save_ = false;
 }
@@ -180,10 +187,11 @@ void WorkspaceShell::MaybeArmAutosaveTimer() {
   }
   autosave_last_content_revision_ = revision;
   autosave_edit_epoch_ms_ = SDL_GetTicks();
-  // Arm while any saveable tab is dirty, not only the active one: an edit that reverts
-  // the active buffer to clean must still leave the timer armed to flush another
-  // dirty tab.
-  autosave_armed_ = !MakeEditorTabService().DirtyIndices().empty();
+  // Arm while any saveable tab is dirty, not only the active one (and across all
+  // editor groups, so a dirty non-focused-group tab keeps the flush armed): an edit
+  // that reverts the active buffer to clean must still leave the timer armed to flush
+  // another dirty tab.
+  autosave_armed_ = !MakeEditorTabService().DirtyGroupTabs().empty();
 }
 
 void WorkspaceShell::MaybeArmSessionFlushTimer() {
@@ -209,8 +217,8 @@ void WorkspaceShell::MaybeArmSessionFlushTimer() {
   }
   session_flush_last_content_revision_ = revision;
   session_flush_edit_epoch_ms_ = SDL_GetTicks();
-  // Arm only when there is unsaved content somewhere to persist.
-  session_flush_armed_ = !MakeEditorTabService().DirtyIndices().empty();
+  // Arm only when there is unsaved content somewhere to persist (across all groups).
+  session_flush_armed_ = !MakeEditorTabService().DirtyGroupTabs().empty();
 }
 
 std::optional<Uint32> WorkspaceShell::NextAutosaveDelayMs() const {
@@ -404,6 +412,17 @@ std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices(
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndicesForProject(
     std::size_t project_index) const {
   return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().DirtyIndicesForProject(project_index);
+}
+
+std::vector<GroupTabRef> WorkspaceShell::DirtyEditorGroupTabs() const {
+  return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().DirtyGroupTabs();
+}
+
+std::vector<GroupTabRef> WorkspaceShell::DirtyEditorGroupTabsForProject(
+    std::size_t project_index) const {
+  return const_cast<WorkspaceShell*>(this)
+      ->MakeEditorTabService()
+      .DirtyGroupTabsForProject(project_index);
 }
 
 void WorkspaceShell::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {

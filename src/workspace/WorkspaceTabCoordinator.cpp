@@ -76,7 +76,15 @@ std::string TabCoordinator::ActiveTitle() const {
 }
 
 bool TabCoordinator::Save(std::size_t index) {
-  if (index >= state_.focused_group().open_tabs.size()) {
+  return SaveGroupTab(state_.clamped_focused_group_index(), index);
+}
+
+bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index) {
+  if (group_index >= state_.editor_groups.size()) {
+    return false;
+  }
+  EditorGroup& group = state_.editor_groups[group_index];
+  if (index >= group.open_tabs.size()) {
     return false;
   }
 
@@ -87,9 +95,9 @@ bool TabCoordinator::Save(std::size_t index) {
     }
   };
 
-  if (state_.focused_group().open_tabs[index].kind == TabEntry::Kind::Compare &&
-      state_.focused_group().open_tabs[index].compare.has_value()) {
-    auto& compare_tab = state_.focused_group().open_tabs[index].compare.value();
+  if (group.open_tabs[index].kind == TabEntry::Kind::Compare &&
+      group.open_tabs[index].compare.has_value()) {
+    auto& compare_tab = group.open_tabs[index].compare.value();
     if (!compare_tab.right_editable || !compare_tab.right_viewport.dirty()) {
       return true;
     }
@@ -112,9 +120,9 @@ bool TabCoordinator::Save(std::size_t index) {
     return true;
   }
 
-  if (state_.focused_group().open_tabs[index].kind == TabEntry::Kind::Merge &&
-      state_.focused_group().open_tabs[index].merge.has_value()) {
-    auto& merge_tab = state_.focused_group().open_tabs[index].merge.value();
+  if (group.open_tabs[index].kind == TabEntry::Kind::Merge &&
+      group.open_tabs[index].merge.has_value()) {
+    auto& merge_tab = group.open_tabs[index].merge.value();
     if (!merge_tab.result_viewport.dirty()) {
       return true;
     }
@@ -145,11 +153,11 @@ bool TabCoordinator::Save(std::size_t index) {
     return true;
   }
 
-  if (state_.focused_group().open_tabs[index].kind != TabEntry::Kind::Editor) {
+  if (group.open_tabs[index].kind != TabEntry::Kind::Editor) {
     return false;
   }
 
-  auto& editor_state = state_.focused_group().open_tabs[index].editor_state;
+  auto& editor_state = group.open_tabs[index].editor_state;
   if (!editor_state.has_value()) {
     return false;
   }
@@ -224,6 +232,43 @@ std::vector<std::size_t> TabCoordinator::DirtyIndicesForProject(std::size_t proj
     }
   }
   return dirty_tabs;
+}
+
+namespace {
+
+// Shared all-groups dirty walk: emit a (group, tab) ref for every dirty tab in
+// every editor group of `project`, in group-then-tab order.
+std::vector<GroupTabRef> CollectDirtyGroupTabs(const ProjectWorkspaceState& project) {
+  std::vector<GroupTabRef> dirty;
+  for (std::size_t g = 0; g < project.editor_groups.size(); ++g) {
+    const EditorGroup& group = project.editor_groups[g];
+    for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
+      if (TabCoordinator::TabStateIsDirty(group.open_tabs[i])) {
+        dirty.push_back(GroupTabRef{g, i});
+      }
+    }
+  }
+  return dirty;
+}
+
+}  // namespace
+
+std::vector<GroupTabRef> TabCoordinator::DirtyGroupTabs() const {
+  return CollectDirtyGroupTabs(state_);
+}
+
+std::vector<GroupTabRef> TabCoordinator::DirtyGroupTabsForProject(std::size_t project_index) const {
+  if (project_index >= project_catalog_.entries.size()) {
+    return {};
+  }
+  if (!state_.root.empty() && project_index == project_catalog_.active_index) {
+    return DirtyGroupTabs();
+  }
+  const auto* project_state = project_catalog_.entries[project_index].get();
+  if (project_state == nullptr) {
+    return {};
+  }
+  return CollectDirtyGroupTabs(*project_state);
 }
 
 bool TabCoordinator::ActiveTabIsEditor() const {

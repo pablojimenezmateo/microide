@@ -57,7 +57,9 @@ class PieceTree {
   bool Empty() const noexcept { return line_count_ == 0; }
 
   // Zero-copy view of line `index` (no trailing newline). `index` < LineCount().
-  // Valid until the next mutation.
+  // Valid until the next mutation, including across repeated calls for the same
+  // `index` (a spanning line is materialized once per revision and its slot is
+  // returned unchanged thereafter, so an earlier view never dangles).
   std::string_view LineView(std::size_t index) const;
   std::size_t LineLength(std::size_t index) const;
 
@@ -87,6 +89,16 @@ class PieceTree {
   // tested without allocating 4 GiB.
   void CompactAddBufferForTesting() { CompactAddBuffer(); }
   std::size_t AddBufferSizeForTesting() const noexcept { return add_.size(); }
+
+  // Testing seam: byte-level mid-line insertion (the shape TextViewport character
+  // editing produces) so a single line's content can be forced to span multiple
+  // pieces, exercising LineView's non-contiguous materialization path. `text` must
+  // not contain '\n' (line_count_ stays valid); the caller passes a pos strictly
+  // inside a line. Bumps the revision so LineView re-materializes.
+  void InsertTextForTesting(std::uint32_t pos, std::string_view text) {
+    InsertText(pos, text);
+    BumpRevision();
+  }
 
  private:
   // 0 = null sentinel; real nodes are indices >= 1 into nodes_.

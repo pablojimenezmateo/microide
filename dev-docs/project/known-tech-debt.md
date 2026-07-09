@@ -124,6 +124,45 @@ regression worse than the defect. Recorded here so they are not silently lost.
 > - **gitignore leading whitespace is significant** (`project/IgnoreMatcher.cpp`) — `ParseRule`
 >   trimmed both ends; per gitignore(5) only trailing whitespace is stripped.
 >
+> **Resolved 2026-07-09 (tenth pass — deferred-item review):** three more open items were
+> implemented after review (speed-first, correctness, low CPU/mem; VSCode as reference), each with
+> regression coverage; the full suite + ASAN/UBSAN/TSAN stay green:
+> - **`PieceTree::LineView` same-index re-read no longer dangles a prior view** (`editor/PieceTree.cpp`).
+>   The spanning-line slow path now returns the already-materialized `line_view_cache_[index]` slot
+>   when present (the whole map is cleared on every mutation via `BumpRevision`, so the bytes are
+>   immutable within a revision) instead of `clear()`+`CopyRange`, which could reallocate the slot and
+>   invalidate an earlier view. Strict improvement: removes the dangle **and** the redundant
+>   re-materialization; the contiguous fast path is untouched. Covered by
+>   `PieceTree/SpanningLineViewStableAcrossReReads` (forces a spanning line via a new
+>   `InsertTextForTesting` seam and asserts equal content + identical backing pointer across re-reads).
+> - **In-buffer regex "find next" is now cancellable on a pathological single-line file**
+>   (`project/ProjectSearchService.cpp`). `FindNextRegexMatch` polls `cancel_requested_` every
+>   `kRegexCancelPollInterval` (4096) iterations of the empty-match advance loop, so `Stop()` interrupts
+>   an `x?`-style pattern on a huge single line (previously the per-line cancel check never re-ran mid
+>   line). The function moved to `search_internal` (new `ProjectSearchServiceInternal.h`) so
+>   `ProjectSearchService/RegexFindNextIsCancellable` can drive it deterministically with a preset
+>   cancel flag (no Start/Stop timing race), asserting it bails with `*search_from` short of the line end.
+> - **Autosave / save-on-quit / quit-count now flush a buffer dirtied in the non-focused split group**
+>   (VSCode "Save All"). Added `GroupTabRef` (`WorkspaceProjectState.h`), a group-aware
+>   `TabCoordinator::SaveGroupTab(group,index)` primitive (`Save(index)` delegates to it with the
+>   clamped focused group — byte-for-byte behavior-preserving), and all-groups enumerators
+>   `DirtyGroupTabs`/`DirtyGroupTabsForProject`. Wired through `EditorTabService`, the autosave loop +
+>   arm gates (`WorkspaceTabCoordinatorShellBridge.cpp`), the quit/close-project count
+>   (`WorkspaceShellPrompts.cpp`), and `DirtyPromptCoordinator::SaveDirtyGroupTabs` (quit + close-project
+>   save). Focused-group semantics (`DirtyIndices`, close-tab/close-tabs UI) are unchanged; the quit
+>   `dirty_tabs` payload stays focused-group (display-only — `ConfirmQuit`/`ConfirmCloseProject`
+>   re-derive the all-groups set to save). Covered by
+>   `ExternalRepoChange/AutosaveFlushesNonFocusedGroupDirtyTab` and the two
+>   `WorkspaceShell/QuitWith*NonFocusedGroupDirtyTab` tests. (The old open bullet's blocked-on
+>   group-aware save/index API is exactly what shipped.)
+>
+> The plugin-metamethod protected-harvest item (111 field-read sites across 15 TUs, needs a
+> `lua_pcall`-trampoline helper + a lint extension) was reviewed and kept deferred as too large/risky
+> for a combined session — it warrants its own pass. The `ParseFloat`/`ParseDouble` parity nit stays
+> deferred (traced-benign; tightening it perturbs the JSON hot path for no live benefit). The
+> environment-blocked (Windows/macOS) and product-decision (DAP multi-thread, branch-review
+> `ChangedSinceReviewed`) items are unchanged.
+
 > Reviewed and left as LOW / deferred (no live MEDIUM+ trigger): `DebugValueTree` duplicate
 > `variablesReference` aliasing (`DebugValueTree.cpp` — one of two aliased rows never populates
 > children; adapter-dependent); several terminal escape-sequence deviations (OSC/DCS not aborted on
@@ -169,22 +208,6 @@ regression worse than the defect. Recorded here so they are not silently lost.
 > - `FileIndex::Refresh()` does not refresh `truncated_`, and `FileIndex::files()` returns a bare
 >   reference into shared_ptr-owned storage (no live caller) — latent footguns, not live defects.
 
-- **Dirty-tab detection (autosave / save-all / quit prompt) only walks the focused
-  editor group.** `src/workspace/WorkspaceTabCoordinator.cpp` (`DirtyIndices`,
-  `DirtyIndicesForProject`) enumerate dirty tabs only in `state_.focused_group()`. A
-  file open *only* in the non-focused split group and dirtied there is skipped by
-  `MaybeAutosaveDirtyTabs`, the quit-prompt count, and `SaveDirtyTabs(DirtyIndices())`,
-  so "Save all"/autosave does not flush it to disk (a file open in *both* groups shares
-  one `DocumentState`, so that case is covered). **Not data loss** — the always-on
-  session-flush snapshot iterates every group, so content survives to the session file;
-  only the disk-flush contract is violated. **Deferred (ninth pass):** the `Save(index)`
-  / `SaveDirtyTabs(span<index>)` contract is index-into-focused-group throughout, so a
-  correct fix means threading (group, index) pairs through the save + dirty-prompt paths
-  — a non-trivial refactor whose regression risk outweighs the narrow, no-data-loss gap.
-  **Blocked on:** a group-aware save/index API (`SaveGroupTab(group_index, index)` plus
-  an all-groups dirty enumerator) that the autosave and dirty-prompt coordinators route
-  through.
-
 - **Branch-review cross-generation `ChangedSinceReviewed` status is effectively
   unreachable.** `src/compare/BranchReviewStateService.cpp` /
   `src/compare/BranchReviewStateTypes.h` (`BranchReviewMarkerStatus::ChangedSinceReviewed`).
@@ -195,18 +218,6 @@ regression worse than the defect. Recorded here so they are not silently lost.
   `BranchReviewTargetIdentity`, so it is not a mechanical fix. **Blocked on:** defining
   the intended "changed since I reviewed it" semantics, then either wiring the
   producer or removing the status (and migrating persisted state).
-
-- **`PieceTree::LineView` same-index re-read can dangle a previously returned view.**
-  `src/editor/PieceTree.cpp:327`. When a line spans multiple pieces, `LineView`
-  returns a `string_view` into `line_view_cache_[index]`; a second `LineView(index)`
-  call for the same index on the non-contiguous path does `cached.clear()` +
-  `CopyRange`, reallocating that slot and invalidating the earlier view. No live
-  caller holds a `LineView` result across a re-read of the *same* index today, so this
-  is a latent API-contract hazard, not a live crash — but it is a hot path, so the
-  fix (e.g. documenting single-live-view-per-index, or returning owned storage on the
-  slow path) must stay allocation-free in the common contiguous case. **Blocked on:**
-  nothing external — deferred only to avoid perturbing a hot path without a measured
-  guard; pick up when the LineView contract is next touched.
 
 The 2026-07-09 fourth-pass sweep also surfaced these lower-severity items, deferred
 as benign/cosmetic or as design constraints rather than live defects:
@@ -286,17 +297,6 @@ ProjectFileScanner symlink-cycle crash):
   `CheckPluginLuaErrorDoesNotLongjmpOverCppLocals` to also flag unprotected
   `lua_getfield`/`lua_geti`. **Blocked on:** that protected-harvest helper + design (do
   NOT blanket-convert to `lua_rawget` — it would break `__index` field defaults).
-
-- **In-buffer regex "find next" is uncancellable on a pathological single-line file.**
-  `src/project/ProjectSearchService.cpp:50` (`FindNextRegexMatch` empty-match advance
-  loop). Cancellation is checked once per *line* (`:367`), never inside the per-offset
-  empty-match loop, so a pattern that matches empty at every offset (e.g. `x?`) against
-  a very large single-line file (up to the 512 MiB read cap) spins ~N PCRE2 `Match`
-  calls one byte at a time before returning — PCRE2's `match_limit`/`depth_limit` bound
-  a single match, not the *count* of separate `Match` calls, so `Stop()` cannot
-  interrupt it. Responsiveness/soft-DoS bounded by line length, not corruption.
-  **Blocked on:** a measured per-line iteration/token check that does not slow the hot
-  search path (speed is the priority), so deferred rather than rushed.
 
 - **`PieceTree` `add_` buffer offset uint32 truncation — FIXED 2026-07-09 (sixth pass).**
   `src/editor/PieceTree.cpp` `InsertText` now guards: when `add_.size() + text.size()`

@@ -405,6 +405,16 @@ struct EditorGroup {
   const TabEntry& active_tab() const { return open_tabs[active_tab_index]; }
 };
 
+// A tab addressed by (group, tab) across ALL editor groups of one project. Used
+// by the all-groups dirty enumerators and the group-aware save primitive so
+// autosave / save-on-quit flush a buffer dirtied in the non-focused split group
+// too (VSCode "Save All" semantics). Focused-group-scoped operations (close-tab /
+// close-tabs UI) keep using a bare tab index into the focused group.
+struct GroupTabRef {
+  std::size_t group_index = 0;
+  std::size_t tab_index = 0;
+};
+
 struct ProjectWorkspaceState {
   std::filesystem::path root;
   bool initialized = false;

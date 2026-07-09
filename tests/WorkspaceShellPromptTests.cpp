@@ -725,6 +725,73 @@ void TestWorkspaceShellQuitWithSavePersistsInactiveDirtyProject() {
          "save-and-quit should set the pending quit request");
 }
 
+// Shared setup: open file_a in group 0, split, open file_b only in the new
+// (focused) group 1, dirty file_b there, then refocus group 0 so file_b is dirty
+// and open EXCLUSIVELY in the non-focused group. Returns with group 0 focused.
+void OpenFileDirtiedOnlyInNonFocusedGroup(WorkspaceShell& shell,
+                                          const std::filesystem::path& root,
+                                          const std::filesystem::path& file_a,
+                                          const std::filesystem::path& file_b) {
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "non-focused-group fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "splitting the editor group should succeed");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "the new group should be focused");
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("edited ");
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus should return to group 0");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0, "group 0 should be focused");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).dirty(),
+         "file_b should be dirty in the non-focused group 1");
+  Expect(!WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).dirty(),
+         "file_a should be clean in the focused group 0");
+}
+
+// Save-on-quit must flush a buffer dirtied only in the non-focused split group.
+void TestWorkspaceShellQuitWithSaveFlushesNonFocusedGroupDirtyTab() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  WriteFile(file_a, "aaa\n");
+  WriteFile(file_b, "bbb\n");
+
+  WorkspaceShell shell;
+  OpenFileDirtiedOnlyInNonFocusedGroup(shell, root, file_a, file_b);
+
+  WorkspaceShellTestAccess::ShowDirtyPromptForQuit(shell);
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "quitting with a non-focused-group dirty tab should show the quit prompt");
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
+
+  Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "confirming save-and-quit should dismiss the prompt");
+  Expect(ReadFile(file_b) == "edited bbb\n",
+         "save-and-quit must flush the non-focused split group's dirty tab to disk");
+  Expect(shell.ConsumeQuitRequested(), "save-and-quit should set the pending quit request");
+}
+
+// The quit-prompt count must include a tab dirtied only in the non-focused group.
+void TestWorkspaceShellQuitPromptCountIncludesNonFocusedGroupDirtyTab() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  WriteFile(file_a, "aaa\n");
+  WriteFile(file_b, "bbb\n");
+
+  WorkspaceShell shell;
+  OpenFileDirtiedOnlyInNonFocusedGroup(shell, root, file_a, file_b);
+
+  WorkspaceShellTestAccess::ShowDirtyPromptForQuit(shell);
+  // Only file_b (non-focused group) is dirty; without the all-groups count this
+  // would be 0 because the focused group holds only the clean file_a.
+  Expect(WorkspaceShellTestAccess::DirtyPromptCount(shell) == 1,
+         "the quit-prompt count must include the non-focused split group's dirty tab");
+}
+
 void TestWorkspaceShellEditorBreadcrumbUsesRelativePathForLargeFixtures() {
   WorkspaceShell shell;
   const std::filesystem::path project_root = FixturePath("large");
@@ -904,6 +971,10 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCloseInactiveDirtyProjectPreservesOriginalActiveProject);
   AddTest(tests, "WorkspaceShell/QuitWithSavePersistsInactiveDirtyProject",
           TestWorkspaceShellQuitWithSavePersistsInactiveDirtyProject);
+  AddTest(tests, "WorkspaceShell/QuitWithSaveFlushesNonFocusedGroupDirtyTab",
+          TestWorkspaceShellQuitWithSaveFlushesNonFocusedGroupDirtyTab);
+  AddTest(tests, "WorkspaceShell/QuitPromptCountIncludesNonFocusedGroupDirtyTab",
+          TestWorkspaceShellQuitPromptCountIncludesNonFocusedGroupDirtyTab);
   AddTest(tests, "WorkspaceShell/EditorBreadcrumbUsesRelativePathForLargeFixtures",
           TestWorkspaceShellEditorBreadcrumbUsesRelativePathForLargeFixtures);
 #if defined(__linux__) || defined(__APPLE__)

@@ -15,6 +15,10 @@ bool EditorTabService::Save(std::size_t index) {
   return coordinator_.Save(index);
 }
 
+bool EditorTabService::SaveGroupTab(std::size_t group_index, std::size_t index) {
+  return coordinator_.SaveGroupTab(group_index, index);
+}
+
 bool EditorTabService::IsDirty(std::size_t index) const {
   return coordinator_.IsDirty(index);
 }
@@ -25,6 +29,14 @@ std::vector<std::size_t> EditorTabService::DirtyIndices() const {
 
 std::vector<std::size_t> EditorTabService::DirtyIndicesForProject(std::size_t project_index) const {
   return coordinator_.DirtyIndicesForProject(project_index);
+}
+
+std::vector<GroupTabRef> EditorTabService::DirtyGroupTabs() const {
+  return coordinator_.DirtyGroupTabs();
+}
+
+std::vector<GroupTabRef> EditorTabService::DirtyGroupTabsForProject(std::size_t project_index) const {
+  return coordinator_.DirtyGroupTabsForProject(project_index);
 }
 
 bool EditorTabService::ActiveTabIsEditor() const {

@@ -63,9 +63,21 @@ class TabCoordinator {
 
   std::string ActiveTitle() const;
   bool Save(std::size_t index);
+  // Group-aware save primitive: saves editor_groups[group_index].open_tabs[index]
+  // (Editor/Compare/Merge) with the same disk-conflict guard and plugin-save notify
+  // as Save(). Bounds-checks both indices. Save() delegates here with the clamped
+  // focused group; the all-groups flush paths (autosave, save-on-quit) call it
+  // directly so a buffer dirtied in the non-focused split group is not skipped.
+  bool SaveGroupTab(std::size_t group_index, std::size_t index);
   bool IsDirty(std::size_t index) const;
   std::vector<std::size_t> DirtyIndices() const;
   std::vector<std::size_t> DirtyIndicesForProject(std::size_t project_index) const;
+  // Dirty tabs across ALL editor groups of the active project.
+  std::vector<GroupTabRef> DirtyGroupTabs() const;
+  // Dirty tabs across ALL editor groups of any catalog project (active project
+  // delegates to DirtyGroupTabs(); inactive walks the catalog entry's groups
+  // directly, mirroring DirtyIndicesForProject).
+  std::vector<GroupTabRef> DirtyGroupTabsForProject(std::size_t project_index) const;
   bool ActiveTabIsEditor() const;
   TabEntry::EditorTabState* ActiveEditorTab();
   const TabEntry::EditorTabState* ActiveEditorTab() const;

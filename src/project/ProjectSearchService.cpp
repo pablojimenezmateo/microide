@@ -1,5 +1,7 @@
 #include "project/ProjectSearchService.h"
 
+#include "project/ProjectSearchServiceInternal.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
@@ -38,18 +40,34 @@ bool UsesCaseSensitiveSearch(std::string_view query, ProjectSearchCaseMode case_
   }
 }
 
+}  // namespace
+
+namespace search_internal {
+
 bool FindNextRegexMatch(const util::CompiledRegex& pattern,
                         std::string_view line,
                         std::size_t* search_from,
                         util::RegexMatchData* match_data,
                         std::size_t* match_start,
-                        std::size_t* match_end) {
+                        std::size_t* match_end,
+                        const std::atomic<bool>& cancel_requested) {
   if (!pattern.valid() || search_from == nullptr || match_data == nullptr ||
       !match_data->valid() || match_start == nullptr || match_end == nullptr) {
     return false;
   }
 
+  std::size_t iterations = 0;
   while (*search_from <= line.size()) {
+    // A pattern that matches empty at every offset (e.g. `x?`) advances one byte
+    // per iteration, so a huge single line spins ~N PCRE2 Match calls that Stop()
+    // cannot otherwise interrupt (the outer per-line cancel check never re-runs).
+    // Poll the cancel flag on a coarse tick so responsiveness stays bounded by a
+    // constant, not by line length. On cancel *search_from is left short of the
+    // line end, so the caller's match loop and the worker loop both wind down.
+    if ((++iterations % search_internal::kRegexCancelPollInterval) == 0 &&
+        cancel_requested.load(std::memory_order_relaxed)) {
+      return false;
+    }
     const int rc = pattern.Match(line, *search_from, *match_data);
     if (rc == PCRE2_ERROR_NOMATCH) {
       return false;
@@ -91,6 +109,10 @@ bool FindNextRegexMatch(const util::CompiledRegex& pattern,
 
   return false;
 }
+
+}  // namespace search_internal
+
+namespace {
 
 class PreparedLiteralQuery {
  public:
@@ -387,8 +409,8 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
         std::size_t match_start = 0;
         std::size_t match_end = 0;
         while ((regex_pattern.has_value() &&
-                FindNextRegexMatch(*regex_pattern, line, &search_from, &match_data, &match_start,
-                                   &match_end)) ||
+                search_internal::FindNextRegexMatch(*regex_pattern, line, &search_from, &match_data,
+                                                    &match_start, &match_end, cancel_requested_)) ||
                (literal_query != nullptr &&
                 literal_query->FindNext(line, lowered_line, &search_from, &match_start, &match_end))) {
           // Count every match globally. The first kMaxProjectSearchResults claims

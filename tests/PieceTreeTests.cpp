@@ -265,6 +265,30 @@ void TestPieceTreeAddBufferCompaction() {
   Expect(tree.ToVector() == expected, "edits after compaction must apply correctly");
 }
 
+// Regression: a spanning line (content crossing a piece boundary, the shape
+// mid-line character editing produces) is materialized into a per-index cache
+// slot. A second LineView() for the SAME index must return the already-cached
+// slot unchanged -- re-running clear()+CopyRange could reallocate the slot's
+// buffer and dangle a view returned by the earlier call. Assert the two views
+// share the same backing pointer (proving no reallocation) and equal content.
+void TestPieceTreeSpanningLineViewStableAcrossReReads() {
+  PieceTree tree({"abcdef", "second"});
+  // Byte-level mid-line insert at column 3 of line 0: "abc" | "XYZ" | "def",
+  // so LineView(0) spans three pieces and takes the non-contiguous slow path.
+  tree.InsertTextForTesting(3, "XYZ");
+  const std::string_view first = tree.LineView(0);
+  Expect(first == "abcXYZdef", "spanning line materializes correctly");
+  // Re-read the same index. With the fix this returns the same slot; without it
+  // the slot is cleared+rebuilt and `first` would dangle.
+  const std::string_view second = tree.LineView(0);
+  Expect(second == "abcXYZdef", "same-index re-read yields identical content");
+  Expect(first.data() == second.data(),
+         "same-index re-read must not reallocate the cache slot (first view stays valid)");
+  Expect(first == "abcXYZdef", "the first view is still valid after the second read");
+  // The untouched neighbour line is unaffected.
+  Expect(tree.LineView(1) == "second", "neighbour line intact");
+}
+
 }  // namespace
 
 void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
@@ -275,6 +299,8 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PieceTree/SliceLines", TestPieceTreeSliceLines);
   AddTest(tests, "PieceTree/SliceLinesEquivalence", TestPieceTreeSliceLinesEquivalence);
   AddTest(tests, "PieceTree/ResetFromTextMatchesReset", TestPieceTreeResetFromTextMatchesReset);
+  AddTest(tests, "PieceTree/SpanningLineViewStableAcrossReReads",
+          TestPieceTreeSpanningLineViewStableAcrossReReads);
 }
 
 }  // namespace microide::tests

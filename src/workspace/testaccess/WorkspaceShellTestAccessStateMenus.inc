@@ -43,6 +43,9 @@
     return shell.StageGitSidebarEntry(entry_index);
   }
   static bool DirtyPromptVisible(const WorkspaceShell& shell) { return shell.context_.prompts.dirty_visible; }
+  static std::size_t DirtyPromptCount(const WorkspaceShell& shell) {
+    return shell.context_.prompts.dirty.dirty_count;
+  }
   static std::string DirtyPromptMessage(const WorkspaceShell& shell) {
     return shell.DirtyPromptMessage();
   }

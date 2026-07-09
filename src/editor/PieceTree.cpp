@@ -358,8 +358,14 @@ std::string_view PieceTree::LineView(std::size_t index) const {
   bool ok = false;
   const std::string_view view = TryViewRange(start, length, ok);
   if (ok) return view;
+  // Spanning line: materialize once per revision. If this index is already
+  // cached (the whole map is cleared on every mutation via BumpRevision), return
+  // the existing slot untouched — re-running clear()+CopyRange could reallocate
+  // the slot's buffer and dangle a view returned by an earlier same-index call,
+  // and re-materializing is wasted work anyway.
+  auto it = line_view_cache_.find(index);
+  if (it != line_view_cache_.end()) return it->second;
   std::string& cached = line_view_cache_[index];
-  cached.clear();
   CopyRange(start, length, cached);
   return cached;
 }

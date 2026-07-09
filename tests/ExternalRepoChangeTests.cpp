@@ -348,9 +348,55 @@ void TestWorkspaceShellExternalChangeReloadsBothSplitGroups() {
          "the NON-focused split group's clean view must also reload (no stale content)");
 }
 
+// Autosave must flush a buffer dirtied in the NON-focused split group. Dirty-tab
+// enumeration used to walk only the focused group, so a file open exclusively in
+// the other split view was skipped by the autosave flush and never written to disk
+// (VSCode "Save All" flushes every group).
+void TestWorkspaceShellAutosaveFlushesNonFocusedGroupDirtyTab() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  WriteFile(file_a, "aaa\n");
+  WriteFile(file_b, "bbb\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "non-focused autosave fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  // Split, then open file_b only in the new (focused) group 1.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "splitting the editor group should succeed");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "the new group should be focused");
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("edited ");
+  // Refocus group 0 so file_b is dirty and open ONLY in the non-focused group 1.
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus should return to group 0");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0, "group 0 should be focused");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).dirty(),
+         "file_b should be dirty in the non-focused group 1");
+  Expect(!WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).dirty(),
+         "file_a should be clean in the focused group 0");
+  DrainProjectChanges(shell);
+
+  // Set the mode AFTER opening so the project/user config load does not reset it.
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.autosave", "after_delay"),
+         "after_delay autosave should be settable");
+  WorkspaceShellTestAccess::MaybeAutosaveDirtyTabs(shell, /*on_focus_change=*/false);
+
+  Expect(ReadFile(file_b) == "edited bbb\n",
+         "autosave must flush the non-focused split group's dirty tab to disk");
+  Expect(!WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).dirty(),
+         "the flushed non-focused tab should be clean afterwards");
+}
+
 }  // namespace
 
 void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ExternalRepoChange/AutosaveFlushesNonFocusedGroupDirtyTab",
+          TestWorkspaceShellAutosaveFlushesNonFocusedGroupDirtyTab);
   AddTest(tests, "ExternalRepoChange/ReloadsCleanBuffer",
           TestWorkspaceShellExternalChangeReloadsCleanBuffer);
   AddTest(tests, "ExternalRepoChange/ReloadsBothSplitGroups",

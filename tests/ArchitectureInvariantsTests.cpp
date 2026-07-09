@@ -155,8 +155,11 @@ void TestArchitectureInvariants() {
              // 1668: +10 for project-wide rename: ApplyRenameWorkspaceEdit / CommitPendingRenameSave
              // / DiscardPendingRenameSave + the PendingRenameSave struct and its optional member
              // (open + apply + save the files a rename touches that were not already open).
+             // 1671: +3 for all-groups dirty flush (VSCode "Save All"): SaveGroupTab wrapper +
+             // DirtyEditorGroupTabs / DirtyEditorGroupTabsForProject accessors, so autosave and
+             // save-on-quit flush a buffer dirtied in the non-focused split group too.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1668);
+                                                     1671);
            });
 
   bool hard_failure = false;

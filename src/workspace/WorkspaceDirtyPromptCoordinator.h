@@ -33,6 +33,8 @@ class DirtyPromptCoordinator {
  private:
   std::optional<std::size_t> FindProjectIndexByRoot(const std::filesystem::path& root) const;
   bool SaveDirtyTabs(std::span<const std::size_t> tab_indices);
+  // All-groups save used by the quit / close-project paths (VSCode "Save All").
+  bool SaveDirtyGroupTabs(std::span<const GroupTabRef> refs);
   bool SwitchProjectByRoot(const std::filesystem::path& root);
   void ConfirmCloseTab(const DirtyPromptState& prompt);
   void ConfirmCloseTabs(const DirtyPromptState& prompt);

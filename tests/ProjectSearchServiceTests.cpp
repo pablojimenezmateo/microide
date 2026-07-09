@@ -1,11 +1,14 @@
 #include "TestSupport.h"
 
 #include "project/ProjectSearchService.h"
+#include "project/ProjectSearchServiceInternal.h"
 #include "project/ProjectFileScanner.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -220,6 +223,43 @@ void TestProjectSearchServiceRegexEmptyMatchDoesNotHideRealMatch() {
          "a non-empty alternative sharing an offset with an empty match must be found");
   Expect(result.results[0].column == 0 && result.results[0].match_preview_length == 3,
          "the recovered match should be the non-empty `foo` at column 0");
+}
+
+void TestProjectSearchServiceRegexFindNextIsCancellable() {
+  // Regression: `x?` matches empty at every offset, so on a line with no 'x' the
+  // advance loop walks one byte per iteration doing a PCRE2 Match each time. The
+  // per-line cancel check never re-runs inside a single line, so on a huge single
+  // line Stop() could not interrupt it. FindNextRegexMatch now polls the cancel
+  // flag inside the advance loop. Drive it directly (deterministic; no Start/Stop
+  // timing race) with the flag preset and assert it bails before the line end.
+  const util::CompiledRegex pattern("x?", 0, "test regex");
+  Expect(pattern.valid(), "x? compiles");
+  util::RegexMatchData match_data = pattern.CreateMatchData();
+  Expect(match_data.valid(), "match data allocates");
+
+  // Longer than kRegexCancelPollInterval so a preset-cancel scan is guaranteed to
+  // hit the poll before reaching the end.
+  const std::string line(20000, 'a');
+  std::size_t search_from = 0;
+  std::size_t match_start = 0;
+  std::size_t match_end = 0;
+
+  std::atomic<bool> cancel{true};
+  const bool found = project::search_internal::FindNextRegexMatch(
+      pattern, line, &search_from, &match_data, &match_start, &match_end, cancel);
+  Expect(!found, "a cancelled scan reports no match");
+  Expect(search_from < line.size(),
+         "cancellation bails inside the advance loop, well before the line end");
+
+  // With cancellation not requested the same scan runs to completion: `x?` finds
+  // no non-empty match on a no-x line and advances one past the end.
+  std::atomic<bool> no_cancel{false};
+  search_from = 0;
+  const bool found_full = project::search_internal::FindNextRegexMatch(
+      pattern, line, &search_from, &match_data, &match_start, &match_end, no_cancel);
+  Expect(!found_full, "an uncancelled x? scan on a no-x line finds no non-empty match");
+  Expect(search_from == line.size() + 1,
+         "an uncancelled scan advances one past the line end");
 }
 
 void TestProjectSearchServiceHiddenAndBinaryFiles() {
@@ -593,6 +633,8 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServiceRegexModeAndInvalidRegex);
   AddTest(tests, "ProjectSearchService/RegexEmptyMatchDoesNotHideRealMatch",
           TestProjectSearchServiceRegexEmptyMatchDoesNotHideRealMatch);
+  AddTest(tests, "ProjectSearchService/RegexFindNextIsCancellable",
+          TestProjectSearchServiceRegexFindNextIsCancellable);
   AddTest(tests, "ProjectSearchService/HiddenAndBinaryFiles",
           TestProjectSearchServiceHiddenAndBinaryFiles);
   AddTest(tests, "ProjectSearchService/ExcludesIgnoredFilesByDefault",

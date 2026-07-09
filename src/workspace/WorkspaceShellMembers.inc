@@ -702,6 +702,9 @@
   void RequestCloseTabs(std::vector<std::size_t> indices);
   void SyncActiveEditorTab();
   bool SaveTab(std::size_t index);
+  // Group-aware save wrapper (mirrors SaveTab's save_tab_mutex_ + format-suppress
+  // bracket) so autosave / save-on-quit can flush a tab in the non-focused group.
+  bool SaveGroupTab(std::size_t group_index, std::size_t index);
   // Autosave dirty, titled editor tabs when editor.autosave selects the matching
   // trigger (on_focus_change vs after_delay). Safe: never prompts, never clobbers.
   void MaybeAutosaveDirtyTabs(bool on_focus_change);
@@ -713,6 +716,11 @@
   std::vector<std::size_t> DirtyEditorTabIndices() const;
   static std::vector<std::size_t> DirtyEditorTabIndices(const ProjectWorkspaceState& state);
   std::vector<std::size_t> DirtyEditorTabIndicesForProject(std::size_t project_index) const;
+  // All-groups dirty enumerators (VSCode "Save All" semantics) used by the quit
+  // count and save-on-quit paths; the focused-group variants above stay for the
+  // close-tab UI that is legitimately scoped to the focused group.
+  std::vector<GroupTabRef> DirtyEditorGroupTabs() const;
+  std::vector<GroupTabRef> DirtyEditorGroupTabsForProject(std::size_t project_index) const;
   void ShowDirtyPromptForTab(std::size_t index);
   void ShowDirtyPromptForTabs(std::vector<std::size_t> target_tabs,
                               std::vector<std::size_t> dirty_tabs);
