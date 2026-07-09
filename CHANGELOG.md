@@ -6,6 +6,74 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.6.7] - 2026-07-09
+
+A **correctness-hardening and consolidation** cycle on top of 2.6.6. Eight
+successive cross-subsystem bug-hunt passes fixed real defects across the editor,
+persistence, terminal, git/diff/merge, LSP, and debugger subsystems; four
+verbatim code duplications were consolidated into shared modules (net code
+reduction); and the LSP/DAP performance surface gained deterministic,
+baseline-gated regression coverage. No public API or format changes — a
+recommended upgrade for all users.
+
+### Added
+
+- **Gated LSP performance scenarios** — deterministic micro-benchmarks over the
+  language-server wire path: `semanticTokens/full` decode, `publishDiagnostics`
+  parse, `documentSymbol` outline parse, and `Content-Length` message framing
+  (`tests/perf/LspPerfScenarios.cpp`), each with a committed reference-runner
+  baseline.
+- **Promoted debugger/DAP performance scenarios** — the six pure-unit DAP
+  micro-benchmarks (value-tree expand/rebuild/paging, protocol encode/decode,
+  breakpoints-model rebuild, pane hit-test geometry) are now baseline-gated with
+  committed baselines rather than advisory-only.
+
+### Changed
+
+- **Shared edit primitives consolidated.** Four byte-for-byte duplications folded
+  into focused shared modules — filesystem ops (`platform/FsOps`), lexical path
+  prefix replacement (`util/PathMatch`, dropping a per-path syscall on rename
+  remap), terminal child-shutdown escalation and shell resolution
+  (`platform/ShellProcess`), and the self-pipe wake + outbound-queue machinery
+  shared between the LSP and DAP stdio clients (`util/WakePipe`,
+  `workspace/StdioClientQueue`).
+- **LSP/DAP transport parity.** The DAP client adopted the LSP client's
+  bounded-acquisition shutdown so teardown can no longer stall behind an I/O
+  thread blocked writing to a wedged-but-alive adapter; requests registered
+  during a failed initialize handshake are now explicitly failed on both stdio
+  transports instead of being silently dropped.
+
+### Fixed
+
+- **Multi-caret line-move allocation regression.** Grouping `move-line-up/down`
+  for correct multi-caret redo had made the undo machinery deep-copy each grouped
+  edit's line slices three times; a wide multi-caret line move now records the
+  aggregate once, restoring allocation counts to parity (fixes a ~50% allocation
+  and ~20% latency regression in the `editor_shaping_multi_caret` scenario).
+- **Editor** — multi-caret redo keeps secondary carets and column; a caret
+  round-trip breaks the typing-coalesce run; multi-caret copy/cut/paste aggregate
+  every selection VSCode-style; snippet placeholder shifts stay in sync across
+  delete/choice and lone-CR bodies; assorted caret, selection, and buffer-integrity
+  fixes across the bug-hunt passes.
+- **Persistence & patches** — patch/diff desync and corruption, and
+  session/persistence data-loss edge cases.
+- **Terminal** — scrollback, alt-screen, and VT-parsing correctness fixes; safe
+  child fork/shutdown.
+- **LSP/debugger** — LSP state drift, DAP hang/shutdown races, and line
+  breakpoints that now shift correctly on edit.
+- **Settings** — integer writes clamp to each spec's declared range at store time.
+
+### Internal
+
+- **Perf harness hardening.** Fixed a selection bug where a bare full
+  `microide_perf` run aborted on an opt-in (`run_by_default = false`) scenario
+  instead of skipping it; added per-scenario warmup iterations; and made the
+  `search_first_result` scenario deterministic (it previously snapshotted a racing
+  mid-search state, swinging ~80× run to run). Project search grew an optional
+  worker-count cap (`MICROIDE_SEARCH_WORKER_LIMIT`, unset in production) and a
+  non-consuming `WorkerFinished` completion signal so the harness can measure a
+  settled, single-worker search reproducibly.
+
 ## [2.6.6] - 2026-07-08
 
 An **LSP feature + performance** cycle on top of 2.6.5. It rounds out the built-in
