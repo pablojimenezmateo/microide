@@ -419,6 +419,12 @@
   static bool ProjectSearchRunning(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.running;
   }
+  // Whether the background search worker has finished, peeked without consuming
+  // its pending results (see ProjectSearchService::WorkerFinished). Lets the perf
+  // harness wait for genuine completion, then drain exactly once for determinism.
+  static bool ProjectSearchWorkerFinished(const WorkspaceShell& shell) {
+    return shell.project_search_runtime_.WorkerFinished();
+  }
   static bool GitSidebarRefreshing(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.git.refreshing;
   }

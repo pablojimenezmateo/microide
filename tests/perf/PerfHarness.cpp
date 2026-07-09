@@ -214,6 +214,43 @@ bool ScenarioContext::WaitForDiagnostics(const std::filesystem::path& path,
   return workspace::WorkspaceShell::TestAccess::DiagnosticsForPath(shell_, path) != nullptr;
 }
 
+bool ScenarioContext::WaitForFileIndexPath(const std::filesystem::path& relative_path,
+                                           std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() <= deadline) {
+    if (workspace::WorkspaceShell::TestAccess::FileIndexContainsPath(shell_, relative_path)) {
+      return true;
+    }
+    const auto wake = shell_.HandleScheduledWake();
+    if (wake.handled) {
+      PumpFrames(1);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return workspace::WorkspaceShell::TestAccess::FileIndexContainsPath(shell_, relative_path);
+}
+
+bool ScenarioContext::WaitForProjectSearchFinished(std::chrono::milliseconds timeout) {
+  // Wait for the background worker to genuinely finish via the non-consuming
+  // WorkerFinished signal, THEN drain exactly once. Two determinism reasons for
+  // this shape: (1) consuming updates mid-search applies a timing-dependent number
+  // of partial-result batches, each allocating — draining once after completion
+  // applies the single deterministic final state instead; (2) we do not pump the
+  // shell while spinning — the search runs on its own thread and flips the flag
+  // independently, so pumping would only add unrelated, timing-dependent
+  // main-thread work to the measured window.
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() <= deadline) {
+    if (workspace::WorkspaceShell::TestAccess::ProjectSearchWorkerFinished(shell_)) {
+      workspace::WorkspaceShell::TestAccess::ConsumeProjectSearchUpdates(shell_);
+      return !workspace::WorkspaceShell::TestAccess::ProjectSearchRunning(shell_);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  workspace::WorkspaceShell::TestAccess::ConsumeProjectSearchUpdates(shell_);
+  return !workspace::WorkspaceShell::TestAccess::ProjectSearchRunning(shell_);
+}
+
 bool ScenarioContext::AssertNoAllocationsDuringDraw(std::string* error) {
   const AllocationSnapshot before = Allocations::Snapshot();
   shell_.Render(renderer_, 1920, 1080);
@@ -423,6 +460,29 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
   aggregate.scenario_name = scenario.name;
   aggregate.smoke = scenario.smoke;
   aggregate.iterations.reserve(options.iterations);
+
+  // Warmup: run (and discard) the scenario a few times on the same reused driver
+  // so any one-time cold work the measured iterations reuse — e.g. a project's
+  // initial file-index build — is already warm. Without this the first measured
+  // iteration alone carries that cost and governs the p95/max percentiles,
+  // making them noisy even when the steady-state p50 is stable.
+  for (std::size_t w = 0; w < scenario.warmup_iterations; ++w) {
+    std::cerr << "[perf] scenario=" << scenario.name << " warmup=" << (w + 1) << "/"
+              << scenario.warmup_iterations << '\n';
+    ScenarioContext warmup_context(driver.shell, driver.window, driver.renderer);
+    try {
+      scenario.run(warmup_context);
+    } catch (const std::exception& ex) {
+      HarnessError() = std::string("scenario threw during warmup: ") + ex.what();
+      ShutdownDriver(&driver);
+      return std::nullopt;
+    } catch (...) {
+      HarnessError() = "scenario threw unknown exception during warmup";
+      ShutdownDriver(&driver);
+      return std::nullopt;
+    }
+  }
+
   for (std::size_t i = 0; i < options.iterations; ++i) {
     std::cerr << "[perf] scenario=" << scenario.name << " iteration=" << (i + 1) << "/"
               << options.iterations << '\n';

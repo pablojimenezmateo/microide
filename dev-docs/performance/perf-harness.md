@@ -215,6 +215,20 @@ Before trusting results from a scenario run:
    window (`1920x1080`); pass `--renderer=auto` for the advisory GPU lane (never baseline-gated)
 6. keep plugin-dependent scenarios explicit and bounded; do not rely on incidental plugin state
 7. capture JSON reports (`--report-json`) for reproducible hotspot triage diffs
+8. drain async subsystems to a fixed state before/inside the measured window rather than snapshotting
+   a race. A scenario over a project's file index or project search must wait for the initial index
+   build (`WaitForFileIndexPath`) and for the search worker to actually finish (`WaitForProjectSearchFinished`,
+   backed by the non-consuming `ProjectSearchService::WorkerFinished`) and then drain exactly once —
+   snapshotting mid-flight makes the metric swing wildly (`search_first_result` swung ~80× before this)
+9. use `Scenario::warmup_iterations` for scenarios whose first passes do one-time cold work the rest
+   reuse (initial index build, background-subsystem settling). Discarded warmup passes bring the reused
+   driver to steady state so every measured iteration is uniform; the whole run shares one process, and
+   the allocation counter is process-**global** (counts every thread), so background work counts too
+10. the harness pins project search to a single worker (`MICROIDE_SEARCH_WORKER_LIMIT=1`, set in
+    `PerfMain`): with a global allocation counter, N parallel search workers make measured allocations
+    non-deterministic. A scenario whose steady-state median is deterministic but whose flat baseline
+    leaves the tail no headroom may loosen `Scenario::tolerance_{p95,max}_percent` (keeping p50 tight)
+    so an incidental background wake can't false-positive
 
 Current notable scenarios:
 

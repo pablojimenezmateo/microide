@@ -91,6 +91,16 @@ class ScenarioContext {
   std::uint64_t Wait(std::chrono::milliseconds duration);
   bool WaitForDiagnostics(const std::filesystem::path& path,
                           std::chrono::milliseconds timeout);
+  // Pump frames until `relative_path` appears in the project file index (the
+  // initial background build has reached it) or the timeout elapses. Used to
+  // take the async indexer out of a scenario's measured window so its metrics
+  // are deterministic. Returns whether the path was present.
+  bool WaitForFileIndexPath(const std::filesystem::path& relative_path,
+                            std::chrono::milliseconds timeout);
+  // Drain project-search updates, pumping frames, until the active search
+  // reports it is no longer running (finished) or the timeout elapses. Returns
+  // whether the search finished.
+  bool WaitForProjectSearchFinished(std::chrono::milliseconds timeout);
   bool AssertNoAllocationsDuringDraw(std::string* error = nullptr);
   double Measure(std::string_view phase_name, const std::function<void()>& action);
   std::vector<Iteration::PhaseMetrics> TakePhaseMetrics();
@@ -138,6 +148,22 @@ struct Scenario {
   bool smoke = false;
   bool baseline_gated = true;
   bool run_by_default = true;
+  // Discarded iterations run (on the same reused driver) before the measured
+  // ones. For scenarios whose first run does one-time cold work the rest reuse
+  // — e.g. a project's initial file-index build — this warms that state so every
+  // measured iteration is uniform and the p95/max percentiles aren't governed by
+  // a single noisy cold sample. Keep 0 for scenarios that are already uniform.
+  std::size_t warmup_iterations = 0;
+  // Per-metric regression tolerances (percent) written into this scenario's
+  // baseline at --update-baseline time; default to the harness-wide 10/20/50.
+  // Only override for a scenario whose steady-state median is deterministic but
+  // whose flat baseline leaves the tail no natural headroom, so an occasional
+  // background-thread wake (caught by the process-global allocation counter)
+  // would trip max/p95: keep p50 tight and loosen p95/max so the gate stays
+  // reliable without going blind to a real regression the p50 gate would catch.
+  double tolerance_p50_percent = 10.0;
+  double tolerance_p95_percent = 20.0;
+  double tolerance_max_percent = 50.0;
   std::function<void(ScenarioContext&)> run;
 };
 

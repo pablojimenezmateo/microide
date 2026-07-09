@@ -27,6 +27,9 @@ class WorkspaceProjectSearchRuntime {
                       project::SharedPathList indexed_files = nullptr);
   void Stop();
   std::optional<project::ProjectSearchUpdate> ConsumeActiveUpdate();
+  // True when the active search worker has finished (or none is running), without
+  // consuming its pending results. See ProjectSearchService::WorkerFinished.
+  bool WorkerFinished() const { return service_.WorkerFinished(); }
 
  private:
   project::ProjectSearchService service_;

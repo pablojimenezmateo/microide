@@ -1190,6 +1190,7 @@ add_executable(microide_search_bench
   src/util/StringUtil.cpp
   src/util/DurableFile.cpp
   src/util/TextFileIO.cpp
+  src/util/Parse.cpp
   src/project/IgnoreMatcher.cpp
   src/project/ProjectFileScanner.cpp
   src/project/ProjectSearchService.cpp

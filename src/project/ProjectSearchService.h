@@ -93,6 +93,12 @@ class ProjectSearchService {
   // accumulator under a shared lock).
   ProjectSearchUpdate TakePendingUpdate();
   std::uint64_t active_search_id() const;
+  // True once the active worker has published its finished update (or there is no
+  // active search). Unlike TakePendingUpdate this does NOT consume/clear pending
+  // results, so a caller can wait for genuine completion and then drain exactly
+  // once — used by the perf harness to keep search scenarios deterministic
+  // instead of snapshotting a racing mid-search state.
+  bool WorkerFinished() const { return worker_finished_.load(std::memory_order_acquire); }
 
  private:
   struct SearchCompletion {
@@ -126,6 +132,10 @@ class ProjectSearchService {
   std::uint64_t next_search_id_ = 0;
   Uint32 wake_event_type_ = 0;
   std::atomic_bool cancel_requested_{false};
+  // True when no worker is running (initial state, or the active worker has
+  // published `finished`). Set false at Start, true at PublishFinished / Stop.
+  // Peeked by WorkerFinished() without touching pending_update_.
+  std::atomic_bool worker_finished_{true};
   // Set when a wake event is queued and unconsumed; cleared when the shell
   // drains via TakePendingUpdate. Lets PushWakeEvent collapse the per-batch /
   // per-progress flood into a single pending wake (the coalesced state always

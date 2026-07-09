@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -10,6 +11,7 @@
 #include <vector>
 
 #include "app/BackgroundTaskCounter.h"
+#include "util/Parse.h"
 #include "util/PerformanceCounters.h"
 #include "util/RegexUtil.h"
 #include "util/StringUtil.h"
@@ -185,6 +187,7 @@ std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
     pending_update_ = {};
   }
   cancel_requested_.store(false, std::memory_order_relaxed);
+  worker_finished_.store(false, std::memory_order_release);
 
   app::IncrementBackgroundTaskCount();
   task_executor_.Submit(
@@ -204,6 +207,7 @@ void ProjectSearchService::Stop() {
     active_search_id_ = ++next_search_id_;
     pending_update_ = {};
   }
+  worker_finished_.store(true, std::memory_order_release);
 
   task_executor_.CancelAll();
 }
@@ -437,9 +441,21 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     }
   };
 
+  // Optional deterministic override: with a global (all-thread) allocation
+  // counter, N parallel workers make a search's measured allocation count
+  // non-deterministic. Perf/regression runs that need reproducibility pin the
+  // worker count via MICROIDE_SEARCH_WORKER_LIMIT (production leaves it unset and
+  // uses the full hardware parallelism).
+  unsigned int worker_cap = 8;
+  if (const char* limit = std::getenv("MICROIDE_SEARCH_WORKER_LIMIT")) {
+    if (const auto parsed = util::ParseInt(limit); parsed.has_value() && *parsed >= 1) {
+      worker_cap = static_cast<unsigned int>(*parsed);
+    }
+  }
   const unsigned int hardware_threads = std::thread::hardware_concurrency();
   const std::size_t worker_count = std::min<std::size_t>(
-      std::clamp<std::size_t>(hardware_threads == 0 ? 1 : hardware_threads, 1, 8), total_files);
+      std::clamp<std::size_t>(hardware_threads == 0 ? 1 : hardware_threads, 1, worker_cap),
+      total_files);
 
   if (worker_count <= 1) {
     run_worker();
@@ -519,6 +535,9 @@ void ProjectSearchService::PublishFinished(std::uint64_t run_id, SearchCompletio
     pending_update_.finished = true;
     pending_update_.error = std::move(completion.error);
   }
+  // Publish completion to WorkerFinished() peekers after the pending state is
+  // fully populated under the lock, so a waiter that then drains sees everything.
+  worker_finished_.store(true, std::memory_order_release);
   PushWakeEvent();
 }
 
