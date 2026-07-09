@@ -232,10 +232,44 @@ void TestPieceTreeResetFromTextMatchesReset() {
   }
 }
 
+// Regression: the append-only add_ buffer indexes bytes with 32-bit offsets, so
+// it must be compactable before add_.size() can cross 4 GiB and wrap. Compaction
+// is representation-only — it materializes the live document into the original
+// buffer and empties add_, preserving content and line count. (The overflow
+// itself is impractical to allocate, so exercise the compaction path directly.)
+void TestPieceTreeAddBufferCompaction() {
+  PieceTree tree({"alpha", "beta", "gamma"});
+  // Each mutator routes new text through InsertText -> AppendToAdd, growing add_.
+  tree.SetLine(0, "alpha-edited");
+  tree.InsertLine(1, "inserted");
+  tree.ReplaceLineRange(2, 1, {"beta-1", "beta-2"});
+  tree.PushBackLine("delta");
+  Expect(tree.AddBufferSizeForTesting() > 0, "edits should have grown the add buffer");
+
+  const std::vector<std::string> before = tree.ToVector();
+  const std::size_t before_lines = tree.LineCount();
+  const std::size_t before_bytes = tree.ByteSize();
+
+  tree.CompactAddBufferForTesting();
+
+  Expect(tree.AddBufferSizeForTesting() == 0, "compaction should empty the add buffer");
+  Expect(tree.ToVector() == before, "compaction must preserve content exactly");
+  Expect(tree.LineCount() == before_lines, "compaction must preserve the line count");
+  Expect(tree.ByteSize() == before_bytes, "compaction must preserve the byte size");
+
+  // Edits after compaction must still apply correctly (add_ re-grows from zero).
+  tree.SetLine(0, "post-compact");
+  Expect(tree.AddBufferSizeForTesting() > 0, "post-compaction edits should re-grow add_");
+  std::vector<std::string> expected = before;
+  expected[0] = "post-compact";
+  Expect(tree.ToVector() == expected, "edits after compaction must apply correctly");
+}
+
 }  // namespace
 
 void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PieceTree/BasicSemantics", TestPieceTreeBasicSemantics);
+  AddTest(tests, "PieceTree/AddBufferCompaction", TestPieceTreeAddBufferCompaction);
   AddTest(tests, "PieceTree/MidLineEdits", TestPieceTreeMidLineEdits);
   AddTest(tests, "PieceTree/RandomizedEquivalence", TestPieceTreeRandomizedEquivalence);
   AddTest(tests, "PieceTree/SliceLines", TestPieceTreeSliceLines);

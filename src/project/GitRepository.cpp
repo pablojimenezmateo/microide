@@ -96,7 +96,7 @@ GitFileHistoryResult GitRepository::GetFileHistory(
   // and report `truncated`, rather than silently hiding older commits.
   constexpr std::size_t kMaxFileHistoryCommits = 5000;
   const auto result = Execute({"log", "--follow", "--no-color", "-n", "5001",
-                               "--pretty=format:%H%x09%h%x09%an%x09%ar%x09%s", "--",
+                               "--pretty=format:%H%x1f%h%x1f%an%x1f%ar%x1f%s", "--",
                                relative_path.generic_string()});
   if (!result.success()) {
     return {};

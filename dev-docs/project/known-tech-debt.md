@@ -129,17 +129,200 @@ ProjectFileScanner symlink-cycle crash):
   **Blocked on:** a measured per-line iteration/token check that does not slow the hot
   search path (speed is the priority), so deferred rather than rushed.
 
-- **`PieceTree` `add_` buffer offset is truncated to `uint32` with no guard.**
-  `src/editor/PieceTree.cpp` (`AppendToAdd`). `RebuildFromOriginal` deliberately guards
-  the `original_` buffer against exceeding `UINT32_MAX`, but the append-only `add_`
-  buffer (which every `InsertText` grows and which is compacted only on a full
-  `Reset`/`ResetFromText`) has no equivalent guard: once cumulative inserted bytes in
-  one session reach 4 GiB, `start = static_cast<uint32_t>(add_.size())` wraps and later
-  pieces reference wrong offsets → silent text corruption. Latent — needs a multi-GiB
-  cumulative-insert session with no intervening reload, so not practically demonstrable
-  today. **Blocked on:** nothing external; add a parity guard (compact/rebuild or refuse
-  the insert) when `add_.size()` would exceed the 32-bit range, next time PieceTree is
-  touched.
+- **`PieceTree` `add_` buffer offset uint32 truncation — FIXED 2026-07-09 (sixth pass).**
+  `src/editor/PieceTree.cpp` `InsertText` now guards: when `add_.size() + text.size()`
+  would exceed `UINT32_MAX` it calls `CompactAddBuffer`, which materializes the live
+  (uint32-bounded) document into `original_` and empties `add_`, preserving content and
+  `line_count_`. Covered by `PieceTree/AddBufferCompaction` (exercises the compaction
+  path directly via the `CompactAddBufferForTesting` seam, since 4 GiB is impractical to
+  allocate). Left here only as a pointer; no longer open.
+
+The 2026-07-09 sixth-pass sweep fixed nine concrete bugs (terminal: wide-glyph
+overwrite orphaning a paired cell, DEL-in-output destructive delete, tab-at-pending-wrap
+moving backward, EL2 over-grow at pending-wrap; editor: PieceTree `add_` overflow now
+compacts, soft-wrap `ClampCursorColumn` relative-vs-absolute caret snap; persistence:
+`TryReadSpecificFile` reporting a stat I/O error as NotFound; git: `ParseLog` field
+desync on a tab-in-author name, now US-delimited; LSP/DAP: LSP missing the DAP idle
+death-nudge `PushWake`, and both clients stalling the drain loop ~1s on a valid-framed
+invalid-JSON message). It also surfaced these, deferred:
+
+- **Combining marks after a double-width glyph (and any base+mark exceeding 4 bytes)
+  are dropped.** `src/terminal/TerminalSessionScreen.cpp` `PutGlyphLocked` (width==0
+  branch). A hunter noted the zero-width path attaches to `cursor_column_ - 1`, which
+  after a wide glyph is the trailing spacer. Stepping back to the wide lead was
+  investigated and reverted: a wide glyph is ≥3 UTF-8 bytes and a combining mark ≥2, so
+  `cell.length + glyph.size()` always exceeds the 4-byte inline `TerminalCell::bytes`,
+  and the existing size guard drops the mark regardless of which cell it targets. So the
+  base-cell fix is unobservable; the *real* limitation is the 4-byte inline cell. Benign
+  (combining-on-wide is rare; display-only). **Blocked on:** a larger/overflow cell
+  representation for combining sequences, which touches the trivially-copyable cell model
+  the terminal-snapshot/scrollback memcpy fast paths rely on — measure before changing.
+
+- **`ParseFloat`/`ParseDouble` accept grammar `ParseInt` rejects.** `src/util/Parse.cpp`
+  (`ParseRealExact` via `strto{f,d}`) vs `ParseExact` (`from_chars`). The float path
+  accepts a leading `+`, leading ASCII whitespace, and hex floats (`0x1p4`); the int path
+  rejects all three. `inf`/`nan` are correctly gated out. Every caller was traced
+  (`JsonValue` feeds a pre-tokenized numeric slice; settings/command callers treat the
+  leniency benignly) and none misbehaves, so this is a parity nit, not a live defect.
+  **Blocked on:** nothing external; tighten only if strict cross-parser parity is wanted
+  (reject when the first char is whitespace/`+`), deferred to avoid perturbing the JSON
+  hot path for no live benefit.
+
+A second sixth-pass sweep (workspace-services / control+platform / render / syntax)
+fixed the HIGH plugin-display-list clip-restore that blanked full-repaint frames
+(`SDL_GetRenderClipRect` return value was misread as "clip enabled"; now
+`SDL_RenderClipEnabled`, plus a shared `render::ScopedRenderClip` guard applied to the
+three status-bar/banner/bottom-panel sites that restored to `nullptr` and broke
+dirty-region confinement), the Linux fork async-signal-safety hazard in `RunSubprocess`
+/ `AsyncSubprocess` (child no longer calls `setenv`/`unsetenv` or allocates — the env
+array and argv are built in the parent and `environ` is assigned in the child), and the
+compare/merge reveal-on-close scroll. It deferred:
+
+- **`TerminalBackend` forks the shell then calls `setenv("TERM"/"COLORTERM")` in the
+  child** (`src/platform/TerminalBackend.cpp:108-110`) — the same async-signal-unsafe
+  pattern fixed in `RunSubprocess`. Deferred, not fixed, because the real PTY fork path
+  is not exercised by the test suite here (tests use placeholder terminals via
+  `SetUsePlaceholderTerminalsForTesting`), terminal creation is usually on the main
+  thread (narrower race window), and an untested change to the interactive-shell
+  environment risks a worse regression than the latent hazard. **Blocked on:** applying
+  the parent-built-`environ` pattern (reuse `BuildChildEnvironment`) with a way to
+  validate the real shell environment.
+
+- **Windows `RunSubprocess` ignores `timeout_ms` and the capture ceiling** →
+  `WaitForSingleObject(hProcess, INFINITE)` (`src/platform/Subprocess.cpp` Windows branch).
+  A hung/firehose formatter run synchronously on the UI thread during format-on-save
+  (`WorkspaceTabCoordinatorShellBridge`) freezes the editor permanently on Windows,
+  where the 5 s cap is a no-op (the POSIX path enforces it). Real MED bug, but Windows-only
+  and **cannot be compiled or tested on this Linux workstation**, so shipping the Win32
+  fix (`WaitForSingleObject(timeout)` + `TerminateProcess` on `WAIT_TIMEOUT`, break the
+  drain at the ceiling) blind risks breaking the Windows build. **Blocked on:** a Windows
+  build/test environment.
+
+- **`AsyncSubprocess` has no shutdown wake-pipe.** `Read`/`ReadExact` `poll()` `stdout_fd`
+  outside `state_mutex`; a concurrent `Shutdown()` closes that fd. Benign today because
+  every LSP/DAP caller passes a finite `timeout_ms` (the guarded read re-checks the fd
+  after each short poll), but any future caller passing `timeout_ms <= 0` (infinite poll)
+  concurrent with shutdown would block on a stale/reused fd. **Blocked on:** nothing —
+  add a self-pipe like `TerminalBackend`, or document the finite-timeout requirement.
+
+- **`--control-spec` file read is uncapped** (`Application.cpp` slurps with
+  `istreambuf_iterator`, no size limit) whereas descriptor files are capped at 1 MiB.
+  Operator-supplied path, not attacker input, so cosmetic. **Blocked on:** nothing; add a
+  size cap for consistency.
+
+- **LSP diagnostics published for a not-yet-open file store the server's UTF-16
+  `character` as a byte column and are never re-encoded on open.** `LspService.cpp`
+  `PublishLspDiagnostics` passes a null viewport into `LspRangeToEditorRange`, whose
+  `LspInboundColumn` returns the raw value; `EnsureLspDocumentOpen` only sends `didOpen`,
+  not a re-encode. For a whole-project-check server (rust-analyzer) reporting on a line
+  with a non-ASCII character, the editor underline / hover target lands at the wrong
+  column until the server re-publishes or the user edits (line/gutter and the Problems
+  sidebar are correct throughout). Deferred because the stored column can't be told apart
+  from a correctly-converted one post-hoc — the clean fix stores closed-file diagnostics
+  in raw LSP form and converts lazily against the viewport at render time, a
+  diagnostics-store data-model change. **Blocked on:** that store change, or forcing a
+  diagnostics refresh on open.
+
+A third sixth-pass sweep (debug-semantics / undo-multicaret / watchers-session)
+fixed the multi-caret selection-aware edit gap (Backspace/Delete/Enter/paste now
+replace each caret's active selection instead of editing one char per caret) and
+the dead "show more…" pagination affordance in the debug Variables/Watch panes
+(click/Enter now page in the next batch). It deferred:
+
+- **File-index initial full-scan races the incremental inotify worker** (MED/HIGH,
+  Linux). `src/platform/FileIndexWatcher.cpp` starts `StartNative` (registers
+  watches + `WorkerMain` incremental delivery) and `StartInitialScan` (the wholesale-
+  replace initial batch) as two independent threads with no delivery ordering. During
+  the project-open window an incremental event can be applied before the initial
+  batch, which then clobbers it: a file created in an already-walked directory is
+  dropped from the finder, or a file deleted mid-scan is resurrected as a ghost — until
+  the next full refresh. Deferred because every safe fix (gate incremental delivery
+  behind an initial-delivered latch + wake; or serialize watch-registration → scan →
+  worker) either adds a wake/overflow-handling path to the hot inotify loop or
+  serializes the currently-parallel watch-registration and scan walks, slowing the
+  latency-critical project-open path — and the race is not deterministically testable
+  here. Speed-first + untestable + self-healing ⇒ record, don't rush. **Blocked on:** a
+  measured, wake-driven delivery gate that keeps the two walks parallel, plus a
+  deterministic test hook.
+
+- **inotify watch-descriptor leak when a subdirectory tree is moved OUT of the
+  project.** `FileIndexWatcher.cpp` `WorkerMain` emits a recursive `Deleted` on
+  `IN_MOVED_FROM`/`IN_DELETE` for a directory but only removes the watch for the dir
+  itself; descendant subdirectory watches (no self-event, inodes still exist at the new
+  location) leak in `wd_to_path` + the kernel table. Repeated move-outs grow it toward
+  the 100k cap, then the watcher degrades to partial-tree tracking. LOW/MED, bounded.
+  **Blocked on:** nothing — on `is_dir && (IN_DELETE|IN_MOVED_FROM)`, also
+  `inotify_rm_watch` + erase every `wd_to_path` entry at/under the path (mirror the
+  recursive index delete). Deferred with the race above to avoid piling untested changes
+  into the watcher in one pass.
+
+- **macOS FSEvents `StopNative` can deadlock if `Unwatch()` runs before the worker
+  publishes `run_loop`.** `FileIndexWatcher.cpp` Apple backend: `StopNative` reads
+  `run_loop` (set later by the worker) and skips `CFRunLoopStop` when it is still null,
+  so `CFRunLoopRun()` never terminates and `worker.join()` hangs. A rapid open→close
+  triggers it. MED but **macOS-only and not compilable/testable on this Linux
+  workstation**. **Blocked on:** a macOS build; fix is to publish `run_loop` under a
+  mutex/condvar and have `StopNative` wait for it.
+
+- **Line breakpoints do not shift when the file is edited.** `src/editor/BreakpointStore`
+  keys breakpoints by absolute 0-based line with no anchor, and no edit path adjusts the
+  store on insert/delete. Insert lines above a breakpoint and its gutter disc, the
+  Breakpoints panel, and the transmitted `SendBreakpointsForFile` line all stay on the
+  now-shifted-down old line number, binding to the wrong statement. VSCode shifts
+  breakpoints on edit, so this is a real correctness gap — but a proper fix is a feature
+  (subscribe the store to edit events; shift entries at/after an inserted/deleted range;
+  drop a breakpoint whose exact line is removed) that deserves focused work, not a
+  loop-iteration bolt-on onto the hot edit path. **Blocked on:** an editor-edit-event
+  subscription + line-shift/anchor model for the breakpoint store.
+
+- **Redo of a multi-caret line move loses secondary carets and column** (LOW).
+  `src/editor/ShapingActions.cpp` `RestoreCaretsAfterLineMove` fixes the live carets via
+  `MoveCursorTo`/`SetSecondaryCarets` (which record nothing), so the undo entry's
+  `after_state` still snaps to `(range_first, 0)` with no secondaries; Redo restores that
+  degraded state. Content is correct; only caret/selection state regresses. **Blocked
+  on:** nothing — refresh the top entry's `after_state` after restoring carets, or wrap
+  move+restore in an undo group so the aggregate captures the final carets.
+
+- **Undo coalescing merges a keystroke after a round-trip caret move** (LOW).
+  `TextViewportUndoHistory.cpp` `TryCoalesceWithTop` breaks a run only on kind or
+  position mismatch; typing `a`, Right, Left (same column), `b` coalesces `a`+`b` into
+  one undo. Buffer/dirty state stay correct; only undo granularity. **Blocked on:**
+  nothing — call `EndCoalesceRun` from the explicit cursor-move paths.
+
+A fourth sixth-pass sweep (command-palette / settings / actions) fixed the palette
+Enter routing a multi-word command *label* to the command-line executor instead of
+the highlighted row, the signed-overflow UB in the settings int stepper
+(`WrapSteppedInt` now steps in `int64`), and the bool toggle no-op for non-canonical
+truthy tokens (now shares `SettingFlagEnabled`). It deferred:
+
+- **Settings int writes are validated for parseability but not range**, so an
+  out-of-range value is stored and displayed verbatim while the editor applies a
+  clamped one (`set-setting editor.font_size 999` shows 999, renders 32). The value is
+  *applied* correctly (clamp at `ApplyCanonicalEditorPreference`); only the stored/
+  displayed value diverges. LOW/MED, cosmetic-ish. **Blocked on:** nothing structural —
+  clamp int values to the spec `[min,max]` at store time (or reject out-of-range in
+  `ParseSettingValue`); deferred only to avoid touching the settings write path under
+  time pressure now that the memory-safety (UB) half is fixed.
+
+- **Folding / sticky-scroll / overview-ruler / clipboard round-trips were only
+  partially swept this session** — the dedicated hunter hit a session/API limit, so the
+  lens was finished by direct review. The sticky-scroll compute (`ComputeStickyScroll-
+  LinesUncached`, depth clamped to [1,8], `take = min(max_depth, openers.size())`) and
+  single-caret `SelectedText` (reversed/multi-line normalized correctly) are sound. One
+  real gap found and deferred (below). Overview-ruler marker math and column-selection
+  extraction still merit a future dedicated pass.
+
+- **Multi-caret copy/cut only captures the primary selection.** `TextViewport::
+  SelectedText`/`has_selection` (`src/editor/TextViewport.cpp:521-569`) read only
+  `selection_anchor_` + the primary cursor, so Ctrl-D-selecting several occurrences and
+  copying (or cutting) yields just one — the secondary caret selections are dropped.
+  This is the clipboard sibling of the multi-caret selection-*delete* gap fixed this pass,
+  but a correct fix is a feature, not a one-liner: copy must aggregate every caret's
+  selection in position order (newline-joined, VSCode-style) AND paste must distribute
+  one clipboard line per caret when the counts match — otherwise pasting an N-line block
+  at each of N carets yields N×N lines. **Blocked on:** designing the aggregate-copy +
+  per-caret-distribute-paste pair together (and the cut path, which composes copy with
+  the now-multi-caret-aware delete). Deferred to focused work rather than a rushed half.
 
 The **timing-dependent test flakiness** item (added 2026-06-21) is now closed. The
 single-check-after-a-fixed-`sleep_for` anti-pattern was audited across every

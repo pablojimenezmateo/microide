@@ -132,7 +132,10 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
         if (operations_.begin_debug_variable_edit) {
           operations_.begin_debug_variable_edit(*line_index);
         }
-      } else if (event.button.clicks == 1 && row.has_children) {
+      } else if (event.button.clicks == 1 && (row.has_children || row.is_show_more)) {
+        // A "show more…" row has no children but toggling it loads the next page
+        // (ToggleRow handles it); without this the row was drawn/cursored as
+        // clickable but did nothing, stranding children past the page size.
         if (operations_.toggle_debug_variable_row) {
           operations_.toggle_debug_variable_row(*line_index);
         }
@@ -166,7 +169,8 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
         if (operations_.begin_debug_watch_edit) {
           operations_.begin_debug_watch_edit(*line_index);
         }
-      } else if (event.button.clicks == 1 && row.has_children) {
+      } else if (event.button.clicks == 1 && (row.has_children || row.is_show_more)) {
+        // "show more…" rows page in the next batch via ToggleRow (see Variables above).
         if (operations_.toggle_debug_watch_row) {
           operations_.toggle_debug_watch_row(*line_index);
         }

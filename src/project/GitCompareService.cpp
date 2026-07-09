@@ -125,7 +125,7 @@ std::vector<GitCommitEntry> CollectGitRecentCommits(const std::filesystem::path&
   }
   const auto result = repo.Execute(std::vector<std::string>{
       "log", "--no-color", "-n", std::to_string(limit),
-      "--pretty=format:%H%x09%h%x09%an%x09%ar%x09%s", "HEAD"});
+      "--pretty=format:%H%x1f%h%x1f%an%x1f%ar%x1f%s", "HEAD"});
   if (!result.success()) {
     return {};
   }

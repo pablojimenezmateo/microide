@@ -245,6 +245,7 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
       EnsureCursorLineExistsLocked();
       auto& line = lines_[cursor_row_];
       ResizeLineLocked(line, cursor_column_ + 1);
+      BreakWideGlyphPairForWriteLocked(line, cursor_column_, 1);
       line.cells[cursor_column_] = MakeUtf8TerminalCell(glyph, current_style_);
       return;
     }
@@ -253,6 +254,7 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
   EnsureCursorLineExistsLocked();
   auto& line = lines_[cursor_row_];
   ResizeLineLocked(line, cursor_column_ + advance);
+  BreakWideGlyphPairForWriteLocked(line, cursor_column_, advance);
   line.cells[cursor_column_] = MakeUtf8TerminalCell(glyph, current_style_);
   if (advance == 2) {
     // Trailing spacer carries the lead's style (so background fills span both
@@ -268,6 +270,22 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
 void TerminalSession::ResizeLineLocked(TerminalLine& line, std::size_t size) {
   if (line.cells.size() < size) {
     line.cells.resize(size, MakeAsciiTerminalCell(' ', TerminalStyle{}));
+  }
+}
+
+void TerminalSession::BreakWideGlyphPairForWriteLocked(TerminalLine& line, std::size_t start,
+                                                       std::size_t advance) {
+  if (advance == 0 || start >= line.cells.size()) {
+    return;
+  }
+  // Left edge: overwriting a trailing spacer orphans its lead one column back.
+  if (line.cells[start].style.wide_trailing() && start > 0) {
+    line.cells[start - 1] = MakeAsciiTerminalCell(' ', current_style_);
+  }
+  // Right edge: overwriting a wide lead orphans its trailing spacer one column on.
+  const std::size_t last = start + advance - 1;
+  if (last + 1 < line.cells.size() && line.cells[last + 1].style.wide_trailing()) {
+    line.cells[last + 1] = MakeAsciiTerminalCell(' ', current_style_);
   }
 }
 
@@ -289,9 +307,16 @@ void TerminalSession::EraseInLineLocked(int mode) {
     case 1:
       ClearLineRangeLocked(line, 0, cursor_column_ + 1);
       break;
-    case 2:
-      ClearLineRangeLocked(line, 0, std::max<std::size_t>(line.cells.size(), cursor_column_ + 1));
+    case 2: {
+      // Erase the entire line: span the full terminal width, not just up to the
+      // cursor. Using cursor_column_ + 1 left a line shorter than the cursor only
+      // partly cleared and, at the pending-wrap column (cursor_column_ ==
+      // columns_), grew the line one cell past the right margin.
+      const std::size_t end =
+          columns_ > 0 ? std::max<std::size_t>(line.cells.size(), columns_) : line.cells.size();
+      ClearLineRangeLocked(line, 0, end);
       break;
+    }
     case 0:
     default:
       if (cursor_column_ < line.cells.size()) {
@@ -378,6 +403,12 @@ void TerminalSession::ResizeTabStopsLocked() {
 
 std::size_t TerminalSession::NextTabStopLocked(std::size_t column) const {
   const std::size_t width = std::max<std::size_t>(1, columns_);
+  // At or past the last usable column there is no forward tab stop. Return the
+  // column unchanged rather than snapping to width-1: at the pending-wrap column
+  // (column == columns_) the old code moved the cursor *backward* by one.
+  if (column >= width - 1) {
+    return column;
+  }
   if (tab_stops_.empty()) {
     return std::min(((column / 8) + 1) * 8, width - 1);
   }

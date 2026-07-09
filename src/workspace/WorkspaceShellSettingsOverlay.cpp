@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cmath>
 #include <unordered_map>
 
@@ -161,15 +162,17 @@ int WrapSteppedInt(int value, int min_value, int max_value, int step, SettingSte
   if (min_value > max_value) {
     std::swap(min_value, max_value);
   }
-  const int delta = direction == SettingStepDirection::Forward ? step : -step;
-  value += delta;
-  if (value > max_value) {
+  // Step in 64-bit: `value` can be a stored-but-unclamped value near INT_MAX (any
+  // int parses into the store), so `value + step` in `int` is signed-overflow UB.
+  const std::int64_t delta = direction == SettingStepDirection::Forward ? step : -step;
+  const std::int64_t stepped = static_cast<std::int64_t>(value) + delta;
+  if (stepped > max_value) {
     return min_value;
   }
-  if (value < min_value) {
+  if (stepped < min_value) {
     return max_value;
   }
-  return value;
+  return static_cast<int>(stepped);
 }
 
 std::string NextSettingValue(const SettingSpec& spec,
@@ -177,7 +180,11 @@ std::string NextSettingValue(const SettingSpec& spec,
                              SettingStepDirection direction) {
   switch (spec.type) {
     case SettingType::Bool:
-      return (current == "true" || current == "1" || current == "on") ? "false" : "true";
+      // Use the single truthiness predicate (SettingFlagEnabled) so a value stored
+      // as a non-canonical truthy token ("yes") — which renders as checked — toggles
+      // OFF on the first step instead of being treated as false and staying enabled.
+      return SettingFlagEnabled(std::optional<std::string>(std::string(current))) ? "false"
+                                                                                  : "true";
     case SettingType::Enum: {
       if (spec.enum_values.empty()) {
         return std::string(current);

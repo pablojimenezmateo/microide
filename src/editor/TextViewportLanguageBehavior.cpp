@@ -132,6 +132,10 @@ std::string TextViewport::AutoIndentForNewline(std::size_t line, std::size_t col
       current_line.begin(), current_line.end(),
       [](char c) { return !IsIndentCharacter(c); });
 
+  // A whitespace-only line (first_non_indent == end) deliberately yields NO base
+  // indent: pressing Enter on an auto-indented blank line clears the pending indent
+  // instead of carrying it forward, so empty lines never accumulate trailing
+  // whitespace. Pinned by TextViewport/InsertNewlineOnWhitespaceOnlyLineDoesNotCarryIndentForward.
   std::string base_indent;
   if (first_non_indent != current_line.end()) {
     const std::size_t indent_columns = std::min<std::size_t>(

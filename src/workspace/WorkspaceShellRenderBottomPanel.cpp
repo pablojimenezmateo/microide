@@ -16,6 +16,7 @@
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "render/PluginDisplayList.h"
 #include "render/PluginDisplayListRenderer.h"
+#include "render/ScopedRenderClip.h"
 #include "render/SurfaceTextureCache.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -53,9 +54,8 @@ void RenderRasterSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
                        static_cast<float>(entry->height) * scale};
   const SDL_Rect clip{static_cast<int>(std::floor(rect.x)), static_cast<int>(std::floor(rect.y)),
                       static_cast<int>(std::ceil(rect.w)), static_cast<int>(std::ceil(rect.h))};
-  SDL_SetRenderClipRect(renderer, &clip);
+  const render::ScopedRenderClip clip_scope(renderer, clip);
   SDL_RenderTexture(renderer, entry->texture, nullptr, &dest);
-  SDL_SetRenderClipRect(renderer, nullptr);
 }
 
 }  // namespace

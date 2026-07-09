@@ -80,6 +80,14 @@ class PieceTree {
   // Total bytes of the logical document (lines joined by '\n').
   std::size_t ByteSize() const noexcept { return TreeLength(root_); }
 
+  // Testing seam: force the add-buffer compaction that InsertText performs
+  // automatically when the append-only add_ buffer would overflow the 32-bit
+  // offset space. Content and line count are invariant across a compaction; the
+  // add buffer is emptied. Exposed so the overflow guard's correctness can be
+  // tested without allocating 4 GiB.
+  void CompactAddBufferForTesting() { CompactAddBuffer(); }
+  std::size_t AddBufferSizeForTesting() const noexcept { return add_.size(); }
+
  private:
   // 0 = null sentinel; real nodes are indices >= 1 into nodes_.
   using NodeId = std::uint32_t;
@@ -112,6 +120,10 @@ class PieceTree {
   std::uint32_t NthNewlineOffset(std::uint8_t buffer, std::uint32_t from, std::uint32_t nth) const;
   // Append `text` to the add buffer; returns its start offset there.
   std::uint32_t AppendToAdd(std::string_view text);
+  // Materialize the live document into `original_` and clear the append-only
+  // `add_` buffer, preserving content and line_count_. Called by InsertText when
+  // add_ would otherwise overflow the 32-bit offset space.
+  void CompactAddBuffer();
   // Rebuild the newline index + single root piece from the current `original_`
   // (shared by Reset / ResetFromText). Does not set line_count_.
   void RebuildFromOriginal();

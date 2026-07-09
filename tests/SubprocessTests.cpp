@@ -160,6 +160,31 @@ void TestSubprocessAppliesEnvironmentOverrides() {
          "subprocess env unset fixture should exit successfully");
   Expect(unset_result.stdout_text == "unset",
          "subprocess execution should allow removing inherited environment variables");
+
+  // Passthrough: when any override is present the child environment is rebuilt from
+  // the current environ (BuildChildEnvironment) in the parent before fork. An
+  // UNRELATED inherited variable must survive that rebuild — a regression here would
+  // silently drop the entire inherited environment from the child.
+  const auto passthrough_result = RunSubprocess(
+      {"sh", "-c", "printf '%s' \"$MICROIDE_SUBPROCESS_TEST_ENV\""},
+      SubprocessOptions{
+          .cwd = {},
+          .stdin_text = {},
+          .environment_overrides =
+              {
+                  SubprocessEnvironmentOverride{
+                      .name = "MICROIDE_SUBPROCESS_UNRELATED",
+                      .value = std::string("x"),
+                  },
+              },
+          .capture_stdout = true,
+          .capture_stderr = true,
+          .silence_stderr = false,
+      });
+  Expect(passthrough_result.exit_code == 0,
+         "subprocess passthrough fixture should exit successfully");
+  Expect(passthrough_result.stdout_text == "outer",
+         "an inherited env var must survive a rebuild triggered by an unrelated override");
 }
 
 void TestSubprocessWithoutExplicitStdinDoesNotInheritParentStdin() {

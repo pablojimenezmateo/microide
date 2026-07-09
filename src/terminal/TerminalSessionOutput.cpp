@@ -235,18 +235,11 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
           --cursor_column_;
         }
         break;
-      case 0x7f: {
-        if (cursor_column_ > 0) {
-          --cursor_column_;
-        }
-        EnsureCursorLineExistsLocked();
-        auto& line = lines_[cursor_row_];
-        if (cursor_column_ < line.cells.size()) {
-          line.cells.erase(line.cells.begin() +
-                           static_cast<std::ptrdiff_t>(cursor_column_));
-        }
+      case 0x7f:
+        // DEL received in the output stream is ignored (ECMA-48 / xterm / VTE).
+        // The previous destructive delete-and-shift corrupted the display when a
+        // stray 0x7f appeared in child output (e.g. `printf '\x7f'` after text).
         break;
-      }
       case '\t': {
         // HT is pure cursor motion to the next tab stop. It must NOT write
         // spaces over the cells it passes: real terminals (xterm/VTE) leave the

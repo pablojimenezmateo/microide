@@ -221,6 +221,12 @@ class TerminalSession {
   void MoveCursorLocked(std::size_t row, std::size_t column);
   void PutCharacterLocked(char character);
   void PutGlyphLocked(std::string_view glyph);
+  // Blank any dangling half of a previously written double-width pair that a
+  // fresh write over [start, start+advance) would orphan, so the renderer never
+  // sees a lead without its trailing spacer (stale gap) or a spacer without its
+  // lead (overlap).
+  void BreakWideGlyphPairForWriteLocked(TerminalLine& line, std::size_t start,
+                                        std::size_t advance);
   void ResizeLineLocked(TerminalLine& line, std::size_t size);
   void ClearLineRangeLocked(TerminalLine& line, std::size_t start, std::size_t end);
   void EraseInLineLocked(int mode);

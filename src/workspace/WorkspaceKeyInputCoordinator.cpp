@@ -429,7 +429,8 @@ bool KeyInputCoordinator::HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& e
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       if (row != nullptr) {
-        if (row->has_children) {
+        if (row->has_children || row->is_show_more) {
+          // "show more…" rows page in the next batch via ToggleRow.
           if (operations_.toggle_debug_variable_row) {
             operations_.toggle_debug_variable_row(selected);
           }

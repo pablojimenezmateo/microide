@@ -249,9 +249,38 @@ void TestRemovingOnlyPrimaryResurrectsFromBackup() {
          "removing both primary and backup fully clears the state");
 }
 
+// Regression: a genuine stat failure on the primary file (here ELOOP from a
+// symlink cycle) must surface as ReadFailed, not NotFound. std::filesystem::exists
+// returns false *and sets the error code* on such failures; the reader used to
+// test !exists() first and report NotFound, letting a transient I/O error look
+// like "no persisted state" — which a later save would overwrite with defaults.
+void TestPersistedRecordReaderReportsReadFailureOnStatError() {
+#if defined(_WIN32)
+  return;  // POSIX symlink semantics
+#else
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path loopa = temp_dir.path() / "loopa";
+  const std::filesystem::path loopb = temp_dir.path() / "loopb";
+  std::error_code ec;
+  std::filesystem::create_directory_symlink(loopb, loopa, ec);
+  Expect(!ec, "loop symlink 'loopa' should be created");
+  std::filesystem::create_directory_symlink(loopa, loopb, ec);
+  Expect(!ec, "loop symlink 'loopb' should be created");
+
+  // Reading through the cycle stats with ELOOP for both primary and backup paths.
+  PersistedRecordReaderError error = PersistedRecordReaderError::None;
+  const auto result = PersistedRecordReader::ReadFile(loopa / "state.bin", &error);
+  Expect(!result.has_value(), "reading through a symlink cycle should not succeed");
+  Expect(error == PersistedRecordReaderError::ReadFailed,
+         "a stat failure must be reported as ReadFailed, not NotFound");
+#endif
+}
+
 }  // namespace
 
 void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PersistedRecordIo/ReaderReportsReadFailureOnStatError",
+          TestPersistedRecordReaderReportsReadFailureOnStatError);
   AddTest(tests, "PersistedRecordIo/RemovingOnlyPrimaryResurrectsFromBackup",
           TestRemovingOnlyPrimaryResurrectsFromBackup);
   AddTest(tests, "PersistedRecordIo/PrimitiveReaderSanitizesNonFiniteF32",

@@ -82,6 +82,27 @@ struct PlannedCaretEdit {
   std::optional<TextPosition> landed_override;
 };
 
+// A caret plus the selection it owns (if any), so multi-caret Backspace / Delete /
+// Enter / paste replace the selection like the single-caret paths do instead of
+// dropping it and mis-editing one character per caret.
+struct MultiCaretSite {
+  TextPosition position;
+  std::optional<SelectionRange> selection;
+};
+
+// Normalize a caret+anchor into an ordered selection range, or nullopt when there
+// is no (non-empty) selection.
+std::optional<SelectionRange> NormalizedSelection(const TextPosition& caret,
+                                                  const std::optional<TextPosition>& anchor) {
+  if (!anchor.has_value() || *anchor == caret) {
+    return std::nullopt;
+  }
+  if (detail::PositionLess(*anchor, caret)) {
+    return SelectionRange{*anchor, caret};
+  }
+  return SelectionRange{caret, *anchor};
+}
+
 }  // namespace
 
 bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo) {
@@ -104,18 +125,54 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     document_->lines.PushBackLine("");
   }
 
-  std::vector<TextPosition> carets = secondary_carets();
-  carets.push_back(TextPosition{cursor_line_, cursor_column_});
-  std::sort(carets.begin(), carets.end(), detail::PositionLess);
-  carets.erase(std::unique(carets.begin(), carets.end()), carets.end());
+  std::vector<MultiCaretSite> carets;
+  carets.reserve(secondary_carets_.size() + 1);
+  for (const SecondaryCaret& secondary : secondary_carets_) {
+    carets.push_back(
+        {secondary.position, NormalizedSelection(secondary.position, secondary.selection_anchor)});
+  }
+  const TextPosition primary_caret{cursor_line_, cursor_column_};
+  carets.push_back({primary_caret, NormalizedSelection(primary_caret, selection_anchor_)});
+  std::sort(carets.begin(), carets.end(), [](const MultiCaretSite& lhs, const MultiCaretSite& rhs) {
+    return detail::PositionLess(lhs.position, rhs.position);
+  });
+  carets.erase(std::unique(carets.begin(), carets.end(),
+                           [](const MultiCaretSite& lhs, const MultiCaretSite& rhs) {
+                             return lhs.position == rhs.position;
+                           }),
+               carets.end());
   if (carets.empty()) {
     return false;
   }
 
+  const auto clamp_position = [&](TextPosition position) -> TextPosition {
+    position.line = std::min(position.line, document_->lines.size() - 1);
+    position.column = TextLayout::ClampTextColumn(document_->lines[position.line], position.column);
+    return position;
+  };
+
   // Plan each caret's edit from the pre-edit buffer. Returns nullopt when the
   // caret cannot edit (backspace at doc start, delete at doc end).
-  const auto plan_edit = [&](std::size_t line,
-                             std::size_t column) -> std::optional<PlannedCaretEdit> {
+  const auto plan_edit = [&](std::size_t line, std::size_t column,
+                             const std::optional<SelectionRange>& selection)
+      -> std::optional<PlannedCaretEdit> {
+    // Selection-aware path: replace the selection (empty replacement for the
+    // delete kinds, the inserted text otherwise), exactly as the single-caret
+    // paths do. Without this, multi-caret Backspace/Delete/Enter/paste ignored
+    // active selections and edited one character per caret instead.
+    if (selection.has_value()) {
+      const SelectionRange removed{clamp_position(selection->start),
+                                   clamp_position(selection->end)};
+      if (kind == MultiCaretEditKind::Insert) {
+        if (insert_text == "\n") {
+          return PlannedCaretEdit{
+              removed, "\n" + AutoIndentForNewline(removed.start.line, removed.start.column),
+              std::nullopt};
+        }
+        return PlannedCaretEdit{removed, std::string(insert_text), std::nullopt};
+      }
+      return PlannedCaretEdit{removed, "", std::nullopt};
+    }
     switch (kind) {
       case MultiCaretEditKind::Insert: {
         // On Enter, a caret between a matching auto-close pair splits the braces
@@ -178,10 +235,11 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   std::size_t affected_start = std::numeric_limits<std::size_t>::max();
   std::size_t affected_end = 0;
   bool has_candidate_edit = false;
-  for (const TextPosition& caret : carets) {
-    const std::size_t line = std::min(caret.line, document_->lines.size() - 1);
-    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], caret.column);
-    std::optional<PlannedCaretEdit> edit = plan_edit(line, column);
+  for (const MultiCaretSite& caret : carets) {
+    const std::size_t line = std::min(caret.position.line, document_->lines.size() - 1);
+    const std::size_t column =
+        TextLayout::ClampTextColumn(document_->lines[line], caret.position.column);
+    std::optional<PlannedCaretEdit> edit = plan_edit(line, column, caret.selection);
     if (edit.has_value()) {
       affected_start = std::min(affected_start, edit->removed.start.line);
       affected_end = std::max(affected_end, edit->removed.end.line + 1);
@@ -201,7 +259,10 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   // by value-equality on the clamped position: a secondary caret can clamp onto
   // the primary's position, which would otherwise misattribute or drop a caret.
   const std::size_t primary_index = static_cast<std::size_t>(
-      std::lower_bound(carets.begin(), carets.end(), primary_before, detail::PositionLess) -
+      std::lower_bound(carets.begin(), carets.end(), primary_before,
+                       [](const MultiCaretSite& site, const TextPosition& value) {
+                         return detail::PositionLess(site.position, value);
+                       }) -
       carets.begin());
   std::vector<ResultCaret> results;
   results.reserve(carets.size());
@@ -209,8 +270,9 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
 
   for (std::size_t i = carets.size(); i-- > 0;) {
     const bool is_primary = (i == primary_index);
-    const std::size_t line = std::min(carets[i].line, document_->lines.size() - 1);
-    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], carets[i].column);
+    const std::size_t line = std::min(carets[i].position.line, document_->lines.size() - 1);
+    const std::size_t column =
+        TextLayout::ClampTextColumn(document_->lines[line], carets[i].position.column);
     std::optional<HistoryEntry> entry =
         planned[i].has_value() ? BuildRangeHistoryEntry(planned[i]->removed, planned[i]->replacement)
                                : std::nullopt;

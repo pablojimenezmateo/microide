@@ -172,9 +172,13 @@ void LspClient::Impl::IoMain() {
   DrainOutbound();  // final flush (e.g. an exit notification queued during stop)
   // The server is gone (EOF / exited). When this is an unexpected death rather than
   // a shutdown we requested, fail any still-pending requests so their UI loading
-  // state clears instead of hanging forever.
+  // state clears instead of hanging forever, and — mirroring the DAP transport —
+  // wake the main thread even if none were pending: an idle session with no
+  // in-flight request would otherwise leave the readiness/status indicator stale
+  // (the manager re-gates on IsRunning) until some unrelated SDL event drove a frame.
   if (!shutting_down.load(std::memory_order_acquire)) {
     FailPendingRequests(/*only_expired=*/false);
+    main_mailbox.PushWake();
   }
   // The io_thread is exiting (EOF / fatal read / runaway buffer). Signal that no
   // thread is draining outbound anymore so the send path refuses further requests

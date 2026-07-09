@@ -791,6 +791,13 @@ void TabCoordinator::Close(std::size_t index) {
         operations_.apply_detected_indent_on_open(loaded_view);
         tab.editor_state = operations_.make_editor_tab_state(loaded_view);
       }
+    } else if (tab.kind == TabEntry::Kind::Compare) {
+      // Promoting a compare/merge tab on close must scroll its active selection
+      // into view, exactly as Activate() does — otherwise the revealed tab's
+      // selected hunk can sit off-screen until the next interaction.
+      operations_.reveal_active_compare_selection();
+    } else if (tab.kind == TabEntry::Kind::Merge) {
+      operations_.reveal_active_merge_selection();
     }
     if (!tab.path.empty()) {
       state_.directory_tree.SelectPath(tab.path);

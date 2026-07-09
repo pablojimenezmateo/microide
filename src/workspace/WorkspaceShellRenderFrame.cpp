@@ -12,6 +12,7 @@
 #include "util/PerformanceTrace.h"
 #include "workspace/OverviewRuler.h"
 #include "workspace/RenderViewModelBuilder.h"
+#include "render/ScopedRenderClip.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 
@@ -825,10 +826,11 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                             std::max(0.0f, message_right - strip.x - 20.0f), strip.h);
     const SDL_Rect clip{static_cast<int>(message_rect.x), static_cast<int>(message_rect.y),
                         static_cast<int>(message_rect.w), static_cast<int>(message_rect.h)};
-    SDL_SetRenderClipRect(renderer, &clip);
-    DrawVCenteredTextOn(text_renderer_, renderer, message_rect, 0.0f, theme_.text_secondary,
-                        theme_.chrome_background, banner_vm.message);
-    SDL_SetRenderClipRect(renderer, nullptr);
+    {
+      const render::ScopedRenderClip clip_scope(renderer, clip);
+      DrawVCenteredTextOn(text_renderer_, renderer, message_rect, 0.0f, theme_.text_secondary,
+                          theme_.chrome_background, banner_vm.message);
+    }
 
     const auto draw_banner_button = [&](const SDL_FRect& rect, std::string_view label,
                                         ButtonTone tone) {

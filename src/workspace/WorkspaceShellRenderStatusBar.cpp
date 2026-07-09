@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 #include "workspace/RenderViewModelBuilder.h"
+#include "render/ScopedRenderClip.h"
 #include "workspace/StatusBarService.h"
 
 #include <algorithm>
@@ -137,10 +138,11 @@ void WorkspaceShell::RenderNotifications(SDL_Renderer* renderer,
     const SDL_Rect clip{static_cast<int>(text_rect.x), static_cast<int>(text_rect.y),
                         static_cast<int>(std::ceil(text_rect.w)),
                         static_cast<int>(std::ceil(text_rect.h))};
-    SDL_SetRenderClipRect(renderer, &clip);
-    DrawVCenteredTextOn(text_renderer_, renderer, text_rect, 0.0f, theme_.text_primary,
-                        theme_.overlay_background, message);
-    SDL_SetRenderClipRect(renderer, nullptr);
+    {
+      const render::ScopedRenderClip clip_scope(renderer, clip);
+      DrawVCenteredTextOn(text_renderer_, renderer, text_rect, 0.0f, theme_.text_primary,
+                          theme_.overlay_background, message);
+    }
 
     bottom = rect.y - kGap;
   }

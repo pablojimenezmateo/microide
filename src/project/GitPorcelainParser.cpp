@@ -197,8 +197,12 @@ std::vector<GitWorkingTreeEntry> GitPorcelainParser::ParseWorkingTreeEntries(std
 }
 
 std::vector<GitCommitEntry> GitPorcelainParser::ParseLog(std::string_view output) {
-  // Expected line layout (tab-separated, subject last so it may contain tabs):
-  //   <hash>\t<short_hash>\t<author>\t<relative_date>\t<subject>
+  // Expected line layout, unit-separator (US, 0x1f) delimited, subject last so it
+  // may contain the delimiter (it never realistically does):
+  //   <hash>\x1f<short_hash>\x1f<author>\x1f<relative_date>\x1f<subject>
+  // US is used instead of a tab because a git author name (%an) can legitimately
+  // contain a literal tab, which would shift every subsequent field; US cannot.
+  constexpr char kSep = '\x1f';
   std::vector<GitCommitEntry> commits;
   std::size_t line_start = 0;
   while (line_start < output.size()) {
@@ -210,27 +214,27 @@ std::vector<GitCommitEntry> GitPorcelainParser::ParseLog(std::string_view output
     if (line.empty()) {
       continue;
     }
-    std::array<std::size_t, 4> tabs{};
+    std::array<std::size_t, 4> seps{};
     std::size_t search = 0;
     bool well_formed = true;
-    for (std::size_t i = 0; i < tabs.size(); ++i) {
-      const std::size_t pos = line.find('\t', search);
+    for (std::size_t i = 0; i < seps.size(); ++i) {
+      const std::size_t pos = line.find(kSep, search);
       if (pos == std::string_view::npos) {
         well_formed = false;
         break;
       }
-      tabs[i] = pos;
+      seps[i] = pos;
       search = pos + 1;
     }
     if (!well_formed) {
       continue;
     }
     commits.push_back(GitCommitEntry{
-        .hash = std::string(line.substr(0, tabs[0])),
-        .short_hash = std::string(line.substr(tabs[0] + 1, tabs[1] - tabs[0] - 1)),
-        .subject = std::string(line.substr(tabs[3] + 1)),
-        .author = std::string(line.substr(tabs[1] + 1, tabs[2] - tabs[1] - 1)),
-        .relative_date = std::string(line.substr(tabs[2] + 1, tabs[3] - tabs[2] - 1)),
+        .hash = std::string(line.substr(0, seps[0])),
+        .short_hash = std::string(line.substr(seps[0] + 1, seps[1] - seps[0] - 1)),
+        .subject = std::string(line.substr(seps[3] + 1)),
+        .author = std::string(line.substr(seps[1] + 1, seps[2] - seps[1] - 1)),
+        .relative_date = std::string(line.substr(seps[2] + 1, seps[3] - seps[2] - 1)),
     });
   }
   return commits;

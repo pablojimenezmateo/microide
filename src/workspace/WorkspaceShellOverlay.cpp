@@ -426,7 +426,29 @@ bool WorkspaceShell::CommandPaletteQueryIsCommandLine() const {
 
 void WorkspaceShell::ConfirmCommandPaletteSelection() {
   CommandPaletteState& palette = context_.current_project_state.overlay.workflow.command_palette;
-  // Command-line path: run the typed line (verb + args) through the shared executor.
+  // Prefer the highlighted row when the query matched one. A multi-word command
+  // *label* (e.g. "open file" → "Open File", "find references" → "Find References")
+  // must run the selected action; previously any query containing a space was routed
+  // to the command-line executor, which silently ran an unrelated verb with the
+  // trailing words as arguments (or died with "Unknown command"). The command-line
+  // path (verb + args, e.g. "colorscheme dark") is the fallback for a query that
+  // matched no row, since RefreshCommandPalette matches the *whole* query as a
+  // substring of the label.
+  if (!palette.matches.empty() && palette.selected_index < palette.matches.size()) {
+    // Copy the selected item before dismissing: the dispatched action may itself open
+    // another overlay (e.g. Find File, Settings), so the palette must be gone first and
+    // we must not hold a reference into state that the action could mutate.
+    const CommandPaletteItem selected = palette.matches[palette.selected_index];
+    DismissOverlay(true);
+    if (selected.is_plugin) {
+      ExecuteCommandName(selected.command_token, {}, ActionSource::Menu, nullptr);
+      return;
+    }
+    ActionCoordinator(MakeActionContext()).Execute(selected.action, {}, ActionSource::Menu);
+    return;
+  }
+
+  // No row matched: run the typed line (verb + args) through the shared executor.
   if (CommandPaletteQueryIsCommandLine()) {
     // Copy the query before dismissing — the dispatch may reopen overlays / mutate state.
     const std::string command_line = palette.query.text();
@@ -436,21 +458,7 @@ void WorkspaceShell::ConfirmCommandPaletteSelection() {
         !feedback.empty()) {
       Notify(ok ? NotificationService::Tone::Info : NotificationService::Tone::Error, feedback);
     }
-    return;
   }
-  if (palette.matches.empty() || palette.selected_index >= palette.matches.size()) {
-    return;
-  }
-  // Copy the selected item before dismissing: the dispatched action may itself open
-  // another overlay (e.g. Find File, Settings), so the palette must be gone first and
-  // we must not hold a reference into state that the action could mutate.
-  const CommandPaletteItem selected = palette.matches[palette.selected_index];
-  DismissOverlay(true);
-  if (selected.is_plugin) {
-    ExecuteCommandName(selected.command_token, {}, ActionSource::Menu, nullptr);
-    return;
-  }
-  ActionCoordinator(MakeActionContext()).Execute(selected.action, {}, ActionSource::Menu);
 }
 
 void WorkspaceShell::CompleteCommandPaletteQuery() {

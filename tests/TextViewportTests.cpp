@@ -2689,9 +2689,32 @@ void TestTextViewportVerticalMovePreservesColumnWhenScrolled() {
          "moving up while horizontally scrolled must preserve the target column (150)");
 }
 
+// In soft-wrap mode preferred_column_ is stored relative to the wrapped-row start.
+// ClampCursorColumn (called from SetTabSize) used to feed it into
+// TextColumnForVisualColumn as an absolute column, snapping the caret to near the
+// start of the logical line whenever it sat on a continuation row.
+void TestTextViewportSoftWrapTabSizeChangePreservesWrappedColumn() {
+  TextViewport viewport;
+  const std::string long_line(200, 'a');  // no tabs: wrapping is tab-size-invariant
+  viewport.LoadContent(long_line + "\n" + long_line + "\n", "/tmp/soft-wrap-tab.txt");
+  viewport.SetViewportSize(10, 80);
+  viewport.SetSoftWrap(true);
+  viewport.SetTabSize(4);  // known baseline so the change below is not a no-op
+
+  viewport.MoveCursorTo(0, 150);  // column 150 lands on the 2nd wrapped row (row [80,160))
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 150,
+         "precondition: caret is at column 150 on a continuation row");
+
+  viewport.SetTabSize(8);  // triggers ClampCursorColumn
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 150,
+         "changing tab size must keep the wrapped caret column, not snap to line start");
+}
+
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextViewport/VerticalMovePreservesColumnWhenScrolled",
           TestTextViewportVerticalMovePreservesColumnWhenScrolled);
+  AddTest(tests, "TextViewport/SoftWrapTabSizeChangePreservesWrappedColumn",
+          TestTextViewportSoftWrapTabSizeChangePreservesWrappedColumn);
   AddTest(tests, "TextViewport/UndoPastSaveMarksDirty",
           TestTextViewportUndoPastSaveMarksDirty);
   AddTest(tests, "TextViewport/SaveAboveUndoneEditsDirtiesRedo",

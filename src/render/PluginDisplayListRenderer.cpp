@@ -48,8 +48,16 @@ void ReplayDisplayList(SDL_Renderer* renderer, TextRenderer& text_renderer,
   // the surface rect. A clip stack tracks ClipPush/ClipPop (content-local rects).
   // Both scratch buffers are thread_local and reused across replays so a visible
   // surface re-painted every frame allocates nothing here.
+  // SDL_GetRenderClipRect returns success/failure, NOT whether a clip was set —
+  // it fills an empty rect when clipping is disabled. Gate on SDL_RenderClipEnabled
+  // instead: otherwise a full repaint (clipping disabled on entry) would restore a
+  // 0x0 clip below, and SDL_SetRenderClipRect enables (not disables) a zero-area
+  // rect, blanking everything drawn after this surface for the rest of the frame.
+  const bool had_clip = SDL_RenderClipEnabled(renderer);
   SDL_Rect previous_clip{};
-  const bool had_clip = SDL_GetRenderClipRect(renderer, &previous_clip);
+  if (had_clip) {
+    SDL_GetRenderClipRect(renderer, &previous_clip);
+  }
   const SDL_Rect base_clip = ToIntRect(params.clip);
   thread_local std::vector<SDL_Rect> clip_stack;
   clip_stack.clear();

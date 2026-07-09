@@ -305,9 +305,18 @@ struct LspClient::Impl {
 
   void ParseBufferedMessages() {
     while (true) {
+      const std::size_t buffered_before = framer_.BufferedBytes();
       auto msg_opt = framer_.Next();
-      if (!msg_opt) break;
-      DispatchMessage(std::move(*msg_opt));
+      if (msg_opt) {
+        DispatchMessage(std::move(*msg_opt));
+        continue;
+      }
+      // nullopt is overloaded: either the framer consumed a frame it could not
+      // surface (malformed header / oversized / invalid JSON) — in which case any
+      // well-formed frames already buffered behind it must still be drained now,
+      // not ~1s later on the next poll — or no complete frame is available yet, in
+      // which case the buffer is unchanged and we wait for more bytes.
+      if (framer_.BufferedBytes() == buffered_before) break;
     }
   }
 

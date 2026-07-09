@@ -162,6 +162,16 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
   // Set stdout read-end non-blocking for poll-based reads.
   fcntl(stdout_pipe[0], F_SETFL, O_NONBLOCK);
 
+  // Build the argv array in the parent, before fork: the child (forked off a
+  // background thread) must call only async-signal-safe functions, so it cannot
+  // allocate the vector itself.
+  std::vector<char*> raw_argv;
+  raw_argv.reserve(argv.size() + 1);
+  for (const std::string& arg : argv) {
+    raw_argv.push_back(const_cast<char*>(arg.c_str()));
+  }
+  raw_argv.push_back(nullptr);
+
   const pid_t pid = fork();
   if (pid < 0) {
     close(stdin_pipe[0]);
@@ -186,13 +196,6 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
       }
     }
     ApplyChildSandbox(sandbox);
-
-    std::vector<char*> raw_argv;
-    raw_argv.reserve(argv.size() + 1);
-    for (const std::string& arg : argv) {
-      raw_argv.push_back(const_cast<char*>(arg.c_str()));
-    }
-    raw_argv.push_back(nullptr);
     execvp(raw_argv[0], raw_argv.data());
     _exit(errno == ENOENT ? 127 : 126);
   }

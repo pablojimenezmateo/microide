@@ -213,8 +213,34 @@ PieceTree::NodeId PieceTree::Merge(NodeId left, NodeId right) {
   return right;
 }
 
+void PieceTree::CompactAddBuffer() {
+  // The live document is uint32-bounded, so materialize it into a fresh original_
+  // buffer and drop the accumulated add_ history. Content and line count are
+  // invariant (representation only changes), so keep the authoritative line_count_
+  // rather than re-deriving it (which would mishandle the empty-document edge case).
+  const std::size_t saved_line_count = line_count_;
+  std::string materialized;
+  const std::uint32_t byte_size = static_cast<std::uint32_t>(ByteSize());
+  materialized.reserve(byte_size);
+  CopyRange(0, byte_size, materialized);
+  original_ = std::move(materialized);
+  RebuildFromOriginal();
+  line_count_ = saved_line_count;
+}
+
 void PieceTree::InsertText(std::uint32_t pos, std::string_view text) {
   if (text.empty()) return;
+  // add_ is append-only: deletes never reclaim it and only Reset*/compaction
+  // clears it, so add_.size() tracks *cumulative* inserted bytes over the
+  // document's lifetime, decoupled from the uint32-bounded live size. A formatter
+  // plugin or the --control channel repeatedly rewriting a large document can
+  // drive it past 4 GiB while the live document stays small; then AppendToAdd's
+  // static_cast<uint32_t>(add_.size()) would wrap and later pieces would reference
+  // stale early bytes -> silent corruption. Compact first (mirrors
+  // RebuildFromOriginal's original_ self-defense) so add_ offsets stay in range.
+  if (add_.size() + text.size() > std::numeric_limits<std::uint32_t>::max()) {
+    CompactAddBuffer();
+  }
   const std::uint32_t start = AppendToAdd(text);
   const NodeId node = Allocate(kAdd, start, static_cast<std::uint32_t>(text.size()));
   NodeId left = kNull;

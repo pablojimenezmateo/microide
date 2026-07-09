@@ -91,12 +91,18 @@ std::optional<PersistedRecordReadResult> TryReadSpecificFile(
     const std::filesystem::path& path,
     PersistedRecordReaderError* error) {
   std::error_code exists_error;
-  if (!std::filesystem::exists(path, exists_error)) {
-    SetError(error, PersistedRecordReaderError::NotFound);
-    return std::nullopt;
-  }
+  const bool present = std::filesystem::exists(path, exists_error);
+  // exists() returns false *and* sets exists_error on a genuine stat failure
+  // (EACCES/ELOOP/ENOTDIR/ENAMETOOLONG on a path component). Check the error
+  // first: reporting such a failure as NotFound let the caller treat a transient
+  // I/O error as "no persisted state" and later overwrite good state with
+  // defaults. Only a clean false means the file is genuinely absent.
   if (exists_error) {
     SetError(error, PersistedRecordReaderError::ReadFailed);
+    return std::nullopt;
+  }
+  if (!present) {
+    SetError(error, PersistedRecordReaderError::NotFound);
     return std::nullopt;
   }
 

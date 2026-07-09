@@ -242,6 +242,19 @@ void TextViewport::ClampCursorColumn() {
     return;
   }
 
+  if (soft_wrap_) {
+    // In soft-wrap mode preferred_column_ is stored *relative to the wrapped row
+    // start* (see PreferredColumnForCaret), so it cannot be fed straight into
+    // TextColumnForVisualColumn as an absolute column — that snapped the caret to
+    // near the start of the logical line on any continuation row. Resolve it to an
+    // absolute visual column for the caret's current row first (mirrors
+    // AdvanceCaretVertical).
+    const std::size_t target_visual = ResolveSoftWrapCursorColumnForTargetRow(CursorVisualRow());
+    cursor_column_ = TextLayout::TextColumnForVisualColumn(document_->lines[cursor_line_],
+                                                           target_visual, tab_size_);
+    return;
+  }
+
   cursor_column_ = TextLayout::TextColumnForVisualColumn(document_->lines[cursor_line_],
                                                          preferred_column_, tab_size_);
 }

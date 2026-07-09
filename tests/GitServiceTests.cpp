@@ -572,13 +572,14 @@ void TestGitPorcelainParserWorkingTreeEntries() {
 }
 
 void TestGitPorcelainParserLog() {
-  // Format: <hash>\t<short>\t<author>\t<relative_date>\t<subject> (subject last,
-  // so it may contain tabs).
+  // Format: <hash>\x1f<short>\x1f<author>\x1f<relative_date>\x1f<subject> (subject
+  // last, so it may contain the delimiter). US (0x1f) is the delimiter, not a tab,
+  // so a tab embedded in an author name cannot shift the fields.
   const std::string output =
-      "0123456789abcdef\t0123456\tAda\t2 days ago\tfirst subject\n"
+      "0123456789abcdef\x1f" "0123456\x1f" "Ada\x1f" "2 days ago\x1f" "first subject\n"
       "malformed line\n"
       "\n"
-      "fedcba9876543210\tfedcba9\tGrace\t3 weeks ago\tsecond\tsubject\n";
+      "fedcba9876543210\x1f" "fedcba9\x1f" "Grace\x1f" "3 weeks ago\x1f" "second\tsubject\n";
 
   const auto commits = GitPorcelainParser::ParseLog(output);
   Expect(commits.size() == 2, "log parser should skip malformed lines");
@@ -590,6 +591,19 @@ void TestGitPorcelainParserLog() {
   Expect(commits[1].hash == "fedcba9876543210", "second parsed commit hash mismatch");
   Expect(commits[1].subject == "second\tsubject",
          "second parsed subject should preserve embedded tabs");
+
+  // Regression: an author name containing a literal tab must not shift the
+  // author/date/subject fields (the old tab-delimited format truncated the author
+  // and absorbed the rest into later fields).
+  const std::string tab_author =
+      "aaaabbbbccccdddd\x1f" "aaaabbb\x1f" "Jane\tQ\x1f" "5 minutes ago\x1f" "tabbed author\n";
+  const auto tab_commits = GitPorcelainParser::ParseLog(tab_author);
+  Expect(tab_commits.size() == 1, "tab-in-author line should parse as one commit");
+  Expect(tab_commits[0].author == "Jane\tQ",
+         "author with an embedded tab should be preserved intact");
+  Expect(tab_commits[0].relative_date == "5 minutes ago",
+         "relative date must not absorb the author's tail");
+  Expect(tab_commits[0].subject == "tabbed author", "subject must stay intact");
 }
 
 // Git-independent regression for the `-z` name-status parser. The prior parser

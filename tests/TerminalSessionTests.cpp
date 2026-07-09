@@ -1349,9 +1349,81 @@ void TestTerminalCellIsTriviallyCopyableAndCompact() {
          "default-constructed cell is empty and reports an empty DisplayText");
 }
 
+// Overwriting either half of a double-width glyph must clear the orphaned half so
+// the renderer never sees a lead without its spacer (overlap) or a spacer without
+// its lead (stale gap).
+void TestTerminalSessionOverwritingWideGlyphClearsStalePair() {
+  {
+    // Overwrite the LEAD: the trailing spacer must be blanked, not left dangling.
+    microide::terminal::TerminalSession session;
+    TerminalSessionTestAccess::Reset(session, 4, 8);
+    TerminalSessionTestAccess::AppendOutput(session, "\xE6\x88\x91");  // wide lead + spacer
+    TerminalSessionTestAccess::AppendOutput(session, "\rA");           // CR to col 0, write 'A'
+    const auto lines = session.SnapshotLines();
+    Expect(lines[0].cells[0].ascii_character() == 'A' && !lines[0].cells[0].style.wide_trailing(),
+           "the overwriting narrow glyph should replace the wide lead");
+    Expect(!lines[0].cells[1].style.wide_trailing() && lines[0].cells[1].ascii_character() == ' ',
+           "the orphaned trailing spacer must be blanked, not left as a wide-trailing cell");
+  }
+  {
+    // Overwrite the SPACER: the lead must be blanked so it no longer paints wide.
+    microide::terminal::TerminalSession session;
+    TerminalSessionTestAccess::Reset(session, 4, 8);
+    TerminalSessionTestAccess::AppendOutput(session, "\xE6\x88\x91");   // wide lead at col 0
+    TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;2HB");     // move to col 1, write 'B'
+    const auto lines = session.SnapshotLines();
+    Expect(lines[0].cells[1].ascii_character() == 'B',
+           "the overwriting glyph should land on the former spacer column");
+    Expect(!lines[0].cells[0].style.wide_trailing() && lines[0].cells[0].ascii_character() == ' ',
+           "the orphaned wide lead must be blanked so it no longer paints across two columns");
+  }
+}
+
+// DEL (0x7f) in the output stream is ignored (ECMA-48 / xterm / VTE); it must not
+// perform a destructive delete-and-shift of the display.
+void TestTerminalSessionIgnoresDelInOutputStream() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "abc\x7f");
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "abc", "a stray DEL must leave the display unchanged");
+  Expect(session.cursor_column() == 3, "DEL must not move the cursor");
+}
+
+// A tab at the pending-wrap column (cursor_column_ == columns_) must not move the
+// cursor backward to the last column.
+void TestTerminalSessionTabAtPendingWrapDoesNotMoveBackward() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "abcdefgh");  // fills all 8 cols -> pending wrap
+  Expect(session.cursor_column() == 8, "precondition: cursor is at the pending-wrap column");
+  TerminalSessionTestAccess::AppendOutput(session, "\t");
+  Expect(session.cursor_column() == 8, "a tab at pending-wrap must not snap the cursor backward");
+}
+
+// EL 2 (CSI 2K) at the pending-wrap column must not grow the line one cell past
+// the right margin.
+void TestTerminalSessionEraseWholeLineDoesNotOvergrowAtPendingWrap() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "abcdefgh");  // pending wrap at column 8
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2K");
+  const auto lines = session.SnapshotLines();
+  Expect(lines[0].cells.size() == 8,
+         "erase-whole-line must span exactly the terminal width, not columns_ + 1");
+}
+
 }  // namespace
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TerminalSession/OverwritingWideGlyphClearsStalePair",
+          TestTerminalSessionOverwritingWideGlyphClearsStalePair);
+  AddTest(tests, "TerminalSession/IgnoresDelInOutputStream",
+          TestTerminalSessionIgnoresDelInOutputStream);
+  AddTest(tests, "TerminalSession/TabAtPendingWrapDoesNotMoveBackward",
+          TestTerminalSessionTabAtPendingWrapDoesNotMoveBackward);
+  AddTest(tests, "TerminalSession/EraseWholeLineDoesNotOvergrowAtPendingWrap",
+          TestTerminalSessionEraseWholeLineDoesNotOvergrowAtPendingWrap);
   AddTest(tests, "TerminalSession/CellIsTriviallyCopyableAndCompact",
           TestTerminalCellIsTriviallyCopyableAndCompact);
   AddTest(tests, "TerminalSession/LineFeedScrollRegion",

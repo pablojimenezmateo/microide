@@ -272,19 +272,46 @@ bool PumpChildIo(UniqueFd* stdin_fd,
   return false;  // stdio fully drained (or poll error) before any deadline.
 }
 
-void ApplyEnvironmentOverrides(const std::vector<SubprocessEnvironmentOverride>& overrides) {
+extern "C" char** environ;
+
+// Build the child's environment (the current environ with overrides applied) in
+// the PARENT, before fork. The child then only assigns `environ` to point at it —
+// a single async-signal-safe pointer store. This replaces calling setenv/unsetenv
+// in the child, which are NOT async-signal-safe: `RunSubprocess` runs on
+// ProjectBackgroundExecutor worker threads, and the environ lock is not covered by
+// pthread_atfork, so a fork racing another thread's setenv/getenv could deadlock
+// the child before exec — hanging the parent's pipe read forever. `storage` owns
+// the strings; `pointers` (built last) is the null-terminated char* array; both
+// must outlive the exec (they live on the caller's stack across the fork).
+void BuildChildEnvironment(const std::vector<SubprocessEnvironmentOverride>& overrides,
+                           std::vector<std::string>& storage, std::vector<char*>& pointers) {
+  storage.clear();
+  for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
+    storage.emplace_back(*entry);
+  }
   for (const auto& override_entry : overrides) {
     if (override_entry.name.empty()) {
       continue;
     }
-
+    const std::string prefix = override_entry.name + "=";
+    // setenv(name, value, 1) / unsetenv(name) semantics: drop any existing entries
+    // for this name, then re-add "name=value" when a value is present.
+    storage.erase(std::remove_if(storage.begin(), storage.end(),
+                                 [&](const std::string& env_entry) {
+                                   return env_entry.size() >= prefix.size() &&
+                                          env_entry.compare(0, prefix.size(), prefix) == 0;
+                                 }),
+                  storage.end());
     if (override_entry.value.has_value()) {
-      (void)setenv(override_entry.name.c_str(), override_entry.value->c_str(), 1);
-      continue;
+      storage.push_back(prefix + *override_entry.value);
     }
-
-    (void)unsetenv(override_entry.name.c_str());
   }
+  pointers.clear();
+  pointers.reserve(storage.size() + 1);
+  for (std::string& env_entry : storage) {
+    pointers.push_back(env_entry.data());
+  }
+  pointers.push_back(nullptr);
 }
 
 #elif defined(_WIN32)
@@ -488,6 +515,24 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
     return result;
   }
 
+  // Everything the child needs is built HERE, in the parent, before fork(): the
+  // child must call only async-signal-safe functions (no malloc / no libc global
+  // mutation), because it is forked off a background worker thread. See
+  // BuildChildEnvironment for the deadlock this avoids.
+  const bool has_env_overrides = !options.environment_overrides.empty();
+  std::vector<std::string> child_env_storage;
+  std::vector<char*> child_envp;
+  if (has_env_overrides) {
+    BuildChildEnvironment(options.environment_overrides, child_env_storage, child_envp);
+  }
+  std::vector<char*> raw_argv;
+  raw_argv.reserve(argv.size() + 1);
+  for (const std::string& arg : argv) {
+    raw_argv.push_back(const_cast<char*>(arg.c_str()));
+  }
+  raw_argv.push_back(nullptr);
+  const std::string cwd_string = options.cwd.empty() ? std::string() : options.cwd.string();
+
   const pid_t pid = fork();
   if (pid < 0) {
     return result;
@@ -514,20 +559,16 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
     stdin_pipe[0].Reset();
     stdin_pipe[1].Reset();
 
-    if (!options.cwd.empty()) {
-      if (chdir(options.cwd.string().c_str()) != 0) {
+    if (!cwd_string.empty()) {
+      if (chdir(cwd_string.c_str()) != 0) {
         _exit(127);
       }
     }
-    ApplyEnvironmentOverrides(options.environment_overrides);
-    ApplyChildSandbox(options.sandbox);
-
-    std::vector<char*> raw_argv;
-    raw_argv.reserve(argv.size() + 1);
-    for (const std::string& arg : argv) {
-      raw_argv.push_back(const_cast<char*>(arg.c_str()));
+    // Async-signal-safe pointer store, replacing the child-side setenv/unsetenv.
+    if (has_env_overrides) {
+      environ = child_envp.data();
     }
-    raw_argv.push_back(nullptr);
+    ApplyChildSandbox(options.sandbox);
     execvp(raw_argv[0], raw_argv.data());
     _exit(errno == ENOENT ? 127 : 126);
   }

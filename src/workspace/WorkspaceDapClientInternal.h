@@ -435,11 +435,20 @@ struct DapClient::Impl {
 
   void ParseBufferedMessages() {
     while (true) {
+      const std::size_t buffered_before = io_buf.view().size();
       auto msg_opt = TryParseOneMessage(io_buf);
-      if (!msg_opt) {
+      if (msg_opt) {
+        DispatchMessage(std::move(*msg_opt));
+        continue;
+      }
+      // nullopt is overloaded: either TryParseOneMessage consumed a frame it could
+      // not surface (malformed header / oversized / invalid JSON) — in which case
+      // well-formed frames already buffered behind it must still be drained now, not
+      // ~1s later on the next poll — or no complete frame is available yet, in which
+      // case the buffer is unchanged and we wait for more bytes.
+      if (io_buf.view().size() == buffered_before) {
         break;
       }
-      DispatchMessage(std::move(*msg_opt));
     }
   }
 

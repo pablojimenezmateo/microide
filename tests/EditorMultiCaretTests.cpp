@@ -366,6 +366,36 @@ void TestSetSecondaryCaretsClampCollapseDedupeAndPrimaryDrop() {
          "the duplicate (2,1) carets dedupe to one, sorted last");
 }
 
+// Multi-caret Backspace/Delete/paste must replace each caret's active selection
+// (like the single-caret paths and VSCode), not drop the selections and edit one
+// character per caret.
+void TestMultiCaretBackspaceReplacesEachSelection() {
+  TextViewport viewport;
+  viewport.LoadContent("foo foo", "/tmp/mc-sel-backspace.cpp");
+  viewport.MoveCursorTo(0, 1);    // inside the first "foo"
+  viewport.SelectWordAtCursor();  // primary selection over [0,0)-[0,3)
+  viewport.AddSecondaryCaretWithRange(
+      microide::editor::SelectionRange{TextPosition{0, 4}, TextPosition{0, 7}});  // second "foo"
+  Expect(viewport.has_multiple_carets(), "fixture should have two carets");
+
+  viewport.Backspace();
+  Expect(viewport.lines().size() == 1 && viewport.lines()[0] == " ",
+         "multi-caret Backspace should delete both selected words, leaving the separating space");
+}
+
+void TestMultiCaretPasteReplacesEachSelection() {
+  TextViewport viewport;
+  viewport.LoadContent("foo foo", "/tmp/mc-sel-paste.cpp");
+  viewport.MoveCursorTo(0, 1);
+  viewport.SelectWordAtCursor();  // primary selection over the first "foo"
+  viewport.AddSecondaryCaretWithRange(
+      microide::editor::SelectionRange{TextPosition{0, 4}, TextPosition{0, 7}});
+
+  viewport.InsertText("XY");  // multi-char paste over both selections
+  Expect(viewport.lines().size() == 1 && viewport.lines()[0] == "XY XY",
+         "multi-caret paste should replace each selection with the pasted text");
+}
+
 }  // namespace
 
 void TestPlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine() {
@@ -413,6 +443,10 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestMultiCaretSplitBracesMixedWithPlainNewline);
   AddTest(tests, "EditorMultiCaret/SetSecondaryCaretsClampCollapseDedupeAndPrimaryDrop",
           TestSetSecondaryCaretsClampCollapseDedupeAndPrimaryDrop);
+  AddTest(tests, "EditorMultiCaret/MultiCaretBackspaceReplacesEachSelection",
+          TestMultiCaretBackspaceReplacesEachSelection);
+  AddTest(tests, "EditorMultiCaret/MultiCaretPasteReplacesEachSelection",
+          TestMultiCaretPasteReplacesEachSelection);
 }
 
 }  // namespace microide::tests
