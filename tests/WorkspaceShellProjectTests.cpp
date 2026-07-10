@@ -949,6 +949,52 @@ void TestWorkspaceShellTabMoveCommandSupportsRelativeForwardOffset() {
          "relative-forward tabmove should keep the moved tab active");
 }
 
+// Regression: with two editor groups already open, `split-right <path>` must OPEN
+// the file as a new tab in the target group — never overwrite that group's active
+// tab in place, which silently discarded its unsaved edits (VS Code "open to the
+// side").
+void TestWorkspaceShellSplitIntoExistingGroupDoesNotClobberDirtyTab() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.txt";
+  const std::filesystem::path beta = root / "beta.txt";
+  const std::filesystem::path gamma = root / "gamma.txt";
+  WriteFile(alpha, "alpha\n");
+  WriteFile(beta, "beta\n");
+  WriteFile(gamma, "gamma\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha), "alpha should open in group 0");
+
+  // Split beta into a new group (1 -> 2 groups); focus moves to the new group.
+  Expect(RunCommandLine(shell, "split-right beta.txt"), "split-right beta should succeed");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "a second group should exist");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "focus should be on the new group");
+
+  // Dirty beta in the new group.
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "EDIT "), "typing should dirty beta");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).dirty(), "beta should be dirty");
+
+  // Focus back to group 0, then split gamma. Two groups already exist, so this must
+  // open gamma as a NEW tab in the other group (group 1), preserving beta's dirty tab.
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus should return to group 0");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0,
+         "group 0 should be focused before the second split");
+  Expect(RunCommandLine(shell, "split-right gamma.txt"), "split-right gamma should succeed");
+
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "the group cap stays at two");
+  Expect(WorkspaceShellTestAccess::GroupTabCount(shell, 1) == 2,
+         "gamma must open as a new tab in the target group, not replace the dirty tab");
+  const auto group1_paths = WorkspaceShellTestAccess::GroupTabPaths(shell, 1);
+  Expect(std::find(group1_paths.begin(), group1_paths.end(), beta.lexically_normal()) !=
+             group1_paths.end(),
+         "beta's dirty tab must survive the split into its group");
+  Expect(std::find(group1_paths.begin(), group1_paths.end(), gamma.lexically_normal()) !=
+             group1_paths.end(),
+         "gamma must be present in the target group");
+}
+
 void TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3567,6 +3613,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabMoveCommandSupportsRelativeOffsets);
   AddTest(tests, "WorkspaceShell/TabMoveCommandSupportsRelativeForwardOffset",
           TestWorkspaceShellTabMoveCommandSupportsRelativeForwardOffset);
+  AddTest(tests, "WorkspaceShell/SplitIntoExistingGroupDoesNotClobberDirtyTab",
+          TestWorkspaceShellSplitIntoExistingGroupDoesNotClobberDirtyTab);
   AddTest(tests, "WorkspaceShell/GotoAndJumpCommandsUseTypedNavigationRequests",
           TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests);
   AddTest(tests, "WorkspaceShell/GlobalCommandsApplyTypedRequests",

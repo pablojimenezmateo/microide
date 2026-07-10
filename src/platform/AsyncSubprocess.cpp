@@ -479,6 +479,12 @@ void AsyncSubprocess::CloseStdin() {
 }
 
 void AsyncSubprocess::Shutdown(int timeout_ms) {
+  // A moved-from instance has a null impl_ (operator= calls Shutdown before adopting the
+  // source). Guard the deref so move-assign / std::swap / std::sort over AsyncSubprocess
+  // cannot crash, matching the null-guarded accessors hardened in a prior pass.
+  if (impl_ == nullptr) {
+    return;
+  }
   std::lock_guard lock(impl_->state_mutex);
   pid_t pid = impl_->pid.load(std::memory_order_acquire);
   if (!impl_->running.load(std::memory_order_acquire) || pid < 0) {
@@ -789,6 +795,11 @@ void AsyncSubprocess::CloseStdin() {
 }
 
 void AsyncSubprocess::Shutdown(int timeout_ms) {
+  // Mirror the POSIX branch: a moved-from instance has a null impl_, and operator= calls
+  // Shutdown before adopting the source, so guard the deref for move-assign / std::swap.
+  if (impl_ == nullptr) {
+    return;
+  }
   if (!impl_->running || impl_->process == nullptr) {
     impl_->Close();
     return;

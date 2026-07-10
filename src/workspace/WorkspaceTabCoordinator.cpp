@@ -950,6 +950,57 @@ void TabCoordinator::RefreshFocusedGroupActiveTab(bool editor_redraw) {
   operations_.request_active_tab_redraw(editor_redraw);
 }
 
+void TabCoordinator::CloseGroupTab(std::size_t group_index, std::size_t index) {
+  if (group_index == state_.focused_group_index) {
+    Close(index);
+    return;
+  }
+  if (group_index >= state_.editor_groups.size()) {
+    return;
+  }
+  EditorGroup& group = state_.editor_groups[group_index];
+  if (index >= group.open_tabs.size()) {
+    return;
+  }
+  // Same last-view LSP-didClose accounting as Close() (count includes the tab being
+  // closed, so ==1 means this is the final view).
+  MaybeNotifyLspClose(group.open_tabs[index]);
+  group.open_tabs.erase(group.open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
+  if (group.active_tab_index > index) {
+    --group.active_tab_index;
+  } else if (!group.open_tabs.empty() && group.active_tab_index >= group.open_tabs.size()) {
+    group.active_tab_index = group.open_tabs.size() - 1;
+  }
+  if (group.open_tabs.empty()) {
+    CollapseGroupAt(group_index);
+  } else {
+    operations_.invalidate_editor_tab_geometry();
+  }
+}
+
+void TabCoordinator::CollapseGroupAt(std::size_t gi) {
+  if (gi >= state_.editor_groups.size()) {
+    return;
+  }
+  state_.editor_groups.erase(state_.editor_groups.begin() + static_cast<std::ptrdiff_t>(gi));
+  if (state_.editor_groups.empty()) {
+    state_.editor_groups.emplace_back();
+  }
+  // Re-home the focused index across the erase: unchanged if it preceded gi, decremented
+  // if it followed, and clamped into range if it was gi itself or now past the end.
+  if (state_.focused_group_index > gi) {
+    --state_.focused_group_index;
+  }
+  if (state_.focused_group_index >= state_.editor_groups.size()) {
+    state_.focused_group_index = state_.editor_groups.size() - 1;
+  }
+  if (state_.editor_groups.size() < 2) {
+    state_.group_split_orientation = EditorSplitOrientation::None;
+    state_.group_split_fraction = 0.5f;
+  }
+  operations_.invalidate_editor_tab_geometry();
+}
+
 void TabCoordinator::CollapseFocusedGroup() {
   const std::size_t removed =
       state_.focused_group_index < state_.editor_groups.size() ? state_.focused_group_index : 0;

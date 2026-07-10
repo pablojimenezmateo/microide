@@ -153,8 +153,11 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
         // v_old while the user has typed on to v_new; applying v_old ranges to
         // the v_new buffer paints squiggles on the wrong spans until the v_new
         // diagnostics arrive. Only gate when the server sent a version and the
-        // document is still open (tracked) at a strictly newer version.
-        if (version_val.IsInt()) {
+        // document is still open (tracked) at a strictly newer version. Accept a
+        // float-echoed version ("version": 3.0) as well as an integer, mirroring
+        // the response-id gate above — a server that round-trips our integer ids
+        // through a float does the same to the didChange version we sent.
+        if (version_val.IsInt() || version_val.IsDouble()) {
           const auto it = document_versions.find(uri);
           if (it != document_versions.end() && version_val.AsInt() < it->second) {
             return;

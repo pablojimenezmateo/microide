@@ -2015,6 +2015,30 @@ void TestGetFieldProtectedCatchesRaisingIndexMetamethod() {
   Expect(lua_isnil(state, -1), "an absent field on a plain table reads as nil");
   lua_pop(state, 1);
 
+  // A non-table base with no metatable (number/boolean/nil) must NOT raise: indexing
+  // it would longjmp over the caller's live C++ locals. It reports the field as nil.
+  // This is the class of argument passed by e.g. `ctx.completion.add(42)`.
+  lua_pushinteger(state, 42);
+  const int number_index = lua_gettop(state);
+  const int top_before_number = lua_gettop(state);
+  bool number_threw = false;
+  try {
+    microide::plugin::lua_interop::GetFieldProtected(state, number_index, "id");
+  } catch (...) {
+    number_threw = true;
+  }
+  Expect(!number_threw, "GetFieldProtected must not raise when indexing a non-table base");
+  Expect(lua_gettop(state) == top_before_number + 1,
+         "GetFieldProtected must leave exactly one value on the stack for a non-table base");
+  Expect(lua_isnil(state, -1), "a field read on a non-table base reads as nil");
+  lua_pop(state, 2);  // the nil result + the number base
+
+  lua_pushboolean(state, 1);
+  const int bool_index = lua_gettop(state);
+  microide::plugin::lua_interop::GetFieldProtected(state, bool_index, "id");
+  Expect(lua_isnil(state, -1), "a field read on a boolean base reads as nil");
+  lua_pop(state, 2);
+
   runtime.reset();
 }
 

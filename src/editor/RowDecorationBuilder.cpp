@@ -50,12 +50,11 @@ void AppendChangedSpanUnderlines(DecoratedTextRow& row,
     if (span_width <= 0.0f) {
       continue;
     }
+    // Full-intensity source color: RenderRow applies the single 0.55 dim at draw time
+    // (see AppendChangedSpanUnderlinesGrid) — pre-dimming here would fade it twice.
     row.underlines.push_back(DecoratedUnderline{
         .rect = SDL_FRect{start_x, y + line_height - 2.0f, span_width, 1.0f},
-        .color = SDL_Color{underline_color.r, underline_color.g, underline_color.b,
-                           static_cast<Uint8>(std::clamp(
-                               std::lround(static_cast<double>(underline_color.a) * 0.55), 0l,
-                               255l))},
+        .color = underline_color,
     });
   }
 }
@@ -125,10 +124,11 @@ void AppendColumnFill(DecoratedTextRow& row, const RowDecorationInput& in, const
 // geometry for the proportional (layout == null) path so each row stays internally
 // consistent with however its text was drawn.
 void AppendChangedSpanUnderlinesGrid(DecoratedTextRow& row, const RowDecorationInput& in) {
-  const Uint8 dimmed_alpha = static_cast<Uint8>(std::clamp(
-      std::lround(static_cast<double>(in.changed_span_color.a) * 0.55), 0l, 255l));
-  const SDL_Color color{in.changed_span_color.r, in.changed_span_color.g, in.changed_span_color.b,
-                        dimmed_alpha};
+  // Push the source color at full intensity: DecoratedTextGridRenderer::RenderRow dims
+  // EVERY underline's alpha by 0.55 at draw time, so pre-dimming here would apply the
+  // fade twice (~0.30 alpha) and make diff underlines fainter than diagnostic squiggles
+  // and plugin underlines on the same row (both of which push full alpha).
+  const SDL_Color color = in.changed_span_color;
   for (const compare::CompareTextSpan& span : in.changed_spans) {
     const std::size_t start_visual = ResolveVisualColumn(in, span.start);
     const std::size_t end_visual = ResolveVisualColumn(in, span.end);
@@ -205,6 +205,59 @@ void AppendTextStyleUnderlines(DecoratedTextRow& row, const RowDecorationInput& 
     if (strike) {
       row.underlines.push_back(DecoratedUnderline{
           .rect = SDL_FRect{start_x, in.y + in.line_height * 0.5f, span_width, 1.0f},
+          .color = color,
+      });
+    }
+  }
+}
+
+// Grid-aligned plugin text-style under/strike lines (source->visual via
+// ResolveVisualColumn, then visual * char_width), matching the grid text runs,
+// caret, selection, diagnostics and the sibling AppendChangedSpanUnderlinesGrid.
+// Used when the row renders on the fixed cell grid (`layout` set): the proportional
+// MeasureWidth geometry of AppendTextStyleUnderlines mispositions the line whenever
+// the row has a tab, a wide glyph, or is horizontally scrolled (row_visual_start is
+// a visual column, not a codepoint count). Inlay displacement is applied uniformly
+// by the post-pass in BuildDecoratedRow, so this stays grid-plain.
+void AppendTextStyleUnderlinesGrid(DecoratedTextRow& row, const RowDecorationInput& in) {
+  if (in.text_styles.empty()) {
+    return;
+  }
+  for (const TextStyleDecoration& ts : in.text_styles) {
+    const bool underline = (ts.flags & kDecorationUnderline) != 0;
+    const bool strike = (ts.flags & kDecorationStrikethrough) != 0;
+    if (!underline && !strike) {
+      continue;
+    }
+    const bool whole = (ts.flags & kDecorationWholeLine) != 0;
+    const std::size_t start_col = whole ? 0 : ts.start_column;
+    const std::size_t end_col = whole ? (in.text != nullptr ? in.text->size() : 0) : ts.end_column;
+    if (end_col <= start_col) {
+      continue;
+    }
+    const std::size_t start_visual = ResolveVisualColumn(in, start_col);
+    const std::size_t end_visual = ResolveVisualColumn(in, end_col);
+    const std::size_t visible_start = std::max(start_visual, in.row_visual_start);
+    const std::size_t visible_end = std::min(end_visual, in.row_visual_end);
+    if (visible_end <= visible_start) {
+      continue;
+    }
+    SDL_Color color = ts.line_color.a != 0 ? ts.line_color
+                      : ts.foreground.a != 0 ? ts.foreground
+                                             : in.plain_color;
+    color.a = 255;
+    const float x =
+        in.text_x + static_cast<float>(visible_start - in.row_visual_start) * in.char_width;
+    const float width = static_cast<float>(visible_end - visible_start) * in.char_width;
+    if (underline) {
+      row.underlines.push_back(DecoratedUnderline{
+          .rect = SDL_FRect{x, in.y + in.line_height - 2.0f, width, 1.0f},
+          .color = color,
+      });
+    }
+    if (strike) {
+      row.underlines.push_back(DecoratedUnderline{
+          .rect = SDL_FRect{x, in.y + in.line_height * 0.5f, width, 1.0f},
           .color = color,
       });
     }
@@ -289,7 +342,12 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
                                  in.diagnostic_visible_columns, in.tab_size, in.diagnostics);
     }
 
-    AppendTextStyleUnderlines(row, in);
+    if (in.layout != nullptr) {
+      // Grid text -> grid-aligned under/strike lines (see AppendTextStyleUnderlinesGrid).
+      AppendTextStyleUnderlinesGrid(row, in);
+    } else {
+      AppendTextStyleUnderlines(row, in);
+    }
   }
 
   // Mid-line inlay hints shift the real glyphs right; every underline (diagnostic

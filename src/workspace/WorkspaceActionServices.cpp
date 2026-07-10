@@ -531,11 +531,22 @@ void WorkspaceActionContext::ResetCaretBlink() {
 bool WorkspaceActionContext::SplitEditorGroup(EditorSplitOrientation orientation,
                                               const std::filesystem::path& path,
                                               std::string* error_message) {
-  // When a path is given, open it first so a failure aborts before mutating the
-  // group layout.
-  editor::TextViewport opened_view;
   const bool open_path = !path.empty();
-  if (open_path && !opened_view.OpenFile(path)) {
+  // With two groups already open, splitting only moves focus into the *other*
+  // existing group (the layout is capped at two). Opening the path there must
+  // ADD a tab, not overwrite that group's active tab in place — an in-place
+  // replace would silently discard the unsaved edits of whatever buffer was
+  // showing there. So route the two-groups case through the new-tab path (which
+  // dedupes and appends), matching VS Code's "open to the side". A fresh split
+  // (1 -> 2 groups) clones the source tab, so replacing that clone's view is
+  // safe: it shares the source buffer and no distinct edits are lost.
+  const bool into_existing_group =
+      open_path && operations_.editor_group_count && operations_.editor_group_count() >= 2;
+
+  // For the replace path, open the file first so a failure aborts before mutating
+  // the group layout. The new-tab path re-opens internally, so skip the pre-open.
+  editor::TextViewport opened_view;
+  if (open_path && !into_existing_group && !opened_view.OpenFile(path)) {
     if (error_message != nullptr) {
       *error_message = "Failed to open file: " + path.string();
     }
@@ -547,11 +558,15 @@ bool WorkspaceActionContext::SplitEditorGroup(EditorSplitOrientation orientation
     }
     return false;
   }
-  if (open_path && !operations_.replace_active_editor_view(opened_view)) {
-    if (error_message != nullptr) {
-      *error_message = "Failed to open in the split: " + path.string();
+  if (open_path) {
+    const bool opened = into_existing_group ? operations_.open_file_in_new_tab(path)
+                                            : operations_.replace_active_editor_view(opened_view);
+    if (!opened) {
+      if (error_message != nullptr) {
+        *error_message = "Failed to open in the split: " + path.string();
+      }
+      return false;
     }
-    return false;
   }
   return true;
 }

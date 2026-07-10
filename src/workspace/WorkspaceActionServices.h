@@ -122,6 +122,7 @@ class WorkspaceActionContext {
     std::function<void()> notify_snippet_session_caret_moved;
     std::function<void()> clear_active_snippet_session_after_undo;
     std::function<bool(EditorSplitOrientation)> split_editor_group;
+    std::function<std::size_t()> editor_group_count;
     std::function<bool()> focus_other_group;
     std::function<bool()> close_editor_group;
     std::function<void(std::size_t)> request_close_tab;

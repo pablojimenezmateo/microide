@@ -103,10 +103,15 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
       return;
     case 6:
       origin_mode_ = enabled;
-      if (enabled) {
-        MoveCursorLocked(ActiveScrollRegionTopLocked(), 0);
+      // DECOM set/reset homes the cursor. On the primary buffer cursor_row_ is an
+      // absolute scrollback index, so home to the visible-screen top — mirroring CUP
+      // (`CSI H`), which ignores origin/scroll-region on primary. Passing a
+      // screen-relative 0 here (as before) jumped into scrollback and overwrote
+      // history. On the alternate screen, origin mode selects the scroll-region top.
+      if (use_alternate_screen_) {
+        MoveCursorLocked(enabled ? ActiveScrollRegionTopLocked() : 0, 0);
       } else {
-        MoveCursorLocked(0, 0);
+        MoveCursorLocked(PrimaryScreenTopLocked(), 0);
       }
       return;
     case 7:

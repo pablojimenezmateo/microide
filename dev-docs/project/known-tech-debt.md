@@ -14,6 +14,120 @@ These were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
 a latent API-contract hazard with no live trigger, so a rushed fix risked a
 regression worse than the defect. Recorded here so they are not silently lost.
 
+> **Resolved 2026-07-10 (twelfth pass — cross-subsystem bug hunt):** a fresh fan-out
+> across every subsystem landed nine fixes, each with regression coverage; the full
+> suite + ASAN/UBSAN/TSAN stay green.
+> - **gitignore `**/<wildcard>` now crosses directories** (`project/IgnoreMatcher.cpp`
+>   `GlobMatches`) — a `**/` segment followed by a non-crossing `*`/`?` (e.g. `**/*.txt`,
+>   `src/**/*.cpp`, `**/*.min.js`) had its cross-slash backtrack clobbered by the trailing
+>   wildcard, so it matched at the top level only. Added a dedicated cross-slash `**`
+>   fallback backtrack slot (`dstar_pi/dstar_ti`); O(1) extra state, fast path untouched.
+> - **Editor left-click / drag honors horizontal scroll** (`workspace/
+>   WorkspaceEditorMouseCoordinator.cpp`) — the caller fed `LogicalPositionForVisualHit`
+>   an absolute visual column while the function re-adds the row's `visual_start`
+>   (== `horizontal_scroll` in the non-wrap grid), double-counting the scroll and snapping
+>   the caret to the right edge on every click once the line scrolled. Now passes the
+>   screen-relative column (no-op under soft wrap). Distinct from the fifth-pass
+>   vertical-motion double-count.
+> - **Terminal CUU/CPL (`CSI A`/`F`) clamp to the visible-screen top**, not the scrollback
+>   deque top (`terminal/TerminalSessionCsi.cpp`) — on the primary buffer `ESC[500A`
+>   ("go to top of screen") climbed above the visible rows into history and overwrote it.
+> - **Terminal VT (0x0B) / FF (0x0C) index like a line feed** (`terminal/
+>   TerminalSessionOutput.cpp`) — they fell through the control switch and were dropped.
+> - **Terminal DECSC/DECRC (ESC 7/8, `CSI s`/`u`) save/restore SGR + origin mode**, not just
+>   the cursor position (`terminal/TerminalSessionScreen.cpp` + `TerminalSession.h`) — an SGR
+>   change between save and restore leaked past the restore.
+> - **Plugin `GetFieldProtected` no longer longjmps on a non-table base**
+>   (`plugin/PluginLuaInterop.cpp`) — the metatable-less fast path called `lua_getfield`,
+>   which raises "attempt to index a X value" for a number/boolean/nil base (e.g.
+>   `ctx.completion.add(42)`), longjmping over the caller's live C++ locals. Now guarded on
+>   `lua_istable`, reporting the field as nil for a non-indexable base — fixes ~16 registration
+>   verbs at one centralized site.
+> - **LSP stale-diagnostics version gate accepts a float-echoed version**
+>   (`workspace/WorkspaceLspClientDispatch.cpp`) — `IsInt()`-only skipped the drop for a
+>   server that serializes `"version": 3.0`, painting superseded ranges on the newer buffer.
+>   Now `IsInt() || IsDouble()`, mirroring the response-id gate.
+> - **Split-editor-with-path into an already-two-groups layout opens a new tab** in the target
+>   group instead of overwriting its active tab in place (`workspace/WorkspaceActionServices.cpp`
+>   + `editor_group_count` operations hook) — the in-place replace silently discarded that
+>   group's unsaved edits. VS Code "open to the side" parity.
+> - **Plugin text-style under/strike lines use grid geometry on the grid path**
+>   (`editor/RowDecorationBuilder.cpp` `AppendTextStyleUnderlinesGrid`) — the proportional
+>   `MeasureWidth` path mispositioned them on lines with a tab, a wide glyph, or horizontal
+>   scroll; now resolved through `ResolveVisualColumn` like the changed-span sibling.
+>
+> **Second round of the twelfth pass** (a fresh fan-out after the first round) landed eight
+> more fixes, each with regression coverage; full suite green:
+> - **Terminal DECOM toggle (`CSI ?6h`/`?6l`) homes to the visible-screen top on the primary
+>   buffer** (`terminal/TerminalSessionModes.cpp`) — passing a screen-relative 0 as an
+>   absolute deque index jumped into scrollback and overwrote history (same family as the
+>   CUU fix). Alt screen still selects the scroll-region top under origin mode.
+> - **LSP completion documentation accepts `MarkupContent`** (`workspace/
+>   WorkspaceLspClientRequests.cpp`) — the bare-string `take` dropped the `{kind,value}` object
+>   form that clangd/rust-analyzer/gopls/pyright/tsserver all send, blanking the completion
+>   doc pane. Now extracts either shape, mirroring hover/signature-help.
+> - **Git partial-stage warning fires under porcelain v2** (`project/CommitWorkflowChecks.cpp`
+>   + a new `worktree_dirty` bit on `GitRepositoryEntry`, set from the `Y` status in
+>   `GitPorcelainV2Parser`) — v2 emits ONE record per path, so the old two-entries-per-path
+>   `PathHasStagedAndUnstaged` never fired; a `1 MM` file is now correctly detected as both
+>   staged and worktree-dirty.
+> - **Control-socket fds are CLOEXEC** (`platform/ControlSocketServer.cpp`) — the listen
+>   socket, accepted clients (`accept4`), and wake pipe (`pipe2`) leaked into every child
+>   forked while the channel was live; matches the FileWatcher/Subprocess hardening.
+> - **File rename/delete propagates to ALL editor groups** (`workspace/
+>   WorkspacePathMutationCoordinatorTabs.cpp` + new group-aware `CloseGroupTab`/`CollapseGroupAt`)
+>   — a split view of the affected file in a non-focused group kept a stale/defunct path and,
+>   with all-groups autosave, wrote back to the old path (resurrecting a renamed/deleted file).
+>   Non-focused groups are processed before the focused close so a focused-group collapse can't
+>   promote a still-affected group to focused and skip it.
+> - **Compare intraline changed-span underlines no longer double-dim** (`editor/
+>   RowDecorationBuilder.cpp`) — the appenders pre-scaled alpha by 0.55 and `RenderRow` scaled
+>   it again (~0.30); now they push full alpha like diagnostics/plugin underlines.
+> - **Merge conflict-preview text is clipped at the pane bottom** (`workspace/
+>   WorkspaceShellRenderMerge.cpp`) — a "Both" preview near the bottom drew trailing lines past
+>   the clamped highlight into the bottom chrome; added the symmetric bottom guard.
+> - **Terminal scrollback trim rebases the workspace-side absolute-row mirrors**
+>   (`terminal/TerminalSession` exposes `ScrollbackTrimTotal()`; `workspace/
+>   WorkspaceShellTerminal.cpp` `RebaseActiveTerminalForScrollbackTrim`) — a coalesced trim
+>   decremented the session cursor rows but left the tab's `scroll_row`/selection/last-command
+>   rows only clamped, so a scrolled-up view jumped forward by the trim batch and a held
+>   selection / copied text pointed at the wrong cells.
+> - **Plugin diagnostic `end_column` default saturates** (`plugin/PluginDiagnosticsInterop.cpp`)
+>   — a plugin `column == INT64_MAX` made the `column + 1` default a signed-overflow UB before
+>   the positivity check; now saturates.
+>
+> **Deferred from the twelfth pass (recorded, not fixed):**
+> - **Terminal basic-color (30–37) brightness is baked from the bold flag at set-time and not
+>   reverted by SGR 22** (`terminal/TerminalSessionSgr.cpp`). `\e[31;1m` vs `\e[1;31m` diverge,
+>   and `\e[1;31m…\e[22m` keeps bright red. A fully-correct fix needs the cell to remember the
+>   foreground is a basic-palette index so brightness resolves live at render (a value-comparison
+>   hack can't distinguish an explicit bright `\e[91m` from a bold-brightened `\e[1;31m` for the
+>   SGR-22 revert). Cosmetic; **blocked on** a palette-index cell representation.
+> - **Terminal URL hit-test compares a grid column against a byte offset**
+>   (`workspace/WorkspaceShellTerminal.cpp` `TerminalUrlAtColumn`). Only desyncs when a wide/
+>   multibyte glyph precedes the URL on the line (uncommon); LOW.
+> - **DECSTBM (`CSI r`) home ignores the scroll-region top under origin mode on the primary
+>   buffer** (`terminal/TerminalSessionCsi.cpp`). Consistent with this terminal's primary CUP
+>   (which ignores origin/scroll-region on primary), so it is a design-consistent LOW, not a
+>   live divergence.
+>
+> (The `AsyncSubprocess::operator=`→`Shutdown` moved-from null-deref surfaced in this pass was
+> fixed outright — a one-line `impl_ == nullptr` guard on BOTH the POSIX and Windows branches —
+> rather than deferred.)
+>
+> **Third (convergence) round of the twelfth pass** verified all of the above against the code
+> and found the tree converged. Two follow-through fixes landed:
+> - **Non-focused rename retarget honors the user's Discard choice** (`workspace/
+>   WorkspacePathMutationCoordinatorTabs.cpp`) — the all-groups retarget added earlier this pass
+>   always kept the dirty buffer (`SetPath`); when the rename discards unsaved edits it now
+>   reopens fresh from disk in background groups too, mirroring the focused path, so
+>   "discarded" edits are not written back by all-groups autosave.
+> - **Windows `AsyncSubprocess::Shutdown` moved-from guard** (mirror of the POSIX fix; can't be
+>   compiled on this Linux host but keeps the branches symmetric).
+> The only residual observations were the recorded deferrals above plus a cosmetic
+> selection-copy choice (empty interior cells dropped vs. spaced) — not a defect. The full
+> suite (1782 tests) plus ASAN, UBSAN and TSAN are all green.
+
 > **Resolved 2026-07-09 (seventh pass):** the terminal `ED` (`CSI 2J`) scrollback-loss
 > item that headed this list is now fixed. Primary-screen absolute-row addressing
 > (`CSI H`/`f`/`d`, DECSTBM home, CPR report) was reworked to be viewport-relative via

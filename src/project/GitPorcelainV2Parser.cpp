@@ -81,6 +81,8 @@ GitRepositoryEntry MakeEntry(GitRepositoryEntryKind kind,
       .old_path = std::nullopt,
       .staged = !conflicted && xy.size() >= 1 && xy[0] != ' ' && xy[0] != '?' &&
                  xy[0] != '!' && xy[0] != '.',
+      .worktree_dirty = !conflicted && xy.size() >= 2 && xy[1] != ' ' && xy[1] != '?' &&
+                        xy[1] != '!' && xy[1] != '.',
       .conflicted = conflicted,
   };
   if (old_path.has_value()) {

@@ -404,7 +404,15 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   const int visual_column = CorrectClickVisualColumnForInlay(
       *viewport, state_, text_renderer_, static_cast<std::size_t>(visual_row),
       display_visual_column);
-  const editor::LogicalPosition hit = viewport->LogicalPositionForVisualHit(visual_row, visual_column);
+  // LogicalPositionForVisualHit expects a SCREEN-RELATIVE column: it re-adds the
+  // row's visual_start, which equals horizontal_scroll in the non-wrap layout. The
+  // column computed above (and the inlay correction) is ABSOLUTE, so strip the
+  // scroll offset here or it is counted twice and the caret snaps to the right
+  // edge on every click once the line is horizontally scrolled. No-op under soft
+  // wrap, where horizontal_scroll is pinned to 0.
+  const int hit_column =
+      std::max(0, visual_column - static_cast<int>(viewport->horizontal_scroll()));
+  const editor::LogicalPosition hit = viewport->LogicalPositionForVisualHit(visual_row, hit_column);
 
   const SDL_Keymod modifiers = SDL_GetModState();
   const bool alt_left_click =
@@ -575,7 +583,11 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   const int visual_column = CorrectClickVisualColumnForInlay(
       *viewport, state_, text_renderer_, static_cast<std::size_t>(visual_row),
       display_visual_column);
-  const editor::LogicalPosition hit = viewport->LogicalPositionForVisualHit(visual_row, visual_column);
+  // Screen-relative column: see the button-down handler above — strip the scroll
+  // offset that LogicalPositionForVisualHit re-adds so it is not double-counted.
+  const int hit_column =
+      std::max(0, visual_column - static_cast<int>(viewport->horizontal_scroll()));
+  const editor::LogicalPosition hit = viewport->LogicalPositionForVisualHit(visual_row, hit_column);
 
   viewport->MoveCursorTo(hit.line, hit.column, true);
   operations_.reset_caret_blink();

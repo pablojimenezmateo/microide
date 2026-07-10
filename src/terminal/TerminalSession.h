@@ -132,6 +132,11 @@ class TerminalSession {
   bool SendKeyPress(const KeyPress& press);
   bool running() const;
   std::size_t LineCount() const;
+  // Monotonic count of scrollback lines dropped off the FRONT by TrimScrollbackLocked.
+  // Workspace-side absolute row mirrors (scroll position, selection, last-command row)
+  // rebase against the delta of this value so a coalesced trim does not shift the
+  // content out from under them (session cursor rows are rebased in-place already).
+  std::uint64_t ScrollbackTrimTotal() const;
   std::vector<TerminalLine> SnapshotLines() const;
   std::vector<TerminalLine> SnapshotLineRange(std::size_t start_row, std::size_t max_lines) const;
   const std::vector<TerminalLine>& SnapshotLineRangeCached(std::size_t start_row,
@@ -179,6 +184,8 @@ class TerminalSession {
     std::size_t cursor_column = 0;
     std::size_t saved_cursor_row = 0;
     std::size_t saved_cursor_column = 0;
+    TerminalStyle saved_style = {};
+    bool saved_origin_mode = false;
     std::size_t scroll_region_top = 0;
     std::size_t scroll_region_bottom = 0;
   };
@@ -311,10 +318,17 @@ class TerminalSession {
   // Scrollback cap (the `terminal.scrollback_lines` setting; default mirrors
   // kMaxScrollbackLines in TerminalInternalConstants.h).
   std::size_t max_scrollback_lines_ = 2000;
+  std::uint64_t scrollback_trim_total_ = 0;
   std::size_t cursor_row_ = 0;
   std::size_t cursor_column_ = 0;
   std::size_t saved_cursor_row_ = 0;
   std::size_t saved_cursor_column_ = 0;
+  // DECSC (ESC 7 / CSI s) saves the graphic rendition and origin mode alongside the
+  // cursor; DECRC (ESC 8 / CSI u) restores them. Without this an SGR change between
+  // save and restore leaks past the restore (e.g. `\0337\033[31mRED\0338X` must
+  // print X in the default color, not red).
+  TerminalStyle saved_style_{};
+  bool saved_origin_mode_ = false;
   std::size_t scroll_region_top_ = 0;
   std::size_t scroll_region_bottom_ = 23;
   std::uint64_t snapshot_generation_ = 1;

@@ -157,7 +157,47 @@ void TestIgnoreMatcherAnchoredPatternsDoNotFloat() {
          "a slash-free pattern still matches by basename at any depth");
 }
 
+// Regression: a `**/` segment followed later by another wildcard segment (`*`/`?`)
+// must still cross directory boundaries. The single-star backtrack model let the
+// trailing non-crossing `*` clobber the `**` restart point, so `**/*.ext` degraded
+// to matching at the top level only. git matches all of these across directories.
+void TestIgnoreMatcherDoubleStarBeforeWildcardCrossesDirectories() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root);
+  WriteFile(root / ".gitignore", "**/*.txt\nsrc/**/*.cpp\n**/*.min.js\na/**/b/*.md\n");
+
+  IgnoreMatcher matcher;
+  matcher.SetRoot(root);
+
+  // A '**' bounded by literals on both sides that also precedes a trailing wildcard
+  // must re-extend across directories even when an earlier literal ('b/') matched at a
+  // false position. git ignores all three of these for `a/**/b/*.md`.
+  Expect(matcher.Ignored("a/b/direct.md", false), "a/**/b/*.md matches with zero middle dirs");
+  Expect(matcher.Ignored("a/q/b/n.md", false), "a/**/b/*.md matches with one middle dir");
+  Expect(matcher.Ignored("a/q/b/w/b/n.md", false),
+         "a/**/b/*.md must re-extend '**' past a false 'b/' match");
+
+  // `**/*.txt` matches a matching file at any depth, including the root.
+  Expect(matcher.Ignored("b.txt", false), "**/*.txt should match a root .txt file");
+  Expect(matcher.Ignored("a/b.txt", false), "**/*.txt should match a depth-1 .txt file");
+  Expect(matcher.Ignored("a/c/b.txt", false), "**/*.txt should match a deeply nested .txt file");
+  Expect(!matcher.Ignored("a/b.md", false), "**/*.txt must not match a non-.txt file");
+
+  // `src/**/*.cpp` descends through directories under src.
+  Expect(matcher.Ignored("src/x.cpp", false), "src/**/*.cpp should match a direct child");
+  Expect(matcher.Ignored("src/a/b/x.cpp", false),
+         "src/**/*.cpp should match a deeply nested child");
+  Expect(!matcher.Ignored("lib/a/x.cpp", false),
+         "src/**/*.cpp must not match a different top segment");
+
+  // A multi-dot suffix wildcard still crosses directories.
+  Expect(matcher.Ignored("dist/app.min.js", false), "**/*.min.js should match under a directory");
+}
+
 void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "IgnoreMatcher/DoubleStarBeforeWildcardCrossesDirectories",
+          TestIgnoreMatcherDoubleStarBeforeWildcardCrossesDirectories);
   AddTest(tests, "IgnoreMatcher/AnchoredPatternsDoNotFloat",
           TestIgnoreMatcherAnchoredPatternsDoNotFloat);
   AddTest(tests, "IgnoreMatcher/NestedGitignoreBasePrefix",

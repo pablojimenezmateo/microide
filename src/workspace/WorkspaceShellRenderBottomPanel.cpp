@@ -396,6 +396,12 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                      : output_panel ? (output_entries != nullptr ? output_entries->size() : 0)
                      : 0;
 
+  if (terminal_panel) {
+    // Rebase the terminal's absolute-row mirrors for any scrollback trimmed since the
+    // last frame BEFORE the layout reads scroll_row, so a scrolled-up view / selection
+    // tracks the same content instead of jumping forward by the trimmed batch.
+    RebaseActiveTerminalForScrollbackTrim();
+  }
   const LogSurfaceLayout panel_layout =
       ComputeBottomPanelLogLayout(layout, panel_line_count);
   SetBottomPanelScrollRow(panel_layout.scroll.vertical_scroll, panel_line_count,

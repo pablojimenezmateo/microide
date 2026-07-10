@@ -36,10 +36,20 @@ int GetFieldTrampoline(lua_State* state) {
 void GetFieldProtected(lua_State* state, int table_index, const char* field) {
   const int absolute_index = lua_absindex(state, table_index);
   if (lua_getmetatable(state, absolute_index) == 0) {
-    // No metatable => __index cannot fire => a plain read cannot raise. Fast path:
-    // identical to lua_getfield, no pcall/closure overhead (lua_getmetatable pushes
-    // nothing when absent, so the stack is already balanced for the getfield).
-    lua_getfield(state, absolute_index, field);
+    // No metatable. If the base is a table, __index cannot fire => a plain read
+    // cannot raise. Fast path: identical to lua_getfield, no pcall/closure overhead
+    // (lua_getmetatable pushes nothing when absent, so the stack is already balanced
+    // for the getfield).
+    if (lua_istable(state, absolute_index)) {
+      lua_getfield(state, absolute_index, field);
+      return;
+    }
+    // The base is a non-table with no metatable (number/boolean/nil/light userdata):
+    // indexing it would raise "attempt to index a X value" and longjmp over the
+    // caller's live C++ locals. Report the field as absent (nil) instead — callers
+    // that pass a non-table argument (e.g. `ctx.completion.add(42)`) then fail
+    // cleanly rather than corrupting the native stack.
+    lua_pushnil(state);
     return;
   }
   lua_pop(state, 1);  // discard the metatable; presence alone forces the protected path

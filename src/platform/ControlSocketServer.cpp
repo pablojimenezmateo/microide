@@ -341,7 +341,7 @@ struct ControlSocketServer::Impl {
     std::filesystem::create_directories(socket_path.parent_path(), ec);
     ::unlink(path_string.c_str());
 
-    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0) {
       return;
     }
@@ -371,7 +371,12 @@ struct ControlSocketServer::Impl {
 
   void AcceptPending() {
     while (true) {
-      const int client_fd = ::accept(listen_fd, nullptr, nullptr);
+      // CLOEXEC on every control-channel fd (listen socket, accepted client, wake pipe):
+      // without it these leak into every child forked while the channel is live (terminal
+      // shells, git, debug adapters), pinning client connections open past teardown and
+      // handing the child a stray control-socket handle. Matches the FileWatcher/Subprocess
+      // hardening.
+      const int client_fd = ::accept4(listen_fd, nullptr, nullptr, SOCK_CLOEXEC);
       if (client_fd < 0) {
         break;
       }
@@ -429,7 +434,7 @@ bool ControlSocketServer::Start(const std::filesystem::path& socket_path) {
   std::filesystem::create_directories(socket_path.parent_path(), ec);
   ::unlink(path_string.c_str());
 
-  const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+  const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
   if (fd < 0) {
     return false;
   }
@@ -449,7 +454,7 @@ bool ControlSocketServer::Start(const std::filesystem::path& socket_path) {
   }
   SetNonBlocking(fd);
 
-  if (::pipe(impl_->wake_pipe) != 0) {
+  if (::pipe2(impl_->wake_pipe, O_CLOEXEC) != 0) {
     ::close(fd);
     ::unlink(path_string.c_str());
     return false;

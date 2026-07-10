@@ -522,6 +522,13 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
               interaction.result.lines.first_line_y +
               static_cast<float>(content_line - interaction.result.lines.scroll_line) *
                   interaction.result.lines.line_height;
+          // Symmetric with the above-viewport skip: a "Both" preview yields more lines
+          // than fit when the conflict starts near the pane bottom, so stop before
+          // drawing text past the result pane into the scrollbar reserve / bottom chrome.
+          // Lines are visited in ascending y, so break rather than continue.
+          if (y >= interaction.result.rect.y + interaction.result.rect.h) {
+            break;
+          }
           text_renderer_.DrawStringOn(renderer, interaction.result.rect.x, y, theme_.line_number,
                                       theme_.editor_background,
                                       FormatLineNumber(conflict.start_line + line + 1,

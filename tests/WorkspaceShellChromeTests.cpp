@@ -2258,7 +2258,51 @@ void TestColorschemeChangeRequestsRepaint() {
 
 }  // namespace
 
+// Regression: a left-click in a horizontally-scrolled (non-soft-wrapped) editor must
+// place the caret under the pointer. The mouse coordinator fed LogicalPositionForVisualHit
+// an ABSOLUTE visual column while the function re-adds the row's visual_start (which
+// equals horizontal_scroll in the non-wrap layout), double-counting the scroll and
+// snapping the caret to the right edge on every click once the line scrolled.
+void TestWorkspaceShellEditorClickHonorsHorizontalScroll() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "long.txt";
+  // A very long single line, wider than any plausible viewport, with uniform content
+  // so the visual->text column mapping is 1:1 (no tabs to expand).
+  WriteFile(source, std::string(2000, 'a') + "\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, source), "long file should open");
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(!editor.soft_wrap(), "word wrap should default off so the view scrolls horizontally");
+  // Move the caret far right so the view scrolls horizontally, then settle the metrics
+  // (this also sets the viewport size the hit-test uses).
+  editor.MoveCursorTo(0, 1999, false);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorRenderMetrics(shell);
+  const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
+  Expect(char_width > 0.0f, "char width should be positive");
+  const std::size_t horizontal_scroll = editor.horizontal_scroll();
+  Expect(horizontal_scroll > 0,
+         "moving the caret to the far right should scroll the view horizontally");
+
+  // Click five cells into the visible text area (well within the viewport width).
+  const std::size_t screen_cells = 5;
+  const float click_x = metrics.text_x + (static_cast<float>(screen_cells) + 0.25f) * char_width;
+  const float click_y = metrics.first_line_y + metrics.line_height * 0.5f;
+  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT, 1),
+         "the editor click should be handled");
+
+  Expect(editor.cursor_line() == 0, "the click should stay on the only line");
+  Expect(editor.cursor_column() == horizontal_scroll + screen_cells,
+         "click caret column must honor the horizontal scroll exactly once (no double-count)");
+}
+
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/EditorClickHonorsHorizontalScroll",
+          TestWorkspaceShellEditorClickHonorsHorizontalScroll);
   AddTest(tests, "WorkspaceShell/ColorschemeChangeRequestsRepaint",
           TestColorschemeChangeRequestsRepaint);
   AddTest(tests, "WorkspaceShell/BreakpointGutterMenu", TestWorkspaceShellBreakpointGutterMenu);

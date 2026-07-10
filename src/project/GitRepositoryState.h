@@ -86,6 +86,11 @@ struct GitRepositoryEntry {
   GitRepositoryPathIdentity path;
   std::optional<GitRepositoryPathIdentity> old_path = std::nullopt;
   bool staged = false;
+  // True when the worktree copy has changes beyond what is staged (porcelain v2 `Y`
+  // status bit is not `.`). A single record can be both `staged` and `worktree_dirty`
+  // (e.g. `1 MM` — staged edit plus further unstaged edits), which is exactly the
+  // partial-stage case the commit surface warns about.
+  bool worktree_dirty = false;
   bool conflicted = false;
 };
 

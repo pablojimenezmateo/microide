@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
 #include <vector>
 
 #include "editor/DiagnosticsStore.h"
@@ -85,9 +86,11 @@ bool ReadDiagnosticTable(lua_State* state,
 
   const lua_Integer end_line =
       lua_interop::ReadOptionalIntegerField(state, absolute_index, "end_line").value_or(line);
+  // Default end_column to column+1, but a plugin-supplied column == INT64_MAX would
+  // make that a signed-overflow UB before the positivity check below runs, so saturate.
   const lua_Integer end_column =
       lua_interop::ReadOptionalIntegerField(state, absolute_index, "end_column")
-          .value_or(column + 1);
+          .value_or(column < std::numeric_limits<lua_Integer>::max() ? column + 1 : column);
 
   if (end_line <= 0 || end_column <= 0) {
     if (error_message != nullptr) {

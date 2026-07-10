@@ -46,6 +46,7 @@ class EditorTabService {
   void ReloadVirtualDocumentTabs(const std::filesystem::path& virtual_path,
                                  std::string_view content);
   void Close(std::size_t index);
+  void CloseGroupTab(std::size_t group_index, std::size_t index);
   bool SplitEditorGroup(EditorSplitOrientation orientation);
   bool FocusOtherGroup();
   bool CloseEditorGroup();

@@ -1484,7 +1484,112 @@ void TestTerminalSessionScrollRegionReexpandsOnGrow() {
 
 }  // namespace
 
+// Regression: CUU (`CSI A`) / CPL (`CSI F`) must clamp at the TOP OF THE VISIBLE
+// SCREEN, not the top of the scrollback deque. On the primary buffer cursor_row_
+// is absolute, so a bare `ESC[<N>A` ("go to top of screen") used to climb above
+// the visible rows into history and overwrite it.
+void TestTerminalSessionCursorUpClampsToVisibleScreenTop() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 3, 8);
+  // Six lines with a 3-row viewport => visible screen is L3/L4/L5, scrollback L0-L2.
+  TerminalSessionTestAccess::AppendOutput(session, "L0\nL1\nL2\nL3\nL4\nL5");
+  Expect(session.cursor_row() == 5, "cursor should sit on the last written primary row");
+
+  // CR to column 0, then cursor up 4 and write X. The floor is the visible-screen
+  // top (row 3), so X lands on L3 — never on the L1 scrollback line.
+  TerminalSessionTestAccess::AppendOutput(session, "\r\x1b[4AX");
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 6, "primary scrollback must be preserved across the cursor move");
+  ExpectLineText(lines, 1, "L1", "CUU must not climb into scrollback and overwrite history");
+  ExpectLineText(lines, 3, "X3", "CUU clamps at the visible-screen top");
+}
+
+// Regression: VT (0x0B) and FF (0x0C) perform an index (line feed), like xterm/VTE.
+// They previously fell through the control switch and were dropped entirely.
+void TestTerminalSessionVerticalTabAndFormFeedIndexLikeLineFeed() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "a\x0b""b\x0c""c");
+
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 3, "VT and FF should each open a new row like a line feed");
+  ExpectLineText(lines, 0, "a", "content before VT stays on the first row");
+  ExpectLineText(lines, 1, "b", "VT moves the cursor down one row like a line feed");
+  ExpectLineText(lines, 2, "c", "FF moves the cursor down another row like a line feed");
+}
+
+// Regression: DECSC (ESC 7) saves the SGR graphic rendition and DECRC (ESC 8)
+// restores it, not just the cursor position. Previously the style leaked past the
+// restore.
+void TestTerminalSessionSaveRestoreCursorRestoresGraphicRendition() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  // DECSC, set red foreground, print RED, DECRC, print X at the restored origin.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b""7\x1b[31mRED\x1b""8X");
+
+  const auto lines = session.SnapshotLines();
+  Expect(!lines.empty() && !lines[0].cells.empty(), "restored write should land on the first row");
+  Expect(lines[0].cells[0].ascii_character() == 'X',
+         "DECRC should restore the cursor to the pre-save position");
+  Expect(!lines[0].cells[0].style.foreground.has_value(),
+         "DECRC should restore the default graphic rendition saved by DECSC");
+}
+
+// Regression: toggling DECOM (origin mode, `CSI ?6h`/`CSI ?6l`) on the primary buffer
+// homes the cursor to the VISIBLE-screen top, not absolute row 0 in scrollback. The
+// old code passed a screen-relative 0 as an absolute deque index, so a bare
+// `CSI ?6l` (which programs commonly emit) jumped into history and overwrote it.
+void TestTerminalSessionOriginModeToggleHomesToVisibleScreenTop() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 3, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "L0\nL1\nL2\nL3\nL4\nL5");
+
+  // Reset origin mode, then write X. X must land on the visible-screen top (L3),
+  // never on the L0 scrollback line.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?6lX");
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 6, "primary scrollback must be preserved across the origin-mode toggle");
+  ExpectLineText(lines, 0, "L0", "origin-mode home must not climb into scrollback");
+  ExpectLineText(lines, 3, "X3", "origin-mode home lands at the visible-screen top");
+}
+
+// Regression: TrimScrollbackLocked exposes a monotonic count of front lines dropped so
+// the workspace-side absolute-row mirrors (scroll position, selection, last-command row)
+// can rebase and track the same content instead of jumping forward by the trim batch.
+void TestTerminalSessionScrollbackTrimTotalTracksDroppedLines() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  session.SetMaxScrollbackLines(200);  // clamped floor is 200
+  Expect(session.ScrollbackTrimTotal() == 0, "no trim before the cap is exceeded");
+
+  // Emit well past the coalesced trim high-watermark (cap + cap/4 == 251).
+  std::string output;
+  const int kLines = 300;
+  for (int i = 0; i < kLines; ++i) {
+    output += "line\n";
+  }
+  TerminalSessionTestAccess::AppendOutput(session, output);
+
+  const std::uint64_t trimmed = session.ScrollbackTrimTotal();
+  Expect(trimmed > 0, "exceeding the scrollback cap should trim front lines");
+  // After trimming, the deque is capped and the trim count accounts for the difference
+  // between everything written and what survives.
+  Expect(session.LineCount() <= 251, "trimmed deque should collapse toward the cap");
+  Expect(trimmed == static_cast<std::uint64_t>(kLines + 1) - session.LineCount(),
+         "trim total should equal written lines minus surviving lines");
+}
+
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TerminalSession/ScrollbackTrimTotalTracksDroppedLines",
+          TestTerminalSessionScrollbackTrimTotalTracksDroppedLines);
+  AddTest(tests, "TerminalSession/OriginModeToggleHomesToVisibleScreenTop",
+          TestTerminalSessionOriginModeToggleHomesToVisibleScreenTop);
+  AddTest(tests, "TerminalSession/CursorUpClampsToVisibleScreenTop",
+          TestTerminalSessionCursorUpClampsToVisibleScreenTop);
+  AddTest(tests, "TerminalSession/VerticalTabAndFormFeedIndexLikeLineFeed",
+          TestTerminalSessionVerticalTabAndFormFeedIndexLikeLineFeed);
+  AddTest(tests, "TerminalSession/SaveRestoreCursorRestoresGraphicRendition",
+          TestTerminalSessionSaveRestoreCursorRestoresGraphicRendition);
   AddTest(tests, "TerminalSession/ClearPreservesScrollback",
           TestTerminalSessionClearPreservesScrollback);
   AddTest(tests, "TerminalSession/PrimaryCupIsViewportRelative",

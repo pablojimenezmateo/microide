@@ -1141,6 +1141,115 @@ while True:
 #endif
 }
 
+// Same as above, but the server echoes the document version as a JSON FLOAT
+// ("version": 1.0 / 2.0). Some servers round-trip integers through a float; the
+// stale-drop gate must accept IsDouble() as well as IsInt() (mirroring the
+// response-id gate) or the stale v1 push slips through onto the v2 buffer.
+void TestWorkspaceLspClientDropsStaleDiagnosticsFloatVersion() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#else
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(
+      server_path,
+      std::string(R"py(import json
+import sys
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+def diag(version, message):
+    write_message({
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {
+            "uri": "file:///tmp/stalef.py",
+            "version": float(version),  # emit the version as a JSON float
+            "diagnostics": [{
+                "range": {"start": {"line": 0, "character": 0},
+                          "end": {"line": 0, "character": 1}},
+                "message": message,
+                "severity": 1,
+            }],
+        },
+    })
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        write_message({
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": {"capabilities": {"textDocumentSync": 1}},
+        })
+    elif method == "textDocument/didChange":
+        version = msg["params"]["textDocument"]["version"]
+        if version == 2:
+            diag(1, "stale-v1")   # superseded — must be dropped even as a float
+            diag(2, "fresh-v2")   # current — must be delivered
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+
+  LspClient client;
+  std::vector<std::string> received;
+  client.SetDiagnosticsCallback(
+      [&](std::string /*uri*/, std::vector<LspClient::Diagnostic> diags) {
+        if (!diags.empty()) {
+          received.push_back(diags.front().message);
+        }
+      });
+  Expect(client.Start({"python3", server_path.string()}, "file:///tmp", "python"),
+         "float-version stale-diagnostics fixture should start");
+  Expect(WaitForLspReadinessState(client, LspClient::ReadinessSnapshot::State::Ready, 2000) ||
+             client.IsInitialized(),
+         "float-version stale-diagnostics fixture should initialize");
+
+  const std::string uri = "file:///tmp/stalef.py";
+  Expect(client.DidOpen(uri, "python", "first"), "didOpen should enqueue (version 1)");
+  Expect(client.DidChange(uri, "second"), "didChange should enqueue (version 2)");
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < deadline &&
+         std::find(received.begin(), received.end(), "fresh-v2") == received.end()) {
+    client.DrainCallbacks();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  client.DrainCallbacks();
+  Expect(std::find(received.begin(), received.end(), "fresh-v2") != received.end(),
+         "current-version diagnostics must be delivered (float version)");
+  Expect(std::find(received.begin(), received.end(), "stale-v1") == received.end(),
+         "superseded-version diagnostics must be dropped even when the version is a float");
+  client.Shutdown();
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // LspMessageFramer — direct, subprocess-free unit coverage of the wire codec.
 // The parser is a hot path and a hostile-input surface; these exercise its
@@ -1576,6 +1685,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientDispatchesPreInitializeFrames);
   AddTest(tests, "WorkspaceLspClient/DropsStaleDiagnosticsVersion",
           TestWorkspaceLspClientDropsStaleDiagnosticsVersion);
+  AddTest(tests, "WorkspaceLspClient/DropsStaleDiagnosticsFloatVersion",
+          TestWorkspaceLspClientDropsStaleDiagnosticsFloatVersion);
   AddTest(tests, "WorkspaceLspClient/FramerSplitFrameAcrossChunks",
           TestLspMessageFramerSplitFrameAcrossChunks);
   AddTest(tests, "WorkspaceLspClient/FramerMultipleFramesInOneChunk",

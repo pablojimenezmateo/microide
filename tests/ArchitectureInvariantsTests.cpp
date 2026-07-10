@@ -158,8 +158,11 @@ void TestArchitectureInvariants() {
              // 1671: +3 for all-groups dirty flush (VSCode "Save All"): SaveGroupTab wrapper +
              // DirtyEditorGroupTabs / DirtyEditorGroupTabsForProject accessors, so autosave and
              // save-on-quit flush a buffer dirtied in the non-focused split group too.
+             // 1672: +1 for RebaseActiveTerminalForScrollbackTrim (rebases the terminal's
+             // absolute-row mirrors when scrollback is trimmed, so a scrolled-up view / held
+             // selection tracks the same content instead of jumping forward by the trim batch).
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1671);
+                                                     1672);
            });
 
   bool hard_failure = false;

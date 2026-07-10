@@ -502,6 +502,16 @@
   static microide::workspace::EditorSplitOrientation GroupSplitOrientation(WorkspaceShell& shell) {
     return shell.context_.current_project_state.group_split_orientation;
   }
+  static std::size_t GroupTabCount(WorkspaceShell& shell, std::size_t gi) {
+    return shell.context_.current_project_state.editor_groups[gi].open_tabs.size();
+  }
+  static std::vector<std::filesystem::path> GroupTabPaths(WorkspaceShell& shell, std::size_t gi) {
+    std::vector<std::filesystem::path> paths;
+    for (const auto& tab : shell.context_.current_project_state.editor_groups[gi].open_tabs) {
+      paths.push_back(tab.path);
+    }
+    return paths;
+  }
   // The active editor viewport of group `gi` (path + scroll line live here).
   static const editor::TextViewport& GroupActiveViewport(WorkspaceShell& shell, std::size_t gi) {
     auto& group = shell.context_.current_project_state.editor_groups[gi];

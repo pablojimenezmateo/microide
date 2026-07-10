@@ -228,6 +228,8 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         cursor_column_ = 0;
         break;
       case '\n':
+      case '\v':  // VT (0x0B): ECMA-48 treats it as index (line feed), like xterm/VTE.
+      case '\f':  // FF (0x0C): likewise index — a bare form feed moves down one row.
         AdvanceCursorRowLocked();
         break;
       case '\b':

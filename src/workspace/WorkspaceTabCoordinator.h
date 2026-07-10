@@ -111,6 +111,12 @@ class TabCoordinator {
   void ReloadVirtualDocumentTabs(const std::filesystem::path& virtual_path,
                                  std::string_view content);
   void Close(std::size_t index);
+  // Group-aware close: closes editor_groups[group_index].open_tabs[index] with the same
+  // LSP-didClose accounting as Close(); delegates to Close() for the focused group, and
+  // for a background group erases the tab, clamps its active index, and collapses the
+  // group if it empties. Used by rename/delete propagation so a split view of the
+  // affected file in a non-focused group is not stranded on a defunct path.
+  void CloseGroupTab(std::size_t group_index, std::size_t index);
   // Editor groups (max 2). Splitting clones the focused group's active editor tab
   // into a new group (shared buffer, independent view) and focuses it; if two
   // groups already exist it just sets the orientation and focuses the other.
@@ -140,6 +146,9 @@ class TabCoordinator {
   // Remove the focused (expected-empty) group and collapse back to a single
   // full-area group, resetting split orientation/fraction.
   void CollapseFocusedGroup();
+  // Erase group `gi` (a non-focused split group that just emptied), re-home the focused
+  // index across the shift, and drop the split orientation when one group remains.
+  void CollapseGroupAt(std::size_t gi);
   // Shared tail for group split/focus/close: scroll the (new) focused group's
   // active tab into view and request the matching redraw.
   void RefreshFocusedGroupActiveTab(bool editor_redraw);

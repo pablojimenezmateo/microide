@@ -94,11 +94,19 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     case 'm':
       detail::ApplySgrParameters(current_style_, body);
       return;
-    case 'A':
-      cursor_row_ = cursor_row_ > static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1))
-                        ? cursor_row_ - static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1))
-                        : 0;
+    case 'A': {
+      // CUU: cursor up, clamped to the TOP OF THE VISIBLE SCREEN, not the top of
+      // the deque. On the primary buffer `cursor_row_` is an absolute index into
+      // scrollback, so flooring at 0 (as before) let `ESC[500A` ("go to top of
+      // screen") climb above the visible rows into history and overwrite it. The
+      // floor mirrors the origin CUP (`CSI H`) uses.
+      const std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
+      const std::size_t floor_row =
+          use_alternate_screen_ ? (origin_mode_ ? ActiveScrollRegionTopLocked() : 0)
+                                : PrimaryScreenTopLocked();
+      cursor_row_ = cursor_row_ >= floor_row + count ? cursor_row_ - count : floor_row;
       return;
+    }
     case 'B':
       MoveCursorLocked(cursor_row_ + static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)),
                        cursor_column_);
@@ -120,13 +128,16 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       MoveCursorLocked(cursor_row_ + static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)),
                        0);
       return;
-    case 'F':
-      MoveCursorLocked(cursor_row_ > static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1))
-                           ? cursor_row_ -
-                                 static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1))
-                           : 0,
-                       0);
+    case 'F': {
+      // CPL: cursor up N lines to column 0, clamped to the visible-screen top (see
+      // CUU above) so it cannot climb into scrollback on the primary buffer.
+      const std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
+      const std::size_t floor_row =
+          use_alternate_screen_ ? (origin_mode_ ? ActiveScrollRegionTopLocked() : 0)
+                                : PrimaryScreenTopLocked();
+      MoveCursorLocked(cursor_row_ >= floor_row + count ? cursor_row_ - count : floor_row, 0);
       return;
+    }
     case 'G':
       MoveCursorLocked(cursor_row_,
                        static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 0, 1) - 1)));

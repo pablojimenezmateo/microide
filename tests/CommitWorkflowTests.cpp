@@ -112,6 +112,48 @@ void TestCommitDraftPersistenceRoundTrip() {
   Expect(decoded.commit_draft->body == "Body text", "commit draft body mismatch");
 }
 
+// Regression: git status --porcelain=v2 emits exactly ONE record per path, so a
+// partially-staged file (`1 MM` — staged edit plus a further unstaged edit) is a single
+// GitRepositoryEntry that is both staged and worktree_dirty. The old two-entries-per-path
+// assumption never fired under v2, silently dropping the "commit includes only staged
+// hunks" warning.
+void TestPartialStageWarnsForV2SingleModifiedEntry() {
+  GitRepositoryState state{
+      .repository_root = "/repo",
+      .repo_available = true,
+      .branch = {.head_kind = GitHeadKind::Normal, .head_oid = "abc", .branch_name = "main"},
+  };
+  state.entries.push_back({
+      .kind = GitRepositoryEntryKind::Ordinary,
+      .status = microide::project::GitFileStatus::Modified,
+      .path = {.relative_path = std::filesystem::path("mm.cpp"), .display_label = "mm.cpp"},
+      .staged = true,
+      .worktree_dirty = true,
+  });
+
+  const auto checks = RunCommitPreChecks(state, "subject", "", {});
+  bool saw_partial = false;
+  for (const auto& check : checks) {
+    if (check.kind == CommitPreCheckKind::UnstagedLeftovers) {
+      saw_partial = true;
+    }
+  }
+  Expect(saw_partial,
+         "a single staged+worktree-dirty (MM) entry must raise the partial-stage warning");
+
+  // A fully-staged file (M.) — staged but not worktree-dirty — must NOT warn.
+  GitRepositoryState fully_staged = state;
+  fully_staged.entries[0].worktree_dirty = false;
+  const auto clean_checks = RunCommitPreChecks(fully_staged, "subject", "", {});
+  bool saw_clean = false;
+  for (const auto& check : clean_checks) {
+    if (check.kind == CommitPreCheckKind::UnstagedLeftovers) {
+      saw_clean = true;
+    }
+  }
+  Expect(!saw_clean, "a fully-staged (M.) file must not raise the partial-stage warning");
+}
+
 void TestClassifyHookFailure() {
   Expect(project::ClassifyCommitFailure(1, "pre-commit hook failed") ==
              CommitOperationResultCategory::HookFailed,
@@ -138,6 +180,8 @@ void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CommitWorkflow/EmptySubjectBlocks", TestEmptySubjectBlocksCommit);
   AddTest(tests, "CommitWorkflow/WarningsRequireAck", TestWarningsRequireAcknowledgement);
   AddTest(tests, "CommitWorkflow/DraftPersistenceRoundTrip", TestCommitDraftPersistenceRoundTrip);
+  AddTest(tests, "CommitWorkflow/PartialStageWarnsForV2SingleModifiedEntry",
+          TestPartialStageWarnsForV2SingleModifiedEntry);
   AddTest(tests, "CommitWorkflow/ClassifyHookFailure", TestClassifyHookFailure);
   AddTest(tests, "CommitWorkflow/ExecuteCommitInTempRepo", TestExecuteCommitInTempRepo);
 }

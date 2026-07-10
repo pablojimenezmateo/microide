@@ -1472,6 +1472,12 @@
   int BottomPanelVisibleRows(float panel_height) const;
   int BottomPanelScrollRow(std::size_t line_count, int visible_rows) const;
   void SetBottomPanelScrollRow(int scroll_row, std::size_t line_count, int visible_rows);
+  // Rebase the active terminal tab's absolute-row mirrors (scroll_row, selection,
+  // last-command row) by however many scrollback lines the session trimmed since the
+  // last call, so a coalesced trim does not shift content out from under a scrolled-up
+  // view or a held selection. Cumulative-delta based, so a background tab catches up in
+  // one call when it next becomes active.
+  void RebaseActiveTerminalForScrollbackTrim();
   void ClearTerminalSelection();
   bool TerminalHasSelection() const;
   std::optional<std::string> TerminalUrlAtPoint(float x, float y) const;

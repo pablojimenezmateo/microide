@@ -380,6 +380,11 @@ std::size_t TerminalSession::LineCount() const {
   return lines_.size();
 }
 
+std::uint64_t TerminalSession::ScrollbackTrimTotal() const {
+  std::scoped_lock lock(mutex_);
+  return scrollback_trim_total_;
+}
+
 std::vector<TerminalLine> TerminalSession::SnapshotLines() const {
   std::scoped_lock lock(mutex_);
   return std::vector<TerminalLine>(lines_.begin(), lines_.end());

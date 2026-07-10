@@ -261,6 +261,10 @@ struct TerminalTabState {
   std::string last_command_prompt_prefix;
   std::size_t last_command_start_row = 0;
   bool has_last_command = false;
+  // Last-observed value of session.ScrollbackTrimTotal(); the delta rebases the
+  // absolute-row mirrors below (scroll_row, selection, last_command_start_row) when
+  // scrollback is trimmed, so they track the same content instead of jumping.
+  std::uint64_t observed_scrollback_trim_total = 0;
 };
 
 struct EditorPreferences {

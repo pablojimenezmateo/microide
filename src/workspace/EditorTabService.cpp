@@ -115,6 +115,10 @@ void EditorTabService::Close(std::size_t index) {
   coordinator_.Close(index);
 }
 
+void EditorTabService::CloseGroupTab(std::size_t group_index, std::size_t index) {
+  coordinator_.CloseGroupTab(group_index, index);
+}
+
 bool EditorTabService::SplitEditorGroup(EditorSplitOrientation orientation) {
   return coordinator_.SplitEditorGroup(orientation);
 }

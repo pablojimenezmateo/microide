@@ -354,6 +354,62 @@ void TestChangedSpanUnderlinesUseGridWhenLayoutSet() {
   // Grid: start at visual col 4 -> x = 10 + 4*8 = 42; width = 6 cells -> 48.
   Expect(rect.x == 10.0f + 4.0f * 8.0f, "underline must start at the tab-expanded grid column");
   Expect(rect.w == 6.0f * 8.0f, "underline width must span the changed cells on the grid");
+  // The appender must push the source color at FULL intensity: RenderRow applies the
+  // single 0.55 dim at draw time, so a pre-dim here would fade diff underlines twice.
+  Expect(row.underlines.front().color.a == 255,
+         "changed-span underline must carry full source alpha (RenderRow dims once)");
+}
+
+// When the row renders on the cell grid (layout set), plugin text-style under/strike
+// lines must land on tab-expanded grid columns (visual * char_width), matching the
+// grid text — not on the proportional MeasureWidth positions. A leading tab makes the
+// two models diverge, so this pins the grid geometry for the text-style path (the
+// changed-span sibling above pins the same for compare's changed spans).
+void TestTextStyleUnderlinesUseGridWhenLayoutSet() {
+  oracle::EnsureDummyVideo();
+  oracle::OracleCanvas init_canvas(kCanvasWidth, kCanvasHeight);
+  render::TextRenderer text_renderer;
+  text_renderer.EnsureInitialized(init_canvas.renderer());
+  const render::Theme& theme = OracleTheme();
+
+  const std::string text = "\treturn x;";  // '\t' + "return x;"
+  const LayoutLine layout = TextLayout::BuildVisibleLine(text, 0, 40, kTabSize);
+  const std::vector<SyntaxTokenKind> tokens;
+  // Underline covers bytes [1, 7) == "return"; byte 1 is at visual column 4 (the tab
+  // expands to kTabSize=4 cells), byte 7 at visual column 10.
+  std::vector<editor::TextStyleDecoration> text_styles;
+  editor::TextStyleDecoration ul;
+  ul.line = 0;
+  ul.start_column = 1;
+  ul.end_column = 7;
+  ul.line_color = SDL_Color{200, 40, 40, 255};
+  ul.flags = editor::kDecorationUnderline;
+  text_styles.push_back(ul);
+
+  RowDecorationInput input;
+  input.text_x = 10.0f;
+  input.y = 5.0f;
+  input.char_width = 8.0f;
+  input.line_height = 16.0f;
+  input.row_visual_start = 0;
+  input.row_visual_end = 40;
+  input.text = &text;
+  input.tokens = &tokens;
+  input.plain_color = theme.text_secondary;
+  input.layout = &layout;  // grid path
+  input.text_styles = text_styles;
+  input.text_renderer = &text_renderer;
+  input.theme = &theme;
+
+  DecoratedTextRow row;
+  editor::BuildDecoratedRow(row, input);
+
+  Expect(row.underlines.size() == 1, "one text-style underline should be emitted");
+  const SDL_FRect& rect = row.underlines.front().rect;
+  // Grid: start at visual col 4 -> x = 10 + 4*8 = 42; width = 6 cells -> 48. The old
+  // proportional path put it at x = 10 + MeasureWidth("\t") = 18 (one cell), width 48.
+  Expect(rect.x == 10.0f + 4.0f * 8.0f, "underline must start at the tab-expanded grid column");
+  Expect(rect.w == 6.0f * 8.0f, "underline width must span the styled cells on the grid");
 }
 
 // A mid-line inlay hint must (a) split and shift the real text runs to its right
@@ -454,6 +510,8 @@ void TestInlayHintsShiftRunsAndDrawGlyph() {
 void RegisterRowDecorationBuilderTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RowDecorationBuilder inlay hints shift runs and draw the glyph",
           TestInlayHintsShiftRunsAndDrawGlyph);
+  AddTest(tests, "RowDecorationBuilder text-style underlines use the grid under a layout",
+          TestTextStyleUnderlinesUseGridWhenLayoutSet);
   AddTest(tests, "RowDecorationBuilder changed-span underlines use the grid under a layout",
           TestChangedSpanUnderlinesUseGridWhenLayoutSet);
   AddTest(tests, "RowDecorationBuilder layout path matches legacy editor row assembly",

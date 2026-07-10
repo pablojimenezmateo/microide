@@ -43,6 +43,11 @@ CommitPreCheck MakeCheck(const CommitPreCheckKind kind,
 
 bool PathHasStagedAndUnstaged(const GitRepositoryState& repository_state,
                               const std::filesystem::path& relative_path) {
+  // porcelain v2 emits exactly one record per path, so a partially-staged file
+  // (staged edit plus a further unstaged edit, `1 MM`) is a single entry that is both
+  // `staged` and `worktree_dirty`. An older two-entries-per-path assumption never fired
+  // under v2. Still tolerate a split representation (staged in one record, unstaged in
+  // another) in case a caller pre-splits the entries for display.
   bool staged = false;
   bool unstaged = false;
   for (const GitRepositoryEntry& entry : repository_state.entries) {
@@ -51,7 +56,8 @@ bool PathHasStagedAndUnstaged(const GitRepositoryState& repository_state,
     }
     if (entry.staged) {
       staged = true;
-    } else if (entry.kind != GitRepositoryEntryKind::Untracked) {
+    }
+    if (entry.worktree_dirty && entry.kind != GitRepositoryEntryKind::Untracked) {
       unstaged = true;
     }
   }

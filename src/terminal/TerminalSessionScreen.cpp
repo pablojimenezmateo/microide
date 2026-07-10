@@ -33,9 +33,15 @@ void TerminalSession::EnsureCursorLineExistsLocked() {
 void TerminalSession::SaveCursorLocked() {
   saved_cursor_row_ = cursor_row_;
   saved_cursor_column_ = cursor_column_;
+  saved_style_ = current_style_;
+  saved_origin_mode_ = origin_mode_;
 }
 
 void TerminalSession::RestoreCursorLocked() {
+  // DECRC restores the graphic rendition and origin mode saved by DECSC before the
+  // cursor move (origin mode affects how MoveCursorLocked clamps the row).
+  current_style_ = saved_style_;
+  origin_mode_ = saved_origin_mode_;
   MoveCursorLocked(saved_cursor_row_, saved_cursor_column_);
 }
 
@@ -47,6 +53,8 @@ void TerminalSession::SaveActiveScreenMetadataLocked(ScreenState& screen) {
   screen.cursor_column = cursor_column_;
   screen.saved_cursor_row = saved_cursor_row_;
   screen.saved_cursor_column = saved_cursor_column_;
+  screen.saved_style = saved_style_;
+  screen.saved_origin_mode = saved_origin_mode_;
   screen.scroll_region_top = scroll_region_top_;
   screen.scroll_region_bottom = scroll_region_bottom_;
 }
@@ -76,6 +84,8 @@ void TerminalSession::RestoreSavedScreenLocked() {
   cursor_column_ = screen.cursor_column;
   saved_cursor_row_ = screen.saved_cursor_row;
   saved_cursor_column_ = screen.saved_cursor_column;
+  saved_style_ = screen.saved_style;
+  saved_origin_mode_ = screen.saved_origin_mode;
   scroll_region_top_ = screen.scroll_region_top;
   scroll_region_bottom_ = screen.scroll_region_bottom;
   if (use_alternate_screen_ && rows_ > 0) {
@@ -564,6 +574,7 @@ void TerminalSession::TrimScrollbackLocked() {
   lines_.erase(lines_.begin(), lines_.begin() + static_cast<std::ptrdiff_t>(trim_count));
   cursor_row_ = cursor_row_ > trim_count ? cursor_row_ - trim_count : 0;
   saved_cursor_row_ = saved_cursor_row_ > trim_count ? saved_cursor_row_ - trim_count : 0;
+  scrollback_trim_total_ += static_cast<std::uint64_t>(trim_count);
   if (lines_.empty()) {
     lines_.push_back(TerminalLine{});
   }

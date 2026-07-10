@@ -332,6 +332,41 @@ void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
   }
 }
 
+void WorkspaceShell::RebaseActiveTerminalForScrollbackTrim() {
+  auto* terminal_tab = ActiveTerminalTab();
+  if (terminal_tab == nullptr) {
+    return;
+  }
+  const std::uint64_t total = terminal_tab->session.ScrollbackTrimTotal();
+  if (total <= terminal_tab->observed_scrollback_trim_total) {
+    terminal_tab->observed_scrollback_trim_total = total;
+    return;
+  }
+  const std::uint64_t delta = total - terminal_tab->observed_scrollback_trim_total;
+  terminal_tab->observed_scrollback_trim_total = total;
+
+  const auto drop_rows = [delta](std::size_t row) -> std::size_t {
+    return static_cast<std::uint64_t>(row) > delta ? row - static_cast<std::size_t>(delta) : 0;
+  };
+  // scroll_row is a signed absolute row; clamp at 0 so a fully-trimmed scroll position
+  // snaps to the new top rather than jumping forward by the trim batch.
+  if (terminal_tab->scroll_row > 0) {
+    terminal_tab->scroll_row =
+        static_cast<std::uint64_t>(terminal_tab->scroll_row) > delta
+            ? terminal_tab->scroll_row - static_cast<int>(delta)
+            : 0;
+  }
+  if (terminal_tab->selection_anchor.has_value()) {
+    terminal_tab->selection_anchor->row = drop_rows(terminal_tab->selection_anchor->row);
+  }
+  if (terminal_tab->selection_head.has_value()) {
+    terminal_tab->selection_head->row = drop_rows(terminal_tab->selection_head->row);
+  }
+  if (terminal_tab->has_last_command) {
+    terminal_tab->last_command_start_row = drop_rows(terminal_tab->last_command_start_row);
+  }
+}
+
 void WorkspaceShell::ClearTerminalSelection() {
   if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
     terminal_tab->mouse_selecting = false;

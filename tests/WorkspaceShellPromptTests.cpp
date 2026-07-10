@@ -946,7 +946,74 @@ void TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus() {
 
 }  // namespace
 
+// Regression: renaming a file open in BOTH split groups must retarget the tab in the
+// non-focused group too. Otherwise it keeps the stale path and (with all-groups autosave)
+// writes the buffer back to the old path, resurrecting the pre-rename file.
+void TestWorkspaceShellRenameRetargetsAllEditorGroups() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path source = root / "shared.txt";
+  WriteFile(source, "content\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  // Split (clones the active tab) so shared.txt is open in both groups, then focus back.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split should create a second group showing the same file");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "two groups after split");
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus back to group 0");
+
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, source, "renamed.txt");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  const std::filesystem::path renamed = (root / "renamed.txt").lexically_normal();
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "both groups survive the rename");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).path() == renamed,
+         "the focused group retargets to the new path");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).path() == renamed,
+         "the NON-focused split group must also retarget (no stale old path)");
+}
+
+// Regression: deleting a file open in BOTH split groups must close the tab in the
+// non-focused group too (otherwise a dirty split view resurrects the deleted file on the
+// next autosave flush).
+void TestWorkspaceShellDeleteClosesTabInAllEditorGroups() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path source = root / "shared.txt";
+  WriteFile(source, "content\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split should create a second group showing the same file");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "two groups after split");
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus back to group 0");
+
+  WorkspaceShellTestAccess::PrepareDeletePrompt(shell, source);
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  Expect(!std::filesystem::exists(source), "delete should remove the file");
+  // No surviving editor group may keep the deleted file open in any tab.
+  const std::filesystem::path normalized = source.lexically_normal();
+  for (std::size_t gi = 0; gi < WorkspaceShellTestAccess::EditorGroupCount(shell); ++gi) {
+    for (const auto& path : WorkspaceShellTestAccess::GroupTabPaths(shell, gi)) {
+      Expect(path != normalized, "no editor group may keep the deleted file open");
+    }
+  }
+}
+
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/RenameRetargetsAllEditorGroups",
+          TestWorkspaceShellRenameRetargetsAllEditorGroups);
+  AddTest(tests, "WorkspaceShell/DeleteClosesTabInAllEditorGroups",
+          TestWorkspaceShellDeleteClosesTabInAllEditorGroups);
   AddTest(tests, "WorkspaceShell/ClosingNonActiveDirtyTabDoesNotStrandFocus",
           TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus);
   AddTest(tests, "WorkspaceShell/RenamePromptSavesDirtyTabs",

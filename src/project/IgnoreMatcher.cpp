@@ -30,6 +30,12 @@ bool GlobMatches(std::string_view pattern, std::string_view text) {
   std::size_t star_pi = std::string_view::npos;
   std::size_t star_ti = 0;
   bool star_cross_slash = false;  // the pending '*' backtrack may consume '/'
+  // A cross-slash '**' restart kept separately from `star_pi` so that a later
+  // non-crossing '*' in the same pattern (e.g. the '*' in '**/*.txt') does not
+  // clobber the only way to consume the intervening '/' separators. Without this
+  // fallback, '**/' degrades to matching at the top level only.
+  std::size_t dstar_pi = std::string_view::npos;
+  std::size_t dstar_ti = 0;
 
   while (ti < tlen) {
     if (pi < plen) {
@@ -54,6 +60,12 @@ bool GlobMatches(std::string_view pattern, std::string_view text) {
         star_pi = pi;
         star_ti = ti;
         star_cross_slash = segment_doublestar;
+        if (segment_doublestar) {
+          // Remember this cross-slash '**' restart independently so a later
+          // non-crossing '*' cannot clobber our only way back across a '/'.
+          dstar_pi = pi;
+          dstar_ti = ti;
+        }
         continue;
       }
       if (pc == '?') {
@@ -122,6 +134,18 @@ bool GlobMatches(std::string_view pattern, std::string_view text) {
     if (star_pi != std::string_view::npos && (star_cross_slash || text[star_ti] != '/')) {
       pi = star_pi;
       ti = ++star_ti;
+      continue;
+    }
+    // The most-recent '*' is exhausted or blocked by a '/'. Fall back to the
+    // most-recent cross-slash '**', which is allowed to consume the '/' — this is
+    // what lets '**/<wildcard>' patterns descend through directory boundaries. The
+    // stale '*' backtrack (which sits AFTER '**' in the pattern) is invalidated so a
+    // later literal mismatch cannot wrongly jump forward into it while we are
+    // re-extending the '**'; it is freshly re-armed when the '*' is reached again.
+    if (dstar_pi != std::string_view::npos && dstar_ti < tlen) {
+      pi = dstar_pi;
+      ti = ++dstar_ti;
+      star_pi = std::string_view::npos;
       continue;
     }
     return false;

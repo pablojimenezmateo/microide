@@ -50,6 +50,20 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
           }
           return {};
         };
+        // CompletionItem.documentation is `string | MarkupContent{kind,value}` per LSP;
+        // essentially every real server (clangd, rust-analyzer, gopls, pyright, tsserver)
+        // sends the object form. Extract the string out of either shape (moving to avoid a
+        // copy) — the bare `take` above would silently drop the object form, blanking the
+        // completion popup's doc pane. Mirrors hover/signature-help's StringOrValueField.
+        const auto take_markup = [](util::JsonValue& obj, std::string_view key) -> std::string {
+          util::JsonValue* v = obj.MutableAt(key);
+          if (v == nullptr) return {};
+          if (std::string* s = v->MutableString()) return std::move(*s);
+          if (util::JsonValue* value = v->MutableAt("value")) {
+            if (std::string* s = value->MutableString()) return std::move(*s);
+          }
+          return {};
+        };
         for (util::JsonValue& item : *arr) {
           if (items.size() >= kMaxCompletionItems) {
             break;
@@ -58,7 +72,7 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
           ci.label = take(item, "label");
           ci.kind = static_cast<int>(item["kind"].AsInt(1));
           ci.detail = take(item, "detail");
-          ci.documentation = take(item, "documentation");
+          ci.documentation = take_markup(item, "documentation");
           ci.insert_text = take(item, "insertText");
           ci.insert_text_format = static_cast<int>(item["insertTextFormat"].AsInt(1));
           // Prefer the server's textEdit: its range is authoritative (it knows the

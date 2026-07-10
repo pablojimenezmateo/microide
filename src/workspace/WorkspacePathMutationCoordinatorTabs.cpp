@@ -202,6 +202,77 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
     tab.title = tab.merge->title;
   }
 
+  // Retarget matching editor tabs in the NON-focused split groups too — BEFORE the
+  // focused close below, so a focused-group collapse (dirty-reopen-fail) that promotes a
+  // background group to focused does not skip it here. A split view of the renamed file
+  // otherwise keeps a stale path, and — now that autosave/save-all flush dirty tabs
+  // across every group — would write the buffer back to the OLD path, resurrecting the
+  // pre-rename file. SetPath preserves any unsaved edits and just redirects the write
+  // target. (Compare/merge chrome in a background group is display-only and self-heals on
+  // the next refresh, so only editor tabs are handled.)
+  for (std::size_t gi = 0; gi < state.editor_groups.size(); ++gi) {
+    if (gi == state.focused_group_index) {
+      continue;
+    }
+    for (TabEntry& tab : state.editor_groups[gi].open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+        continue;
+      }
+      auto& editor_state = *tab.editor_state;
+      if (editor_state.needs_restore) {
+        // Restore-pending tab: fix the deferred-open target path.
+        if (!editor_state.restored_path.empty() &&
+            PathEqualsOrWithin(editor_state.restored_path.lexically_normal(), old_path)) {
+          editor_state.restored_path =
+              util::ReplacePathPrefix(editor_state.restored_path, old_path, new_path)
+                  .lexically_normal();
+          tab.path = editor_state.restored_path;
+          tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
+        }
+        continue;
+      }
+      const std::filesystem::path current_path = operations_.editor_view_path(editor_state);
+      if (current_path.empty() || !PathEqualsOrWithin(current_path, old_path)) {
+        continue;
+      }
+      const std::filesystem::path updated_path =
+          util::ReplacePathPrefix(current_path, old_path, new_path).lexically_normal();
+      // Honor the user's Discard choice in background groups too, mirroring the focused
+      // path: when the rename discards unsaved edits, reopen fresh from disk at the new
+      // path so the "discarded" buffer is not later written back by all-groups autosave.
+      // If the reopen fails, fall back to SetPath (keep the buffer, just retarget) so no
+      // data is lost and nothing writes back to the old path.
+      if (!preserve_unsaved_state && editor_state.viewport.dirty()) {
+        const std::size_t cursor_line = editor_state.viewport.cursor_line();
+        const std::size_t cursor_column = editor_state.viewport.cursor_column();
+        const std::size_t scroll_line = editor_state.viewport.scroll_line();
+        const std::size_t horizontal_scroll = editor_state.viewport.horizontal_scroll();
+        editor::TextViewport reopened_view;
+        if (reopened_view.OpenFile(updated_path)) {
+          operations_.apply_editor_preferences(reopened_view);
+          operations_.apply_detected_indent_on_open(reopened_view);
+          reopened_view.MoveCursorTo(cursor_line, cursor_column);
+          reopened_view.SetScrollLine(scroll_line);
+          reopened_view.SetHorizontalScroll(horizontal_scroll);
+          editor_state.viewport = std::move(reopened_view);
+        } else {
+          editor_state.viewport.SetPath(updated_path);
+        }
+      } else {
+        editor_state.viewport.SetPath(updated_path);
+      }
+      editor_state.restored_path = updated_path;
+      editor_state.restored_cursor_line = editor_state.viewport.cursor_line();
+      editor_state.restored_cursor_column = editor_state.viewport.cursor_column();
+      editor_state.restored_scroll_line = editor_state.viewport.scroll_line();
+      editor_state.restored_horizontal_scroll = editor_state.viewport.horizontal_scroll();
+      tab.path = updated_path;
+      tab.title = updated_path.filename().string();
+    }
+  }
+
+  // Focused-group tabs that could not be reopened at the new path are closed last (this
+  // may collapse the focused group; the non-focused retargets above already ran).
   std::sort(special_tabs_to_close.rbegin(), special_tabs_to_close.rend());
   for (std::size_t index : special_tabs_to_close) {
     editor_tabs_.Close(index);
@@ -246,6 +317,38 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
   std::sort(indices.begin(), indices.end());
   indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
   std::sort(indices.rbegin(), indices.rend());
+
+  // Close matching editor tabs in the NON-focused split groups FIRST: a deleted file's
+  // split view otherwise lingers on the defunct path and (with all-groups autosave)
+  // would recreate the just-deleted file on the next flush. Doing this before the
+  // focused close means a focused-group collapse cannot promote a still-affected
+  // background group to focused and skip it. `focused_group_index` can shift as a
+  // background group collapses, so re-read it and iterate the survivors from the back.
+  // Compare/merge tabs in a background group are left to self-heal.
+  for (std::size_t gi = state.editor_groups.size(); gi-- > 0;) {
+    if (gi == state.focused_group_index || gi >= state.editor_groups.size()) {
+      continue;
+    }
+    std::vector<std::size_t> group_indices;
+    const auto& tabs = state.editor_groups[gi].open_tabs;
+    for (std::size_t i = 0; i < tabs.size(); ++i) {
+      const TabEntry& tab = tabs[i];
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+        continue;
+      }
+      const std::filesystem::path current_path = operations_.editor_view_path(*tab.editor_state);
+      if (!current_path.empty() && PathEqualsOrWithin(current_path, normalized_path)) {
+        group_indices.push_back(i);
+      }
+    }
+    std::sort(group_indices.rbegin(), group_indices.rend());
+    for (std::size_t index : group_indices) {
+      editor_tabs_.CloseGroupTab(gi, index);
+    }
+  }
+
+  // Now the focused group (indices were captured against it above; non-focused collapses
+  // only re-home its index, leaving its own open_tabs — and these indices — valid).
   for (std::size_t index : indices) {
     editor_tabs_.Close(index);
   }
