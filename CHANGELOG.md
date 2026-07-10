@@ -6,6 +6,78 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.6.8] - 2026-07-10
+
+A **correctness-hardening and polish** cycle on top of 2.6.7. Five further
+cross-subsystem bug-hunt passes fixed real defects across the editor,
+persistence, terminal, git/diff/merge, LSP, DAP, and plugin subsystems — each
+with regression coverage — while the full suite plus ASAN/UBSAN/TSAN stay green.
+This cycle also adds a user-facing **Reveal in File Tree** action, polishes the
+Settings surface, closes the flagship plugin-metamethod tech-debt item, and
+measurably speeds up the LSP wire-decode paths. No public API or format changes —
+a recommended upgrade for all users.
+
+### Added
+
+- **Reveal in File Tree** — a new editor-tab context-menu item and
+  `reveal-in-tree` command-palette command. It opens the sidebar on the Tree
+  view, force-expands the file's collapsed ancestors, selects it, and scrolls it
+  into view (VSCode "Reveal in Explorer" behavior).
+
+### Changed
+
+- **Settings surface polish.** The category rail now scrolls (wheel, keyboard
+  reveal-on-navigate, draggable scrollbar) so the last category is no longer
+  clipped on shorter windows. Every section renders a fixed header band, and the
+  ~25-item ungrouped "General" catch-all is regrouped into named Editor /
+  Appearance / Terminal / Diagnostics sections.
+- **Faster LSP wire decode.** `semanticTokens/full` decode, `documentSymbol`
+  outline parse, and `Content-Length` message framing are measurably faster on
+  the reference runner this cycle (no baseline regressions elsewhere).
+
+### Fixed
+
+- **Path/URI security.** Strict `file://` parsing (local-authority-only, strict
+  percent-decode, NUL reject); malformed LSP code-action/rename URIs no longer
+  edit the active buffer; server `applyEdit` and plugin containment are confined
+  to the project root and fail closed on canonicalization errors; watcher,
+  batch-apply, and traversal filters reject `..`-escaping paths; exclusive
+  (`O_EXCL`) file creation.
+- **Split-view correctness.** Replace-all dirty-guard/reopen, compare/merge
+  external-change invalidation, and control-channel tab listing now scan every
+  editor group; file rename/delete propagates group-aware across all groups.
+- **Editor & snippets.** Snippet backspace/delete honor UTF-8 and reject
+  multi-line mirror inserts; click/drag horizontal-scroll double-count fixed;
+  a failed file open no longer moves the caret in the previously-active buffer.
+- **Terminal.** Correct scrollback-trim accounting for modern clear (ED2+ED3),
+  `DECXCPR`/`CSI 6n` screen-relative row reporting, `CUU`/`CPL` scrollback climb,
+  `DECSC`/`DECRC` and `DECOM` origin/scrollback handling, and soft-wrap flag
+  preservation on hard LF.
+- **Git / diff / merge.** Partial-stage warning under porcelain v2, compare
+  changed-span double-dim, merge preview bottom clip, and copied compare patches
+  are now real `git apply`-able diffs with git-quoted paths.
+- **LSP / DAP.** Diagnostics use half-open ranges and honor the echoed version;
+  `stopped`/`continued` honor optional `threadId`/`allThreadsContinued`;
+  breakpoint verification keeps both requested and resolved lines; CRLF
+  incremental `didChange` is re-encoded correctly.
+- **Plugin host.** Metamethod-capable Lua field harvests are now performed
+  under protection so a plugin-installed raising `__index` can no longer
+  `longjmp` over live C++ destructors (closes the flagship deferred tech-debt
+  item); a plugin-sidebar refresh use-after-free is fixed; harvest counts are
+  clamped; editor position fields read at full double precision; raster
+  dimensions are range-clamped before narrowing.
+- **Robustness caps & validation.** RFC-8259 JSON grammar with control-char
+  reject; snippet/env/decoration/MRU/debug-state decode caps; launch-config JSON
+  and tool-SHA validation; atomic control-descriptor writes (temp+rename,
+  0600/0700); protocol integer-range guards; non-throwing filesystem probes on
+  UI paths; `O_CLOEXEC` on the durable-save staging fd and the control socket.
+
+Deferred items (renameat2 no-replace, two-generation persisted backup,
+cross-device move rollback, symlink-save root confinement, multi-file rename
+atomicity, closed-file diagnostic re-encoding, plugin async-executor cluster,
+and the merge/render perf batch) are recorded with rationale in
+`dev-docs/project/known-tech-debt.md`.
+
 ## [2.6.7] - 2026-07-09
 
 A **correctness-hardening and consolidation** cycle on top of 2.6.6. Eight
