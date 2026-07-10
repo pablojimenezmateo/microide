@@ -59,6 +59,53 @@ bool TabCoordinator::EnsureEditorTabLoaded(TabEntry& tab) {
   return true;
 }
 
+bool TabCoordinator::LoadEditorTabForActivation(TabEntry& tab) {
+  if (tab.kind != TabEntry::Kind::Editor) {
+    return true;
+  }
+  if (tab.editor_state.has_value()) {
+    // A deferred tab gets its preferences applied inside RestoreEditorTab, after
+    // which view state (scroll) is authoritative. Re-applying preferences here
+    // would run EnsureCursorVisible again and snap scroll back onto the caret, so
+    // only refresh preferences for tabs that were already loaded.
+    const bool was_deferred = tab.editor_state->needs_restore;
+    if (!EnsureEditorTabLoaded(tab)) {
+      return false;
+    }
+    if (!was_deferred) {
+      operations_.apply_editor_preferences(tab.editor_state->viewport);
+    }
+    return true;
+  }
+  if (tab.deferred_handle.has_value()) {
+    editor::TextViewport loaded_view;
+    const std::filesystem::path deferred_path = tab.deferred_handle->path.lexically_normal();
+    if (deferred_path.empty() || !loaded_view.OpenFile(deferred_path)) {
+      return false;
+    }
+    operations_.apply_editor_preferences(loaded_view);
+    operations_.apply_detected_indent_on_open(loaded_view);
+    // View state last: scroll stays authoritative even when a restored selection
+    // would otherwise drag scroll back onto the caret.
+    loaded_view.ApplyRestoredViewState(tab.deferred_handle->cursor_line,
+                                       tab.deferred_handle->cursor_column,
+                                       tab.deferred_handle->scroll_line,
+                                       tab.deferred_handle->horizontal_scroll,
+                                       tab.deferred_handle->selection);
+    tab.editor_state = operations_.make_editor_tab_state(loaded_view);
+    tab.deferred_handle.reset();
+    return true;
+  }
+  editor::TextViewport loaded_view;
+  if (!loaded_view.OpenFile(tab.path)) {
+    return false;
+  }
+  operations_.apply_editor_preferences(loaded_view);
+  operations_.apply_detected_indent_on_open(loaded_view);
+  tab.editor_state = operations_.make_editor_tab_state(loaded_view);
+  return true;
+}
+
 std::optional<std::size_t> TabCoordinator::FindIndexBySpecifier(std::string_view specifier,
                                                                 std::string* error_message) const {
   if (specifier.empty()) {

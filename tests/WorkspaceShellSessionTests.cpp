@@ -2307,9 +2307,65 @@ void TestWorkspaceShellAfterDelayAutosaveSurvivesTabSwitch() {
          "switching to a clean tab must not disarm tab A's pending after_delay autosave");
 }
 
+// Regression: closing the active tab promotes a neighbor. If that neighbor is a
+// session-restored, still-deferred editor tab, the promote path must honor its
+// restored cursor/scroll (from deferred_handle) rather than opening fresh at
+// (0,0). Previously the bespoke promote branch ignored deferred_handle, silently
+// losing the persisted view state (and leaving a stale handle behind).
+void TestWorkspaceShellClosePromotesDeferredTabWithRestoredViewState() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  WriteFile(file_a, "alpha\n");
+  std::string b_content;
+  for (int i = 0; i < 200; ++i) {
+    b_content += "abcdef\n";
+  }
+  WriteFile(file_b, b_content);
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);  // tab 0
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);  // tab 1 (active)
+  auto& editor_b = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor_b.MoveCursorTo(2, 3);
+  editor_b.SetScrollLine(10);
+  // Make tab A active so that on restore B is the DEFERRED neighbor.
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "session restore should succeed");
+  // Hydrate only the active tab (A); tab B stays deferred, as on real startup.
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+
+  // Close the active tab WITHOUT first activating B; B is promoted while deferred.
+  WorkspaceShellTestAccess::RequestCloseTab(restored, 0);
+
+  const auto& promoted = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(promoted.cursor_line() == 2 && promoted.cursor_column() == 3,
+         "promoting a deferred tab on close must restore its persisted caret");
+  Expect(promoted.scroll_line() == 10,
+         "promoting a deferred tab on close must restore its persisted scroll position");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/ClosePromotesDeferredTabWithRestoredViewState",
+          TestWorkspaceShellClosePromotesDeferredTabWithRestoredViewState);
   AddTest(tests, "WorkspaceShell/AfterDelayAutosaveSurvivesTabSwitch",
           TestWorkspaceShellAfterDelayAutosaveSurvivesTabSwitch);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesEditorGroupSplit",

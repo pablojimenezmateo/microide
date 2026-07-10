@@ -135,6 +135,11 @@ class TabCoordinator {
  private:
   bool RestoreEditorTab(TabEntry::EditorTabState& editor_state);
   bool EnsureEditorTabLoaded(TabEntry& tab);
+  // Load an editor tab for activation/promotion: hydrates an already-loaded tab,
+  // or opens a deferred/fresh one applying preferences, detected indent, and (for a
+  // deferred tab) the restored cursor/scroll/selection. Shared by Activate() and
+  // Close()'s promote path so both honor deferred view state identically.
+  bool LoadEditorTabForActivation(TabEntry& tab);
   // The normalized buffer path a tab contributes to LSP open-view accounting, or
   // empty if the tab holds no editable buffer view. Mirrors OpenBufferViewPath so
   // the live per-close count and the whole-group count map agree on keys/kinds.

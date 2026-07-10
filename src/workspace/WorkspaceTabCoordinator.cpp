@@ -342,55 +342,9 @@ void TabCoordinator::Activate(std::size_t index) {
   // Editor loading is best-effort: if the file disappeared while the IDE was
   // closed, we still want the tab strip + project tree to reflect this tab as
   // the active one (otherwise the activation looks like a no-op to the user).
-  // The lambda returns false on failure but doesn't skip the post-activation
-  // sync below.
-  const auto attempt_editor_load = [&]() -> bool {
-    if (tab.kind != TabEntry::Kind::Editor) {
-      return true;
-    }
-    if (tab.editor_state.has_value()) {
-      // A deferred tab gets its preferences applied inside RestoreEditorTab, after
-      // which view state (scroll) is authoritative. Re-applying preferences here
-      // would run EnsureCursorVisible again and snap scroll back onto the caret, so
-      // only refresh preferences for tabs that were already loaded.
-      const bool was_deferred = tab.editor_state->needs_restore;
-      if (!EnsureEditorTabLoaded(tab)) {
-        return false;
-      }
-      if (!was_deferred) {
-        operations_.apply_editor_preferences(tab.editor_state->viewport);
-      }
-      return true;
-    }
-    if (tab.deferred_handle.has_value()) {
-      editor::TextViewport loaded_view;
-      const std::filesystem::path deferred_path = tab.deferred_handle->path.lexically_normal();
-      if (deferred_path.empty() || !loaded_view.OpenFile(deferred_path)) {
-        return false;
-      }
-      operations_.apply_editor_preferences(loaded_view);
-      operations_.apply_detected_indent_on_open(loaded_view);
-      // View state last: scroll stays authoritative even when a restored selection
-      // would otherwise drag scroll back onto the caret.
-      loaded_view.ApplyRestoredViewState(tab.deferred_handle->cursor_line,
-                                         tab.deferred_handle->cursor_column,
-                                         tab.deferred_handle->scroll_line,
-                                         tab.deferred_handle->horizontal_scroll,
-                                         tab.deferred_handle->selection);
-      tab.editor_state = operations_.make_editor_tab_state(loaded_view);
-      tab.deferred_handle.reset();
-      return true;
-    }
-    editor::TextViewport loaded_view;
-    if (!loaded_view.OpenFile(tab.path)) {
-      return false;
-    }
-    operations_.apply_editor_preferences(loaded_view);
-    operations_.apply_detected_indent_on_open(loaded_view);
-    tab.editor_state = operations_.make_editor_tab_state(loaded_view);
-    return true;
-  };
-  (void)attempt_editor_load();
+  // LoadEditorTabForActivation returns false on failure but the post-activation
+  // sync below still runs.
+  (void)LoadEditorTabForActivation(tab);
   SyncActiveEditorTabMetadata();
   const editor::TextViewport* active_vp =
       (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value())
@@ -825,17 +779,11 @@ void TabCoordinator::Close(std::size_t index) {
   } else if (index == state_.focused_group().active_tab_index) {
     state_.focused_group().active_tab_index = std::min(index, state_.focused_group().open_tabs.size() - 1);
     auto& tab = state_.focused_group().open_tabs[state_.focused_group().active_tab_index];
-    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
-      if (EnsureEditorTabLoaded(tab)) {
-        operations_.apply_editor_preferences(tab.editor_state->viewport);
-      }
-    } else if (tab.kind == TabEntry::Kind::Editor) {
-      editor::TextViewport loaded_view;
-      if (loaded_view.OpenFile(tab.path)) {
-        operations_.apply_editor_preferences(loaded_view);
-        operations_.apply_detected_indent_on_open(loaded_view);
-        tab.editor_state = operations_.make_editor_tab_state(loaded_view);
-      }
+    if (tab.kind == TabEntry::Kind::Editor) {
+      // Promote the neighbor through the same loader Activate uses so a deferred
+      // (session-restored, never-activated) tab restores its cursor/scroll/
+      // selection instead of opening fresh at (0,0).
+      (void)LoadEditorTabForActivation(tab);
     } else if (tab.kind == TabEntry::Kind::Compare) {
       // Promoting a compare/merge tab on close must scroll its active selection
       // into view, exactly as Activate() does — otherwise the revealed tab's
