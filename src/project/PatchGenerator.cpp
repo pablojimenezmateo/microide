@@ -229,10 +229,31 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
         // valid "real line" test: using it dropped interior blank context lines
         // and desynced the @@ header (making `git apply --check` reject the hunk).
         if (context_text.empty()) {
-          const bool is_phantom_trailing_eol =
-              compare_row.left_line == last_left_line && !model.left_final_newline_missing &&
-              compare_row.right_line == last_right_line && !model.right_final_newline_missing;
-          if (is_phantom_trailing_eol) {
+          // An Unchanged row's two sides are equal, so both texts are empty here.
+          // Each side is a phantom trailing element only if it sits at that side's
+          // last line AND that side ended in a newline. Classify each independently:
+          const bool left_is_phantom = compare_row.left_line == last_left_line &&
+                                       !model.left_final_newline_missing;
+          const bool right_is_phantom = compare_row.right_line == last_right_line &&
+                                        !model.right_final_newline_missing;
+          if (left_is_phantom && right_is_phantom) {
+            break;  // Both-sides phantom: not a real line on either side; drop it.
+          }
+          // One-sided phantom: the phantom side has NO real line here while the other
+          // side has a genuine blank line. Emitting it as shared context would add a
+          // non-existent line to the phantom side's @@ count and git would reject the
+          // pre/post-image. Emit the real side as an add (left phantom) or delete
+          // (right phantom) instead.
+          if (left_is_phantom) {
+            body_lines.push_back(PatchBodyLine{'+', std::string_view(compare_row.right_text),
+                                               right_no_newline(compare_row.right_line)});
+            has_change = true;
+            break;
+          }
+          if (right_is_phantom) {
+            body_lines.push_back(PatchBodyLine{'-', std::string_view(compare_row.left_text),
+                                               left_no_newline(compare_row.left_line)});
+            has_change = true;
             break;
           }
         }
@@ -247,20 +268,27 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
         const bool right_last_no_nl = right_no_newline(compare_row.right_line);
         const bool new_side_continues = compare_row.right_line < last_right_line;
         const bool old_side_continues = compare_row.left_line < last_left_line;
-        if (left_last_no_nl && new_side_continues) {
+        // The no-newline marker — and the delete/add split that places it — is only
+        // valid when this hunk actually reaches the end of the file. For an isolated
+        // NON-terminal hunk (e.g. staging one hunk while a later hunk owns the file
+        // end) this shared line is mid-file, so a trailing marker would make git
+        // treat the hunk as reaching EOF and reject it. Emit ordinary context there.
+        const bool hunk_reaches_model_end = end_row + 1 == model.rows.size();
+        if (hunk_reaches_model_end && left_last_no_nl && new_side_continues) {
           body_lines.push_back(PatchBodyLine{'-', context_text, true});
           body_lines.push_back(PatchBodyLine{'+', context_text, right_last_no_nl});
           has_change = true;
           break;
         }
-        if (right_last_no_nl && old_side_continues) {
+        if (hunk_reaches_model_end && right_last_no_nl && old_side_continues) {
           body_lines.push_back(PatchBodyLine{'-', context_text, false});
           body_lines.push_back(PatchBodyLine{'+', context_text, true});
           has_change = true;
           break;
         }
-        body_lines.push_back(
-            PatchBodyLine{' ', context_text, left_last_no_nl || right_last_no_nl});
+        body_lines.push_back(PatchBodyLine{
+            ' ', context_text,
+            hunk_reaches_model_end && (left_last_no_nl || right_last_no_nl)});
         break;
       }
       case CompareRowKind::Deleted:

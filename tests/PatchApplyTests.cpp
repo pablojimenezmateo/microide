@@ -95,6 +95,77 @@ void TestPatchStageHunkInRepository() {
          "staged diff should contain added line");
 }
 
+// Bug: appending a blank line + content to a newline-terminated file produced a
+// patch whose @@ old count included the LEFT file's phantom trailing element as a
+// context line, so `git apply` rejected the pre-image. The whole-file patch must
+// apply cleanly against the real repo.
+void TestPatchGeneratorOneSidedPhantomTrailingLineApplies() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  std::filesystem::create_directories(repo_path);
+  InitializeGitRepo(repo_path);
+  const auto file_path = repo_path / "f.txt";
+  WriteFile(file_path, "c\n");
+  CommitAll(repo_path, "base", "base");
+
+  WriteFile(file_path, "c\n\nd\n");
+  const CompareModel model = BuildCompareModel("c\n", "c\n\nd\n");
+  const auto patch = GenerateComparePatch(model, "f.txt", 0);
+  Expect(patch.has_value(), "one-sided-phantom patch should be generated");
+
+  PatchApplyRequest request{
+      .operation = PatchOperationKind::StageHunk,
+      .target{
+          .repository_root = repo_path,
+          .relative_path = std::filesystem::path("f.txt"),
+          .hunk = std::nullopt,
+          .line_selection = std::nullopt,
+      },
+      .model = model,
+  };
+  const auto result = ApplyPatchRequest(request, *patch);
+  Expect(result.category == PatchApplyResultCategory::Success,
+         "git apply should accept the appended-blank-line patch");
+}
+
+// Bug: staging a single non-terminal hunk that ends just before an EOF-no-newline
+// shared line emitted a `\ No newline at end of file` marker mid-file, so git
+// rejected the isolated hunk (it does not reach the file end). The marker must be
+// suppressed for a non-terminal hunk so the shared line is ordinary context.
+void TestPatchGeneratorNonTerminalHunkNoNewlineMarkerApplies() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  std::filesystem::create_directories(repo_path);
+  InitializeGitRepo(repo_path);
+  const auto file_path = repo_path / "f.txt";
+  WriteFile(file_path, "p\nalpha\nq");  // no trailing newline
+  CommitAll(repo_path, "base", "base");
+
+  WriteFile(file_path, "P\nalpha");  // no trailing newline
+  const CompareModel model = BuildCompareModel("p\nalpha\nq", "P\nalpha");
+  Expect(model.hunks.size() >= 2, "fixture should produce at least two hunks");
+
+  // Stage only the FIRST hunk (the p->P change), which does not reach the file end.
+  const auto patch = GenerateComparePatch(model, "f.txt", 0);
+  Expect(patch.has_value(), "non-terminal hunk patch should be generated");
+  Expect(patch->find("\\ No newline at end of file") == std::string::npos,
+         "a non-terminal isolated hunk must not emit an EOF no-newline marker");
+
+  PatchApplyRequest request{
+      .operation = PatchOperationKind::StageHunk,
+      .target{
+          .repository_root = repo_path,
+          .relative_path = std::filesystem::path("f.txt"),
+          .hunk = std::nullopt,
+          .line_selection = std::nullopt,
+      },
+      .model = model,
+  };
+  const auto result = ApplyPatchRequest(request, *patch);
+  Expect(result.category == PatchApplyResultCategory::Success,
+         "git apply should accept the non-terminal hunk without a stray no-newline marker");
+}
+
 void TestPatchStaleGenerationCategory() {
   PatchApplyRequest request{
       .operation = PatchOperationKind::StageHunk,
@@ -825,6 +896,10 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
   tests.push_back({"PatchApply/UnifiedDiff", TestPatchGeneratorProducesUnifiedDiff});
   tests.push_back({"PatchApply/SelectedLines", TestPatchGeneratorSelectedLinesIncludeContext});
   tests.push_back({"PatchApply/StageHunk", TestPatchStageHunkInRepository});
+  tests.push_back({"PatchApply/OneSidedPhantomTrailingLine",
+                   TestPatchGeneratorOneSidedPhantomTrailingLineApplies});
+  tests.push_back({"PatchApply/NonTerminalHunkNoNewlineMarker",
+                   TestPatchGeneratorNonTerminalHunkNoNewlineMarkerApplies});
   tests.push_back({"PatchApply/FailureCategory", TestPatchStaleGenerationCategory});
   tests.push_back({"PatchApply/LineSelection", TestPatchLineSelectionHelpers});
   tests.push_back({"PatchApply/Utf8Paths", TestPatchGeneratorUtf8Paths});

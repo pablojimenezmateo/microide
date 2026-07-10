@@ -181,6 +181,11 @@ void TextViewport::MoveCursorTo(std::size_t line, std::size_t column, bool exten
     return;
   }
 
+  // End the typing coalesce run like every other caret-move method: MoveCursorTo is
+  // the path for mouse-click positioning, goto-line, bracket-match, find-nav, and
+  // snippet/tabstop jumps. Without this, typing after a click that lands on the exact
+  // column the previous run ended at merges both edits into one undo step.
+  undo_history_.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   const std::size_t clamped_line = std::min(line, document_->lines.size() - 1);
   const std::size_t line_length = document_->lines[clamped_line].size();

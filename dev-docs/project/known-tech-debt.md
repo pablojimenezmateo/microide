@@ -110,6 +110,33 @@ regression worse than the defect. Recorded here so they are not silently lost.
 >   disabled containers are always empty. Route through the full container reset if a
 >   runtime enable/disable toggle is ever added. (Plugin hunter #3.)
 
+> **Deferred 2026-07-11 (pass 9 — cross-subsystem bug hunt):** a four-way fan-out
+> (snippet/folding/advanced-editor, compare/merge patch+staging, control-channel
+> deep, undo/redo internals) landed 6 fixes (see commit): folding scroll-resolve
+> gate (folds below the 2000-line compute budget never appeared on scroll), folding
+> incremental-resume dead path (perf — always full-rescanned unless a fold was
+> collapsed), control-channel `--json` id:null correlation (false timeout/exit 2),
+> the MoveCursorTo typing-coalesce boundary (undo merged edits across a click/goto
+> jump), and two git-apply-verified patch-generation bugs (one-sided phantom
+> trailing line inflating the @@ old count; `\ No newline` marker on a non-terminal
+> isolated hunk). The following were deliberately **not** fixed and are recorded:
+> - **Control: `--timeout N` can block ~2N seconds** when a peer accepts but never
+>   reads — SendLine and the read loop use two independent full-timeout deadlines
+>   instead of one shared overall deadline. Low. Fix: compute one deadline before
+>   SendLine and pass the remaining budget to both. (Control hunter #2.)
+> - **Control: command replies can carry stale `panel.feedback`** from a prior
+>   unrelated action (ExecuteControlCommand reports the shared panel feedback string
+>   without snapshotting/clearing it before dispatch). Low, somewhat uncertain — a
+>   headless driver may see a misleading `feedback` on an ok:true reply. Fix: snapshot
+>   feedback before ExecuteCommandLine and report only if it changed. (Control #3.)
+> - **Undo: nested undo groups double-fold child edits into the outer frame.**
+>   RecordEntry folds each child into every frame on group_stack_, so a re-pushed
+>   inner aggregate is folded into the outer frame on top of the raw children it
+>   already received. LATENT — no current BeginUndoGroup caller nests a second group
+>   inside an open one — but the multi-frame design invites future nesting. Fix: fold
+>   each edit only into the innermost frame and propagate inner aggregates outward on
+>   finish. (Undo hunter #2.)
+
 > **Resolved 2026-07-10 (bug-inventory review pass — `microide-2026-07-10-bug-inventory.md`):**
 > a ~90-item inventory built against `main` was triaged against the current tree (many
 > items were already closed by the twelfth/thirteenth passes) and ~50 still-live items

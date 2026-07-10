@@ -40,7 +40,16 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
   fingerprint.tab_size = tab_size == 0 ? 1 : tab_size;
   fingerprint.language_id = contract == nullptr ? std::string{} : contract->language_id;
 
-  if (model.IsFresh(fingerprint)) {
+  const std::size_t visible_start = viewport.scroll_line();
+  const std::size_t visible_end =
+      visible_rows == 0 ? visible_start : visible_start + visible_rows - 1;
+
+  // Content-freshness alone is not enough to skip: on a file larger than the
+  // per-frame compute budget the first pass resolves only a prefix, so folds below
+  // it must keep resolving as the user scrolls (same content, new visible range).
+  // Skip only when the fingerprint matches AND the visible range is already
+  // resolved; otherwise fall through so EnsureFoldsForVisibleRange extends the scan.
+  if (model.IsFresh(fingerprint) && model.IsVisibleRangeResolved(visible_end)) {
     return;
   }
 
@@ -57,9 +66,6 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
   }
 
   const std::size_t fold_resume_line = viewport.ConsumeFoldEditAnchorLine();
-  const std::size_t visible_start = viewport.scroll_line();
-  const std::size_t visible_end =
-      visible_rows == 0 ? visible_start : visible_start + visible_rows - 1;
   model.EnsureFoldsForVisibleRange(viewport.lines(), options, visible_start, visible_end,
                                    kFoldingModelComputeBudget, fold_resume_line, &viewport);
   model.SetFingerprint(fingerprint);

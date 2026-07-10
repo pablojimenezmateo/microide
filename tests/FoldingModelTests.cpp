@@ -313,6 +313,43 @@ void TestEnsureFoldsForVisibleRangeBudgetGuardOnHugeFile() {
          "scrolling near the closer must resolve the far opener");
 }
 
+// The workspace refresh gate skips recompute only when the fold model is fresh AND
+// the visible range is already resolved (IsVisibleRangeResolved). On a file larger
+// than the compute budget the first pass resolves only a prefix, so the predicate
+// must report the far range as UNresolved — otherwise the gate would early-return on
+// content-freshness alone and folds below the budget would never appear on scroll.
+void TestIsVisibleRangeResolvedTracksBudgetedPrefix() {
+  std::vector<std::string> lines;
+  lines.reserve(5200);
+  lines.push_back("namespace n {");
+  for (int i = 0; i < 5000; ++i) {
+    lines.push_back("  int v = 0;");
+  }
+  lines.push_back("}");
+  for (int i = 0; i < 100; ++i) {
+    lines.push_back("// tail");
+  }
+
+  FoldingModel model;
+  Expect(model.EnsureFoldsForVisibleRange(lines, DefaultCStyleOptions(),
+                                          /*visible_start_line=*/0,
+                                          /*visible_end_line=*/20,
+                                          /*max_lines=*/2000),
+         "first budgeted resolve should finish");
+  Expect(model.IsVisibleRangeResolved(20),
+         "the resolved prefix must report the top visible range as resolved");
+  Expect(!model.IsVisibleRangeResolved(5001),
+         "a range beyond the budgeted prefix must report as UNresolved so the gate keeps scanning");
+
+  Expect(model.EnsureFoldsForVisibleRange(lines, DefaultCStyleOptions(),
+                                          /*visible_start_line=*/4980,
+                                          /*visible_end_line=*/5001,
+                                          /*max_lines=*/2000),
+         "scrolled resolve should finish");
+  Expect(model.IsVisibleRangeResolved(5001),
+         "after scrolling and extending the scan, the far range must report as resolved");
+}
+
 void TestEnsureFoldsForVisibleRangeExtendsOnScroll() {
   std::vector<std::string> lines;
   lines.reserve(256);
@@ -606,6 +643,8 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
           TestEnsureFoldsForVisibleRangeResolvesVisibleOpenerWithDistantCloser);
   AddTest(tests, "EditorFolding/VisibleRange/BudgetGuardOnHugeFile",
           TestEnsureFoldsForVisibleRangeBudgetGuardOnHugeFile);
+  AddTest(tests, "EditorFolding/VisibleRange/IsVisibleRangeResolvedTracksBudgetedPrefix",
+          TestIsVisibleRangeResolvedTracksBudgetedPrefix);
   AddTest(tests, "EditorFolding/VisibleRange/ExtendsOnScroll",
           TestEnsureFoldsForVisibleRangeExtendsOnScroll);
   AddTest(tests, "EditorFolding/IndexedLookup/CollapsedBeforeAndAfterViewportDoNotHideViewport",

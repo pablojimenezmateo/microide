@@ -387,17 +387,30 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
                                      std::size_t incremental_resume_line,
                                      std::size_t target_end_exclusive,
                                      const TextViewport* syntax_viewport) {
-  // Skip the expensive previous-state copies when nothing was collapsed; the
-  // remap is then a no-op and the new state is just `all-false`.
+  const std::size_t line_count = lines.size();
+  constexpr std::size_t kNoResume = std::numeric_limits<std::size_t>::max();
+
+  // The incremental-resume path reuses the pre-edit bracket ranges whose closer is
+  // before the edit anchor, then rescans the tail — cheap for a localized edit on a
+  // large file. It needs a snapshot of `ranges_`, so snapshot when a resume will be
+  // attempted, not only when a fold is collapsed (the collapse remap has its own
+  // gate below). Without this the reuse path was dead whenever nothing was
+  // collapsed — the common case — forcing a full rescan on every edit.
+  const bool resume_valid = incremental_resume_line != kNoResume &&
+                            incremental_resume_line > 0 && incremental_resume_line < line_count &&
+                            !options.bracket_pairs.empty();
+
+  // Skip the expensive previous-state copies unless the remap or the resume needs
+  // them; the collapse remap is a no-op (all-false) when nothing was collapsed.
   const std::size_t previous_collapsed_count = collapsed_count_;
   std::vector<FoldRange> previous_ranges;
   std::vector<bool> previous_collapsed;
-  if (previous_collapsed_count > 0) {
+  if (previous_collapsed_count > 0 || resume_valid) {
     previous_ranges = ranges_;
+  }
+  if (previous_collapsed_count > 0) {
     previous_collapsed = collapsed_;
   }
-  const std::size_t line_count = lines.size();
-  constexpr std::size_t kNoResume = std::numeric_limits<std::size_t>::max();
   const std::size_t scan_end =
       std::min(target_end_exclusive == kNoResume ? line_count : target_end_exclusive, line_count);
 
@@ -435,11 +448,6 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
     ++revision_;
     return complete_;
   };
-
-  const bool resume_valid = incremental_resume_line != kNoResume &&
-                            incremental_resume_line > 0 &&
-                            incremental_resume_line < line_count &&
-                            !options.bracket_pairs.empty();
 
   bool kept_prefix_exists = false;
   if (resume_valid) {
@@ -502,7 +510,6 @@ bool FoldingModel::EnsureFoldsForVisibleRange(
     std::size_t max_lines,
     std::size_t incremental_resume_line,
     const TextViewport* syntax_viewport) {
-  constexpr std::size_t kVisibleLookAhead = 32;
   const std::size_t line_count = lines.size();
   if (line_count == 0) {
     Clear();

@@ -169,7 +169,12 @@ std::optional<std::string> BuildControlSendRequest(const ControlSendOptions& opt
       return std::nullopt;
     }
     util::JsonObject object = parsed->AsObject();
-    if (object.find("id") == object.end()) {
+    // Inject the client's correlation id when the caller left it absent OR passed an
+    // explicit null: the server treats a null id as "no id" and omits it from the
+    // reply, which the read loop then can't correlate — the command runs and its
+    // reply prints, but the client falls through to a false "timed out" (exit 2).
+    const auto id_it = object.find("id");
+    if (id_it == object.end() || id_it->second.IsNull()) {
       object["id"] = static_cast<std::int64_t>(options.request_id);
     }
     return util::SerializeJson(util::JsonValue(std::move(object)));

@@ -123,8 +123,22 @@ class FoldingModel {
   bool complete() const { return complete_; }
   std::size_t revision() const { return revision_; }
 
+  // Look-ahead the visible-range resolve extends past the last visible line so an
+  // opener on-screen whose closer sits just below still gets a marker. Shared with
+  // EnsureFoldsForVisibleRange and IsVisibleRangeResolved so the refresh gate and
+  // the scan use the same window.
+  static constexpr std::size_t kVisibleLookAhead = 32;
+
   bool IsFresh(const Fingerprint& fingerprint) const {
     return !dirty_ && fingerprint_ == fingerprint;
+  }
+  // True when the folds covering [0, visible_end + look-ahead] are already resolved,
+  // so an EnsureFoldsForVisibleRange call for that range would no-op. A budgeted
+  // compute on a huge file resolves only a prefix, so IsFresh (content-only) is not
+  // sufficient to skip the refresh — the scan must still extend as the user scrolls.
+  bool IsVisibleRangeResolved(std::size_t visible_end_line) const {
+    return !dirty_ &&
+           (complete_ || resolved_prefix_line_count_ >= visible_end_line + kVisibleLookAhead + 1);
   }
   void MarkDirty() { dirty_ = true; }
   void SetFingerprint(Fingerprint fingerprint) {

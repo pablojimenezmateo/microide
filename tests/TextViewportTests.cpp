@@ -749,6 +749,29 @@ void TestTextViewportCaretRoundTripBreaksTypingCoalesce() {
          "the first character should undo separately");
 }
 
+// A mouse-click / goto caret jump goes through MoveCursorTo, which must also end
+// the typing coalesce run. Clicking away and back to the exact column the previous
+// run ended at (same before-cursor == run's after-cursor) would otherwise let the
+// next character merge into the prior run's single undo step.
+void TestTextViewportMoveCursorToSameColumnBreaksTypingCoalesce() {
+  TextViewport viewport;
+  viewport.LoadContent("", "/tmp/undo-coalesce-clickback.txt");
+
+  viewport.InsertCharacter('a');
+  viewport.InsertCharacter('b');
+  viewport.InsertCharacter('c');  // "abc", run's after-cursor at column 3
+  // Simulate a mouse click elsewhere then a click back to the SAME column 3.
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 3);
+  viewport.InsertCharacter('d');  // "abcd"
+  Expect(viewport.lines()[0] == "abcd", "fixture should append 'd' after a click round-trip");
+
+  Expect(viewport.Undo() && viewport.lines()[0] == "abc",
+         "a MoveCursorTo round-trip must isolate 'd' in its own undo step");
+  Expect(viewport.Undo() && viewport.lines()[0].empty(),
+         "the original 'abc' run should undo as one step");
+}
+
 void TestTextViewportBackspaceCoalescesIntoWordUndoSteps() {
   TextViewport viewport;
   viewport.LoadContent("foo bar", "/tmp/undo-coalesce-backspace.txt");
@@ -2931,6 +2954,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportCaretJumpBreaksTypingCoalesce);
   AddTest(tests, "TextViewport/CaretRoundTripBreaksTypingCoalesce",
           TestTextViewportCaretRoundTripBreaksTypingCoalesce);
+  AddTest(tests, "TextViewport/MoveCursorToSameColumnBreaksTypingCoalesce",
+          TestTextViewportMoveCursorToSameColumnBreaksTypingCoalesce);
   AddTest(tests, "TextViewport/BackspaceCoalescesIntoWordUndoSteps",
           TestTextViewportBackspaceCoalescesIntoWordUndoSteps);
   AddTest(tests, "TextViewport/MultiCaretInsertAndUndoAreAtomic",
