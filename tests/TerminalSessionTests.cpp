@@ -1630,7 +1630,66 @@ void TestTerminalSessionScrollbackTrimTotalTracksDroppedLines() {
          "trim total should equal written lines minus surviving lines");
 }
 
+// DECSTBM (CSI r) requires the top margin to be strictly above the bottom.
+// A one-line region (top == bottom) is invalid and must leave the region
+// unchanged. We reveal the effective scroll-region top with origin mode: with
+// origin mode on, CUP row 1 homes to the region top, so writing there shows
+// where the top margin actually is.
+void TestTerminalSessionDecstbmIgnoresEqualMargins() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 6, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049hA\nB\nC\nD\nE\nF");
+
+  // CSI 5;5 r would set a one-line region at index 4; it must be ignored so the
+  // region stays full-screen (top index 0).
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[5;5r\x1b[?6h\x1b[1;1HZ");
+
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "Z",
+                 "equal DECSTBM margins should be ignored, leaving the top margin at row 0");
+  ExpectLineText(lines, 4, "E",
+                 "an ignored one-line region must not become the effective scroll region");
+}
+
+void TestTerminalSessionDecstbmIgnoresInvertedMargins() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 8, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049hA\nB\nC\nD\nE\nF\nG\nH");
+
+  // CSI 8;3 r inverts the margins (top index 7 below bottom index 2); it must be
+  // ignored, leaving the full-screen region with its top at row 0.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[8;3r\x1b[?6h\x1b[1;1HZ");
+
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "Z",
+                 "inverted DECSTBM margins should be ignored, leaving the top margin at row 0");
+  ExpectLineText(lines, 2, "C",
+                 "an ignored inverted region must not repurpose the bottom row as the top margin");
+}
+
+void TestTerminalSessionDecstbmFullScreenResetsRegion() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 6, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049hA\nB\nC\nD\nE\nF");
+
+  // Establish a genuine narrower region, then the no-argument CSI r must reset it
+  // to a valid full-screen region (top index 0 < bottom index 5).
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[3;5r\x1b[r\x1b[?6h\x1b[1;1HZ");
+
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "Z",
+                 "full-screen CSI r should re-establish a valid region with the top margin at row 0");
+  ExpectLineText(lines, 2, "C",
+                 "full-screen CSI r must not leave the previous narrower region's top in effect");
+}
+
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TerminalSession/DecstbmIgnoresEqualMargins",
+          TestTerminalSessionDecstbmIgnoresEqualMargins);
+  AddTest(tests, "TerminalSession/DecstbmIgnoresInvertedMargins",
+          TestTerminalSessionDecstbmIgnoresInvertedMargins);
+  AddTest(tests, "TerminalSession/DecstbmFullScreenResetsRegion",
+          TestTerminalSessionDecstbmFullScreenResetsRegion);
   AddTest(tests, "TerminalSession/ScrollbackTrimTotalTracksDroppedLines",
           TestTerminalSessionScrollbackTrimTotalTracksDroppedLines);
   AddTest(tests, "TerminalSession/OriginModeToggleHomesToVisibleScreenTop",

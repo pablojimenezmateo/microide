@@ -4,15 +4,21 @@
 #include <limits>
 #include <utility>
 
+#include "workspace/ProtocolNumeric.h"
+
 namespace microide::workspace::lsp_protocol {
 
 using util::JsonObject;
 using util::JsonValue;
+using protocol_numeric::JsonIntInRange;
 
 LspClient::Position ParsePosition(const JsonValue& value) {
   LspClient::Position position;
-  position.line = static_cast<int>(value["line"].AsInt());
-  position.character = static_cast<int>(value["character"].AsInt());
+  // Clamp out-of-int-range positions deterministically rather than relying on the
+  // implementation-defined narrowing of an out-of-range int64 (a hostile server
+  // could otherwise wrap a huge line/character into a small/negative coordinate).
+  position.line = JsonIntInRange(value["line"]);
+  position.character = JsonIntInRange(value["character"]);
   return position;
 }
 
@@ -70,7 +76,7 @@ LspClient::Diagnostic ParseDiagnostic(const JsonValue& value) {
   LspClient::Diagnostic diagnostic;
   diagnostic.range = ParseRange(value["range"]);
   diagnostic.message = value["message"].AsString();
-  diagnostic.severity = static_cast<int>(value["severity"].AsInt(1));
+  diagnostic.severity = JsonIntInRange(value["severity"], 1);
   // LSP `Diagnostic.code` is `integer | string`. Many servers (TypeScript's 2304,
   // and most compiler-backed servers) report a numeric code; AsString() yields ""
   // for those, silently dropping the code from the UI. Capture the int form too.
@@ -107,7 +113,7 @@ LspClient::DocumentSymbol ParseDocumentSymbolAtDepth(const JsonValue& value, int
   LspClient::DocumentSymbol symbol;
   symbol.name = value["name"].AsString();
   symbol.detail = value["detail"].AsString();
-  symbol.kind = static_cast<int>(value["kind"].AsInt(1));
+  symbol.kind = JsonIntInRange(value["kind"], 1);
   if (value.HasKey("location")) {
     // SymbolInformation shape.
     symbol.range = ParseRange(value["location"]["range"]);
@@ -150,7 +156,7 @@ std::vector<LspClient::WorkspaceSymbol> ParseWorkspaceSymbols(const JsonValue& r
     LspClient::WorkspaceSymbol symbol;
     symbol.name = item["name"].AsString();
     symbol.container_name = item["containerName"].AsString();
-    symbol.kind = static_cast<int>(item["kind"].AsInt(1));
+    symbol.kind = JsonIntInRange(item["kind"], 1);
     symbol.location = ParseLocation(item["location"]);
     symbols.push_back(std::move(symbol));
   }
@@ -269,6 +275,20 @@ std::string StringOrValueField(const JsonValue& value) {
   }
   return {};
 }
+
+// Truncate `text` to at most `max_bytes` without splitting a UTF-8 code point:
+// back up off any continuation byte (0b10xxxxxx) at the cut so a multi-byte
+// sequence is never chopped mid-character.
+void TruncateUtf8InPlace(std::string& text, std::size_t max_bytes) {
+  if (text.size() <= max_bytes) {
+    return;
+  }
+  std::size_t cut = max_bytes;
+  while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) {
+    --cut;
+  }
+  text.resize(cut);
+}
 }  // namespace
 
 LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
@@ -276,8 +296,8 @@ LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
   if (!result.HasKey("signatures") || !result["signatures"].IsArray()) {
     return help;
   }
-  help.active_signature = static_cast<int>(result["activeSignature"].AsInt(0));
-  help.active_parameter = static_cast<int>(result["activeParameter"].AsInt(0));
+  help.active_signature = JsonIntInRange(result["activeSignature"], 0);
+  help.active_parameter = JsonIntInRange(result["activeParameter"], 0);
   // Bound the materialized signature/parameter counts (hostile-server backstop,
   // mirrors the other request caps). A usable overload menu never approaches these.
   constexpr std::size_t kMaxSignatures = 64;
@@ -290,9 +310,8 @@ LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
     LspClient::SignatureInformation info;
     info.label = signature["label"].AsString();
     info.documentation = StringOrValueField(signature["documentation"]);
-    info.active_parameter = signature.HasKey("activeParameter")
-                                ? static_cast<int>(signature["activeParameter"].AsInt(-1))
-                                : -1;
+    info.active_parameter =
+        signature.HasKey("activeParameter") ? JsonIntInRange(signature["activeParameter"], -1) : -1;
     if (signature.HasKey("parameters") && signature["parameters"].IsArray()) {
       const auto& parameters = signature["parameters"].AsArray();
       const std::size_t parameter_count = std::min(parameters.size(), kMaxParameters);
@@ -338,17 +357,40 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
     return contents["value"].AsString();
   }
   // MarkedString[]: join each element's text with a blank line between blocks.
+  // Bound both the element count and the accumulated byte size so a hostile server
+  // cannot force a near-64 MiB concatenation on the callback path before the UI
+  // truncates it. The hover popup only displays a few KiB; cap comfortably above
+  // that and stop early, truncating the final piece on a UTF-8 boundary with an
+  // explicit marker so the user sees the content was clipped.
   if (contents.IsArray()) {
+    constexpr std::size_t kMaxHoverElements = 128;
+    constexpr std::size_t kMaxHoverBytes = 32 * 1024;
+    static constexpr char kTruncationMarker[] = "\n\n… (truncated)";
     std::string out;
+    std::size_t elements = 0;
+    bool truncated = false;
     for (const auto& element : contents.AsArray()) {
+      if (elements >= kMaxHoverElements) {
+        truncated = true;
+        break;
+      }
       const std::string piece = StringOrValueField(element);
       if (piece.empty()) {
         continue;
       }
+      ++elements;
       if (!out.empty()) {
         out += "\n\n";
       }
       out += piece;
+      if (out.size() >= kMaxHoverBytes) {
+        TruncateUtf8InPlace(out, kMaxHoverBytes);
+        truncated = true;
+        break;
+      }
+    }
+    if (truncated) {
+      out += kTruncationMarker;
     }
     return out;
   }
@@ -381,7 +423,7 @@ std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const JsonValue& r
     const std::int64_t delta_line = ints[i].AsInt();
     const std::int64_t delta_start = ints[i + 1].AsInt();
     const std::int64_t length = ints[i + 2].AsInt();
-    const int token_type = static_cast<int>(ints[i + 3].AsInt());
+    const int token_type = JsonIntInRange(ints[i + 3]);
     if (delta_line > 0) {
       line += delta_line;
       start_char = delta_start;
@@ -439,7 +481,7 @@ std::vector<LspClient::InlayHint> ParseInlayHints(const JsonValue& result, std::
     if (hint.label.empty()) {
       continue;  // nothing to render
     }
-    hint.kind = static_cast<int>(entry["kind"].AsInt(0));
+    hint.kind = JsonIntInRange(entry["kind"], 0);
     hint.padding_left = entry["paddingLeft"].AsBool(false);
     hint.padding_right = entry["paddingRight"].AsBool(false);
     hints.push_back(std::move(hint));

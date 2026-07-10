@@ -116,19 +116,35 @@ bool GitRepository::FileExistsAtRevision(const std::filesystem::path& relative_p
       {"cat-file", "-e", std::string(revision) + ":" + relative_path.generic_string()});
 }
 
-std::optional<std::string> GitRepository::ReadFileAtRevision(
+std::optional<GitRepository::BlobAtRevision> GitRepository::InterpretBlobResult(
+    const CommandResult& result) {
+  // A `truncated` result means the blob exceeded the subprocess capture ceiling and
+  // git was killed (non-zero exit). Surface the partial content WITH the truncated
+  // flag so a caller can render a "content truncated" state instead of mistaking the
+  // clipped prefix for the whole file. A genuine failure (missing revision, other
+  // non-zero exit) stays nullopt so it is distinguishable from a real empty blob.
+  if (!result.success() && !result.truncated) {
+    return std::nullopt;
+  }
+  return BlobAtRevision{.content = result.output, .truncated = result.truncated};
+}
+
+std::optional<GitRepository::BlobAtRevision> GitRepository::ReadBlobAtRevision(
     const std::filesystem::path& relative_path,
     std::string_view revision) const {
   const auto result =
       Execute({"show", std::string(revision) + ":" + relative_path.generic_string()});
-  // A `truncated` result means the blob exceeded the subprocess capture ceiling
-  // and git was killed (non-zero exit). Return the partial content so an enormous
-  // blob still shows (clipped) in compare/blob views rather than collapsing to a
-  // generic error the way a real failure (missing revision) does.
-  if (!result.success() && !result.truncated) {
+  return InterpretBlobResult(result);
+}
+
+std::optional<std::string> GitRepository::ReadFileAtRevision(
+    const std::filesystem::path& relative_path,
+    std::string_view revision) const {
+  auto blob = ReadBlobAtRevision(relative_path, revision);
+  if (!blob.has_value()) {
     return std::nullopt;
   }
-  return result.output;
+  return std::move(blob->content);
 }
 
 std::optional<std::string> GitRepository::ResolveHeadId() const {

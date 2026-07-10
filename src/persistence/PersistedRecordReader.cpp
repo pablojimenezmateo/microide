@@ -145,17 +145,31 @@ PersistedRecordReaderError MergeErrors(PersistedRecordReaderError primary,
 
 std::optional<PersistedRecordReadResult> PersistedRecordReader::ReadFile(
     const std::filesystem::path& path,
-    PersistedRecordReaderError* error) {
+    PersistedRecordReaderError* error,
+    bool allow_backup_for_unsupported_version) {
   SetError(error, PersistedRecordReaderError::None);
   PersistedRecordReaderError primary_error = PersistedRecordReaderError::None;
   if (auto primary = TryReadSpecificFile(path, &primary_error); primary.has_value()) {
     return primary;
   }
 
+  // A version-mismatched primary must not be silently replaced by a possibly
+  // older backup: doing so lets the next save overwrite newer state with stale
+  // data and hides the mismatch from operators. Refuse the fallback and surface
+  // the mismatch unless the caller explicitly opts into downgrade recovery.
+  if (primary_error == PersistedRecordReaderError::UnsupportedVersion &&
+      !allow_backup_for_unsupported_version) {
+    SetError(error, PersistedRecordReaderError::UnsupportedVersion);
+    return std::nullopt;
+  }
+
   PersistedRecordReaderError backup_error = PersistedRecordReaderError::None;
   const std::filesystem::path backup_path = PersistedRecordWriter::BackupPathFor(path);
   if (auto backup = TryReadSpecificFile(backup_path, &backup_error); backup.has_value()) {
     backup->used_backup = true;
+    // Surface the primary failure that triggered recovery through the result so
+    // callers do not lose the signal that a fallback occurred.
+    backup->primary_error = primary_error;
     SetError(error, PersistedRecordReaderError::None);
     return backup;
   }

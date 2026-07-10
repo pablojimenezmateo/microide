@@ -2,6 +2,7 @@
 
 #include "editor/SnippetEngine.h"
 #include "editor/TextViewport.h"
+#include "util/StringUtil.h"
 
 #include <string>
 
@@ -14,9 +15,11 @@ using microide::editor::SnippetOnCaretMoved;
 using microide::editor::SnippetNavigateTab;
 using microide::editor::SnippetTryInsertText;
 using microide::editor::SnippetTryBackspace;
+using microide::editor::SnippetTryDeleteForward;
 using microide::editor::ExpandSnippetAtSelection;
 using microide::editor::ParseSnippetBody;
 using microide::editor::TextViewport;
+using microide::util::IsValidUtf8;
 
 void TestSnippetSimpleExpansion() {
   TextViewport viewport;
@@ -207,6 +210,116 @@ void TestSnippetLoneCarriageReturnBodyPositions() {
          "tab 2 must map onto the normalized second line, not a stale column on line 0");
 }
 
+// Backspace inside a mirrored placeholder that holds a multi-byte code point (é)
+// must delete the WHOLE code point in every mirror, never a single byte. The old
+// code deleted exactly one byte and decremented end.column by 1, splitting the
+// two-byte 'é' and corrupting the buffer / desyncing the mirrors.
+void TestSnippetUtf8BackspaceDeletesWholeCodepoint() {
+  TextViewport viewport;
+  viewport.LoadContent("--", "/tmp/snippet.cpp");
+  viewport.MoveCursorTo(0, 0);
+  SnippetSessionState session;
+  viewport.BeginUndoGroup();
+  SelectionRange trigger{{0, 0}, {0, 2}};
+  Expect(ExpandSnippetAtSelection(viewport, session, trigger, "${1:\xC3\xA9}-${1:\xC3\xA9}$0"),
+         "mirrored placeholder containing 'é' should expand");
+  Expect(viewport.lines()[0] == "\xC3\xA9-\xC3\xA9", "expands to 'é-é'");
+  Expect(IsValidUtf8(viewport.lines()[0]), "expanded buffer is valid UTF-8");
+  Expect(session.ranges_by_tab[1].size() == 2u, "two mirrored placeholders");
+
+  // Caret sits at the end of the first 'é' (byte column 2). Backspace must remove
+  // both bytes of the code point across BOTH mirrors.
+  Expect(SnippetTryBackspace(viewport, session), "backspace inside mirrored 'é'");
+  Expect(viewport.lines()[0] == "-",
+         "backspace deletes the whole 'é' from every mirror, leaving just '-'");
+  Expect(IsValidUtf8(viewport.lines()[0]), "buffer stays valid UTF-8 after backspace");
+  Expect(session.ranges_by_tab[1][0].start.column == session.ranges_by_tab[1][0].end.column &&
+             session.ranges_by_tab[1][1].start.column == session.ranges_by_tab[1][1].end.column,
+         "both mirrors collapse to empty and stay column-consistent (no half-byte residue)");
+}
+
+// Delete-forward on a multi-byte code point at the caret must likewise remove the
+// whole code point in every mirror, leaving trailing placeholder text intact.
+void TestSnippetUtf8DeleteForwardDeletesWholeCodepoint() {
+  TextViewport viewport;
+  viewport.LoadContent("--", "/tmp/snippet.cpp");
+  viewport.MoveCursorTo(0, 0);
+  SnippetSessionState session;
+  viewport.BeginUndoGroup();
+  SelectionRange trigger{{0, 0}, {0, 2}};
+  Expect(ExpandSnippetAtSelection(viewport, session, trigger, "${1:\xC3\xA9z}-${1:\xC3\xA9z}$0"),
+         "mirrored placeholder 'éz' should expand");
+  Expect(viewport.lines()[0] == "\xC3\xA9z-\xC3\xA9z", "expands to 'éz-éz'");
+
+  // Put the caret at the start of the first placeholder so delete-forward targets
+  // the leading 'é'.
+  viewport.MoveCursorTo(0, 0);
+  Expect(SnippetTryDeleteForward(viewport, session), "delete-forward on leading 'é'");
+  Expect(viewport.lines()[0] == "z-z",
+         "delete-forward removes the whole 'é' from every mirror, keeping the trailing 'z'");
+  Expect(IsValidUtf8(viewport.lines()[0]), "buffer stays valid UTF-8 after delete-forward");
+  Expect(session.ranges_by_tab[1][0].end.column - session.ranges_by_tab[1][0].start.column == 1u,
+         "first mirror now holds the single-byte 'z'");
+  Expect(session.ranges_by_tab[1][1].end.column - session.ranges_by_tab[1][1].start.column == 1u,
+         "second mirror stays consistent and holds 'z'");
+}
+
+// A multi-line paste inside a placeholder must not use the single-line mirror fast
+// path: the engine declines (returns false) so the host does a normal insert and
+// following tab stops keep their line/column ranges rather than going stale.
+void TestSnippetMultiLineInsertDeclinesFastPath() {
+  TextViewport viewport;
+  viewport.LoadContent("--", "/tmp/snippet.cpp");
+  viewport.MoveCursorTo(0, 0);
+  SnippetSessionState session;
+  viewport.BeginUndoGroup();
+  SelectionRange trigger{{0, 0}, {0, 2}};
+  Expect(ExpandSnippetAtSelection(viewport, session, trigger, "${1:i} ${2:n}$0"),
+         "two tab stops on one line should expand");
+  Expect(viewport.lines()[0] == "i n", "placeholders expand to 'i n'");
+  Expect(session.ranges_by_tab[2][0].start.column == 2u, "tab 2 starts at column 2");
+
+  // A payload with a newline must be rejected by the snippet fast path, unchanged
+  // buffer, unchanged recorded ranges — no double insert, no stale tab stops.
+  Expect(!SnippetTryInsertText(viewport, session, "x\ny"),
+         "multi-line insert must decline the mirror fast path");
+  Expect(viewport.lines().size() == 1 && viewport.lines()[0] == "i n",
+         "declined insert leaves the buffer untouched (host does the real insert)");
+  Expect(session.ranges_by_tab[2][0].start.column == 2u,
+         "tab 2's recorded range is not corrupted by the rejected multi-line insert");
+}
+
+// A snippet body with an enormous tab-stop id must not signed-overflow the id
+// accumulator; the parse fails cleanly to an empty result.
+void TestSnippetParseRejectsHugeTabId() {
+  const auto parsed = ParseSnippetBody("${999999999:x}");
+  Expect(parsed.occurrences.empty() && parsed.expanded.empty(),
+         "an out-of-range tab-stop id is rejected without overflow");
+}
+
+// Thousands of placeholders exceed the occurrence cap and are rejected cleanly.
+void TestSnippetParseRejectsTooManyPlaceholders() {
+  std::string body;
+  for (int i = 0; i < 5000; ++i) {
+    body += "$1";
+  }
+  const auto parsed = ParseSnippetBody(body);
+  Expect(parsed.occurrences.empty() && parsed.expanded.empty(),
+         "a body past the placeholder cap is rejected without unbounded growth");
+}
+
+// Hundreds of choices in one placeholder exceed the per-placeholder choice cap.
+void TestSnippetParseRejectsTooManyChoices() {
+  std::string body = "${1:|";
+  for (int i = 0; i < 400; ++i) {
+    body += "a,";
+  }
+  body += "z|}";
+  const auto parsed = ParseSnippetBody(body);
+  Expect(parsed.occurrences.empty() && parsed.expanded.empty(),
+         "a placeholder past the choice cap is rejected without unbounded growth");
+}
+
 }  // namespace
 
 void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
@@ -226,6 +339,17 @@ void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorSnippet/InsertIgnoredWhenSessionInactive",
           TestSnippetEngineIgnoresInsertWhenSessionInactive);
   AddTest(tests, "EditorSnippet/ParseFallbackDollarLiteral", TestSnippetParseFallbackLeavesDollarLiteral);
+  AddTest(tests, "EditorSnippet/Utf8BackspaceDeletesWholeCodepoint",
+          TestSnippetUtf8BackspaceDeletesWholeCodepoint);
+  AddTest(tests, "EditorSnippet/Utf8DeleteForwardDeletesWholeCodepoint",
+          TestSnippetUtf8DeleteForwardDeletesWholeCodepoint);
+  AddTest(tests, "EditorSnippet/MultiLineInsertDeclinesFastPath",
+          TestSnippetMultiLineInsertDeclinesFastPath);
+  AddTest(tests, "EditorSnippet/ParseRejectsHugeTabId", TestSnippetParseRejectsHugeTabId);
+  AddTest(tests, "EditorSnippet/ParseRejectsTooManyPlaceholders",
+          TestSnippetParseRejectsTooManyPlaceholders);
+  AddTest(tests, "EditorSnippet/ParseRejectsTooManyChoices",
+          TestSnippetParseRejectsTooManyChoices);
 }
 
 }  // namespace microide::tests

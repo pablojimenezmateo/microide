@@ -1,4 +1,5 @@
 #include "workspace/WorkspacePersistenceBinaryInternal.h"
+#include "workspace/RecentsService.h"
 
 namespace microide::workspace {
 
@@ -84,10 +85,20 @@ bool DecodeMruRecord(std::span<const std::byte> input, PersistedMruState* state)
                    if (!reader.ReadPath(&root) || reader.remaining() != 0) {
                      return false;
                    }
+                   // Records are newest-first and RecentsService truncates to the
+                   // front on load; drop anything past the cap here so a malformed
+                   // file cannot make the decoder allocate entries that will be
+                   // discarded immediately.
+                   if (state->recent_project_roots.size() >= RecentsService::MaxProjects()) {
+                     return true;
+                   }
                    state->recent_project_roots.push_back(std::move(root));
                    return true;
                  }
                  case MruStateTag::RecentFile: {
+                   if (state->recent_files.size() >= RecentsService::MaxFiles()) {
+                     return true;
+                   }
                    PersistedRecentFile file;
                    if (!DecodeRecentFile(payload, &file)) {
                      return false;

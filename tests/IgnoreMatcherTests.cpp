@@ -195,7 +195,45 @@ void TestIgnoreMatcherDoubleStarBeforeWildcardCrossesDirectories() {
   Expect(matcher.Ignored("dist/app.min.js", false), "**/*.min.js should match under a directory");
 }
 
+// gitignore(5) escapes: "\#literal"/"\!literal" are literal patterns (not a comment or
+// negation), and a backslash-escaped trailing space is preserved as part of the name.
+// Regression for inventory I10 (trimming/escape handling ran in the wrong order).
+void TestIgnoreMatcherHonorsGitignoreEscapes() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root);
+  // Lines (raw bytes on disk):
+  //   \#foo        -> ignore a file literally named "#foo"
+  //   \!bar        -> ignore a file literally named "!bar"
+  //   trailer\     -> ignore "trailer " (escaped trailing space kept)
+  //   plain        -> ignore "plain" (an unescaped trailing space is trimmed)
+  WriteFile(root / ".gitignore", "\\#foo\n\\!bar\ntrailer\\ \nplain \n");
+
+  IgnoreMatcher matcher;
+  matcher.SetRoot(root);
+
+  Expect(matcher.Ignored("#foo", false),
+         "\\#foo should ignore a file literally named '#foo' (not treated as a comment)");
+  Expect(!matcher.Ignored("foo", false), "\\#foo must not ignore 'foo'");
+
+  Expect(matcher.Ignored("!bar", false),
+         "\\!bar should ignore a file literally named '!bar' (not treated as negation)");
+  Expect(!matcher.Ignored("bar", false), "\\!bar must not ignore 'bar'");
+
+  Expect(matcher.Ignored("trailer ", false),
+         "an escaped trailing space must be preserved: 'trailer ' should be ignored");
+  Expect(!matcher.Ignored("trailer", false),
+         "the escaped-space pattern must not match the space-less name 'trailer'");
+
+  Expect(matcher.Ignored("plain", false),
+         "an unescaped trailing space is trimmed: 'plain' should be ignored");
+  Expect(!matcher.Ignored("plain ", false),
+         "the trimmed pattern must not match a trailing-space name 'plain '");
+}
+
 void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "IgnoreMatcher/HonorsGitignoreEscapes",
+          TestIgnoreMatcherHonorsGitignoreEscapes);
   AddTest(tests, "IgnoreMatcher/DoubleStarBeforeWildcardCrossesDirectories",
           TestIgnoreMatcherDoubleStarBeforeWildcardCrossesDirectories);
   AddTest(tests, "IgnoreMatcher/AnchoredPatternsDoNotFloat",

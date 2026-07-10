@@ -10,9 +10,18 @@
 #include <thread>
 #include <vector>
 
+#include "platform/ControlSocketClient.h"
 #include "platform/ControlSocketServer.h"
 #include "util/JsonValue.h"
 #include "workspace/ControlClient.h"
+#include "workspace/WorkspaceCommandParsing.h"
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <cstring>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#endif
 
 namespace microide::tests {
 namespace {
@@ -102,6 +111,41 @@ void TestParseJsonPreservesOwnId() {
   const std::optional<util::JsonValue> request = RequestObject(options);
   Expect(request.has_value() && (*request)["id"].AsInt() == 42,
          "an explicit id in --json should be preserved");
+}
+
+// The receiving instance re-parses the serialized `command` string with
+// ParseCommandLine, so each argv token must round-trip verbatim through the client's
+// quoting. A bare space-join would split a path with spaces and mangle quotes /
+// backslashes / apostrophes. Regression for inventory J14.
+void TestControlSendCommandTokensRoundTripThroughParser() {
+  const std::vector<std::vector<std::string>> cases = {
+      {"open", "dir/a b.cpp"},          // embedded space
+      {"open", "O'Brien.cpp"},          // apostrophe
+      {"open", "a\\b\\c"},              // backslashes
+      {"open", "say \"hi\""},           // embedded double quotes + space
+      {"debug-run", "./app", "--type", "gdb"},  // an argument that starts with --
+      {"open", "plain.cpp"},            // no special bytes (unquoted fast path)
+  };
+  for (const std::vector<std::string>& tokens : cases) {
+    const ControlSendOptions options = ParseControlSendArgs(tokens);
+    Expect(options.valid, "command tokens should parse");
+    const std::optional<util::JsonValue> request = RequestObject(options);
+    Expect(request.has_value() && request->HasKey("command"),
+           "request should carry a serialized command");
+    const std::string command = (*request)["command"].AsString();
+
+    const microide::workspace::ParsedCommandLine parsed =
+        microide::workspace::ParseCommandLine(command);
+    Expect(parsed.open_quote == '\0' && !parsed.dangling_escape,
+           std::string("the serialized command must be well-formed: ") + command);
+    bool all_match = parsed.tokens.size() == tokens.size();
+    for (std::size_t i = 0; i < tokens.size() && all_match; ++i) {
+      all_match = parsed.tokens[i].text == tokens[i];
+    }
+    Expect(all_match,
+           std::string("each argv token must round-trip verbatim through ParseCommandLine: ") +
+               command);
+  }
 }
 
 void TestParseRejectsBadShapes() {
@@ -254,6 +298,98 @@ void TestRunControlSendConnectFailureExitsTwo() {
   Expect(code == 2, "a failed connection should exit 2");
 }
 
+// A raw AF_UNIX peer that accepts the connection but never reads from it. Used to
+// prove SendLine honors its write deadline instead of blocking forever once the
+// socket buffers fill. It never recv()s, so the kernel send buffer saturates.
+struct SilentPeer {
+  int listen_fd = -1;
+  int conn_fd = -1;
+  std::thread accept_thread;
+
+  bool Start(const std::filesystem::path& path) {
+    listen_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (listen_fd < 0) {
+      return false;
+    }
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    const std::string path_string = path.string();
+    if (path_string.size() + 1 > sizeof(address.sun_path)) {
+      return false;
+    }
+    std::memcpy(address.sun_path, path_string.c_str(), path_string.size() + 1);
+    if (::bind(listen_fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+      return false;
+    }
+    if (::listen(listen_fd, 1) != 0) {
+      return false;
+    }
+    // Accept once on a background thread, then hold the connection without ever
+    // reading a byte from it.
+    accept_thread = std::thread([this]() { conn_fd = ::accept(listen_fd, nullptr, nullptr); });
+    return true;
+  }
+
+  ~SilentPeer() {
+    if (accept_thread.joinable()) {
+      accept_thread.join();
+    }
+    if (conn_fd >= 0) {
+      ::close(conn_fd);
+    }
+    if (listen_fd >= 0) {
+      ::close(listen_fd);
+    }
+  }
+};
+
+void TestSendLineTimesOutWhenPeerNeverReads() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path socket_path = temp_dir.path() / "silent.sock";
+  SilentPeer peer;
+  Expect(peer.Start(socket_path), "the silent peer should bind and listen");
+
+  platform::ControlSocketClient client;
+  Expect(client.Connect(socket_path), "connecting to the silent peer should succeed");
+
+  // A payload comfortably larger than any socket buffer, with a short deadline: the
+  // peer never drains, so the kernel send buffer fills and SendLine must give up at
+  // the deadline instead of blocking indefinitely.
+  const std::string big_line(8u << 20, 'x');  // 8 MiB, under the 16 MiB cap
+  const auto start = std::chrono::steady_clock::now();
+  const bool sent = client.SendLine(big_line, std::chrono::milliseconds(400));
+  const auto elapsed = std::chrono::steady_clock::now() - start;
+
+  Expect(!sent, "SendLine to a non-draining peer must fail at the deadline, not hang");
+  Expect(elapsed < std::chrono::seconds(5),
+         "SendLine must return promptly around its deadline rather than blocking forever");
+}
+
+void TestSendLineSucceedsForShortRequest() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
+  ControlSocketServer server;
+  Expect(server.Start(socket_path), "server should start");
+
+  platform::ControlSocketClient client;
+  Expect(client.Connect(socket_path), "connecting should succeed");
+  Expect(client.SendLine(R"({"id":1,"query":"status"})", std::chrono::seconds(2)),
+         "a normal short request must still send successfully with a deadline");
+}
+
+void TestSendLineRejectsOversizeLine() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
+  ControlSocketServer server;
+  Expect(server.Start(socket_path), "server should start");
+
+  platform::ControlSocketClient client;
+  Expect(client.Connect(socket_path), "connecting should succeed");
+  const std::string oversize(17u << 20, 'x');  // 17 MiB, above the 16 MiB cap
+  Expect(!client.SendLine(oversize, std::chrono::seconds(2)),
+         "an over-cap outbound line must be rejected before framing");
+}
+
 #endif  // POSIX
 
 }  // namespace
@@ -268,6 +404,8 @@ void RegisterControlClientTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlClient/ParseJsonPassthroughInjectsId", TestParseJsonPassthroughInjectsId);
   AddTest(tests, "ControlClient/ParseJsonPreservesOwnId", TestParseJsonPreservesOwnId);
   AddTest(tests, "ControlClient/ParseRejectsBadShapes", TestParseRejectsBadShapes);
+  AddTest(tests, "ControlClient/CommandTokensRoundTripThroughParser",
+          TestControlSendCommandTokensRoundTripThroughParser);
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "ControlClient/RunControlSendQuerySucceeds", TestRunControlSendQuerySucceeds);
   AddTest(tests, "ControlClient/RunControlSendFailureExitsOne", TestRunControlSendFailureExitsOne);
@@ -276,6 +414,12 @@ void RegisterControlClientTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlClient/RunControlSendWaitTimesOut", TestRunControlSendWaitTimesOut);
   AddTest(tests, "ControlClient/RunControlSendConnectFailureExitsTwo",
           TestRunControlSendConnectFailureExitsTwo);
+  AddTest(tests, "ControlClient/SendLineTimesOutWhenPeerNeverReads",
+          TestSendLineTimesOutWhenPeerNeverReads);
+  AddTest(tests, "ControlClient/SendLineSucceedsForShortRequest",
+          TestSendLineSucceedsForShortRequest);
+  AddTest(tests, "ControlClient/SendLineRejectsOversizeLine",
+          TestSendLineRejectsOversizeLine);
 #endif
 }
 

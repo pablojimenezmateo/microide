@@ -37,6 +37,10 @@ std::vector<GitCommitEntry> CollectGitRecentCommits(const std::filesystem::path&
 struct GitFileContentAtCommit {
   bool exists = false;
   std::string content;
+  // True when `content` is only a partial prefix because the blob exceeded the
+  // subprocess capture ceiling and git was killed. Callers must not diff/save a
+  // truncated blob as the file's full content.
+  bool truncated = false;
 };
 
 std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem::path& root,

@@ -37,6 +37,61 @@ std::optional<std::string> ReadTextFile(const std::filesystem::path& path) {
   return content;
 }
 
+TextFileReadResult ReadTextFileClassified(const std::filesystem::path& path) {
+  TextFileReadResult result;
+
+  // Treat a genuinely-absent file as Missing (empty is a valid "deleted" state).
+  // Any stat error other than not-found is conservatively an Unreadable error.
+  std::error_code exist_error;
+  const bool exists = std::filesystem::exists(path, exist_error);
+  if (exist_error) {
+    result.status = TextFileReadStatus::Unreadable;
+    return result;
+  }
+  if (!exists) {
+    result.status = TextFileReadStatus::Missing;
+    return result;
+  }
+
+  std::ifstream file(path, std::ios::binary);
+  if (!file) {
+    // Exists (checked above) but cannot be opened -> permission/I-O error, not absence.
+    result.status = TextFileReadStatus::Unreadable;
+    return result;
+  }
+
+  file.seekg(0, std::ios::end);
+  const std::streamoff size = file.tellg();
+  if (size < 0) {
+    result.status = TextFileReadStatus::Unreadable;
+    return result;
+  }
+  if (static_cast<std::uintmax_t>(size) > kMaxTextFileBytes) {
+    result.status = TextFileReadStatus::TooLarge;
+    return result;
+  }
+  file.seekg(0, std::ios::beg);
+
+  result.content.resize(static_cast<std::size_t>(size));
+  if (size > 0) {
+    file.read(result.content.data(), static_cast<std::streamsize>(size));
+    if (!file) {
+      result.content.clear();
+      result.status = TextFileReadStatus::Unreadable;
+      return result;
+    }
+    // An embedded NUL means the bytes are binary; refuse to treat them as text so a
+    // binary file is never diffed line-by-line or saved back through a compare tab.
+    if (std::memchr(result.content.data(), '\0', result.content.size()) != nullptr) {
+      result.content.clear();
+      result.status = TextFileReadStatus::Binary;
+      return result;
+    }
+  }
+  result.status = TextFileReadStatus::Ok;
+  return result;
+}
+
 bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out) {
   std::ifstream file(path, std::ios::binary);
   if (!file) {

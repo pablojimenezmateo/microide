@@ -189,9 +189,67 @@ void TestMutableAccessorsMoveOutAndTypeGuard() {
   Expect(first["n"].AsInt() == 3, "unrelated fields are untouched by the move-out");
 }
 
+// RFC 8259 forbids raw control bytes (< 0x20) inside a string literal; they must
+// be escaped. A raw newline/tab/NUL/CR from a malformed peer (or a hand-authored
+// --control-spec line) must reject rather than smuggle a control char into a host
+// string. The escaped forms stay fully valid.
+void TestRawControlCharsInStringRejected() {
+  Expect(!ParseJson("\"a\nb\"").has_value(), "raw newline inside a string must reject");
+  Expect(!ParseJson("\"a\tb\"").has_value(), "raw tab inside a string must reject");
+  Expect(!ParseJson("\"a\rb\"").has_value(), "raw carriage return inside a string must reject");
+  Expect(!ParseJson(std::string("\"a\0b\"", 5)).has_value(),
+         "raw NUL inside a string must reject");
+  // A control byte as the very first content byte must also reject (empty run).
+  Expect(!ParseJson("\"\x01\"").has_value(), "leading raw control byte must reject");
+
+  // The escaped forms of the same characters stay valid and decode correctly.
+  Expect(ParseJson("\"a\\nb\"")->AsString() == "a\nb", "escaped newline must decode");
+  Expect(ParseJson("\"a\\tb\"")->AsString() == "a\tb", "escaped tab must decode");
+  Expect(ParseJson("\"a\\rb\"")->AsString() == "a\rb", "escaped carriage return must decode");
+}
+
+// RFC 8259 has a strict number grammar: no lone '-', no leading zeros ("01"), a
+// '.' needs a trailing digit ("1." is invalid), and an exponent needs digits
+// ("1e"/"1e+" are invalid). Valid forms — including "0", "-0", "1.0", "1e-9" and
+// the large-integer double fallback — must still parse.
+void TestNumberGrammarStrictness() {
+  // Rejected malformed numbers. Wrap in an array so a trailing-garbage number is
+  // exercised inside a real document context.
+  Expect(!ParseJson("-").has_value(), "lone '-' must reject");
+  Expect(!ParseJson("01").has_value(), "leading zero must reject");
+  Expect(!ParseJson("1.").has_value(), "trailing decimal point must reject");
+  Expect(!ParseJson("1e").has_value(), "exponent with no digits must reject");
+  Expect(!ParseJson("1e+").has_value(), "exponent sign with no digits must reject");
+  Expect(!ParseJson("-e5").has_value(), "sign with no integer digit must reject");
+  Expect(!ParseJson("[01]").has_value(), "leading zero inside an array must reject");
+
+  // Accepted forms round-trip to the expected value/kind.
+  Expect(ParseJson("0")->AsInt() == 0, "'0' must parse");
+  Expect(ParseJson("-0")->AsInt() == 0, "'-0' must parse");
+  Expect(ParseJson("123")->AsInt() == 123, "'123' must parse");
+  const auto one_point_zero = ParseJson("1.0");
+  Expect(one_point_zero.has_value() && one_point_zero->IsDouble() &&
+             one_point_zero->AsDouble() == 1.0,
+         "'1.0' must parse as a double");
+  const auto tiny = ParseJson("1e-9");
+  Expect(tiny.has_value() && tiny->IsDouble() && tiny->AsDouble() == 1e-9,
+         "'1e-9' must parse as a double");
+  const auto neg_half = ParseJson("-0.5");
+  Expect(neg_half.has_value() && neg_half->AsDouble() == -0.5, "'-0.5' must parse");
+
+  // The int64-overflow -> double fallback for a syntactically valid literal is
+  // preserved (regression guard for the strict-grammar change).
+  const auto big = ParseJson("9223372036854775808");  // 2^63
+  Expect(big.has_value() && big->IsDouble(),
+         "valid over-range integer must still fall back to double");
+}
+
 }  // namespace
 
 void RegisterJsonValueTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "JsonValue/RawControlCharsInStringRejected",
+          TestRawControlCharsInStringRejected);
+  AddTest(tests, "JsonValue/NumberGrammarStrictness", TestNumberGrammarStrictness);
   AddTest(tests, "JsonValue/MutableAccessorsMoveOutAndTypeGuard",
           TestMutableAccessorsMoveOutAndTypeGuard);
   AddTest(tests, "JsonValue/DeeplyNestedArrayRejected", TestDeeplyNestedArrayRejected);

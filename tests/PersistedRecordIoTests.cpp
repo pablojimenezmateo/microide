@@ -276,9 +276,90 @@ void TestPersistedRecordReaderReportsReadFailureOnStatError() {
 #endif
 }
 
+// I16 regression: a readable but stale `.bak` must not silently mask a primary
+// UnsupportedVersion. Falling back would let the next save overwrite newer state
+// with older data and hide the version mismatch. The reader now refuses the
+// fallback for UnsupportedVersion (surfacing the mismatch) unless the caller opts
+// into an explicit downgrade-recovery path, and it always surfaces the primary
+// failure + backup usage through the result.
+void TestPersistedRecordReaderRefusesBackupForUnsupportedVersion() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "state" / "project.state.bin";
+
+  // A valid backup (v1) with a valid current-format primary (v2), then overwrite
+  // the primary with a CRC-valid but future-version record.
+  PersistedRecordWriterError write_error = PersistedRecordWriterError::None;
+  Expect(PersistedRecordWriter::WriteFile(path, BytesFromText("known-good"), 3u, &write_error),
+         "initial write should succeed");
+  Expect(PersistedRecordWriter::WriteFile(path, BytesFromText("current"), 9u, &write_error),
+         "second write should succeed and rotate a valid backup");
+  const std::filesystem::path backup = PersistedRecordWriter::BackupPathFor(path);
+  Expect(std::filesystem::exists(backup), "backup should exist after the rewrite");
+
+  std::vector<std::byte> future_primary;
+  Expect(microide::persistence::BuildPersistedRecordFile(BytesFromText("future"), 9u,
+                                                         &future_primary),
+         "future-version primary should build");
+  Expect(future_primary.size() > 8, "primary file should include a version field");
+  future_primary[4] = std::byte{0x02};  // bump the format version out of range
+  future_primary[5] = std::byte{0x00};
+  future_primary[6] = std::byte{0x00};
+  future_primary[7] = std::byte{0x00};
+  WriteFile(path, TextFromBytes(future_primary));
+
+  // Default: fallback refused, the version mismatch surfaces, no value returned.
+  PersistedRecordReaderError error = PersistedRecordReaderError::None;
+  const auto refused = PersistedRecordReader::ReadFile(path, &error);
+  Expect(!refused.has_value(), "an unsupported-version primary must not fall back by default");
+  Expect(error == PersistedRecordReaderError::UnsupportedVersion,
+         "a refused fallback should surface the version mismatch reason");
+
+  // Opt-in downgrade recovery: the backup is used, and the result carries both the
+  // used_backup flag and the primary failure that triggered recovery.
+  PersistedRecordReaderError recovery_error = PersistedRecordReaderError::None;
+  const auto recovered =
+      PersistedRecordReader::ReadFile(path, &recovery_error, /*allow_backup_for_unsupported_version=*/true);
+  Expect(recovered.has_value(), "explicit downgrade recovery should read the backup");
+  Expect(recovery_error == PersistedRecordReaderError::None,
+         "a successful downgrade recovery reports None as the overall status");
+  Expect(recovered->used_backup, "downgrade recovery should report backup usage");
+  Expect(recovered->primary_error == PersistedRecordReaderError::UnsupportedVersion,
+         "downgrade recovery should surface the primary version mismatch through the result");
+  Expect(TextFromBytes(recovered->body) == "known-good",
+         "downgrade recovery should return the backup body");
+}
+
+// I16 regression: a parse-failure primary with a valid backup still recovers, but
+// the result must now surface that recovery happened (used_backup) and why
+// (primary_error), so operators do not lose the signal.
+void TestPersistedRecordReaderSurfacesBackupUsageOnParseFailure() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "state" / "user.config.bin";
+
+  PersistedRecordWriterError write_error = PersistedRecordWriterError::None;
+  Expect(PersistedRecordWriter::WriteFile(path, BytesFromText("known-good"), 3u, &write_error),
+         "initial write should succeed");
+  Expect(PersistedRecordWriter::WriteFile(path, BytesFromText("current"), 9u, &write_error),
+         "second write should rotate a valid backup");
+  WriteFile(path, "corrupt-payload-without-valid-header");
+
+  PersistedRecordReaderError error = PersistedRecordReaderError::None;
+  const auto recovered = PersistedRecordReader::ReadFile(path, &error);
+  Expect(recovered.has_value(), "a parse-failure primary should recover from a valid backup");
+  Expect(error == PersistedRecordReaderError::None, "recovery reports None as the overall status");
+  Expect(recovered->used_backup, "recovery should surface backup usage");
+  Expect(recovered->primary_error == PersistedRecordReaderError::ParseFailed,
+         "recovery should surface the primary parse failure that triggered fallback");
+  Expect(TextFromBytes(recovered->body) == "known-good", "recovery should return the backup body");
+}
+
 }  // namespace
 
 void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PersistedRecordIo/ReaderRefusesBackupForUnsupportedVersion",
+          TestPersistedRecordReaderRefusesBackupForUnsupportedVersion);
+  AddTest(tests, "PersistedRecordIo/ReaderSurfacesBackupUsageOnParseFailure",
+          TestPersistedRecordReaderSurfacesBackupUsageOnParseFailure);
   AddTest(tests, "PersistedRecordIo/ReaderReportsReadFailureOnStatError",
           TestPersistedRecordReaderReportsReadFailureOnStatError);
   AddTest(tests, "PersistedRecordIo/RemovingOnlyPrimaryResurrectsFromBackup",

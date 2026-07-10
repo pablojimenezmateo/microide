@@ -73,4 +73,30 @@ inline std::string PercentDecode(std::string_view text) {
   return decoded;
 }
 
+// Strict percent-decode: every `%` MUST introduce exactly two hex digits, or the
+// whole input is rejected (nullopt). Unlike PercentDecode this does not pass a
+// malformed `%zz` / trailing `%` through verbatim, so callers parsing untrusted
+// URIs (e.g. file:// from a language server) cannot be tricked into materializing
+// a path containing a stray `%` that a stricter peer would have refused.
+inline std::optional<std::string> PercentDecodeStrict(std::string_view text) {
+  std::string decoded;
+  decoded.reserve(text.size());
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    if (text[i] != '%') {
+      decoded.push_back(text[i]);
+      continue;
+    }
+    if (i + 2 >= text.size()) {
+      return std::nullopt;  // '%' with fewer than two following characters
+    }
+    const auto byte = ParseHexByte(text[i + 1], text[i + 2]);
+    if (!byte) {
+      return std::nullopt;  // '%' not followed by two hex digits
+    }
+    decoded.push_back(static_cast<char>(*byte));
+    i += 2;
+  }
+  return decoded;
+}
+
 }  // namespace microide::util

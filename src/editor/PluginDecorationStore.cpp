@@ -135,6 +135,27 @@ void PluginDecorationStore::RebuildPath(std::string_view path_key) {
     }
     merged.path = sole->path;
     SortDecorations(merged);
+
+    // Per-owner input is capped (kMaxEntriesPerKind) at publish, but the merge sums
+    // across every owner, so a pathological set of plugins could push a single
+    // file's per-kind totals arbitrarily high and bloat render/slice work. Apply an
+    // aggregate per-file cap. The vectors are already line-sorted above (gutter
+    // marks additionally by descending priority within a line), so truncating to
+    // the first N is deterministic and keeps the lowest-line decorations. resize()
+    // down never reallocates, so this stays allocation-conscious.
+    constexpr std::size_t kMaxMergedPerKind = 200000;
+    if (merged.text_styles.size() > kMaxMergedPerKind) {
+      merged.text_styles.resize(kMaxMergedPerKind);
+    }
+    if (merged.gutter_marks.size() > kMaxMergedPerKind) {
+      merged.gutter_marks.resize(kMaxMergedPerKind);
+    }
+    if (merged.inline_texts.size() > kMaxMergedPerKind) {
+      merged.inline_texts.resize(kMaxMergedPerKind);
+    }
+    if (merged.code_lenses.size() > kMaxMergedPerKind) {
+      merged.code_lenses.resize(kMaxMergedPerKind);
+    }
   }
 
   const auto existing = merged_by_path_.find(path_key);

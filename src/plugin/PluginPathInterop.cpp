@@ -22,32 +22,24 @@ bool WithinRoot(const std::filesystem::path& normalized, const std::filesystem::
            *relative.begin() == std::filesystem::path(".."));
 }
 
-// weakly_canonical(root) is a realpath syscall, and ContainPath runs it for every
-// allowed root on every sandboxed plugin filesystem call — but the roots (project
-// root, plugin data dir) are stable for a session. Memoize per root in a small
-// thread_local cache (plugin fs calls are single-threaded on the worker). `ok` is
-// false when canonicalization failed, so the caller skips that root exactly as
-// before. A bounded size keeps a pathological caller from growing it unboundedly.
+// weakly_canonical(root) is a realpath syscall run for every allowed root on every
+// sandboxed plugin filesystem call. It was previously memoized per root in a
+// thread_local cache, but that cache was keyed only by the lexical root path and
+// never invalidated: if an allowed root is a symlink and its target is replaced
+// mid-session, containment kept comparing against the stale canonical target
+// (denying the new root or, worse, still trusting the old physical directory).
+// For a security check that is unacceptable, and a plugin fs call already performs
+// real file I/O, so one fresh realpath per allowed root is negligible. Resolve
+// live every time. `ok` is false when canonicalization failed.
 struct CanonicalRoot {
   std::filesystem::path path;
   bool ok = false;
 };
 
-const CanonicalRoot& CanonicalRootCached(const std::filesystem::path& root) {
-  thread_local std::vector<std::pair<std::filesystem::path, CanonicalRoot>> cache;
-  for (const auto& [key, value] : cache) {
-    if (key == root) {
-      return value;
-    }
-  }
+CanonicalRoot CanonicalRootResolved(const std::filesystem::path& root) {
   std::error_code error;
   std::filesystem::path canonical = std::filesystem::weakly_canonical(root, error);
-  CanonicalRoot resolved{.path = std::move(canonical), .ok = !error};
-  if (cache.size() >= 16) {
-    cache.clear();
-  }
-  cache.emplace_back(root, std::move(resolved));
-  return cache.back().second;
+  return CanonicalRoot{.path = std::move(canonical), .ok = !error};
 }
 
 }  // namespace
@@ -95,12 +87,21 @@ std::optional<std::filesystem::path> ContainPath(
   // target — a containment escape. Canonicalizing the deepest existing parent closes
   // that hole.
   std::error_code canon_error;
-  const std::filesystem::path canonical = std::filesystem::weakly_canonical(normalized, canon_error);
+  std::filesystem::path canonical = std::filesystem::weakly_canonical(normalized, canon_error);
   if (canon_error) {
-    return normalized;  // Lexical test already passed; tolerate transient canonicalization errors.
+    // Retry once: a truly transient error (e.g. a momentary EAGAIN) should not
+    // deny a legitimate plugin path. But if canonicalization still fails we must
+    // FAIL CLOSED — returning the lexical path here would downgrade the symlink
+    // containment check to lexical-only, letting a symlinked prefix whose
+    // canonicalization errors (permission error, symlink loop) escape the root.
+    canon_error.clear();
+    canonical = std::filesystem::weakly_canonical(normalized, canon_error);
+    if (canon_error) {
+      return std::nullopt;
+    }
   }
   for (const std::filesystem::path& root : allowed_roots) {
-    const CanonicalRoot& canonical_root = CanonicalRootCached(root);
+    const CanonicalRoot canonical_root = CanonicalRootResolved(root);
     if (!canonical_root.ok) {
       continue;
     }

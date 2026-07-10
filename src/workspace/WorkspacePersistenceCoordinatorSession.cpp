@@ -148,7 +148,15 @@ void PersistenceCoordinator::RestoreDebugState() {
     }
     state.launch_configs.push_back(std::move(config));
   }
-  state.selected_launch_config_index = persisted.selected_launch_config_index;
+  // A persisted index can be stale or out of range relative to the rebuilt
+  // config list. An out-of-range selection makes StartDebuggingWithDefaultConfig
+  // ignore every launch config, so clamp/reset it to a valid slot immediately.
+  if (state.launch_configs.empty() ||
+      persisted.selected_launch_config_index >= state.launch_configs.size()) {
+    state.selected_launch_config_index = 0;
+  } else {
+    state.selected_launch_config_index = persisted.selected_launch_config_index;
+  }
   state.debug_watch.SetExpressions(std::move(persisted.watch_expressions));
   state.debug_breakpoints_panel.SetEnabledFilterIds(std::move(persisted.enabled_exception_filters),
                                                     persisted.exception_filters_seeded);

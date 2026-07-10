@@ -3,6 +3,7 @@
 #include <string>
 #include <utility>
 
+#include "util/PathMatch.h"
 #include "util/StringUtil.h"
 
 namespace microide::project {
@@ -28,6 +29,13 @@ bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platfor
   const std::filesystem::path normalized_path = path.lexically_normal();
   if (root_.empty() || normalized_path == root_) {
     return true;
+  }
+  // A path that is not nested under the root escapes the project boundary
+  // (lexically_relative would yield a "../…" relative that RelativeToRoot used to
+  // accept). Reject it outright so a watcher/scanner/helper event for an
+  // out-of-root file cannot pass the filter and feed out-of-root indexing.
+  if (!util::PathEqualsOrWithin(normalized_path, root_)) {
+    return false;
   }
 
   const bool is_directory = type == platform::PathType::Directory;

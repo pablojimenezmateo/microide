@@ -40,15 +40,40 @@ bool ParseAheadBehind(std::string_view token, int* ahead, int* behind) {
     return false;
   }
   const std::size_t minus = token.find('-');
-  const std::string_view ahead_text = token.substr(1, minus - 1);
-  const std::string_view behind_text = token.substr(minus + 1);
+  // Real porcelain-v2 emits `+<ahead> -<behind>` with a single space field
+  // separator (e.g. "+2 -0"), so splitting on the first '-' leaves that
+  // separator space trailing on the ahead field. Trim surrounding ASCII
+  // whitespace (view-based, no allocation) so the full-consume check below
+  // still accepts genuine git output while rejecting garbage like "+12x-3".
+  const auto trim_ascii_ws = [](std::string_view text) {
+    const auto is_ws = [](char ch) { return ch == ' ' || ch == '\t'; };
+    while (!text.empty() && is_ws(text.front())) {
+      text.remove_prefix(1);
+    }
+    while (!text.empty() && is_ws(text.back())) {
+      text.remove_suffix(1);
+    }
+    return text;
+  };
+  const std::string_view ahead_text = trim_ascii_ws(token.substr(1, minus - 1));
+  const std::string_view behind_text = trim_ascii_ws(token.substr(minus + 1));
+  // Reject empty fields outright: from_chars on an empty range reports
+  // invalid_argument, but an explicit guard keeps the intent obvious.
+  if (ahead_text.empty() || behind_text.empty()) {
+    return false;
+  }
   int parsed_ahead = 0;
   int parsed_behind = 0;
   const auto ahead_result = std::from_chars(ahead_text.data(), ahead_text.data() + ahead_text.size(),
                                             parsed_ahead);
   const auto behind_result =
       std::from_chars(behind_text.data(), behind_text.data() + behind_text.size(), parsed_behind);
-  if (ahead_result.ec != std::errc{} || behind_result.ec != std::errc{}) {
+  // Require both fields to parse cleanly AND to consume every byte, so a
+  // trailing non-numeric suffix ("+12x-3", "+12-3x") is rejected instead of
+  // silently yielding a truncated count.
+  if (ahead_result.ec != std::errc{} || behind_result.ec != std::errc{} ||
+      ahead_result.ptr != ahead_text.data() + ahead_text.size() ||
+      behind_result.ptr != behind_text.data() + behind_text.size()) {
     return false;
   }
   *ahead = parsed_ahead;

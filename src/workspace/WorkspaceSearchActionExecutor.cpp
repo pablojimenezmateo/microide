@@ -79,7 +79,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       if (path.empty()) {
         return reject("No file selected for compare");
       }
-      if (!std::filesystem::exists(path)) {
+      std::error_code compare_exists_error;
+      if (!std::filesystem::exists(path, compare_exists_error) || compare_exists_error) {
         return reject("Compare path does not exist: " + path.string());
       }
 
@@ -94,7 +95,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       if (path.empty()) {
         return reject("No file selected for compare-head");
       }
-      if (!std::filesystem::exists(path)) {
+      std::error_code head_exists_error;
+      if (!std::filesystem::exists(path, head_exists_error) || head_exists_error) {
         return reject("Compare path does not exist: " + path.string());
       }
       context_.OpenHeadComparison(path);
@@ -108,9 +110,13 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       if (!request.has_value()) {
         return reject("merge requires base, incoming, current, and optional output paths");
       }
-      if (!std::filesystem::exists(request->base_path) ||
-          !std::filesystem::exists(request->incoming_path) ||
-          !std::filesystem::exists(request->current_path)) {
+      std::error_code merge_exists_error;
+      if (!std::filesystem::exists(request->base_path, merge_exists_error) ||
+          merge_exists_error ||
+          !std::filesystem::exists(request->incoming_path, merge_exists_error) ||
+          merge_exists_error ||
+          !std::filesystem::exists(request->current_path, merge_exists_error) ||
+          merge_exists_error) {
         return reject("merge requires existing base, incoming, and current files");
       }
       context_.OpenMergeEditor(request->base_path, request->incoming_path, request->current_path,

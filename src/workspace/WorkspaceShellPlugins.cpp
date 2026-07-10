@@ -953,12 +953,20 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
   if (client == nullptr) {
     return;
   }
-  client->SetDiagnosticsCallback([this, project = &context_.current_project_state, client](
-                                     std::string uri,
-                                     std::vector<LspClient::Diagnostic> diagnostics) {
-    PublishLspDiagnostics(*project, std::move(uri), LspEncodingForClient(*client),
-                          std::move(diagnostics));
-  });
+  client->SetDiagnosticsCallback(
+      [this, project_root = context_.current_project_state.root.lexically_normal(), client](
+          std::string uri, std::vector<LspClient::Diagnostic> diagnostics) {
+        // Resolve the active project at dispatch time and drop the publish if the
+        // active project changed since this callback was installed. A raw
+        // &current_project_state capture would otherwise publish diagnostics from an
+        // old server into whatever project happens to be current now.
+        ProjectWorkspaceState& current = context_.current_project_state;
+        if (current.root.lexically_normal() != project_root) {
+          return;
+        }
+        PublishLspDiagnostics(current, std::move(uri), LspEncodingForClient(*client),
+                              std::move(diagnostics));
+      });
   EnsureLspDocumentOpen(*viewport, *client, language_id);
   // Must match the percent-encoded URI the document was opened under
   // (EnsureLspDocumentOpen -> FileUriForPath); a hand-built "file://" + raw path

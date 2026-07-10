@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -12,6 +13,68 @@ namespace {
 
 using compare::CompareRow;
 using compare::CompareRowKind;
+
+// Git-compatible C-style quoting for the path token in a patch header. Git wraps
+// a pathname in double quotes and C-escapes it whenever it contains a control
+// byte, a double quote, a backslash, or a high-bit byte (the core.quotePath
+// default) — see git's quote_two_c_style. The `a/` / `b/` prefix is quoted
+// together with the path as one token, so `git apply` parses the `--- ` / `+++ `
+// / `diff --git` lines unambiguously even when the filename embeds tabs,
+// newlines, quotes, or backslashes. Raw emission of such bytes would split or
+// corrupt the header. Safe paths (including spaces, which git leaves unquoted)
+// are returned verbatim.
+std::string QuoteGitHeaderPath(std::string_view prefix, std::string_view path) {
+  std::string combined;
+  combined.reserve(prefix.size() + path.size());
+  combined.append(prefix);
+  combined.append(path);
+
+  const auto needs_escape = [](unsigned char byte) {
+    return byte < 0x20 || byte == 0x7f || byte == '"' || byte == '\\' || byte >= 0x80;
+  };
+
+  bool needs_quoting = false;
+  for (const char raw : combined) {
+    if (needs_escape(static_cast<unsigned char>(raw))) {
+      needs_quoting = true;
+      break;
+    }
+  }
+  if (!needs_quoting) {
+    return combined;
+  }
+
+  std::string out;
+  out.reserve(combined.size() + 2);
+  out.push_back('"');
+  for (const char raw : combined) {
+    const unsigned char byte = static_cast<unsigned char>(raw);
+    switch (byte) {
+      case '\a': out += "\\a"; break;
+      case '\b': out += "\\b"; break;
+      case '\t': out += "\\t"; break;
+      case '\n': out += "\\n"; break;
+      case '\v': out += "\\v"; break;
+      case '\f': out += "\\f"; break;
+      case '\r': out += "\\r"; break;
+      case '"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      default:
+        if (byte < 0x20 || byte == 0x7f || byte >= 0x80) {
+          // Three-digit octal escape, matching git's `\ooo`.
+          out.push_back('\\');
+          out.push_back(static_cast<char>('0' + ((byte >> 6) & 0x7)));
+          out.push_back(static_cast<char>('0' + ((byte >> 3) & 0x7)));
+          out.push_back(static_cast<char>('0' + (byte & 0x7)));
+        } else {
+          out.push_back(raw);
+        }
+        break;
+    }
+  }
+  out.push_back('"');
+  return out;
+}
 
 // CompareRow line text never carries a trailing newline (SplitLineViews strips
 // endings), so patch lines are emitted verbatim with a single terminator.
@@ -254,20 +317,22 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
     }
   }
   const std::string path = relative_path.generic_string();
+  const std::string a_path = QuoteGitHeaderPath("a/", path);
+  const std::string b_path = QuoteGitHeaderPath("b/", path);
 
   std::ostringstream stream;
-  stream << "diff --git a/" << path << " b/" << path << '\n';
+  stream << "diff --git " << a_path << ' ' << b_path << '\n';
   if (is_new_file) {
     stream << "new file mode 100644\n";
     stream << "--- /dev/null\n";
-    stream << "+++ b/" << path << '\n';
+    stream << "+++ " << b_path << '\n';
   } else if (is_deleted_file) {
     stream << "deleted file mode 100644\n";
-    stream << "--- a/" << path << '\n';
+    stream << "--- " << a_path << '\n';
     stream << "+++ /dev/null\n";
   } else {
-    stream << "--- a/" << path << '\n';
-    stream << "+++ b/" << path << '\n';
+    stream << "--- " << a_path << '\n';
+    stream << "+++ " << b_path << '\n';
   }
   stream << "@@ -" << old_range_start << ',' << old_range_count << " +" << new_range_start << ','
          << new_range_count << " @@\n";

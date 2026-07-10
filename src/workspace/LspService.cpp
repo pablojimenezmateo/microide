@@ -12,6 +12,7 @@
 #include "editor/PluginDecorationStore.h"
 #include "editor/SyntaxHighlighter.h"
 #include "render/Theme.h"
+#include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "workspace/FileUri.h"
@@ -925,6 +926,25 @@ void LspService::SyncLspForActiveEditableLastChange() {
     } else {
       util::PerformanceTrace::Scope scope(
           "LspService::SyncLspForActiveEditableLastChange::IncrementalSync");
+      // The document was opened on the server with its own line ending
+      // (SerializeLines(..., line_ending())), but replacement_text is built from
+      // editor edit deltas that use bare-LF line breaks. For a CRLF document, send
+      // the replacement re-encoded to CRLF so the server mirror does not drift toward
+      // LF inside every edited range until the next full sync. LF documents (the
+      // common case) skip this entirely.
+      std::string replacement = applied_edit->replacement_text;
+      if (viewport->line_ending() == util::LineEnding::CRLF &&
+          replacement.find('\n') != std::string::npos) {
+        std::string crlf;
+        crlf.reserve(replacement.size() + 8);
+        for (const char c : replacement) {
+          if (c == '\n') {
+            crlf.push_back('\r');
+          }
+          crlf.push_back(c);
+        }
+        replacement = std::move(crlf);
+      }
       client->DidChangeIncremental(
           uri,
           LspClient::Range{
@@ -937,7 +957,7 @@ void LspService::SyncLspForActiveEditableLastChange() {
                   static_cast<int>(applied_edit->range_before.end.column),
               },
           },
-          applied_edit->replacement_text);
+          replacement);
     }
   }
 
@@ -1062,9 +1082,21 @@ bool LspService::ApplyServerWorkspaceEdit(LspClient::WorkspaceEdit edit) {
   // Flatten the URI-keyed WorkspaceEdit into the shared 0-based edit records; both
   // appliers map the LSP `character` offsets through the position encoding.
   std::vector<CodeActionEdit> flat;
+  const std::filesystem::path project_root = CurrentProjectState().root;
   for (const auto& [uri, text_edits] : edit.changes) {
     const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
     if (!path.has_value()) {
+      continue;
+    }
+    // A server-initiated workspace edit may only target files inside the active
+    // project root (or a buffer already open in this project). Without this a buggy
+    // or compromised language server could request writes to any file the user
+    // account can reach (e.g. file:///etc/passwd on a writable fixture). The disk
+    // applier below writes closed targets silently, so the containment check must
+    // happen here rather than trusting the URI.
+    const std::filesystem::path normalized = path->lexically_normal();
+    if (!util::PathEqualsOrWithin(normalized, project_root) &&
+        !IsPathOpenInProject(normalized)) {
       continue;
     }
     for (const auto& [range, new_text] : text_edits) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -116,9 +117,23 @@ struct DapStoppedEvent {
   std::string reason;       // breakpoint, step, pause, exception, ...
   std::string description;
   std::string text;
-  int thread_id = 0;
+  // DAP makes `threadId` OPTIONAL on `stopped` (e.g. an all-threads-stopped halt
+  // may omit it). `nullopt` means "no focused thread was named" — the session must
+  // resolve one (query threads) rather than send `threadId:0` on the mandatory-
+  // threadId stackTrace/continue requests.
+  std::optional<int> thread_id;
   bool all_threads_stopped = false;
   std::vector<int> hit_breakpoint_ids;
+};
+
+// A DAP `continued` event: which thread resumed, and whether ALL threads did.
+// `all_threads_continued` distinguishes a full resume (tear down the shared
+// stopped view) from a single-thread continue (leave the focused stop intact).
+// A missing `allThreadsContinued` is treated as NOT-all (the conservative choice:
+// the next `stopped`/full `continued` re-syncs) — see HandleEvent.
+struct DapContinuedEvent {
+  std::optional<int> thread_id;
+  bool all_threads_continued = false;
 };
 
 struct DapOutputEvent {
@@ -248,6 +263,7 @@ std::vector<DapVariable> ParseVariables(const util::JsonValue& body);
 DapBreakpoint ParseBreakpoint(const util::JsonValue& value);
 std::vector<DapBreakpoint> ParseBreakpoints(const util::JsonValue& body);
 DapStoppedEvent ParseStoppedEvent(const util::JsonValue& body);
+DapContinuedEvent ParseContinuedEvent(const util::JsonValue& body);
 DapOutputEvent ParseOutputEvent(const util::JsonValue& body);
 DapEvaluateResult ParseEvaluateResult(const util::JsonValue& body);
 DapSetVariableResult ParseSetVariableResult(const util::JsonValue& body);

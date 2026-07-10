@@ -8,8 +8,10 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 #include "WorkspaceShellEventHelpers.h"
@@ -1233,9 +1235,66 @@ void TestWorkspaceShellCompareRecomputeGate() {
 
 }  // namespace
 
+// H11/J41: an unreadable or binary working-tree file must NOT open as an editable
+// compare showing "whole file deleted" (which could then save a false empty file).
+// A genuinely-missing working-tree file is a real deletion and still opens (empty).
+// Distinct files per case avoid compare-tab reuse collisions on the same path.
+void TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path missing_file = root / "src" / "missing.cpp";
+  const std::filesystem::path binary_file = root / "src" / "binary.cpp";
+  const std::filesystem::path locked_file = root / "src" / "locked.cpp";
+  WriteFile(missing_file, "int alpha() {\n  return 1;\n}\n");
+  WriteFile(binary_file, "int beta() {\n  return 2;\n}\n");
+  WriteFile(locked_file, "int gamma() {\n  return 3;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare reject fixture", "compare reject fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  // Missing working-tree file: a legitimate deletion -> opens as an (empty) diff.
+  std::filesystem::remove(missing_file);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, missing_file, "HEAD", "HEAD"),
+         "a missing working-tree file should still open as a whole-file-deleted diff");
+
+  // Binary working-tree file (early AND late NUL): must be refused, not rendered as
+  // deleted/empty text.
+  std::string binary_bytes;
+  binary_bytes.push_back('\0');            // early NUL
+  binary_bytes.append("PNG\r\n\x1a\n binary body ");
+  binary_bytes.push_back('\0');            // late NUL
+  binary_bytes.append(" trailing");
+  WriteFile(binary_file, binary_bytes);
+  Expect(!WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, binary_file, "HEAD", "HEAD"),
+         "a binary working-tree file must not open as an editable text compare");
+
+  // Unreadable working-tree file: must be refused (not treated as empty). chmod 000
+  // is bypassed by root, so guard the assertion when the harness runs privileged.
+  std::error_code ec;
+  std::filesystem::permissions(locked_file, std::filesystem::perms::none,
+                               std::filesystem::perm_options::replace, ec);
+  if (!ec) {
+    std::ifstream probe(locked_file, std::ios::binary);
+    const bool actually_locked = !probe.good();
+    probe.close();
+    if (actually_locked) {
+      Expect(!WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, locked_file, "HEAD", "HEAD"),
+             "an unreadable working-tree file must not open as an empty compare");
+    }
+    std::filesystem::permissions(locked_file, std::filesystem::perms::owner_all,
+                                 std::filesystem::perm_options::replace, ec);
+  }
+}
+
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",
           TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves);
+  AddTest(tests, "WorkspaceShell/WorkingTreeCompareRejectsBinaryAndUnreadable",
+          TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable);
   AddTest(tests, "WorkspaceShell/CompareClickTogglesEditablePaneFocus",
           TestWorkspaceShellCompareClickTogglesEditablePaneFocus);
   AddTest(tests, "WorkspaceShell/CompareCollapsedContextButtonsExpandHiddenRows",

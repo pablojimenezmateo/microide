@@ -3,12 +3,19 @@
 #include "compare/CompareModel.h"
 #include "project/GitPatchApply.h"
 #include "project/GitRepository.h"
+#include "project/GitRepositoryState.h"
 #include "project/PatchGenerator.h"
 #include "project/PatchApplyTypes.h"
+#include "project/ProjectBackgroundExecutor.h"
+#include "workspace/GitRepositoryService.h"
+#include "workspace/PatchApplyService.h"
+#include "workspace/WorkspaceTabState.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <regex>
 #include <string>
+#include <vector>
 
 namespace microide::tests {
 namespace {
@@ -514,6 +521,242 @@ void TestPatchStageDeleteTrailingLeavesMissingFinalNewline() {
          "staged blob must be exactly 'line1' with no added trailing newline");
 }
 
+// J37: the copy-to-clipboard "file patch" path (CopyCompareFilePatch) now routes
+// through the real generator (whole-file row span) instead of the removed
+// display-only exporter that emitted fake `@@ hunk N @@` headers. The copied
+// text must be a genuine unified diff that git accepts.
+void TestCopyFilePatchWholeFileIsRealUnifiedDiffAndApplies() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  std::filesystem::create_directories(repo_path);
+  InitializeGitRepo(repo_path);
+  const auto file_path = repo_path / "tracked.txt";
+  WriteFile(file_path, "one\ntwo\nthree\n");
+  CommitAll(repo_path, "base", "base");
+  WriteFile(file_path, "one\nTWO\nthree\n");
+
+  const CompareModel model = BuildCompareModel("one\ntwo\nthree\n", "one\nTWO\nthree\n");
+  // CopyCompareFilePatch spans every model row through the real generator.
+  const auto patch =
+      GenerateComparePatchForRows(model, "tracked.txt", 0, model.rows.size() - 1);
+  Expect(patch.has_value(), "whole-file copy patch should be generated");
+  Expect(patch->find("@@ hunk ") == std::string::npos,
+         "copied patch must not use the removed exporter's fake '@@ hunk N @@' headers");
+  Expect(patch->find("--- a/tracked.txt") != std::string::npos,
+         "copied patch must carry a real --- header");
+  Expect(patch->find("+++ b/tracked.txt") != std::string::npos,
+         "copied patch must carry a real +++ header");
+  Expect(std::regex_search(*patch, std::regex(R"(@@ -\d+,\d+ \+\d+,\d+ @@)")),
+         "copied patch must carry a real unified @@ range header");
+
+  PatchApplyRequest request{
+      .operation = PatchOperationKind::StageHunk,
+      .target{.repository_root = repo_path,
+              .relative_path = std::filesystem::path("tracked.txt"),
+              .hunk = std::nullopt,
+              .line_selection = std::nullopt},
+  };
+  const auto result = ApplyPatchRequest(request, *patch);
+  Expect(result.category == PatchApplyResultCategory::Success,
+         "copied whole-file patch must be git-apply-able");
+}
+
+// J37: copied patches must be git-apply-able for the full edge matrix — an add,
+// a delete, a path containing spaces, and a file missing its trailing newline.
+void TestCopyPatchAppliesForAddDeleteSpacesAndNoNewline() {
+  const auto make_repo = [](const TemporaryDirectory& temp) {
+    const auto repo_path = temp.path() / "repo";
+    std::filesystem::create_directories(repo_path);
+    InitializeGitRepo(repo_path);
+    WriteFile(repo_path / "seed.txt", "seed\n");
+    CommitAll(repo_path, "base", "base");
+    return repo_path;
+  };
+
+  // Add (whole-file copy of an untracked file uses a /dev/null old side).
+  {
+    TemporaryDirectory temp_dir;
+    const auto repo_path = make_repo(temp_dir);
+    WriteFile(repo_path / "created.txt", "alpha\nbeta\n");
+    const CompareModel model = BuildCompareModel("", "alpha\nbeta\n");
+    const auto patch = GenerateComparePatchForRows(model, "created.txt", 0, model.rows.size() - 1);
+    Expect(patch.has_value(), "added-file copy patch should be generated");
+    Expect(patch->find("--- /dev/null") != std::string::npos,
+           "added-file copy patch old side must be /dev/null");
+    PatchApplyRequest request{
+        .operation = PatchOperationKind::StageHunk,
+        .target{.repository_root = repo_path,
+                .relative_path = std::filesystem::path("created.txt"),
+                .hunk = std::nullopt,
+                .line_selection = std::nullopt},
+    };
+    Expect(ApplyPatchRequest(request, *patch).category == PatchApplyResultCategory::Success,
+           "copied add patch must apply");
+  }
+
+  // Delete (whole-file copy of a removed file uses a /dev/null new side).
+  {
+    TemporaryDirectory temp_dir;
+    const auto repo_path = temp_dir.path() / "repo";
+    std::filesystem::create_directories(repo_path);
+    InitializeGitRepo(repo_path);
+    WriteFile(repo_path / "doomed.txt", "gamma\ndelta\n");
+    CommitAll(repo_path, "base", "base");
+    const CompareModel model = BuildCompareModel("gamma\ndelta\n", "");
+    const auto patch = GenerateComparePatchForRows(model, "doomed.txt", 0, model.rows.size() - 1);
+    Expect(patch.has_value(), "deleted-file copy patch should be generated");
+    Expect(patch->find("+++ /dev/null") != std::string::npos,
+           "deleted-file copy patch new side must be /dev/null");
+    PatchApplyRequest request{
+        .operation = PatchOperationKind::StageHunk,
+        .target{.repository_root = repo_path,
+                .relative_path = std::filesystem::path("doomed.txt"),
+                .hunk = std::nullopt,
+                .line_selection = std::nullopt},
+    };
+    Expect(ApplyPatchRequest(request, *patch).category == PatchApplyResultCategory::Success,
+           "copied delete patch must apply");
+  }
+
+  // Path with spaces (git leaves such paths unquoted; the header must still apply).
+  {
+    TemporaryDirectory temp_dir;
+    const auto repo_path = temp_dir.path() / "repo";
+    std::filesystem::create_directories(repo_path);
+    InitializeGitRepo(repo_path);
+    WriteFile(repo_path / "a b.txt", "x\n");
+    CommitAll(repo_path, "base", "base");
+    const CompareModel model = BuildCompareModel("x\n", "y\n");
+    const auto patch = GenerateComparePatch(model, "a b.txt", 0);
+    Expect(patch.has_value(), "spaces-path copy patch should be generated");
+    Expect(patch->find("--- a/a b.txt") != std::string::npos,
+           "a space-containing path stays unquoted, matching git");
+    PatchApplyRequest request{
+        .operation = PatchOperationKind::StageHunk,
+        .target{.repository_root = repo_path,
+                .relative_path = std::filesystem::path("a b.txt"),
+                .hunk = std::nullopt,
+                .line_selection = std::nullopt},
+    };
+    Expect(ApplyPatchRequest(request, *patch).category == PatchApplyResultCategory::Success,
+           "copied spaces-path patch must apply");
+  }
+
+  // Missing trailing newline.
+  {
+    TemporaryDirectory temp_dir;
+    const auto repo_path = temp_dir.path() / "repo";
+    std::filesystem::create_directories(repo_path);
+    InitializeGitRepo(repo_path);
+    WriteFile(repo_path / "nonl.txt", "a\nb\nc");
+    CommitAll(repo_path, "base", "base");
+    const CompareModel model = BuildCompareModel("a\nb\nc", "a\nb\nC");
+    const auto patch = GenerateComparePatchForRows(model, "nonl.txt", 0, model.rows.size() - 1);
+    Expect(patch.has_value(), "no-newline copy patch should be generated");
+    Expect(patch->find("\\ No newline at end of file") != std::string::npos,
+           "copied no-newline patch must carry git's marker");
+    PatchApplyRequest request{
+        .operation = PatchOperationKind::StageHunk,
+        .target{.repository_root = repo_path,
+                .relative_path = std::filesystem::path("nonl.txt"),
+                .hunk = std::nullopt,
+                .line_selection = std::nullopt},
+    };
+    Expect(ApplyPatchRequest(request, *patch).category == PatchApplyResultCategory::Success,
+           "copied no-newline patch must apply");
+  }
+}
+
+// J38: patch header paths must be quoted/escaped exactly like git so that tabs,
+// newlines, quotes, backslashes, and high-bit bytes cannot split or corrupt the
+// `--- ` / `+++ ` / `diff --git` lines. Spaces and a leading dash under the
+// `a/`/`b/` prefix stay unquoted, matching git.
+void TestPatchHeaderQuotesUnsafePaths() {
+  const CompareModel model = BuildCompareModel("x\n", "y\n");
+  struct Case {
+    std::filesystem::path path;
+    std::string expected_minus_header;  // exact bytes expected on the `--- ` line
+    const char* note;
+  };
+  const std::vector<Case> cases = {
+      {std::filesystem::path("a b.txt"), "--- a/a b.txt", "space stays unquoted"},
+      {std::filesystem::path("a\tb.txt"), "--- \"a/a\\tb.txt\"", "tab escaped and quoted"},
+      {std::filesystem::path("a\nb.txt"), "--- \"a/a\\nb.txt\"", "newline escaped and quoted"},
+      {std::filesystem::path("a\"b.txt"), "--- \"a/a\\\"b.txt\"", "double-quote escaped and quoted"},
+      {std::filesystem::path("a\\b.txt"), "--- \"a/a\\\\b.txt\"", "backslash escaped and quoted"},
+      {std::filesystem::path("-lead.txt"), "--- a/-lead.txt", "leading dash stays unquoted under a/"},
+      {std::filesystem::path("caf\xc3\xa9.txt"), "--- \"a/caf\\303\\251.txt\"",
+       "non-ASCII octal-escaped and quoted"},
+  };
+  for (const Case& test_case : cases) {
+    const auto patch = GenerateComparePatch(model, test_case.path, 0);
+    Expect(patch.has_value(), test_case.note);
+    Expect(patch->find(test_case.expected_minus_header) != std::string::npos, test_case.note);
+    // The diff --git line must carry the same quoted token on both sides.
+    if (test_case.expected_minus_header.rfind("--- \"", 0) == 0) {
+      Expect(patch->find("diff --git \"a/") != std::string::npos,
+             "quoted path must also quote the diff --git a/ token");
+    }
+  }
+}
+
+// J39: building a patch-apply request must not deep-copy the whole compare model.
+// The patch text is generated synchronously from the live model; only compact
+// target metadata is dispatched, so staging one hunk costs O(hunk), not O(file).
+void TestPatchApplyRequestDoesNotCopyModel() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path();
+
+  microide::project::ProjectBackgroundExecutor executor;
+  microide::workspace::GitRepositoryService git_service(executor);
+  microide::workspace::PatchApplyService service(executor, git_service);
+
+  microide::project::GitRepositoryState repo_state;
+  repo_state.repository_root = repo_path;
+  repo_state.repo_available = true;
+  repo_state.generation = 1;
+  microide::workspace::PatchApplyService::Callbacks callbacks;
+  callbacks.current_repository_state = [repo_state]() { return repo_state; };
+  service.SetCallbacks(std::move(callbacks));
+
+  // A deliberately large diff. Staging a single hunk must not clone all of it.
+  std::string left;
+  std::string right;
+  for (int i = 0; i < 500; ++i) {
+    const std::string tag = std::to_string(i);
+    left += "line" + tag + "\n";
+    right += (i == 250 ? "CHANGED" + tag : "line" + tag);
+    right += "\n";
+  }
+  microide::workspace::CompareTabState compare_tab;
+  compare_tab.path = repo_path / "file.txt";
+  compare_tab.right_ref = "WORKTREE";
+  compare_tab.model = BuildCompareModel(left, right);
+  Expect(compare_tab.model.rows.size() > 400, "expected a large compare model");
+  std::size_t changed_row = compare_tab.model.rows.size();
+  for (std::size_t i = 0; i < compare_tab.model.rows.size(); ++i) {
+    if (compare_tab.model.rows[i].kind != CompareRowKind::Unchanged) {
+      changed_row = i;
+      break;
+    }
+  }
+  Expect(changed_row < compare_tab.model.rows.size(), "expected a changed row in the model");
+  compare_tab.selected_row = changed_row;
+
+  const auto request = service.BuildRequestForTesting(
+      compare_tab, PatchOperationKind::StageHunk, /*line_scope=*/false);
+  Expect(request.has_value(), "request should build for a working-tree text hunk");
+  Expect(request->target.hunk.has_value(), "request should target a hunk");
+  // The fix: the dispatched request carries no copy of the (large) diff model.
+  Expect(request->model.rows.empty(),
+         "request must not deep-copy the compare model (cost bounded by hunk, not file)");
+  // The source model is untouched — the emptiness above is the request's, not a
+  // side effect that mutated the tab.
+  Expect(compare_tab.model.rows.size() > 400, "source model must remain intact");
+
+  executor.Shutdown();
+}
+
 void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
   tests.push_back({"PatchApply/AppendAfterMissingFinalNewline",
                    TestPatchStageAppendAfterMissingFinalNewline});
@@ -540,6 +783,12 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
                    TestPatchStagePreservesMissingFinalNewline});
   tests.push_back({"PatchApply/StageHunkShiftedBlankContext",
                    TestPatchStageHunkWithShiftedBlankContextApplies});
+  tests.push_back({"PatchApply/CopyFilePatchIsRealUnifiedDiff",
+                   TestCopyFilePatchWholeFileIsRealUnifiedDiffAndApplies});
+  tests.push_back({"PatchApply/CopyPatchAddDeleteSpacesNoNewline",
+                   TestCopyPatchAppliesForAddDeleteSpacesAndNoNewline});
+  tests.push_back({"PatchApply/HeaderQuotesUnsafePaths", TestPatchHeaderQuotesUnsafePaths});
+  tests.push_back({"PatchApply/RequestDoesNotCopyModel", TestPatchApplyRequestDoesNotCopyModel});
 }
 
 }  // namespace microide::tests

@@ -151,15 +151,20 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
   };
 
   if (std::filesystem::exists(cached_path)) {
-    if (expected_sha256.empty()) {
-      return cached_path;
+    if (!expected_sha256.empty()) {
+      if (const auto cached_sha = compute_sha256_async(cached_path);
+          cached_sha.has_value() && *cached_sha == expected_sha256) {
+        return cached_path;
+      }
+      std::error_code remove_error;
+      std::filesystem::remove(cached_path, remove_error);
     }
-    if (const auto cached_sha = compute_sha256_async(cached_path);
-        cached_sha.has_value() && *cached_sha == expected_sha256) {
-      return cached_path;
-    }
-    std::error_code remove_error;
-    std::filesystem::remove(cached_path, remove_error);
+    // An empty expected hash gives NO integrity guarantee, so a cached copy is not
+    // returned blindly — it could be stale or tampered. Fall through: the only way to
+    // proceed is to re-copy from an explicitly-trusted local source (resolved below).
+    // If no local source resolves (e.g. an http(s) URL the downloader can't fetch),
+    // ResolveToolSourcePath fails and the request is rejected rather than served
+    // unverified. (See bug inventory J22.)
   }
 
   const auto source_path = ResolveToolSourcePath(url);

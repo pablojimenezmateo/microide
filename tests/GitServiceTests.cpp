@@ -313,6 +313,17 @@ void TestGitBranchAndRecentCommitCollection() {
 
   const auto capped = CollectGitRecentCommits(repo_path, 1);
   Expect(capped.size() == 1, "recent commit collection should honor the limit");
+
+  // A caller-supplied limit far above the helper-level cap (kMaxRecentCommits =
+  // 1000) must be clamped before it reaches `git log -n` / the unbounded
+  // ParseLog. This repo only has two commits, so an over-cap request must still
+  // succeed and return at most the cap (here, the two available commits).
+  static constexpr std::size_t kRecentCommitHelperCap = 1000;
+  const auto over_cap = CollectGitRecentCommits(repo_path, 1'000'000);
+  Expect(over_cap.size() <= kRecentCommitHelperCap,
+         "over-cap recent-commit request must be clamped to the helper cap");
+  Expect(over_cap.size() == 2,
+         "over-cap request should still return every available commit on HEAD");
 }
 
 void TestGitResolvePrBaseReferenceFromGhMergeBase() {
@@ -761,7 +772,43 @@ void TestGitCommandTimeoutReportsTimedOut() {
 
 }  // namespace
 
+// J1: `git show <rev>:<path>` can be killed for hitting the subprocess capture
+// ceiling, leaving a partial blob with a non-zero exit and result.truncated set.
+// The interpretation must surface that partial content WITH the truncated flag (so
+// callers can refuse to diff it as truth) while a genuine failure stays nullopt and
+// a clean read stays untruncated. Tested through the pure static helper so the
+// contract is verified without committing a 128 MiB blob to force a real kill.
+void TestGitReadFileAtRevisionSurfacesTruncation() {
+  using CommandResult = GitRepository::CommandResult;
+
+  // A clean success: full content, not truncated.
+  const auto clean = GitRepository::InterpretBlobResult(
+      CommandResult{.exit_code = 0, .output = "full file contents\n", .truncated = false});
+  Expect(clean.has_value(), "a successful git show should yield a blob");
+  Expect(clean->content == "full file contents\n" && !clean->truncated,
+         "a clean read is the whole file and is not flagged truncated");
+
+  // A capture-ceiling kill: non-zero exit but truncated set -> partial + flagged.
+  const auto truncated = GitRepository::InterpretBlobResult(
+      CommandResult{.exit_code = 137, .output = "partial prefix", .truncated = true});
+  Expect(truncated.has_value(),
+         "a truncated blob is still surfaced (partial content is available)");
+  Expect(truncated->truncated,
+         "a capture-ceiling kill must be flagged truncated, not treated as a full read");
+  Expect(truncated->content == "partial prefix",
+         "the partial prefix is preserved for a 'content truncated' state");
+
+  // A genuine failure (e.g. missing revision) is nullopt, distinct from an empty
+  // blob and from a truncation.
+  const auto failure = GitRepository::InterpretBlobResult(
+      CommandResult{.exit_code = 128, .output = "", .truncated = false});
+  Expect(!failure.has_value(),
+         "a real non-zero-exit failure stays nullopt, not a bogus empty blob");
+}
+
 void RegisterGitServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Git/ReadFileAtRevisionSurfacesTruncation",
+          TestGitReadFileAtRevisionSurfacesTruncation);
   AddTest(tests, "Git/PorcelainParserBoundsHostileStatus",
           TestGitPorcelainParserBoundsHostileStatus);
   AddTest(tests, "Git/BuildStatusMapFolderPriorityIsSingleSourced",

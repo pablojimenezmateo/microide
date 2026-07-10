@@ -52,7 +52,8 @@ mode = sys.argv[1] if len(sys.argv) > 1 else ""
 # all advertise configurationDone support.
 supports_config_done = mode in ("config_done", "stop", "pause", "variables", "evaluate",
                                 "restart", "threads", "exception", "die", "thread_event",
-                                "function", "reverse", "reverse_late", "stale_stack")
+                                "function", "reverse", "reverse_late", "stale_stack",
+                                "relocate", "partial_continue", "stop_no_thread")
 supports_set_variable = (mode == "variables")
 supports_evaluate = (mode == "evaluate")
 supports_restart = (mode == "restart")
@@ -60,6 +61,15 @@ supports_step_back = (mode == "reverse")  # advertise supportsStepBack (reverse 
 supports_function = (mode == "function")  # advertise supportsFunctionBreakpoints
 multi_thread = (mode == "threads")     # `threads` returns two threads + per-thread frames
 exception_mode = (mode == "exception")  # advertise exceptionBreakpointFilters (+ filter options)
+# `relocate`: setBreakpoints returns an EXTRA non-requested result + an async
+# `breakpoint` event that relocates the first breakpoint (E3 consistency).
+relocate_mode = (mode == "relocate")
+# `partial_continue`: after the stop, emit a single-thread `continued`
+# (allThreadsContinued=false) that must NOT resume the session (E4).
+partial_continue = (mode == "partial_continue")
+# `stop_no_thread`: emit `stopped` with NO threadId; the host must resolve a real
+# thread rather than requesting threadId:0 (J9).
+stop_no_thread = (mode == "stop_no_thread")
 # `thread_event`: a worker thread spawns after the first `threads` fetch; the mock
 # emits a `thread` started event so the host must refresh the list a second time.
 thread_event_mode = (mode == "thread_event")
@@ -70,7 +80,8 @@ thread_started = False
 # rr / gdb `record`, which announce reverse execution after initialize).
 reverse_late = (mode == "reverse_late")
 stop_on_config = mode in ("stop", "variables", "evaluate", "restart", "threads", "exception",
-                          "thread_event", "function", "reverse", "reverse_late", "stale_stack")
+                          "thread_event", "function", "reverse", "reverse_late", "stale_stack",
+                          "partial_continue", "stop_no_thread")
 # `stale_stack`: hold the first stackTrace response until a resume arrives, then
 # flush it late so the host must drop the stale stopped view (session Running).
 stale_stack = (mode == "stale_stack")
@@ -132,7 +143,11 @@ def finish_launch():
     event("terminated")
 
 def emit_stop():
-    event("stopped", {"reason": "breakpoint", "threadId": 1, "allThreadsStopped": True})
+    if stop_no_thread:
+        # DAP allows omitting threadId on `stopped`; the host must resolve one.
+        event("stopped", {"reason": "breakpoint", "allThreadsStopped": True})
+    else:
+        event("stopped", {"reason": "breakpoint", "threadId": 1, "allThreadsStopped": True})
 
 def send_stack(req):
     tid = req.get("arguments", {}).get("threadId", 1)
@@ -175,10 +190,23 @@ while True:
         event("initialized")
     elif command == "setBreakpoints":
         args = msg.get("arguments", {})
+        src = args.get("source", {}).get("path", "")
+        reqs = args.get("breakpoints", [])
         verified = []
-        for i, bp in enumerate(args.get("breakpoints", [])):
+        for i, bp in enumerate(reqs):
             verified.append({"id": i + 1, "verified": True, "line": bp.get("line", 0)})
+        if relocate_mode and reqs:
+            # A non-conformant adapter appends an EXTRA result with no matching
+            # request, at the LAST requested line. The host must DROP it, not apply
+            # it by line and clobber that breakpoint's adapter id.
+            verified.append({"id": 99, "verified": True, "line": reqs[-1].get("line", 0)})
         respond(msg, {"breakpoints": verified})
+        if relocate_mode and reqs:
+            # Async relocation of the FIRST breakpoint to line+5: the marker must
+            # stay at the user's requested line (reconciled by adapter id), not jump.
+            event("breakpoint", {"reason": "changed", "breakpoint": {
+                "id": 1, "verified": True, "line": reqs[0].get("line", 0) + 5,
+                "source": {"path": src}}})
     elif command == "launch":
         respond(msg, {})
         if not supports_config_done:
@@ -201,6 +229,12 @@ while True:
             # tests can assert handshake ordering too.
             event("output", {"category": "stdout", "output": "commands:" + ",".join(received) + "\n"})
             emit_stop()
+            if partial_continue:
+                # A single-thread continue for a DIFFERENT thread. Because
+                # allThreadsContinued is false, the host must leave the stopped view
+                # intact (not fire on_resumed / flip to Running).
+                event("continued", {"threadId": 2, "allThreadsContinued": False})
+                event("output", {"category": "stdout", "output": "partial-continue-sent\n"})
         elif running_no_stop:
             pass  # stay running; the test will issue a pause
         else:
@@ -210,6 +244,11 @@ while True:
             # Hold the first stack request; it is flushed (stale) after the resume.
             deferred_stack_req = msg
         else:
+            if stop_no_thread:
+                # Surface the threadId the host targeted so the test can assert it
+                # resolved a real thread (1) instead of sending threadId:0.
+                tid = msg.get("arguments", {}).get("threadId", "none")
+                event("output", {"category": "stdout", "output": "stack-thread:" + str(tid) + "\n"})
             send_stack(msg)
     elif command == "restart":
         event("output", {"category": "stdout", "output": "cmd:restart\n"})
@@ -218,6 +257,11 @@ while True:
         event("initialized")
     elif command in ("continue", "next", "stepIn", "stepOut", "reverseContinue", "stepBack"):
         event("output", {"category": "stdout", "output": "cmd:" + command + "\n"})
+        if stop_no_thread:
+            # Surface the threadId the resume targeted (J9: must be the resolved
+            # thread, never 0).
+            rtid = msg.get("arguments", {}).get("threadId", "none")
+            event("output", {"category": "stdout", "output": "resume-thread:" + str(rtid) + "\n"})
         respond(msg, {"allThreadsContinued": True} if command == "continue" else {})
         if stale_stack and deferred_stack_req is not None:
             # The host already flipped to Running (resume is optimistic). Flush the
@@ -2731,6 +2775,161 @@ void TestGdbRealFunctionBreakpointsE2E() {
          "gdb should stop inside add() via the function breakpoint (within a few attempts)");
 }
 
+// E3 regression (through the production DebugService callback wiring against the
+// real project BreakpointStore): the setBreakpoints RESPONSE anchors verification
+// to the line the user REQUESTED (keeping the gutter marker at the user's line),
+// records the adapter id, and DROPS any extra non-requested result rather than
+// applying it by the adapter's line. A later async `breakpoint` event that
+// relocates the breakpoint reconciles by that id and likewise keeps the requested
+// line — so the response and the event agree and the marker never jumps.
+void TestDebugServiceBreakpointVerificationStaysAtRequestedLine() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = temp_dir.path();
+  const std::filesystem::path bp_path = temp_dir.path() / "main.c";
+  // Two breakpoints at 0-based lines 9 and 19 (DAP lines 10 and 20).
+  context.current_project_state.breakpoint_store.Set(bp_path, 9);
+  context.current_project_state.breakpoint_store.Set(bp_path, 19);
+
+  microide::workspace::DebugService service;
+  service.Configure(context, microide::workspace::DebugService::Operations{});
+  service.CurrentDapManager().RegisterAdapter("mock", MockAdapterCommand(server_path, "relocate"));
+
+  LaunchConfig config;
+  config.name = "session";
+  config.type = "mock";
+  config.request = "launch";
+  Expect(service.StartDebugging(config), "the session should start");
+
+  // Wait until the setBreakpoints RESPONSE has been applied (both breakpoints
+  // verified). The relocate `breakpoint` event and `terminated` follow it in wire
+  // order, so a short settle after this flushes them deterministically.
+  const auto both_verified = [&]() {
+    const auto* v = context.current_project_state.breakpoint_store.FindByPath(bp_path);
+    if (v == nullptr || v->size() != 2) {
+      return false;
+    }
+    return (*v)[0].verified && (*v)[1].verified;
+  };
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(4000);
+  while (std::chrono::steady_clock::now() < deadline && !both_verified()) {
+    service.ConsumeDapCallbacks();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  Expect(both_verified(), "both breakpoints should verify from the setBreakpoints response");
+  // Flush the async relocate `breakpoint` event (it follows the response) so the
+  // "stays at the requested line after the event" assertions see it applied.
+  for (int i = 0; i < 25; ++i) {
+    service.ConsumeDapCallbacks();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+
+  const auto* bps = context.current_project_state.breakpoint_store.FindByPath(bp_path);
+  Expect(bps != nullptr && bps->size() == 2, "both breakpoints remain, none added/dropped");
+  if (bps != nullptr && bps->size() == 2) {
+    const editor::Breakpoint* first = nullptr;   // requested at 0-based line 9
+    const editor::Breakpoint* second = nullptr;  // requested at 0-based line 19
+    for (const auto& bp : *bps) {
+      if (bp.line == 9) first = &bp;
+      if (bp.line == 19) second = &bp;
+    }
+    Expect(first != nullptr,
+           "the relocated breakpoint stays at the user's requested line 9, not the adapter line");
+    Expect(first != nullptr && first->verified && first->adapter_id == 1,
+           "the requested-line breakpoint verifies with its own adapter id across response+event");
+    Expect(second != nullptr && second->verified && second->adapter_id == 2,
+           "an extra non-requested result must not clobber the second breakpoint's adapter id");
+  }
+
+  service.StopAllDebugging();
+}
+
+// E4 regression: a `continued` event with allThreadsContinued=false (a single
+// thread resumed) must NOT tear down the shared stopped view — a multi-thread
+// session keeps its focused stack/execution state until a full resume or the next
+// stop. The mock stops, then emits a partial `continued` for a different thread.
+void TestDebugSessionPartialContinueDoesNotResume() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "partial_continue"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+
+  // The partial `continued` + its sentinel are written after the stop on the same
+  // pipe, so observing the sentinel means the `continued` was already handled.
+  Expect(PollUntil(manager,
+                   [&]() {
+                     return captured.output.find("partial-continue-sent") != std::string::npos;
+                   }),
+         "adapter should emit the stop and the partial continued event");
+
+  DebugSession* session = manager.ActiveSession();
+  Expect(session != nullptr && session->CurrentState() == DebugSession::State::Stopped,
+         "a partial continued (allThreadsContinued=false) must not resume the session");
+  Expect(captured.resume_count == 0,
+         "on_resumed must not fire for a single-thread continue");
+  manager.ShutdownAll();
+}
+
+// J9 regression: a `stopped` event with no threadId must not drive a
+// stackTrace/continue targeting threadId 0. The host resolves a real thread (via a
+// threads query) first. The mock surfaces the threadId it received on stackTrace
+// and on resume so the test can assert it was the resolved thread, never 0.
+void TestDebugSessionStopWithoutThreadIdResolvesThread() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop_no_thread"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+
+  // Reaching a resolved stop (frames delivered) already proves the host resolved a
+  // concrete thread from the threadId-less stop before requesting the stack.
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
+         "a threadId-less stop should still resolve a stack (via a resolved thread)");
+  Expect(captured.output.find("stack-thread:1") != std::string::npos,
+         "stackTrace must target the resolved thread, not threadId 0");
+  Expect(captured.output.find("stack-thread:0") == std::string::npos,
+         "stackTrace must never send threadId 0");
+
+  DebugSession* session = manager.ActiveSession();
+  Expect(session != nullptr, "session should be active while stopped");
+  session->Continue();
+  Expect(PollUntil(manager,
+                   [&]() { return captured.output.find("resume-thread:") != std::string::npos; }),
+         "continue should reach the adapter");
+  Expect(captured.output.find("resume-thread:1") != std::string::npos,
+         "continue must target the resolved thread, not threadId 0");
+  Expect(captured.output.find("resume-thread:0") == std::string::npos,
+         "continue must never send threadId 0");
+  manager.ShutdownAll();
+}
+
 }  // namespace
 
 void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
@@ -2772,6 +2971,12 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugSessionFunctionBreakpointsSentOnLaunch);
   AddTest(tests, "DebugService/SessionExceptionFilterConditionsSent",
           TestDebugSessionExceptionFilterConditionsSent);
+  AddTest(tests, "DebugService/BreakpointVerificationStaysAtRequestedLine",
+          TestDebugServiceBreakpointVerificationStaysAtRequestedLine);
+  AddTest(tests, "DebugService/SessionPartialContinueDoesNotResume",
+          TestDebugSessionPartialContinueDoesNotResume);
+  AddTest(tests, "DebugService/SessionStopWithoutThreadIdResolvesThread",
+          TestDebugSessionStopWithoutThreadIdResolvesThread);
   AddTest(tests, "DebugService/FunctionBreakpointStoreBehavior",
           TestFunctionBreakpointStoreBehavior);
   AddTest(tests, "DebugService/GdbRealFunctionBreakpointsE2E", TestGdbRealFunctionBreakpointsE2E);

@@ -47,8 +47,11 @@ std::optional<OutputReference> ParseOutputReference(std::string_view text) {
   const std::string_view column_text = text.substr(column_delimiter + 1);
   const auto parsed_line = util::ParseSize(line_text);
   const auto parsed_column = util::ParseSize(column_text);
+  // OutputReference documents both line and column as 1-based, so a zero in
+  // either field is malformed and must be rejected (not silently accepted as
+  // column 0).
   if (path_text.empty() || !parsed_line.has_value() || !parsed_column.has_value() ||
-      *parsed_line == 0) {
+      *parsed_line == 0 || *parsed_column == 0) {
     return std::nullopt;
   }
   return OutputReference{

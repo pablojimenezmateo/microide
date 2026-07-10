@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <string_view>
 
 #include "platform/ControlSocketClient.h"
 #include "util/JsonValue.h"
@@ -24,13 +25,47 @@ std::optional<std::string> TakeValue(const std::vector<std::string>& args, std::
   return args[*index];
 }
 
+// Quote a single argv token so ParseCommandLine (the receiver's parser) recovers it
+// verbatim. The receiver re-parses the joined `command` string, so a bare space-join
+// would split a token containing spaces and mangle quotes/backslashes. We use the
+// parser's own double-quote grammar: inside "...", '\' escapes the next byte and '"'
+// closes, so escaping '\' and '"' and wrapping in quotes round-trips ANY content
+// (spaces, apostrophes, backslashes, embedded quotes). Tokens with no parser-special
+// bytes are emitted unquoted to keep the wire form readable. NOTE: this deliberately
+// does NOT reuse workspace::QuoteCommandArg — that emits POSIX single-quote escaping
+// (e.g. 'can'\''t') which ParseCommandLine, not being a shell, cannot round-trip.
+std::string QuoteTokenForParser(std::string_view token) {
+  bool needs_quoting = token.empty();
+  for (const char c : token) {
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\'' || c == '"' ||
+        c == '\\') {
+      needs_quoting = true;
+      break;
+    }
+  }
+  if (!needs_quoting) {
+    return std::string(token);
+  }
+  std::string quoted;
+  quoted.reserve(token.size() + 2);
+  quoted.push_back('"');
+  for (const char c : token) {
+    if (c == '\\' || c == '"') {
+      quoted.push_back('\\');
+    }
+    quoted.push_back(c);
+  }
+  quoted.push_back('"');
+  return quoted;
+}
+
 std::string JoinTokens(const std::vector<std::string>& tokens) {
   std::string joined;
   for (std::size_t i = 0; i < tokens.size(); ++i) {
     if (i != 0) {
       joined.push_back(' ');
     }
-    joined += tokens[i];
+    joined += QuoteTokenForParser(tokens[i]);
   }
   return joined;
 }
@@ -237,7 +272,9 @@ int RunControlSend(int argc, char** argv) {
     EmitError("could not connect to " + socket->string());
     return 2;
   }
-  if (!client.SendLine(*request)) {
+  // Bound the write by the caller's overall timeout so a peer that accepts but never
+  // reads cannot hang control-send indefinitely (the read side already honors it).
+  if (!client.SendLine(*request, std::chrono::seconds(options.timeout_seconds))) {
     EmitError("failed to send request");
     return 2;
   }

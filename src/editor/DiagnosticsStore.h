@@ -86,6 +86,13 @@ class DiagnosticsStore {
   // Hot-path variant taking a precomputed NormalizedPathKey (see
   // TextViewport::path_key). Allocation-free: the map uses heterogeneous lookup.
   const std::vector<PublishedDiagnostic>* FindByPathKey(std::string_view path_key) const;
+  // True when the stored diagnostics for `path` were capped
+  // (kMaxDiagnosticsPerOwnerFile) and some the server published were dropped, so
+  // callers (Problems sidebar/status) can flag that the list is incomplete.
+  bool IsPathTruncated(const std::filesystem::path& path) const;
+  bool IsPathKeyTruncated(std::string_view path_key) const;
+  // Store-wide flag: any file currently retains a truncated diagnostic list.
+  bool HasTruncatedFile() const { return truncated_file_count_ > 0; }
   std::vector<PublishedDiagnostic> SnapshotAll() const;
   std::vector<PublishedDiagnostic> SnapshotForOwner(std::string_view owner) const;
   std::size_t ErrorCount() const { return error_count_; }
@@ -108,6 +115,11 @@ class DiagnosticsStore {
     std::filesystem::path path;
     std::vector<PublishedDiagnostic> diagnostics;
     SeveritySummary summary;
+    // Set when the source list exceeded kMaxDiagnosticsPerOwnerFile and was
+    // capped; `original_count` records how many the server actually published
+    // (>= diagnostics.size()) so a summary can report the dropped remainder.
+    bool truncated = false;
+    std::size_t original_count = 0;
 
     bool operator==(const FileDiagnostics&) const = default;
   };
@@ -135,6 +147,9 @@ class DiagnosticsStore {
   std::size_t warning_count_ = 0;
   std::size_t info_count_ = 0;
   std::size_t hint_count_ = 0;
+  // Number of entries in merged_by_path_ whose list is currently truncated;
+  // keeps HasTruncatedFile() O(1) as merged paths are rebuilt.
+  std::size_t truncated_file_count_ = 0;
   std::uint64_t revision_ = 0;
 };
 

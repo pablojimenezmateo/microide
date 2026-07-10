@@ -25,12 +25,16 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
   if (repository_changed) {
     git_repository_service_.MarkStale();
     context_.current_project_state.sidebar.git.snapshot_stale = true;
-    for (TabEntry& tab : context_.current_project_state.focused_group().open_tabs) {
-      if (!tab.merge.has_value()) {
-        continue;
+    // Mark merge tabs stale in EVERY editor group, not just the focused split: a
+    // merge tab in the other split must not keep rendering a pre-change index.
+    for (EditorGroup& group : context_.current_project_state.editor_groups) {
+      for (TabEntry& tab : group.open_tabs) {
+        if (!tab.merge.has_value()) {
+          continue;
+        }
+        tab.merge->index_stale = true;
+        tab.merge->marked_resolved = false;
       }
-      tab.merge->index_stale = true;
-      tab.merge->marked_resolved = false;
     }
   }
 
@@ -125,23 +129,29 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
 void WorkspaceShell::MarkCompareTabsStaleForPath(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
   bool refreshed_any = false;
-  for (std::size_t index = 0; index < context_.current_project_state.focused_group().open_tabs.size(); ++index) {
-    const auto& tab = context_.current_project_state.focused_group().open_tabs[index];
-    if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
-        tab.compare->path != normalized_path) {
-      continue;
+  // Scan every editor group: a compare tab in the non-focused split must also be
+  // invalidated when its file changes externally, otherwise it keeps rendering a
+  // pre-change diff.
+  for (EditorGroup& group : context_.current_project_state.editor_groups) {
+    for (TabEntry& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
+          tab.compare->path != normalized_path) {
+        continue;
+      }
+      tab.compare->model_stale = true;
+      tab.compare->model_refreshing = true;
+      refreshed_any = true;
     }
-    context_.current_project_state.focused_group().open_tabs[index].compare->model_stale = true;
-    context_.current_project_state.focused_group().open_tabs[index].compare->model_refreshing = true;
-    refreshed_any = true;
   }
   if (refreshed_any) {
     RefreshOpenCompareTabsForPath(normalized_path);
-    for (TabEntry& tab : context_.current_project_state.focused_group().open_tabs) {
-      if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
-          tab.compare->path == normalized_path) {
-        tab.compare->model_stale = false;
-        tab.compare->model_refreshing = false;
+    for (EditorGroup& group : context_.current_project_state.editor_groups) {
+      for (TabEntry& tab : group.open_tabs) {
+        if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+            tab.compare->path == normalized_path) {
+          tab.compare->model_stale = false;
+          tab.compare->model_refreshing = false;
+        }
       }
     }
   }
@@ -149,14 +159,16 @@ void WorkspaceShell::MarkCompareTabsStaleForPath(const std::filesystem::path& pa
 
 void WorkspaceShell::InvalidateMergeTabsForPath(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
-  for (TabEntry& tab : context_.current_project_state.focused_group().open_tabs) {
+  for (EditorGroup& group : context_.current_project_state.editor_groups) {
+   for (TabEntry& tab : group.open_tabs) {
     if (!tab.merge.has_value() || tab.merge->output_path.empty()) {
       continue;
     }
     if (tab.merge->output_path.lexically_normal() != normalized_path) {
       continue;
     }
-    if (!std::filesystem::exists(normalized_path)) {
+    std::error_code exists_error;
+    if (!std::filesystem::exists(normalized_path, exists_error) || exists_error) {
       continue;
     }
     std::error_code error;
@@ -166,6 +178,7 @@ void WorkspaceShell::InvalidateMergeTabsForPath(const std::filesystem::path& pat
       tab.merge->external_result_stale = true;
       tab.merge->marked_resolved = false;
     }
+   }
   }
 }
 

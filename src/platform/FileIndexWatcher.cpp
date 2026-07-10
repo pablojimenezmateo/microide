@@ -54,6 +54,19 @@ bool IsGitMetadataRelativePath(const std::filesystem::path& relative_path) {
   return it != relative_path.end() && *it == std::filesystem::path(".git");
 }
 
+// True when a computed relative path escapes the project root — either it is
+// absolute or its first component is "..". `lexically_relative` happily returns
+// "../outside/file" for an absolute path outside the root, and downstream code
+// resolves `root / relative`, so an escaping relative would let watcher/poll
+// events insert paths outside the project into the index.
+bool IsEscapingRelativePath(const std::filesystem::path& relative_path) {
+  if (relative_path.is_absolute()) {
+    return true;
+  }
+  const auto it = relative_path.begin();
+  return it != relative_path.end() && *it == std::filesystem::path("..");
+}
+
 bool TryComputeRelativePath(const std::filesystem::path& absolute_path,
                             const std::filesystem::path& root,
                             std::filesystem::path& relative_path) {
@@ -98,7 +111,7 @@ bool TryBuildTrackedRelativePath(const std::filesystem::path& absolute_path,
     return false;
   }
   rel = rel.lexically_normal();
-  if (IsGitMetadataRelativePath(rel)) {
+  if (IsGitMetadataRelativePath(rel) || IsEscapingRelativePath(rel)) {
     return false;
   }
   relative_path = std::move(rel);

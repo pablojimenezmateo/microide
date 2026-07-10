@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -254,6 +255,11 @@ class DebugSession {
  private:
   void HandleEvent(const std::string& event, const util::JsonValue& body);
   void RequestStackTrace(const dap_protocol::DapStoppedEvent& stop);
+  // A `stopped` event with no threadId (DAP allows omitting it) cannot drive a
+  // stackTrace/continue directly — those require a concrete threadId. Query the
+  // adapter's threads, adopt the first as the focused thread, and resolve the
+  // stack for it. Guarded by `epoch` so a resume/newer stop drops a late reply.
+  void ResolveFocusThreadForStop(std::uint64_t epoch);
   // Fetch the thread list and forward it through `on_threads`, guarded by the stop
   // epoch so a superseded response is dropped. Called a beat after a stop's stack
   // resolves (keeps the stop fast) and on `thread` events to track live changes.
@@ -291,9 +297,11 @@ class DebugSession {
   // True when the adapter command looks like gdb (`gdb --interpreter=dap`); gates
   // the gdb-specific value-formatting limits.
   bool is_gdb_adapter_ = false;
-  // Thread id from the most recent `stopped` event; the target for stackTrace
-  // and continue/step requests.
-  int stopped_thread_id_ = 0;
+  // Focused thread for stackTrace and continue/step requests. Set from the most
+  // recent `stopped` event's threadId, or resolved via a threads query when the
+  // event omitted it (DAP allows that). `nullopt` means "not yet resolved" — the
+  // resume path queries threads rather than sending threadId:0.
+  std::optional<int> stopped_thread_id_;
   // The most recent `stopped` event, retained so SwitchThread can re-emit
   // on_stopped with the original stop reason for a different thread's frames.
   dap_protocol::DapStoppedEvent last_stop_{};

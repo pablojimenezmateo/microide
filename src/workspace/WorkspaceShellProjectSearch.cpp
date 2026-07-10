@@ -396,11 +396,29 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
       continue;
     }
 
-    for (std::size_t i = 0; i < context_.current_project_state.focused_group().open_tabs.size(); ++i) {
-      if (context_.current_project_state.focused_group().open_tabs[i].kind == TabEntry::Kind::Editor &&
-          context_.current_project_state.focused_group().open_tabs[i].path.lexically_normal() == normalized_absolute && TabIsDirty(i)) {
-        return;
+    // Scan EVERY editor group, not just the focused split: a file open dirty in the
+    // other split must still block replace-all, otherwise replace-all would write a
+    // new copy to disk underneath that split's unsaved edits. On a blocker, surface
+    // a precise error (naming the file) rather than a bare silent return.
+    bool blocked_by_dirty = false;
+    for (const EditorGroup& group : context_.current_project_state.editor_groups) {
+      for (const TabEntry& tab : group.open_tabs) {
+        if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+            tab.path.lexically_normal() == normalized_absolute &&
+            tab.editor_state->viewport.dirty()) {
+          blocked_by_dirty = true;
+          break;
+        }
       }
+      if (blocked_by_dirty) {
+        break;
+      }
+    }
+    if (blocked_by_dirty) {
+      context_.current_project_state.overlay.workflow.project_search.error =
+          "Replace-all aborted: save open changes to " + relative_path.generic_string() + " first.";
+      RequestSidebarRedraw();
+      return;
     }
     aggregate_bytes += updated_content.size();
     if (aggregate_bytes > kMaxAggregateReplaceBytes) {
@@ -436,31 +454,40 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
       continue;
     }
 
-    for (std::size_t i = 0; i < context_.current_project_state.focused_group().open_tabs.size(); ++i) {
-      auto& tab = context_.current_project_state.focused_group().open_tabs[i];
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-        continue;
-      }
-      auto& editor_state = *tab.editor_state;
-      if (EditorViewPath(editor_state) != change.absolute_path) {
-        continue;
-      }
+    // Refresh every clean open view of the rewritten file across ALL editor groups,
+    // not just the focused split: a file open clean in the other split must not keep
+    // rendering the pre-replace buffer after the on-disk write.
+    for (std::size_t group_index = 0;
+         group_index < context_.current_project_state.editor_groups.size(); ++group_index) {
+      EditorGroup& group = context_.current_project_state.editor_groups[group_index];
+      const bool is_focused_group =
+          group_index == context_.current_project_state.focused_group_index;
+      for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
+        auto& tab = group.open_tabs[i];
+        if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+          continue;
+        }
+        auto& editor_state = *tab.editor_state;
+        if (EditorViewPath(editor_state) != change.absolute_path) {
+          continue;
+        }
 
-      editor::TextViewport reopened_view;
-      if (!reopened_view.OpenFile(change.absolute_path)) {
-        continue;
-      }
-      ApplyEditorPreferences(reopened_view);
-      ApplyDetectedIndentOnOpen(reopened_view);
-      editor_state.viewport = reopened_view;
-      editor_state.restored_path = change.absolute_path;
-      editor_state.restored_cursor_line = reopened_view.cursor_line();
-      editor_state.restored_cursor_column = reopened_view.cursor_column();
-      editor_state.restored_scroll_line = reopened_view.scroll_line();
-      editor_state.restored_horizontal_scroll = reopened_view.horizontal_scroll();
-      editor_state.needs_restore = false;
-      if (i == context_.current_project_state.focused_group().active_tab_index) {
-        SyncActiveEditorTabMetadata();
+        editor::TextViewport reopened_view;
+        if (!reopened_view.OpenFile(change.absolute_path)) {
+          continue;
+        }
+        ApplyEditorPreferences(reopened_view);
+        ApplyDetectedIndentOnOpen(reopened_view);
+        editor_state.viewport = reopened_view;
+        editor_state.restored_path = change.absolute_path;
+        editor_state.restored_cursor_line = reopened_view.cursor_line();
+        editor_state.restored_cursor_column = reopened_view.cursor_column();
+        editor_state.restored_scroll_line = reopened_view.scroll_line();
+        editor_state.restored_horizontal_scroll = reopened_view.horizontal_scroll();
+        editor_state.needs_restore = false;
+        if (is_focused_group && i == group.active_tab_index) {
+          SyncActiveEditorTabMetadata();
+        }
       }
     }
   }

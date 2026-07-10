@@ -32,6 +32,7 @@ using microide::workspace::ComputeLayout;
 using microide::workspace::ComputeMergeResultActionButtonRects;
 using microide::workspace::ComputeMergeResultViewportRect;
 using microide::workspace::ComputeMergeSourceActionButtonRect;
+using microide::workspace::FindMergeTrackedConflictAtSourceLine;
 using microide::workspace::ComputeOverlaySurfaceRect;
 using microide::workspace::ComputePromptSurfaceButtonRects;
 using microide::workspace::ComputePromptSurfaceInputRect;
@@ -823,6 +824,147 @@ void TestWorkspaceSharedMergeHoverClassifier() {
          "merge hover classifier should ignore pointers outside the merge panes");
 }
 
+// B3: zero-length source spans (start == end) describe pure insertion/deletion
+// conflicts where one side contributes no source lines. They must still own their
+// anchor row for source hover/tint/accept hit-testing, exactly as the result-side
+// lookup normalizes zero-length ranges.
+void TestWorkspaceSharedMergeZeroLengthSourceHitTest() {
+  // Pure insertion on the incoming side: incoming span is zero-length at line 4,
+  // current side inserts two lines [4, 6).
+  const std::vector<MergeTrackedConflict> insertion = {
+      MergeTrackedConflict{
+          .hunk_index = 0,
+          .incoming_start_line = 4,
+          .incoming_end_line = 4,  // zero-length -> pure insertion, no incoming source lines
+          .current_start_line = 4,
+          .current_end_line = 6,
+          .start_line = 4,
+          .end_line = 6,
+          .valid = true,
+      },
+  };
+  Expect(FindMergeTrackedConflictAtSourceLine(insertion, 4, /*incoming=*/true) == std::size_t{0},
+         "zero-length incoming source span should still match its anchor row");
+  Expect(!FindMergeTrackedConflictAtSourceLine(insertion, 5, /*incoming=*/true).has_value(),
+         "a normalized zero-length span should only own the single anchor row");
+  Expect(FindMergeTrackedConflictAtSourceLine(insertion, 4, /*incoming=*/false) == std::size_t{0},
+         "the non-empty current source span should match across its two rows");
+  Expect(FindMergeTrackedConflictAtSourceLine(insertion, 5, /*incoming=*/false) == std::size_t{0},
+         "the non-empty current source span should match its second row");
+
+  // Pure deletion on the current side: current span is zero-length at line 7.
+  const std::vector<MergeTrackedConflict> deletion = {
+      MergeTrackedConflict{
+          .hunk_index = 0,
+          .incoming_start_line = 7,
+          .incoming_end_line = 9,
+          .current_start_line = 7,
+          .current_end_line = 7,  // zero-length -> pure deletion, no current source lines
+          .start_line = 7,
+          .end_line = 9,
+          .valid = true,
+      },
+  };
+  Expect(FindMergeTrackedConflictAtSourceLine(deletion, 7, /*incoming=*/false) == std::size_t{0},
+         "zero-length current source span should still match its anchor row");
+  Expect(!FindMergeTrackedConflictAtSourceLine(deletion, 8, /*incoming=*/false).has_value(),
+         "a normalized zero-length current span should only own the single anchor row");
+  Expect(FindMergeTrackedConflictAtSourceLine(deletion, 8, /*incoming=*/true) == std::size_t{0},
+         "the non-empty incoming source span should still match its rows");
+}
+
+// B4: source-pane accept buttons must anchor to the SOURCE pane's own scroll, not
+// the result pane's clamped scroll. When a source pane is longer than the result,
+// the result scroll clamps lower, so a shared scroll would drift the button off its
+// rendered source row.
+void TestWorkspaceSharedMergeSourceButtonUsesSourceScroll() {
+  const MergeHoverSurfaceLayout surface = {
+      .gutter_width = 32.0f,
+      .left_x = 120.0f,
+      .center_x = 320.0f,
+      .right_x = 560.0f,
+      .rows_y = 260.0f,
+      .line_height = 18.0f,
+  };
+  const SDL_FRect editor_surface = MakeRect(100.0f, 200.0f, 640.0f, 320.0f);
+  const SDL_FRect result_rect = ComputeMergeResultViewportRect(editor_surface, surface.center_x,
+                                                               surface.rows_y, surface.gutter_width,
+                                                               180.0f, true);
+  // Source panes scrolled to line 8; the (shorter) result pane clamps its scroll to
+  // line 3. A conflict whose incoming source ends at line 12 renders at a source-pane
+  // relative row of (12 - 8), so the accept button must anchor there, not at (12 - 3).
+  const std::size_t source_scroll = 8;
+  const std::size_t result_scroll = 3;
+  const MergeHoverInteractionLayout interaction = {
+      .content_bottom = 900.0f,
+      .incoming = ComputeTextGridInteractionLayout(
+          MakeRect(surface.left_x, surface.rows_y, 180.0f, 360.0f),
+          surface.left_x + surface.gutter_width, surface.rows_y, surface.line_height, 8.0f,
+          source_scroll, 40, 0, 20, 20),
+      .current = ComputeTextGridInteractionLayout(
+          MakeRect(surface.right_x, surface.rows_y, 180.0f, 360.0f),
+          surface.right_x + surface.gutter_width, surface.rows_y, surface.line_height, 8.0f,
+          source_scroll, 40, 0, 20, 20),
+      .result =
+          MergeHoverResultLayout{
+              .rect = result_rect,
+              .lines =
+                  VisibleLineRangeLayout{
+                      .first_line_y = surface.rows_y,
+                      .line_height = surface.line_height,
+                      .scroll_line = result_scroll,
+                      .visible_rows = 20,
+                  },
+              .text = ComputeTextGridInteractionLayout(result_rect, 352.0f, surface.rows_y,
+                                                       surface.line_height, 8.0f, result_scroll, 20,
+                                                       0, 20, 20),
+          },
+      .incoming_accept_button_width = 90.0f,
+      .current_accept_button_width = 92.0f,
+      .result_action_widths = {64.0f, 82.0f, 84.0f, 70.0f},
+      .button_height = 22.0f,
+      .button_gap = 8.0f,
+  };
+  const std::vector<MergeTrackedConflict> conflicts = {
+      MergeTrackedConflict{
+          .hunk_index = 0,
+          .incoming_start_line = 10,
+          .incoming_end_line = 12,
+          .current_start_line = 10,
+          .current_end_line = 12,
+          .start_line = 10,
+          .end_line = 12,
+          .valid = true,
+      },
+  };
+
+  // The rendered source accept button uses the SOURCE scroll (source_scroll).
+  const SDL_FRect source_anchored = ComputeMergeSourceActionButtonRect(
+      surface.left_x, surface.gutter_width, surface.rows_y, surface.line_height,
+      static_cast<int>(source_scroll), conflicts[0].incoming_end_line, interaction.content_bottom,
+      interaction.incoming_accept_button_width, interaction.button_height);
+  // The old buggy geometry would have used the result scroll and landed on a
+  // different row; make sure the two actually differ so this test is meaningful.
+  const SDL_FRect result_anchored = ComputeMergeSourceActionButtonRect(
+      surface.left_x, surface.gutter_width, surface.rows_y, surface.line_height,
+      static_cast<int>(result_scroll), conflicts[0].incoming_end_line, interaction.content_bottom,
+      interaction.incoming_accept_button_width, interaction.button_height);
+  Expect(source_anchored.y != result_anchored.y,
+         "source and result scroll must produce different button rows for this fixture");
+
+  // The classifier must hit-test at the source-anchored position (not the result one).
+  const auto hover = ClassifyMergeHoverState(surface, interaction, conflicts,
+                                             source_anchored.x + source_anchored.w * 0.5f,
+                                             source_anchored.y + source_anchored.h * 0.5f);
+  Expect(hover.has_value() && hover->kind == MergeHoverState::Kind::IncomingAccept,
+         "merge hover classifier should hit the source accept button at its source-scrolled row");
+  const auto miss = ClassifyMergeHoverState(surface, interaction, conflicts,
+                                            result_anchored.x + result_anchored.w * 0.5f,
+                                            result_anchored.y + result_anchored.h * 0.5f);
+  Expect(!miss.has_value() || miss->kind != MergeHoverState::Kind::IncomingAccept,
+         "the stale result-scrolled row must no longer register as the accept button");
+}
+
 void TestWorkspaceSharedOverlayRectHelpers() {
   const SDL_FRect roomy = ComputeOverlaySurfaceRect(MakeRect(100.0f, 200.0f, 1200.0f, 800.0f));
   Expect(roomy.w == 696.0f,
@@ -1154,6 +1296,10 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedMergeHoverClassifier);
   AddTest(tests, "WorkspaceShared/MergeInteractionGeometry",
           TestWorkspaceSharedMergeInteractionGeometry);
+  AddTest(tests, "WorkspaceShared/MergeZeroLengthSourceHitTest",
+          TestWorkspaceSharedMergeZeroLengthSourceHitTest);
+  AddTest(tests, "WorkspaceShared/MergeSourceButtonUsesSourceScroll",
+          TestWorkspaceSharedMergeSourceButtonUsesSourceScroll);
   AddTest(tests, "WorkspaceShared/OverlayRectHelpers", TestWorkspaceSharedOverlayRectHelpers);
   AddTest(tests, "WorkspaceShared/HitTargets", TestWorkspaceSharedHitTargets);
   AddTest(tests, "WorkspaceShared/HitTargetClickRouting", TestWorkspaceHitTargetClickRouting);

@@ -20,6 +20,25 @@ int DiagnosticSeverityRank(DiagnosticSeverity severity) {
   return -1;
 }
 
+// LSP diagnostic ranges are half-open: the end position is one past the last
+// covered character. A range covers `line_index` when it falls within
+// [start.line, end.line], EXCEPT the final line of a strictly-multi-line range
+// that ends at column 0 — that end position sits at the very start of the line
+// and covers no character on it, so painting a marker/underline there is
+// spurious. Single-line zero-width ranges (start.line == end.line) are kept:
+// editors still surface a marker at an empty range like `{3,1}->{3,1}`.
+bool DiagnosticCoversLine(const PublishedDiagnostic& diagnostic, std::size_t line_index) {
+  const auto& range = diagnostic.range;
+  if (line_index < range.start.line || line_index > range.end.line) {
+    return false;
+  }
+  if (line_index == range.end.line && range.end.line > range.start.line &&
+      range.end.column == 0) {
+    return false;
+  }
+  return true;
+}
+
 }  // namespace
 
 SDL_Color DiagnosticSeverityColor(const render::Theme& theme, DiagnosticSeverity severity) {
@@ -42,7 +61,7 @@ std::optional<DiagnosticSeverity> HighestDiagnosticSeverityForLine(
   std::optional<DiagnosticSeverity> severity;
   int highest_rank = -1;
   for (const PublishedDiagnostic& diagnostic : diagnostics) {
-    if (line_index < diagnostic.range.start.line || line_index > diagnostic.range.end.line) {
+    if (!DiagnosticCoversLine(diagnostic, line_index)) {
       continue;
     }
     const int rank = DiagnosticSeverityRank(diagnostic.severity);
@@ -95,7 +114,7 @@ std::optional<SDL_FRect> DiagnosticUnderlineRect(const render::TextRenderer& tex
                                                  std::size_t tab_size,
                                                  const PublishedDiagnostic& diagnostic) {
   if (line_height <= 0.0f || visible_columns == 0 ||
-      (line_index < diagnostic.range.start.line || line_index > diagnostic.range.end.line)) {
+      !DiagnosticCoversLine(diagnostic, line_index)) {
     return std::nullopt;
   }
 

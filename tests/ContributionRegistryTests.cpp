@@ -390,6 +390,94 @@ return ide.plugin({
          "keybinding context should be editor");
 }
 
+// A plugin chord that collides with an already-resolved binding (a built-in, or an
+// earlier plugin) must be skipped in ResolveKeybindings: built-ins resolve first and
+// FindKeybinding returns the first match, so a shadowed plugin binding would be shown
+// in Help/Settings yet silently run the winner. Regression for inventory J2.
+void TestResolveKeybindingsSkipsBuiltinCollision() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  WriteFile(plugins_dir / "collide-kb" / "init.lua", R"(
+local ide = require("microide")
+return ide.plugin({
+  id = "collide.kb",
+  setup = function(ctx)
+    -- Collides with the built-in Ctrl+S "save" (a Global binding matches the editor
+    -- context), so this contribution must NOT win.
+    ctx.keybindings.add({ id = "shadow-save", action = "save", key = "Ctrl+S", context = "editor" })
+    -- A free chord: no built-in owns Ctrl+Alt+Y, so this one survives.
+    ctx.keybindings.add({ id = "free", action = "save", key = "Ctrl+Alt+Y", context = "editor" })
+  end,
+})
+)");
+
+  PluginHost host;
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+
+  const auto bindings = ResolveKeybindings(host);
+
+  const auto* ctrl_s =
+      FindKeybinding(bindings, SDLK_S, SDL_KMOD_CTRL, KeybindingContext::Editor);
+  Expect(ctrl_s != nullptr, "Ctrl+S should resolve");
+  Expect(!ctrl_s->from_plugin && ctrl_s->id == "save",
+         "a colliding plugin Ctrl+S must not shadow the built-in save binding");
+  const bool shadow_present = std::any_of(bindings.begin(), bindings.end(), [](const auto& rb) {
+    return rb.id == "collide.kb.shadow-save";
+  });
+  Expect(!shadow_present, "the colliding plugin binding must be dropped, not advertised");
+
+  const auto* free_chord = FindKeybinding(
+      bindings, SDLK_Y, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT),
+      KeybindingContext::Editor);
+  Expect(free_chord != nullptr && free_chord->from_plugin,
+         "a non-colliding plugin chord must still resolve as a plugin binding");
+}
+
+// When two plugins register the same chord, only the first resolved one wins; the
+// second collides with an already-resolved plugin binding and is skipped. Regression
+// for inventory J2 ("two plugins registering the same chord → second skipped").
+void TestResolveKeybindingsSkipsSecondPluginSameChord() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  WriteFile(plugins_dir / "kb-a" / "init.lua", R"(
+local ide = require("microide")
+return ide.plugin({
+  id = "kb.a",
+  setup = function(ctx)
+    ctx.keybindings.add({ id = "u", action = "save", key = "Ctrl+Alt+U", context = "editor" })
+  end,
+})
+)");
+  WriteFile(plugins_dir / "kb-b" / "init.lua", R"(
+local ide = require("microide")
+return ide.plugin({
+  id = "kb.b",
+  setup = function(ctx)
+    ctx.keybindings.add({ id = "u", action = "save", key = "Ctrl+Alt+U", context = "editor" })
+  end,
+})
+)");
+
+  PluginHost host;
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+
+  const auto bindings = ResolveKeybindings(host);
+  const int u_matches = static_cast<int>(std::count_if(bindings.begin(), bindings.end(),
+                                                       [](const auto& rb) {
+                                                         return rb.key == SDLK_U && rb.from_plugin;
+                                                       }));
+  Expect(u_matches == 1,
+         "two plugins registering the same chord must resolve to exactly one binding");
+}
+
 // ---------------------------------------------------------------------------
 // Plugin-contributed status items
 // ---------------------------------------------------------------------------
@@ -1032,6 +1120,10 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MenuRegistry/PluginContributions", TestPluginContributedMenuEntries);
   AddTest(tests, "KeybindingRegistry/PluginContributions",
           TestPluginContributedKeybindings);
+  AddTest(tests, "KeybindingRegistry/ResolveSkipsBuiltinCollision",
+          TestResolveKeybindingsSkipsBuiltinCollision);
+  AddTest(tests, "KeybindingRegistry/ResolveSkipsSecondPluginSameChord",
+          TestResolveKeybindingsSkipsSecondPluginSameChord);
   AddTest(tests, "StatusRegistry/PluginContributions", TestPluginContributedStatusItems);
   AddTest(tests, "StatusRegistry/Update", TestPluginStatusItemUpdate);
   AddTest(tests, "StatusRegistry/CacheInvalidatesOnRevisionBump",

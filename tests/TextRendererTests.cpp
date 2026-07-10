@@ -1236,6 +1236,77 @@ void TestHighestDiagnosticSeverityForLinePrefersTheMostSevereMatch() {
          "line severity should report no marker when a line has no diagnostics");
 }
 
+// LSP diagnostic ranges are half-open: a multi-line range ending at column 0 of
+// line N does not cover line N, so neither the gutter severity nor an underline
+// should appear there. Single-line zero-width ranges still render.
+void TestDiagnosticRangesAreHalfOpenAtLineEnd() {
+  using microide::editor::DiagnosticSeverity;
+  using microide::editor::DiagnosticUnderlineRect;
+  using microide::editor::HighestDiagnosticSeverityForLine;
+  using microide::editor::PublishedDiagnostic;
+  using microide::editor::SelectionRange;
+  using microide::editor::TextPosition;
+
+  const PublishedDiagnostic multi_line_to_col0{
+      .owner = "lsp",
+      .path = "/tmp/half-open.cpp",
+      .range = SelectionRange{.start = TextPosition{0, 2}, .end = TextPosition{1, 0}},
+      .severity = DiagnosticSeverity::Error,
+      .message = "spans line 0 only",
+  };
+  const PublishedDiagnostic single_line_zero_width{
+      .owner = "lsp",
+      .path = "/tmp/half-open.cpp",
+      .range = SelectionRange{.start = TextPosition{3, 1}, .end = TextPosition{3, 1}},
+      .severity = DiagnosticSeverity::Warning,
+      .message = "empty range marker",
+  };
+  const PublishedDiagnostic normal_single_line{
+      .owner = "lsp",
+      .path = "/tmp/half-open.cpp",
+      .range = SelectionRange{.start = TextPosition{2, 0}, .end = TextPosition{2, 5}},
+      .severity = DiagnosticSeverity::Info,
+      .message = "normal underline",
+  };
+  const std::vector<PublishedDiagnostic> diagnostics = {
+      multi_line_to_col0, single_line_zero_width, normal_single_line};
+
+  // Gutter severity: line 0 covered, line 1 NOT covered, lines 2 and 3 covered.
+  Expect(HighestDiagnosticSeverityForLine(diagnostics, 0) == DiagnosticSeverity::Error,
+         "a range (0,2)->(1,0) must cover its start line");
+  Expect(HighestDiagnosticSeverityForLine(diagnostics, 1) == std::nullopt,
+         "a multi-line range ending at column 0 must NOT cover that end line");
+  Expect(HighestDiagnosticSeverityForLine(diagnostics, 2) == DiagnosticSeverity::Info,
+         "a normal single-line range must cover its line");
+  Expect(HighestDiagnosticSeverityForLine(diagnostics, 3) == DiagnosticSeverity::Warning,
+         "a single-line zero-width range must still surface a marker");
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+
+  const std::string line_text = "hello world";
+  constexpr float kTextX = 0.0f;
+  constexpr float kY = 0.0f;
+  constexpr float kLineHeight = 16.0f;
+  constexpr std::size_t kScroll = 0;
+  constexpr std::size_t kVisibleColumns = 80;
+  constexpr std::size_t kTabSize = 4;
+
+  const auto rect_for = [&](std::size_t line_index, const PublishedDiagnostic& diagnostic) {
+    return DiagnosticUnderlineRect(text_renderer, kTextX, kY, kLineHeight, line_text, line_index,
+                                   kScroll, kVisibleColumns, kTabSize, diagnostic);
+  };
+
+  Expect(rect_for(0, multi_line_to_col0).has_value(),
+         "the half-open range must underline its start line");
+  Expect(!rect_for(1, multi_line_to_col0).has_value(),
+         "the half-open range must NOT underline the end line it stops before");
+  Expect(rect_for(2, normal_single_line).has_value(),
+         "a normal single-line range must underline its line");
+  Expect(rect_for(3, single_line_zero_width).has_value(),
+         "a single-line zero-width range must still underline its line");
+}
+
 void TestEditorViewRendererPaintsDiagnosticGutterMarkers() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(220, 72);
@@ -2020,17 +2091,74 @@ void TestTextLayoutIdentifierRangeAt() {
          "past end-of-line is empty");
   Expect(TextLayout::IdentifierRangeAt("", 0).empty(), "empty line is empty");
 
-  // Member access does not merge across `->`/`.` (identifier-only, Phase 5 contract).
+  // Member access now extends leftward across `->` so a hover on the trailing
+  // member evaluates the whole chain (`other->x`), not just the bare word `x`.
   const std::size_t x = line.find("->x") + 2;
   const auto rx = TextLayout::IdentifierRangeAt(line, x);
-  Expect(!rx.empty() && line.substr(rx.start, rx.end - rx.start) == "x",
-         "member access stops at the operator");
+  Expect(!rx.empty() && line.substr(rx.start, rx.end - rx.start) == "other->x",
+         "member access absorbs the `->` chain to the left of the hovered member");
 
   // Tabs/leading indent do not affect byte-offset resolution.
   const std::string tabbed = "\t\tvalue";
   const auto rt = TextLayout::IdentifierRangeAt(tabbed, 3);
   Expect(!rt.empty() && rt.start == 2 && rt.end == tabbed.size(),
          "identifier after tabs resolves by byte offset");
+
+  // B9: member-access chains. Hovering the trailing member of a `.`, `->`, or a
+  // nested mixed chain resolves the full expression; hovering an interior member
+  // resolves only up to that member (leftward only, never rightward).
+  const auto dot = [](std::string_view s, std::string_view member) {
+    const std::size_t pos = s.find(member) + member.size() - 1;  // last byte of member
+    return TextLayout::IdentifierRangeAt(s, pos);
+  };
+  {
+    const std::string s = "foo.bar";
+    const auto r = dot(s, "bar");
+    Expect(s.substr(r.start, r.end - r.start) == "foo.bar", "a.b resolves the whole dot chain");
+  }
+  {
+    const std::string s = "ptr->field";
+    const auto r = dot(s, "field");
+    Expect(s.substr(r.start, r.end - r.start) == "ptr->field",
+           "a->b resolves the whole arrow chain");
+  }
+  {
+    const std::string s = "a.b.c";
+    const auto tail = dot(s, "c");
+    Expect(s.substr(tail.start, tail.end - tail.start) == "a.b.c",
+           "hovering the last member of a.b.c resolves the full nested dot chain");
+    const auto mid = dot(s, "b");
+    Expect(s.substr(mid.start, mid.end - mid.start) == "a.b",
+           "hovering an interior member extends leftward only (a.b, not a.b.c)");
+  }
+  {
+    const std::string s = "a->b->c";
+    const auto tail = dot(s, "c");
+    Expect(s.substr(tail.start, tail.end - tail.start) == "a->b->c",
+           "hovering the last member of a->b->c resolves the full nested arrow chain");
+  }
+  {
+    // Mixed operators chain too.
+    const std::string s = "obj.ptr->name";
+    const auto r = dot(s, "name");
+    Expect(s.substr(r.start, r.end - r.start) == "obj.ptr->name",
+           "mixed `.`/`->` chains resolve end to end");
+  }
+  {
+    // A stray `>` that is not part of `->` must not be absorbed (greater-than).
+    const std::string s = "a>b";
+    const auto r = dot(s, "b");
+    Expect(s.substr(r.start, r.end - r.start) == "b",
+           "a bare `>` (not `->`) does not extend the identifier range");
+  }
+  {
+    // A leading UTF-8 byte before the dot terminates the chain deterministically.
+    const std::string s = std::string("\xC3\xA9") + ".field";  // "é.field"
+    const std::size_t pos = s.find("field") + 4;  // last byte of field
+    const auto r = TextLayout::IdentifierRangeAt(s, pos);
+    Expect(s.substr(r.start, r.end - r.start) == "field",
+           "a multibyte UTF-8 byte before `.` bounds the chain");
+  }
 }
 
 // The render-whitespace markers have two producers: the fast view-model path
@@ -2137,6 +2265,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer diagnostic line severity prefers the most severe match",
           TestHighestDiagnosticSeverityForLinePrefersTheMostSevereMatch);
+  AddTest(tests,
+          "TextRenderer diagnostic ranges are half-open at the end line",
+          TestDiagnosticRangesAreHalfOpenAtLineEnd);
   AddTest(tests,
           "TextRenderer editor view paints diagnostic gutter markers",
           TestEditorViewRendererPaintsDiagnosticGutterMarkers);

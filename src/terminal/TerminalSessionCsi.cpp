@@ -355,8 +355,10 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
           static_cast<std::size_t>(std::max(0, scroll_region_top_param - 1));
       const std::size_t scroll_region_bottom =
           static_cast<std::size_t>(std::max(0, scroll_region_bottom_param - 1));
+      // Per DEC/VT (DECSTBM) the top margin must be strictly above the bottom;
+      // an equal (one-line) or inverted region is invalid and must be ignored.
       if (scroll_region_top >= terminal_rows || scroll_region_bottom >= terminal_rows ||
-          scroll_region_top > scroll_region_bottom) {
+          scroll_region_top >= scroll_region_bottom) {
         return;
       }
       scroll_region_top_ = scroll_region_top;

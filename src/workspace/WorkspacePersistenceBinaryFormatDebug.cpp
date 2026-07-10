@@ -247,6 +247,19 @@ bool DecodeExceptionFilterCondition(std::span<const std::byte> input, std::strin
       });
 }
 
+// Decode caps: a corrupt or hostile debug-state file must not be able to force
+// large allocations or long restore work before the project UI opens. Each
+// repeated collection is bounded independently, and the sum of the bytes backing
+// every decoded repeated record is bounded so string payloads cannot blow up
+// aggregate memory even when each individual entry is small.
+constexpr std::size_t kMaxDebugFileBreakpointGroups = 4096;
+constexpr std::size_t kMaxDebugLaunchConfigs = 4096;
+constexpr std::size_t kMaxDebugWatchExpressions = 4096;
+constexpr std::size_t kMaxDebugExceptionFilters = 4096;
+constexpr std::size_t kMaxDebugFunctionBreakpoints = 4096;
+constexpr std::size_t kMaxDebugExceptionFilterConditions = 4096;
+constexpr std::size_t kMaxDebugDecodedStringBytes = 8u * 1024u * 1024u;  // 8 MiB
+
 }  // namespace
 
 bool EncodeDebugStateRecord(const PersistedDebugState& state, std::vector<std::byte>* out) {
@@ -320,6 +333,14 @@ bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugStat
   }
   *state = PersistedDebugState{};
   bool seen_schema = false;
+  std::size_t total_decoded_bytes = 0;
+  // Charge every repeated record's payload against a shared byte budget; the
+  // record framing already bounds each payload, so summing them bounds the
+  // aggregate string bytes the decoder will materialize.
+  auto charge_bytes = [&](std::span<const std::byte> record_payload) -> bool {
+    total_decoded_bytes += record_payload.size();
+    return total_decoded_bytes <= kMaxDebugDecodedStringBytes;
+  };
   return ParseRecordStream<DebugStateTag>(
              input, [&](DebugStateTag tag, std::span<const std::byte> payload) {
                PrimitiveReader reader(payload);
@@ -337,6 +358,10 @@ bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugStat
                    return ReadSize(reader, &state->selected_launch_config_index) &&
                           reader.remaining() == 0;
                  case DebugStateTag::FileBreakpoints: {
+                   if (state->files.size() >= kMaxDebugFileBreakpointGroups ||
+                       !charge_bytes(payload)) {
+                     return false;
+                   }
                    PersistedFileBreakpoints file;
                    if (!DecodeFileBreakpoints(payload, &file)) {
                      return false;
@@ -345,6 +370,10 @@ bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugStat
                    return true;
                  }
                  case DebugStateTag::LaunchConfig: {
+                   if (state->launch_configs.size() >= kMaxDebugLaunchConfigs ||
+                       !charge_bytes(payload)) {
+                     return false;
+                   }
                    PersistedLaunchConfig config;
                    if (!DecodeLaunchConfig(payload, &config)) {
                      return false;
@@ -353,6 +382,10 @@ bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugStat
                    return true;
                  }
                  case DebugStateTag::WatchExpression: {
+                   if (state->watch_expressions.size() >= kMaxDebugWatchExpressions ||
+                       !charge_bytes(payload)) {
+                     return false;
+                   }
                    std::string expression;
                    if (!reader.ReadString(&expression) || reader.remaining() != 0) {
                      return false;
@@ -361,6 +394,10 @@ bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugStat
                    return true;
                  }
                  case DebugStateTag::ExceptionFilter: {
+                   if (state->enabled_exception_filters.size() >= kMaxDebugExceptionFilters ||
+                       !charge_bytes(payload)) {
+                     return false;
+                   }
                    std::string filter_id;
                    if (!reader.ReadString(&filter_id) || reader.remaining() != 0) {
                      return false;
@@ -372,6 +409,10 @@ bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugStat
                    return reader.ReadBool(&state->exception_filters_seeded) &&
                           reader.remaining() == 0;
                  case DebugStateTag::FunctionBreakpoint: {
+                   if (state->function_breakpoints.size() >= kMaxDebugFunctionBreakpoints ||
+                       !charge_bytes(payload)) {
+                     return false;
+                   }
                    PersistedFunctionBreakpoint breakpoint;
                    if (!DecodeFunctionBreakpoint(payload, &breakpoint)) {
                      return false;
@@ -380,6 +421,11 @@ bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugStat
                    return true;
                  }
                  case DebugStateTag::ExceptionFilterCondition: {
+                   if (state->exception_filter_conditions.size() >=
+                           kMaxDebugExceptionFilterConditions ||
+                       !charge_bytes(payload)) {
+                     return false;
+                   }
                    std::string filter_id;
                    std::string condition;
                    if (!DecodeExceptionFilterCondition(payload, &filter_id, &condition)) {

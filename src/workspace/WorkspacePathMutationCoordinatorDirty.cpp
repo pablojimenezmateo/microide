@@ -224,7 +224,10 @@ void PathMutationCoordinator::RefreshProjectViewsAfterMutation(
     const std::filesystem::path& preferred_tree_path) {
   operations_.refresh_project_files();
   auto& state = CurrentProjectState();
-  if (!preferred_tree_path.empty() && std::filesystem::exists(preferred_tree_path)) {
+  std::error_code preferred_exists_error;
+  if (!preferred_tree_path.empty() &&
+      std::filesystem::exists(preferred_tree_path, preferred_exists_error) &&
+      !preferred_exists_error) {
     state.directory_tree.SelectPath(preferred_tree_path);
   } else if (!state.root.empty()) {
     state.directory_tree.SelectPath(state.root);

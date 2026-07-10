@@ -217,13 +217,21 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(const std::filesystem::path& 
   }
 
   const auto left_content = project::ReadGitFileAtCommit(state_.root, normalized_path, left_ref);
-  if (!left_content.has_value()) {
+  if (!left_content.has_value() || left_content->truncated) {
+    // Absent revision, or a blob clipped at the subprocess capture ceiling: refuse
+    // rather than diff partial bytes as if they were the file's full content.
     return false;
   }
-  const std::optional<std::string> working_content = util::ReadTextFile(normalized_path);
+  // Only a genuinely-absent working-tree file becomes an empty (deleted) side; an
+  // unreadable or binary file is an error state, not a whole-file-deleted diff, and
+  // must not be openable as an editable compare that could save false empty content.
+  const util::TextFileReadResult working = util::ReadTextFileClassified(normalized_path);
+  if (working.is_error()) {
+    return false;
+  }
   auto compare_tab = operations_.build_compare_tab_from_buffers(
       normalized_path, left_content->exists ? left_content->content : "",
-      working_content.value_or(""), left_label, "Working tree", 0, true);
+      working.content, left_label, "Working tree", 0, true);
   if (!compare_tab.has_value() || !compare_tab->compare.has_value()) {
     return false;
   }
@@ -263,7 +271,10 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(const std::filesystem::path& p
 
   const auto left_content = project::ReadGitFileAtCommit(state_.root, normalized_path, left_ref);
   const auto right_content = project::ReadGitFileAtCommit(state_.root, normalized_path, right_ref);
-  if (!left_content.has_value() || !right_content.has_value()) {
+  if (!left_content.has_value() || !right_content.has_value() || left_content->truncated ||
+      right_content->truncated) {
+    // A truncated blob was clipped at the subprocess capture ceiling; refuse rather
+    // than present a partial diff as truth.
     return false;
   }
   auto compare_tab = operations_.build_compare_tab_from_buffers(
@@ -316,7 +327,11 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path)
   const auto base_content = project::ReadGitFileAtCommit(state_.root, normalized_path, ":1");
   const auto current_content = project::ReadGitFileAtCommit(state_.root, normalized_path, ":2");
   const auto incoming_content = project::ReadGitFileAtCommit(state_.root, normalized_path, ":3");
-  if (!current_content.has_value() || !incoming_content.has_value()) {
+  if (!current_content.has_value() || !incoming_content.has_value() ||
+      current_content->truncated || incoming_content->truncated ||
+      (base_content.has_value() && base_content->truncated)) {
+    // A truncated conflict-stage blob was clipped at the subprocess capture ceiling;
+    // refuse rather than build a merge from partial bytes.
     return false;
   }
 

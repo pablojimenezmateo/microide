@@ -3,6 +3,7 @@
 #include "util/JsonValue.h"
 #include "workspace/DapProtocol.h"
 
+#include <cstdint>
 #include <optional>
 
 namespace microide::tests {
@@ -120,10 +121,66 @@ void TestDapProtocolParsesStoppedEvent() {
       Json(R"({"reason":"breakpoint","threadId":1,"allThreadsStopped":true,
           "hitBreakpointIds":[4,5]})"));
   Expect(stopped.reason == "breakpoint", "stopped reason");
-  Expect(stopped.thread_id == 1, "stopped thread id");
+  Expect(stopped.thread_id.has_value() && *stopped.thread_id == 1, "stopped thread id");
   Expect(stopped.all_threads_stopped, "all threads stopped flag");
   Expect(stopped.hit_breakpoint_ids.size() == 2 && stopped.hit_breakpoint_ids[1] == 5,
          "hit breakpoint ids parsed");
+
+  // J9: threadId is optional on `stopped`. When the adapter omits it (e.g. an
+  // all-threads-stopped halt) the id must be UNSET, never defaulted to 0 — the
+  // session resolves a real thread rather than requesting threadId:0.
+  const codec::DapStoppedEvent no_thread =
+      codec::ParseStoppedEvent(Json(R"({"reason":"pause","allThreadsStopped":true})"));
+  Expect(!no_thread.thread_id.has_value(),
+         "a stopped event without threadId leaves the thread id unset (not 0)");
+  Expect(no_thread.all_threads_stopped, "allThreadsStopped still parses without a threadId");
+}
+
+// E4: a `continued` event distinguishes a full resume (allThreadsContinued=true)
+// from a single-thread continue, and keeps threadId optional (unset, not 0).
+void TestDapProtocolParsesContinuedEvent() {
+  const codec::DapContinuedEvent full = codec::ParseContinuedEvent(
+      Json(R"({"threadId":3,"allThreadsContinued":true})"));
+  Expect(full.thread_id.has_value() && *full.thread_id == 3, "continued thread id");
+  Expect(full.all_threads_continued, "allThreadsContinued=true is a full resume");
+
+  const codec::DapContinuedEvent partial =
+      codec::ParseContinuedEvent(Json(R"({"threadId":2,"allThreadsContinued":false})"));
+  Expect(partial.thread_id.has_value() && *partial.thread_id == 2, "partial continued thread id");
+  Expect(!partial.all_threads_continued, "allThreadsContinued=false is a single-thread continue");
+
+  // Missing allThreadsContinued is treated as NOT-all (conservative).
+  const codec::DapContinuedEvent bare = codec::ParseContinuedEvent(Json(R"({"threadId":5})"));
+  Expect(bare.thread_id.has_value() && *bare.thread_id == 5, "bare continued thread id");
+  Expect(!bare.all_threads_continued, "absent allThreadsContinued defaults to single-thread");
+
+  const codec::DapContinuedEvent empty = codec::ParseContinuedEvent(Json("null"));
+  Expect(!empty.thread_id.has_value() && !empty.all_threads_continued,
+         "continued from a null body → unset thread, not-all");
+}
+
+// J26: protocol numeric fields narrow to `int` deterministically. An out-of-int-
+// range id/position must clamp to the nearest int bound, never wrap to an
+// unrelated small/negative value.
+void TestDapProtocolClampsOutOfRangeInts() {
+  constexpr std::int64_t kIntMax = 2147483647;
+  constexpr std::int64_t kIntMin = -2147483647 - 1;
+
+  // INT_MAX + 1 and INT64_MAX both clamp to INT_MAX (stay large + positive).
+  const codec::DapStackFrame over = codec::ParseStackFrame(
+      Json(R"({"id":2147483648,"line":9223372036854775807,"column":1})"));
+  Expect(over.id == static_cast<int>(kIntMax),
+         "a frame id of INT_MAX+1 clamps to INT_MAX (no wrap to negative)");
+  Expect(over.line == static_cast<int>(kIntMax), "a line of INT64_MAX clamps to INT_MAX");
+
+  // A huge NEGATIVE id clamps to INT_MIN (stays negative, does not wrap positive).
+  const codec::DapStackFrame under =
+      codec::ParseStackFrame(Json(R"({"id":-9223372036854775808,"line":1,"column":1})"));
+  Expect(under.id == static_cast<int>(kIntMin), "a huge negative id clamps to INT_MIN");
+
+  // An in-range value round-trips unchanged.
+  const codec::DapThread thread = codec::ParseThread(Json(R"({"id":123456,"name":"t"})"));
+  Expect(thread.id == 123456, "an in-range id is preserved");
 }
 
 void TestDapProtocolParsesOutputEvent() {
@@ -318,8 +375,8 @@ void TestDapProtocolDecodeRobustness() {
   Expect(!arr_response.success && arr_response.command.empty(),
          "response parsed from a bare array → failure, empty command");
   const codec::DapStoppedEvent null_stop = codec::ParseStoppedEvent(Json("null"));
-  Expect(null_stop.reason.empty() && null_stop.thread_id == 0,
-         "stopped event from null body → empty/default");
+  Expect(null_stop.reason.empty() && !null_stop.thread_id.has_value(),
+         "stopped event from null body → empty/unset (threadId absent, not 0)");
   const codec::DapCapabilities str_caps = codec::ParseCapabilities(Json(R"("not-an-object")"));
   Expect(!str_caps.supports_configuration_done_request && str_caps.exception_filters.empty(),
          "capabilities from a string → all-false, no filters");
@@ -405,6 +462,8 @@ void RegisterDapProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DapProtocol/ParsesCapabilities", TestDapProtocolParsesCapabilities);
   AddTest(tests, "DapProtocol/MergesPartialCapabilities", TestDapProtocolMergesPartialCapabilities);
   AddTest(tests, "DapProtocol/ParsesStoppedEvent", TestDapProtocolParsesStoppedEvent);
+  AddTest(tests, "DapProtocol/ParsesContinuedEvent", TestDapProtocolParsesContinuedEvent);
+  AddTest(tests, "DapProtocol/ClampsOutOfRangeInts", TestDapProtocolClampsOutOfRangeInts);
   AddTest(tests, "DapProtocol/ParsesOutputEvent", TestDapProtocolParsesOutputEvent);
   AddTest(tests, "DapProtocol/ParsesThreadsStackScopesVariables",
           TestDapProtocolParsesThreadsAndStackAndScopesAndVariables);

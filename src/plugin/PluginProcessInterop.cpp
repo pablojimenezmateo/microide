@@ -90,8 +90,20 @@ const char* ParseProcessRunArgs(lua_State* state,
         lua_pop(state, 1);
         return "process env must be a table";
       }
+      // Bound the env drain the same way argv is bounded above: lua_next is
+      // unbounded, so a malformed/hostile table could otherwise grow
+      // `environment_overrides` (and its backing key/value strings) without limit
+      // on the plugin worker thread. Cap both the entry count and the total
+      // key+value byte volume, rejecting once either is exceeded.
+      constexpr std::size_t kMaxProcessEnvEntries = 4096;
+      constexpr std::size_t kMaxProcessEnvBytes = 1u << 20;  // 1 MiB of key+value data
+      std::size_t env_bytes = 0;
       lua_pushnil(state);
       while (lua_next(state, -2) != 0) {
+        if (out->environment_overrides.size() >= kMaxProcessEnvEntries) {
+          lua_pop(state, 2);
+          return "process env exceeds the maximum number of entries";
+        }
         // Strict string check on the KEY: lua_isstring() is also true for numbers,
         // and calling lua_tostring() on a numeric key converts it in place, which
         // corrupts the running lua_next() iteration (Lua raises "invalid key to
@@ -113,6 +125,13 @@ const char* ParseProcessRunArgs(lua_State* state,
         } else {
           lua_pop(state, 2);
           return "process env values must be strings or false";
+        }
+
+        env_bytes += override_entry.name.size() +
+                     (override_entry.value ? override_entry.value->size() : 0);
+        if (env_bytes > kMaxProcessEnvBytes) {
+          lua_pop(state, 2);
+          return "process env exceeds the maximum total size";
         }
 
         out->environment_overrides.push_back(std::move(override_entry));

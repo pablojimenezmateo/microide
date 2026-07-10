@@ -170,12 +170,20 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
     }
     merged.diagnostics.insert(merged.diagnostics.end(), it->second.diagnostics.begin(),
                               it->second.diagnostics.end());
+    // A file is truncated if any owner's list for it was capped; the merged
+    // original_count sums what every owner published so the dropped remainder
+    // can be reported.
+    merged.truncated = merged.truncated || it->second.truncated;
+    merged.original_count += it->second.original_count;
   }
 
   if (merged.diagnostics.empty()) {
     const auto existing = merged_by_path_.find(path_key);
     if (existing != merged_by_path_.end()) {
       RemoveSummary(existing->second.summary);
+      if (existing->second.truncated) {
+        --truncated_file_count_;
+      }
       merged_by_path_.erase(existing);
       BumpRevision();
     }
@@ -187,6 +195,9 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
   auto existing = merged_by_path_.find(path_key);
   if (existing == merged_by_path_.end()) {
     AddSummary(merged.summary);
+    if (merged.truncated) {
+      ++truncated_file_count_;
+    }
     merged_by_path_[std::string(path_key)] = std::move(merged);
     BumpRevision();
     return;
@@ -196,6 +207,11 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
   }
   RemoveSummary(existing->second.summary);
   AddSummary(merged.summary);
+  if (existing->second.truncated && !merged.truncated) {
+    --truncated_file_count_;
+  } else if (!existing->second.truncated && merged.truncated) {
+    ++truncated_file_count_;
+  }
   existing->second = std::move(merged);
   BumpRevision();
 }
@@ -218,8 +234,11 @@ bool DiagnosticsStore::ReplaceForOwnerFile(std::string_view owner,
   // diagnostics than this is already unreadable, and the marker/underline render
   // stays bounded regardless of what a server sends.
   constexpr std::size_t kMaxDiagnosticsPerOwnerFile = 10000;
+  const std::size_t original_count = diagnostics.size();
+  bool truncated = false;
   if (diagnostics.size() > kMaxDiagnosticsPerOwnerFile) {
     diagnostics.resize(kMaxDiagnosticsPerOwnerFile);
+    truncated = true;
   }
 
   bool changed = false;
@@ -239,6 +258,8 @@ bool DiagnosticsStore::ReplaceForOwnerFile(std::string_view owner,
       .path = normalized_path,
       .diagnostics = CollectPublishedDiagnostics(owner_key, normalized_path, std::move(diagnostics)),
       .summary = {},
+      .truncated = truncated,
+      .original_count = original_count,
   };
   SortDiagnostics(&next.diagnostics);
   next.summary = SummarizeDiagnostics(next.diagnostics);
@@ -430,6 +451,7 @@ void DiagnosticsStore::Clear() {
   warning_count_ = 0;
   info_count_ = 0;
   hint_count_ = 0;
+  truncated_file_count_ = 0;
   BumpRevision();
 }
 
@@ -451,6 +473,21 @@ const std::vector<PublishedDiagnostic>* DiagnosticsStore::FindByPath(
     return nullptr;
   }
   return FindByPathKey(PathKey(path));
+}
+
+bool DiagnosticsStore::IsPathKeyTruncated(std::string_view path_key) const {
+  if (truncated_file_count_ == 0 || merged_by_path_.empty()) {
+    return false;
+  }
+  const auto it = merged_by_path_.find(path_key);
+  return it != merged_by_path_.end() && it->second.truncated;
+}
+
+bool DiagnosticsStore::IsPathTruncated(const std::filesystem::path& path) const {
+  if (truncated_file_count_ == 0 || merged_by_path_.empty()) {
+    return false;
+  }
+  return IsPathKeyTruncated(PathKey(path));
 }
 
 std::vector<PublishedDiagnostic> DiagnosticsStore::SnapshotAll() const {

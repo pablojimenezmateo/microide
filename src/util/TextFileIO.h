@@ -19,6 +19,39 @@ inline constexpr std::uintmax_t kMaxTextFileBytes = 512ull * 1024 * 1024;
 std::optional<std::string> ReadTextFile(const std::filesystem::path& path);
 bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text);
 
+// Outcome of a classifying text read. Distinguishes a genuinely absent file from
+// one that exists but cannot be represented as ordinary text. Callers that would
+// otherwise collapse every read failure to "" (e.g. a compare tab's working-tree
+// side) must branch on this so an unreadable, binary, or oversized file surfaces
+// an error state instead of masquerading as an empty / whole-file-deleted document.
+enum class TextFileReadStatus {
+  Ok,          // read succeeded and the content is text (no embedded NUL)
+  Missing,     // file does not exist (a legitimate "deleted" state -> empty is fine)
+  Unreadable,  // file exists but could not be opened/read (permissions, I/O error)
+  Binary,      // file contains a NUL byte -> binary, must not render as text
+  TooLarge,    // file exceeds kMaxTextFileBytes and was refused before allocation
+};
+
+struct TextFileReadResult {
+  TextFileReadStatus status = TextFileReadStatus::Missing;
+  std::string content;  // populated only when status == Ok
+
+  bool ok() const { return status == TextFileReadStatus::Ok; }
+  bool missing() const { return status == TextFileReadStatus::Missing; }
+  // True when the file exists but cannot be treated as ordinary text. These callers
+  // must refuse rather than substitute empty content.
+  bool is_error() const {
+    return status == TextFileReadStatus::Unreadable || status == TextFileReadStatus::Binary ||
+           status == TextFileReadStatus::TooLarge;
+  }
+};
+
+// Classifying counterpart to ReadTextFile. Unlike ReadTextFile (which returns
+// nullopt for both an absent and an unreadable file, and returns raw bytes for a
+// binary file), this reports exactly which case occurred so the caller can map
+// only true absence to empty content.
+TextFileReadResult ReadTextFileClassified(const std::filesystem::path& path);
+
 // Cheap on-disk identity of a file: modification time + size. Used to detect that
 // a file changed underneath an open editor buffer without reading its contents.
 // `exists == false, error == false` means the file is absent; `error == true`

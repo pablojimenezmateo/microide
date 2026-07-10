@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "persistence/PersistedRecord.h"
+#include "workspace/RecentsService.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceProjectState.h"
 
@@ -265,6 +266,109 @@ void TestPersistedStateProjectSessionRoundTripsTreeState() {
          "absent tree/sidebar tags decode to defaults");
 }
 
+// A1 regression: compare `review_mode` and `staging_view` must survive a binary
+// session round-trip. Before the fix the tab schema had no tags for these fields,
+// so EncodeEditorTab/DecodeEditorTab dropped them and a rebuilt CompareTabState
+// silently reverted to the default WorkingTree/Combined lens. This asserts the
+// *rebuilt* CompareTabState (built exactly as RestoreSessionState builds it from
+// the decoded persisted tab), not only the decoded intermediate struct.
+void TestPersistedStateCompareTabReviewFieldsRoundTrip() {
+  using microide::compare::CompareReviewMode;
+  using microide::compare::WorkingTreeStagingView;
+  using microide::workspace::CompareTabState;
+
+  // Mirror of the RestoreSessionState mapping (WorkspacePersistenceCoordinator
+  // Session.cpp): translate the persisted string labels back into a rebuilt
+  // CompareTabState's review_mode / staging_view.
+  const auto rebuild_compare = [](const PersistedEditorTabState& tab) {
+    CompareTabState compare_state;  // defaults: WorkingTree + Combined
+    if (!tab.compare_review_mode.empty()) {
+      if (tab.compare_review_mode == "commit") {
+        compare_state.review_mode = CompareReviewMode::Commit;
+      } else if (tab.compare_review_mode == "branch") {
+        compare_state.review_mode = CompareReviewMode::Branch;
+      } else if (tab.compare_review_mode == "conflict") {
+        compare_state.review_mode = CompareReviewMode::Conflict;
+      } else {
+        compare_state.review_mode = CompareReviewMode::WorkingTree;
+      }
+    }
+    if (!tab.compare_staging_view.empty()) {
+      if (tab.compare_staging_view == "staged") {
+        compare_state.staging_view = WorkingTreeStagingView::Staged;
+      } else if (tab.compare_staging_view == "unstaged") {
+        compare_state.staging_view = WorkingTreeStagingView::Unstaged;
+      } else {
+        compare_state.staging_view = WorkingTreeStagingView::Combined;
+      }
+    }
+    return compare_state;
+  };
+
+  PersistedEditorTabState compare_tab;
+  compare_tab.kind = "compare";
+  compare_tab.compare_path = "/tmp/project/src/compare.txt";
+  compare_tab.compare_left_path = "/tmp/project/src/compare.txt";
+  compare_tab.compare_right_path = "/tmp/project/src/compare.txt";
+  compare_tab.compare_commit_hash = "abcdef123456";
+  compare_tab.compare_commit_short_hash = "abcdef1";
+  compare_tab.compare_right_ref = "WORKTREE";
+  compare_tab.compare_review_mode = "commit";   // non-default (default is WorkingTree)
+  compare_tab.compare_staging_view = "staged";  // non-default (default is Combined)
+
+  PersistedEditorGroupState group;
+  group.active_tab_index = 0;
+  group.tabs = {compare_tab};
+  PersistedProjectSessionState session;
+  session.groups = {group};
+
+  std::vector<std::byte> record;
+  Expect(EncodeProjectSessionRecord(session, &record),
+         "compare-review session encode should succeed");
+  PersistedProjectSessionState decoded;
+  Expect(DecodeProjectSessionRecord(record, &decoded),
+         "compare-review session decode should succeed");
+  Expect(decoded.groups.size() == 1 && decoded.groups[0].tabs.size() == 1,
+         "compare-review session should round-trip a single compare tab");
+
+  const PersistedEditorTabState& decoded_tab = decoded.groups[0].tabs[0];
+  Expect(decoded_tab.compare_review_mode == "commit",
+         "decoded persisted tab should preserve compare_review_mode");
+  Expect(decoded_tab.compare_staging_view == "staged",
+         "decoded persisted tab should preserve compare_staging_view");
+
+  const CompareTabState rebuilt = rebuild_compare(decoded_tab);
+  Expect(rebuilt.review_mode == CompareReviewMode::Commit,
+         "rebuilt CompareTabState should preserve the commit review mode");
+  Expect(rebuilt.staging_view == WorkingTreeStagingView::Staged,
+         "rebuilt CompareTabState should preserve the staged staging view");
+
+  // Backward compatibility: an older record with no review/staging tags must
+  // decode to empty strings so the rebuilt tab keeps the struct defaults instead
+  // of failing to decode.
+  PersistedEditorTabState legacy_tab = compare_tab;
+  legacy_tab.compare_review_mode.clear();
+  legacy_tab.compare_staging_view.clear();
+  PersistedEditorGroupState legacy_group;
+  legacy_group.tabs = {legacy_tab};
+  PersistedProjectSessionState legacy_session;
+  legacy_session.groups = {legacy_group};
+  std::vector<std::byte> legacy_record;
+  Expect(EncodeProjectSessionRecord(legacy_session, &legacy_record),
+         "legacy compare session (no review tags) should encode");
+  PersistedProjectSessionState decoded_legacy;
+  Expect(DecodeProjectSessionRecord(legacy_record, &decoded_legacy),
+         "legacy compare session should decode");
+  const PersistedEditorTabState& decoded_legacy_tab = decoded_legacy.groups[0].tabs[0];
+  Expect(decoded_legacy_tab.compare_review_mode.empty() &&
+             decoded_legacy_tab.compare_staging_view.empty(),
+         "absent review/staging tags decode to empty strings");
+  const CompareTabState rebuilt_legacy = rebuild_compare(decoded_legacy_tab);
+  Expect(rebuilt_legacy.review_mode == CompareReviewMode::WorkingTree &&
+             rebuilt_legacy.staging_view == WorkingTreeStagingView::Combined,
+         "a legacy record rebuilds to the default WorkingTree/Combined lens");
+}
+
 void TestPersistedStateProjectSessionAcceptsLegacyChatRegistryTag() {
   PersistedProjectSessionState session = BuildProjectSessionFixture();
   std::vector<std::byte> encoded;
@@ -490,6 +594,39 @@ void TestPersistedStateDebugStateRequiresSchema() {
          "empty body (no schema tag) should fail to decode");
 }
 
+// J16 regression: the debug-state decoder must bound each repeated collection so
+// a corrupt or hostile state file cannot force huge allocations before the
+// project UI opens. A record whose watch-expression count exceeds the per-section
+// cap (4096) must fail cleanly rather than materialize every entry.
+void TestPersistedStateDebugStateEnforcesDecodeCaps() {
+  PersistedDebugState state;
+  state.selected_launch_config_index = 0;
+  // 5000 > the 4096 per-section cap.
+  for (int i = 0; i < 5000; ++i) {
+    state.watch_expressions.push_back("w");
+  }
+  std::vector<std::byte> encoded;
+  Expect(EncodeDebugStateRecord(state, &encoded),
+         "an over-cap debug record should still encode (writer is uncapped)");
+  PersistedDebugState decoded;
+  Expect(!DecodeDebugStateRecord(encoded, &decoded),
+         "a record exceeding the per-section watch cap should fail to decode");
+
+  // A record right at the cap still decodes so legitimate state is not rejected.
+  PersistedDebugState at_cap;
+  at_cap.selected_launch_config_index = 0;
+  for (int i = 0; i < 4096; ++i) {
+    at_cap.watch_expressions.push_back("w");
+  }
+  std::vector<std::byte> at_cap_encoded;
+  Expect(EncodeDebugStateRecord(at_cap, &at_cap_encoded), "at-cap debug record should encode");
+  PersistedDebugState at_cap_decoded;
+  Expect(DecodeDebugStateRecord(at_cap_encoded, &at_cap_decoded),
+         "a record at the per-section cap should still decode cleanly");
+  Expect(at_cap_decoded.watch_expressions.size() == 4096,
+         "at-cap watch expressions should all decode");
+}
+
 }  // namespace
 
 // Regression: a corrupt/adversarial length prefix must not drive an unbounded
@@ -534,6 +671,39 @@ void TestPersistedStateMruRecordRoundTrip() {
              decoded.recent_files[1].path == std::filesystem::path("/home/u/proj-b/README.md") &&
              decoded.recent_files[1].project_root == std::filesystem::path("/home/u/proj-b"),
          "mru recent files should round-trip with their project root");
+}
+
+// J17 regression: the MRU decoder must enforce RecentsService::MaxProjects() /
+// MaxFiles() so a malformed recents file cannot allocate every entry during
+// startup only for the service to discard almost all of them. Records are
+// newest-first, so the decoder keeps the leading cap-many entries and drops the
+// rest.
+void TestPersistedStateMruRecordEnforcesCaps() {
+  using microide::workspace::RecentsService;
+  PersistedMruState mru;
+  const std::size_t project_overflow = RecentsService::MaxProjects() * 4;
+  const std::size_t file_overflow = RecentsService::MaxFiles() * 4;
+  for (std::size_t i = 0; i < project_overflow; ++i) {
+    mru.recent_project_roots.push_back(std::filesystem::path("/home/u/proj") /
+                                       std::to_string(i));
+  }
+  for (std::size_t i = 0; i < file_overflow; ++i) {
+    mru.recent_files.push_back(
+        {std::filesystem::path("/home/u/proj/file") / std::to_string(i), "/home/u/proj"});
+  }
+  std::vector<std::byte> encoded;
+  Expect(EncodeMruRecord(mru, &encoded), "over-cap mru record should encode (writer is uncapped)");
+  PersistedMruState decoded;
+  Expect(DecodeMruRecord(encoded, &decoded), "over-cap mru record should still decode");
+  Expect(decoded.recent_project_roots.size() == RecentsService::MaxProjects(),
+         "mru decode should cap project roots at MaxProjects()");
+  Expect(decoded.recent_files.size() == RecentsService::MaxFiles(),
+         "mru decode should cap recent files at MaxFiles()");
+  // The retained entries are the leading (newest-first) ones.
+  Expect(decoded.recent_project_roots.front() == std::filesystem::path("/home/u/proj/0"),
+         "mru decode should keep the newest project roots");
+  Expect(decoded.recent_files.front().path == std::filesystem::path("/home/u/proj/file/0"),
+         "mru decode should keep the newest recent files");
 }
 
 void TestPersistedStateMruRecordRequiresSchema() {
@@ -637,6 +807,8 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PersistedStateRecord/ProjectConfigMigratesLegacyEditorPrefTags",
           TestPersistedStateProjectConfigMigratesLegacyEditorPrefTags);
   AddTest(tests, "PersistedStateRecord/MruRoundTrip", TestPersistedStateMruRecordRoundTrip);
+  AddTest(tests, "PersistedStateRecord/MruEnforcesCaps",
+          TestPersistedStateMruRecordEnforcesCaps);
   AddTest(tests, "PersistedStateRecord/MruRequiresSchema",
           TestPersistedStateMruRecordRequiresSchema);
   AddTest(tests, "PersistedStateRecord/RejectsAdversarialLengthWithoutOom",
@@ -660,6 +832,10 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
           TestPersistedStateDebugStateSpecialCharacters);
   AddTest(tests, "PersistedStateRecord/DebugStateRequiresSchema",
           TestPersistedStateDebugStateRequiresSchema);
+  AddTest(tests, "PersistedStateRecord/DebugStateEnforcesDecodeCaps",
+          TestPersistedStateDebugStateEnforcesDecodeCaps);
+  AddTest(tests, "PersistedStateRecord/CompareTabReviewFieldsRoundTrip",
+          TestPersistedStateCompareTabReviewFieldsRoundTrip);
 }
 
 }  // namespace microide::tests

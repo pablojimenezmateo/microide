@@ -2,7 +2,9 @@
 
 #if MICROIDE_HAS_LUA_PLUGINS
 
+#include <cctype>
 #include <optional>
+#include <string_view>
 
 #include "plugin/PluginLuaInterop.h"
 
@@ -132,9 +134,17 @@ bool ParseLaunchConfigRegistration(lua_State* state,
   auto name_opt = ReadStringField(state, 1, "name");
   auto request_opt = ReadStringField(state, 1, "request");
   // `arguments` is a JSON-string field (same convention as LSP
-  // initialization_options); the host parses it into the launch request body.
+  // initialization_options); the host parses it into the launch request body. Reject
+  // a present-but-malformed value up front rather than storing a string that fails to
+  // parse later at launch time. An empty/absent field stays allowed.
   std::string arguments_json;
-  if (auto json = ReadStringField(state, 1, "arguments")) {
+  if (auto json = ReadStringField(state, 1, "arguments"); json && !json->empty()) {
+    if (!util::ParseJson(*json)) {
+      if (error_message != nullptr) {
+        *error_message = "launch config arguments must be valid JSON";
+      }
+      return false;
+    }
     arguments_json = std::move(*json);
   }
   out->contributed = PluginHost::ContributedLaunchConfig{
@@ -160,6 +170,24 @@ bool ParseToolRegistration(lua_State* state,
   auto url_opt = ReadStringField(state, 1, "url");
   auto sha256_opt = ReadStringField(state, 1, "sha256");
   if (!id_opt || !platform_opt || !url_opt || !sha256_opt) return false;
+  // The sha256 is the ONLY integrity check the downloader performs on a fetched
+  // executable, so an empty / short / non-hex value is a silent trust hole: the
+  // downloader would serve an unverified cached binary. Require a real 64-char hex
+  // digest (either case) at registration rather than storing a bogus hash that fails
+  // to guard anything later. (See bug inventory J22.)
+  const auto is_hex_sha256 = [](std::string_view value) {
+    if (value.size() != 64) return false;
+    for (const char c : value) {
+      if (std::isxdigit(static_cast<unsigned char>(c)) == 0) return false;
+    }
+    return true;
+  };
+  if (!is_hex_sha256(*sha256_opt)) {
+    if (error_message != nullptr) {
+      *error_message = "tool sha256 must be a 64-character hex digest";
+    }
+    return false;
+  }
   std::string label;
   if (auto value = ReadStringField(state, 1, "label")) label = std::move(*value);
   std::string install_dir;

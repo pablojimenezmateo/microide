@@ -11,6 +11,7 @@
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceOutputChannels.h"
+#include "workspace/WorkspaceOutputReference.h"
 #include "workspace/WorkspaceTextSearch.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
@@ -292,6 +293,27 @@ void TestWorkspaceOutputChannelsCapRetainedBytes() {
          "output channel retained bytes must stay near the byte budget");
   Expect(channels.ParsedEntryAt("plugins.log", entries->size() - 1) != nullptr,
          "byte-budget trimming should keep parsed entries in lockstep");
+}
+
+// OutputReference documents both line and column as 1-based, so ParseOutputReference
+// must reject a zero in EITHER field. The parser previously guarded only line == 0,
+// silently accepting a bogus ":<line>:0" column.
+void TestWorkspaceOutputReferenceRejectsZeroLineOrColumn() {
+  using microide::workspace::ParseOutputReference;
+
+  const auto normal = ParseOutputReference("file.cpp:10:5");
+  Expect(normal.has_value(), "a normal 1-based reference should parse");
+  Expect(normal->line == 10 && normal->column == 5,
+         "parsed reference should carry the 1-based line and column");
+
+  const auto column_one = ParseOutputReference("file.cpp:1:1");
+  Expect(column_one.has_value() && column_one->line == 1 && column_one->column == 1,
+         "the smallest valid 1-based reference (:1:1) should parse");
+
+  Expect(!ParseOutputReference("file.cpp:1:0").has_value(),
+         "a zero column (:1:0) must be rejected as malformed");
+  Expect(!ParseOutputReference("file.cpp:0:1").has_value(),
+         "a zero line (:0:1) must be rejected as malformed");
 }
 
 void TestWorkspaceSharedCommandCompletionHelpers() {
@@ -602,6 +624,8 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
           TestWorkspaceOutputChannelsCapLargeLineBytes);
   AddTest(tests, "WorkspaceShared/OutputChannelsCapRetainedBytes",
           TestWorkspaceOutputChannelsCapRetainedBytes);
+  AddTest(tests, "WorkspaceShared/OutputReferenceRejectsZeroLineOrColumn",
+          TestWorkspaceOutputReferenceRejectsZeroLineOrColumn);
   AddTest(tests, "WorkspaceShared/CommandCompletionHelpers",
           TestWorkspaceSharedCommandCompletionHelpers);
   AddTest(tests, "Workspace/CommandRegistry", TestWorkspaceCommandRegistry);

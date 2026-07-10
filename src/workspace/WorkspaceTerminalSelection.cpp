@@ -47,9 +47,11 @@ std::string ExtractTerminalSelectionText(const std::vector<terminal::TerminalLin
         row == selection.start.row ? std::min(selection.start.column, line_size) : 0;
     const std::size_t end_column =
         row == end_row ? std::min(selection.end.column, line_size) : line_size;
-    for (std::size_t column = start_column; column < end_column; ++column) {
-      text.append(line.cells[column].DisplayText());
-    }
+    // Reuse the whole-line slice logic so selection copy and line copy produce
+    // identical text: wide-trailing spacer cells are skipped and empty cells
+    // render as a single space. Trailing blanks are preserved per row because a
+    // mid-selection span may legitimately end on blank cells.
+    text.append(TerminalLineSliceText(line, start_column, end_column, /*trim_trailing=*/false));
     if (row != end_row) {
       text.push_back('\n');
     }

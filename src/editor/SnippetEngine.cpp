@@ -4,6 +4,8 @@
 #include <cctype>
 #include <set>
 
+#include "util/StringUtil.h"
+
 namespace microide::editor {
 
 namespace {
@@ -11,6 +13,16 @@ namespace {
 bool IsDigit(char ch) {
   return std::isdigit(static_cast<unsigned char>(ch)) != 0;
 }
+
+// Hard caps so a hostile or pathological snippet body cannot signed-overflow the
+// tab-stop accumulator or make the parser allocate/loop unboundedly. On exceeding
+// any cap ParseSnippetBody fails cleanly by returning an empty result (no
+// expansion text, no occurrences); the caller treats that as "nothing to insert".
+constexpr int kMaxTabStopId = 100000;
+constexpr std::size_t kMaxBodyBytes = std::size_t{1} << 16;      // 64 KiB
+constexpr std::size_t kMaxExpandedBytes = std::size_t{1} << 16;  // 64 KiB
+constexpr std::size_t kMaxOccurrences = 4096;
+constexpr std::size_t kMaxChoicesPerPlaceholder = 256;
 
 }  // namespace
 
@@ -26,9 +38,18 @@ SnippetParseResult ParseSnippetBody(std::string_view body) {
   result.expanded.clear();
   result.occurrences.clear();
 
+  // Oversized bodies are rejected outright rather than parsed; every downstream
+  // buffer (expanded text, occurrence list) is bounded by the body length.
+  if (body.size() > kMaxBodyBytes) {
+    return SnippetParseResult{};
+  }
+
   for (std::size_t i = 0; i < body.size();) {
     if (body[i] != '$') {
       result.expanded += body[i];
+      if (result.expanded.size() > kMaxExpandedBytes) {
+        return SnippetParseResult{};
+      }
       ++i;
       continue;
     }
@@ -39,7 +60,13 @@ SnippetParseResult ParseSnippetBody(std::string_view body) {
       if (j < body.size() && IsDigit(body[j])) {
         tab = 0;
         while (j < body.size() && IsDigit(body[j])) {
+          // Checked accumulation: `tab` is <= kMaxTabStopId before each step, so
+          // tab*10 + digit cannot signed-overflow (stays well under INT_MAX).
+          // Any id past the cap fails the whole parse cleanly.
           tab = tab * 10 + (body[j] - '0');
+          if (tab > kMaxTabStopId) {
+            return SnippetParseResult{};
+          }
           ++j;
         }
       }
@@ -64,6 +91,9 @@ SnippetParseResult ParseSnippetBody(std::string_view body) {
               ++j;
             }
             choices.emplace_back(body.substr(start, j - start));
+            if (choices.size() > kMaxChoicesPerPlaceholder) {
+              return SnippetParseResult{};
+            }
             if (j < body.size() && body[j] == ',') {
               ++j;
             }
@@ -85,10 +115,16 @@ SnippetParseResult ParseSnippetBody(std::string_view body) {
       occ.tab_stop = tab;
       occ.start_off = result.expanded.size();
       result.expanded += default_text;
+      if (result.expanded.size() > kMaxExpandedBytes) {
+        return SnippetParseResult{};
+      }
       occ.end_off = result.expanded.size();
       occ.is_final = tab == 0;
       occ.choices = std::move(choices);
       result.occurrences.push_back(std::move(occ));
+      if (result.occurrences.size() > kMaxOccurrences) {
+        return SnippetParseResult{};
+      }
       i = j;
       continue;
     }
@@ -100,6 +136,9 @@ SnippetParseResult ParseSnippetBody(std::string_view body) {
       occ.end_off = result.expanded.size();
       occ.is_final = tab == 0;
       result.occurrences.push_back(std::move(occ));
+      if (result.occurrences.size() > kMaxOccurrences) {
+        return SnippetParseResult{};
+      }
       i += 2;
       continue;
     }
@@ -421,6 +460,18 @@ bool SnippetTryInsertText(TextViewport& viewport, SnippetSessionState& session, 
   if (!session.active || text.empty()) {
     return false;
   }
+  // The mirror fast path only knows how to shift columns on a single line: it
+  // advances end.column by text.size() and shifts later same-line placeholders.
+  // A payload containing a line break (a raw '\n', or a '\r'/'\r\n' that
+  // ReplaceRange would normalize to a newline) would make every following
+  // placeholder's line/column ranges stale. Decline the fast path so the caller
+  // falls back to normal editing (VSCode likewise drops the linked-edit session
+  // on a multi-line insert). Returning false does not double-insert: the caller
+  // performs the single normal insert itself.
+  if (text.find('\n') != std::string_view::npos ||
+      text.find('\r') != std::string_view::npos) {
+    return false;
+  }
   if (session.navigate_index >= session.navigate_order.size()) {
     return false;
   }
@@ -481,11 +532,18 @@ bool SnippetTryBackspace(TextViewport& viewport, SnippetSessionState& session) {
   if (p.column == 0) {
     return false;
   }
-  const TextPosition prev{p.line, p.column - 1};
+  // Backspace removes the whole UTF-8 code point ENDING at the caret. Scan back
+  // to its start so multi-byte code points (é, emoji) are never split mid-byte.
+  // The caret line is always a valid buffer line (cursor_line() is bounded).
+  const std::string& caret_line = viewport.lines()[p.line];
+  const std::size_t cp_start = util::PreviousUtf8Boundary(caret_line, p.column);
+  const TextPosition prev{p.line, cp_start};
   const SelectionRange* ref = RangeContaining(it->second, prev);
   if (ref == nullptr) {
     return false;
   }
+  // Relative byte offset of the code point's START within the placeholder; every
+  // linked mirror holds identical bytes, so this maps onto the same code point.
   const std::size_t rel_del = RelativeColumnInRange(*ref, prev);
 
   auto& ranges = it->second;
@@ -508,13 +566,26 @@ bool SnippetTryBackspace(TextViewport& viewport, SnippetSessionState& session) {
     if (del.column >= r.end.column) {
       continue;
     }
-    viewport.ReplaceRange(SelectionRange{del, TextPosition{del.line, del.column + 1}}, "", false);
-    ranges[idx].end.column -= 1;
+    // Delete the FULL code point starting at `del` in this mirror. Mirrors hold
+    // identical bytes, so its width matches the reference code point; recompute it
+    // per mirror from that mirror's own line so nothing is split mid-byte. Clamp
+    // to the placeholder end so the span never spills past the mirror.
+    const std::string& mirror_line = viewport.lines()[del.line];
+    std::size_t width = util::NextUtf8Boundary(mirror_line, del.column) - del.column;
+    if (width < 1) {
+      width = 1;
+    }
+    if (del.column + width > r.end.column) {
+      width = r.end.column - del.column;
+    }
+    viewport.ReplaceRange(
+        SelectionRange{del, TextPosition{del.line, del.column + width}}, "", false);
+    ranges[idx].end.column -= width;
     // Mirror SnippetTryInsertText: the deletion pulls every column at/after `del`
-    // on this line one to the left, so every OTHER placeholder there (a same-tab
-    // mirror or a different tab stop sharing the line) must shift too, or its
-    // recorded range goes stale and FocusTabStop later jumps to the wrong column.
-    ShiftPlaceholdersAtOrAfter(session, del, -1, tab, idx);
+    // on this line `width` bytes to the left, so every OTHER placeholder there (a
+    // same-tab mirror or a different tab stop sharing the line) must shift too, or
+    // its recorded range goes stale and FocusTabStop later jumps to the wrong column.
+    ShiftPlaceholdersAtOrAfter(session, del, -static_cast<std::ptrdiff_t>(width), tab, idx);
   }
   FocusTabStop(viewport, session, tab);
   return true;
@@ -560,11 +631,23 @@ bool SnippetTryDeleteForward(TextViewport& viewport, SnippetSessionState& sessio
     if (del.column >= r.end.column) {
       continue;
     }
-    viewport.ReplaceRange(SelectionRange{del, TextPosition{del.line, del.column + 1}}, "", false);
-    ranges[idx].end.column -= 1;
+    // Delete-forward removes the whole UTF-8 code point STARTING at `del`. Compute
+    // its byte width from this mirror's own line and clamp to the placeholder end
+    // so a multi-byte code point is deleted whole, never split mid-byte.
+    const std::string& mirror_line = viewport.lines()[del.line];
+    std::size_t width = util::NextUtf8Boundary(mirror_line, del.column) - del.column;
+    if (width < 1) {
+      width = 1;
+    }
+    if (del.column + width > r.end.column) {
+      width = r.end.column - del.column;
+    }
+    viewport.ReplaceRange(
+        SelectionRange{del, TextPosition{del.line, del.column + width}}, "", false);
+    ranges[idx].end.column -= width;
     // See SnippetTryBackspace: shift every other placeholder at/after `del` on this
-    // line left so cross-tab and sibling-mirror ranges stay accurate.
-    ShiftPlaceholdersAtOrAfter(session, del, -1, tab, idx);
+    // line left by `width` so cross-tab and sibling-mirror ranges stay accurate.
+    ShiftPlaceholdersAtOrAfter(session, del, -static_cast<std::ptrdiff_t>(width), tab, idx);
   }
   FocusTabStop(viewport, session, tab);
   return true;

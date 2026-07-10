@@ -24,6 +24,13 @@ namespace {
 // capture cap otherwise, which is far too large for these list surfaces.
 constexpr std::size_t kMaxGitCollectionEntries = 50000;
 
+// Helper-level cap on `git log -n <limit>` for the recent-commit surface. The
+// caller-provided limit flows straight into `git log` and then into an
+// unbounded ParseLog, so a hostile or buggy caller could request millions of
+// commits and materialize them all on the UI thread. The recent-commit picker
+// asks for ~50; 1000 leaves generous headroom while bounding worst-case work.
+constexpr std::size_t kMaxRecentCommits = 1000;
+
 std::string ShortRefLabel(std::string_view ref) {
   if (ref.empty()) {
     return {};
@@ -123,8 +130,9 @@ std::vector<GitCommitEntry> CollectGitRecentCommits(const std::filesystem::path&
   if (limit == 0 || !repo.IsValid() || !repo.HasHeadCommit()) {
     return {};
   }
+  const std::size_t effective_limit = std::min(limit, kMaxRecentCommits);
   const auto result = repo.Execute(std::vector<std::string>{
-      "log", "--no-color", "-n", std::to_string(limit),
+      "log", "--no-color", "-n", std::to_string(effective_limit),
       "--pretty=format:%H%x1f%h%x1f%an%x1f%ar%x1f%s", "HEAD"});
   if (!result.success()) {
     return {};
@@ -182,11 +190,12 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
     return GitFileContentAtCommit{.exists = false, .content = ""};
   }
 
-  const auto content = repo.ReadFileAtRevision(*relative, hash);
-  if (!content.has_value()) {
+  const auto blob = repo.ReadBlobAtRevision(*relative, hash);
+  if (!blob.has_value()) {
     return std::nullopt;
   }
-  return GitFileContentAtCommit{.exists = true, .content = *content};
+  return GitFileContentAtCommit{
+      .exists = true, .content = blob->content, .truncated = blob->truncated};
 }
 
 std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem::path& root) {

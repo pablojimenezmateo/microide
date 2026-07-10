@@ -13,8 +13,8 @@
 #include <utility>
 #include <vector>
 
-#include "compare/ComparePatchExport.h"
 #include "project/GitCompareService.h"
+#include "project/PatchGenerator.h"
 #include "workspace/CompareTabReview.h"
 #include "workspace/SelectionMovement.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -341,6 +341,27 @@ void CompareInteractionCoordinator::CopyComparePath() {
   operations_.write_clipboard_text(compare_tab->path.lexically_normal().generic_string());
 }
 
+namespace {
+
+// Relative-to-root label for a compare path, using the non-throwing
+// std::filesystem::relative overload with a lexical fallback. The throwing
+// overload could raise filesystem_error on the UI thread (deleted file, broken
+// symlink, inaccessible mount) and terminate the app while merely copying a patch.
+std::filesystem::path RelativeToRootOrSelf(const std::filesystem::path& path,
+                                           const std::filesystem::path& root) {
+  if (!path.is_absolute() || root.empty()) {
+    return path;
+  }
+  std::error_code error;
+  const std::filesystem::path relative = std::filesystem::relative(path, root, error);
+  if (error || relative.empty()) {
+    return path;
+  }
+  return relative;
+}
+
+}  // namespace
+
 void CompareInteractionCoordinator::CopyCompareHunkPatch() {
   const CompareTabState* compare_tab = operations_.active_compare_tab();
   if (compare_tab == nullptr || !operations_.write_clipboard_text) {
@@ -350,12 +371,14 @@ void CompareInteractionCoordinator::CopyCompareHunkPatch() {
   if (hunk_index < 0) {
     return;
   }
-  const std::filesystem::path relative =
-      compare_tab->path.is_absolute() && !state_.root.empty()
-          ? std::filesystem::relative(compare_tab->path, state_.root)
-          : compare_tab->path;
-  operations_.write_clipboard_text(
-      compare::FormatCompareHunkPatch(compare_tab->model, hunk_index, relative));
+  const std::filesystem::path relative = RelativeToRootOrSelf(compare_tab->path, state_.root);
+  // Route through the same real unified-diff generator the staging/discard path
+  // uses, so a copied hunk is a genuine `git apply`-able patch (correct @@ line
+  // ranges, /dev/null headers for add/delete, no-final-newline markers) rather
+  // than a display-only approximation.
+  const std::optional<std::string> patch =
+      project::GenerateComparePatch(compare_tab->model, relative, hunk_index);
+  operations_.write_clipboard_text(patch.value_or(std::string{}));
 }
 
 void CompareInteractionCoordinator::CopyCompareFilePatch() {
@@ -363,12 +386,17 @@ void CompareInteractionCoordinator::CopyCompareFilePatch() {
   if (compare_tab == nullptr || !operations_.write_clipboard_text) {
     return;
   }
-  const std::filesystem::path relative =
-      compare_tab->path.is_absolute() && !state_.root.empty()
-          ? std::filesystem::relative(compare_tab->path, state_.root)
-          : compare_tab->path;
-  operations_.write_clipboard_text(
-      compare::FormatCompareFilePatch(compare_tab->model, relative));
+  if (compare_tab->model.rows.empty()) {
+    operations_.write_clipboard_text(std::string{});
+    return;
+  }
+  const std::filesystem::path relative = RelativeToRootOrSelf(compare_tab->path, state_.root);
+  // Whole-file patch: span every model row through the real generator so the
+  // copied text is a genuine unified diff (same contract as the staging path),
+  // not the fake `@@ hunk N @@` headers the display-only exporter emitted.
+  const std::optional<std::string> patch = project::GenerateComparePatchForRows(
+      compare_tab->model, relative, 0, compare_tab->model.rows.size() - 1);
+  operations_.write_clipboard_text(patch.value_or(std::string{}));
 }
 
 void CompareInteractionCoordinator::ToggleCompareIgnoreWhitespace() {

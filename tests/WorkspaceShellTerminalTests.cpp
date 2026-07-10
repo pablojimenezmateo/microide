@@ -2,6 +2,7 @@
 
 #include "TerminalSessionTestAccess.h"
 #include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/WorkspaceTerminalSelection.h"
 
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
@@ -1040,9 +1041,83 @@ void TestWorkspaceShellTerminalExitMarkerDisplaysAfterCleanOutput() {
          "exit marker should display in the normal (no open escape) case");
 }
 
+// Terminal selection copy must use the same cell-to-text rules as whole-line
+// copy: empty cells render as a single space (so internal spacing survives) and
+// the trailing spacer of a double-width glyph is skipped (so no phantom space is
+// copied). These cases assert selection extraction matches a whole-line slice of
+// the same span.
+microide::terminal::TerminalCell MakeAsciiCell(char c) {
+  microide::terminal::TerminalCell cell;
+  cell.SetAscii(c);
+  return cell;
+}
+
+microide::terminal::TerminalCell MakeEmptyCell() {
+  return microide::terminal::TerminalCell{};
+}
+
+void TestWorkspaceShellSelectionPreservesInternalSpaces() {
+  using microide::workspace::ExtractTerminalSelectionText;
+  using microide::workspace::TerminalLineSliceText;
+  using microide::workspace::TerminalSelectionBounds;
+  using microide::workspace::TerminalSelectionPoint;
+
+  // "A  B": two empty cells stand in for the internal spaces.
+  microide::terminal::TerminalLine line;
+  line.cells = {MakeAsciiCell('A'), MakeEmptyCell(), MakeEmptyCell(), MakeAsciiCell('B')};
+  const std::vector<microide::terminal::TerminalLine> lines = {line};
+
+  const std::string whole_line =
+      TerminalLineSliceText(line, 0, line.cells.size(), /*trim_trailing=*/false);
+  Expect(whole_line == "A  B", "whole-line copy should render empty cells as spaces");
+
+  const TerminalSelectionBounds selection{
+      .start = TerminalSelectionPoint{.row = 0, .column = 0},
+      .end = TerminalSelectionPoint{.row = 0, .column = line.cells.size()},
+  };
+  Expect(ExtractTerminalSelectionText(lines, selection) == whole_line,
+         "selection copy should preserve internal spaces exactly like whole-line copy");
+}
+
+void TestWorkspaceShellSelectionSkipsWideTrailingSpacer() {
+  using microide::workspace::ExtractTerminalSelectionText;
+  using microide::workspace::TerminalLineSliceText;
+  using microide::workspace::TerminalSelectionBounds;
+  using microide::workspace::TerminalSelectionPoint;
+
+  // A CJK wide glyph occupies a lead cell plus a trailing spacer; the spacer
+  // here even carries a stray space to prove the skip is attribute-driven.
+  microide::terminal::TerminalCell lead;
+  lead.SetUtf8("\xE4\xB8\xAD");  // U+4E2D "中"
+  microide::terminal::TerminalCell trailing;
+  trailing.SetAscii(' ');
+  trailing.style.set(microide::terminal::cell_attr::kWideTrailing, true);
+
+  microide::terminal::TerminalLine line;
+  line.cells = {lead, trailing, MakeAsciiCell('X')};
+  const std::vector<microide::terminal::TerminalLine> lines = {line};
+
+  const std::string whole_line =
+      TerminalLineSliceText(line, 0, line.cells.size(), /*trim_trailing=*/false);
+  Expect(whole_line == "\xE4\xB8\xAD"
+                       "X",
+         "whole-line copy should skip the wide-trailing spacer");
+
+  const TerminalSelectionBounds selection{
+      .start = TerminalSelectionPoint{.row = 0, .column = 0},
+      .end = TerminalSelectionPoint{.row = 0, .column = line.cells.size()},
+  };
+  Expect(ExtractTerminalSelectionText(lines, selection) == whole_line,
+         "selection copy should skip the wide-trailing spacer exactly like whole-line copy");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/TerminalSelectionPreservesInternalSpaces",
+          TestWorkspaceShellSelectionPreservesInternalSpaces);
+  AddTest(tests, "WorkspaceShell/TerminalSelectionSkipsWideTrailingSpacer",
+          TestWorkspaceShellSelectionSkipsWideTrailingSpacer);
   AddTest(tests, "WorkspaceShell/TerminalExitMarkerSurvivesOpenEscape",
           TestWorkspaceShellTerminalExitMarkerSurvivesOpenEscape);
   AddTest(tests, "WorkspaceShell/TerminalExitMarkerDisplaysAfterCleanOutput",

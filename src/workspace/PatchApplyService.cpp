@@ -124,25 +124,31 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
     target.hunk = project::PatchHunkTarget{.hunk_index = hunk_index};
   }
 
+  // Deliberately do NOT copy compare_tab.model into the request. The patch text
+  // is generated synchronously (BuildPatchForRequest) from the live model before
+  // dispatch, and the background apply path (project::ApplyPatchRequest) never
+  // reads request.model. Copying a whole CompareModel here — every row and hunk
+  // of a potentially huge diff — just to stage one small hunk was pure UI-thread
+  // overhead. The .model field is left value-initialized (empty).
   return project::PatchApplyRequest{
       .operation = operation,
       .target = std::move(target),
-      .model = compare_tab.model,
       .repository_snapshot_generation = repository_state.generation,
       .diff_model_generation = compare_tab.model_revision,
   };
 }
 
 std::optional<std::string> PatchApplyService::BuildPatchForRequest(
-    const project::PatchApplyRequest& request) const {
+    const project::PatchApplyRequest& request,
+    const compare::CompareModel& model) const {
   if (request.target.line_selection.has_value()) {
     const auto& selection = *request.target.line_selection;
     return project::GenerateComparePatchForRows(
-        request.model, request.target.relative_path, selection.first_model_row,
+        model, request.target.relative_path, selection.first_model_row,
         selection.last_model_row);
   }
   if (request.target.hunk.has_value()) {
-    return project::GenerateComparePatch(request.model, request.target.relative_path,
+    return project::GenerateComparePatch(model, request.target.relative_path,
                                          request.target.hunk->hunk_index);
   }
   return std::nullopt;
@@ -240,7 +246,7 @@ bool PatchApplyService::RequestStageHunk(CompareTabState& compare_tab) {
                   .detail = "Stage hunk is not available for this compare target"});
     return false;
   }
-  auto patch = BuildPatchForRequest(*request);
+  auto patch = BuildPatchForRequest(*request, compare_tab.model);
   if (!patch.has_value()) {
     ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
                   .detail = "Selected hunk has no stageable changes"});
@@ -257,7 +263,7 @@ bool PatchApplyService::RequestStageSelectedLines(CompareTabState& compare_tab) 
                   .detail = "Stage selected lines is not available for this selection"});
     return false;
   }
-  auto patch = BuildPatchForRequest(*request);
+  auto patch = BuildPatchForRequest(*request, compare_tab.model);
   if (!patch.has_value()) {
     ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
                   .detail = "Selected lines have no stageable changes"});
@@ -274,7 +280,7 @@ bool PatchApplyService::RequestUnstageHunk(CompareTabState& compare_tab) {
                   .detail = "Unstage hunk is not available for this compare target"});
     return false;
   }
-  auto patch = BuildPatchForRequest(*request);
+  auto patch = BuildPatchForRequest(*request, compare_tab.model);
   if (!patch.has_value()) {
     ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
                   .detail = "Selected hunk has no unstaged changes"});
@@ -291,7 +297,7 @@ bool PatchApplyService::RequestUnstageSelectedLines(CompareTabState& compare_tab
                   .detail = "Unstage selected lines is not available for this selection"});
     return false;
   }
-  auto patch = BuildPatchForRequest(*request);
+  auto patch = BuildPatchForRequest(*request, compare_tab.model);
   if (!patch.has_value()) {
     ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
                   .detail = "Selected lines have no unstaged changes"});
@@ -308,7 +314,7 @@ bool PatchApplyService::RequestDiscardHunkPreview(CompareTabState& compare_tab) 
                   .detail = "Discard hunk is not available for this compare target"});
     return false;
   }
-  auto patch = BuildPatchForRequest(*request);
+  auto patch = BuildPatchForRequest(*request, compare_tab.model);
   if (!patch.has_value()) {
     ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
                   .detail = "Selected hunk has no discardable changes"});
@@ -335,7 +341,7 @@ bool PatchApplyService::RequestDiscardSelectedLinesPreview(CompareTabState& comp
                   .detail = "Discard selected lines is not available for this selection"});
     return false;
   }
-  auto patch = BuildPatchForRequest(*request);
+  auto patch = BuildPatchForRequest(*request, compare_tab.model);
   if (!patch.has_value()) {
     ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
                   .detail = "Selected lines have no discardable changes"});

@@ -212,6 +212,64 @@ void TestLspProtocolParsesHoverContents() {
          "empty contents array yields empty");
 }
 
+// J27: ParseHoverContents caps a hostile MarkedString[] by element count AND total
+// bytes, truncating on a UTF-8 boundary with an explicit marker, so a near-64 MiB
+// hover cannot force an unbounded concatenation on the callback path.
+void TestLspProtocolHoverContentsAreBounded() {
+  const std::string marker = "\n\n\xE2\x80\xA6 (truncated)";  // "\n\n… (truncated)"
+
+  // A single 200 KiB element is truncated well below its input size and marked.
+  {
+    const std::string big(200 * 1024, 'x');
+    const std::string body = std::string(R"({"contents":[")") + big + R"("]})";
+    const std::string out = codec::ParseHoverContents(Json(body));
+    Expect(out.size() < 64 * 1024, "a huge hover element is truncated below its input size");
+    Expect(out.rfind(marker) != std::string::npos, "byte-cap truncation is explicitly marked");
+  }
+
+  // Hundreds of tiny elements are capped by element count and marked.
+  {
+    std::string many = R"({"contents":[)";
+    for (int i = 0; i < 500; ++i) {
+      if (i != 0) many += ',';
+      many += "\"e\"";
+    }
+    many += "]}";
+    const std::string out = codec::ParseHoverContents(Json(many));
+    Expect(out.rfind(marker) != std::string::npos,
+           "an over-long hover array is capped by element count and marked");
+  }
+
+  // A 3-byte code point ("→") payload is never split mid-character at the byte cap:
+  // the join before the marker ends on a code-point boundary (a multiple of 3).
+  {
+    std::string arrows;
+    while (arrows.size() < 200 * 1024) {
+      arrows += "\xE2\x86\x92";
+    }
+    const std::string body = std::string(R"({"contents":[")") + arrows + R"("]})";
+    const std::string out = codec::ParseHoverContents(Json(body));
+    const auto mpos = out.rfind(marker);
+    Expect(mpos != std::string::npos, "utf8 hover is truncated + marked");
+    Expect(mpos % 3 == 0, "truncation lands on a UTF-8 boundary (no split multibyte char)");
+  }
+}
+
+// J26: LSP positions narrow to `int` deterministically. Out-of-int-range
+// coordinates clamp to the nearest int bound rather than wrapping to an unrelated
+// small/negative value.
+void TestLspProtocolClampsOutOfRangePositions() {
+  const LspClient::Position over =
+      codec::ParsePosition(Json(R"({"line":2147483648,"character":9223372036854775807})"));
+  Expect(over.line == 2147483647, "line INT_MAX+1 clamps to INT_MAX (no wrap to negative)");
+  Expect(over.character == 2147483647, "character INT64_MAX clamps to INT_MAX");
+
+  const LspClient::Position under =
+      codec::ParsePosition(Json(R"({"line":-9223372036854775808,"character":-1})"));
+  Expect(under.line == (-2147483647 - 1), "a huge negative line clamps to INT_MIN");
+  Expect(under.character == -1, "an in-range negative character is preserved");
+}
+
 void TestLspProtocolParsesWorkspaceEdit() {
   // `changes` object shape (uri -> TextEdit[]).
   const JsonValue changes = Json(R"({"changes":{
@@ -390,6 +448,9 @@ void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspProtocol/ParsesPrepareRename", TestLspProtocolParsesPrepareRename);
   AddTest(tests, "LspProtocol/ParsesTextEdits", TestLspProtocolParsesTextEdits);
   AddTest(tests, "LspProtocol/ParsesHoverContents", TestLspProtocolParsesHoverContents);
+  AddTest(tests, "LspProtocol/HoverContentsAreBounded", TestLspProtocolHoverContentsAreBounded);
+  AddTest(tests, "LspProtocol/ClampsOutOfRangePositions",
+          TestLspProtocolClampsOutOfRangePositions);
   AddTest(tests, "LspProtocol/ParseCapsBoundHostileArrays",
           TestLspProtocolParseCapsBoundHostileArrays);
   AddTest(tests, "LspProtocol/DecodesSemanticTokens", TestLspProtocolDecodesSemanticTokens);

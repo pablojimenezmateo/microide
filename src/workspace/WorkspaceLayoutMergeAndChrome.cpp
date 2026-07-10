@@ -206,7 +206,12 @@ std::optional<std::size_t> FindMergeTrackedConflictAtSourceLine(
   for (std::size_t i = 0; i < conflicts.size(); ++i) {
     const auto& conflict = conflicts[i];
     const std::size_t start = incoming ? conflict.incoming_start_line : conflict.current_start_line;
-    const std::size_t end = incoming ? conflict.incoming_end_line : conflict.current_end_line;
+    const std::size_t raw_end = incoming ? conflict.incoming_end_line : conflict.current_end_line;
+    // Normalize zero-length source spans (pure insertion/deletion conflicts where
+    // start == end and the side contributes no source lines) exactly the way the
+    // result-side lookup does, so a zero-height span still owns its anchor row for
+    // hover, tint, and accept-button hit-testing instead of matching nothing.
+    const std::size_t end = std::max(raw_end, start + std::size_t{1});
     if (line >= start && line < end) {
       return i;
     }
@@ -239,9 +244,12 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
       continue;
     }
 
+    // Source-pane accept buttons anchor to the SOURCE pane's own scroll, not the
+    // result pane's. When a source pane is longer than the result the result scroll
+    // clamps lower, so using it here would drift the button off its rendered row.
     if (Contains(ComputeMergeSourceActionButtonRect(surface.left_x, surface.gutter_width,
                                                     surface.rows_y, surface.line_height,
-                                                    static_cast<int>(interaction.result.text.scroll_line),
+                                                    static_cast<int>(interaction.incoming.scroll_line),
                                                     conflict.incoming_end_line,
                                                     interaction.content_bottom,
                                                     interaction.incoming_accept_button_width,
@@ -255,7 +263,7 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
     }
     if (Contains(ComputeMergeSourceActionButtonRect(surface.right_x, surface.gutter_width,
                                                     surface.rows_y, surface.line_height,
-                                                    static_cast<int>(interaction.result.text.scroll_line),
+                                                    static_cast<int>(interaction.current.scroll_line),
                                                     conflict.current_end_line,
                                                     interaction.content_bottom,
                                                     interaction.current_accept_button_width,

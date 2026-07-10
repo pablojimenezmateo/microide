@@ -304,17 +304,42 @@ bool IgnoreMatcher::ParseRule(std::string base_relative, std::string line, Rule&
   // gitignore(5): only TRAILING whitespace is stripped; leading whitespace is
   // significant (a pattern like "  build.log" matches a name that begins with
   // spaces). Trimming both ends over-normalized leading-space patterns.
-  while (!line.empty() && (line.back() == ' ' || line.back() == '\t' ||
-                           line.back() == '\r' || line.back() == '\n')) {
+  //
+  // CR/LF are line terminators (getline may leave a CR on CRLF input) and are always
+  // removed.
+  while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
     line.pop_back();
   }
-  if (line.empty() || line.starts_with('#')) {
+  // Trailing spaces/tabs are ignored UNLESS the whitespace is backslash-escaped. A
+  // trailing whitespace char is escaped when preceded by an ODD run of backslashes;
+  // an escaped trailing space is a literal part of the pattern (e.g. "foo\ " matches
+  // the name "foo "). Keep the escaping backslash in place — GlobMatches resolves
+  // "\ " to a literal space — and stop trimming at the first escaped whitespace.
+  while (!line.empty() && (line.back() == ' ' || line.back() == '\t')) {
+    std::size_t backslashes = 0;
+    std::size_t index = line.size() - 1;  // the trailing whitespace char
+    while (index > 0 && line[index - 1] == '\\') {
+      ++backslashes;
+      --index;
+    }
+    if (backslashes % 2 == 1) {
+      break;
+    }
+    line.pop_back();
+  }
+  if (line.empty() || line.front() == '#') {
     return false;
   }
 
   bool negated = false;
-  if (line.starts_with('!')) {
+  if (line.front() == '!') {
     negated = true;
+    line.erase(line.begin());
+  } else if (line.size() >= 2 && line.front() == '\\' &&
+             (line[1] == '#' || line[1] == '!')) {
+    // gitignore(5): "\#"/"\!" escape a literal leading '#'/'!' so the line is a
+    // pattern, not a comment or negation. Drop the single escaping backslash; '#'
+    // and '!' are not glob-special, so the remainder matches them literally.
     line.erase(line.begin());
   }
 

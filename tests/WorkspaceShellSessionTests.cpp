@@ -1,7 +1,9 @@
 #include "TestSupport.h"
 
 #include "platform/AppDirectories.h"
+#include "persistence/PersistedRecordWriter.h"
 #include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "project/GitCompareService.h"
 
@@ -502,6 +504,62 @@ void TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState() {
       });
   Expect(kept_compare_content,
          "restored compare should preserve the pre-rename commit-vs-working-tree content");
+}
+
+// J15 regression: a stale/corrupt persisted `selected_launch_config_index` that
+// points past the rebuilt launch-config list must be clamped/reset on restore.
+// An out-of-range selection makes StartDebuggingWithDefaultConfig ignore every
+// launch config and fall back to the first registered adapter with empty args.
+void TestWorkspaceShellRestoreClampsOutOfRangeSelectedLaunchConfig() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.py";
+  WriteFile(source, "print('hi')\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  // Persist the session so a later restore has a project-session file to load
+  // (RestoreDebugState runs as part of RestoreSessionState).
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  // Write a stale debug-state file directly: exactly one launch config, but a
+  // persisted selected index of 2 (out of range). A plain copy-through of the
+  // index would leave the restored state pointing past the end of the list.
+  microide::workspace::PersistedDebugState persisted;
+  persisted.launch_configs.push_back(microide::workspace::PersistedLaunchConfig{
+      .name = "Debug main",
+      .type = "debugpy",
+      .request = "launch",
+      .arguments_json = {},
+  });
+  persisted.selected_launch_config_index = 2;
+  std::vector<std::byte> body;
+  Expect(microide::workspace::EncodeDebugStateRecord(persisted, &body),
+         "stale debug state should encode");
+  const std::filesystem::path debug_path =
+      microide::workspace::ProjectStateDirectory(root) / "debug";
+  Expect(microide::persistence::PersistedRecordWriter::WriteFile(debug_path, body, 5u),
+         "stale debug state file should write to the project state directory");
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "session restore should succeed with a stale debug file present");
+  WorkspaceShellTestAccess::OpenLaunchConfigPicker(restored);
+  Expect(WorkspaceShellTestAccess::LaunchConfigPickerMatchLabels(restored).size() == 1,
+         "the single persisted launch config should restore");
+  Expect(WorkspaceShellTestAccess::SelectedLaunchConfigIndex(restored) == 0,
+         "an out-of-range persisted selected launch index should clamp to 0 on restore");
 }
 
 void TestWorkspaceShellCompareSyntaxTokensAreDeferredUntilRender() {
@@ -2260,6 +2318,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionPreservesBranchCompareState);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesRenamedWorkingTreeCompareState",
           TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState);
+  AddTest(tests, "WorkspaceShell/RestoreClampsOutOfRangeSelectedLaunchConfig",
+          TestWorkspaceShellRestoreClampsOutOfRangeSelectedLaunchConfig);
   AddTest(tests, "WorkspaceShell/ReopenFileReloadsCleanEditorTab",
           TestWorkspaceShellReopenFileReloadsCleanEditorTab);
   AddTest(tests, "WorkspaceShell/RefreshReloadsCleanOpenEditorBuffers",

@@ -141,11 +141,24 @@ void ApplyFilePermissions(const std::filesystem::path& path, const FilePermissio
   // Ownership first: chown can strip setuid/setgid, so restore mode afterwards. Both
   // are best-effort — a non-root save of a file it does not own keeps whatever the
   // fresh temp got, which is strictly no worse than today's unconditional 0644.
-  if (::chown(path.c_str(), static_cast<uid_t>(permissions.uid),
-              static_cast<gid_t>(permissions.gid)) != 0) {
-    // Ignore: EPERM for an unprivileged user is expected and non-fatal.
+  const bool chown_ok = ::chown(path.c_str(), static_cast<uid_t>(permissions.uid),
+                                static_cast<gid_t>(permissions.gid)) == 0;
+  mode_t mode = static_cast<mode_t>(permissions.mode);
+  if (!chown_ok) {
+    // EPERM for an unprivileged user is expected and non-fatal, but ownership was NOT
+    // restored — the file is now owned by the saving user. Re-applying setuid/setgid
+    // in that state would create a set-id file under the WRONG owner, effectively
+    // granting the saver's identity elevated execution; that is worse than dropping
+    // the bits. Strip S_ISUID/S_ISGID so an ownership-restore failure can never
+    // manufacture a set-id binary. The remaining permission bits are still restored.
+    //
+    // util/ has no logging seam reachable here and this entry point's signature is
+    // fixed (its header is a shared contract), so this hardening is silent by
+    // necessity; the observable guarantee is "no setuid/setgid survives a failed
+    // ownership restore." (See bug inventory C7.)
+    mode &= ~static_cast<mode_t>(S_ISUID | S_ISGID);
   }
-  ::chmod(path.c_str(), static_cast<mode_t>(permissions.mode));
+  ::chmod(path.c_str(), mode);
 #endif
 }
 

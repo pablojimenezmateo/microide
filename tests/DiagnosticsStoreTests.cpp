@@ -286,10 +286,53 @@ void TestDiagnosticsStoreCapsPerFileCount() {
          "stored diagnostics per file must be capped so per-row scans stay bounded");
 }
 
+// Truncation must be observable so the Problems sidebar/status can signal that a
+// file's diagnostic list is incomplete.
+void TestDiagnosticsStoreFlagsTruncatedFiles() {
+  constexpr std::size_t kMax = 10000;
+  DiagnosticsStore store;
+  const std::filesystem::path capped = "/tmp/project/capped.cpp";
+  const std::filesystem::path small = "/tmp/project/small.cpp";
+
+  std::vector<Diagnostic> flood;
+  flood.reserve(kMax + 1);
+  for (std::size_t i = 0; i < kMax + 1; ++i) {
+    flood.push_back(MakeDiagnostic(i, 0, i, 1, DiagnosticSeverity::Warning, "x"));
+  }
+  Expect(store.ReplaceForOwnerFile("flood", capped, std::move(flood)),
+         "publishing kMax + 1 diagnostics should succeed");
+
+  const auto* merged = store.FindByPath(capped);
+  Expect(merged != nullptr, "the capped file should have diagnostics");
+  Expect(merged->size() == kMax, "stored count must be capped to the maximum");
+  Expect(store.IsPathTruncated(capped), "the capped file must be flagged truncated");
+  Expect(store.HasTruncatedFile(), "the store must report at least one truncated file");
+
+  // A file whose list fits under the cap is not flagged.
+  std::vector<Diagnostic> few;
+  few.push_back(MakeDiagnostic(0, 0, 0, 1, DiagnosticSeverity::Error, "e"));
+  Expect(store.ReplaceForOwnerFile("lint", small, std::move(few)),
+         "a small diagnostic batch should publish");
+  Expect(!store.IsPathTruncated(small), "an uncapped file must not be flagged truncated");
+
+  // Replacing the capped file with a small batch clears its truncated flag and
+  // the store-wide signal.
+  std::vector<Diagnostic> replacement;
+  replacement.push_back(MakeDiagnostic(0, 0, 0, 1, DiagnosticSeverity::Warning, "w"));
+  Expect(store.ReplaceForOwnerFile("flood", capped, std::move(replacement)),
+         "shrinking the capped file should republish");
+  Expect(!store.IsPathTruncated(capped),
+         "clearing the flood must clear the truncated flag");
+  Expect(!store.HasTruncatedFile(),
+         "with no capped file remaining the store must report no truncation");
+}
+
 }  // namespace
 
 void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DiagnosticsStore/CapsPerFileCount", TestDiagnosticsStoreCapsPerFileCount);
+  AddTest(tests, "DiagnosticsStore/FlagsTruncatedFiles",
+          TestDiagnosticsStoreFlagsTruncatedFiles);
   AddTest(tests, "DiagnosticsStore/SeverityFilter", TestDiagnosticsSeverityFilter);
   AddTest(tests, "DiagnosticsStore/MergesOwnersPerFile", TestDiagnosticsStoreMergesOwnersPerFile);
   AddTest(tests, "DiagnosticsStore/ClearsOwnersIndependently",

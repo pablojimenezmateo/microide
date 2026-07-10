@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "plugin/PluginLuaInterop.h"
+#include "util/TextFileIO.h"
 
 namespace microide::plugin::provider_query_interop {
 namespace {
@@ -719,20 +720,36 @@ bool RunSaveParticipants(
       }
       return false;
     }
+    // Cap the participant's replacement text at the same ceiling the editor uses to
+    // read/write files (kMaxTextFileBytes). Without it, a participant could hand back
+    // an arbitrarily large string that the host would assign straight into the
+    // document, blowing past the size the buffer could ever have been loaded from and
+    // ballooning host memory. An over-limit result rejects that participant's
+    // transform (the text is left unchanged) and is surfaced through Lua's warning
+    // channel rather than failing the whole save.
+    const auto assign_if_within_limit = [&](const char* updated, std::size_t size) {
+      if (updated == nullptr) {
+        return;
+      }
+      if (static_cast<std::uintmax_t>(size) > util::kMaxTextFileBytes) {
+        lua_warning(state,
+                    "microide: save participant output exceeds the maximum text file "
+                    "size; discarding this transform",
+                    0);
+        return;
+      }
+      *text = std::string(updated, size);
+    };
     if (lua_isstring(state, -1)) {
       std::size_t size = 0;
       const char* updated = lua_tolstring(state, -1, &size);
-      if (updated != nullptr) {
-        *text = std::string(updated, size);
-      }
+      assign_if_within_limit(updated, size);
     } else if (lua_istable(state, -1)) {
       lua_interop::GetFieldProtected(state, -1, "text");
       if (lua_isstring(state, -1)) {
         std::size_t size = 0;
         const char* updated = lua_tolstring(state, -1, &size);
-        if (updated != nullptr) {
-          *text = std::string(updated, size);
-        }
+        assign_if_within_limit(updated, size);
       }
       lua_pop(state, 1);
     }

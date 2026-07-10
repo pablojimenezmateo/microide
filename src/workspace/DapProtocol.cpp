@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <utility>
 
+#include "workspace/ProtocolNumeric.h"
+
 namespace microide::workspace::dap_protocol {
 
 using util::JsonArray;
@@ -12,8 +14,13 @@ using util::JsonValue;
 
 namespace {
 
+// Narrow a JSON integer field to `int` deterministically: out-of-int-range
+// values clamp to the nearest int bound instead of relying on the
+// implementation-defined `static_cast<int>` of an out-of-range int64 (a hostile
+// adapter could otherwise wrap a huge id into a small/negative one). See
+// workspace/ProtocolNumeric.h.
 int AsInt(const JsonValue& value, int fallback = 0) {
-  return static_cast<int>(value.AsInt(fallback));
+  return protocol_numeric::JsonIntInRange(value, fallback);
 }
 
 // JsonValue::AsString() already returns a static empty string for non-string
@@ -409,7 +416,11 @@ DapStoppedEvent ParseStoppedEvent(const JsonValue& body) {
   event.reason = AsString(body["reason"]);
   event.description = AsString(body["description"]);
   event.text = AsString(body["text"]);
-  event.thread_id = AsInt(body["threadId"]);
+  // threadId is OPTIONAL on `stopped`: keep it unset when the adapter omits it so
+  // the session resolves a real thread instead of requesting threadId:0.
+  if (body.HasKey("threadId")) {
+    event.thread_id = AsInt(body["threadId"]);
+  }
   event.all_threads_stopped = body["allThreadsStopped"].AsBool(false);
   const auto& hit_ids = body["hitBreakpointIds"].AsArray();
   const std::size_t hit_count = std::min(hit_ids.size(), kMaxDapListEntries);
@@ -417,6 +428,20 @@ DapStoppedEvent ParseStoppedEvent(const JsonValue& body) {
   for (std::size_t i = 0; i < hit_count; ++i) {
     event.hit_breakpoint_ids.push_back(AsInt(hit_ids[i]));
   }
+  return event;
+}
+
+DapContinuedEvent ParseContinuedEvent(const JsonValue& body) {
+  DapContinuedEvent event;
+  // threadId is required by the DAP spec on `continued`, but treat it as optional
+  // for robustness (mirrors ParseStoppedEvent): absent → unset, not 0.
+  if (body.HasKey("threadId")) {
+    event.thread_id = AsInt(body["threadId"]);
+  }
+  // Absent allThreadsContinued is treated as false (single-thread continue) so a
+  // partial resume never tears down the shared stopped view; a full resume the
+  // adapter really means will set the flag explicitly.
+  event.all_threads_continued = body["allThreadsContinued"].AsBool(false);
   return event;
 }
 

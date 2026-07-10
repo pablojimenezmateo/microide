@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed on 2026-07-09.
+Reviewed on 2026-07-10.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
 It is deliberately short. Closed debt does not live here — it is archived (see below).
@@ -13,6 +13,36 @@ These were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
 **deliberately deferred** — each is either entangled with a semantics decision or
 a latent API-contract hazard with no live trigger, so a rushed fix risked a
 regression worse than the defect. Recorded here so they are not silently lost.
+
+> **Resolved 2026-07-10 (bug-inventory review pass — `microide-2026-07-10-bug-inventory.md`):**
+> a ~90-item inventory built against `main` was triaged against the current tree (many
+> items were already closed by the twelfth/thirteenth passes) and ~50 still-live items
+> were fixed with regression coverage; the full suite stays green. Highlights:
+> - **Path/URI security cluster** — strict `file://` parser (empty/`localhost` authority
+>   only, strict percent-decode, NUL reject) in `FileUri.cpp`/`Hex.h`; malformed
+>   code-action/rename edit URIs are dropped instead of falling back to the active buffer
+>   (`AssistService.cpp`); server `workspace/applyEdit` targets are confined to the project
+>   root or an open buffer (`LspService.cpp`); file-index watcher, `FileIndex::ApplyBatch`,
+>   and `ProjectTraversalFilter::Includes` reject `..`-escaping / absolute relative paths;
+>   plugin fs containment fails **closed** on canonicalization error and drops its stale
+>   root cache (`PluginPathInterop.cpp`).
+> - **Split-view coverage** — replace-all dirty-guard + post-write reopen, compare/merge
+>   external-change invalidation, and control-channel `tabs`/`tabCount` now scan every
+>   editor group, and replace-all surfaces a precise "save open changes first" error.
+> - **Correctness** — compare `review_mode`/`staging_view` persisted in the binary tab
+>   schema; snippet backspace/delete honor UTF-8 boundaries and reject multi-line mirror
+>   inserts; LSP diagnostic ranges treated as half-open; DAP `stopped`/`continued` respect
+>   optional `threadId`/`allThreadsContinued`; breakpoint verify stores requested+resolved
+>   lines; compare/git-blob truncation and unreadable/binary worktree files no longer
+>   render as empty; copied compare patches are real `git apply`-able unified diffs with
+>   git-quoted header paths; CRLF incremental `didChange` re-encodes replacement text.
+> - **Robustness caps / validation** — JSON RFC-8259 number grammar + raw-control-char
+>   rejection; snippet/plugin-env/decoration/MRU/debug-state decode caps; plugin launch
+>   config JSON + tool sha256 validation; `O_EXCL` exclusive file create; atomic control
+>   descriptor write (temp+rename, 0600/0700 perms); porcelain-v2 ahead/behind full-consume;
+>   protocol int-range narrowing guard; hover-content byte cap.
+> - **Throwing-probe / crash hardening** — workspace `std::filesystem::exists`/`relative`
+>   probes on the UI command path switched to the `error_code` overloads.
 
 > **Resolved 2026-07-10 (thirteenth pass — cross-subsystem bug hunt):** a fan-out across
 > every subsystem landed nine fixes (one HIGH, several MEDIUM), each with regression
@@ -478,36 +508,23 @@ as benign/cosmetic or as design constraints rather than live defects:
   changing. **Blocked on:** a perf-neutral styled-blank-line representation. Cosmetic
   (BCE is an optional xterm feature) so low priority.
 
-- **LSP incremental `didChange` LF-joins replacement text on CRLF documents.**
-  `src/workspace/LspService.cpp:928-940` sends `applied_edit->replacement_text` (built
-  LF-joined in `TextViewportUndoHistory.cpp`) even for a CRLF buffer, whose `didOpen`
-  used the real CRLF ending. The server mirror's edited regions drift toward LF. Traced
-  as benign: LSP positions are line/character (never byte offsets), replacement text
-  never contains a stray `\r`, edit ranges align to line-content boundaries so a
-  `\r\n` pair is never split, and the next full sync (save/clean transition) reconciles.
-  Not fixed because the correction adds per-keystroke string work on the hot
-  incremental-sync path to fix an inconsistency with no demonstrable wrong-position
-  outcome (speed is the priority). **Blocked on:** a demonstrated corruption case, or
-  doing the transform only when `line_ending() == CRLF` if a case ever surfaces.
-  (Re-confirmed by an independent 2026-07-09 fifth-pass hunter as a real server-mirror
-  desync, but it again could not exhibit a concrete wrong-*position* outcome, and no
-  LF→CRLF string helper exists, so the guarded send-site re-encode stays deferred
-  pending a demonstrated corruption case — the disciplined call given speed is priority.)
-  (Note: the sibling "cross-language go-to-definition uses the source server's encoding"
-  suspicion was investigated and is NOT a bug — a `definition` response's `character`
-  is in the responding/source server's encoding regardless of the target file, which is
-  exactly what `AssistService::NavigateToLspLocation` uses.)
+- **LSP incremental `didChange` LF-joins replacement text on CRLF documents — RESOLVED
+  2026-07-10 (bug-inventory pass).** `SyncLspForActiveEditableLastChange` now re-encodes
+  the incremental replacement text to CRLF when `viewport->line_ending() == CRLF` (guarded
+  so LF documents skip the work entirely), exactly the deferred "do the transform only for
+  CRLF" plan. (The sibling "cross-language go-to-definition uses the source server's
+  encoding" suspicion was investigated and is NOT a bug — a `definition` response's
+  `character` is in the responding/source server's encoding regardless of the target file,
+  which is exactly what `AssistService::NavigateToLspLocation` uses.)
 
-- **DAP multi-thread semantics are single-thread-simplified.** Two spots assume the
-  app's single-thread debugging focus: `DebugServiceCallbacks.cpp` records a verified
-  breakpoint at the *requested* line rather than the adapter's relocated `breakpoint.line`
-  (the store is keyed by requested line, so it structurally cannot represent a
-  relocation — the async `breakpoint`-event path uses the real line, so the two can
-  disagree), and `DebugSession.cpp:258-264` treats a `continued` event as a full resume,
-  ignoring `allThreadsContinued`/`threadId`. Both are correct for single-threaded targets
-  and incorrect per spec for multi-threaded ones. **Blocked on:** a decision to support
-  per-thread stop/resume state, which would re-key `BreakpointStore` and add per-thread
-  run state.
+- **DAP partial `continued` / breakpoint relocation — RESOLVED 2026-07-10 (bug-inventory
+  pass).** `continued` now performs a full resume only when `allThreadsContinued` is true
+  (a single-thread continue leaves the focused stopped view intact), and
+  `DebugServiceCallbacks` anchors verified breakpoints to the requested line while
+  recording the adapter id so the async `breakpoint`-event path reconciles by id instead of
+  clobbering by relocated line. Full per-thread stop/resume *state* (re-keying
+  `BreakpointStore`, per-thread run flags) remains an explicit non-goal until multi-thread
+  debugging is a funded feature.
 
 The 2026-07-09 fifth-pass sweep surfaced these, deferred as latent/broad rather
 than live defects (the pass fixed nine concrete bugs outright — terminal SGR mouse
@@ -725,6 +742,83 @@ double-fire; and the `SnippetEngine` cross-tab insert shift). It left these defe
   **Blocked on:** a perf-neutral variable-length grapheme representation (same
   constraint as the deferred BCE styled-blank-line item). Low priority — CJK-plus-
   combining-mark is rare.
+
+The 2026-07-10 bug-inventory review pass fixed ~50 items but **deliberately deferred**
+these (entangled with a semantics/data-model decision, needing a platform primitive, or
+a perf change that must be measured before landing — speed is the priority):
+
+- **`FileOperationService::RenamePath` still has a check-then-rename TOCTOU window** (HIGH
+  by label, tiny window in practice). `H1` (create) was fixed with `O_EXCL`; the no-replace
+  rename needs a `renameat2(RENAME_NOREPLACE)` primitive with a portable fallback (old
+  kernels/filesystems return `ENOSYS`/`EINVAL`) plus a Windows equivalent. **Blocked on:** a
+  platform `MovePathNoReplace` seam. The synchronous exists-check already covers the
+  non-racing common case.
+- **Persisted-record commit is not two-generation.** `PersistedRecordWriter::WriteFile`
+  removes the old `.bak` before the new primary is durable, so a crash mid-rename can lose
+  the last-known-good backup. Needs a `.bak.next`-then-atomic-promote protocol plus
+  crash-point tests. (Reader-side recovery signalling was already fixed — `I16`.)
+- **Cross-device `platform::MovePath` fallback leaves partial/duplicated trees on failure**
+  (`FsOps.cpp` rename→copy→remove). Needs a staged temp-destination move with rollback and
+  partial-failure reporting.
+- **Symlinked project-file save can write a target outside the workspace root.**
+  `WriteTextFileAtomically` resolves the symlink and writes the resolved target with no
+  root check. A real fix threads the project root through every save caller and adds an
+  explicit "edit target of an out-of-root symlink" policy (reject vs. confirm) — a
+  cross-cutting save-API change entangled with a UX decision.
+- **Following out-of-root directory symlinks still indexes escaping `..` paths.** The
+  untrusted-input paths (native watcher, `ApplyBatch`, traversal filter) now reject `..`,
+  but `CollectProjectFiles` with the opt-in `project.follow_out_of_root_symlinks` setting
+  still yields `../outside/...` relative entries by design. A clean fix stores a typed
+  symlink-root identity instead of `..` paths, or drops the follow feature. **Blocked on:**
+  deciding whether out-of-root symlink *contents* are a supported feature.
+- **Rename/delete/trash dirty-guards and the replace-all all-group work do not yet carry
+  `(group_index, tab_index)`.** `DirtyPathTargetsForPath`/`AffectedCompareTabIndices`/
+  `AffectedMergeTabIndices` still detect dirty tabs in the focused split only (retarget/close
+  are already all-group). Making detection group-aware needs `(group,tab)` addressing threaded
+  through the prompt payloads — a data-model change too risky for a rushed pass.
+- **LSP `workspace/applyEdit` still can't report partial application, and ignores
+  `TextDocumentEdit.version`.** The parser drops create/rename/delete resource ops and
+  silently truncates at the file/edit caps, then replies `applied: true`; and stale-version
+  edits are applied without a version check. Needs parser status plumbed into the reply plus
+  optional-version tracking through the flattened `CodeActionEdit`.
+- **Multi-file rename can partially commit, and closed-file LSP edits can overwrite external
+  modifications.** `CommitPendingRenameSave` mutates+saves open buffers before writing closed
+  files with no rollback, and stores no `(mtime,size,hash)` signature to detect a closed
+  target changed since the prompt. Needs a preflight-all-then-commit-all rewrite of the save
+  path.
+- **Closed-file LSP diagnostics published in UTF-16/32 are stored as byte columns and not
+  re-encoded on open** (`E1`). Store raw LSP diagnostics for closed files and convert lazily
+  against a viewport, or force a reconversion in `EnsureLspDocumentOpen`.
+- **Plugin host mutations carry no project/reload epoch** (`D2`); **plugin `ctx.process.run`
+  and save participants run synchronously on the single Lua worker with no cancellation/budget**
+  (`D3`/`J11`); **tool download + hashing block the caller and shell out via
+  `project::RunSubprocess` from a workspace TU** (`J20`/`A3`, formatter has a 5 s backstop);
+  **plugin tool `url` only resolves local sources — HTTP(S) fetch is unimplemented** (`J21`).
+  Each needs a bounded async executor / worker-isolation design.
+- **Plugin string-field readers truncate embedded NUL on some paths** (`J34`) — route all
+  extraction through a length-preserving `lua_tolstring` helper with a per-field NUL policy.
+- **Snippet parsing does not implement the LSP/TextMate escape + nesting grammar** (`J48`)
+  despite advertising `snippetSupport` — implement the supported subset or downgrade the
+  capability.
+- **Inline git blame for a dirty buffer uses the on-disk file, not the editor buffer**
+  (`J5`) — feed viewport text via `git blame --contents -`, or suppress blame for dirty
+  buffers.
+- **Project search does not surface skipped unreadable/oversized files** (`I7`) and
+  **`count_all_matches` has no time/work budget** (`J58`) — add a skipped-file count to the
+  result and a budgeted "10000+" total.
+- **Terminal scroll-region ops are alternate-screen only** (`F3`) — define + implement (or
+  explicitly ignore) primary-screen DECSTBM semantics.
+- **Control runtime dir is not refused when not owned by the current user** (`J53` residual)
+  — the descriptor is now atomic + 0600 and the dirs 0700, but an ownership check is still
+  missing.
+- **Perf follow-ups (speed is the top priority, so these are the highest-value next batch,
+  deferred only because each needs `MICROIDE_PERF_TRACE` before/after measurement):** merge
+  side-effect edits snapshot the whole result document per keystroke (`A4`); merge
+  hit-testing/rendering scans conflicts O(rows×conflicts) and rebuilds candidate/context
+  vectors (`B5`/`B6`); deep merge jumps tokenize the off-screen prefix first (`B7`); grouped
+  undo fallback snapshots a full `TextBuffer` (`B8`); several render TUs still materialize
+  label/URI/preview strings per frame (`B1`/`B2`); merge previews recompute choice lines
+  during render (`B2`).
 
 ## Guardrails — rejected experiments, do not retry
 

@@ -211,6 +211,10 @@ enum class EditorTabTag : std::uint16_t {
   MergeLeftDividerFraction = 22,
   MergeRightDividerFraction = 23,
   MergeHunkChoice = 24,
+  // Appended after the fields above; older records simply omit these and decode
+  // with defaults (empty string).
+  CompareReviewMode = 31,
+  CompareStagingView = 32,
 };
 
 enum class WorkspaceSessionTag : std::uint16_t {
@@ -617,6 +621,10 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
       !AppendRecord(EditorTabTag::CompareDividerFraction,
                     [&](PrimitiveWriter& w) { return w.WriteF32(tab.compare_divider_fraction); },
                     out) ||
+      !AppendRecord(EditorTabTag::CompareReviewMode,
+                    [&](PrimitiveWriter& w) { return w.WriteString(tab.compare_review_mode); }, out) ||
+      !AppendRecord(EditorTabTag::CompareStagingView,
+                    [&](PrimitiveWriter& w) { return w.WriteString(tab.compare_staging_view); }, out) ||
       !AppendRecord(EditorTabTag::MergeBasePath,
                     [&](PrimitiveWriter& w) { return w.WritePath(tab.merge_base_path); }, out) ||
       !AppendRecord(EditorTabTag::MergeIncomingPath,
@@ -714,6 +722,10 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
             return ReadSize(reader, &tab->compare_horizontal_scroll) && reader.remaining() == 0;
           case EditorTabTag::CompareDividerFraction:
             return reader.ReadF32(&tab->compare_divider_fraction) && reader.remaining() == 0;
+          case EditorTabTag::CompareReviewMode:
+            return reader.ReadString(&tab->compare_review_mode) && reader.remaining() == 0;
+          case EditorTabTag::CompareStagingView:
+            return reader.ReadString(&tab->compare_staging_view) && reader.remaining() == 0;
           case EditorTabTag::MergeBasePath:
             return reader.ReadPath(&tab->merge_base_path) && reader.remaining() == 0;
           case EditorTabTag::MergeIncomingPath:

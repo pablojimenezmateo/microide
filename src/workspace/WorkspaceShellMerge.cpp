@@ -365,9 +365,18 @@ SDL_FRect WorkspaceShell::BuildMergeSourceActionButtonRect(
     const MergeInteractionLayout& interaction,
     const MergeTrackedConflict& conflict,
     bool incoming) const {
+  // Source panes render from the merge tab's own scroll_row (see RenderMergeSurface),
+  // which can exceed the result viewport's clamped scroll_line when a source pane has
+  // more rows than the result. Anchoring the source accept button to the result scroll
+  // would drift it off its rendered source row, so use the source scroll here. Fall
+  // back to the result scroll only if the active merge tab is unexpectedly absent.
+  const MergeTabState* merge_tab = const_cast<WorkspaceShell*>(this)->ActiveMergeTab();
+  const int source_scroll_row =
+      merge_tab != nullptr ? std::max(0, merge_tab->scroll_row)
+                           : static_cast<int>(interaction.result.text.scroll_line);
   return ComputeMergeSourceActionButtonRect(
       incoming ? surface.left_x : surface.right_x, surface.gutter_width, surface.rows_y,
-      surface.line_height, static_cast<int>(interaction.result.text.scroll_line),
+      surface.line_height, source_scroll_row,
       incoming ? conflict.incoming_end_line : conflict.current_end_line, interaction.content_bottom,
       incoming ? interaction.incoming_accept_button_width : interaction.current_accept_button_width,
       kMergeToolbarButtonHeight);

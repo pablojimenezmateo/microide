@@ -13,6 +13,18 @@ namespace microide::project {
 
 namespace {
 
+// A batch-supplied "relative" path that is absolute or begins with ".." escapes
+// the project root once resolved as `root / relative`. Native watchers, poll
+// diffs, or hostile/test batches can present such paths; reject them so the index
+// (and every file-finder/search/open that resolves through it) stays contained.
+bool BatchPathEscapesRoot(const std::filesystem::path& relative_path) {
+  if (relative_path.is_absolute()) {
+    return true;
+  }
+  const auto it = relative_path.begin();
+  return it != relative_path.end() && *it == std::filesystem::path("..");
+}
+
 ProjectFile BuildProjectFile(const std::filesystem::path& absolute_root,
                              const std::filesystem::path& relative_path) {
   ProjectFile file;
@@ -89,8 +101,11 @@ bool FileIndex::SetRoot(const std::filesystem::path& root,
   util::StartupTrace::Scope trace_scope("FileIndex::SetRoot");
   std::error_code error;
   const auto absolute_root = std::filesystem::absolute(root, error);
-  if (error || !std::filesystem::exists(absolute_root) ||
-      !std::filesystem::is_directory(absolute_root)) {
+  // Non-throwing probes: selecting a root that is inaccessible, a symlink cycle,
+  // or on a flaky/unmounted volume must fail the open cleanly rather than throw
+  // out of sidebar/index setup.
+  if (error || !std::filesystem::exists(absolute_root, error) || error ||
+      !std::filesystem::is_directory(absolute_root, error) || error) {
     return false;
   }
 
@@ -98,6 +113,10 @@ bool FileIndex::SetRoot(const std::filesystem::path& root,
     std::unique_lock lock(files_mutex_);
     root_ = absolute_root;
     files_.clear();
+    // A previous root may have hit the entry budget; the new root has not been
+    // scanned yet, so clear the stale truncation flag (Refresh/ApplyBatch below
+    // reassigns it from the real scan).
+    truncated_ = false;
     ++version_;
     exclude_hidden_cache_ = {};
     include_hidden_cache_ = {};
@@ -115,6 +134,7 @@ void FileIndex::Reset() {
   }
   root_.clear();
   files_.clear();
+  truncated_ = false;
   ++version_;
   exclude_hidden_cache_ = {};
   include_hidden_cache_ = {};
@@ -148,6 +168,11 @@ void FileIndex::Refresh() {
   {
     std::unique_lock lock(files_mutex_);
     files_ = std::move(rebuilt);
+    // A full rescan replaces the file list; the watcher-batch truncation flag no
+    // longer describes this content. CollectProjectFiles does not currently report
+    // budget exhaustion, so clear the stale flag rather than leave a prior root's
+    // "truncated" state asserted over a freshly scanned (often smaller) tree.
+    truncated_ = false;
     ++version_;
     exclude_hidden_cache_.needs_refresh = true;
     include_hidden_cache_.needs_refresh = true;
@@ -177,7 +202,8 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
         continue;
       }
       const std::filesystem::path relative_path = change.entry.relative_path.lexically_normal();
-      if (relative_path.empty() || IsGitMetadataRelativePath(relative_path)) {
+      if (relative_path.empty() || IsGitMetadataRelativePath(relative_path) ||
+          BatchPathEscapesRoot(relative_path)) {
         continue;
       }
       ProjectFile file = ToProjectFile(change.entry);
@@ -208,7 +234,8 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
   bool changed = false;
   for (const auto& change : batch.changes) {
     const std::filesystem::path relative_path = change.entry.relative_path.lexically_normal();
-    if (relative_path.empty() || IsGitMetadataRelativePath(relative_path)) {
+    if (relative_path.empty() || IsGitMetadataRelativePath(relative_path) ||
+        BatchPathEscapesRoot(relative_path)) {
       continue;
     }
     if (change.kind == platform::IndexUpdateBatch::Kind::Deleted) {

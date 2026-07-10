@@ -49,6 +49,15 @@ class PatchApplyService {
   project::PatchApplyResult ApplyPatchSynchronouslyForTesting(project::PatchApplyRequest request,
                                                               std::string patch_text);
 
+  // Test seam: builds a patch-apply request the same way the production request
+  // paths do, so tests can assert the request carries no full-model copy (the
+  // model stays UI-thread-local and only the compact target + patch text is
+  // dispatched to the background executor).
+  std::optional<project::PatchApplyRequest> BuildRequestForTesting(
+      CompareTabState& compare_tab, project::PatchOperationKind operation, bool line_scope) const {
+    return BuildRequest(compare_tab, operation, line_scope);
+  }
+
  private:
   struct PendingDiscard {
     project::PatchApplyRequest request;
@@ -58,7 +67,8 @@ class PatchApplyService {
   std::optional<project::PatchApplyRequest> BuildRequest(CompareTabState& compare_tab,
                                                          project::PatchOperationKind operation,
                                                          bool line_scope) const;
-  std::optional<std::string> BuildPatchForRequest(const project::PatchApplyRequest& request) const;
+  std::optional<std::string> BuildPatchForRequest(const project::PatchApplyRequest& request,
+                                                  const compare::CompareModel& model) const;
   void DispatchApply(project::PatchApplyRequest request, std::string patch_text);
   void PublishResult(project::PatchApplyResult result,
                      const project::PatchApplyRequest& request);

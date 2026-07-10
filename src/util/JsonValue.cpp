@@ -108,16 +108,27 @@ struct Parser {
     const std::size_t start = pos;
     bool is_float = false;
     if (Peek() == '-') ++pos;
-    while (pos < src.size() && src[pos] >= '0' && src[pos] <= '9') ++pos;
+    // Integer part: RFC 8259 requires at least one digit after the optional
+    // sign, and a leading '0' must stand alone (reject a lone '-' and "01").
+    if (pos >= src.size() || src[pos] < '0' || src[pos] > '9') return std::nullopt;
+    if (src[pos] == '0') {
+      ++pos;
+    } else {
+      while (pos < src.size() && src[pos] >= '0' && src[pos] <= '9') ++pos;
+    }
     if (pos < src.size() && src[pos] == '.') {
       is_float = true;
       ++pos;
+      // A decimal point must be followed by at least one digit (reject "1.").
+      if (pos >= src.size() || src[pos] < '0' || src[pos] > '9') return std::nullopt;
       while (pos < src.size() && src[pos] >= '0' && src[pos] <= '9') ++pos;
     }
     if (pos < src.size() && (src[pos] == 'e' || src[pos] == 'E')) {
       is_float = true;
       ++pos;
       if (pos < src.size() && (src[pos] == '+' || src[pos] == '-')) ++pos;
+      // An exponent must carry at least one digit (reject "1e" and "1e+").
+      if (pos >= src.size() || src[pos] < '0' || src[pos] > '9') return std::nullopt;
       while (pos < src.size() && src[pos] >= '0' && src[pos] <= '9') ++pos;
     }
     const std::string_view tok = src.substr(start, pos - start);
@@ -147,13 +158,19 @@ struct Parser {
       // them on the LSP/DAP inbound hot path) then cost one memcpy rather than N
       // single-byte operator+= calls.
       const std::size_t run_start = pos;
-      while (pos < src.size() && src[pos] != '"' && src[pos] != '\\') {
+      while (pos < src.size() && src[pos] != '"' && src[pos] != '\\' &&
+             static_cast<unsigned char>(src[pos]) >= 0x20) {
         ++pos;
       }
       if (pos > run_start) {
         result.append(src.data() + run_start, pos - run_start);
       }
       if (pos >= src.size()) break;  // no closing quote before end of input
+      // RFC 8259 forbids raw control bytes (< 0x20) inside a string; they must be
+      // escaped. The run above stops on such a byte (it is not '"' or '\\'), so a
+      // control byte here is a hard reject. Escaped \n \t \r etc. stay valid: they
+      // arrive as a '\\' handled by the escape switch below, never as a raw byte.
+      if (static_cast<unsigned char>(src[pos]) < 0x20) return std::nullopt;
       const char c = src[pos++];
       if (c == '"') return JsonValue(std::move(result));
       // c is a backslash: decode the escape sequence.

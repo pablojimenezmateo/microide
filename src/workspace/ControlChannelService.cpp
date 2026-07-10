@@ -9,6 +9,7 @@
 #if defined(__unix__) || defined(__APPLE__)
 #include <csignal>
 #include <cerrno>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 #endif
@@ -229,7 +230,17 @@ void ControlChannelService::WriteDescriptor() {
   }
   const int pid = CurrentProcessId();
   std::error_code ec;
-  std::filesystem::create_directories(descriptor_path_.parent_path(), ec);
+  const std::filesystem::path parent = descriptor_path_.parent_path();
+  std::filesystem::create_directories(parent, ec);
+#if defined(__unix__) || defined(__APPLE__)
+  // The descriptor exposes project_root/project_hash. Keep the runtime + instances
+  // directories owner-only (0700) so other local users cannot enumerate active
+  // project roots even when $XDG_RUNTIME_DIR is absent and we fell back to /tmp.
+  ::chmod(parent.c_str(), S_IRWXU);
+  if (parent.has_parent_path()) {
+    ::chmod(parent.parent_path().c_str(), S_IRWXU);
+  }
+#endif
   util::JsonObject descriptor;
   descriptor["pid"] = util::JsonValue(static_cast<std::int64_t>(pid));
   descriptor["socket"] = util::JsonValue(SocketPathForPid(pid).generic_string());
@@ -237,9 +248,33 @@ void ControlChannelService::WriteDescriptor() {
   descriptor["project_hash"] =
       util::JsonValue(project_root_.empty() ? std::string()
                                             : ProjectStateDirectoryName(project_root_));
-  std::ofstream out(descriptor_path_, std::ios::trunc);
-  if (out) {
+
+  // Atomic publish: write a temp file then rename into place, so a concurrent
+  // reader (a driver racing startup) never observes an empty or half-written
+  // descriptor and skips a live instance. A crash mid-write leaves only the temp.
+  std::filesystem::path temp_path = descriptor_path_;
+  temp_path += ".tmp";
+  {
+    std::ofstream out(temp_path, std::ios::trunc | std::ios::binary);
+    if (!out) {
+      return;
+    }
     out << util::SerializeJson(util::JsonValue(std::move(descriptor)));
+    out.flush();
+    if (!out) {
+      std::error_code remove_ec;
+      std::filesystem::remove(temp_path, remove_ec);
+      return;
+    }
+  }
+#if defined(__unix__) || defined(__APPLE__)
+  ::chmod(temp_path.c_str(), S_IRUSR | S_IWUSR);  // 0600 before it becomes visible
+#endif
+  std::error_code rename_ec;
+  std::filesystem::rename(temp_path, descriptor_path_, rename_ec);
+  if (rename_ec) {
+    std::error_code remove_ec;
+    std::filesystem::remove(temp_path, remove_ec);
   }
 }
 
@@ -466,18 +501,27 @@ util::JsonValue ControlChannelService::BuildTabs() const {
     return util::JsonValue(std::move(tabs));
   }
   const ProjectWorkspaceState& state = context_->current_project_state;
-  for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
-    const TabEntry& tab = state.focused_group().open_tabs[i];
-    util::JsonObject tab_object;
-    tab_object["index"] = util::JsonValue(static_cast<std::int64_t>(i));
-    const char* kind = tab.kind == TabEntry::Kind::Editor    ? "editor"
-                       : tab.kind == TabEntry::Kind::Compare ? "compare"
-                                                             : "merge";
-    tab_object["kind"] = util::JsonValue(std::string(kind));
-    tab_object["path"] = util::JsonValue(tab.path.generic_string());
-    tab_object["title"] = util::JsonValue(tab.title);
-    tab_object["active"] = util::JsonValue(i == state.focused_group().active_tab_index);
-    tabs.push_back(util::JsonValue(std::move(tab_object)));
+  const std::size_t focused_group_index = state.clamped_focused_group_index();
+  // Enumerate every editor group (a split workspace has two) so a headless driver
+  // can see and target tabs in either split. Each entry carries its `group` index;
+  // `active` is true only for the active tab of the focused group.
+  for (std::size_t g = 0; g < state.editor_groups.size(); ++g) {
+    const EditorGroup& group = state.editor_groups[g];
+    for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
+      const TabEntry& tab = group.open_tabs[i];
+      util::JsonObject tab_object;
+      tab_object["group"] = util::JsonValue(static_cast<std::int64_t>(g));
+      tab_object["index"] = util::JsonValue(static_cast<std::int64_t>(i));
+      const char* kind = tab.kind == TabEntry::Kind::Editor    ? "editor"
+                         : tab.kind == TabEntry::Kind::Compare ? "compare"
+                                                               : "merge";
+      tab_object["kind"] = util::JsonValue(std::string(kind));
+      tab_object["path"] = util::JsonValue(tab.path.generic_string());
+      tab_object["title"] = util::JsonValue(tab.title);
+      tab_object["active"] = util::JsonValue(g == focused_group_index &&
+                                             i == group.active_tab_index);
+      tabs.push_back(util::JsonValue(std::move(tab_object)));
+    }
   }
   return util::JsonValue(std::move(tabs));
 }
@@ -545,7 +589,11 @@ util::JsonValue ControlChannelService::BuildStatus() const {
   }
   const ProjectWorkspaceState& state = context_->current_project_state;
   object["projectRoot"] = util::JsonValue(state.root.generic_string());
-  object["tabCount"] = util::JsonValue(static_cast<std::int64_t>(state.focused_group().open_tabs.size()));
+  std::size_t total_tabs = 0;
+  for (const EditorGroup& group : state.editor_groups) {
+    total_tabs += group.open_tabs.size();
+  }
+  object["tabCount"] = util::JsonValue(static_cast<std::int64_t>(total_tabs));
   object["debugStopped"] = util::JsonValue(state.debug_execution.stopped);
   object["connections"] = util::JsonValue(static_cast<std::int64_t>(server_.ConnectionCount()));
   object["renderer"] = util::JsonValue(context_->render_driver_name);

@@ -3,6 +3,8 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
+#include <utility>
 
 #include "project/GitPorcelainV2Parser.h"
 #include "project/GitRepositoryState.h"
@@ -213,6 +215,41 @@ void TestPorcelainV2ShortRecordDoesNotThrow() {
          "valid entry should parse while the short trailing record is skipped");
 }
 
+// porcelain-v2 `# branch.ab` reports ahead/behind as `+<ahead> -<behind>`.
+// ParseAheadBehind must (a) accept genuine git output including its space field
+// separator, and (b) reject a field carrying a trailing non-numeric suffix
+// instead of silently truncating it (e.g. "+12x-3" previously parsed ahead=12,
+// "+12-3x" parsed behind=3 because only from_chars' error code was checked).
+void TestPorcelainV2AheadBehindParsing() {
+  const auto parse_ab = [](std::string_view token) {
+    std::string output = "# branch.ab ";
+    output.append(token);
+    output.push_back('\0');
+    const auto state = GitPorcelainV2Parser::Parse(output, "/repo", 1, 0);
+    return std::pair<int, int>{state.branch.ahead, state.branch.behind};
+  };
+
+  // No-space form parses both counts.
+  Expect(parse_ab("+12-3") == (std::pair<int, int>{12, 3}),
+         "\"+12-3\" should parse ahead=12 behind=3");
+  // Real git emits a space field separator; it must still parse (regression guard
+  // against the full-consume check over-rejecting authentic output).
+  Expect(parse_ab("+2 -0") == (std::pair<int, int>{2, 0}),
+         "genuine git \"+2 -0\" must parse ahead=2 behind=0");
+
+  // A trailing garbage suffix on either field is rejected outright, leaving the
+  // default 0/0 rather than a truncated count.
+  Expect(parse_ab("+12x-3") == (std::pair<int, int>{0, 0}),
+         "\"+12x-3\" must be rejected, not truncated to ahead=12");
+  Expect(parse_ab("+12-3x") == (std::pair<int, int>{0, 0}),
+         "\"+12-3x\" must be rejected, not truncated to behind=3");
+  // Non-numeric fields are rejected too.
+  Expect(parse_ab("+x-3") == (std::pair<int, int>{0, 0}),
+         "\"+x-3\" (non-numeric ahead) must be rejected");
+  Expect(parse_ab("+12-x") == (std::pair<int, int>{0, 0}),
+         "\"+12-x\" (non-numeric behind) must be rejected");
+}
+
 void TestRefreshFailureClassification() {
   Expect(microide::project::ClassifyGitRefreshFailure(
              128, "fatal: not a git repository (or any of the parent directories)") ==
@@ -241,6 +278,8 @@ void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
           TestPorcelainV2ConflictClassification);
   AddTest(tests, "GitRepositoryState/PorcelainV2ShortRecordDoesNotThrow",
           TestPorcelainV2ShortRecordDoesNotThrow);
+  AddTest(tests, "GitRepositoryState/PorcelainV2AheadBehindParsing",
+          TestPorcelainV2AheadBehindParsing);
   AddTest(tests, "GitRepositoryState/RefreshFailureClassification",
           TestRefreshFailureClassification);
 }

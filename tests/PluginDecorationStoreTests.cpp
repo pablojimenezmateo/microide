@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -133,6 +134,34 @@ void TestClearOwnerAndPathPrefix() {
   Expect(store.empty(), "store should be empty after clearing the whole prefix");
 }
 
+void TestAggregatePerFileCapTruncatesMergedKinds() {
+  PluginDecorationStore store;
+  const std::filesystem::path path = "/tmp/p/huge.cpp";
+
+  // Three owners each contribute a large, distinct line range. The per-owner publish
+  // cap does not bound the multi-owner sum (270k here), so the store's aggregate
+  // per-file cap (200k) must truncate the merged view to stay render-bounded.
+  constexpr std::uint32_t kPerOwner = 90000;
+  for (int owner = 0; owner < 3; ++owner) {
+    PluginDecorationData data;
+    data.text_styles.reserve(kPerOwner);
+    const std::uint32_t base = static_cast<std::uint32_t>(owner) * kPerOwner;
+    for (std::uint32_t i = 0; i < kPerOwner; ++i) {
+      data.text_styles.push_back(Style(base + i, 0, 1));
+    }
+    store.ReplaceForOwnerFile("owner" + std::to_string(owner), path, std::move(data));
+  }
+
+  const FileDecorations* file = store.FindByPath(path);
+  Expect(file != nullptr, "the heavily-decorated file should be present");
+  Expect(file->text_styles.size() == 200000,
+         "the merged per-file text styles should be capped at the aggregate limit");
+  // The merge sorts by line before truncating, so the retained set is the lowest
+  // 200k lines (0 .. 199999) -- a deterministic head, never a wrapped/undefined tail.
+  Expect(file->text_styles.front().line == 0 && file->text_styles.back().line == 199999,
+         "the aggregate cap should keep the lowest-line decorations after sorting");
+}
+
 }  // namespace
 
 void RegisterPluginDecorationStoreTests(std::vector<TestCase>& tests) {
@@ -144,6 +173,8 @@ void RegisterPluginDecorationStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginDecorationStore/ReplaceIsIdempotentAndClears",
           TestReplaceIsIdempotentAndClears);
   AddTest(tests, "PluginDecorationStore/ClearOwnerAndPathPrefix", TestClearOwnerAndPathPrefix);
+  AddTest(tests, "PluginDecorationStore/AggregatePerFileCapTruncatesMergedKinds",
+          TestAggregatePerFileCapTruncatesMergedKinds);
 }
 
 }  // namespace microide::tests

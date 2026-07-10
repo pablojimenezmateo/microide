@@ -26,7 +26,9 @@ DebugExecutionView BuildExecutionView(const dap_protocol::DapStoppedEvent& stop,
                                       const std::vector<dap_protocol::DapStackFrame>& frames) {
   DebugExecutionView view;
   view.stopped = true;
-  view.thread_id = stop.thread_id;
+  // A resolved stop always carries a concrete focused thread (the no-threadId stop
+  // path resolves one before frames arrive); 0 is the "unknown" fallback.
+  view.thread_id = stop.thread_id.value_or(0);
   view.stop_reason = stop.reason;
   view.focused_frame_index = 0;
   view.frames.reserve(frames.size());
@@ -84,7 +86,7 @@ void DebugService::ProjectStop(const dap_protocol::DapStoppedEvent& stop,
   const int focused_session = state.debug_execution.focused_session_id;
   state.debug_execution = BuildExecutionView(stop, frames);
   state.debug_execution.threads = std::move(threads);
-  state.debug_execution.focused_thread_id = stop.thread_id;
+  state.debug_execution.focused_thread_id = stop.thread_id.value_or(0);
   state.debug_execution.sessions = std::move(sessions);
   state.debug_execution.focused_session_id = focused_session;
   // A fresh stop invalidates any prior hover value (new frame state / values).
@@ -168,7 +170,7 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
   // does not project into the shared views, so it must not report one either.
   callbacks.on_stop_began = [this, session_id](const dap_protocol::DapStoppedEvent& stop) {
     if (IsActiveSession(session_id) && operations_.notify_stop_began) {
-      operations_.notify_stop_began(stop.reason, stop.thread_id);
+      operations_.notify_stop_began(stop.reason, stop.thread_id.value_or(0));
     }
   };
   // On every stop: the active session projects into the shared views; a background
@@ -244,16 +246,26 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
         results.reserve(breakpoints.size());
         for (std::size_t i = 0; i < breakpoints.size(); ++i) {
           const dap_protocol::DapBreakpoint& breakpoint = breakpoints[i];
-          // The response is positional to the request, so match by the line we
-          // requested at this index (the store may have changed while in flight).
-          // Fall back to the adapter-reported line for a non-conformant adapter
-          // that returns a shorter array.
-          const int match_line =
-              i < requested_lines.size() ? requested_lines[i] : breakpoint.line;
+          // The setBreakpoints response is positional to the request. Anchor each
+          // result to the line the user REQUESTED at this index — NOT the adapter's
+          // possibly-relocated `breakpoint.line` — so the gutter marker stays at the
+          // user's chosen line. This deliberately mirrors the async `breakpoint`
+          // event path (on_breakpoint_changed below), which also never moves the
+          // marker and reconciles by adapter id: recording `breakpoint.id` here is
+          // what lets a later event for this same breakpoint update it in place (by
+          // id) instead of clobbering a coincident breakpoint at the relocated line.
+          //
+          // A non-conformant adapter that returns MORE results than we requested has
+          // no requested line to anchor the extras to; DROP them rather than trust
+          // the adapter's line (which could land on, and clobber, an unrelated
+          // breakpoint at that line).
+          if (i >= requested_lines.size()) {
+            break;
+          }
           results.push_back(editor::VerifiedBreakpoint{
               .id = breakpoint.id,
               .verified = breakpoint.verified,
-              .line = match_line,
+              .line = requested_lines[i],
               .message = breakpoint.message,
           });
         }

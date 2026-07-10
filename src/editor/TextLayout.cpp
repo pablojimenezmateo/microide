@@ -223,6 +223,31 @@ TextLayout::ByteRange TextLayout::IdentifierRangeAt(std::string_view line,
   while (end < line.size() && is_ident(static_cast<unsigned char>(line[end]))) {
     ++end;
   }
+
+  // Extend the range leftward across member-access operators (`.` and `->`) so a
+  // hover on the trailing member of `foo.bar` / `ptr->field` / `a.b.c` evaluates the
+  // whole chain rather than just the bare word. Only a `.` or `->` immediately
+  // preceding the current start, and itself immediately preceded by an identifier
+  // byte, is absorbed; anything else (whitespace, a stray `>`, a multibyte UTF-8
+  // byte, a second `.`) terminates the walk so the boundary stays deterministic.
+  for (;;) {
+    std::size_t op_start = start;
+    if (start >= 2 && line[start - 1] == '>' && line[start - 2] == '-') {
+      op_start = start - 2;  // "->"
+    } else if (start >= 1 && line[start - 1] == '.') {
+      op_start = start - 1;  // "."
+    } else {
+      break;
+    }
+    if (op_start == 0 || !is_ident(static_cast<unsigned char>(line[op_start - 1]))) {
+      break;
+    }
+    std::size_t run_start = op_start;
+    while (run_start > 0 && is_ident(static_cast<unsigned char>(line[run_start - 1]))) {
+      --run_start;
+    }
+    start = run_start;
+  }
   return {start, end};
 }
 

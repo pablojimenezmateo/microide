@@ -654,14 +654,25 @@ std::vector<CodeActionSessionItem> AssistService::TransformLspCodeActions(
     if (action.has_edit) {
       for (const auto& [uri, text_edits] : action.edit.changes) {
         const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
+        if (!path.has_value()) {
+          // An undecodable / non-local / malformed URI must never fall back to
+          // the empty path, which the apply layer interprets as "edit the active
+          // buffer". Skip these edits rather than corrupt whatever file is focused.
+          continue;
+        }
         for (const auto& [lsp_range, new_text] : text_edits) {
           edits.push_back(CodeActionEdit{
-              .path = path.value_or(std::filesystem::path{}),
+              .path = *path,
+              // Clamp negative positions to 0, matching the rename/formatting paths
+              // (a malformed quick fix with line:-1 must not wrap to a huge size_t and
+              // land at the end of the buffer).
               .range = editor::SelectionRange{
-                  .start = editor::TextPosition{static_cast<std::size_t>(lsp_range.start.line),
-                                                static_cast<std::size_t>(lsp_range.start.character)},
-                  .end = editor::TextPosition{static_cast<std::size_t>(lsp_range.end.line),
-                                              static_cast<std::size_t>(lsp_range.end.character)},
+                  .start = editor::TextPosition{
+                      static_cast<std::size_t>(std::max(0, lsp_range.start.line)),
+                      static_cast<std::size_t>(std::max(0, lsp_range.start.character))},
+                  .end = editor::TextPosition{
+                      static_cast<std::size_t>(std::max(0, lsp_range.end.line)),
+                      static_cast<std::size_t>(std::max(0, lsp_range.end.character))},
               },
               .new_text = new_text,
           });
@@ -1132,9 +1143,19 @@ bool AssistService::RenameSymbol(const std::string& new_name, std::string* error
         std::vector<CodeActionEdit> workspace_edits;
         for (const auto& [uri, text_edits] : edit->changes) {
           const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
+          if (!path.has_value()) {
+            // A rename that touches a target whose URI cannot be decoded (non-local
+            // authority, malformed percent escape, unsupported scheme) must not be
+            // silently applied as a partial rename — and must never fall back to the
+            // empty "active buffer" path. Refuse the whole rename so the user is not
+            // left with a half-renamed symbol.
+            output_channels_->AppendLine(
+                "lsp.log", "LSP Log", "Rename aborted: server returned an unusable edit target URI");
+            return;
+          }
           for (const auto& [range, new_text] : text_edits) {
             workspace_edits.push_back(CodeActionEdit{
-                .path = path.value_or(std::filesystem::path{}),
+                .path = *path,
                 .range = editor::SelectionRange{
                     .start = editor::TextPosition{
                         static_cast<std::size_t>(std::max(0, range.start.line)),

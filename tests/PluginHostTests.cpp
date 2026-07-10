@@ -4,6 +4,7 @@
 #include "plugin/PluginInstallRoot.h"
 #include "plugin/PluginThread.h"
 #include "plugin/LuaRuntime.h"
+#include "plugin/PluginDecorationInterop.h"
 #include "plugin/PluginDiagnosticsInterop.h"
 #include "plugin/PluginLuaInterop.h"
 #include "workspace/WorkspacePluginAssetMonitor.h"
@@ -1724,6 +1725,61 @@ return ide.plugin({
          "ctx.debug.addConfig without capabilities.process.exec should register nothing");
 }
 
+// A tool's sha256 is the only integrity check the downloader performs, so an empty /
+// short / non-hex value must be rejected at registration. Each ctx.tools.add is
+// wrapped in pcall so a rejected (raised) registration does not abort setup(); only
+// valid 64-hex registrations should be contributed. Regression for inventory J22.
+void TestPluginHostToolRegistrationValidatesSha256() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "tool sha256 fixture\n");
+
+  WritePluginInit(
+      global_plugins, "tool-sha",
+      R"(local ide = require("microide")
+local function adder(id, sha)
+  return function(ctx)
+    ctx.tools.add({ id = id, label = id, platform = "linux-x64",
+                    url = "file:///tmp/" .. id, sha256 = sha, install_dir = id })
+  end
+end
+return ide.plugin({
+  id = "tool.sha",
+  setup = function(ctx)
+    pcall(adder("valid-lower", string.rep("a", 64)), ctx)
+    pcall(adder("valid-upper", string.rep("A", 64)), ctx)
+    pcall(adder("empty", ""), ctx)
+    pcall(adder("short", "abc"), ctx)
+    pcall(adder("nonhex", string.rep("z", 64)), ctx)
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  host.Reload(project_root);
+
+  const auto& tools = host.ContributedTools();
+  Expect(tools.size() == 2,
+         "only the two valid 64-hex tool registrations should be contributed");
+  for (const auto& tool : tools) {
+    Expect(tool.sha256.size() == 64,
+           "every contributed tool must carry a 64-character hex sha256");
+  }
+  const bool has_bad_hash = std::any_of(tools.begin(), tools.end(), [](const auto& tool) {
+    return tool.sha256.size() != 64;
+  });
+  Expect(!has_bad_hash,
+         "empty/short/non-hex sha256 registrations must be rejected at registration time");
+}
+
 void TestRepoTypescriptLspPluginUsesAbsoluteProjectBinary() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1942,6 +1998,17 @@ return ide.plugin({
       -- longjmping over the live ProcessRunArgs. Must fail cleanly instead.
       ctx.process.run({"true"}, { env = { [1] = "x" } })
     end)
+    ctx.commands.add("proc.env-too-many", function(ctx, args)
+      -- lua_next drains the env table unbounded; a huge table must be rejected by
+      -- the entry-count cap rather than growing environment_overrides without limit.
+      local e = {}
+      for i = 1, 5000 do e["K" .. i] = "v" end
+      ctx.process.run({"true"}, { env = e })
+    end)
+    ctx.commands.add("proc.env-too-big", function(ctx, args)
+      -- A single but enormous value must trip the total key+value byte cap.
+      ctx.process.run({"true"}, { env = { HUGE = string.rep("x", 1048577) } })
+    end)
     ctx.commands.add("diag.bad-path", function(ctx, args)
       ctx.diagnostics.publish({}, {})
     end)
@@ -1982,6 +2049,19 @@ return ide.plugin({
   Expect(command_error.find("process env keys must be strings") != std::string::npos,
          "bad env key should preserve the descriptive error message");
 
+  command_error.clear();
+  Expect(!host.ExecuteCommand("proc.env-too-many", {}, &command_error),
+         "an env table past the entry cap should fail the command");
+  Expect(command_error.find("process env exceeds the maximum number of entries") !=
+             std::string::npos,
+         "an over-count env table should report the entry-cap error");
+
+  command_error.clear();
+  Expect(!host.ExecuteCommand("proc.env-too-big", {}, &command_error),
+         "an env table past the total byte cap should fail the command");
+  Expect(command_error.find("process env exceeds the maximum total size") != std::string::npos,
+         "an over-size env table should report the byte-cap error");
+
   // The remaining cases exercise the other delegating wrappers (diagnostics /
   // files / workspace), whose null-host ternary fallbacks previously materialized
   // a std::filesystem::path or Callbacks temporary that the inner longjmp leaked.
@@ -2002,6 +2082,53 @@ return ide.plugin({
   Expect(command_error.empty(), "successful command should clear the error output");
   Expect(!host.Messages().empty() && host.Messages().back() == "proc.errors: proc-ok:0",
          "the Lua stack must remain intact across deferred-raise error paths");
+}
+
+// A decoration line/column is stored 0-based as (value - 1) in a uint32, so the
+// largest representable 1-based input is UINT32_MAX + 1 (== 2^32). ReadOneBasedField
+// used to validate only `> 0`, letting 2^32 + 1 wrap to 0 and silently mislocate the
+// decoration. Exercise both the boundary (accepted) and the first over-range value
+// (rejected with the positive-integer message, and nothing published).
+void TestPluginDecorationRejectsLineBeyondUint32Range() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  std::string create_error;
+  auto runtime = microide::plugin::LuaRuntime::Create(&create_error);
+  Expect(runtime != nullptr, "lua runtime should create");
+  lua_State* state = runtime->state();
+
+  bool published = false;
+  PluginHost::Callbacks callbacks;
+  callbacks.publish_decorations = [&](std::string_view, const std::filesystem::path&,
+                                      microide::editor::PluginDecorationData) { published = true; };
+  const std::filesystem::path project_root = "/tmp/decoration-range";
+
+  // 2^32 + 1: one past the largest representable 1-based line -> must be rejected.
+  Expect(luaL_dostring(state, "return { text_styles = { { line = 4294967297, start_col = 1, "
+                              "end_col = 2 } } }") == LUA_OK,
+         "the out-of-range decoration table should evaluate");
+  std::string error_message;
+  const bool over = microide::plugin::decoration_interop::PublishDecorations(
+      state, "test.plugin", project_root, "README.md", lua_gettop(state), callbacks,
+      &error_message);
+  Expect(!over, "a decoration line beyond uint32 range must be rejected");
+  Expect(error_message.find("line must be a positive integer") != std::string::npos,
+         "an out-of-range line should reuse the positive-integer rejection message");
+  Expect(!published, "a rejected decoration set must not publish");
+  lua_pop(state, 1);
+
+  // 2^32 (== UINT32_MAX + 1): the largest representable 1-based line -> accepted.
+  Expect(luaL_dostring(state, "return { text_styles = { { line = 4294967296, start_col = 1, "
+                              "end_col = 2 } } }") == LUA_OK,
+         "the boundary decoration table should evaluate");
+  error_message.clear();
+  const bool boundary = microide::plugin::decoration_interop::PublishDecorations(
+      state, "test.plugin", project_root, "README.md", lua_gettop(state), callbacks,
+      &error_message);
+  Expect(boundary, "the maximum representable 1-based line must be accepted");
+  Expect(published, "the boundary decoration set must publish");
+  lua_pop(state, 1);
 }
 
 // A Lua error raised with no protected frame above it (e.g. a raising metamethod
@@ -3279,6 +3406,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/DebugAdapterRequiresProcessExec",
           TestPluginHostDebugAdapterRequiresProcessExec);
   AddTest(tests, "PluginHost/LaunchConfigRegistration", TestPluginHostLaunchConfigRegistration);
+  AddTest(tests, "PluginHost/ToolRegistrationValidatesSha256",
+          TestPluginHostToolRegistrationValidatesSha256);
   AddTest(tests, "PluginHost/LaunchConfigRequiresProcessExec",
           TestPluginHostLaunchConfigRequiresProcessExec);
   AddTest(tests, "PluginHost/RepoTypescriptLspPluginUsesAbsoluteProjectBinary",
@@ -3287,6 +3416,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestRepoCppLspPluginRegistersClangdForCLikeLanguages);
   AddTest(tests, "PluginHost/ProcessRunReportsArgumentErrorsWithoutCorruptingState",
           TestPluginHostProcessRunReportsArgumentErrorsWithoutCorruptingState);
+  AddTest(tests, "PluginHost/DecorationRejectsLineBeyondUint32Range",
+          TestPluginDecorationRejectsLineBeyondUint32Range);
   AddTest(tests, "PluginHost/GetFieldProtectedCatchesRaisingIndexMetamethod",
           TestGetFieldProtectedCatchesRaisingIndexMetamethod);
   AddTest(tests, "PluginHost/PublishDiagnosticsSurvivesHostileIndexMetamethod",

@@ -3,6 +3,7 @@
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -28,7 +29,13 @@ constexpr lua_Integer kMaxEntriesPerKind = 100000;
 bool ReadOneBasedField(lua_State* state, int table_index, const char* key, std::uint32_t* out,
                        std::string* error_message) {
   lua_interop::GetFieldProtected(state, table_index, key);
-  if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) <= 0) {
+  // The value is stored 0-based (value - 1), so the largest representable 1-based
+  // input is UINT32_MAX + 1. Reject anything above that: without the upper bound
+  // the cast below wraps (e.g. 2^32 + 1 -> 0), silently mislocating the decoration.
+  constexpr lua_Integer kMaxOneBased =
+      static_cast<lua_Integer>(std::numeric_limits<std::uint32_t>::max()) + 1;
+  if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) <= 0 ||
+      lua_tointeger(state, -1) > kMaxOneBased) {
     if (error_message != nullptr) {
       *error_message = std::string(key) + " must be a positive integer";
     }

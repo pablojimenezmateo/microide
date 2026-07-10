@@ -655,6 +655,24 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     result.push_back(std::move(rb));
   }
 
+  // Two bindings collide when they share a key + normalized modifiers and their
+  // contexts overlap. A Global binding matches in every context (see FindKeybinding),
+  // so it overlaps any context; otherwise contexts must be equal.
+  const auto contexts_overlap = [](KeybindingContext a, KeybindingContext b) {
+    return a == b || a == KeybindingContext::Global || b == KeybindingContext::Global;
+  };
+  const auto conflicts_with_resolved = [&](SDL_Keycode key, SDL_Keymod mods,
+                                           KeybindingContext context) {
+    const SDL_Keymod normalized = NormalizedKeyModifiers(mods);
+    for (const ResolvedKeybinding& existing : result) {
+      if (existing.key == key && NormalizedKeyModifiers(existing.modifiers) == normalized &&
+          contexts_overlap(existing.context, context)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   for (const auto& contrib : plugin_host.ContributedKeybindings()) {
     if (is_disabled(contrib.id)) {
       continue;
@@ -671,6 +689,13 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
       context = KeybindingContext::Sidebar;
     } else if (contrib.context == "terminal") {
       context = KeybindingContext::Terminal;
+    }
+    // Built-ins resolve first and FindKeybinding returns the first match, so a plugin
+    // chord that collides with an already-resolved binding (a built-in or an earlier
+    // plugin) would be advertised in Help/Settings yet silently dispatch the winner
+    // instead. Skip the shadowed contribution so the UI never shows a dead binding.
+    if (conflicts_with_resolved(key, mods, context)) {
+      continue;
     }
     const ActionSpec* spec = FindWorkspaceActionByCommand(contrib.action);
     ResolvedKeybinding rb;

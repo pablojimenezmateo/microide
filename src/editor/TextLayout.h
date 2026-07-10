@@ -80,12 +80,14 @@ class TextLayout {
     bool empty() const { return start >= end; }
   };
 
-  // Identifier (`[A-Za-z0-9_]+`) range containing the byte at `text_column`, or an empty range
-  // when that byte is not an identifier character (whitespace, punctuation, past end-of-line).
-  // Used by debug hover-to-inspect to resolve the bare word under the cursor as an `evaluate`
-  // expression. Identifier bytes are ASCII, so multibyte UTF-8 bytes (>= 0x80) terminate the run.
-  // TODO(phase>5): optionally extend leftward across member-access (`.`/`->`) for richer
-  // expressions; the `evaluate` plumbing is identical either way.
+  // Identifier range containing the byte at `text_column`, or an empty range when that byte is
+  // not an identifier character (whitespace, punctuation, past end-of-line). The core run is
+  // `[A-Za-z0-9_]+`; the range is then extended leftward across member-access operators (`.` and
+  // `->`) so a hover on the trailing member of `foo.bar`, `ptr->field`, or a nested `a.b.c` chain
+  // resolves the full member expression for `evaluate`. Used by debug hover-to-inspect. Identifier
+  // bytes are ASCII, so multibyte UTF-8 bytes (>= 0x80) terminate every run and bound the chain.
+  // Only leftward member access is absorbed; the range never extends rightward past the hovered
+  // member, keeping the boundary deterministic.
   static ByteRange IdentifierRangeAt(std::string_view line, std::size_t text_column);
 };
 

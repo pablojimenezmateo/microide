@@ -750,7 +750,9 @@ void WorkspaceShell::InvalidateStaleMergeTabs() {
       merge_tab.index_stale = true;
       merge_tab.marked_resolved = false;
     }
-    if (!merge_tab.output_path.empty() && std::filesystem::exists(merge_tab.output_path)) {
+    std::error_code merge_exists_error;
+    if (!merge_tab.output_path.empty() &&
+        std::filesystem::exists(merge_tab.output_path, merge_exists_error) && !merge_exists_error) {
       std::error_code error;
       const auto tick = std::filesystem::last_write_time(merge_tab.output_path, error);
       if (!error && merge_tab.disk_result_tick.has_value() &&
@@ -810,7 +812,9 @@ void WorkspaceShell::FinalizeGitMergeTab(MergeTabState& merge_tab,
     }
   }
   merge_tab.remaining_conflicted_files = remaining_files;
-  if (!merge_tab.output_path.empty() && std::filesystem::exists(merge_tab.output_path)) {
+  std::error_code output_exists_error;
+  if (!merge_tab.output_path.empty() &&
+      std::filesystem::exists(merge_tab.output_path, output_exists_error) && !output_exists_error) {
     std::error_code error;
     const auto tick = std::filesystem::last_write_time(merge_tab.output_path, error);
     if (!error) {

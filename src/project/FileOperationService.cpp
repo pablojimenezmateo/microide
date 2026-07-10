@@ -3,12 +3,47 @@
 #include "platform/FsOps.h"
 #include "platform/Trash.h"
 
+#include <cerrno>
 #include <fstream>
 #include <system_error>
+
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#include <sys/stat.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 namespace microide::project {
 
 namespace {
+
+// Atomically create `path` failing if it already exists. Returns 1 on success, 0
+// if the file already existed (EEXIST), -1 on any other error. O_CREAT|O_EXCL is
+// a single kernel operation, so unlike an exists() probe followed by a truncating
+// open it cannot clobber a file another process creates in the meantime.
+int ExclusiveCreateEmptyFile(const std::filesystem::path& path) {
+#ifdef _WIN32
+  int fd = -1;
+  const errno_t open_error = _wsopen_s(&fd, path.c_str(),
+                                       _O_BINARY | _O_CREAT | _O_EXCL | _O_WRONLY,
+                                       _SH_DENYNO, _S_IREAD | _S_IWRITE);
+  if (open_error != 0 || fd < 0) {
+    return (open_error == EEXIST) ? 0 : -1;
+  }
+  _close(fd);
+  return 1;
+#else
+  const int fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0644);
+  if (fd < 0) {
+    return (errno == EEXIST) ? 0 : -1;
+  }
+  ::close(fd);
+  return 1;
+#endif
+}
 
 FileOperationResult Failure(std::string message) {
   return FileOperationResult{
@@ -50,22 +85,24 @@ FileOperationResult FileOperationService::CreateFile(const std::filesystem::path
     return Failure("Invalid file name");
   }
 
-  std::error_code error;
-  if (std::filesystem::exists(normalized_path, error)) {
-    return Failure("The file already exists");
-  }
-
   const std::filesystem::path parent = normalized_path.parent_path();
   if (parent.empty()) {
     return Failure("The file path has no parent directory");
   }
+  std::error_code error;
   std::filesystem::create_directories(parent, error);
   if (error) {
     return Failure("Failed to create the parent directory");
   }
 
-  std::ofstream stream(normalized_path, std::ios::binary | std::ios::trunc);
-  if (!stream) {
+  // Exclusive create: never truncate an existing file. A plain exists()-then-open
+  // sequence would silently overwrite a file that a racing process created between
+  // the two steps.
+  const int created = ExclusiveCreateEmptyFile(normalized_path);
+  if (created == 0) {
+    return Failure("The file already exists");
+  }
+  if (created < 0) {
     return Failure("Failed to create the file");
   }
   return Success(normalized_path);

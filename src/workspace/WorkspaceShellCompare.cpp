@@ -57,13 +57,21 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     std::size_t selected_row) const {
   const std::filesystem::path normalized_path = path.lexically_normal();
   const auto content = project::ReadGitFileAtCommit(context_.current_project_state.root, normalized_path, commit.hash);
-  if (!content.has_value()) {
+  if (!content.has_value() || content->truncated) {
+    // Absent revision -> nullopt; a truncated blob was clipped at the subprocess
+    // capture ceiling, so diffing the partial bytes as truth would be bogus.
     return std::nullopt;
   }
 
-  const std::optional<std::string> working_content = util::ReadTextFile(normalized_path);
+  // Distinguish an absent working-tree file (a legitimate whole-file-deleted diff)
+  // from an unreadable or binary one; the latter must not masquerade as empty text
+  // or an editable compare could save a false empty file over it.
+  const util::TextFileReadResult working = util::ReadTextFileClassified(normalized_path);
+  if (working.is_error()) {
+    return std::nullopt;
+  }
   auto compare_tab = BuildCompareTabFromBuffers(normalized_path, content->exists ? content->content : "",
-                                                working_content.value_or(""), commit.short_hash,
+                                                working.content, commit.short_hash,
                                                 "Working tree", selected_row, true);
   if (compare_tab.has_value() && compare_tab->compare.has_value()) {
     compare_tab->compare->left_path = normalized_path;
@@ -87,20 +95,28 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
       (compare_tab.right_path.empty() ? normalized_path : compare_tab.right_path).lexically_normal();
   const auto left_content =
       project::ReadGitFileAtCommit(context_.current_project_state.root, left_source_path, compare_tab.commit_hash);
-  if (!left_content.has_value()) {
+  if (!left_content.has_value() || left_content->truncated) {
     return std::nullopt;
   }
 
   std::string right_content;
   if (compare_tab.right_ref == "WORKTREE") {
-    right_content = compare_tab.right_viewport.dirty()
-                        ? util::SerializeLines(compare_tab.right_viewport.lines().Snapshot(),
-                                               compare_tab.right_viewport.line_ending())
-                        : util::ReadTextFile(right_source_path).value_or("");
+    if (compare_tab.right_viewport.dirty()) {
+      right_content = util::SerializeLines(compare_tab.right_viewport.lines().Snapshot(),
+                                           compare_tab.right_viewport.line_ending());
+    } else {
+      // Only a truly-absent worktree file maps to empty; an unreadable or binary
+      // file is an error state, not a whole-file-deleted diff.
+      const util::TextFileReadResult working = util::ReadTextFileClassified(right_source_path);
+      if (working.is_error()) {
+        return std::nullopt;
+      }
+      right_content = working.content;
+    }
   } else {
     const auto right_commit_content =
         project::ReadGitFileAtCommit(context_.current_project_state.root, right_source_path, compare_tab.right_ref);
-    if (!right_commit_content.has_value()) {
+    if (!right_commit_content.has_value() || right_commit_content->truncated) {
       return std::nullopt;
     }
     right_content =

@@ -249,14 +249,27 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
     if (callbacks_.on_stop_began) {
       callbacks_.on_stop_began(stop);
     }
-    // Resolve the call stack for the stopped thread, then hand the focused
-    // frames up so the host can highlight the execution line + fill the panel.
-    RequestStackTrace(stop);
-    // Fetch the thread list as a second request so the Call Stack panel can show
-    // a thread selector; it lands a beat later and never delays the stack.
-    RefreshThreadList();
+    if (stop.thread_id.has_value()) {
+      // Resolve the call stack for the stopped thread, then hand the focused
+      // frames up so the host can highlight the execution line + fill the panel.
+      RequestStackTrace(stop);
+      // Fetch the thread list as a second request so the Call Stack panel can show
+      // a thread selector; it lands a beat later and never delays the stack.
+      RefreshThreadList();
+    } else {
+      // The adapter omitted threadId (legal on `stopped`). Resolve a concrete
+      // thread before requesting the stack/continue instead of sending threadId:0.
+      ResolveFocusThreadForStop(stop_epoch_);
+    }
   } else if (event == "continued") {
-    if (state_ == State::Stopped) {
+    // Only a full resume (allThreadsContinued) tears down the shared stopped view.
+    // A single-thread continue must NOT clear the focused stack/execution state:
+    // microide focuses one stopped thread at a time, so a partial resume of some
+    // other thread leaves that focus valid until it too stops or fully resumes.
+    // (An absent allThreadsContinued is treated as not-all — the conservative
+    // choice; the next `stopped` or full `continued` re-syncs the view.)
+    const dap_protocol::DapContinuedEvent resumed = dap_protocol::ParseContinuedEvent(body);
+    if (state_ == State::Stopped && resumed.all_threads_continued) {
       if (callbacks_.on_resumed) {
         callbacks_.on_resumed();
       }
@@ -343,6 +356,13 @@ void DebugSession::RequestStackTrace(const dap_protocol::DapStoppedEvent& stop) 
   if (!callbacks_.on_stopped) {
     return;
   }
+  // A concrete threadId is required; the no-threadId stop path resolves one via
+  // ResolveFocusThreadForStop before calling here, so an unset id means "nothing
+  // to focus yet" and we skip rather than send threadId:0.
+  if (!stop.thread_id.has_value()) {
+    return;
+  }
+  const int thread_id = *stop.thread_id;
   // Bind this stack request to the stop it belongs to. Every other async apply
   // path is generation-guarded — scopes/variables/watches via frame_generation_,
   // the thread list via stop_epoch_ (RefreshThreadList) — but the stack trace,
@@ -361,7 +381,7 @@ void DebugSession::RequestStackTrace(const dap_protocol::DapStoppedEvent& stop) 
   client_->SendRequestAsync(
       // Bound the levels requested (0 == "all frames"); a cooperative adapter then
       // caps transfer, and ParseStackFrames caps again for hostile adapters.
-      "stackTrace", dap_protocol::MakeStackTraceArguments(stop.thread_id, 0, 10000),
+      "stackTrace", dap_protocol::MakeStackTraceArguments(thread_id, 0, 10000),
       [this, stop, epoch](const dap_protocol::DapResponse& response) {
         if (!response.success) {
           return;
@@ -373,6 +393,25 @@ void DebugSession::RequestStackTrace(const dap_protocol::DapStoppedEvent& stop) 
         // once at session creation and never reassigned during the session.
         callbacks_.on_stopped(stop, dap_protocol::ParseStackFrames(response.body));
       });
+}
+
+void DebugSession::ResolveFocusThreadForStop(std::uint64_t epoch) {
+  RequestThreads([this, epoch](std::vector<dap_protocol::DapThread> threads) {
+    // Drop the reply if a resume or a newer stop superseded this one.
+    if (epoch != stop_epoch_ || state_ != State::Stopped) {
+      return;
+    }
+    if (threads.empty()) {
+      return;  // no thread to focus; leave the (already-set) Stopped state as-is
+    }
+    const int focus = threads.front().id;
+    stopped_thread_id_ = focus;
+    last_stop_.thread_id = focus;
+    // Now that a concrete thread is known, resolve its stack and (re)publish the
+    // thread list to the Call Stack selector.
+    RequestStackTrace(last_stop_);
+    RefreshThreadList();
+  });
 }
 
 void DebugSession::RequestScopes(int frame_id,
@@ -487,7 +526,18 @@ void DebugSession::SendResumeRequest(const char* command) {
   if (state_ != State::Stopped) {
     return;
   }
-  client_->SendRequestAsync(command, ThreadIdArgs(stopped_thread_id_), {});
+  if (stopped_thread_id_.has_value()) {
+    client_->SendRequestAsync(command, ThreadIdArgs(*stopped_thread_id_), {});
+  } else {
+    // A `stopped` with no threadId whose threads query has not landed yet: resolve
+    // a thread and resume it rather than sending threadId:0 (which DAP rejects /
+    // misroutes). `command` is a string literal, safe to capture by value.
+    RequestThreads([this, command](std::vector<dap_protocol::DapThread> threads) {
+      if (!threads.empty()) {
+        client_->SendRequestAsync(command, ThreadIdArgs(threads.front().id), {});
+      }
+    });
+  }
   // Optimistically resume so the UI clears immediately; the next `stopped`
   // (breakpoint/step end) repopulates the execution state.
   if (callbacks_.on_resumed) {
