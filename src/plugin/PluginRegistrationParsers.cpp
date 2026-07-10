@@ -335,7 +335,10 @@ bool ParseSettingRegistration(lua_State* state,
   if (*type_opt == "enum") {
     lua_interop::GetFieldProtected(state, table_index, "enum_values");
     if (lua_istable(state, -1)) {
-      const lua_Integer n = static_cast<lua_Integer>(lua_rawlen(state, -1));
+      // Clamp against a sparse-border lua_rawlen; matches the hardened harvests.
+      constexpr lua_Integer kMaxEnumValues = 4096;
+      const lua_Integer n =
+          std::min<lua_Integer>(static_cast<lua_Integer>(lua_rawlen(state, -1)), kMaxEnumValues);
       for (lua_Integer i = 1; i <= n; ++i) {
         lua_rawgeti(state, -1, i);
         if (lua_isstring(state, -1)) {

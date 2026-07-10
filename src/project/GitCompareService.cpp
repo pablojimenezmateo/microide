@@ -306,8 +306,11 @@ std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesys
   // `-z` makes paths NUL-delimited so paths containing spaces and rename records
   // (status NUL old NUL new) parse correctly; the prior whitespace-split parser
   // truncated spaced paths and mis-attributed renames.
-  const auto result = repo.Execute(
-      {"diff", "--name-status", "-z", "--find-renames", std::string(base_ref) + "...HEAD"});
+  // `--end-of-options` guards a user-typed SpecificRef base (custom_ref) that may
+  // begin with `-`: without it git parses `--output=...` etc. as an option rather
+  // than a revision. Matches the `--` discipline used elsewhere in this subsystem.
+  const auto result = repo.Execute({"diff", "--name-status", "-z", "--find-renames",
+                                    "--end-of-options", std::string(base_ref) + "...HEAD"});
   if (!result.success() || result.output.empty()) {
     return {};
   }
@@ -325,8 +328,8 @@ std::vector<GitBranchFileEntry> CollectGitWorkingTreeDiffFiles(const std::filesy
   // Two-dot diff (no `...`): compares `ref` against the working tree, so it
   // includes uncommitted edits — i.e. "what is different between local state and
   // <ref>". `-z` keeps spaced paths and rename records intact.
-  const auto result =
-      repo.Execute({"diff", "--name-status", "-z", "--find-renames", std::string(ref)});
+  const auto result = repo.Execute({"diff", "--name-status", "-z", "--find-renames",
+                                    "--end-of-options", std::string(ref)});
   if (!result.success() || result.output.empty()) {
     return {};
   }

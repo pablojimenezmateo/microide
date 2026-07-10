@@ -519,6 +519,32 @@ void TestTextViewportLastAppliedEditTracksInsertUndoRedo() {
          "redo should restore the forward replacement text");
 }
 
+// A disjoint multi-caret line delete cannot be represented as one contiguous
+// AppliedEdit. It must clear last_applied_edit_ (like the other aggregate paths)
+// so the incremental LSP sync and breakpoint shifter fall back to a full resync
+// instead of replaying the previous single-caret edit's stale range/replacement.
+void TestTextViewportMultiCaretDeleteLineClearsLastAppliedEdit() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\nbeta\ngamma\ndelta\n", "/tmp/multi-delete-applied.txt");
+
+  // A prior single-caret insert leaves a concrete applied edit behind.
+  viewport.MoveCursorTo(0, 2);
+  viewport.InsertText("Z");
+  Expect(viewport.last_applied_edit().has_value(),
+         "single-caret insert should publish an applied edit as the stale baseline");
+
+  // Drop a second caret on a non-adjacent line and delete both lines at once.
+  viewport.MoveCursorTo(0, 0);
+  viewport.AddSecondaryCaret(2, 0);
+  Expect(viewport.has_multiple_carets(),
+         "test setup should establish a multi-caret configuration");
+  Expect(viewport.DeleteCurrentLine(),
+         "multi-caret DeleteCurrentLine should report a successful edit");
+
+  Expect(!viewport.last_applied_edit().has_value(),
+         "multi-caret line delete must clear last_applied_edit_ so LSP/breakpoints resync");
+}
+
 void TestTextViewportLastAppliedEditTracksMultilineReplacement() {
   TextViewport viewport;
   viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/applied-edit-range.txt");
@@ -2887,6 +2913,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSameLineCountEditInvalidatesSyntaxCache);
   AddTest(tests, "TextViewport/LastAppliedEditTracksInsertUndoRedo",
           TestTextViewportLastAppliedEditTracksInsertUndoRedo);
+  AddTest(tests, "TextViewport/MultiCaretDeleteLineClearsLastAppliedEdit",
+          TestTextViewportMultiCaretDeleteLineClearsLastAppliedEdit);
   AddTest(tests, "TextViewport/LastAppliedEditTracksMultilineReplacement",
           TestTextViewportLastAppliedEditTracksMultilineReplacement);
   AddTest(tests, "TextViewport/UndoRedoPreservesLatestViewState",

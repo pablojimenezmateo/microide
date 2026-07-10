@@ -70,7 +70,13 @@ void ReadSymbolArray(lua_State* state,
   // invoking lua_geti over an adversarial __index/__len would spin this worker
   // thread forever (and could longjmp past the native frame).
   const int array_index = lua_absindex(state, -1);
-  const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, array_index));
+  // Clamp the iteration count, not just the accepted-node count: entries that are
+  // non-tables or lack a "name" never bump *total, so a sparse-border table with a
+  // huge lua_rawlen would otherwise defeat the *total < kMaxSymbolNodes guard and
+  // spin this worker thread. Mirrors the sibling completion/code-action harvests.
+  const lua_Integer count = std::min<lua_Integer>(
+      static_cast<lua_Integer>(lua_rawlen(state, array_index)),
+      static_cast<lua_Integer>(kMaxSymbolNodes));
   for (lua_Integer i = 1; i <= count && *total < kMaxSymbolNodes; ++i) {
     lua_rawgeti(state, array_index, i);
     if (!lua_istable(state, -1)) {

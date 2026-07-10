@@ -50,6 +50,26 @@ regression worse than the defect. Recorded here so they are not silently lost.
 > - **Git porcelain-v2:** a `'2'` rename record consumes the following record as
 >   origPath unconditionally; only matters on truncated/garbled `-z` output. Very low.
 
+> **Deferred 2026-07-10 (pass 6 — cross-subsystem bug hunt):** a four-way fan-out
+> (search/git, editor/compare/merge, persistence/util/control, terminal/plugin)
+> landed 7 fixes (5 plugin harvest-loop clamps, the multi-caret `DeleteCurrentLine`
+> stale-`last_applied_edit_` fix, and the `git diff --end-of-options` guard — see
+> commit). Persistence/util/control and terminal came back clean. Two genuine
+> findings were deliberately **not** fixed and are recorded here:
+> - **Editor: `MoveLineUp`/`MoveLineDown` drop the selection when it ends at
+>   column 0 of the line after the block.** `ResolveLineRange` decrements the block's
+>   `last` to exclude that trailing line, but `RestoreCaretsAfterLineMove` gates
+>   selection restoration on `selection->end.line <= range_last`, so the original
+>   `end.line == range_last+1` fails the guard and the code falls to the single-caret
+>   branch — the block stays moved but the selection is lost (self-corrects on next
+>   selection). A correct fix must shift the trailing column-0 boundary by `delta`
+>   and clamp an out-of-bounds end across all orientations (upward selections,
+>   MoveLineUp at top-of-file); a subtly-wrong selection is worse than the safe
+>   fallback, so this wants a deliberate fix with dedicated tests. (Editor obs #2.)
+> - **Git porcelain-v2 empty-path `'2'` record** (already noted under pass 5): the
+>   re-audit confirmed it is truncation-only and harmless — the stray origPath
+>   record is dropped by `default: break`. Left as-is. (Search/git #2.)
+
 > **Resolved 2026-07-10 (bug-inventory review pass — `microide-2026-07-10-bug-inventory.md`):**
 > a ~90-item inventory built against `main` was triaged against the current tree (many
 > items were already closed by the twelfth/thirteenth passes) and ~50 still-live items

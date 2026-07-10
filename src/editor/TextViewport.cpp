@@ -642,6 +642,12 @@ bool TextViewport::DeleteCurrentLine() {
     HistoryEntry aggregate_entry = TextViewportUndoHistory::BuildEntryForDocumentChange(
         before_lines, before_state, after_lines, CaptureViewState());
     aggregate_entry.start_line += before_lines_start;
+    // A disjoint multi-line delete cannot be described by one contiguous
+    // AppliedEdit; leaving the previous single-caret edit's value in place would
+    // feed a stale range/replacement to the incremental LSP sync and the
+    // breakpoint shifter. Clear it so both fall back to a full resync, matching
+    // the sibling aggregate paths (TextViewportMultiCaret / LanguageBehavior).
+    last_applied_edit_.reset();
     PushHistoryEntry(std::move(aggregate_entry));
     return true;
   }

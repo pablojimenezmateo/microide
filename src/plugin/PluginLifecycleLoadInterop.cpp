@@ -74,7 +74,12 @@ bool ParseCapabilities(lua_State* state,
     lua_pop(state, 1);
     lua_interop::GetFieldProtected(state, process_index, "allow");
     if (lua_istable(state, -1)) {
-      const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, -1));
+      // Clamp against a sparse-border lua_rawlen even though this parses the plugin's
+      // own manifest at load; matches the hardened harvest loops elsewhere.
+      constexpr lua_Integer kMaxProcessAllowEntries = 4096;
+      const lua_Integer raw_count = static_cast<lua_Integer>(lua_rawlen(state, -1));
+      const lua_Integer count =
+          raw_count < kMaxProcessAllowEntries ? raw_count : kMaxProcessAllowEntries;
       for (lua_Integer i = 1; i <= count; ++i) {
         lua_rawgeti(state, -1, i);
         if (lua_isstring(state, -1)) {

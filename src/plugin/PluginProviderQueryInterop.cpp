@@ -22,6 +22,7 @@ constexpr lua_Integer kMaxDiscoveredTests = 20000;
 constexpr lua_Integer kMaxTestRunResults = 20000;
 constexpr lua_Integer kMaxScmEntries = 200000;
 constexpr lua_Integer kMaxAnnotationLines = 200000;
+constexpr lua_Integer kMaxAuthScopes = 4096;
 
 }  // namespace
 
@@ -499,7 +500,8 @@ bool LoginAuthProvider(
     lua_interop::GetFieldProtected(state, -1, "scopes");
     if (lua_istable(state, -1)) {
       const int scopes_index = lua_absindex(state, -1);
-      const lua_Integer scopes_count = static_cast<lua_Integer>(lua_rawlen(state, scopes_index));
+      const lua_Integer scopes_count = std::min<lua_Integer>(
+          static_cast<lua_Integer>(lua_rawlen(state, scopes_index)), kMaxAuthScopes);
       for (lua_Integer i = 1; i <= scopes_count; ++i) {
         lua_rawgeti(state, scopes_index, i);
         if (lua_isstring(state, -1)) {
@@ -560,7 +562,8 @@ bool RefreshAuthSession(
     lua_interop::GetFieldProtected(state, -1, "scopes");
     if (lua_istable(state, -1)) {
       const int scopes_index = lua_absindex(state, -1);
-      const lua_Integer scopes_count = static_cast<lua_Integer>(lua_rawlen(state, scopes_index));
+      const lua_Integer scopes_count = std::min<lua_Integer>(
+          static_cast<lua_Integer>(lua_rawlen(state, scopes_index)), kMaxAuthScopes);
       for (lua_Integer i = 1; i <= scopes_count; ++i) {
         lua_rawgeti(state, scopes_index, i);
         if (lua_isstring(state, -1)) {

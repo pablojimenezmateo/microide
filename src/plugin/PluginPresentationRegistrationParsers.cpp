@@ -167,7 +167,11 @@ bool RegisterFileIconTheme(lua_State* state,
   }
   if (lua_istable(state, -1)) {
     const int rules_index = lua_gettop(state);
-    const std::size_t count = static_cast<std::size_t>(lua_rawlen(state, rules_index));
+    // Clamp iterations, not just accepted rules: entries that are non-tables or
+    // fail the matcher/icon gate never grow theme.rules, so a sparse-border table
+    // with a huge lua_rawlen would otherwise defeat the size()<kMaxIconRules guard.
+    const std::size_t count =
+        std::min<std::size_t>(static_cast<std::size_t>(lua_rawlen(state, rules_index)), kMaxIconRules);
     for (std::size_t i = 1; i <= count && theme.rules.size() < kMaxIconRules; ++i) {
       lua_rawgeti(state, rules_index, static_cast<lua_Integer>(i));
       if (lua_istable(state, -1)) {

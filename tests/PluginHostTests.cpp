@@ -1320,6 +1320,53 @@ return ide.plugin({
          "code action arguments harvest must clamp to kMaxCodeActionArguments (256)");
 }
 
+// The document-symbol harvest bounds its iteration count with lua_rawlen; entries
+// that lack a "name" never bump the accepted-node counter, so the harvest must
+// clamp the raw iteration count too (kMaxSymbolNodes == 8192) or a huge array of
+// unnamed/invalid entries would spin the worker thread. A provider returning far
+// more valid symbols than the cap must be bounded to exactly kMaxSymbolNodes.
+void TestPluginHostDocumentSymbolHarvestClampsHugeArray() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.todo";
+  WriteFile(source, "alpha\n");
+
+  WritePluginInit(
+      global_plugins, "many-symbols-provider",
+      R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "many-symbols-provider",
+  setup = function(ctx)
+    ctx.document_symbols.add({
+      id = "many-symbols",
+      language_id = "todo",
+      provide = function(_)
+        local out = {}
+        for i = 1, 12000 do out[i] = { name = "sym" .. i, kind = "field", line = 1, column = 1 } end
+        return out
+      end
+    })
+  end
+})
+)lua");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "many-symbols provider plugin should reload successfully");
+
+  std::string runtime_error;
+  const auto symbols = host.QueryDocumentSymbols("todo", source, &runtime_error);
+  Expect(symbols.size() == 8192,
+         "document-symbol harvest must clamp to kMaxSymbolNodes (8192), not the raw array length");
+}
+
 void TestPluginHostPhase4ContributionApis() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3379,6 +3426,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostProviderQueryBoundsAdversarialMetatable);
   AddTest(tests, "PluginHost/ProviderQueryClampsHugeArrayHarvest",
           TestPluginHostProviderQueryClampsHugeArrayHarvest);
+  AddTest(tests, "PluginHost/DocumentSymbolHarvestClampsHugeArray",
+          TestPluginHostDocumentSymbolHarvestClampsHugeArray);
   AddTest(tests, "PluginHost/RunAsyncInvokesCallbackSynchronously",
           TestPluginHostRunAsyncInvokesCallbackSynchronously);
   AddTest(tests, "PluginHost/RunAsyncCallbackOutlivesOuterWatchdog",
