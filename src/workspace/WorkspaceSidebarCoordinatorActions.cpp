@@ -95,9 +95,51 @@ void SidebarCoordinator::MoveSimpleListSelection(
 }
 
 void SidebarCoordinator::MoveGitSelection(int delta) {
-  // Git's selection clamps against the entry vector but reveals against the
-  // richer line model, so it keeps its own move/reveal pair.
-  if (MoveSelectionIndex(state_.sidebar.git.entries, &state_.sidebar.git.selected_index, delta)) {
+  // Selection is a flat index into git.entries, but the rendered list is a
+  // collapsible tree: entries hidden under a collapsed directory must be skipped,
+  // or arrow keys walk invisible rows and the highlight appears to vanish. Step
+  // through the VISIBLE entry rows of the current line model instead.
+  auto& git = state_.sidebar.git;
+  if (git.entries.empty() || delta == 0) {
+    return;
+  }
+  const std::vector<GitSidebarLine> lines =
+      operations_.build_git_sidebar_lines ? operations_.build_git_sidebar_lines()
+                                          : std::vector<GitSidebarLine>{};
+  std::vector<std::size_t> visible;
+  visible.reserve(git.entries.size());
+  for (const GitSidebarLine& line : lines) {
+    if (line.kind == GitSidebarLine::Kind::Entry && line.entry_index >= 0) {
+      visible.push_back(static_cast<std::size_t>(line.entry_index));
+    }
+  }
+  if (visible.empty()) {
+    // No tree model available (or nothing visible): fall back to the flat clamp.
+    if (MoveSelectionIndex(git.entries, &git.selected_index, delta)) {
+      RevealSelectedGitLine();
+    }
+    return;
+  }
+
+  std::optional<std::size_t> pos;
+  for (std::size_t i = 0; i < visible.size(); ++i) {
+    if (visible[i] == git.selected_index) {
+      pos = i;
+      break;
+    }
+  }
+  std::size_t next_pos;
+  if (pos.has_value()) {
+    const long long moved = static_cast<long long>(*pos) + delta;
+    next_pos = static_cast<std::size_t>(
+        std::clamp<long long>(moved, 0, static_cast<long long>(visible.size()) - 1));
+  } else {
+    // Selected entry is currently hidden: land on the first visible entry in the
+    // direction of travel.
+    next_pos = delta > 0 ? 0 : visible.size() - 1;
+  }
+  if (visible[next_pos] != git.selected_index) {
+    git.selected_index = visible[next_pos];
     RevealSelectedGitLine();
   }
 }

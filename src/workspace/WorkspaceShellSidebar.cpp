@@ -426,12 +426,38 @@ bool WorkspaceShell::ToggleGitSidebarDirectoryCollapsed(const std::string& tree_
   if (tree_node_key.empty()) {
     return false;
   }
-  auto& collapsed = context_.current_project_state.sidebar.git.collapsed_directory_keys;
+  auto& git = context_.current_project_state.sidebar.git;
+  auto& collapsed = git.collapsed_directory_keys;
   const auto it = collapsed.find(tree_node_key);
   if (it == collapsed.end()) {
     collapsed.insert(tree_node_key);
   } else {
     collapsed.erase(it);
+  }
+
+  // Collapsing a directory can hide the selected entry (selection is a flat entry
+  // index, the tree filters rows). Snap the flat selection to the nearest still-
+  // visible entry so arrow keys and the highlight don't strand on an invisible row.
+  if (git.selected_index < git.entries.size()) {
+    const std::vector<GitSidebarLine> lines = BuildGitSidebarLines();
+    if (!FindSelectedGitSidebarLineIndex(lines, git.selected_index).has_value()) {
+      std::optional<std::size_t> nearest;
+      for (const GitSidebarLine& line : lines) {
+        if (line.kind == GitSidebarLine::Kind::Entry && line.entry_index >= 0) {
+          const auto candidate = static_cast<std::size_t>(line.entry_index);
+          // Prefer the first visible entry at/after the old selection; otherwise
+          // keep the last visible entry before it.
+          if (candidate >= git.selected_index) {
+            nearest = candidate;
+            break;
+          }
+          nearest = candidate;
+        }
+      }
+      if (nearest.has_value()) {
+        git.selected_index = *nearest;
+      }
+    }
   }
   return true;
 }

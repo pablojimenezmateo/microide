@@ -9,6 +9,7 @@
 #include "project/GitStatusService.h"
 #include "project/IgnoreMatcher.h"
 #include "project/SymlinkLoopGuard.h"
+#include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 #include "util/StringUtil.h"
@@ -172,8 +173,10 @@ bool DirectoryTree::HasManuallyCollapsedAncestor(const std::filesystem::path& pa
   }
 
   const auto normalized_path = absolute_path.lexically_normal();
+  // Component-wise containment via the sanctioned helper, not a raw byte-prefix
+  // test: rfind(root,0)==0 would treat `/a/project/...` as inside root `/a/proj`.
   for (auto current = normalized_path.parent_path();
-       !current.empty() && current != root_ && current.native().rfind(root_.native(), 0) == 0;
+       !current.empty() && current != root_ && util::PathEqualsOrWithin(current, root_);
        current = current.parent_path()) {
     if (manually_collapsed_paths_.contains(NormalizePathKey(current))) {
       return true;

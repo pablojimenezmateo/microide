@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "workspace/WorkspaceSettingsRegistry.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
@@ -10,6 +11,9 @@
 namespace microide::tests {
 namespace {
 
+using microide::workspace::FindBuiltinSettingSpec;
+using microide::workspace::SettingSpec;
+using microide::workspace::SettingType;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
@@ -57,6 +61,33 @@ void TestSetSettingCommandFlipsAndRejects() {
          "set-setting should reject an unknown id");
   Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "set-setting"),
          "set-setting with no arguments should reject");
+}
+
+// A built-in write must STORE the parsed + range-clamped value, not the raw input,
+// so the stored/displayed/persisted value matches the value the editor applies.
+// Previously `set-setting editor.font_size 999` stored "999" while the editor
+// rendered at the clamped 32, so the overlay showed 999 and its stepper wrapped.
+void TestSetSettingStoresClampedBuiltinValue() {
+  TemporaryDirectory temp;
+  ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
+
+  WorkspaceShell shell;
+  shell.Initialize({});
+
+  const SettingSpec* spec = FindBuiltinSettingSpec("editor.font_size");
+  Expect(spec != nullptr && spec->type == SettingType::Int, "font_size must be an int spec");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.font_size", "999"),
+         "an out-of-range int write should still succeed (clamped)");
+  Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.font_size") ==
+             std::to_string(spec->max_int),
+         "the stored value must be clamped to the spec max, not the raw 999");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.font_size", "1"),
+         "a below-range int write should succeed (clamped)");
+  Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.font_size") ==
+             std::to_string(spec->min_int),
+         "the stored value must be clamped to the spec min, not the raw 1");
 }
 
 // A transient (`--set` / spec) override applies live but is stripped before the
@@ -192,6 +223,8 @@ void RegisterWorkspaceShellControlSettingsTests(std::vector<TestCase>& tests) {
           TestForceStartedControlChannelSurvivesSettingChange);
   AddTest(tests, "WorkspaceShellControlSettings/SetSettingCommandFlipsAndRejects",
           TestSetSettingCommandFlipsAndRejects);
+  AddTest(tests, "WorkspaceShellControlSettings/SetSettingStoresClampedBuiltinValue",
+          TestSetSettingStoresClampedBuiltinValue);
   AddTest(tests, "WorkspaceShellControlSettings/TransientSettingNotPersisted",
           TestTransientSettingNotPersisted);
   AddTest(tests, "WorkspaceShellControlSettings/StartupOverridesAreTransient",

@@ -1113,9 +1113,14 @@
     state_teardown_interop::DestroyPluginState(plugin);
   }
 
-  void UnregisterContributionsForState(lua_State* state) {
+  // `plugin` is passed explicitly rather than resolved via FindPluginByState: during
+  // setup-failure cleanup the failing plugin is not yet in `plugins` (and active_plugin
+  // was reset), so FindPluginByState would return nullptr and the teardown would skip
+  // every plugin_id-keyed container and runtime-provider vector — leaving them pointing
+  // at the lua_State we are about to destroy (use-after-free on the next query).
+  void UnregisterContributionsForState(lua_State* state, const PluginInstance* plugin) {
     state_teardown_interop::UnregisterContributionsForState(
-        state, FindPluginByState(state), &commands, &command_names, &sidebars, &sidebar_providers,
+        state, plugin, &commands, &command_names, &sidebars, &sidebar_providers,
         &hovers, &hover_provider_order, &menu_entries, &keybindings, &settings, &status_items,
         &status_item_order, &formatters, &save_participants, &save_participant_runtimes,
         &completions, &completion_runtimes, &code_actions, &code_action_runtimes,
@@ -1208,7 +1213,9 @@
           CallProjectCallback(plugin, ref, callback_name);
         },
         [this](PluginInstance* plugin) { CallShutdown(plugin); },
-        [this](lua_State* state) { UnregisterContributionsForState(state); },
+        [this](lua_State* state) {
+          UnregisterContributionsForState(state, FindPluginByState(state));
+        },
         [this](const PluginInstance* plugin) { ClearPluginDiagnostics(plugin); },
         [this](PluginInstance* plugin) { DestroyPluginState(plugin); });
   }
@@ -1226,7 +1233,12 @@
         [this](PluginInstance* plugin, std::string* setup_error) {
           return CallSetup(plugin, setup_error);
         },
-        [this](lua_State* state) { UnregisterContributionsForState(state); },
+        // Setup-failure cleanup: pass the live plugin directly so plugin_id-keyed
+        // contributions and runtime-provider vectors are torn down before its
+        // lua_State is destroyed (FindPluginByState can't see it yet).
+        [this](const PluginInstance& plugin) {
+          UnregisterContributionsForState(plugin.state, &plugin);
+        },
         [this](const PluginInstance* plugin) { ClearPluginDiagnostics(plugin); },
         [this](PluginInstance* plugin) { DestroyPluginState(plugin); },
         [this](const std::string& id) {

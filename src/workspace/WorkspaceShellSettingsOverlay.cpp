@@ -266,6 +266,16 @@ bool WorkspaceShell::WriteSettingValue(std::string_view id, std::string value,
     }
   }
 
+  // Store the canonicalized (parsed + range-clamped) value for built-ins, not the
+  // raw input string: ParseSettingValue clamps Int/Float to the spec range, and the
+  // stored/displayed/persisted value must not diverge from the clamped value the
+  // editor actually applies (e.g. `set-setting editor.font_size 999` must store 32,
+  // not 999 — otherwise the overlay shows 999, the stepper wraps to min from it, and
+  // the garbage persists across restarts for project-scoped settings). This matches
+  // the canonical format already used when persisting ui.scale on config restore.
+  std::string stored_value =
+      builtin != nullptr ? SerializeSettingValue(*parsed_builtin_value) : std::move(value);
+
   // A user-scoped setting already lives in the user layer; "set as default" only
   // changes where a project-scoped write lands (user layer instead of project).
   const bool write_user_layer = info->scope == SettingScope::User || as_user_default;
@@ -284,7 +294,7 @@ bool WorkspaceShell::WriteSettingValue(std::string_view id, std::string value,
         MakePersistenceCoordinator().ApplyUiScale(*parsed, false, false);
       }
     }
-    settings_store_.SetUser(id, std::move(value));
+    settings_store_.SetUser(id, std::move(stored_value));
     // Canonical preferences are materialized from the resolved layers so a new
     // user-level default takes effect on any project without a project override.
     ApplyCanonicalPreferenceSideEffects(id);
@@ -292,7 +302,7 @@ bool WorkspaceShell::WriteSettingValue(std::string_view id, std::string value,
       MakePersistenceCoordinator().SaveUserConfig();
     }
   } else {
-    settings_store_.SetProject(id, std::move(value));
+    settings_store_.SetProject(id, std::move(stored_value));
     ApplyCanonicalPreferenceSideEffects(id);
     if (persist) {
       MakePersistenceCoordinator().SaveConfigState();

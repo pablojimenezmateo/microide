@@ -187,6 +187,28 @@ void TestTerminalSessionPasteStripsEmbeddedEndMarker() {
          "an embedded end marker must be stripped so paste mode can't be escaped");
 }
 
+// A single-pass deletion of the end marker is not closed under reconstitution:
+// deleting the middle marker in `ESC[` + `ESC[201~` + `201~payload` splices the
+// surrounding bytes into a fresh `ESC[201~`. The filter must reach a fixed point so
+// deletion-created markers are also removed and cannot escape paste mode.
+void TestTerminalSessionPasteNeutralizesReconstitutedEndMarker() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2004h");
+
+  // Bytes: ESC [  <full end marker>  201~rm -rf ~\n
+  session.PasteText("\x1b[\x1b[201~201~rm -rf ~\n");
+
+  const std::string sent = TerminalSessionTestAccess::SentBytes(session);
+  // The only end marker present must be the trailing guard we appended; the body
+  // must contain no embedded ESC[201~ that could terminate paste mode early.
+  Expect(sent == "\x1b[200~rm -rf ~\n\x1b[201~",
+         "reconstituted end markers must be neutralized to a fixed point");
+  const std::string_view body_and_tail(sent.data() + 6, sent.size() - 6);  // skip ESC[200~
+  Expect(body_and_tail.find("\x1b[201~") == body_and_tail.size() - 6,
+         "the pasted body must contain no embedded end marker before the final guard");
+}
+
 void TestTerminalSessionPasteFallsBackToRawBytesWhenDisabled() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -1884,6 +1906,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionPasteUsesBracketedPasteWhenEnabled);
   AddTest(tests, "TerminalSession/PasteStripsEmbeddedEndMarker",
           TestTerminalSessionPasteStripsEmbeddedEndMarker);
+  AddTest(tests, "TerminalSession/PasteNeutralizesReconstitutedEndMarker",
+          TestTerminalSessionPasteNeutralizesReconstitutedEndMarker);
   AddTest(tests, "TerminalSession/PasteRawMode",
           TestTerminalSessionPasteFallsBackToRawBytesWhenDisabled);
   AddTest(tests, "TerminalSession/ApplicationCursorKeysSs3Mode",

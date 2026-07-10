@@ -77,20 +77,27 @@ inline std::string FormatTerminalPasteBytes(bool bracketed_paste_mode, std::stri
   // clipboard containing `ESC[201~<payload>` would terminate paste mode early and
   // deliver <payload> to the shell as if typed — the exact injection bracketed
   // paste exists to prevent. Drop the marker (as xterm does) and keep the rest.
+  //
+  // A single non-overlapping deletion pass is NOT enough: deleting one marker can
+  // splice its surrounding bytes into a *new* marker at the seam (e.g. the paste
+  // `ESC[` + `ESC[201~` + `201~payload` collapses to `ESC[201~payload`). We instead
+  // build the body incrementally and, whenever its tail forms the marker, erase it —
+  // a fixed point that also catches deletion-created markers. The body is kept
+  // separate from the wrapping markers so the intentional guards aren't rescanned.
   static constexpr std::string_view kEndMarker = "\x1b[201~";
-  std::string bytes;
-  bytes.reserve(text.size() + 12);
-  bytes.append("\x1b[200~");
-  std::size_t pos = 0;
-  while (true) {
-    const std::size_t hit = text.find(kEndMarker, pos);
-    if (hit == std::string_view::npos) {
-      bytes.append(text.substr(pos));
-      break;
+  std::string body;
+  body.reserve(text.size());
+  for (const char c : text) {
+    body.push_back(c);
+    if (body.size() >= kEndMarker.size() &&
+        std::string_view(body).substr(body.size() - kEndMarker.size()) == kEndMarker) {
+      body.erase(body.size() - kEndMarker.size());
     }
-    bytes.append(text.substr(pos, hit - pos));
-    pos = hit + kEndMarker.size();
   }
+  std::string bytes;
+  bytes.reserve(body.size() + 12);
+  bytes.append("\x1b[200~");
+  bytes.append(body);
   bytes.append("\x1b[201~");
   return bytes;
 }

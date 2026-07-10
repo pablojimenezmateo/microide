@@ -78,7 +78,11 @@ bool LoadPluginRoot(const std::filesystem::path& plugin_root,
                         load_plugin_descriptor,
                     const std::function<bool(runtime_types::PluginInstance*, std::string*)>&
                         call_setup,
-                    const std::function<void(lua_State*)>& unregister_for_state,
+                    // Passed the live PluginInstance (not just its lua_State): on
+                    // setup failure the plugin is not yet in `plugins`, so teardown
+                    // must clean its contributions from the pointer we hold here.
+                    const std::function<void(const runtime_types::PluginInstance&)>&
+                        unregister_for_state,
                     const std::function<void(const runtime_types::PluginInstance*)>&
                         clear_plugin_diagnostics,
                     const std::function<void(runtime_types::PluginInstance*)>&

@@ -87,6 +87,29 @@ regression worse than the defect. Recorded here so they are not silently lost.
 >   rather than a defect; left as-is to avoid adding a branch to a hot color path.
 >   (Render hunter hardening note.)
 
+> **Deferred 2026-07-11 (pass 8 — cross-subsystem bug hunt):** a four-way fan-out
+> (sidebar/tree/finder, settings/config/responsive, plugin lifecycle/sandbox,
+> terminal PTY/session) landed 6 fixes (see commit): terminal bracketed-paste
+> marker reconstitution (HIGH security), settings store-path divergence (font_size
+> 999 stored raw not clamped), plugin setup-failure UAF (HIGH — live contributions
+> left bound to a destroyed lua_State), DirectoryTree byte-prefix containment, and
+> the git-sidebar keyboard-nav / collapse-snap desync. The following were
+> deliberately **not** fixed and are recorded:
+> - **Plugin: provider-query loops dereference `provider.state` (StackResetGuard +
+>   lua_rawgeti) before the `find_plugin_by_state == nullptr` guard** (~15 sites in
+>   PluginProviderQueryInterop / PluginLanguageProviderQueryInterop). With the pass-8
+>   setup-failure UAF fixed, the runtime vectors only ever hold live states, so this
+>   is latent hardening — the guard is currently non-functional (it dereferences the
+>   state it means to reject). Fix by resolving the plugin and bailing BEFORE touching
+>   `state`. Deferred to avoid reordering 15 loops (each with distinct return
+>   semantics) in the same pass. (Plugin hunter #2.)
+> - **Plugin: `ResetForDisabledRuntime`/`ShutdownForDisabledRuntime` clear only a
+>   subset of contribution containers** (commands/sidebars/hovers/plugins), not the
+>   runtime-provider vectors. Currently UNREACHABLE — `enabled()` only ever goes
+>   true→false once at startup before any plugin loads, with no path back — so the
+>   disabled containers are always empty. Route through the full container reset if a
+>   runtime enable/disable toggle is ever added. (Plugin hunter #3.)
+
 > **Resolved 2026-07-10 (bug-inventory review pass — `microide-2026-07-10-bug-inventory.md`):**
 > a ~90-item inventory built against `main` was triaged against the current tree (many
 > items were already closed by the twelfth/thirteenth passes) and ~50 still-live items

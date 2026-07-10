@@ -444,6 +444,58 @@ return ide.plugin({
          "duplicate plugin ids should also be forwarded to the host error sink");
 }
 
+// A plugin whose setup() registers a runtime provider and THEN errors must have
+// that provider torn down before its lua_State is destroyed. Otherwise the
+// completion_runtimes vector retains an entry pointing at freed Lua state, and the
+// next QueryCompletions dereferences it (use-after-free). Setup-failure cleanup
+// resolves the plugin by pointer (it is not yet in `plugins`), so the provider is
+// removed. A completion query for the provider's language must safely return empty.
+void TestPluginHostSetupFailureTearsDownRegisteredProviders() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.todo";
+  WriteFile(source, "alpha\n");
+
+  WritePluginInit(
+      global_plugins, "half-setup",
+      R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "half-setup",
+  setup = function(ctx)
+    ctx.completion.add({
+      id = "half",
+      language_id = "todo",
+      provide = function(buffer, position, trigger)
+        return { { label = "GHOST", insert_text = "GHOST" } }
+      end
+    })
+    error("setup blew up after registering a provider")
+  end
+})
+)lua");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(!host.Reload(project_root),
+         "a plugin whose setup errors should report reload failure");
+  Expect(host.LoadedPluginCount() == 0,
+         "a failed-setup plugin must not remain loaded");
+
+  // The provider registered before the error must have been torn down; querying it
+  // must not touch the destroyed lua_State and must return no candidates.
+  std::string runtime_error;
+  const auto completions = host.QueryCompletions("todo", source, 1, 0, "", &runtime_error);
+  Expect(completions.empty(),
+         "a failed-setup plugin's provider must be removed, not left dangling");
+}
+
 void TestPluginHostSkipsBackupPluginDirectories() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3409,6 +3461,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostRejectsDuplicatePluginIds);
   AddTest(tests, "PluginHost/SkipsBackupPluginDirectories",
           TestPluginHostSkipsBackupPluginDirectories);
+  AddTest(tests, "PluginHost/SetupFailureTearsDownRegisteredProviders",
+          TestPluginHostSetupFailureTearsDownRegisteredProviders);
   AddTest(tests, "PluginHost/LuaRuntimeMatchesDocumentedStdlib",
           TestPluginHostLuaRuntimeMatchesDocumentedStdlib);
   AddTest(tests, "PluginHost/PluginsUseIsolatedLuaStates",
