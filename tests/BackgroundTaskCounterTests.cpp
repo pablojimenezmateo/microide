@@ -99,9 +99,51 @@ void TestCountRemainsNonNegativeAfterBalancedOps() {
          "count should return to baseline after balanced operations");
 }
 
+// Regression: the completion wake must post the dedicated registered event type,
+// not the bare SDL_EVENT_USER base (which aliases the first registered custom
+// event and mis-routes the wake into that subsystem's handler on every task).
+void TestWakeUsesRegisteredEventTypeNotUserBase() {
+  static const bool initialized = InitSdlEvents();
+  (void)initialized;
+
+  Uint32 wake_type = SDL_RegisterEvents(1);
+  // If this was the process's first registration it returns the SDL_EVENT_USER
+  // base; take the next one so the wake type is provably distinct from the base
+  // regardless of test ordering.
+  if (wake_type == static_cast<Uint32>(SDL_EVENT_USER)) {
+    wake_type = SDL_RegisterEvents(1);
+  }
+  Expect(wake_type != static_cast<Uint32>(-1), "SDL should allocate a wake event type");
+  Expect(wake_type != static_cast<Uint32>(SDL_EVENT_USER),
+         "the wake type used for this test must not equal the SDL_EVENT_USER base");
+  app::SetBackgroundTaskWakeEventType(wake_type);
+
+  // Drain any pending events so we observe only our wake.
+  SDL_PumpEvents();
+  SDL_Event drain{};
+  while (SDL_PollEvent(&drain)) {
+  }
+
+  app::IncrementBackgroundTaskCount();
+  app::DecrementBackgroundTaskCountAndWake();
+
+  bool saw_wake = false;
+  bool saw_user_base = false;
+  SDL_Event event{};
+  while (SDL_PollEvent(&event)) {
+    if (event.type == wake_type) saw_wake = true;
+    if (event.type == static_cast<Uint32>(SDL_EVENT_USER)) saw_user_base = true;
+  }
+  Expect(saw_wake, "the completion wake must post the registered wake event type");
+  Expect(!saw_user_base,
+         "the completion wake must not post the aliasing SDL_EVENT_USER base");
+}
+
 }  // namespace
 
 void RegisterBackgroundTaskCounterTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "BackgroundTaskCounter/WakeUsesRegisteredEventType",
+          TestWakeUsesRegisteredEventTypeNotUserBase);
   AddTest(tests, "BackgroundTaskCounter/IncrementIncreasesCount",
           TestIncrementIncreasesCount);
   AddTest(tests, "BackgroundTaskCounter/DecrementRestoresCount",

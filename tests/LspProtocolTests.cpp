@@ -436,6 +436,24 @@ void TestLspProtocolParsesInlayHints() {
       {"position":{"line":0,"character":0},"label":"a"},
       {"position":{"line":1,"character":0},"label":"b"}])json"), /*max_hints=*/1);
   Expect(capped.size() == 1, "the hint cap truncates");
+
+  // Regression: the 512-byte label cap must truncate on a UTF-8 boundary, not a
+  // raw byte, so a multi-byte code point straddling the cap is dropped whole
+  // rather than leaving a split sequence.
+  std::string long_label(511, 'a');
+  long_label += "\xC3\xBC";  // 'ü' (2 bytes); byte 512 lands on its lead byte
+  const std::string payload =
+      "[{\"position\":{\"line\":0,\"character\":0},\"label\":\"" + long_label + "\"}]";
+  const auto utf8_capped = codec::ParseInlayHints(Json(payload));
+  Expect(utf8_capped.size() == 1, "the oversized-label hint should still parse");
+  Expect(utf8_capped[0].label.size() <= 512, "the label must be capped at the byte limit");
+  bool has_high_byte = false;
+  for (const unsigned char byte : utf8_capped[0].label) {
+    if (byte >= 0x80) has_high_byte = true;
+  }
+  Expect(!has_high_byte,
+         "UTF-8-boundary truncation must drop the straddling code point, leaving no "
+         "split multi-byte sequence");
 }
 
 }  // namespace

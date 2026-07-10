@@ -475,9 +475,10 @@ std::vector<LspClient::InlayHint> ParseInlayHints(const JsonValue& result, std::
         hint.label += part["value"].AsString();
       }
     }
-    if (hint.label.size() > kMaxLabelBytes) {
-      hint.label.resize(kMaxLabelBytes);
-    }
+    // Truncate on a UTF-8 boundary (not a raw byte resize) so a non-ASCII label
+    // whose cap falls mid-sequence does not leave a split code point that renders
+    // as a replacement glyph and breaks downstream width/codepoint iteration.
+    TruncateUtf8InPlace(hint.label, kMaxLabelBytes);
     if (hint.label.empty()) {
       continue;  // nothing to render
     }

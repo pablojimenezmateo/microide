@@ -22,6 +22,7 @@
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <cerrno>
+#include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/ioctl.h>
@@ -81,6 +82,17 @@ class PosixTerminalBackend final : public TerminalBackend {
           .initial_output = "failed to allocate PTY for terminal session.",
       };
     }
+
+    // Mark both PTY ends close-on-exec. Without this, any unrelated child forked
+    // by another thread (Subprocess/AsyncSubprocess on the background executor)
+    // inherits copies of the master and slave: the leaked slave keeps the master
+    // from ever seeing EOF/POLLHUP when the shell exits (the reader poll() hangs
+    // and on_exit never fires), and the master leaks into every such subprocess,
+    // pinning the PTY device open past terminal teardown. The shell child re-opens
+    // its std fds via dup2(slave_fd, 0/1/2) below, which clears CLOEXEC on those
+    // duplicates, so the shell keeps working. Mirrors Subprocess.cpp.
+    (void)fcntl(master_fd, F_SETFD, fcntl(master_fd, F_GETFD, 0) | FD_CLOEXEC);
+    (void)fcntl(slave_fd, F_SETFD, fcntl(slave_fd, F_GETFD, 0) | FD_CLOEXEC);
 
     const std::string shell_path = request.shell.empty() ? DefaultShellPath() : request.shell;
     const std::string shell_name = ShellProgramName(shell_path);
@@ -153,8 +165,10 @@ class PosixTerminalBackend final : public TerminalBackend {
     // Self-pipe used to wake the reader's poll() on shutdown without closing
     // master_fd out from under it (closing an fd another thread is polling is
     // a data race and risks fd-number reuse).
+    // CLOEXEC both wake-pipe ends: they must not leak into subprocesses forked
+    // by other threads while the terminal is live (same hazard as the PTY fds).
     int wake_pipe[2] = {-1, -1};
-    if (pipe(wake_pipe) != 0) {
+    if (pipe2(wake_pipe, O_CLOEXEC) != 0) {
       close(master_fd);
       RequestTerminalChildShutdown(child_pid);
       return TerminalStartResult{

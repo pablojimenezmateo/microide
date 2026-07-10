@@ -1319,6 +1319,31 @@ void TestLspMessageFramerOversizedFrameSkips() {
   Expect(framer.BufferedBytes() == 0, "drained skip bytes leave the buffer empty");
 }
 
+// Regression: an oversized frame whose header block is not yet fully buffered
+// (a recv split right on the Content-Length line's newline, before the blank-line
+// terminator) must NOT commit the skip yet. Committing it early would count the
+// still-unseen "\r\n" terminator bytes as body, drain two bytes short, and desync
+// the stream (re-parsing trailing body bytes as a new frame). The framer must wait
+// for the terminator, then skip with a body_start that is correctly past it.
+void TestLspMessageFramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync() {
+  workspace::LspMessageFramer framer;
+  const std::size_t oversized = 64ull * 1024 * 1024 + 1;  // just past kMaxLspMessageBytes
+  // Feed only the Content-Length line, ending exactly on its '\n' — no blank line.
+  framer.Append("Content-Length: " + std::to_string(oversized) + "\r\n");
+  Expect(!framer.Next().has_value(), "an incomplete header block frames no message");
+  Expect(framer.skip_body_bytes == 0,
+         "the skip must NOT be committed before the header terminator is seen");
+  Expect(framer.BufferedBytes() > 0,
+         "the header line must stay buffered until the block terminates");
+  // Now the blank-line terminator arrives; the skip commits past it (not before).
+  framer.Append("\r\n");
+  Expect(!framer.Next().has_value(), "the oversized frame still frames no message");
+  Expect(framer.skip_body_bytes == oversized,
+         "the whole body is queued for skipping once the header block terminates");
+  Expect(framer.BufferedBytes() == 0,
+         "the header block (and only it) is consumed before the body drain begins");
+}
+
 // Track A regression: serialization is deferred to the I/O thread (the outbound
 // builder runs SerializeMessage lazily). This must preserve FIFO order and the full
 // per-change payload — a reorder or a captured-by-reference bug would corrupt sync.
@@ -1697,6 +1722,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestLspMessageFramerMalformedLengthResyncs);
   AddTest(tests, "WorkspaceLspClient/FramerOversizedFrameSkips",
           TestLspMessageFramerOversizedFrameSkips);
+  AddTest(tests, "WorkspaceLspClient/FramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync",
+          TestLspMessageFramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync);
 }
 
 }  // namespace microide::tests

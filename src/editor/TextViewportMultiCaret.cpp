@@ -337,7 +337,22 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
 
   const HistoryEntry aggregate_entry = BuildAggregateFromLineSlice(
       before_slice, before_document_line_count, before_state, document_->lines, CaptureViewState());
-  last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true);
+  // The aggregate history entry spans first..last affected caret line as one
+  // contiguous replace, which is correct for undo/redo but WRONG as an AppliedEdit
+  // when 2+ caret sites edited disjoint regions: BuildAppliedEdit only trims equal
+  // whole lines at the ends, so an unchanged interior line between carets stays
+  // inside the "replaced" span, and single-range marker consumers (BreakpointStore,
+  // LSP diagnostic shifting) drag markers on those preserved lines to the span's
+  // end. Only publish the AppliedEdit for a single edited region; for a true
+  // multi-region edit leave it empty so those consumers take their resync fallback
+  // (breakpoints stay put, diagnostics re-request) instead of mis-collapsing.
+  std::size_t edited_region_count = 0;
+  for (const std::optional<PlannedCaretEdit>& plan : planned) {
+    if (plan.has_value()) ++edited_region_count;
+  }
+  last_applied_edit_ = edited_region_count <= 1
+                           ? TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true)
+                           : std::nullopt;
   if (record_undo) {
     PushHistoryEntry(aggregate_entry);
   } else {

@@ -243,6 +243,11 @@ class TerminalSession {
                                         std::size_t advance);
   void ResizeLineLocked(TerminalLine& line, std::size_t size);
   void ClearLineRangeLocked(TerminalLine& line, std::size_t start, std::size_t end);
+  // Blank a whole row honoring Background Color Erase (BCE): when the current SGR
+  // paints a non-default background, fill full-width styled blanks so the erased
+  // row keeps that background (matching EraseInLineLocked); otherwise keep the
+  // cheap empty-line reset, which renders identically to the default background.
+  void BlankLineToCurrentBackgroundLocked(TerminalLine& line);
   void EraseInLineLocked(int mode);
   void EraseInDisplayLocked(int mode);
   void ResetScrollRegionLocked();

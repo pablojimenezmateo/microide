@@ -94,8 +94,16 @@ void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
     if (pending == in_flight_or_failed_.end()) {
       continue;
     }
-    if (!decoded.ok || renderer == nullptr) {
-      continue;  // leave the marker so we treat this hash as permanently failed
+    if (!decoded.ok) {
+      continue;  // permanent failure: same content hash → correct never to retry
+    }
+    if (renderer == nullptr) {
+      // Transient, NOT a decode failure: a valid image arrived without a live
+      // renderer (e.g. mid renderer re-create). Drop the marker so a later Upload
+      // with a renderer re-decodes and displays it, instead of permanently
+      // suppressing a good image until Clear().
+      in_flight_or_failed_.erase(pending);
+      continue;
     }
 
     SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
@@ -135,7 +143,11 @@ const SurfaceTextureCache::Entry* SurfaceTextureCache::Lookup(std::uint64_t hash
 }
 
 void SurfaceTextureCache::EvictToBudget() {
-  while (vram_bytes_ > vram_budget_bytes_ && !lru_.empty()) {
+  // Keep at least the newest entry (front of lru_) even if it alone exceeds the
+  // budget: otherwise a single over-budget texture is uploaded and immediately
+  // evicted every frame, so it never displays and perpetually re-decodes on the
+  // background executor. Mirrors the sibling text-texture cache's guard.
+  while (lru_.size() > 1 && vram_bytes_ > vram_budget_bytes_) {
     const std::uint64_t victim = lru_.back();
     lru_.pop_back();
     lru_pos_.erase(victim);

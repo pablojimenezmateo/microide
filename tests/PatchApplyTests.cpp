@@ -267,6 +267,66 @@ void TestPatchUnstageSelectedLinesWithStagedAndUnstagedChanges() {
          "unrelated unstaged worktree edits should remain");
 }
 
+// Regression: staging only the trailing inserted lines of a file whose preceding
+// row is a modification (so no context is attached) yields a hunk with zero
+// old-side lines. The header must be a valid `@@ -L,0 +M,N @@` (git's pure-insertion
+// convention), not a clamped `@@ -1,1 ... @@` that claims a line the body lacks —
+// which `git apply` rejects, silently failing the stage.
+void TestPatchStagePureInsertionWithNoContextApplies() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  std::filesystem::create_directories(repo_path);
+  InitializeGitRepo(repo_path);
+  const auto file_path = repo_path / "file.txt";
+  WriteFile(file_path, "a\nb\n");
+  CommitAll(repo_path, "base", "base");
+
+  // Modify line 2 AND append two lines. The added lines sit directly after the
+  // modification, so range expansion attaches no context on the old side.
+  WriteFile(file_path, "a\nZ\nc\nd\n");
+  const CompareModel model = BuildCompareModel("a\nb\n", "a\nZ\nc\nd\n");
+
+  std::size_t first_added = model.rows.size();
+  std::size_t last_added = 0;
+  for (std::size_t i = 0; i < model.rows.size(); ++i) {
+    if (model.rows[i].kind == CompareRowKind::Added &&
+        (model.rows[i].right_text == "c" || model.rows[i].right_text == "d")) {
+      first_added = std::min(first_added, i);
+      last_added = std::max(last_added, i);
+    }
+  }
+  Expect(first_added <= last_added && last_added < model.rows.size(),
+         "the two appended lines should be present as Added rows");
+
+  const auto patch = GenerateComparePatchForRows(model, "file.txt", first_added, last_added);
+  Expect(patch.has_value(), "a pure-insertion patch should be generated");
+  // The old side must be a genuine zero-length range, not a clamped 1.
+  Expect(patch->find("@@ -2,0 ") != std::string::npos,
+         "pure insertion after old line 2 must emit a zero-length old range at line 2");
+
+  PatchApplyRequest request{
+      .operation = PatchOperationKind::StageHunk,
+      .target{
+          .repository_root = repo_path,
+          .relative_path = std::filesystem::path("file.txt"),
+          .hunk = std::nullopt,
+          .line_selection = std::nullopt,
+      },
+      .model = model,
+  };
+  const auto result = ApplyPatchRequest(request, *patch);
+  Expect(result.category == PatchApplyResultCategory::Success,
+         "the pure-insertion patch must apply cleanly (no corrupt hunk header)");
+
+  GitRepository repo(repo_path);
+  const auto staged = repo.Execute({"diff", "--cached", "--", "file.txt"});
+  Expect(staged.success() && staged.output.find("+c") != std::string::npos &&
+             staged.output.find("+d") != std::string::npos,
+         "staging the insertion should place both added lines in the index");
+  Expect(staged.output.find("Z") == std::string::npos,
+         "the unrelated modification must not be staged by an insertion-only patch");
+}
+
 void TestPatchStageNewFileUsesDevNull() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -777,6 +837,8 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
   tests.push_back({"PatchApply/CrlfContextLines", TestPatchGeneratorCrlfContextLines});
   tests.push_back({"PatchApply/UnstageMixedIndexWorktree",
                    TestPatchUnstageSelectedLinesWithStagedAndUnstagedChanges});
+  tests.push_back({"PatchApply/StagePureInsertionNoContextApplies",
+                   TestPatchStagePureInsertionWithNoContextApplies});
   tests.push_back({"PatchApply/StageNewFileDevNull", TestPatchStageNewFileUsesDevNull});
   tests.push_back({"PatchApply/StageDeletedFileDevNull", TestPatchStageDeletedFileUsesDevNull});
   tests.push_back({"PatchApply/PreserveMissingFinalNewline",

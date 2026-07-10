@@ -120,6 +120,21 @@ struct TerminalSessionTestAccess {
     session.mouse_tracking_any_ = any;
   }
 
+  static bool SynchronizedOutput(const microide::terminal::TerminalSession& session) {
+    std::scoped_lock lock(session.mutex_);
+    return session.synchronized_output_;
+  }
+
+  static unsigned KittyKeyboardFlags(const microide::terminal::TerminalSession& session) {
+    std::scoped_lock lock(session.mutex_);
+    return session.kitty_keyboard_flags_;
+  }
+
+  static std::size_t TabStopCount(const microide::terminal::TerminalSession& session) {
+    std::scoped_lock lock(session.mutex_);
+    return session.tab_stops_.size();
+  }
+
   static std::string SentBytes(const microide::terminal::TerminalSession& session) {
 #ifdef MICROIDE_TESTING
     std::scoped_lock lock(session.mutex_);

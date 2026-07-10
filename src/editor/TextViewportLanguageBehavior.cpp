@@ -657,7 +657,11 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   HistoryEntry aggregate_entry = TextViewportUndoHistory::BuildEntryForDocumentChange(
       before_lines, before_state, after_lines_slice, CaptureViewState());
   aggregate_entry.start_line += before_lines_start;
-  last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true);
+  // This path only runs with multiple carets (has_multiple_carets() gate above),
+  // so the aggregate always spans disjoint regions. Publishing it as a single
+  // contiguous AppliedEdit would drag markers on preserved interior lines to the
+  // span's end (see TextViewportMultiCaret). Leave last_applied_edit_ empty (it was
+  // reset at entry) so single-range marker consumers take their resync fallback.
   PushHistoryEntry(aggregate_entry);
   return true;
 }

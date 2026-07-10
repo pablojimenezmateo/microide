@@ -251,16 +251,28 @@ void CommitWorkflowService::DispatchCommit(CommitWorkflowState& state,
   background_executor_.Post([this, &state, operation, subject, body, repository_generation,
                              captured_generation,
                              repository_root = repository_state.repository_root]() {
-    const project::CommitOperationResult result =
+    // Worker thread: only run the (possibly slow, hook-invoking) git commit and
+    // produce a result. Mutating CommitWorkflowState here would race the main
+    // thread, which reads state.subject/body/status_message while rendering the
+    // commit overlay. Marshal the state mutation back to the render thread.
+    project::CommitOperationResult result =
         project::ExecuteGitCommit(repository_root, subject, body, operation);
-
-    std::lock_guard completion_lock(mutex_);
-    if (captured_generation != operation_generation_) {
-      return;
-    }
-    PublishResult(state, result, operation, repository_generation);
+    completion_mailbox_.Post([this, &state, operation, repository_generation, captured_generation,
+                              result = std::move(result)]() mutable {
+      std::lock_guard completion_lock(mutex_);
+      if (captured_generation != operation_generation_) {
+        return;
+      }
+      PublishResult(state, std::move(result), operation, repository_generation);
+    });
   });
 }
+
+void CommitWorkflowService::SetCompletionWakeEvent(std::uint32_t event_type) {
+  completion_mailbox_.SetWakeEventType(event_type);
+}
+
+void CommitWorkflowService::DrainCompletions() { completion_mailbox_.Drain(); }
 
 void CommitWorkflowService::PublishResult(CommitWorkflowState& state,
                                           project::CommitOperationResult result,

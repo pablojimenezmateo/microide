@@ -479,6 +479,44 @@ void TestPlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine() {
          "column caret placement should clamp each line to the shared column");
 }
 
+// Regression: a multi-caret edit whose carets straddle a preserved interior line
+// must NOT publish a single contiguous AppliedEdit. The aggregate history entry
+// spans first..last caret line, but the interior line is unchanged; a single
+// AppliedEdit would drag markers (breakpoints, LSP diagnostics) on that line to
+// the span's end. The viewport must leave last_applied_edit() empty so marker
+// consumers take their resync fallback.
+void TestMultiCaretDisjointEditPublishesNoAppliedEdit() {
+  TextViewport viewport;
+  viewport.LoadContent("l0\nl1\nl2\nl3\nl4", "/tmp/mc-disjoint.txt");
+  viewport.MoveCursorTo(1, 0);            // primary on line 1
+  viewport.SetSecondaryCarets({{3, 0}});  // secondary on line 3 -> line 2 preserved
+
+  viewport.InsertText("X");  // plain insert at both carets, no line-count change
+
+  Expect(viewport.lines().size() == 5 && viewport.lines()[1] == "Xl1" &&
+             viewport.lines()[2] == "l2" && viewport.lines()[3] == "Xl3",
+         "the edit inserts at both carets and leaves the interior line untouched");
+  Expect(!viewport.last_applied_edit().has_value(),
+         "a disjoint multi-caret edit must not publish a single contiguous AppliedEdit");
+}
+
+// Regression: a multi-caret single-character insert (routing through the
+// pair-insert / multi-caret insert paths) always spans disjoint regions, so it
+// must likewise not publish a contiguous AppliedEdit.
+void TestMultiCaretPairInsertPublishesNoAppliedEdit() {
+  TextViewport viewport;
+  viewport.LoadContent("a\nb\nc\nd\ne", "/tmp/mc-pair.cpp");
+  viewport.MoveCursorTo(0, 1);
+  viewport.SetSecondaryCarets({{4, 1}});  // carets on lines 0 and 4
+
+  viewport.InsertCharacter('(');  // multi-caret -> pair-insert or multi-caret insert
+
+  Expect(viewport.secondary_carets().size() == 1,
+         "the second caret should survive the multi-caret character insert");
+  Expect(!viewport.last_applied_edit().has_value(),
+         "multi-caret character insert must not publish a single contiguous AppliedEdit");
+}
+
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorMultiCaret/PromotedCaretToggleLineCommentAtomicUndo",
           TestPromotedCaretToggleLineCommentAtomicUndo);
@@ -522,6 +560,10 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestMultiCaretPasteCountMismatchInsertsFullTextAtEachCaret);
   AddTest(tests, "EditorMultiCaret/DeleteSelectionsRemovesAllAndUndoesAtomically",
           TestMultiCaretDeleteSelectionsRemovesAllAndUndoesAtomically);
+  AddTest(tests, "EditorMultiCaret/DisjointEditPublishesNoAppliedEdit",
+          TestMultiCaretDisjointEditPublishesNoAppliedEdit);
+  AddTest(tests, "EditorMultiCaret/PairInsertPublishesNoAppliedEdit",
+          TestMultiCaretPairInsertPublishesNoAppliedEdit);
 }
 
 }  // namespace microide::tests

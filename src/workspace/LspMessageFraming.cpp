@@ -48,14 +48,25 @@ std::optional<util::JsonValue> LspMessageFramer::Next() {
   // Locate the end of the header block (the blank line). Headers are tiny, so
   // waiting for the whole block never blocks on the (possibly huge) body.
   std::size_t body_start = nl + 1;
+  bool header_terminated = false;
   while (body_start < v.size()) {
     const auto nl2 = v.find('\n', body_start);
     if (nl2 == std::string_view::npos) return std::nullopt;
     std::string_view hdr = v.substr(body_start, nl2 - body_start);
     if (!hdr.empty() && hdr.back() == '\r') hdr.remove_suffix(1);
     body_start = nl2 + 1;
-    if (hdr.empty()) break;
+    if (hdr.empty()) {
+      header_terminated = true;
+      break;
+    }
   }
+  // The loop can also exit because the buffer ran out mid-header-block (e.g. a
+  // recv split right on a header newline). `body_start` then points at the
+  // buffer end, NOT past the real blank-line terminator. Committing the
+  // oversized skip below with that body_start would count the still-unseen
+  // terminator bytes as body and stop short, desyncing the stream. Wait for the
+  // rest of the header block instead.
+  if (!header_terminated) return std::nullopt;
 
   if (static_cast<std::size_t>(content_len) > kMaxLspMessageBytes) {
     // Too large to buffer: skip the entire frame (headers + body) so the parser

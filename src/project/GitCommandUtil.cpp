@@ -1,6 +1,7 @@
 #include "project/GitCommandUtil.h"
 
 #include <cctype>
+#include <system_error>
 
 #include "platform/Subprocess.h"
 #include "util/StringUtil.h"
@@ -8,7 +9,16 @@
 namespace microide::project::internal {
 
 bool HasGitMarker(const std::filesystem::path& root) {
-  return !root.empty() && std::filesystem::exists(root / ".git");
+  if (root.empty()) {
+    return false;
+  }
+  // Use the non-throwing overload: this runs on the background-executor thread on
+  // essentially every git operation, and the throwing exists() aborts the process
+  // when the failure is not "does not exist" (a parent dir losing +x, an unmounted
+  // network volume, ENAMETOOLONG). Those must degrade to "repo unavailable", not
+  // crash. Matches every other filesystem probe in this subsystem.
+  std::error_code error;
+  return std::filesystem::exists(root / ".git", error) && !error;
 }
 
 std::optional<std::filesystem::path> AbsoluteToRelativePath(

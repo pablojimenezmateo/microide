@@ -1,12 +1,17 @@
 #include "TestSupport.h"
 
+#include <chrono>
 #include <filesystem>
+#include <thread>
 #include <unordered_set>
 
 #include "project/CommitWorkflowChecks.h"
 #include "project/GitCommitExecutor.h"
 #include "project/GitPorcelainV2Parser.h"
 #include "project/GitRepositoryState.h"
+#include "project/ProjectBackgroundExecutor.h"
+#include "workspace/CommitWorkflowService.h"
+#include "workspace/GitRepositoryService.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 
 namespace microide::tests {
@@ -174,9 +179,78 @@ void TestExecuteCommitInTempRepo() {
   Expect(result.category == CommitOperationResultCategory::Success, "commit should succeed");
 }
 
+// Regression: the background commit result must be published to the shared
+// CommitWorkflowState on the MAIN thread, never mutated on the worker thread
+// (which would race the render thread reading subject/body/status_message).
+// After the worker finishes the git commit, the state must stay "in flight"
+// until DrainCompletions() runs on the main thread.
+void TestCommitResultIsMarshaledToMainThread() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  using microide::project::ProjectBackgroundExecutor;
+  using microide::workspace::CommitWorkflowService;
+  using microide::workspace::CommitWorkflowState;
+  using microide::workspace::GitRepositoryService;
+  using microide::workspace::GitSidebarRefreshScope;
+  using microide::workspace::OutgoingBaseChoice;
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path repo = temp_dir.path() / "repo";
+  InitializeGitRepo(repo);
+  WriteFile(repo / "seed.txt", "seed\n");
+  CommitAll(repo, "base", "base");
+  // Stage a change so there is something to commit.
+  WriteFile(repo / "seed.txt", "seed\nmore\n");
+  RequireGitCommandSuccess(repo, {"add", "seed.txt"}, "stage change for commit marshaling test");
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService git_service(executor);
+  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+                                                OutgoingBaseChoice{}, false);
+  Expect(git_service.CurrentState().repo_available, "fixture repo should be available");
+
+  CommitWorkflowService service(executor, git_service);
+  CommitWorkflowState state;
+  service.Open(state);
+  state.subject.SetText("Add more");
+  // Acknowledge any non-blocking warnings so the commit is executable.
+  for (const auto& check : state.checks) {
+    if (check.severity == project::CommitPreCheckSeverity::Warning) {
+      state.acknowledged_warning_ids.insert(check.id);
+    }
+  }
+
+  const bool dispatched = service.RequestCommit(state, CommitOperationKind::Create);
+  Expect(dispatched, "a staged change with a subject should dispatch a commit");
+  Expect(state.operation_in_flight, "the commit should be in flight immediately after dispatch");
+
+  // Wait for the worker to finish the git commit and queue its completion for the
+  // main thread — WITHOUT cancelling the task (Shutdown/Drain would cancel it if it
+  // were still queued). Polling the completion count observes the worker naturally.
+  for (int i = 0; i < 2000 && service.PendingCompletionCount() == 0; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  Expect(service.PendingCompletionCount() > 0,
+         "the worker should queue a completion for the main thread");
+
+  // Crucially, the result must NOT have been applied on the worker thread.
+  Expect(state.operation_in_flight,
+         "the commit result must not be published from the worker thread");
+  Expect(state.status_message == "Committing...",
+         "state must stay pending until the main thread drains the completion");
+
+  // Draining on the main thread publishes the result.
+  service.DrainCompletions();
+  Expect(!state.operation_in_flight,
+         "draining completions on the main thread must publish the commit result");
+}
+
 }  // namespace
 
 void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "CommitWorkflow/ResultMarshaledToMainThread",
+          TestCommitResultIsMarshaledToMainThread);
   AddTest(tests, "CommitWorkflow/EmptySubjectBlocks", TestEmptySubjectBlocksCommit);
   AddTest(tests, "CommitWorkflow/WarningsRequireAck", TestWarningsRequireAcknowledgement);
   AddTest(tests, "CommitWorkflow/DraftPersistenceRoundTrip", TestCommitDraftPersistenceRoundTrip);

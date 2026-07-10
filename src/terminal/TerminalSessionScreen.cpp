@@ -357,6 +357,21 @@ void TerminalSession::EraseInLineLocked(int mode) {
   }
 }
 
+void TerminalSession::BlankLineToCurrentBackgroundLocked(TerminalLine& line) {
+  // Background Color Erase: an erase with a non-default background (an explicit
+  // background color, or reverse video which swaps in the foreground) must paint
+  // the blanked cells with that background. A default-background erase renders the
+  // same whether the row is empty or full of default-styled blanks, so keep the
+  // cheap empty reset for it to avoid materializing a full-width row per clear.
+  const bool erases_to_default_background =
+      !current_style_.background.has_value() && !current_style_.has(cell_attr::kInverse);
+  if (erases_to_default_background || columns_ == 0) {
+    line = TerminalLine{};
+    return;
+  }
+  line.cells.assign(columns_, MakeAsciiTerminalCell(' ', current_style_));
+}
+
 void TerminalSession::EraseInDisplayLocked(int mode) {
   EnsureCursorLineExistsLocked();
   switch (mode) {
@@ -366,7 +381,7 @@ void TerminalSession::EraseInDisplayLocked(int mode) {
       // blanking absolute row 0 would destroy history above the screen.
       const std::size_t top = PrimaryScreenTopLocked();
       for (std::size_t row = top; row < cursor_row_ && row < lines_.size(); ++row) {
-        lines_[row].cells.clear();
+        BlankLineToCurrentBackgroundLocked(lines_[row]);
       }
       EraseInLineLocked(1);
       break;
@@ -374,6 +389,9 @@ void TerminalSession::EraseInDisplayLocked(int mode) {
     case 2:
       if (use_alternate_screen_) {
         lines_.assign(std::max<std::size_t>(1, rows_), TerminalLine{});
+        for (auto& row : lines_) {
+          BlankLineToCurrentBackgroundLocked(row);
+        }
       } else {
         // ED 2 erases the visible screen in place and MUST preserve scrollback
         // (this is what `clear`/`tput clear`'s `ESC[2J` sends). Blank only the last
@@ -384,7 +402,7 @@ void TerminalSession::EraseInDisplayLocked(int mode) {
           lines_.push_back(TerminalLine{});
         }
         for (std::size_t row = lines_.size() - visible; row < lines_.size(); ++row) {
-          lines_[row] = TerminalLine{};
+          BlankLineToCurrentBackgroundLocked(lines_[row]);
         }
       }
       break;
@@ -418,7 +436,7 @@ void TerminalSession::EraseInDisplayLocked(int mode) {
     default:
       EraseInLineLocked(0);
       for (std::size_t row = cursor_row_ + 1; row < lines_.size(); ++row) {
-        lines_[row].cells.clear();
+        BlankLineToCurrentBackgroundLocked(lines_[row]);
       }
       break;
   }

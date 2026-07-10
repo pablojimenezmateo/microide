@@ -702,6 +702,47 @@ These are not current project work unless deliberately promoted into their own p
   and the section header band is fixed (does not scroll with rows). Shipped scope is the
   scrollable category rail, fixed section header (title + subtitle), and subsection sub-headers.
 
+### Deferred items from the 2026-07-10 cross-subsystem bug-hunt pass
+
+Fixed this pass (with regression tests unless noted): FoldingModel indent-fold
+budget starvation + truncated-block suppression; JSON over-range float parse
+abort; TerminalBackend PTY/wake-pipe CLOEXEC leak; PersistedRecord::ReadVector
+reserve over-allocation; GitCommandUtil throwing `exists`; LSP/DAP framer
+oversized-frame desync on split header; CompareTabReview dead review markers;
+PatchGenerator corrupt hunk header for zero-context pure insertions/deletions;
+CommitWorkflowService worker-thread state race (now marshaled to the main thread);
+terminal ED Background-Color-Erase; terminal ESC/CAN/SUB mid-CSI abort; terminal
+`Start`/`Stop` negotiated-state reset gaps; SurfaceTextureCache lone-over-budget
+eviction churn + null-renderer permanent-blacklist.
+
+Deferred (not fixed, low value or hard to reach/test):
+
+- `CommitWorkflowService::DispatchCommit` captures `&state` into the background
+  task; if the owning project state is destroyed while a commit is in flight the
+  main-thread completion touches freed memory. Pre-existing (the old worker-thread
+  path had the same capture); the generation guard only covers a newer dispatch,
+  not teardown. Would need the mailbox cleared / the operation cancelled on
+  project close.
+- `TerminalSession` has three near-duplicate reset blocks (`Start`,
+  `StartPlaceholderForTesting`, `Stop`) plus `TestAccess::Reset`; they were kept in
+  lockstep this pass but should be factored into one `ResetSessionStateLocked` to
+  prevent future drift.
+- `SurfaceTextureCache` eviction/null-renderer fixes lack direct unit coverage:
+  `Upload` needs a live SDL renderer (`SDL_CreateTexture`), unavailable headless.
+  They mirror the already-tested sibling text-texture cache guard.
+- Terminal minor spec deviations (not user-visible in normal use): a combining
+  mark following a double-width glyph attaches to the wide-trailing spacer and is
+  dropped; multi-byte charset designations (`ESC ( " ?`) mis-parse; DECSTBM on the
+  alternate screen with origin mode homes to screen-top rather than region-top.
+- `MergeConflictKind` may label a both-modified conflict `LineEndingHeavy` when
+  only one side is line-ending-only; cosmetic (summary text), behavior unchanged.
+- Windows `FileIndexWatcher` (`ReadDirectoryChangesW`) backend gaps: a tracked
+  directory rename leaves ghost index entries + an unindexed subtree (no recursive
+  delete / no subtree walk), and a change-buffer overflow (`bytes_transferred==0`)
+  drops notifications with no full-rescan resync. Out of scope: non-Linux host
+  backends are not built (see the non-Linux note above); Linux inotify handles
+  both cases correctly.
+
 ## Git Workstation
 
 The workstation release scope, safe startup flags, release checklist, and trust documentation are

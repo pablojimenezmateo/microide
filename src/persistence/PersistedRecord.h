@@ -105,9 +105,14 @@ class PrimitiveReader {
       return false;
     }
     values->clear();
-    // Bound the reservation by the remaining input so a corrupt length field cannot
-    // force an unbounded allocation; each element consumes at least one byte.
-    values->reserve(std::min<std::size_t>(count, remaining()));
+    // Bound the reservation so a corrupt length field cannot force an unbounded
+    // allocation. reserve(N) allocates N*sizeof(T) bytes, so cap N by
+    // remaining()/sizeof(T) — that keeps the up-front byte allocation at or below
+    // the bytes still available, regardless of the element size. (The previous
+    // bound capped by remaining() as an element count, which for a multi-byte T
+    // would have requested remaining()*sizeof(T) bytes from one corrupt length.)
+    values->reserve(
+        std::min<std::size_t>(count, remaining() / std::max<std::size_t>(1, sizeof(T))));
     for (std::uint32_t i = 0; i < count; ++i) {
       T item{};
       if (!read_item(*this, &item)) {

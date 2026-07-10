@@ -66,7 +66,12 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
     lines_.push_back(TerminalLine{});
   }
 
-  for (const unsigned char byte : data) {
+  // Index-based so a byte can be reprocessed (see the OSC/StringPayload ESC
+  // restart below): `--data_index; continue;` re-runs the current byte after the
+  // parser state has changed. The unsigned wrap at index 0 is well-defined and the
+  // subsequent `++data_index` returns it to 0.
+  for (std::size_t data_index = 0; data_index < data.size(); ++data_index) {
+    const unsigned char byte = static_cast<unsigned char>(data[data_index]);
     if (escape_mode_ == EscapeMode::AfterEscape) {
       if (byte == '[') {
         escape_sequence_buffer_.push_back('[');
@@ -108,8 +113,16 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
       } else if (byte == 'Z') {
         SendBytesLocked("\x1b[?1;2c");
       } else if (byte == 'D' || byte == 'E') {
+        // IND (ESC D) moves down one row PRESERVING the column; only NEL (ESC E)
+        // resets to column 0. AdvanceCursorRowLocked unconditionally zeroes the
+        // column (correct for LF/wrap), so restore it for IND. Unlike a bare LF,
+        // IND is not subject to the PTY's ONLCR translation, so a program using it
+        // to move down while holding its column must land at that column.
+        const std::size_t saved_column = cursor_column_;
         AdvanceCursorRowLocked();
-        if (byte == 'E') {
+        if (byte == 'D') {
+          cursor_column_ = saved_column;
+        } else {
           cursor_column_ = 0;
         }
       } else if (byte == 'M') {
@@ -137,6 +150,22 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
     }
 
     if (escape_mode_ == EscapeMode::Csi) {
+      // ECMA-48: ESC/CAN/SUB appearing mid-sequence cancel the control sequence.
+      // ESC starts a fresh escape (e.g. `\x1b[\x1b[2J` must run the second CSI, not
+      // dispatch a garbage sequence ending in the second '['); CAN/SUB abort to
+      // ground. Without this the intervening byte was swallowed as a parameter and
+      // the next final byte dispatched a corrupt sequence.
+      if (byte == 0x1b) {
+        escape_sequence_buffer_.clear();
+        escape_mode_ = EscapeMode::AfterEscape;
+        osc_escape_pending_ = false;
+        continue;
+      }
+      if (byte == 0x18 || byte == 0x1a) {
+        escape_sequence_buffer_.clear();
+        escape_mode_ = EscapeMode::None;
+        continue;
+      }
       escape_sequence_buffer_.push_back(static_cast<char>(byte));
       if (byte >= '@' && byte <= '~') {
         HandleEscapeSequenceLocked(escape_sequence_buffer_);
@@ -149,15 +178,30 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
     }
 
     if (escape_mode_ == EscapeMode::Osc) {
+      // CAN/SUB abort the control string (ESC is handled below as the ST lead-in).
+      if (byte == 0x18 || byte == 0x1a) {
+        escape_sequence_buffer_.clear();
+        escape_mode_ = EscapeMode::None;
+        osc_escape_pending_ = false;
+        continue;
+      }
       if (osc_escape_pending_) {
+        osc_escape_pending_ = false;
         if (byte == '\\') {
           HandleOscSequenceLocked(escape_sequence_buffer_);
           escape_sequence_buffer_.clear();
           escape_mode_ = EscapeMode::None;
-          osc_escape_pending_ = false;
           continue;
         }
-        osc_escape_pending_ = false;
+        // ECMA-48: an ESC not forming ST (`ESC \`) terminates the control string
+        // AND begins a new escape sequence. Dispatch the OSC, then reprocess this
+        // byte as the first byte after ESC — otherwise a title followed by a real
+        // sequence (`\e]0;t\e[0m`) would swallow the `\e[0m` into the OSC payload.
+        HandleOscSequenceLocked(escape_sequence_buffer_);
+        escape_sequence_buffer_.clear();
+        escape_mode_ = EscapeMode::AfterEscape;
+        --data_index;
+        continue;
       }
       if (byte == '\a') {
         HandleOscSequenceLocked(escape_sequence_buffer_);
@@ -179,14 +223,26 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
 
     if (escape_mode_ == EscapeMode::StringPayload) {
       // DCS/SOS/PM/APC payload: discard everything up to the ST (ESC \) or BEL.
+      // CAN/SUB abort the control string early (ESC is the ST lead-in, below).
+      if (byte == 0x18 || byte == 0x1a) {
+        escape_sequence_buffer_.clear();
+        escape_mode_ = EscapeMode::None;
+        osc_escape_pending_ = false;
+        continue;
+      }
       if (osc_escape_pending_) {
+        osc_escape_pending_ = false;
         if (byte == '\\') {
           escape_sequence_buffer_.clear();
           escape_mode_ = EscapeMode::None;
-          osc_escape_pending_ = false;
           continue;
         }
-        osc_escape_pending_ = false;
+        // ESC not forming ST terminates the payload AND begins a new escape:
+        // drop the (discarded) payload and reprocess this byte after ESC.
+        escape_sequence_buffer_.clear();
+        escape_mode_ = EscapeMode::AfterEscape;
+        --data_index;
+        continue;
       }
       if (byte == '\a') {
         escape_sequence_buffer_.clear();

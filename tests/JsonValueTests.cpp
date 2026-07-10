@@ -150,6 +150,27 @@ void TestStringEscapeRunsRoundTrip() {
 
 // A non-finite double has no JSON form; the serializer emits null rather than the
 // bare token nan/inf that this parser (and any strict peer) would reject.
+// Regression: a syntactically valid float literal whose magnitude overflows
+// double must not abort the whole message parse (it previously returned nullopt
+// from ParseNumber, silently dropping the entire LSP/DAP message). It must
+// resolve the surrounding object with a best-effort non-finite value, mirroring
+// the int64-overflow fallback.
+void TestOverRangeFloatDoesNotAbortParse() {
+  const auto obj = ParseJson("{\"timeout\":1e400,\"ok\":true}");
+  Expect(obj.has_value(), "over-range float must not abort the enclosing parse");
+  Expect(obj->IsObject(), "parsed value should be the enclosing object");
+  Expect((*obj)["ok"].IsBool() && (*obj)["ok"].AsBool(),
+         "sibling members must still resolve after an over-range float");
+  Expect((*obj)["timeout"].IsDouble(),
+         "over-range float should be stored as a (non-finite) double");
+  Expect(!std::isfinite((*obj)["timeout"].AsDouble()),
+         "over-range float should decode as a non-finite double");
+  // Negative overflow preserves sign.
+  const auto neg = ParseJson("-1e400");
+  Expect(neg.has_value() && neg->IsDouble() && neg->AsDouble() < 0.0,
+         "negative over-range float preserves its sign");
+}
+
 void TestNonFiniteDoubleSerializesAsNull() {
   const JsonValue nan_value{std::numeric_limits<double>::quiet_NaN()};
   const JsonValue inf_value{std::numeric_limits<double>::infinity()};

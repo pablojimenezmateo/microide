@@ -122,6 +122,16 @@ void WorkspaceShell::ResetLifecycleStartupState() {
 }
 
 void WorkspaceShell::RegisterLifecycleWakeEvents() {
+  // Dedicated neutral wake for background-task completion. Without a registered
+  // type the counter falls back to the bare SDL_EVENT_USER base, which aliases
+  // whichever subsystem registered first (project search today) and mis-routes
+  // every task-completion wake into that handler. A registered type is claimed by
+  // no dispatch branch, so it reaches the neutral default.
+  const Uint32 background_task_event_type = SDL_RegisterEvents(1);
+  if (background_task_event_type != static_cast<Uint32>(-1)) {
+    app::SetBackgroundTaskWakeEventType(background_task_event_type);
+  }
+
   const Uint32 plugin_asset_event_type = SDL_RegisterEvents(1);
   plugin_runtime_.SetWakeEventType(
       plugin_asset_event_type != static_cast<Uint32>(-1) ? plugin_asset_event_type : 0);
@@ -137,6 +147,10 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   if (git_sidebar_event_type_ == static_cast<Uint32>(-1)) {
     git_sidebar_event_type_ = 0;
   }
+  // Reuse the git-sidebar wake for commit completions: a commit result is
+  // marshaled back to the main thread and drained in ConsumeGitSidebarRefresh
+  // (a successful commit refreshes the sidebar anyway).
+  commit_workflow_service_.SetCompletionWakeEvent(git_sidebar_event_type_);
   InitializeCommitWorkflowService();
   patch_apply_service_.SetCallbacks(PatchApplyService::Callbacks{
       .current_repository_state = [this]() {

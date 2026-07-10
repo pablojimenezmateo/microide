@@ -1363,6 +1363,125 @@ void TestTerminalSessionOutputParserIgnoresIncompleteEscapes() {
                  "completed CSI sequences should apply styling without losing buffered text");
 }
 
+// Regression: Background Color Erase. A whole-screen erase with a non-default
+// background must paint the blanked rows with that background, matching the
+// erase-in-line path. Previously EraseInDisplay reset rows to empty cells, so
+// `\x1b[44m\x1b[2J` (blue background, clear screen) lost the background.
+void TestTerminalSessionEraseDisplayAppliesBackgroundColorErase() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+
+  // SGR 44 = blue background, then ED 2 (clear entire display).
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[44m\x1b[2J");
+
+  const auto lines = session.SnapshotLines();
+  bool any_blue = false;
+  for (const auto& line : lines) {
+    for (const auto& cell : line.cells) {
+      if (cell.style.background.has_value()) {
+        any_blue = true;
+      }
+    }
+  }
+  Expect(any_blue,
+         "clearing the screen under a non-default background must retain that "
+         "background on the erased rows (BCE)");
+}
+
+// Regression: IND (ESC D) moves down one row PRESERVING the column; only NEL
+// (ESC E) resets to column 0. IND is not subject to ONLCR, so a program using it
+// to move down while holding its column must land at that column.
+void TestTerminalSessionIndexPreservesColumn() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+
+  TerminalSessionTestAccess::AppendOutput(session, "abc");  // row 0, column 3
+  Expect(session.cursor_row() == 0 && session.cursor_column() == 3,
+         "cursor should sit at column 3 after printing 'abc'");
+
+  // NB: octal \033 (not \x1b) — a \x hex escape is greedy and would fold the
+  // following 'D'/'E' hex digit into a single out-of-range escape.
+  TerminalSessionTestAccess::AppendOutput(session, "\033D");  // IND
+  Expect(session.cursor_row() == 1 && session.cursor_column() == 3,
+         "IND (ESC D) must move down one row and preserve the column");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\033E");  // NEL
+  Expect(session.cursor_row() == 2 && session.cursor_column() == 0,
+         "NEL (ESC E) must move down and reset the column to 0");
+}
+
+// Regression: an ESC (not forming ST) inside an unterminated OSC string must
+// terminate the string AND restart escape parsing, so a following real sequence
+// runs instead of being swallowed into the OSC payload.
+void TestTerminalSessionEscInsideOscRestartsSequence() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "HELLO");
+  // OSC set-title WITHOUT a terminator, immediately followed by a clear-screen.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]0;title\x1b[2J");
+
+  const auto lines = session.SnapshotLines();
+  std::string all;
+  for (const auto& line : lines) {
+    all += LineText(line);
+  }
+  Expect(all.find("HELLO") == std::string::npos,
+         "the clear-screen after an unterminated OSC must run (ESC restarts parsing)");
+  Expect(all.find("2J") == std::string::npos && all.find("title") == std::string::npos,
+         "OSC payload and the following CSI must not leak as literal text");
+}
+
+// Regression: restarting a session in place must reset all negotiated protocol
+// state, so a reused session never inherits a prior shell's Kitty-keyboard flags,
+// synchronized-output mode, cursor shape, reported cwd, or custom tab stops.
+void TestTerminalSessionRestartResetsNegotiatedState() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  // Negotiate protocol state a real shell might set.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[>5u");     // push Kitty flags = 5
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2026h");  // synchronized output on
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[3g");      // clear then set a tab stop
+  TerminalSessionTestAccess::AppendOutput(session, "\x1bH");
+  Expect(TerminalSessionTestAccess::KittyKeyboardFlags(session) == 5,
+         "kitty keyboard flags should be negotiated before restart");
+  Expect(TerminalSessionTestAccess::SynchronizedOutput(session),
+         "synchronized output should be enabled before restart");
+
+  // Restart in place (test seam routes through Stop()'s reset).
+  session.StartPlaceholderForTesting(std::filesystem::path("/tmp"), "");
+
+  Expect(TerminalSessionTestAccess::KittyKeyboardFlags(session) == 0,
+         "restart must clear negotiated kitty keyboard flags");
+  Expect(!TerminalSessionTestAccess::SynchronizedOutput(session),
+         "restart must clear synchronized output mode");
+  Expect(TerminalSessionTestAccess::TabStopCount(session) == 0,
+         "restart must clear custom tab stops");
+}
+
+// Regression: an ESC appearing mid-CSI must cancel the current sequence and start
+// a fresh one. `\x1b[\x1b[2J` must run the second CSI (clear screen), not swallow
+// the ESC as a parameter and dispatch a corrupt sequence that prints "2J".
+void TestTerminalSessionEscInsideCsiAbortsSequence() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+
+  // Put some text on screen, then send an aborted CSI immediately followed by a
+  // real clear-screen. The clear must take effect and no literal "2J" may appear.
+  TerminalSessionTestAccess::AppendOutput(session, "HELLO");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[\x1b[2J");
+
+  const auto lines = session.SnapshotLines();
+  std::string all;
+  for (const auto& line : lines) {
+    all += LineText(line);
+  }
+  Expect(all.find("2J") == std::string::npos,
+         "an ESC-cancelled CSI must not leak its final bytes as literal text");
+  Expect(all.find("HELLO") == std::string::npos,
+         "the second CSI (clear screen) must actually run after the ESC cancel");
+}
+
 void TestTerminalCellIsTriviallyCopyableAndCompact() {
   // 2026-05-15 perf deep-dive round 2 Finding 8: TerminalCell must use inline UTF-8 storage so
   // scrollback snapshots/trims become bulk memcpys instead of per-cell std::string moves, and the
@@ -1865,6 +1984,16 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionResizeClampsCursorAndPreservesBuffer);
   AddTest(tests, "TerminalSession/OutputParserIgnoresIncompleteEscapes",
           TestTerminalSessionOutputParserIgnoresIncompleteEscapes);
+  AddTest(tests, "TerminalSession/EraseDisplayAppliesBackgroundColorErase",
+          TestTerminalSessionEraseDisplayAppliesBackgroundColorErase);
+  AddTest(tests, "TerminalSession/EscInsideCsiAbortsSequence",
+          TestTerminalSessionEscInsideCsiAbortsSequence);
+  AddTest(tests, "TerminalSession/EscInsideOscRestartsSequence",
+          TestTerminalSessionEscInsideOscRestartsSequence);
+  AddTest(tests, "TerminalSession/IndexPreservesColumn",
+          TestTerminalSessionIndexPreservesColumn);
+  AddTest(tests, "TerminalSession/RestartResetsNegotiatedState",
+          TestTerminalSessionRestartResetsNegotiatedState);
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "TerminalSession/StopEscalatesToKillForStubbornChild",
           TestTerminalSessionStopEscalatesToKillForStubbornChild);

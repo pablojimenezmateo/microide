@@ -373,6 +373,7 @@ struct DapClient::Impl {
       return std::nullopt;
     }
     std::size_t body_start = nl + 1;
+    bool header_terminated = false;
     while (body_start < v.size()) {
       const auto nl2 = v.find('\n', body_start);
       if (nl2 == std::string_view::npos) {
@@ -384,8 +385,17 @@ struct DapClient::Impl {
       }
       body_start = nl2 + 1;
       if (hdr.empty()) {
+        header_terminated = true;
         break;
       }
+    }
+    // The loop can also exit because the buffer ran out mid-header-block (a recv
+    // split right on a header newline). `body_start` then points at the buffer
+    // end, not past the real blank-line terminator; committing the oversized skip
+    // below with that body_start would count the unseen terminator bytes as body
+    // and desync the stream. Wait for the rest of the header block instead.
+    if (!header_terminated) {
+      return std::nullopt;
     }
     if (static_cast<std::size_t>(content_len) > kMaxDapMessageBytes) {
       // Too large to buffer: skip the entire frame (headers + body) so the parser

@@ -9,6 +9,7 @@
 
 #include "project/CommitWorkflowTypes.h"
 #include "project/ProjectBackgroundExecutor.h"
+#include "util/MainThreadMailbox.h"
 #include "workspace/CommitWorkflowPersistence.h"
 #include "workspace/CommitWorkflowState.h"
 #include "workspace/NotificationService.h"
@@ -43,6 +44,19 @@ class CommitWorkflowService {
 
   void SetCallbacks(Callbacks callbacks);
 
+  // The commit runs on a background thread; its result must be published to the
+  // shared CommitWorkflowState on the main (render) thread. SetCompletionWakeEvent
+  // wires the mailbox that carries the completion closure back, and
+  // DrainCompletions runs any queued completion on the main thread. The shell
+  // reuses the git-sidebar wake event (a successful commit refreshes git anyway)
+  // and drains here before rebuilding the sidebar.
+  void SetCompletionWakeEvent(std::uint32_t event_type);
+  void DrainCompletions();
+
+  // Test seam: number of commit completions queued for the main thread but not
+  // yet drained (lets a test wait for the worker to finish without cancelling it).
+  int PendingCompletionCount() const { return completion_mailbox_.PendingCount(); }
+
   void Open(CommitWorkflowState& state);
   void Close(CommitWorkflowState& state);
   void RefreshDerivedState(CommitWorkflowState& state);
@@ -67,6 +81,10 @@ class CommitWorkflowService {
   Callbacks callbacks_;
   mutable std::mutex mutex_;
   std::uint64_t operation_generation_ = 0;
+  // Background-thread commit result -> main-thread PublishResult marshaling. Keeps
+  // all mutation of CommitWorkflowState (subject/body viewports, status message)
+  // on the render thread; the worker only produces the CommitOperationResult.
+  util::MainThreadMailbox completion_mailbox_;
 };
 
 }  // namespace microide::workspace

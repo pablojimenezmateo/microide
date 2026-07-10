@@ -1,11 +1,14 @@
 #include "TestSupport.h"
 
+#include "compare/BranchReviewStateService.h"
+#include "compare/BranchReviewStateTypes.h"
 #include "compare/ComparePresentationModel.h"
 #include "compare/CompareReviewTypes.h"
 #include "compare/CompareSemanticMetadata.h"
 #include "workspace/CompareTabReview.h"
 
 #include <algorithm>
+#include <filesystem>
 
 namespace microide::tests {
 
@@ -29,6 +32,57 @@ using microide::workspace::ExpandCompareCollapsedContext;
 using microide::workspace::RefreshCompareReviewHeader;
 
 void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
+  // Regression: branch-review markers/notes must actually render on the compare
+  // rows. The marker-application loop gated on ComparePresentationRow::hunk_index,
+  // which the presentation builder never populates (stays -1), so the whole
+  // "reviewed"/note-indicator half of branch review was dead code. Markers must
+  // resolve the hunk from the underlying model row instead.
+  tests.push_back(
+      {"CompareReview/BranchMarkersRenderFromModelRowHunk",
+       [] {
+         using microide::compare::BranchReviewMarkerStatus;
+         using microide::compare::BranchReviewNoteScope;
+         using microide::compare::BranchReviewStateService;
+         using microide::compare::ComputeBranchReviewHunkIdentity;
+         using microide::compare::MakeBranchReviewTargetIdentity;
+         using microide::workspace::ApplyBranchReviewPresentationMarkers;
+         using microide::workspace::RefreshCompareTabPresentation;
+
+         CompareTabState compare_tab;
+         compare_tab.review_mode = CompareReviewMode::Branch;
+         compare_tab.path = std::filesystem::path("a.cpp");
+         compare_tab.branch_target =
+             MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 3);
+         compare_tab.model = BuildCompareModel("old line\n", "new line\n");
+         compare_tab.semantic_file = InferCompareSemanticFileMetadata(
+             CompareSemanticMetadataInput{
+                 .path = "a.cpp",
+                 .left_content = "old line\n",
+                 .right_content = "new line\n",
+                 .git_entry = std::nullopt,
+                 .old_path = {},
+             });
+         RefreshCompareTabPresentation(compare_tab);
+
+         BranchReviewStateService service;
+         service.MarkHunkReviewed(
+             compare_tab.branch_target,
+             ComputeBranchReviewHunkIdentity(compare_tab.model, 0,
+                                             std::filesystem::path("a.cpp")));
+
+         ApplyBranchReviewPresentationMarkers(compare_tab, service);
+
+         bool any_marked = false;
+         for (const auto& row : compare_tab.presentation.rows) {
+           if (row.kind == ComparePresentationRowKind::Model &&
+               !row.review_marker_label.empty()) {
+             any_marked = true;
+           }
+         }
+         Expect(any_marked,
+                "a reviewed hunk must place a review marker on its model rows");
+       }});
+
   tests.push_back({"CompareReview/WorkingTreeMode",
                    [] {
                      Expect(InferCompareReviewMode("HEAD", "WORKTREE", false) ==

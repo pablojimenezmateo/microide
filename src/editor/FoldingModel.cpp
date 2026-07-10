@@ -246,6 +246,14 @@ void ScanIndentRanges(LineSpan lines,
     indents[i] = MeasureIndent(lines[i], tab_size);
   }
 
+  // The emission pass only reads the precomputed `indents[]` array; it must not
+  // share the measurement loop's budget counter. Because callers pass
+  // `max_lines == work_budget == max(max_lines, scan_end)`, the measurement loop
+  // above always consumes the full budget first, which would leave this loop
+  // with zero remaining budget and silently drop every indent fold on files
+  // whose scan window reaches the budget. Reset the counter so emission gets its
+  // own budget of `max_lines` visits.
+  scanned = 0;
   for (std::size_t i = 0; i < scan_end; ++i) {
     if (max_lines != 0 && scanned >= max_lines) {
       complete = false;
@@ -263,15 +271,32 @@ void ScanIndentRanges(LineSpan lines,
     }
     if (body_start >= scan_end) break;
     if (indents[body_start] <= opener_indent) continue;
-    // Walk forward until indent <= opener_indent or EOF.
+    // Walk forward until a genuine dedent (indent <= opener_indent) or the window
+    // boundary.
     std::size_t closer = body_start;
+    bool found_dedent = false;
     while (closer + 1 < scan_end) {
       const std::size_t next_indent = indents[closer + 1];
-      if (next_indent != kSentinelIndent && next_indent <= opener_indent) break;
+      if (next_indent != kSentinelIndent && next_indent <= opener_indent) {
+        found_dedent = true;
+        break;
+      }
       ++closer;
     }
-    if (closer > i) {
-      out_ranges.push_back(FoldRange{i, closer, FoldSource::Indent});
+    // Only emit when the block genuinely terminates: either a dedent was found, or
+    // the scan window already reaches end-of-document (so the block really ends at
+    // EOF). If the window is budget-limited and no dedent was seen, the block is
+    // truncated by the window — emitting here would produce a bogus short fold on a
+    // deeply-indented body whose real end (or a bracket fold on the same opener)
+    // lies past the budget, e.g. a `namespace {` whose `}` is thousands of lines
+    // below. Defer it: mark incomplete so a wider scan on scroll resolves it.
+    const bool window_reaches_eof = scan_end >= lines.size();
+    if (found_dedent || window_reaches_eof) {
+      if (closer > i) {
+        out_ranges.push_back(FoldRange{i, closer, FoldSource::Indent});
+      }
+    } else {
+      complete = false;
     }
   }
 }

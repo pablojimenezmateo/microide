@@ -140,6 +140,23 @@ int FirstPatchLineNumber(const compare::CompareModel& model,
   return 1;
 }
 
+// For a zero-length hunk side (a pure insertion has 0 old-side lines; a pure
+// deletion has 0 new-side lines), git's `@@ -L,0 @@` / `@@ +M,0 @@` convention
+// sets L/M to the line number on that side *immediately preceding* the change —
+// i.e. the line after which the opposite side's content is inserted. Scan
+// backward from the hunk start for the nearest row that carries a real line
+// number on this side; 0 means the change sits at the top of the file.
+int PrecedingSideLine(const compare::CompareModel& model, std::size_t start_row, bool right_side) {
+  for (std::size_t row = start_row; row-- > 0;) {
+    const CompareRow& compare_row = model.rows[row];
+    const int line = right_side ? compare_row.right_line : compare_row.left_line;
+    if (line > 0) {
+      return line;
+    }
+  }
+  return 0;
+}
+
 std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
                                              const std::filesystem::path& relative_path,
                                              std::size_t start_row,
@@ -303,11 +320,22 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
     }
   }
 
-  const int old_range_start = is_new_file ? 0 : FirstPatchLineNumber(model, start_row, end_row, false);
+  // A genuine 0 count is valid for a partial selection that touches only one side
+  // (e.g. staging just the trailing inserted lines of a file whose preceding row
+  // is a modification, so no context is attached). Clamping such a side to 1 emits
+  // a header that claims a line the body does not contain, which `git apply`
+  // rejects as corrupt. Emit the real 0 count and point the range start at the
+  // line preceding the change, matching git's `-L,0` / `+M,0` convention.
+  const int old_range_count = is_new_file ? 0 : old_count;
+  const int new_range_count = is_deleted_file ? 0 : new_count;
+  const int old_range_start =
+      is_new_file ? 0
+      : old_range_count == 0 ? PrecedingSideLine(model, start_row, false)
+                             : FirstPatchLineNumber(model, start_row, end_row, false);
   const int new_range_start =
-      is_deleted_file ? 0 : FirstPatchLineNumber(model, start_row, end_row, true);
-  const int old_range_count = is_new_file ? 0 : std::max(old_count, 1);
-  const int new_range_count = is_deleted_file ? 0 : std::max(new_count, 1);
+      is_deleted_file ? 0
+      : new_range_count == 0 ? PrecedingSideLine(model, start_row, true)
+                             : FirstPatchLineNumber(model, start_row, end_row, true);
 
   std::ostringstream body;
   for (const PatchBodyLine& line : body_lines) {

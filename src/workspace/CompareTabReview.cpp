@@ -93,15 +93,22 @@ void ApplyBranchReviewPresentationMarkers(
   for (compare::ComparePresentationRow& row : compare_tab.presentation.rows) {
     row.review_marker_label.clear();
     row.has_review_note = false;
-    if ((row.kind == compare::ComparePresentationRowKind::HunkHeader ||
-         row.kind == compare::ComparePresentationRowKind::Model) &&
-        row.hunk_index >= 0) {
-      compare::BranchReviewStateQueryInput query = base_query;
-      query.selected_hunk_index = row.hunk_index;
-      row.review_marker_label =
-          compare::BranchReviewMarkerLabel(review_service.HunkStatus(query));
-      row.has_review_note =
-          review_service.HasNote(query, compare::BranchReviewNoteScope::Hunk);
+    // Resolve the hunk from the underlying model row. `ComparePresentationRow::
+    // hunk_index` is never populated by the builder (it stays -1), so gating on it
+    // made this branch dead code — review markers/notes never rendered on any row.
+    // The model row carries the real hunk id (matching the navigation path in
+    // CompareTabPresentationRowForHunk).
+    if (row.kind == compare::ComparePresentationRowKind::Model &&
+        row.model_row_index < compare_tab.model.rows.size()) {
+      const int hunk = compare_tab.model.rows[row.model_row_index].hunk;
+      if (hunk >= 0) {
+        compare::BranchReviewStateQueryInput query = base_query;
+        query.selected_hunk_index = hunk;
+        row.review_marker_label =
+            compare::BranchReviewMarkerLabel(review_service.HunkStatus(query));
+        row.has_review_note =
+            review_service.HasNote(query, compare::BranchReviewNoteScope::Hunk);
+      }
     }
     compare::ComposeComparePresentationDisplaySummary(row);
   }

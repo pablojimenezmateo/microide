@@ -89,6 +89,41 @@ void TestIndentFoldFallsBackWhenNoBrackets() {
          "indent-source fold should span the indented block");
 }
 
+// Regression: indent-source folds must still be emitted when the scan window
+// reaches the compute budget. The emission pass previously shared the
+// measurement loop's budget counter, which the measurement loop always
+// exhausted first (callers pass work_budget == max(max_lines, scan_end)), so
+// every indent fold was silently dropped on files whose scan window hit the
+// 2000-line budget — indentation-only languages (Python/YAML) then showed no
+// fold markers at all.
+void TestIndentFoldsEmittedWhenScanWindowReachesBudget() {
+  std::vector<std::string> lines;
+  lines.reserve(2100);
+  lines.push_back("if cond:");        // indent opener at line 0
+  lines.push_back("    body_one()");  // line 1
+  lines.push_back("    body_two()");  // line 2 (closer)
+  lines.push_back("next_thing()");    // line 3, dedent
+  for (int i = 0; i < 2096; ++i) {
+    lines.push_back("filler()");  // no folds, pushes line_count past the budget
+  }
+
+  FoldingModel::ComputeOptions options = DefaultCStyleOptions();
+  options.bracket_pairs = {};  // Python-ish: no bracket fold to mask the indent fold
+
+  FoldingModel model;
+  // Visible at the very top; scan_end resolves to max(target_end, budget) == 2000
+  // == max_lines, the exact condition that previously starved the emission loop.
+  Expect(model.EnsureFoldsForVisibleRange(lines, options,
+                                          /*visible_start_line=*/0,
+                                          /*visible_end_line=*/20,
+                                          /*max_lines=*/2000),
+         "visible-range resolve should finish");
+  const auto fold = model.FoldStartingAt(0);
+  Expect(fold.has_value() && fold->closer_line == 2 &&
+             fold->source == FoldSource::Indent,
+         "indent fold near the top must be emitted even when scan_end == budget");
+}
+
 void TestBracketWinsOnDuplicateOpenerLine() {
   const std::vector<std::string> lines = {
       "if (a) {",
@@ -553,6 +588,8 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
           TestInnermostFoldContainingPicksDeepestOpener);
   AddTest(tests, "EditorFolding/Indent/FallsBackWhenNoBrackets",
           TestIndentFoldFallsBackWhenNoBrackets);
+  AddTest(tests, "EditorFolding/Indent/EmittedWhenScanWindowReachesBudget",
+          TestIndentFoldsEmittedWhenScanWindowReachesBudget);
   AddTest(tests, "EditorFolding/Mixed/BracketWinsOnDuplicateOpener",
           TestBracketWinsOnDuplicateOpenerLine);
   AddTest(tests, "EditorFolding/Bracket/SkipsStringAndCommentRegions",

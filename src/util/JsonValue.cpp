@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <sstream>
 
 #include "util/Hex.h"
@@ -134,8 +135,17 @@ struct Parser {
     const std::string_view tok = src.substr(start, pos - start);
     if (is_float) {
       const auto parsed = ParseDouble(tok);
-      if (!parsed.has_value()) return std::nullopt;
-      return JsonValue(*parsed);
+      if (parsed.has_value()) return JsonValue(*parsed);
+      // A syntactically valid JSON float literal whose magnitude overflows
+      // double (e.g. "1e400") must not abort the entire message parse, mirroring
+      // the int64-overflow fallback below — otherwise one out-of-range number
+      // silently drops the whole LSP/DAP response and stalls the request.
+      // Preserve the sign as ±inf; SerializeJson maps non-finite doubles to null
+      // and the numeric accessors clamp it, so the surrounding value resolves.
+      const double overflow = (!tok.empty() && tok.front() == '-')
+                                  ? -std::numeric_limits<double>::infinity()
+                                  : std::numeric_limits<double>::infinity();
+      return JsonValue(overflow);
     }
     const auto parsed = ParseInt64(tok);
     if (parsed.has_value()) return JsonValue(*parsed);

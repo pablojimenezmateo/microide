@@ -91,6 +91,19 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     bracketed_paste_mode_ = false;
     focus_event_mode_ = false;
     cursor_visible_ = true;
+    // Reset the remaining negotiated/terminal state so a reused session never
+    // inherits a prior shell's protocol state (stale Kitty-keyboard flags would
+    // mis-encode Enter/Tab; a stuck synchronized-output flag would suppress the
+    // first redraw wakes; stale cursor shape / reported cwd / tab stops would
+    // leak through). Kept in lockstep with Stop() and TestAccess::Reset.
+    kitty_keyboard_flags_ = 0;
+    kitty_keyboard_stack_.clear();
+    synchronized_output_ = false;
+    sync_suppressed_wakes_ = 0;
+    cursor_shape_ = CursorShape::Block;
+    cursor_blinking_ = true;
+    reported_working_directory_.clear();
+    tab_stops_.clear();
     primary_screen_ = ScreenState{};
     alternate_screen_ = ScreenState{};
     rows_ = 24;
@@ -200,6 +213,19 @@ bool TerminalSession::StartPlaceholderForTesting(const std::filesystem::path& wo
     bracketed_paste_mode_ = false;
     focus_event_mode_ = false;
     cursor_visible_ = true;
+    // Reset the remaining negotiated/terminal state so a reused session never
+    // inherits a prior shell's protocol state (stale Kitty-keyboard flags would
+    // mis-encode Enter/Tab; a stuck synchronized-output flag would suppress the
+    // first redraw wakes; stale cursor shape / reported cwd / tab stops would
+    // leak through). Kept in lockstep with Stop() and TestAccess::Reset.
+    kitty_keyboard_flags_ = 0;
+    kitty_keyboard_stack_.clear();
+    synchronized_output_ = false;
+    sync_suppressed_wakes_ = 0;
+    cursor_shape_ = CursorShape::Block;
+    cursor_blinking_ = true;
+    reported_working_directory_.clear();
+    tab_stops_.clear();
     primary_screen_ = ScreenState{};
     alternate_screen_ = ScreenState{};
     rows_ = 24;
@@ -256,6 +282,16 @@ void TerminalSession::Stop() {
   bracketed_paste_mode_ = false;
   focus_event_mode_ = false;
   cursor_visible_ = true;
+  // Reset the remaining negotiated/terminal state (see Start()); kept in lockstep
+  // so a reused session never inherits a prior shell's protocol state.
+  kitty_keyboard_flags_ = 0;
+  kitty_keyboard_stack_.clear();
+  synchronized_output_ = false;
+  sync_suppressed_wakes_ = 0;
+  cursor_shape_ = CursorShape::Block;
+  cursor_blinking_ = true;
+  reported_working_directory_.clear();
+  tab_stops_.clear();
   primary_screen_ = ScreenState{};
   alternate_screen_ = ScreenState{};
   cursor_row_ = 0;

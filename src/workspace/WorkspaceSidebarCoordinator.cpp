@@ -491,6 +491,9 @@ void WorkspaceShell::RefreshGitSidebar() {
 }
 
 void WorkspaceShell::ConsumeGitSidebarRefresh() {
+  // Publish any completed background commit on the main thread first (its wake
+  // reuses this event), then rebuild the sidebar to reflect the new state.
+  commit_workflow_service_.DrainCompletions();
   MakeSidebarService().RefreshGit();
 }
 
