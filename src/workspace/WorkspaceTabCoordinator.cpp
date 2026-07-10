@@ -324,6 +324,14 @@ void TabCoordinator::Activate(std::size_t index) {
 
   if (state_.focused_group().active_tab_index == index) {
     auto& active_tab = state_.focused_group().open_tabs[index];
+    // Re-activating the already-active tab normally needs no load, but a tab left
+    // deferred (editor_state unset yet a deferred handle present) must still be
+    // hydrated here or its pane renders empty. Guarded on the un-hydrated state so
+    // the common re-click stays a no-op and never re-snaps scroll onto the caret.
+    if (active_tab.kind == TabEntry::Kind::Editor && !active_tab.editor_state.has_value() &&
+        active_tab.deferred_handle.has_value()) {
+      (void)LoadEditorTabForActivation(active_tab);
+    }
     SyncActiveEditorTabMetadata();
     state_.surface.focus = FocusTarget::Editor;
     operations_.reset_caret_blink();
@@ -913,6 +921,7 @@ void TabCoordinator::CloseGroupTab(std::size_t group_index, std::size_t index) {
   // Same last-view LSP-didClose accounting as Close() (count includes the tab being
   // closed, so ==1 means this is the final view).
   MaybeNotifyLspClose(group.open_tabs[index]);
+  const bool closing_active = index == group.active_tab_index;
   group.open_tabs.erase(group.open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
   if (group.active_tab_index > index) {
     --group.active_tab_index;
@@ -922,6 +931,16 @@ void TabCoordinator::CloseGroupTab(std::size_t group_index, std::size_t index) {
   if (group.open_tabs.empty()) {
     CollapseGroupAt(group_index);
   } else {
+    if (closing_active) {
+      // Promote the neighbor through the same loader Close()/Activate use so a
+      // deferred (session-restored, never-activated) tab in this non-focused
+      // group hydrates its cursor/scroll/selection instead of rendering empty
+      // (only a group's active tab is eagerly hydrated on restore).
+      auto& tab = group.open_tabs[group.active_tab_index];
+      if (tab.kind == TabEntry::Kind::Editor) {
+        (void)LoadEditorTabForActivation(tab);
+      }
+    }
     operations_.invalidate_editor_tab_geometry();
   }
 }

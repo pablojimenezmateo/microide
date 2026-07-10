@@ -358,6 +358,29 @@ void TestTextViewportInsertNewlineCopiesLeadingIndentation() {
          "newline insertion should place the caret after the copied indentation");
 }
 
+// Regression: Enter over a top-to-bottom (downward) selection must take its
+// auto-indent from the insertion point (range.start, the surviving prefix line),
+// not from cursor_line_ which sits on the removed line at range.end. Previously
+// the inherited indent came from the bottom line, so replacing a selection could
+// drop or corrupt the leading indentation of the new line.
+void TestTextViewportInsertNewlineOverDownwardSelectionIndentsFromStartLine() {
+  TextViewport viewport;
+  viewport.LoadContent("    alpha\nbeta\n", "/tmp/indent-newline-sel.cpp");
+
+  // Select from end of the indented line 0 down to end of the unindented line 1.
+  viewport.MoveCursorTo(0, viewport.lines()[0].size(), false);
+  viewport.MoveCursorTo(1, viewport.lines()[1].size(), true);
+  viewport.InsertNewline();
+
+  Expect(viewport.lines()[0] == "    alpha",
+         "the surviving prefix line should keep its original text and indent");
+  Expect(viewport.lines()[1] == "    ",
+         "newline over a downward selection should inherit the START line's indent, "
+         "not the removed end line's (empty) indent");
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 4,
+         "caret should land after the inherited four-space indent");
+}
+
 void TestTextViewportInsertNewlineOnWhitespaceOnlyLineDoesNotCarryIndentForward() {
   TextViewport viewport;
   viewport.LoadContent("  const value = 1;", "/tmp/indent-newline-reset.cpp");
@@ -2852,6 +2875,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportEditingNearTailDoesNotRebuildFarCheckpoints);
   AddTest(tests, "TextViewport/InsertNewlineCopiesLeadingIndentation",
           TestTextViewportInsertNewlineCopiesLeadingIndentation);
+  AddTest(tests, "TextViewport/InsertNewlineOverDownwardSelectionIndentsFromStartLine",
+          TestTextViewportInsertNewlineOverDownwardSelectionIndentsFromStartLine);
   AddTest(tests, "TextViewport/InsertNewlineOnWhitespaceOnlyLineDoesNotCarryIndentForward",
           TestTextViewportInsertNewlineOnWhitespaceOnlyLineDoesNotCarryIndentForward);
   AddTest(tests, "TextViewport/MultiCaretNewlineCopiesIndentationPerCaret",

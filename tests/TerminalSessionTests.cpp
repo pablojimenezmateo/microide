@@ -1398,6 +1398,31 @@ void TestTerminalSessionEraseDisplayAppliesBackgroundColorErase() {
          "background on the erased rows (BCE)");
 }
 
+// Regression: a scroll-region scroll (SU/SD/IL/DL) under a non-default background
+// must paint the freed rows with that background, matching xterm/VTE and the
+// ED/EL erase paths. Previously ScrollRegionUp/DownLocked reset freed rows to
+// empty default cells, so `\x1b[44m\x1b[S` lost the background on the freed row.
+void TestTerminalSessionScrollRegionAppliesBackgroundColorErase() {
+  microide::terminal::TerminalSession session;
+  ResetAlternateScreenFixture(session);
+
+  // SGR 44 = blue background, then SU (scroll whole screen up one row).
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[44m\x1b[S");
+
+  const auto lines = session.SnapshotLines();
+  Expect(!lines.empty(), "alt screen should have rows after scroll");
+  const auto& freed = lines.back();
+  bool freed_has_background = false;
+  for (const auto& cell : freed.cells) {
+    if (cell.style.background.has_value()) {
+      freed_has_background = true;
+    }
+  }
+  Expect(freed_has_background,
+         "scrolling a region under a non-default background must paint the freed "
+         "row with that background (BCE)");
+}
+
 // Regression: IND (ESC D) moves down one row PRESERVING the column; only NEL
 // (ESC E) resets to column 0. IND is not subject to ONLCR, so a program using it
 // to move down while holding its column must land at that column.
@@ -1996,6 +2021,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionOutputParserIgnoresIncompleteEscapes);
   AddTest(tests, "TerminalSession/EraseDisplayAppliesBackgroundColorErase",
           TestTerminalSessionEraseDisplayAppliesBackgroundColorErase);
+  AddTest(tests, "TerminalSession/ScrollRegionAppliesBackgroundColorErase",
+          TestTerminalSessionScrollRegionAppliesBackgroundColorErase);
   AddTest(tests, "TerminalSession/EscInsideCsiAbortsSequence",
           TestTerminalSessionEscInsideCsiAbortsSequence);
   AddTest(tests, "TerminalSession/EscInsideOscRestartsSequence",

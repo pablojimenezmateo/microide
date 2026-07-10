@@ -554,7 +554,11 @@ void TerminalSession::ScrollRegionUpLocked(std::size_t top, std::size_t bottom, 
   auto begin = lines_.begin() + static_cast<std::ptrdiff_t>(clamped_top);
   auto end = lines_.begin() + static_cast<std::ptrdiff_t>(clamped_bottom + 1);
   std::rotate(begin, begin + static_cast<std::ptrdiff_t>(shift), end);
-  std::fill(end - static_cast<std::ptrdiff_t>(shift), end, TerminalLine{});
+  // Background Color Erase: lines exposed by the scroll take the current
+  // background, matching xterm/VTE (and the ED/EL erase paths above).
+  for (auto it = end - static_cast<std::ptrdiff_t>(shift); it != end; ++it) {
+    BlankLineToCurrentBackgroundLocked(*it);
+  }
 }
 
 void TerminalSession::ScrollRegionDownLocked(std::size_t top,
@@ -580,7 +584,11 @@ void TerminalSession::ScrollRegionDownLocked(std::size_t top,
   auto begin = lines_.begin() + static_cast<std::ptrdiff_t>(clamped_top);
   auto end = lines_.begin() + static_cast<std::ptrdiff_t>(clamped_bottom + 1);
   std::rotate(begin, end - static_cast<std::ptrdiff_t>(shift), end);
-  std::fill(begin, begin + static_cast<std::ptrdiff_t>(shift), TerminalLine{});
+  // Background Color Erase: lines exposed by the scroll take the current
+  // background, matching xterm/VTE (and the ED/EL erase paths above).
+  for (auto it = begin; it != begin + static_cast<std::ptrdiff_t>(shift); ++it) {
+    BlankLineToCurrentBackgroundLocked(*it);
+  }
 }
 
 void TerminalSession::TrimScrollbackLocked() {

@@ -74,7 +74,12 @@ void TextViewport::InsertNewline() {
   const SelectionRange range = selection_range().value_or(
       SelectionRange{TextPosition{cursor_line_, cursor_column_},
                      TextPosition{cursor_line_, cursor_column_}});
-  const std::string newline_text = "\n" + AutoIndentForNewline(cursor_line_, cursor_column_);
+  // Auto-indent from the insertion point (the surviving prefix line), which is
+  // range.start after the selection is deleted — not cursor_line_/column_, which
+  // for a top-to-bottom selection sits on the line being removed at range.end.
+  // Matches the multi-caret path (TextViewportMultiCaret uses removed.start).
+  const std::string newline_text =
+      "\n" + AutoIndentForNewline(range.start.line, range.start.column);
   (void)ApplyRangeEdit(range, newline_text, true);
 }
 

@@ -214,7 +214,13 @@ int LuaEditorApplyEdits(lua_State* state,
 
     lua_interop::GetFieldProtected(state, 1, "edits");
     if (lua_type(state, -1) == LUA_TTABLE) {
-      const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, -1));
+      // Cap the harvested edit count so a plugin returning a huge (or
+      // sparse-border-overstated) array cannot grow an unbounded host vector on
+      // this directly plugin-invokable runtime path (mirrors the provider-query
+      // harvest clamps).
+      constexpr lua_Integer kMaxApplyEdits = 100000;
+      const lua_Integer raw_count = static_cast<lua_Integer>(lua_rawlen(state, -1));
+      const lua_Integer count = raw_count < kMaxApplyEdits ? raw_count : kMaxApplyEdits;
       for (lua_Integer i = 1; i <= count; ++i) {
         lua_rawgeti(state, -1, i);
         if (lua_type(state, -1) == LUA_TTABLE) {

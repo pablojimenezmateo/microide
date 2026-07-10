@@ -14,6 +14,42 @@ These were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
 a latent API-contract hazard with no live trigger, so a rushed fix risked a
 regression worse than the defect. Recorded here so they are not silently lost.
 
+> **Deferred 2026-07-10 (pass 5 — cross-subsystem bug hunt):** a six-way fan-out
+> landed 8 fixes (see commit); the following genuine findings were deliberately
+> **not** fixed this pass and are recorded here:
+> - **Terminal: DECSTBM scroll region is not honored on the *primary* screen.**
+>   `ScrollRegionUp/DownLocked` and the LF path early-return / ignore margins unless
+>   `use_alternate_screen_`, and SU/SD (`CSI S`/`CSI T`) are alt-only. A bottom
+>   status-line program that stays on the primary buffer scrolls the whole screen.
+>   Implementing primary-screen regions touches scrollback interaction and is a
+>   feature, not a one-line fix. (Terminal hunter #2.)
+> - **Terminal: `CSI r` with an out-of-range bottom margin discards the whole
+>   command** rather than clamping the bottom to the screen height (xterm/VTE clamp).
+>   Low severity behavioral deviation. (Terminal hunter #6.)
+> - **Terminal: primary-screen DL (`CSI M`) at absolute row 0 does not bump
+>   `scrollback_trim_total_`**, so workspace scroll/selection mirrors can strand.
+>   Narrow reachability; IL/DL are general content edits the mirror only partly
+>   tracks — needs a semantics decision, not a rushed accounting patch. (Terminal #5.)
+> - **Terminal: resize full-window scroll-margin re-expansion is applied only to
+>   the active screen**, not the saved primary/alternate `scroll_region_*`; a resize
+>   between alt-screen switches can restore a stale region. Masked in practice by
+>   apps re-issuing `CSI r` on redraw. (Terminal hunter #1.)
+> - **Plugin: contribution registrations lack the per-kind count cap** that
+>   `registry_interop` enforces (`kMaxPluginContributionsPerKind`). The parallel
+>   `contribution_interop::Register*` path (completions/code-actions/providers/etc.)
+>   `push_back`s uncapped, so a tight `setup()` loop can balloon host RSS within the
+>   750 ms watchdog. Best fixed by routing all contribution registers through the
+>   shared cap helper — a focused refactor worth doing deliberately. (Plugin #3.)
+> - **Windows-only platform gaps** (not built on the Linux-primary tree, so
+>   informational): `AsyncSubprocess` Windows `Impl::state_mutex` is declared but
+>   never acquired (Read/Write/Shutdown race → HANDLE UAF); `Subprocess::RunSubprocess`
+>   Windows ignores `timeout_ms` (`WaitForSingleObject(INFINITE)`) and writes stdin
+>   with a blocking `WriteFile` that can deadlock on a full pipe; `DurableFile::
+>   RenameReplacing` is non-atomic on Windows (`remove`+`rename`). (Compare/platform
+>   hunter #1–4.)
+> - **Git porcelain-v2:** a `'2'` rename record consumes the following record as
+>   origPath unconditionally; only matters on truncated/garbled `-z` output. Very low.
+
 > **Resolved 2026-07-10 (bug-inventory review pass — `microide-2026-07-10-bug-inventory.md`):**
 > a ~90-item inventory built against `main` was triaged against the current tree (many
 > items were already closed by the twelfth/thirteenth passes) and ~50 still-live items

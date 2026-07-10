@@ -19,6 +19,9 @@ constexpr lua_Integer kMaxCompletionCandidates = 20000;
 constexpr lua_Integer kMaxCodeActions = 4096;
 constexpr lua_Integer kMaxCodeActionArguments = 256;
 constexpr lua_Integer kMaxDiscoveredTests = 20000;
+constexpr lua_Integer kMaxTestRunResults = 20000;
+constexpr lua_Integer kMaxScmEntries = 200000;
+constexpr lua_Integer kMaxAnnotationLines = 200000;
 
 }  // namespace
 
@@ -277,7 +280,8 @@ bool RunTests(
   }
   if (lua_istable(state, -1)) {
     const int array_index = lua_absindex(state, -1);
-    const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, array_index));
+    const lua_Integer count = std::min<lua_Integer>(
+        static_cast<lua_Integer>(lua_rawlen(state, array_index)), kMaxTestRunResults);
     for (lua_Integer i = 1; i <= count; ++i) {
       lua_rawgeti(state, array_index, i);
       if (!lua_istable(state, -1)) {
@@ -345,8 +349,8 @@ bool SnapshotScm(
     lua_interop::GetFieldProtected(state, -1, "entries");
     if (lua_istable(state, -1)) {
       const int entries_index = lua_absindex(state, -1);
-      const lua_Integer entries_count =
-          static_cast<lua_Integer>(lua_rawlen(state, entries_index));
+      const lua_Integer entries_count = std::min<lua_Integer>(
+          static_cast<lua_Integer>(lua_rawlen(state, entries_index)), kMaxScmEntries);
       for (lua_Integer index = 1; index <= entries_count; ++index) {
         lua_rawgeti(state, entries_index, index);
         if (!lua_istable(state, -1)) {
@@ -417,7 +421,8 @@ std::vector<PluginHost::AnnotationLine> QueryAnnotations(
     }
     if (lua_istable(state, -1)) {
       const int array_index = lua_absindex(state, -1);
-      const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, array_index));
+      const lua_Integer count = std::min<lua_Integer>(
+          static_cast<lua_Integer>(lua_rawlen(state, array_index)), kMaxAnnotationLines);
       for (lua_Integer index = 1; index <= count; ++index) {
         lua_rawgeti(state, array_index, index);
         if (!lua_istable(state, -1)) {
