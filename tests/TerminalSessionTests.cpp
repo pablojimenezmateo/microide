@@ -654,6 +654,16 @@ void TestTerminalSessionEncodesModifiedAndFunctionKeys() {
   ctrl_a.ctrl = true;
   Expect(sent_after(ctrl_a) == std::string(1, '\x01'),
          "Ctrl+A should send the C0 control byte 0x01 in legacy mode");
+
+  // Regression: Meta+Ctrl must prefix the control byte with ESC so M-C-<key>
+  // chords reach TUI apps; the ESC was previously dropped in legacy mode.
+  KeyPress ctrl_alt_a;
+  ctrl_alt_a.key = KeyPress::Key::Char;
+  ctrl_alt_a.codepoint = 'a';
+  ctrl_alt_a.ctrl = true;
+  ctrl_alt_a.alt = true;
+  Expect(sent_after(ctrl_alt_a) == std::string("\x1b\x01", 2),
+         "Ctrl+Alt+A should send ESC + C0 control byte (Meta+Ctrl) in legacy mode");
 }
 
 void TestTerminalSessionAppliesKittyKeyboardProtocol() {

@@ -81,8 +81,11 @@ std::size_t WorkspaceShell::HitTestSingleLineByteOffset(
     cursor_x += before_cursor[i - 1].width;
     view_start_idx = i - 1;
   }
+  // If not even the single glyph immediately left of the caret fits, view_start_idx
+  // stays == size(); indexing it would read past the end (uninitialized CharEntry,
+  // UB) and corrupt the hit-test offset. Anchor the view at the caret instead.
   const std::size_t view_start =
-      before_cursor.empty() ? 0 : before_cursor[view_start_idx].start;
+      view_start_idx < before_cursor.size() ? before_cursor[view_start_idx].start : cursor_byte;
 
   const auto to_user_byte = [&](std::size_t full_byte) -> std::size_t {
     return full_byte > prefix_size ? full_byte - prefix_size : 0;

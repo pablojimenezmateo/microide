@@ -182,6 +182,12 @@ std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
         return CsiU(base, mod);
       }
       if (press.ctrl) {
+        // Meta+Ctrl: xterm prefixes the control byte with ESC (Alt/Meta) so apps
+        // that bind M-C-<key> (Emacs, tmux, readline) see both modifiers. Dropping
+        // the ESC here made those chords indistinguishable from plain Ctrl.
+        if (press.alt) {
+          return std::string("\x1b") + ControlByte(cp);
+        }
         return std::string(1, ControlByte(cp));
       }
       if (press.alt) {

@@ -165,8 +165,12 @@ WorkspaceShell::SingleLineViewMetrics WorkspaceShell::ComputeSingleLineViewMetri
     cursor_x += before_cursor[i - 1].width;
     view_start_idx = i - 1;
   }
+  // If not even the single glyph immediately left of the caret fits (a field
+  // narrower than one codepoint), view_start_idx stays == size(); indexing it
+  // would read past the end (reserve()'d capacity → uninitialized CharEntry, UB).
+  // Start the view at the caret in that case (empty left side).
   const std::size_t view_start =
-      before_cursor.empty() ? 0 : before_cursor[view_start_idx].start;
+      view_start_idx < before_cursor.size() ? before_cursor[view_start_idx].start : cursor_byte;
 
   // Walk forward from cursor_byte, measuring each codepoint once, until full.
   float right_accum = cursor_x;

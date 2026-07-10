@@ -730,12 +730,24 @@ Deferred (not fixed, low value or hard to reach/test):
 - `SurfaceTextureCache` eviction/null-renderer fixes lack direct unit coverage:
   `Upload` needs a live SDL renderer (`SDL_CreateTexture`), unavailable headless.
   They mirror the already-tested sibling text-texture cache guard.
+- The single-line-input view-metrics OOB fix (`WorkspaceShellRenderTextInput` /
+  `WorkspaceShellSingleLineInputMouse`: `view_start_idx == size()` when no glyph
+  left of the caret fits a sub-glyph-width field) lacks a direct regression test —
+  both functions are `WorkspaceShell` members needing a live `text_renderer_` and
+  the narrow-field trigger (debug variables inline editor). Fix verified by
+  inspection; ASAN covers it if a shell-level test ever drives that path.
 - Terminal minor spec deviations (not user-visible in normal use): a combining
   mark following a double-width glyph attaches to the wide-trailing spacer and is
   dropped; multi-byte charset designations (`ESC ( " ?`) mis-parse; DECSTBM on the
   alternate screen with origin mode homes to screen-top rather than region-top.
 - `MergeConflictKind` may label a both-modified conflict `LineEndingHeavy` when
   only one side is line-ending-only; cosmetic (summary text), behavior unchanged.
+- LSP diagnostics version gate after close→reopen (`WorkspaceLspClientDispatch`):
+  `DidClose` erases the URI's tracked version and `DidOpen` resets it to 1, so a
+  late `publishDiagnostics` from the previous open (version > 1) is not dropped and
+  can paint briefly on the reopened buffer until the next republish. Narrow race,
+  self-healing; low severity. Fix would require an open-generation token or a
+  version that never resets across reopen.
 - Windows `FileIndexWatcher` (`ReadDirectoryChangesW`) backend gaps: a tracked
   directory rename leaves ghost index entries + an unindexed subtree (no recursive
   delete / no subtree walk), and a change-buffer overflow (`bytes_transferred==0`)
