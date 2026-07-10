@@ -86,28 +86,37 @@ void ResetGhostText(ProjectWorkspaceState& state) {
 
 template <typename Callback>
 void ForEachOpenEditableBuffer(const ProjectWorkspaceState& state, Callback&& callback) {
-  for (const auto& tab : state.focused_group().open_tabs) {
-    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
-      const auto& view = *tab.editor_state;
-      const std::filesystem::path path =
-          (view.needs_restore ? view.restored_path : view.viewport.path()).lexically_normal();
-      if (!path.empty()) {
-        if (view.needs_restore) {
-          callback(path, nullptr);
-        } else {
-          callback(path, &view.viewport);
+  // Iterate every editor group, not just the focused one: on session restore of a
+  // split, each background group's active tab is eager-hydrated but its document
+  // would otherwise never receive didOpen / OnBufferOpen (no diagnostics/semantic
+  // tokens until the user focuses that pane). The sole caller dedups by path, so a
+  // buffer shared across splits is still opened once.
+  for (const auto& group : state.editor_groups) {
+    for (const auto& tab : group.open_tabs) {
+      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+        const auto& view = *tab.editor_state;
+        const std::filesystem::path path =
+            (view.needs_restore ? view.restored_path : view.viewport.path()).lexically_normal();
+        if (!path.empty()) {
+          if (view.needs_restore) {
+            callback(path, nullptr);
+          } else {
+            callback(path, &view.viewport);
+          }
         }
+        continue;
       }
-      continue;
-    }
-    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
-        tab.compare->right_editable && !tab.compare->right_viewport.path().empty()) {
-      callback(tab.compare->right_viewport.path().lexically_normal(), &tab.compare->right_viewport);
-      continue;
-    }
-    if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
-        !tab.merge->result_viewport.path().empty()) {
-      callback(tab.merge->result_viewport.path().lexically_normal(), &tab.merge->result_viewport);
+      if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+          tab.compare->right_editable && !tab.compare->right_viewport.path().empty()) {
+        callback(tab.compare->right_viewport.path().lexically_normal(),
+                 &tab.compare->right_viewport);
+        continue;
+      }
+      if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
+          !tab.merge->result_viewport.path().empty()) {
+        callback(tab.merge->result_viewport.path().lexically_normal(),
+                 &tab.merge->result_viewport);
+      }
     }
   }
 }

@@ -172,7 +172,8 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
 std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTargetForLine(
     const std::filesystem::path& path,
     std::string_view line,
-    std::size_t line_index,
+    std::size_t grid_row,
+    std::size_t document_line,
     std::size_t tab_size,
     const TextGridInteractionLayout& interaction,
     float x,
@@ -183,7 +184,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
   }
 
   const std::optional<std::size_t> hovered_line = VisibleTextGridLineAtY(interaction, y);
-  if (!hovered_line.has_value() || *hovered_line != line_index) {
+  if (!hovered_line.has_value() || *hovered_line != grid_row) {
     return std::nullopt;
   }
 
@@ -210,7 +211,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
   // record a kickoff for the non-const UpdateEditorHover (no Lua runs on this hot
   // hit-test path). The query itself runs on the plugin worker; its completion
   // re-drives this resolution into a cache hit.
-  const std::size_t query_line = line_index + 1;
+  const std::size_t query_line = document_line + 1;
   const std::size_t query_column = text_column + 1;
   plugin::PluginHost::HoverResult hover;
   if (plugin_hover_cache_.Matches(path, query_line, query_column)) {
@@ -242,7 +243,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
           ? editor::TextLayout::VisualColumnForTextColumn(
                 line_text, editor::TextLayout::NextTextColumn(line_text, text_column), tab_size)
           : start_visual + 1;
-  const float line_y = TextGridLineY(interaction, line_index);
+  const float line_y = TextGridLineY(interaction, grid_row);
   const SDL_FRect anchor_rect =
       MakeRect(TextGridCursorX(interaction, start_visual), line_y + interaction.line_height - 2.0f,
                std::max(1.0f, static_cast<float>(std::max<std::size_t>(1, end_visual - start_visual)) *
@@ -271,8 +272,9 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
     return std::nullopt;
   }
 
+  // Plain editor: the visible grid row and the document line are the same value.
   return PluginHoverTargetForLine(viewport.path(), viewport.lines()[*line_index], *line_index,
-                                  viewport.tab_size(), interaction, x, y);
+                                  *line_index, viewport.tab_size(), interaction, x, y);
 }
 
 std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetAtPosition(
@@ -342,10 +344,11 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
     }
 
     const std::size_t line_index = static_cast<std::size_t>(row.right_line - 1);
-    const float line_y =
-        surface.rows_y +
-        static_cast<float>(*model_row - static_cast<std::size_t>(std::max(0, compare_tab->scroll_row))) *
-            surface.line_height;
+    // Use the shared signed helper keyed on the clamped interaction scroll: the
+    // hand-rolled `*model_row - scroll_row` used the unclamped compare scroll_row,
+    // which size_t-underflows to a huge Y if scroll_row transiently exceeds the
+    // clamp (scrolled to bottom, then the window is enlarged before re-clamp).
+    const float line_y = TextGridLineY(interaction, *model_row);
     for (const editor::PublishedDiagnostic& diagnostic : diagnostics) {
       const auto rect = editor::DiagnosticUnderlineRect(
           text_renderer_, interaction.text_x, line_y, surface.line_height, row.right_text,
@@ -473,9 +476,14 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
       return std::nullopt;
     }
 
-    const std::size_t line_index = static_cast<std::size_t>(row.right_line - 1);
-    return PluginHoverTargetForLine(compare_tab->right_viewport.path(), row.right_text, line_index,
-                                    compare_tab->right_viewport.tab_size(), interaction, x, y);
+    // Compare view: the visible grid row is the diff-model row (interaction space),
+    // while the plugin query line is the right-file line it maps to. Passing the
+    // file line for both (the old bug) made the row-identity check and anchor Y
+    // wrong whenever any diff hunk sat above the cursor, so hover never appeared.
+    const std::size_t document_line = static_cast<std::size_t>(row.right_line - 1);
+    return PluginHoverTargetForLine(compare_tab->right_viewport.path(), row.right_text, *model_row,
+                                    document_line, compare_tab->right_viewport.tab_size(),
+                                    interaction, x, y);
   }
 
   if (ActiveTabIsMerge()) {

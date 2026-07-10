@@ -82,6 +82,21 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       continue;
     }
 
+    // Deferred (session-restored, never-activated) editor tabs carry their path in
+    // deferred_handle, not editor_state; retarget it too or a folder rename strands
+    // the tab on the old path — unreachable when later activated (LoadEditorTabForActivation
+    // opens the stale path and fails) and silently dropped on the next restart because
+    // the persisted path no longer exists.
+    if (tab.kind == TabEntry::Kind::Editor && tab.deferred_handle.has_value()) {
+      auto& handle = *tab.deferred_handle;
+      if (!handle.path.empty() && PathEqualsOrWithin(handle.path.lexically_normal(), old_path)) {
+        handle.path = util::ReplacePathPrefix(handle.path, old_path, new_path).lexically_normal();
+        tab.path = handle.path;
+        tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
+      }
+      continue;
+    }
+
     if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
         PathEqualsOrWithin(tab.compare->path.lexically_normal(), old_path)) {
       const std::filesystem::path updated_path =
@@ -215,6 +230,18 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       continue;
     }
     for (TabEntry& tab : state.editor_groups[gi].open_tabs) {
+      if (tab.kind == TabEntry::Kind::Editor && !tab.editor_state.has_value() &&
+          tab.deferred_handle.has_value()) {
+        // Deferred split-view tab: retarget its deferred-open path so a later
+        // activation (or persistence round-trip) resolves the new path.
+        auto& handle = *tab.deferred_handle;
+        if (!handle.path.empty() && PathEqualsOrWithin(handle.path.lexically_normal(), old_path)) {
+          handle.path = util::ReplacePathPrefix(handle.path, old_path, new_path).lexically_normal();
+          tab.path = handle.path;
+          tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
+        }
+        continue;
+      }
       if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
         continue;
       }
@@ -300,11 +327,19 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
   std::vector<std::size_t> indices;
   for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
     auto& tab = state.focused_group().open_tabs[i];
-    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+    if (tab.kind != TabEntry::Kind::Editor) {
       continue;
     }
-
-    const std::filesystem::path current_path = operations_.editor_view_path(*tab.editor_state);
+    // Include deferred (never-activated) tabs too: their path lives in deferred_handle,
+    // not editor_state; otherwise a delete leaves them lingering on the defunct path.
+    std::filesystem::path current_path;
+    if (tab.editor_state.has_value()) {
+      current_path = operations_.editor_view_path(*tab.editor_state);
+    } else if (tab.deferred_handle.has_value()) {
+      current_path = tab.deferred_handle->path.lexically_normal();
+    } else {
+      continue;
+    }
     if (!current_path.empty() && PathEqualsOrWithin(current_path, normalized_path)) {
       indices.push_back(i);
     }
@@ -333,10 +368,17 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
     const auto& tabs = state.editor_groups[gi].open_tabs;
     for (std::size_t i = 0; i < tabs.size(); ++i) {
       const TabEntry& tab = tabs[i];
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+      if (tab.kind != TabEntry::Kind::Editor) {
         continue;
       }
-      const std::filesystem::path current_path = operations_.editor_view_path(*tab.editor_state);
+      std::filesystem::path current_path;
+      if (tab.editor_state.has_value()) {
+        current_path = operations_.editor_view_path(*tab.editor_state);
+      } else if (tab.deferred_handle.has_value()) {
+        current_path = tab.deferred_handle->path.lexically_normal();
+      } else {
+        continue;
+      }
       if (!current_path.empty() && PathEqualsOrWithin(current_path, normalized_path)) {
         group_indices.push_back(i);
       }

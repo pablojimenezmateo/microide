@@ -191,7 +191,11 @@ void RefillOccurrenceSeedCache(const editor::TextViewport& viewport,
   std::size_t seed_line = seed->start.line;
   std::size_t seed_start = seed->start.column;
   std::size_t seed_end = seed->end.column;
-  if (seed_start >= seed_end || seed_line >= viewport.lines().size()) {
+  if (seed_start >= seed_end || seed_line >= viewport.lines().size() ||
+      seed_end > viewport.lines()[seed_line].size()) {
+    // A stale selection anchor column can outlive a content shrink, leaving
+    // seed_start/seed_end past the line length; guard before substr (which throws
+    // std::out_of_range when pos > size) and to avoid seeding a truncated needle.
     seed_cache.lowered_needle.clear();
     return;
   }

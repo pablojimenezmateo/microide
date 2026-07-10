@@ -83,6 +83,10 @@ class SerialWorkQueue {
     std::string key;  // empty = no dedup
     std::function<void()> task;
     bool cancelled = false;
+    // Barrier jobs (Drain) only signal a waiting promise; they must still run when
+    // a concurrent Cancel()/Shutdown() flags the whole queue cancelled, or Drain()
+    // would block forever on a promise no one ever fulfills.
+    bool run_even_if_cancelled = false;
   };
 
   Hooks hooks_;

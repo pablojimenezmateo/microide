@@ -115,7 +115,8 @@ void SerialWorkQueue::Drain() {
     }
     queue_.push_back(Job{.key = {},
                          .task = [&barrier]() { barrier.set_value(); },
-                         .cancelled = false});
+                         .cancelled = false,
+                         .run_even_if_cancelled = true});
   }
   cv_.notify_one();
   drained.wait();
@@ -166,7 +167,7 @@ void SerialWorkQueue::WorkerMain() {
       job = std::move(queue_.front());
       queue_.pop_front();
     }
-    if (!job.cancelled && job.task) {
+    if (job.task && (!job.cancelled || job.run_even_if_cancelled)) {
       // Exception firewall: a job that escapes with a C++ exception must never
       // propagate out of the worker functor (that is a std::terminate for the
       // whole app). Swallow it here and keep the worker draining. Jobs that need

@@ -231,13 +231,26 @@ const WorkspaceShell::CompareTabState* WorkspaceShell::ActiveCompareTab() const 
 WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout(
     const SDL_FRect& rect,
     const CompareTabState& compare_tab) const {
+  // The gutter renders actual file line numbers (left_line/right_line), so it must
+  // be sized from the largest displayed line number — i.e. the longer of the two
+  // files — not the presentation-row count. In a collapsed diff of large files the
+  // presentation collapses to a handful of rows while the visible line numbers stay
+  // in the thousands, and sizing by row count clipped them. Computed once here (not
+  // inside `measure`, which runs up to 4x) to keep the newline scan off the hot path.
+  const std::size_t left_line_count =
+      compare_tab.left_content.empty()
+          ? 0
+          : static_cast<std::size_t>(std::count(compare_tab.left_content.begin(),
+                                                 compare_tab.left_content.end(), '\n')) +
+                1;
+  const std::size_t gutter_max_line =
+      std::max<std::size_t>({left_line_count, compare_tab.right_viewport.lines().size(), 1});
   const auto measure = [&](bool reserve_vertical, bool reserve_horizontal) {
     CompareSurfaceLayout layout;
     layout.line_height = text_renderer_.LineHeight();
     std::array<char, 20> line_count_buf;
     const auto [line_count_end, _] = std::to_chars(
-        line_count_buf.data(), line_count_buf.data() + line_count_buf.size(),
-        CompareTabPresentationRowCount(compare_tab) + 1);
+        line_count_buf.data(), line_count_buf.data() + line_count_buf.size(), gutter_max_line);
     layout.gutter_width = std::max(
         28.0f,
         text_renderer_.MeasureWidth(std::string_view{

@@ -112,11 +112,17 @@ bool LspClient::Impl::SendMessageBuilderAfterInitialize(
 // to a short read timeout (no wake fd available).
 bool LspClient::Impl::WaitStdoutReadable(int timeout_ms) {
 #if defined(__unix__) || defined(__APPLE__)
-  if (cached_stdout_fd_ >= 0) {
+  // Re-fetch the stdout fd each poll rather than trusting the once-captured
+  // cached_stdout_fd_: a liveness probe / shutdown reap can close this fd from
+  // another thread and its number be reused, so polling the cached copy would
+  // watch an unrelated descriptor. stdout_fd() returns -1 (under lock) once
+  // closed, so we fall through and let Read() observe EOF. (Mirrors the DAP fix.)
+  const int stdout_fd = proc.stdout_fd();
+  if (stdout_fd >= 0) {
     pollfd fds[2] = {};
     int nfds = 0;
     const int out_index = nfds;
-    fds[nfds].fd = cached_stdout_fd_;
+    fds[nfds].fd = stdout_fd;
     fds[nfds].events = POLLIN | POLLHUP;
     ++nfds;
     int wake_index = -1;

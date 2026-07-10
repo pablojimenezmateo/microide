@@ -70,6 +70,23 @@ regression worse than the defect. Recorded here so they are not silently lost.
 >   re-audit confirmed it is truncation-only and harmless — the stray origPath
 >   record is dropped by `default: break`. Left as-is. (Search/git #2.)
 
+> **Deferred 2026-07-10 (pass 7 — cross-subsystem bug hunt):** a four-way fan-out
+> (workspace coordinators, LSP/DAP clients, render/view-model/layout, async/subprocess/
+> debug) landed 11 fixes (see commit) plus folding in the pre-staged gdb-detection
+> fix. The following genuine findings were deliberately **not** fixed and are recorded:
+> - **DAP: capabilities race if `initialized` precedes the `initialize` response.**
+>   If a non-conformant adapter emits the `initialized` event before its `initialize`
+>   response and the main thread drains it before the response is parsed,
+>   `DebugSession::HandleEvent("initialized")` reads default (all-false) capabilities,
+>   so `supports_configuration_done_request` is misread and launch/configurationDone
+>   ordering flips. The DAP spec requires `initialized` *after* the response, so gdb/
+>   lldb-dap/debugpy never trigger it. Close by gating the handler on
+>   `client_->IsInitialized()` (defer/re-post if false). (LSP/DAP hunter #2.)
+> - **render: `ColorMath::BlendColors` omits the `std::clamp` that `CompositeOver`
+>   has.** Provably in-range for the current lerp inputs, so it's a harmless asymmetry
+>   rather than a defect; left as-is to avoid adding a branch to a hot color path.
+>   (Render hunter hardening note.)
+
 > **Resolved 2026-07-10 (bug-inventory review pass — `microide-2026-07-10-bug-inventory.md`):**
 > a ~90-item inventory built against `main` was triaged against the current tree (many
 > items were already closed by the twelfth/thirteenth passes) and ~50 still-live items

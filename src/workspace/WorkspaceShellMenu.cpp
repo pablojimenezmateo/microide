@@ -73,7 +73,11 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
     measured.emplace_back(spec.id, width);
     total_x += width + 4.0f;
   }
-  any_overflow = total_x > available_right;
+  // total_x adds a trailing 4px gap after every item, but real placement puts only
+  // (n-1) gaps *between* n items — the last item's right edge is 4px less. Drop that
+  // over-counted gap so a menu bar that exactly fits doesn't spuriously overflow.
+  const float content_right = measured.empty() ? total_x : total_x - 4.0f;
+  any_overflow = content_right > available_right;
   const float max_x = any_overflow ? available_right - chevron_reserve : available_right;
 
   for (const auto& [id, width] : measured) {

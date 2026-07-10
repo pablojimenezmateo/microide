@@ -188,6 +188,9 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
   // leaf is being edited.
   const auto draw_value_tree_row = [&](const auto& model, std::size_t row_index, float line_y) {
     const std::vector<DebugVariableRowView>& rows = model.Rows();
+    if (row_index >= rows.size()) {
+      return;  // Defensive: keep parity with the breakpoints branch's bounds guard.
+    }
     const DebugVariableRowView& var_row = rows[row_index];
     const bool selected = row_index == model.SelectedRow();
     const SDL_FRect row_band = MakeRect(panel_layout.content_rect.x, line_y - 1.0f,

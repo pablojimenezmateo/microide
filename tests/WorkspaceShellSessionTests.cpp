@@ -2132,6 +2132,66 @@ void TestWorkspaceShellDeferredTabHydrationPreservesCursorAndScroll() {
          "hydrated deferred tab should restore cursor and scroll metadata");
 }
 
+// A folder rename must retarget the paths of deferred (session-restored,
+// never-activated) editor tabs too, not only hydrated ones. Otherwise the
+// deferred tab strands on the old path: activating it later fails to open, and
+// the next session-save persists a path that no longer exists, dropping the tab.
+void TestWorkspaceShellRenameRetargetsDeferredEditorTab() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "src" / "alpha.txt";
+  const std::filesystem::path beta = root / "src" / "beta.txt";
+  WriteFile(alpha, "a1\na2\na3\n");
+  WriteFile(beta, "b1\nb2\nb3\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, alpha);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, beta),
+         "rename-deferred fixture should open the secondary tab");
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);  // beta (index 1) becomes inactive => deferred
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "rename-deferred restore should succeed");
+  const auto& tabs = WorkspaceShellTestAccess::OpenTabs(restored);
+  Expect(tabs.size() == 2, "rename-deferred restore should reopen both tabs");
+  Expect(tabs[1].deferred_handle.has_value(),
+         "inactive secondary tab should restore as deferred before rename");
+
+  // Rename the enclosing folder while the beta tab is still deferred.
+  WorkspaceShellTestAccess::PrepareRenamePrompt(restored, root / "src", "renamed-src");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(restored);
+
+  const std::filesystem::path renamed_beta = root / "renamed-src" / "beta.txt";
+  Expect(std::filesystem::is_regular_file(renamed_beta),
+         "folder rename should move beta.txt to the new directory");
+
+  const auto& tabs_after = WorkspaceShellTestAccess::OpenTabs(restored);
+  Expect(tabs_after[1].deferred_handle.has_value() &&
+             tabs_after[1].deferred_handle->path == renamed_beta.lexically_normal(),
+         "deferred tab's deferred_handle path must be retargeted to the renamed folder");
+  Expect(tabs_after[1].path == renamed_beta.lexically_normal(),
+         "deferred tab's tab-strip path must be retargeted too");
+
+  // Activating the retargeted deferred tab must hydrate from the new path.
+  WorkspaceShellTestAccess::ActivateTab(restored, 1);
+  const auto& hydrated = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(hydrated.path() == renamed_beta.lexically_normal(),
+         "activating the retargeted deferred tab must open the renamed path");
+}
+
 void TestWorkspaceShellRestoreSessionTabSwitchSelectsTreePath() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2456,6 +2516,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionDefersInactiveCleanEditorTabs);
   AddTest(tests, "WorkspaceShell/DeferredTabHydrationPreservesCursorAndScroll",
           TestWorkspaceShellDeferredTabHydrationPreservesCursorAndScroll);
+  AddTest(tests, "WorkspaceShell/RenameRetargetsDeferredEditorTab",
+          TestWorkspaceShellRenameRetargetsDeferredEditorTab);
   AddTest(tests, "WorkspaceShell/RestoreSessionTabSwitchSelectsTreePath",
           TestWorkspaceShellRestoreSessionTabSwitchSelectsTreePath);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesOutgoingBaseChoice",

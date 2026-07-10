@@ -1132,10 +1132,15 @@
       const TextGridInteractionLayout& interaction,
       float x,
       float y) const;
+  // `grid_row` is the visible row in `interaction`-space (used for the row-identity
+  // check and popup anchor Y); `document_line` is the 0-based file/document line
+  // (used as the plugin query line). They coincide in a plain editor/merge viewport
+  // but differ in compare view, where a visible row maps to a right-file line offset
+  // by the diff hunks above it.
   std::optional<EditorHoverTarget> PluginHoverTargetForLine(
       const std::filesystem::path& path,
       std::string_view line,
-      std::size_t line_index,
+      std::size_t grid_row, std::size_t document_line,
       std::size_t tab_size,
       const TextGridInteractionLayout& interaction,
       float x,

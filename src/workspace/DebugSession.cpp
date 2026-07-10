@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <string_view>
 #include <utility>
 
 #include "util/JsonValue.h"
@@ -10,6 +11,39 @@
 namespace microide::workspace {
 
 namespace {
+
+// Detect whether a debug adapter is gdb so the pre-run value-size caps that keep
+// gdb from freezing the host for 15s+ while expanding an uninitialized STL
+// container get sent (see DebugSession::SendDebuggerValueLimits). Match the
+// executable *basename* (not any substring, which false-positives on paths like
+// /home/gdbuser/bin/lldb-dap) plus the host-controlled adapter type id; err
+// toward detection because a false negative reinstates the freeze risk.
+bool ContainsGdbCaseInsensitive(std::string_view text) {
+  for (std::size_t i = 0; i + 3 <= text.size(); ++i) {
+    if ((text[i] == 'g' || text[i] == 'G') && (text[i + 1] == 'd' || text[i + 1] == 'D') &&
+        (text[i + 2] == 'b' || text[i + 2] == 'B')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool CommandLooksLikeGdb(const std::vector<std::string>& command,
+                         const std::string& adapter_type) {
+  if (ContainsGdbCaseInsensitive(adapter_type)) {
+    return true;
+  }
+  for (const std::string& token : command) {
+    const std::size_t slash = token.find_last_of("/\\");
+    const std::string_view basename = slash == std::string::npos
+                                          ? std::string_view(token)
+                                          : std::string_view(token).substr(slash + 1);
+    if (ContainsGdbCaseInsensitive(basename)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 util::JsonValue ThreadIdArgs(int thread_id) {
   util::JsonObject args;
@@ -78,13 +112,7 @@ bool DebugSession::Start(const std::vector<std::string>& command, const LaunchCo
   launch_sent_ = false;
   configuration_done_sent_ = false;
   last_error_.clear();
-  is_gdb_adapter_ = false;
-  for (const std::string& token : command) {
-    if (token.find("gdb") != std::string::npos) {
-      is_gdb_adapter_ = true;
-      break;
-    }
-  }
+  is_gdb_adapter_ = CommandLooksLikeGdb(command, config.type);
 
   client_->SetEventCallback(
       [this](const std::string& event, const util::JsonValue& body) { HandleEvent(event, body); });
