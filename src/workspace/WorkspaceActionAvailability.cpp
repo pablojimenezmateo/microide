@@ -336,6 +336,10 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ShowInFileExplorer:
       return !operations_.resolve_tree_action_path(ActionSource::ContextMenu).empty() ||
              !operations_.active_tab_path().empty();
+    case ActionId::RevealInFileTree:
+      // Acts on the active editor tab; needs a project root to reveal within.
+      return !context_.current_project_state.root.empty() &&
+             !operations_.active_tab_path().empty();
     case ActionId::CopyRelativePath: {
       const std::filesystem::path path =
           !operations_.resolve_tree_action_path(ActionSource::ContextMenu).empty()

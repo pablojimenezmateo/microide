@@ -553,7 +553,8 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   if (event.button.button != SDL_BUTTON_LEFT) {
     return false;
   }
-  if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar) {
+  if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar ||
+      context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar) {
     context_.interaction_state.drag_target = DragTarget::None;
     EnsureRedraw([this]() { RequestOverlayRedraw(); });
     return true;

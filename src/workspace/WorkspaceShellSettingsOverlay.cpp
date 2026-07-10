@@ -705,6 +705,20 @@ void WorkspaceShell::EnsureSettingsSelectionVisible() {
   if (!layout_state.has_value()) {
     return;
   }
+  // Keep the selected category within the fixed-height left rail (keyboard nav).
+  {
+    const SettingsOverlayViewModel vm = RenderViewModelBuilder(context_).BuildSettingsOverlay(
+        *layout_state, settings_overlay_service_, text_renderer_);
+    const int selected_category = settings_overlay_service_.SelectedCategory();
+    int category_scroll = vm.category_scroll_row;
+    if (selected_category < category_scroll) {
+      category_scroll = selected_category;
+    } else if (selected_category >= category_scroll + vm.category_visible_rows) {
+      category_scroll = selected_category - vm.category_visible_rows + 1;
+    }
+    settings_overlay_service_.SetCategoryScrollRow(
+        std::clamp(category_scroll, 0, vm.category_max_scroll));
+  }
   const int selected = settings_overlay_service_.SelectedRow();
   // Scroll up so the selection is never above the viewport.
   if (selected < settings_overlay_service_.ScrollRow()) {
@@ -751,7 +765,8 @@ void WorkspaceShell::OpenHelpAboutOverlay() {
 
 void WorkspaceShell::CloseSettingsOverlay() {
   settings_overlay_service_.Close();
-  if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar) {
+  if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar ||
+      context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar) {
     context_.interaction_state.drag_target = DragTarget::None;
   }
   InvalidateCursorKindFingerprint();
@@ -834,6 +849,22 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
   if (Contains(vm.filter_rect, mx, my)) {
     settings_overlay_service_.SetFocusedPane(SettingsPane::Filter);
     InvalidateCursorKindFingerprint();
+    RequestOverlayRedraw();
+    return true;
+  }
+
+  // Left-rail scrollbar: clicking the track jumps and begins a drag (checked before
+  // category rows, which span the pane width and would otherwise swallow the click).
+  if (left && vm.category_scrollbar.has_value() &&
+      Contains(vm.category_scrollbar->track, mx, my)) {
+    context_.interaction_state.drag_target = DragTarget::SettingsCategoryScrollbar;
+    context_.interaction_state.drag_scrollbar_offset =
+        Contains(vm.category_scrollbar->thumb, mx, my) ? my - vm.category_scrollbar->thumb.y
+                                                       : vm.category_scrollbar->thumb.h * 0.5f;
+    settings_overlay_service_.SetCategoryScrollRow(std::clamp(
+        static_cast<int>(std::lround(ScrollUnitsForPointer(
+            *vm.category_scrollbar, my, context_.interaction_state.drag_scrollbar_offset))),
+        0, vm.category_max_scroll));
     RequestOverlayRedraw();
     return true;
   }

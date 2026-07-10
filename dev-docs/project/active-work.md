@@ -695,6 +695,12 @@ These are not current project work unless deliberately promoted into their own p
 - hosted CI and a self-hosted `perf-runner-v1` captured-baseline perf gate — local
   `tools/run-checks.sh` (`tests`/`asan`/`ubsan`/`tsan`) plus the manual fuzz/perf targets are the
   supported validation path
+- Settings overlay follow-ups (deferred from the 2026-07-10 tab-reveal + settings-cohesion pass):
+  section subtitles are a static table in `RenderViewModelBuilder` keyed by category label, so
+  plugin-contributed categories render a title with no subtitle; there is no per-category
+  collapse/expand (VSCode's settings tree) — the left rail is a flat scrollable category list;
+  and the section header band is fixed (does not scroll with rows). Shipped scope is the
+  scrollable category rail, fixed section header (title + subtitle), and subsection sub-headers.
 
 ## Git Workstation
 

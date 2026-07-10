@@ -9,6 +9,7 @@
 
 #include "workspace/WorkspaceActionRequests.h"
 #include "workspace/WorkspacePathUtils.h"
+#include "workspace/WorkspaceSidebarRegistry.h"
 
 namespace microide::workspace {
 
@@ -233,6 +234,25 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       }
 
       context_.WriteClipboardText(clipboard_text);
+      return DispatchResult::Handled;
+    }
+    case ActionId::RevealInFileTree: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      const std::filesystem::path path = context_.ActiveTabPath();
+      if (path.empty()) {
+        return reject("Active tab has no path");
+      }
+      // Full VSCode-style reveal: open the sidebar on the Tree view (switching from
+      // Search/Git if needed), then force-expand ancestors + select + scroll to the file.
+      context_.ShowSidebarView(SidebarViewInfo{.id = "tree",
+                                               .label = "Tree",
+                                               .mode = SidebarMode::Tree},
+                               context_.ProjectRoot(), {});
+      if (!context_.RevealPathInTree(path)) {
+        return reject("File is not in the project tree");
+      }
       return DispatchResult::Handled;
     }
     case ActionId::MarkBranchFileReviewed:

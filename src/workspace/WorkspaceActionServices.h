@@ -63,6 +63,9 @@ class WorkspaceActionContext {
     std::function<bool(std::string_view)> write_clipboard_text;
     std::function<bool(std::string_view)> write_primary_selection_text;
     std::function<bool(const std::filesystem::path&)> reveal_path_in_file_explorer;
+    // Reveal a path in the in-app sidebar tree: force-expand ancestors, select it,
+    // and scroll it into view. Returns whether a matching row was found.
+    std::function<bool(const std::filesystem::path&)> reveal_path_in_tree;
     std::function<void(std::string)> open_terminal;
     std::function<void(OverlayMode)> show_overlay;
     std::function<void()> dismiss_overlay;
@@ -298,6 +301,7 @@ class WorkspaceActionContext {
   bool WriteClipboardText(std::string_view text) const;
   bool WritePrimarySelectionText(std::string_view text) const;
   bool RevealPathInFileExplorer(const std::filesystem::path& directory) const;
+  bool RevealPathInTree(const std::filesystem::path& path) const;
 
   void OpenTerminal(std::string command);
   void ShowFileFinderWithQuery(std::string query);

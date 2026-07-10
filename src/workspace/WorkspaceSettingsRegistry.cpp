@@ -72,7 +72,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Editor → Indentation & Wrapping",
       },
       SettingSpec{
           .id = "editor.indent_width",
@@ -88,7 +88,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Editor → Indentation & Wrapping",
       },
       SettingSpec{
           .id = "editor.soft_tabs",
@@ -101,7 +101,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Editor → Indentation & Wrapping",
       },
       SettingSpec{
           .id = "editor.wrap",
@@ -114,7 +114,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = "off",
           .enum_values = kEditorWrapValues,
-          .group = {},
+          .group = "Editor → Indentation & Wrapping",
       },
       SettingSpec{
           .id = "editor.colorscheme",
@@ -127,7 +127,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = "default",
           .enum_values = kColorschemeValues,
-          .group = {},
+          .group = "Appearance",
       },
       SettingSpec{
           .id = "ui.scale",
@@ -142,7 +142,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .max_float = kMaxUiScale,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Appearance",
       },
       SettingSpec{
           .id = "editor.font_family",
@@ -155,7 +155,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Editor → Font",
           .suggests_fonts = true,
       },
       SettingSpec{
@@ -172,7 +172,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Editor → Font",
       },
       SettingSpec{
           .id = "editor.line_endings",
@@ -185,7 +185,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = "auto",
           .enum_values = kEditorLineEndingsValues,
-          .group = {},
+          .group = "Editor → Text & Files",
       },
       SettingSpec{
           .id = "editor.format_on_save",
@@ -198,7 +198,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Editor → Text & Files",
       },
       SettingSpec{
           .id = "editor.autosave",
@@ -211,7 +211,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = "off",
           .enum_values = kEditorAutosaveValues,
-          .group = {},
+          .group = "Editor → Text & Files",
       },
       SettingSpec{
           .id = "editor.autosave.delay_ms",
@@ -227,7 +227,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Editor → Text & Files",
       },
       SettingSpec{
           .id = "editor.hover_delay_ms",
@@ -243,7 +243,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Editor → Text & Files",
       },
       SettingSpec{
           .id = "ui.layout_mode",
@@ -256,7 +256,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = "auto",
           .enum_values = kLayoutModeValues,
-          .group = {},
+          .group = "Appearance → Layout",
       },
       SettingSpec{
           .id = "ui.layout_compact_breakpoint_px",
@@ -272,7 +272,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Appearance → Layout",
       },
       SettingSpec{
           .id = "ui.scrollbar_size",
@@ -285,7 +285,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = "regular",
           .enum_values = kHandleSizeValues,
-          .group = {},
+          .group = "Appearance → Layout",
       },
       SettingSpec{
           .id = "ui.show_status_bar",
@@ -298,7 +298,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Appearance → Layout",
       },
       SettingSpec{
           .id = "debug.enabled",
@@ -359,7 +359,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Terminal",
       },
       SettingSpec{
           .id = "terminal.font_size",
@@ -375,7 +375,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Terminal",
       },
       SettingSpec{
           .id = "terminal.font_family",
@@ -388,7 +388,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Terminal",
           .suggests_fonts = true,
       },
       SettingSpec{
@@ -403,7 +403,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .int_step = 1000,
           .default_string = {},
           .enum_values = {},
-          .group = {},
+          .group = "Terminal",
       },
       SettingSpec{
           .id = "terminal.osc52_clipboard_write",
@@ -517,7 +517,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = "hint",
           .enum_values = kSeverityValues,
-          .group = {},
+          .group = "Diagnostics",
       },
       // Editor essentials toggles. Defaults match the design table; project
       // overrides win over user preferences.

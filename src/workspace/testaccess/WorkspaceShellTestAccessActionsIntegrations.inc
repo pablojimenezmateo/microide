@@ -137,6 +137,11 @@
     return ActionCoordinator(shell.MakeActionContext())
         .Execute(id, {}, WorkspaceShell::ActionSource::ContextMenu);
   }
+  // Dispatch as the editor-tab/menu-bar surfaces do (ActionSource::Menu).
+  static bool ExecuteMenuAction(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
+    return ActionCoordinator(shell.MakeActionContext())
+        .Execute(id, {}, WorkspaceShell::ActionSource::Menu);
+  }
   static bool IsActionEnabled(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
     return shell.MakeActionAvailability().IsEnabled(id);
   }

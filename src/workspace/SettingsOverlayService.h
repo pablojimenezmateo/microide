@@ -80,6 +80,11 @@ class SettingsOverlayService {
   SettingsOverlayMode Mode() const { return mode_; }
   int ScrollRow() const { return scroll_row_; }
   void SetScrollRow(int row);
+  // Whole-row scroll offset of the left-rail category list. The category count can
+  // exceed the pane height, so the rail scrolls (wheel / scrollbar / keyboard
+  // keep-visible) just like the right-pane rows. The builder clamps for display.
+  int CategoryScrollRow() const { return category_scroll_row_; }
+  void SetCategoryScrollRow(int row);
   const std::string& Query() const { return query_; }
   void SetQuery(std::string query);
 
@@ -164,6 +169,7 @@ class SettingsOverlayService {
   bool visible_ = false;
   SettingsOverlayMode mode_ = SettingsOverlayMode::Settings;
   int scroll_row_ = 0;
+  int category_scroll_row_ = 0;
   std::string query_;
   editor::SingleLineEditor query_editor_;
   editor::SingleLineEditor value_editor_;

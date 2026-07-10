@@ -68,6 +68,25 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return true;
   }
 
+  // Settings left-rail (category) scrollbar drag.
+  if (context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar) {
+    if (settings_overlay_service_.Visible() &&
+        settings_overlay_service_.Mode() == SettingsOverlayMode::Settings) {
+      const SettingsOverlayViewModel vm =
+          RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_,
+                                                                text_renderer_);
+      if (vm.category_scrollbar.has_value()) {
+        settings_overlay_service_.SetCategoryScrollRow(std::clamp(
+            static_cast<int>(std::lround(ScrollUnitsForPointer(
+                *vm.category_scrollbar, static_cast<float>(event.motion.y),
+                context_.interaction_state.drag_scrollbar_offset))),
+            0, vm.category_max_scroll));
+      }
+    }
+    EnsureRedraw([this]() { RequestOverlayRedraw(); });
+    return true;
+  }
+
   if (context_.prompts.surface_visible) {
     UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
     EnsureRedraw([this]() { RequestPromptRedraw(); });
@@ -666,6 +685,14 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
               Contains(vm.value_picker.rect, event.wheel.mouse_x, event.wheel.mouse_y)) {
             settings_overlay_service_.SetPickerScroll(
                 settings_overlay_service_.PickerScroll() - vertical_ticks);
+            EnsureRedraw([this]() { RequestOverlayRedraw(); });
+            return true;
+          }
+          // Over the left rail: scroll the category list instead of the value rows.
+          if (Contains(vm.left_pane_rect, event.wheel.mouse_x, event.wheel.mouse_y)) {
+            settings_overlay_service_.SetCategoryScrollRow(std::clamp(
+                settings_overlay_service_.CategoryScrollRow() - vertical_ticks, 0,
+                vm.category_max_scroll));
             EnsureRedraw([this]() { RequestOverlayRedraw(); });
             return true;
           }

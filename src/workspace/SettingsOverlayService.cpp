@@ -44,6 +44,7 @@ void SettingsOverlayService::OpenSettings() {
   visible_ = true;
   mode_ = SettingsOverlayMode::Settings;
   scroll_row_ = 0;
+  category_scroll_row_ = 0;
   selected_category_ = 0;
   selected_row_ = 0;
   focused_pane_ = SettingsPane::Filter;
@@ -66,6 +67,7 @@ void SettingsOverlayService::OpenHelpAbout() {
 void SettingsOverlayService::Close() {
   visible_ = false;
   scroll_row_ = 0;
+  category_scroll_row_ = 0;
   CancelValueEdit();
 }
 
@@ -156,14 +158,20 @@ void SettingsOverlayService::SetScrollRow(int row) {
   scroll_row_ = std::max(0, row);
 }
 
+void SettingsOverlayService::SetCategoryScrollRow(int row) {
+  category_scroll_row_ = std::max(0, row);
+}
+
 void SettingsOverlayService::SetQuery(std::string query) {
   query_ = std::move(query);
   scroll_row_ = 0;
+  category_scroll_row_ = 0;
 }
 
 void SettingsOverlayService::SyncQueryFromEditor() {
   query_ = query_editor_.text();
   scroll_row_ = 0;
+  category_scroll_row_ = 0;
 }
 
 void SettingsOverlayService::RebuildSettingsRows(
@@ -344,9 +352,13 @@ void SettingsOverlayService::ClampSelection() {
   if (categories_.empty()) {
     selected_category_ = 0;
     selected_row_ = 0;
+    category_scroll_row_ = 0;
     return;
   }
   selected_category_ = std::clamp(selected_category_, 0, static_cast<int>(categories_.size()) - 1);
+  // A shrunk (filtered) category list must not strand the scroll past the last row.
+  category_scroll_row_ =
+      std::clamp(category_scroll_row_, 0, static_cast<int>(categories_.size()) - 1);
   const int count = static_cast<int>(RowCountInSelectedCategory());
   if (count <= 0) {
     selected_row_ = 0;

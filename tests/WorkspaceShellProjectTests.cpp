@@ -1937,7 +1937,7 @@ void TestWorkspaceShellSettingsOverlayWheelScrolls() {
   WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
   Expect(WorkspaceShellTestAccess::SettingsOverlayVisible(shell),
          "settings overlay fixture should open the overlay");
-  // The default "General" category holds more settings than fit at this size.
+  // The first category ("Editor") holds more settings than fit at this size.
   WorkspaceShellTestAccess::SetSettingsOverlayCategory(shell, 0);
   const SDL_FRect rect = WorkspaceShellTestAccess::SettingsOverlayRect(shell);
   const float wheel_x = rect.x + rect.w * 0.7f;  // over the value pane
@@ -3477,6 +3477,46 @@ void TestWorkspaceShellSplitContextMenuAvailabilityAndTreeOpen() {
          "split-down should be disabled once a split exists");
 }
 
+// Right-clicking an editor tab and choosing "Reveal in File Tree" performs a full
+// VSCode-style reveal: it opens the sidebar on the Tree view (switching from another
+// view), force-expands the file's collapsed ancestors, and selects it — even when the
+// user had manually collapsed a parent folder (which the passive tab-focus auto-reveal
+// deliberately respects and would not expand).
+void TestWorkspaceShellRevealInFileTreeFromTabMenu() {
+  using ActionId = WorkspaceShell::ActionId;
+  using SidebarMode = WorkspaceShell::SidebarMode;
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path nested = root / "src" / "deep" / "main.cpp";
+  WriteFile(nested, "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1000, 700);
+  WorkspaceShellTestAccess::OpenFile(shell, nested);
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::RevealInFileTree),
+         "reveal-in-tree should be enabled for a project-backed active tab");
+
+  // Manually collapse the file's ancestor so its row is no longer visible, and move
+  // the sidebar to the Search view — the reveal must recover from both.
+  Expect(WorkspaceShellTestAccess::SelectTreePath(shell, root / "src"),
+         "src folder should be selectable in the tree");
+  WorkspaceShellTestAccess::CollapseTreeSelection(shell);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "", false);
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) != SidebarMode::Tree,
+         "precondition: sidebar is not on the Tree view before reveal");
+
+  Expect(WorkspaceShellTestAccess::ExecuteMenuAction(shell, ActionId::RevealInFileTree),
+         "reveal-in-tree should execute from the tab menu");
+  Expect(WorkspaceShellTestAccess::SidebarVisible(shell),
+         "reveal should make the sidebar visible");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == SidebarMode::Tree,
+         "reveal should switch the sidebar to the Tree view");
+  Expect(WorkspaceShellTestAccess::SelectedTreePath(shell) == nested.lexically_normal(),
+         "reveal should force-expand ancestors and select the revealed file");
+}
+
 // OpenBufferViewCounts feeds the bulk-close LSP didClose decision: a buffer must
 // be reported as still open while any group keeps a view of it, and as a single
 // view only when exactly one tab references it. This guards the per-tab-count ->
@@ -3751,6 +3791,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorGroupSplitFocusCloseSemantics);
   AddTest(tests, "WorkspaceShell/SplitContextMenuAvailabilityAndTreeOpen",
           TestWorkspaceShellSplitContextMenuAvailabilityAndTreeOpen);
+  AddTest(tests, "WorkspaceShell/RevealInFileTreeFromTabMenu",
+          TestWorkspaceShellRevealInFileTreeFromTabMenu);
 }
 
 }  // namespace microide::tests

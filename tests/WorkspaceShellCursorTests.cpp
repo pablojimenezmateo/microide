@@ -137,8 +137,10 @@ void TestWorkspaceShellSettingsOverlayCursorKind() {
   const auto overlay_layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   const SDL_FRect settings_rect =
       microide::workspace::ComputeOverlaySurfaceRect(overlay_layout.editor_area);
+  // A fixed section-header band (category title + subtitle) now sits between the
+  // filter bar and the value rows, so the first row starts lower than before.
   const float row_x = settings_rect.x + settings_rect.w * 0.5f;
-  const float row_y = settings_rect.y + 58.0f;
+  const float row_y = settings_rect.y + 100.0f;
   WorkspaceShellTestAccess::UpdateMouseCursor(shell, row_x, row_y);
   Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, row_x, row_y),
          "settings rows should expose a pointer cursor");

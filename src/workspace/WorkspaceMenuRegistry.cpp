@@ -240,6 +240,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   static const auto kEditorTabContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::CopyRelativePath),
       MenuItem(ActionId::CopyAbsolutePath),
+      MenuItem(ActionId::RevealInFileTree, "Reveal in File Tree"),
       MenuSeparator(),
       MenuItem(ActionId::SplitEditorRight, "Split Right"),
       MenuItem(ActionId::SplitEditorDown, "Split Down"),

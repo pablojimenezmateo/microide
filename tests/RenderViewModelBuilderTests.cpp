@@ -533,7 +533,136 @@ void TestSettingsOverlayFontPickerBuildsScrollbarOnOverflow() {
          "a mid-list window reports families both above and below");
 }
 
+// The left-rail category list can hold more sections than fit the pane height (this
+// is what previously clipped the last-derived "LSP" category off-screen). The builder
+// must expose a category scroll model — a positive max scroll, a left-rail scrollbar,
+// and a scroll offset that shifts off-top categories above the pane so the render pass
+// skips them — so the tail categories become reachable.
+void TestSettingsOverlayCategoryRailScrolls() {
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+  TextRenderer text_renderer;
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
+                                    LayoutModeInputs{}, true);
+
+  SettingsOverlayService service;
+  service.OpenSettings();
+  // Inject far more distinct top-level groups than the rail can show at once.
+  std::vector<SettingsOverlayRow> rows;
+  constexpr int kCategoryCount = 40;
+  for (int i = 0; i < kCategoryCount; ++i) {
+    SettingsOverlayRow row;
+    const std::string suffix = i < 10 ? "0" + std::to_string(i) : std::to_string(i);
+    row.id = "cat" + suffix + ".toggle";
+    row.label = "Toggle " + suffix;
+    row.group = "Cat" + suffix;  // each distinct group becomes its own category
+    rows.push_back(row);
+  }
+  service.RebuildSettingsRows({}, {}, {}, rows);
+  service.SetSelectedCategory(0);
+
+  const auto unscrolled = builder.BuildSettingsOverlay(layout, service, text_renderer);
+  Expect(static_cast<int>(unscrolled.categories.size()) == kCategoryCount,
+         "every injected group should derive its own category");
+  Expect(unscrolled.category_max_scroll > 0,
+         "more categories than fit the rail should produce a positive max scroll");
+  Expect(unscrolled.category_visible_rows < kCategoryCount,
+         "not every category fits the rail at once in this fixture");
+  Expect(unscrolled.category_scrollbar.has_value(),
+         "an overflowing category rail should expose a scrollbar");
+  Expect(unscrolled.category_scroll_row == 0,
+         "the rail starts unscrolled");
+  // The last category sits below the pane bottom before scrolling.
+  const float pane_bottom = unscrolled.left_pane_rect.y + unscrolled.left_pane_rect.h;
+  Expect(unscrolled.categories.back().rect.y >= pane_bottom - 0.5f,
+         "the tail category is off-screen before scrolling (the old clip bug)");
+
+  // Scroll to the bottom: the last category must now land inside the pane, and the
+  // first must shift above the pane top (render skips negatives).
+  service.SetCategoryScrollRow(unscrolled.category_max_scroll);
+  const auto scrolled = builder.BuildSettingsOverlay(layout, service, text_renderer);
+  Expect(scrolled.category_scroll_row == unscrolled.category_max_scroll,
+         "the builder honors the requested category scroll");
+  const float scrolled_pane_bottom = scrolled.left_pane_rect.y + scrolled.left_pane_rect.h;
+  const microide::workspace::SettingsCategoryViewModel& last = scrolled.categories.back();
+  Expect(last.rect.y >= scrolled.left_pane_rect.y - 0.5f &&
+             last.rect.y + last.rect.h <= scrolled_pane_bottom + 0.5f,
+         "the tail category becomes fully visible after scrolling to the bottom");
+  Expect(scrolled.categories.front().rect.y < scrolled.left_pane_rect.y - 0.5f,
+         "the first category scrolls above the pane top");
+}
+
+// Every section renders a fixed header band (title + subtitle), and multi-subsection
+// categories get a sub-header on the first row of each subsection so the flat row list
+// is visually grouped (VSCode-style). The master row (bare group) has no sub-header.
+void TestSettingsOverlaySectionHeaderAndSubsections() {
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+  TextRenderer text_renderer;
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
+                                    LayoutModeInputs{}, true);
+
+  SettingsOverlayService service;
+  service.OpenSettings();
+  std::vector<SettingsOverlayRow> rows;
+  SettingsOverlayRow master;
+  master.id = "lsp.enabled";
+  master.label = "Enable Language Server";
+  master.group = "LSP";  // bare top-level group -> no sub-header
+  rows.push_back(master);
+  SettingsOverlayRow feat_a;
+  feat_a.id = "lsp.hover.enabled";
+  feat_a.label = "Hover";
+  feat_a.group = "LSP → Features";
+  rows.push_back(feat_a);
+  SettingsOverlayRow feat_b;
+  feat_b.id = "lsp.completion.enabled";
+  feat_b.label = "Completion";
+  feat_b.group = "LSP → Features";
+  rows.push_back(feat_b);
+  service.RebuildSettingsRows({}, {}, {}, rows);
+
+  // Select the derived LSP category.
+  const auto& categories = service.Categories();
+  const auto lsp_it = std::find(categories.begin(), categories.end(), "LSP");
+  Expect(lsp_it != categories.end(), "the LSP group should derive an LSP category");
+  service.SetSelectedCategory(static_cast<int>(std::distance(categories.begin(), lsp_it)));
+
+  const auto vm = builder.BuildSettingsOverlay(layout, service, text_renderer);
+  Expect(vm.section_title == "LSP", "the header band shows the selected category title");
+  Expect(!vm.section_subtitle.empty(), "known sections carry a one-line subtitle");
+  Expect(vm.section_header_rect.h > 0.0f && vm.right_pane_rect.y >= vm.section_header_rect.y +
+                                                                        vm.section_header_rect.h -
+                                                                        0.5f,
+         "value rows start below the fixed header band");
+
+  const SettingsRowViewModel* master_vm = nullptr;
+  const SettingsRowViewModel* hover_vm = nullptr;
+  const SettingsRowViewModel* completion_vm = nullptr;
+  for (const SettingsRowViewModel& row : vm.rows) {
+    if (row.id == "lsp.enabled") master_vm = &row;
+    else if (row.id == "lsp.hover.enabled") hover_vm = &row;
+    else if (row.id == "lsp.completion.enabled") completion_vm = &row;
+  }
+  Expect(master_vm != nullptr && hover_vm != nullptr && completion_vm != nullptr,
+         "all injected LSP rows should be built");
+  Expect(master_vm->group_subheader.empty(),
+         "the bare-group master row gets no subsection sub-header");
+  Expect(hover_vm->group_subheader == "Features",
+         "the first row of the Features subsection carries its sub-header");
+  Expect(completion_vm->group_subheader.empty(),
+         "later rows of the same subsection do not repeat the sub-header");
+  // The sub-header reserves a strip above the row, so the first Features row sits lower
+  // than a same-height master row would without one.
+  Expect(hover_vm->row_rect.y > master_vm->row_rect.y + master_vm->row_rect.h - 0.5f,
+         "the Features sub-header pushes its first row down below the master row");
+}
+
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RenderViewModelBuilder/SettingsOverlayCategoryRailScrolls",
+          TestSettingsOverlayCategoryRailScrolls);
+  AddTest(tests, "RenderViewModelBuilder/SettingsOverlaySectionHeaderAndSubsections",
+          TestSettingsOverlaySectionHeaderAndSubsections);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFontPickerBuildsScrollbarOnOverflow",
           TestSettingsOverlayFontPickerBuildsScrollbarOnOverflow);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayWrapsLongDescriptions",

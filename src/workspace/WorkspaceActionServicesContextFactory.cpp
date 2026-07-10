@@ -402,6 +402,17 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](std::string_view text) { return WritePrimarySelectionText(text); },
           .reveal_path_in_file_explorer =
               [this](const std::filesystem::path& dir) { return RevealPathInFileExplorer(dir); },
+          .reveal_path_in_tree =
+              [this](const std::filesystem::path& path) {
+                // Force-expand ancestors and select the row (SelectPath), then scroll
+                // it into view. Unconditional reveal — ignores the manual-collapse guard.
+                const bool found =
+                    context_.current_project_state.directory_tree.SelectPath(path);
+                if (found) {
+                  RevealSelectedTreeSidebarLine();
+                }
+                return found;
+              },
           .open_terminal = [this](std::string command) { OpenTerminal(std::move(command)); },
           .show_overlay = [this](OverlayMode mode) { ShowOverlay(mode); },
           .dismiss_overlay = [this]() { DismissOverlay(); },

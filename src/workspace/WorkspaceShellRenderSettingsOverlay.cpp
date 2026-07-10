@@ -189,6 +189,11 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
     const float pane_bottom = vm.left_pane_rect.y + vm.left_pane_rect.h;
     const bool pane_focused = vm.focused_pane == SettingsPane::Categories;
     for (const SettingsCategoryViewModel& cat : vm.categories) {
+      // The rail is whole-row scrolled: skip rows above the pane top and stop once a
+      // row falls past the bottom (categories are ordered top-to-bottom).
+      if (cat.rect.y < vm.left_pane_rect.y - 0.5f) {
+        continue;
+      }
       if (cat.rect.y + cat.rect.h > pane_bottom + 0.5f) {
         break;
       }
@@ -203,12 +208,37 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
                                   cat.selected ? theme_.text_primary : theme_.text_muted, background,
                                   text_renderer_.TruncateToWidth(cat.label, cat.rect.w - 24.0f));
     }
+    if (vm.category_scrollbar.has_value()) {
+      DrawScrollbar(renderer, theme_, vm.category_scrollbar->track, vm.category_scrollbar->thumb,
+                    false);
+    }
+  }
+
+  // --- Section header band: selected category title + one-line subtitle ---
+  const float line_height = text_renderer_.LineHeight();
+  if (!vm.section_title.empty()) {
+    DrawFilledRect(renderer, vm.section_header_rect, theme_.surface_background);
+    const float header_x = vm.section_header_rect.x + 12.0f;
+    text_renderer_.DrawStringOn(
+        renderer, header_x, vm.section_header_rect.y + 6.0f, theme_.accent,
+        theme_.surface_background,
+        text_renderer_.TruncateToWidth(vm.section_title, vm.section_header_rect.w - 24.0f));
+    if (!vm.section_subtitle.empty()) {
+      text_renderer_.DrawStringOn(
+          renderer, header_x, vm.section_header_rect.y + 6.0f + line_height, theme_.text_muted,
+          theme_.surface_background,
+          text_renderer_.TruncateToWidth(vm.section_subtitle, vm.section_header_rect.w - 24.0f));
+    }
+    DrawFilledRect(renderer,
+                   MakeRect(vm.section_header_rect.x,
+                            vm.section_header_rect.y + vm.section_header_rect.h - 1.0f,
+                            vm.section_header_rect.w, 1.0f),
+                   theme_.border);
   }
 
   // --- Right pane: value rows ---
   const bool values_focused = vm.focused_pane == SettingsPane::Values;
   const float pane_bottom = vm.right_pane_rect.y + vm.right_pane_rect.h;
-  const float line_height = text_renderer_.LineHeight();
   // Scope-chip hover tooltip, captured during the row loop and drawn last so it
   // overlays following rows and the scrollbar.
   std::string_view hovered_scope_help;
@@ -221,6 +251,16 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
         row.row_rect.y < vm.right_pane_rect.y - 0.5f) {
       continue;
     }
+    // Subsection sub-header in the reserved strip above the row (first row of each
+    // non-empty subsection). Skip when it would paint into the fixed header band.
+    if (!row.group_subheader.empty() &&
+        row.row_rect.y - line_height >= vm.right_pane_rect.y - 0.5f) {
+      text_renderer_.DrawStringOn(
+          renderer, row.row_rect.x + 12.0f, row.row_rect.y - line_height + 3.0f, theme_.text_muted,
+          theme_.surface_background,
+          text_renderer_.TruncateToWidth(row.group_subheader, row.row_rect.w - 24.0f));
+    }
+
     const SDL_Color background = row.selected ? theme_.selection_strong : theme_.surface_background;
     if (row.selected) {
       DrawFilledRect(renderer, row.row_rect, background);

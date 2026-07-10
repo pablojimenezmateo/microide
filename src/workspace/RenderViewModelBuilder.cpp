@@ -1120,6 +1120,35 @@ constexpr float kSettingsResetW = 22.0f;
 constexpr float kSettingsScopeW = 68.0f;
 constexpr float kSettingsTextEditW = 180.0f;
 constexpr float kSettingsCheckBox = 18.0f;
+
+// One-line subtitle shown under each settings section's title, keyed by the
+// top-level category label. Unknown categories (e.g. plugin-contributed) get none,
+// so the header still renders its title but no subtitle line.
+std::string_view SettingsSectionSubtitle(std::string_view category) {
+  if (category == "Editor") return "Text editing, indentation, saving, and fonts";
+  if (category == "Appearance") return "Theme, interface scale, layout, and chrome";
+  if (category == "Terminal") return "Integrated terminal shell and appearance";
+  if (category == "Diagnostics") return "How problems are surfaced";
+  if (category == "LSP") return "Language server features and capabilities";
+  if (category == "Debugger") return "Debug adapter integration";
+  if (category == "Plugins") return "Installed plugins and their toggles";
+  if (category == "Control") return "External control channel for automation";
+  if (category == "Workspace") return "Project files, sessions, and tabs";
+  if (category == "Sidebar") return "Sidebar appearance";
+  if (category == "General") return "Miscellaneous settings";
+  return {};
+}
+
+// The subsection label of a group ("Editor → View" -> "View",
+// "Editor → Essentials → Block Structure" -> "Essentials → Block Structure"), or
+// empty when the group has no subsection. Used to render right-pane sub-headers.
+std::string_view SettingsSubsectionLabel(std::string_view group) {
+  const std::size_t arrow = group.find(" → ");
+  if (arrow == std::string_view::npos) {
+    return {};
+  }
+  return group.substr(arrow + std::string_view(" → ").size());
+}
 constexpr float kSettingsControlGap = 6.0f;
 
 bool SettingBoolIsOn(std::string_view value) {
@@ -1162,20 +1191,51 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   const float content_height = std::max(0.0f, content_bottom - content_top);
   const float left_w = std::clamp(vm.rect.w * 0.26f, 150.0f, 240.0f);
   vm.left_pane_rect = MakeRect(vm.rect.x, content_top, left_w, content_height);
-  vm.right_pane_rect =
-      MakeRect(vm.rect.x + left_w, content_top, vm.rect.w - left_w, content_height);
 
-  // Left pane: one clickable rect per category.
+  // Carve a fixed header band (section title + one-line subtitle) from the top of the
+  // right pane; the value rows scroll below it. The left rail keeps its full height.
+  const float section_line_height = text_renderer.LineHeight();
+  const float section_header_h =
+      kSettingsRowPadTop + 2.0f * section_line_height + kSettingsRowPadBottom;
+  vm.section_header_rect =
+      MakeRect(vm.rect.x + left_w, content_top, vm.rect.w - left_w, section_header_h);
+  if (service.SelectedCategory() >= 0 &&
+      service.SelectedCategory() < static_cast<int>(service.Categories().size())) {
+    vm.section_title =
+        service.Categories()[static_cast<std::size_t>(service.SelectedCategory())];
+    vm.section_subtitle = SettingsSectionSubtitle(vm.section_title);
+  }
+  vm.right_pane_rect = MakeRect(vm.rect.x + left_w, content_top + section_header_h,
+                                vm.rect.w - left_w,
+                                std::max(0.0f, content_height - section_header_h));
+
+  // Left pane: one clickable rect per category, whole-row scrolled. Categories are
+  // fixed-height so the visible count and max scroll are exact; the offset shifts
+  // every category rect up so off-top rows land above the pane (render skips them).
   const std::vector<std::string>& categories = service.Categories();
+  const int category_count = static_cast<int>(categories.size());
+  vm.category_visible_rows =
+      std::max(1, static_cast<int>(content_height / kSettingsCatRowH));
+  vm.category_max_scroll = std::max(0, category_count - vm.category_visible_rows);
+  vm.category_scroll_row = std::clamp(service.CategoryScrollRow(), 0, vm.category_max_scroll);
+  const float category_scroll_offset =
+      static_cast<float>(vm.category_scroll_row) * kSettingsCatRowH;
   vm.categories.reserve(categories.size());
   for (std::size_t i = 0; i < categories.size(); ++i) {
     SettingsCategoryViewModel cat;
     cat.label = categories[i];
-    cat.rect = MakeRect(vm.left_pane_rect.x, vm.left_pane_rect.y +
-                                                 static_cast<float>(i) * kSettingsCatRowH,
+    cat.rect = MakeRect(vm.left_pane_rect.x,
+                        vm.left_pane_rect.y + static_cast<float>(i) * kSettingsCatRowH -
+                            category_scroll_offset,
                         vm.left_pane_rect.w, kSettingsCatRowH);
     cat.selected = static_cast<int>(i) == service.SelectedCategory();
     vm.categories.push_back(cat);
+  }
+  if (vm.category_max_scroll > 0) {
+    vm.category_scrollbar = MakeVerticalScrollbarGeometry(
+        vm.left_pane_rect, static_cast<float>(category_count),
+        static_cast<float>(vm.category_visible_rows),
+        static_cast<float>(vm.category_scroll_row), false);
   }
 
   // Right pane: rows of the selected category, variable-height, whole-row scrolled.
@@ -1209,6 +1269,7 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   std::vector<float> heights;
   heights.reserve(static_cast<std::size_t>(total));
   float natural_y = vm.right_pane_rect.y;
+  std::string_view prev_subsection;
   for (int i = 0; i < total; ++i) {
     const SettingsOverlayRow& row = *cat_rows[static_cast<std::size_t>(i)];
     SettingsRowViewModel rvm;
@@ -1220,8 +1281,20 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     rvm.selected = i == service.SelectedRow();
     rvm.resettable = row.resettable;
 
-    rvm.row_rect = MakeRect(vm.right_pane_rect.x, natural_y, row_w, head_band);
-    const float cy = natural_y + (head_band - kSettingsBtnH) * 0.5f;
+    // A sub-header labels the first row of each non-empty subsection ("Editor → View"
+    // -> "View"). It occupies a reserved line strip above the row's head band; the
+    // head-band content (title/controls/description) anchors below it at head_top.
+    const std::string_view subsection = SettingsSubsectionLabel(row.group);
+    const bool new_subsection = !subsection.empty() && subsection != prev_subsection;
+    prev_subsection = subsection;
+    const float subheader_h = new_subsection ? line_height : 0.0f;
+    if (new_subsection) {
+      rvm.group_subheader = subsection;
+    }
+    const float head_top = natural_y + subheader_h;
+
+    rvm.row_rect = MakeRect(vm.right_pane_rect.x, head_top, row_w, head_band);
+    const float cy = head_top + (head_band - kSettingsBtnH) * 0.5f;
     float leftmost = content_right;
 
     SettingsControlViewModel& control = rvm.control;
@@ -1229,7 +1302,7 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     control.display_value = row.value_display;
     switch (row.control_kind) {
       case SettingsControlKind::Checkbox: {
-        const float box_y = natural_y + (head_band - kSettingsCheckBox) * 0.5f;
+        const float box_y = head_top + (head_band - kSettingsCheckBox) * 0.5f;
         control.checkbox_rect =
             MakeRect(content_right - kSettingsCheckBox, box_y, kSettingsCheckBox, kSettingsCheckBox);
         control.checkbox_on = SettingBoolIsOn(row.value);
@@ -1345,8 +1418,10 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
 
     const float row_h = row_height_for(rvm.description_lines.size());
     rvm.row_rect.h = row_h;
-    heights.push_back(row_h);
-    natural_y += row_h;
+    // The row advances by its own height plus any reserved sub-header strip above it;
+    // row_rect stays the clickable setting row (excludes the sub-header line).
+    heights.push_back(row_h + subheader_h);
+    natural_y += row_h + subheader_h;
     vm.rows.push_back(std::move(rvm));
   }
 
@@ -1357,7 +1432,7 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   float acc = 0.0f;
   for (int i = total - 1; i >= 0; --i) {
     acc += heights[static_cast<std::size_t>(i)];
-    if (acc > content_height) {
+    if (acc > vm.right_pane_rect.h) {
       break;
     }
     ++fit_from_bottom;
@@ -1389,11 +1464,12 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   }
 
   // Fully-visible row count from the current scroll drives keyboard keep-visible.
+  const float rows_content_bottom = vm.right_pane_rect.y + vm.right_pane_rect.h;
   float visible_y = vm.right_pane_rect.y;
   int visible = 0;
   for (int i = scroll; i < total; ++i) {
     const float bottom = visible_y + heights[static_cast<std::size_t>(i)];
-    if (bottom > content_bottom + 0.5f) {
+    if (bottom > rows_content_bottom + 0.5f) {
       break;
     }
     ++visible;

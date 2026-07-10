@@ -260,12 +260,23 @@ struct SettingsOverlayViewModel {
   int max_scroll = 0;
   int visible_rows = 0;  // value rows that fit in the right pane
   std::optional<ScrollbarGeometry> scrollbar;  // right-pane scrollbar (Settings mode)
+  // Left-rail (category) scroll model, mirroring the right pane. Categories are
+  // fixed-height, so the counts are exact.
+  int category_scroll_row = 0;
+  int category_max_scroll = 0;
+  int category_visible_rows = 0;
+  std::optional<ScrollbarGeometry> category_scrollbar;  // left-rail scrollbar when categories overflow
   SettingsPane focused_pane = SettingsPane::Filter;
   std::string_view title;
   std::string_view query;             // view into the service-owned filter text
   std::string_view filter_placeholder;
   bool query_empty = true;
   std::vector<SettingsCategoryViewModel> categories;
+  // Fixed header band above the value rows: the selected category's title plus a
+  // one-line subtitle. Present in Settings mode whenever a category is selected.
+  SDL_FRect section_header_rect{};
+  std::string_view section_title;     // view into service-owned category label
+  std::string_view section_subtitle;  // static blurb (empty for unknown categories)
   std::vector<SettingsRowViewModel> rows;  // rows of the selected category only
   std::vector<HelpAboutRow> help_rows;     // unchanged Help/About path
   SettingsPickerViewModel value_picker;    // font dropdown (visible while editing)

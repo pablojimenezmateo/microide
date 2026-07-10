@@ -34,6 +34,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::ReviewCommit, "review-commit", "review-commit [commit]",
                  "Review Commit Diff", ""},
       ActionSpec{ActionId::ShowInFileExplorer, "", "", "Show in File Explorer", ""},
+      ActionSpec{ActionId::RevealInFileTree, "reveal-in-tree", "reveal-in-tree",
+                 "Reveal in File Tree", ""},
       ActionSpec{ActionId::CopyAbsolutePath, "", "", "Copy Absolute Path", ""},
       ActionSpec{ActionId::CopyRelativePath, "", "", "Copy Relative Path", ""},
       ActionSpec{ActionId::CreateDirectory, "", "", "New Folder...", ""},

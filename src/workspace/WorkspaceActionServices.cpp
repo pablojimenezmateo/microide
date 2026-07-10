@@ -232,6 +232,10 @@ bool WorkspaceActionContext::RevealPathInFileExplorer(
   return operations_.reveal_path_in_file_explorer(directory);
 }
 
+bool WorkspaceActionContext::RevealPathInTree(const std::filesystem::path& path) const {
+  return operations_.reveal_path_in_tree(path);
+}
+
 void WorkspaceActionContext::OpenTerminal(std::string command) {
   operations_.open_terminal(std::move(command));
 }

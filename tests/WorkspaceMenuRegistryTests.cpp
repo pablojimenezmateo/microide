@@ -175,6 +175,13 @@ void TestMenuRegistrySplitItemsPresentInTabAndTreeMenus() {
          "project-tree file context menu should expose Split Down");
 }
 
+void TestMenuRegistryEditorTabContextExposesRevealInFileTree() {
+  // Right-clicking an editor tab offers an in-app "Reveal in File Tree" jump to the
+  // sidebar tree (distinct from the OS-level "Show in File Explorer").
+  Expect(MenuContainsAction(MenuId::EditorTabContext, ActionId::RevealInFileTree),
+         "editor tab context menu should expose Reveal in File Tree");
+}
+
 void TestMenuRegistryProjectTabContextExposesCopyAbsolutePathNotTreeRoot() {
   // The project tab context menu owns project-level lifecycle: it exposes both
   // Close Project and a dedicated Copy Absolute Path (copies the project root via
@@ -246,6 +253,8 @@ void RegisterWorkspaceMenuRegistryTests(std::vector<TestCase>& tests) {
           TestMenuRegistryEveryItemIsWired);
   AddTest(tests, "WorkspaceMenuRegistry/SplitItemsPresentInTabAndTreeMenus",
           TestMenuRegistrySplitItemsPresentInTabAndTreeMenus);
+  AddTest(tests, "WorkspaceMenuRegistry/EditorTabContextExposesRevealInFileTree",
+          TestMenuRegistryEditorTabContextExposesRevealInFileTree);
   AddTest(tests, "WorkspaceMenuRegistry/ProjectTabContextExposesCopyAbsolutePathNotTreeRoot",
           TestMenuRegistryProjectTabContextExposesCopyAbsolutePathNotTreeRoot);
   AddTest(tests, "WorkspaceMenuRegistry/TabContextMenusLeadWithCopyAndTrailWithClose",

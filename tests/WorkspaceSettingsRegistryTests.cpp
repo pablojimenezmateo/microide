@@ -419,8 +419,8 @@ void TestSettingsOverlayGroupsEditorEssentialsToggles() {
   const auto layout_it = find_row("ui.layout_mode");
   Expect(layout_it != service.SettingsRows().end(),
          "settings overlay should still surface non-essentials toggles");
-  Expect(layout_it->group.empty(),
-         "non-essentials toggles should keep an empty group so they fall outside the essentials block");
+  Expect(layout_it->group == "Appearance → Layout",
+         "the layout-mode toggle now lives in the Appearance section (no ungrouped catch-all)");
 }
 
 void TestSettingsCategoryLabelHelper() {
@@ -440,10 +440,16 @@ void TestSettingsOverlayDerivesCategories() {
                               {}, {});
   const auto& categories = service.Categories();
   Expect(!categories.empty(), "settings overlay should derive at least one category");
-  Expect(categories.front() == "General",
-         "General (ungrouped settings) should be the first category");
+  // Every builtin is now grouped, so there is no ungrouped "General" catch-all; the
+  // first spec (editor.tab_size) makes Editor the leading category.
+  Expect(std::find(categories.begin(), categories.end(), "General") == categories.end(),
+         "the General catch-all should be gone once every setting is grouped");
+  Expect(categories.front() == "Editor",
+         "the first grouped setting should make Editor the leading category");
   Expect(std::find(categories.begin(), categories.end(), "Editor") != categories.end(),
          "grouped Editor settings should produce an Editor category");
+  Expect(std::find(categories.begin(), categories.end(), "Appearance") != categories.end(),
+         "regrouped UI/appearance settings should produce an Appearance category");
   // No duplicate categories.
   for (std::size_t i = 0; i < categories.size(); ++i) {
     for (std::size_t j = i + 1; j < categories.size(); ++j) {
