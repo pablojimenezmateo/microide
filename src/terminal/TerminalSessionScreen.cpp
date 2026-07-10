@@ -181,8 +181,15 @@ void TerminalSession::AdvanceCursorRowLocked(bool wrapped_from_previous) {
 
   ++cursor_row_;
   cursor_column_ = 0;
+  // Only stamp the soft-wrap flag when this row is freshly created. Landing on a
+  // pre-existing row (e.g. a hard LF after cursor-up motion) must not relabel an
+  // existing soft-wrapped continuation as a hard boundary, which would corrupt
+  // reflow / selection-by-logical-line for that row.
+  const bool row_existed = cursor_row_ < lines_.size();
   EnsureCursorLineExistsLocked();
-  lines_[cursor_row_].wrapped_from_previous = wrapped_from_previous;
+  if (!row_existed) {
+    lines_[cursor_row_].wrapped_from_previous = wrapped_from_previous;
+  }
 }
 
 std::size_t TerminalSession::PrimaryScreenTopLocked() const {
@@ -398,6 +405,11 @@ void TerminalSession::EraseInDisplayLocked(int mode) {
                        lines_.begin() + static_cast<std::ptrdiff_t>(trim_count));
           cursor_row_ = cursor_row_ > trim_count ? cursor_row_ - trim_count : 0;
           saved_cursor_row_ = saved_cursor_row_ > trim_count ? saved_cursor_row_ - trim_count : 0;
+          // Account the front-trim exactly as TrimScrollbackLocked does. Workspace
+          // scroll/selection mirrors rebase against the *delta* of ScrollbackTrimTotal();
+          // omitting it here would strand those absolute rows `trim_count` too high after
+          // a `clear`/`tput clear` (which emits ED2 then ED3).
+          scrollback_trim_total_ += static_cast<std::uint64_t>(trim_count);
         }
       }
       break;

@@ -48,6 +48,14 @@ class SidebarCoordinator {
                        std::vector<plugin::PluginHost::DocumentSymbolNode> symbols,
                        std::string plugin_error)>
         apply_plugin_outline_result;
+    // Applies a plugin sidebar snapshot to the active plugin view through a FRESH
+    // coordinator (the shell owns it). The async snapshot callback routes here instead
+    // of touching the transient coordinator that issued the query, which is destroyed
+    // before the worker result lands.
+    std::function<void(std::string request_view_id, bool ok,
+                       std::vector<plugin::PluginHost::SidebarItem> items,
+                       std::string error_message)>
+        apply_plugin_sidebar_result;
     std::function<bool(const std::filesystem::path&)> open_git_conflict_merge;
     std::function<bool(const std::filesystem::path&, const std::string&, const std::string&)>
         open_working_tree_comparison;
@@ -121,6 +129,12 @@ class SidebarCoordinator {
   void ApplyPluginOutlineResult(const std::filesystem::path& request_path,
                                 std::vector<plugin::PluginHost::DocumentSymbolNode> symbols,
                                 std::string plugin_error);
+  // Applies a plugin sidebar snapshot to the active plugin view, dropping it if the
+  // view changed since the request. Runs on a fresh coordinator, so the deferred
+  // worker callback never touches the transient one that issued the query.
+  void ApplyPluginSidebarResult(const std::string& request_view_id, bool ok,
+                                std::vector<plugin::PluginHost::SidebarItem> items,
+                                std::string error_message);
   void RevealSelectedTreeLine();
   void RevealSelectedGitLine();
   void RevealSelectedProblemsLine();

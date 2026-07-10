@@ -286,6 +286,14 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                 MakeSidebarCoordinator().ApplyPluginOutlineResult(
                     std::move(request_path), std::move(symbols), std::move(plugin_error));
               },
+          .apply_plugin_sidebar_result =
+              [this](std::string request_view_id, bool ok,
+                     std::vector<plugin::PluginHost::SidebarItem> items,
+                     std::string error_message) {
+                // Fresh coordinator: the transient one that issued the query is gone.
+                MakeSidebarCoordinator().ApplyPluginSidebarResult(
+                    request_view_id, ok, std::move(items), std::move(error_message));
+              },
           .open_git_conflict_merge =
               [this](const std::filesystem::path& path) { return OpenGitConflictMerge(path); },
           .open_working_tree_comparison =

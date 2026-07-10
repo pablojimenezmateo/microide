@@ -7,6 +7,19 @@
 #include "plugin/PluginLuaInterop.h"
 
 namespace microide::plugin::provider_query_interop {
+namespace {
+
+// Cap host-side harvests from plugin result tables. lua_rawlen already bounds the
+// loop against a metamethod-driven __len, but a provider can still return a
+// genuinely huge (or sparse-border-overstated) array within the 256 MB Lua budget;
+// without a cap that stalls the worker thread and grows an unbounded host vector.
+// Mirrors the clamps in the sidebar/diagnostics/language-provider harvesters.
+constexpr lua_Integer kMaxCompletionCandidates = 20000;
+constexpr lua_Integer kMaxCodeActions = 4096;
+constexpr lua_Integer kMaxCodeActionArguments = 256;
+constexpr lua_Integer kMaxDiscoveredTests = 20000;
+
+}  // namespace
 
 std::vector<PluginHost::CompletionCandidate> QueryCompletions(
     std::string_view language_id,
@@ -43,7 +56,8 @@ std::vector<PluginHost::CompletionCandidate> QueryCompletions(
       // an unbounded for(;;) + metamethod-invoking lua_geti over an adversarial
       // __index/__len would hang the worker thread or longjmp past native frames.
       const int array_index = lua_absindex(state, -1);
-      const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, array_index));
+      const lua_Integer count = std::min<lua_Integer>(
+          static_cast<lua_Integer>(lua_rawlen(state, array_index)), kMaxCompletionCandidates);
       for (lua_Integer i = 1; i <= count; ++i) {
         lua_rawgeti(state, array_index, i);
         if (!lua_istable(state, -1)) {
@@ -113,7 +127,8 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
     }
     if (lua_istable(state, -1)) {
       const int array_index = lua_absindex(state, -1);
-      const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, array_index));
+      const lua_Integer count = std::min<lua_Integer>(
+          static_cast<lua_Integer>(lua_rawlen(state, array_index)), kMaxCodeActions);
       for (lua_Integer i = 1; i <= count; ++i) {
         lua_rawgeti(state, array_index, i);
         if (!lua_istable(state, -1)) {
@@ -126,7 +141,8 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
         lua_interop::GetFieldProtected(state, -1, "arguments");
         if (lua_istable(state, -1)) {
           const int args_index = lua_absindex(state, -1);
-          const lua_Integer args_count = static_cast<lua_Integer>(lua_rawlen(state, args_index));
+          const lua_Integer args_count = std::min<lua_Integer>(
+              static_cast<lua_Integer>(lua_rawlen(state, args_index)), kMaxCodeActionArguments);
           for (lua_Integer arg_index = 1; arg_index <= args_count; ++arg_index) {
             lua_rawgeti(state, args_index, arg_index);
             if (lua_isstring(state, -1)) {
@@ -186,7 +202,8 @@ bool DiscoverTests(
   }
   if (lua_istable(state, -1)) {
     const int array_index = lua_absindex(state, -1);
-    const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, array_index));
+    const lua_Integer count = std::min<lua_Integer>(
+        static_cast<lua_Integer>(lua_rawlen(state, array_index)), kMaxDiscoveredTests);
     for (lua_Integer i = 1; i <= count; ++i) {
       lua_rawgeti(state, array_index, i);
       if (!lua_istable(state, -1)) {

@@ -23,10 +23,14 @@ namespace {
 
 int OpenForBinaryWrite(const std::filesystem::path& path) {
 #if defined(_WIN32)
-  return _wopen(path.c_str(), _O_BINARY | _O_CREAT | _O_TRUNC | _O_WRONLY,
+  // _O_NOINHERIT keeps the staging fd out of forked/spawned children, matching the
+  // close-on-exec hygiene every other fd-opening site in the tree enforces.
+  return _wopen(path.c_str(), _O_BINARY | _O_CREAT | _O_TRUNC | _O_WRONLY | _O_NOINHERIT,
                 _S_IREAD | _S_IWRITE);
 #else
-  return ::open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0644);
+  // O_CLOEXEC: a concurrent fork+exec (terminal shell, git, LSP/DAP adapter) must not
+  // inherit a live writable handle to this durable-write staging file and pin it open.
+  return ::open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY | O_CLOEXEC, 0644);
 #endif
 }
 

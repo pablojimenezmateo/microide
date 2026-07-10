@@ -516,7 +516,11 @@ void WorkspaceShell::OpenFileAtLocation(const std::filesystem::path& path,
     }
   }
 
-  if (viewport != nullptr) {
+  // Only move the caret once we have actually landed on the requested file. If the
+  // open failed (per-group tab cap reached, unreadable file, …) the fallback search
+  // finds no matching tab and `viewport` still points at the previously-active tab —
+  // relocating its caret would scroll/jump the wrong buffer.
+  if (viewport != nullptr && viewport->path().lexically_normal() == normalized_path) {
     viewport->MoveCursorTo(line, column);
   }
 }

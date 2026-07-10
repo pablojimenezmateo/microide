@@ -13,9 +13,14 @@ namespace microide::plugin::runtime_api_interop {
 namespace {
 
 // Reads a 1-based position field; 0 means "absent" (callers treat 0 as unset).
+// Read through `double` (lua_Number), not `float`: a 24-bit float mantissa rounds
+// line/column indices at or above 2^24 to the wrong row, landing edits/cursors on
+// the wrong line in very large buffers. Accepts both Lua integer and float subtypes.
 std::size_t ReadIndexField(lua_State* state, int table_index, const char* field) {
-  const float value = lua_interop::ReadNumberField(state, table_index, field, 0.0f);
-  return value >= 1.0f ? static_cast<std::size_t>(value) : 0;
+  lua_interop::GetFieldProtected(state, table_index, field);
+  const double value = lua_isnumber(state, -1) ? lua_tonumber(state, -1) : 0.0;
+  lua_pop(state, 1);
+  return value >= 1.0 ? static_cast<std::size_t>(value) : 0;
 }
 
 // Resolves an optional `path` field on the spec table at index 1 against the

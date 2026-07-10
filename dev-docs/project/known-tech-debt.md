@@ -14,6 +14,104 @@ These were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
 a latent API-contract hazard with no live trigger, so a rushed fix risked a
 regression worse than the defect. Recorded here so they are not silently lost.
 
+> **Resolved 2026-07-10 (thirteenth pass — cross-subsystem bug hunt):** a fan-out across
+> every subsystem landed nine fixes (one HIGH, several MEDIUM), each with regression
+> coverage where testable; the full suite (1786 tests) plus ASAN stay green.
+> - **Plugin sidebar refresh no longer use-after-frees the transient coordinator** (HIGH)
+>   (`workspace/WorkspaceSidebarCoordinatorRefresh.cpp` + `WorkspaceSidebarCoordinator.{h,cpp}`)
+>   — `SidebarCoordinator` is always a stack temporary, but `RefreshPlugin`'s
+>   `SnapshotSidebarAsync` completion captured `[this]` and dereferenced `state_`/member
+>   functions on a later main-thread drain, by which point the coordinator was destroyed.
+>   Now mirrors the sibling `RefreshOutline`: the callback captures only an
+>   `apply_plugin_sidebar_result` shell applier + the view id, which rebuilds a fresh
+>   coordinator (`ApplyPluginSidebarResult`) to apply the snapshot. Fires on any
+>   plugin-sidebar refresh/view-switch/project-change while a plugin worker is running.
+> - **Durable-write staging fd is O_CLOEXEC / _O_NOINHERIT** (`util/DurableFile.cpp`) — the
+>   open→write→fsync→close window of every document save and persisted-state write leaked a
+>   writable fd into any child forked mid-window (terminal/git/LSP/DAP); matches the
+>   Subprocess/FileWatcher/ControlSocket hardening standard.
+> - **Plugin completion / code-action / test-discovery harvests clamp their count**
+>   (`plugin/PluginProviderQueryInterop.cpp`) — every sibling harvester caps `lua_rawlen`
+>   (sidebar/diagnostics/language-providers); these four loops did not, so a provider
+>   returning a genuinely huge (or sparse-border-overstated) array stalled the worker and
+>   grew an unbounded host vector. Added `kMaxCompletionCandidates`/`kMaxCodeActions`/
+>   `kMaxCodeActionArguments`/`kMaxDiscoveredTests` clamps.
+> - **Terminal ED3 (`CSI 3J`) accounts its scrollback front-trim** (`terminal/
+>   TerminalSessionScreen.cpp`) — it erased the front of the deque without bumping
+>   `scrollback_trim_total_` like `TrimScrollbackLocked`, so after a modern `clear` (ED2 then
+>   ED3) the workspace scroll/selection mirrors (which rebase off that counter's delta) were
+>   stranded `trim_count` rows too high.
+> - **Terminal DECXCPR (`CSI ?6n`) reports the screen-relative row** (`terminal/
+>   TerminalSessionCsi.cpp`) — the private cursor-position reply sent the raw absolute deque
+>   index while the public `CSI 6n` path was already fixed to subtract `PrimaryScreenTopLocked()`;
+>   an app querying `?6n` with scrollback got a wildly overstated row.
+> - **Terminal hard LF onto an existing row keeps its soft-wrap flag** (`terminal/
+>   TerminalSessionScreen.cpp` `AdvanceCursorRowLocked`) — a `\n` landing on a pre-existing
+>   wrapped continuation (reached via cursor-up + LF) unconditionally relabeled it as a hard
+>   boundary, corrupting reflow / selection-by-logical-line; now only stamps the flag on a
+>   freshly-created row.
+> - **Plugin editor position fields read at full `double` precision** (`plugin/
+>   PluginRuntimeApiInterop.cpp` `ReadIndexField`) — line/column indices went through a 24-bit
+>   `float`, rounding positions ≥ 2^24 to the wrong line for `set_cursor`/`apply_edits`/etc.
+> - **Plugin raster width/height clamp before the double→int narrowing** (`plugin/
+>   PluginSurfaceInterop.cpp`) — an out-of-range/NaN/negative plugin dimension was UB when cast
+>   straight to `int` and poisoned `RasterHandle`; now clamped to `[0, 65535]`.
+> - **`AsyncSubprocess::Read(0)` returns empty instead of tearing down the child** (`platform/
+>   AsyncSubprocess.cpp`) — a zero-length request fell through to `read(fd, buf, 0)` (returns 0),
+>   indistinguishable from EOF, which closed stdout and reaped the child. Now early-returns.
+> - **`OpenFileAtLocation` only moves the caret once on the requested file** (`workspace/
+>   WorkspaceTabCoordinatorShellBridge.cpp`) — a failed open (tab cap / unreadable) left the
+>   active viewport on the previous tab and the go-to-location moved *its* caret; now guarded
+>   on a confirmed path match.
+>
+> **Deferred from the thirteenth pass (recorded, not fixed):**
+> - **Compare syntax highlighting is never computed for hunks deep in a collapsed large-file
+>   diff** (MEDIUM) (`workspace/WorkspaceShellRenderCompare.cpp`
+>   `PopulateCompareSyntaxTokensForWindow`). The render loop indexes `left/right_tokens_by_row`
+>   by *model* row (`model_row_index`, potentially ~50k), but the tokenizer's window bound is
+>   the *presentation* `scroll_row` (collapsed runs hidden), so it caps far below the visible
+>   model rows and those rows draw unhighlighted. A correct fix needs the window in model space
+>   **and** a way to reach a deep model row — the tokenizer is cumulative (threads syntax state
+>   line-to-line) and capped at 256 rows/frame with no continued-redraw trigger, so scrolling
+>   past a giant collapsed run can't catch up without either an uncapped catch-up (frame jank)
+>   or a background tokenizer (VS Code's model). **Blocked on** that design decision.
+> - **Windows `RunSubprocess` ignores `options.timeout_ms`** (MEDIUM, Windows-only)
+>   (`platform/Subprocess.cpp`) — the branch waits `INFINITE`; a hung child blocks the caller
+>   forever and `result.timed_out` never sets. The POSIX path enforces the deadline. Cannot be
+>   compiled/tested on this Linux host, so deferred rather than landed blind.
+> - **Terminal combining marks / ZWJ dropped after a double-width base glyph** (LOW-MED)
+>   (`terminal/TerminalSessionOutput.cpp` `PutGlyphLocked`) — the base cell is resolved at
+>   `cursor_column_-1` (the wide-trailing spacer, length 0), so the `length > 0` guard drops the
+>   mark instead of attaching it to the lead at `cursor_column_-2` (emoji+VS, wide CJK+diacritic).
+> - **Terminal IL/DL (`CSI L`/`M`) on the primary buffer edit the absolute deque** (LOW-MED)
+>   (`terminal/TerminalSessionCsi.cpp`) — mixes a mid-deque insert with a front trim, shifting
+>   scrollback/visible boundaries; rare (most such apps use the alt screen).
+> - **Terminal C0/ESC bytes embedded mid-CSI/OSC are swallowed** (LOW, spec deviation)
+>   (`terminal/TerminalSessionOutput.cpp`) — ECMA-48 says execute an intervening C0 and let a
+>   bare ESC cancel the sequence; here every non-final byte is buffered.
+> - **Terminal `[process exited]` marker on the alternate screen can evict visible rows** (LOW)
+>   (`terminal/TerminalSessionOutput.cpp` `EmitProcessExitMarkerLocked`) — appends past the
+>   alt-grid cap, and the trim erases from the top of the live grid.
+> - **`ParseCsiParameters` heap-allocates a params vector per non-SGR CSI** (LOW, perf)
+>   (`terminal/TerminalSessionCsi.cpp`) — the SGR fast-path already reuses a thread_local buffer;
+>   these allocations count against the process-global alloc counter the perf harness measures.
+> - **`AsciiGlyphAtlas::BlitInto` straight-copies (BLENDMODE_NONE)** (LOW) (`render/
+>   AsciiGlyphAtlas.cpp`) — an adjacent glyph's transparent left padding erases a prior glyph's
+>   right overhang; negligible for typical monospace fonts, visible for overhang fonts.
+> - **`AlignHunkLines` 1×1 pairing gate ignores per-line similarity** (LOW / possibly by-design)
+>   (`compare/CompareModel.cpp` `CanPairAlignedLines`) — a 1-del/1-add of two 0%-similar lines
+>   always renders as a `Modified` row with a full intra-line diff.
+> - **Closing the active tab onto a still-deferred neighbor loses its restored cursor/scroll**
+>   (LOW-MED) (`workspace/WorkspaceTabCoordinator.cpp` `Close`) — the promote-deferred branch
+>   does a bare `OpenFile` instead of applying the `deferred_handle`'s persisted caret/scroll
+>   like `Activate()`, and leaves both `editor_state` and `deferred_handle` set.
+> - **freedesktop trash `.trashinfo` written non-atomically** (LOW) (`platform/Trash.cpp`) — the
+>   name is reserved only in `Trash/files/`; a lingering orphan `info/foo.trashinfo` is clobbered
+>   and two concurrent trashes can race. Spec wants `O_EXCL` info-file creation.
+> - **`ParseFloat`/`ParseDouble` are more permissive than the integer parsers** (LOW)
+>   (`util/Parse.cpp`) — `strtof`/`strtod` accept leading whitespace, `+`, and hex-float that
+>   `from_chars` rejects; a validation inconsistency, no live corruption.
+
 > **Resolved 2026-07-10 (twelfth pass — cross-subsystem bug hunt):** a fresh fan-out
 > across every subsystem landed nine fixes, each with regression coverage; the full
 > suite + ASAN/UBSAN/TSAN stay green.

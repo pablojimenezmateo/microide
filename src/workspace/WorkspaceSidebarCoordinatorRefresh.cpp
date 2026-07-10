@@ -271,31 +271,45 @@ bool SidebarCoordinator::RefreshPlugin() {
     operations_.request_sidebar_redraw();
   }
 
+  // The snapshot completes on a later main-thread drain, by which time this
+  // coordinator (a stack temporary) is destroyed. So the callback must NOT capture
+  // `this`: it routes the result back through the shell, which re-creates a fresh
+  // coordinator to apply it. `apply` holds the shell, not the coordinator.
+  auto apply = operations_.apply_plugin_sidebar_result;
   plugin_runtime_.Host().SnapshotSidebarAsync(
       request_view_id,
-      [this, request_view_id](bool ok, std::vector<plugin::PluginHost::SidebarItem> items,
-                              std::string error_message) {
-        if (state_.sidebar.view_id != request_view_id) {
-          return;  // superseded: the active sidebar view changed
-        }
-        state_.sidebar.plugin.items.clear();
-        state_.sidebar.plugin.error.clear();
-        if (!ok) {
-          state_.sidebar.plugin.error = std::move(error_message);
-        } else {
-          state_.sidebar.plugin.items = std::move(items);
-        }
-        ClampSelectionToItemCount(state_.sidebar.plugin.items.size(),
-                                  &state_.sidebar.plugin.selected_index);
-        RecomputePluginSidebarPlaceholder();
-        if (ok) {
-          RevealSelectedPluginLine();
-        }
-        if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Plugin) {
-          operations_.request_sidebar_redraw();
+      [apply = std::move(apply), request_view_id](
+          bool ok, std::vector<plugin::PluginHost::SidebarItem> items,
+          std::string error_message) {
+        if (apply) {
+          apply(request_view_id, ok, std::move(items), std::move(error_message));
         }
       });
   return true;
+}
+
+void SidebarCoordinator::ApplyPluginSidebarResult(
+    const std::string& request_view_id, bool ok,
+    std::vector<plugin::PluginHost::SidebarItem> items, std::string error_message) {
+  if (state_.sidebar.view_id != request_view_id) {
+    return;  // superseded: the active sidebar view changed
+  }
+  state_.sidebar.plugin.items.clear();
+  state_.sidebar.plugin.error.clear();
+  if (!ok) {
+    state_.sidebar.plugin.error = std::move(error_message);
+  } else {
+    state_.sidebar.plugin.items = std::move(items);
+  }
+  ClampSelectionToItemCount(state_.sidebar.plugin.items.size(),
+                            &state_.sidebar.plugin.selected_index);
+  RecomputePluginSidebarPlaceholder();
+  if (ok) {
+    RevealSelectedPluginLine();
+  }
+  if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Plugin) {
+    operations_.request_sidebar_redraw();
+  }
 }
 
 bool SidebarCoordinator::RefreshOutline() {

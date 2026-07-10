@@ -2,6 +2,7 @@
 
 #if MICROIDE_HAS_LUA_PLUGINS
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -185,8 +186,18 @@ bool ReadRaster(lua_State* state, int raster_index, editor::SurfaceContent* cont
   std::string bytes(data, len);
   lua_pop(state, 1);
 
-  const int width = static_cast<int>(ReadNumberField(state, raster_index, "width", 0.0f));
-  const int height = static_cast<int>(ReadNumberField(state, raster_index, "height", 0.0f));
+  // Clamp before the double->int narrowing: a plugin-supplied width/height outside
+  // [0, kMaxRasterDimension] (e.g. 3e9, or negative) is undefined behavior when cast
+  // straight to int, and a garbage/negative dimension would poison RasterHandle and
+  // the decode_raster callback.
+  constexpr double kMaxRasterDimension = 65535.0;
+  const auto read_dimension = [&](const char* field) -> int {
+    const double raw = static_cast<double>(ReadNumberField(state, raster_index, field, 0.0f));
+    if (!(raw > 0.0)) return 0;  // also rejects NaN
+    return static_cast<int>(std::min(raw, kMaxRasterDimension));
+  };
+  const int width = read_dimension("width");
+  const int height = read_dimension("height");
   const std::uint64_t hash = HashBytes(bytes);
 
   editor::RasterHandle handle;

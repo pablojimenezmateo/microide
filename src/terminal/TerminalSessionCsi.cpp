@@ -72,7 +72,13 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
           // terminal reports the last on-screen column, never one past the edge.
           const std::size_t reported_column =
               columns_ > 0 ? std::min(cursor_column_, columns_ - 1) : cursor_column_;
-          SendBytesLocked("\x1b[?" + std::to_string(cursor_row_ + 1) + ";" +
+          // Report the row relative to the visible screen, mirroring the public CPR
+          // path: on the primary buffer cursor_row_ is an absolute deque index that
+          // includes scrollback, so a raw cursor_row_+1 would grossly overstate the row.
+          const std::size_t screen_top = PrimaryScreenTopLocked();
+          const std::size_t reported_row =
+              cursor_row_ > screen_top ? cursor_row_ - screen_top : 0;
+          SendBytesLocked("\x1b[?" + std::to_string(reported_row + 1) + ";" +
                           std::to_string(reported_column + 1) + "R");
         }
       }

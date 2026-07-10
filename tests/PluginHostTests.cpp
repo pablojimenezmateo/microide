@@ -1272,6 +1272,53 @@ return ide.plugin({
          "code action harvest must return the real entry, not a metatable phantom");
 }
 
+// A provider can return a genuinely large (or sparse-border-overstated) array whose
+// lua_rawlen is huge; without a max-count clamp the harvest grows an unbounded host
+// vector / spins the worker thread. Every sibling harvester clamps this — the code
+// action `arguments` inner loop must too (kMaxCodeActionArguments == 256).
+void TestPluginHostProviderQueryClampsHugeArrayHarvest() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.todo";
+  WriteFile(source, "alpha\n");
+
+  WritePluginInit(
+      global_plugins, "many-args-provider",
+      R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "many-args-provider",
+  setup = function(ctx)
+    ctx.code_actions.add({
+      id = "many-args",
+      language_id = "todo",
+      provide = function(buffer, range)
+        local args = {}
+        for i = 1, 300 do args[i] = "arg" .. i end
+        return { { title = "REAL", command = "noop", arguments = args } }
+      end
+    })
+  end
+})
+)lua");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "many-args provider plugin should reload successfully");
+
+  std::string runtime_error;
+  const auto actions = host.QueryCodeActions("todo", source, 1, 0, 1, 0, &runtime_error);
+  Expect(actions.size() == 1, "one code action should be harvested");
+  Expect(actions.front().arguments.size() == 256,
+         "code action arguments harvest must clamp to kMaxCodeActionArguments (256)");
+}
+
 void TestPluginHostPhase4ContributionApis() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3203,6 +3250,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/Phase3RuntimeApis", TestPluginHostPhase3RuntimeApis);
   AddTest(tests, "PluginHost/ProviderQueryBoundsAdversarialMetatable",
           TestPluginHostProviderQueryBoundsAdversarialMetatable);
+  AddTest(tests, "PluginHost/ProviderQueryClampsHugeArrayHarvest",
+          TestPluginHostProviderQueryClampsHugeArrayHarvest);
   AddTest(tests, "PluginHost/RunAsyncInvokesCallbackSynchronously",
           TestPluginHostRunAsyncInvokesCallbackSynchronously);
   AddTest(tests, "PluginHost/RunAsyncCallbackOutlivesOuterWatchdog",

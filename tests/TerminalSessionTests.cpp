@@ -1175,6 +1175,57 @@ void TestTerminalSessionEraseSavedLinesKeepsVisibleScreen() {
          "3J must preserve the last visible line ('L5')");
 }
 
+// ED 3 front-trims the scrollback deque, so — exactly like the natural
+// TrimScrollbackLocked path — it must add the trimmed count to ScrollbackTrimTotal().
+// The workspace rebases its absolute scroll/selection mirrors purely from the delta of
+// that counter; an untracked trim strands those rows `trim_count` too high after a
+// modern `clear` (which emits ED2 then ED3). Regression for that desync.
+void TestTerminalSessionEraseSavedLinesAccountsScrollbackTrim() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 3, 20);  // 3-row visible screen
+  TerminalSessionTestAccess::AppendOutput(session, "L0\r\nL1\r\nL2\r\nL3\r\nL4\r\nL5");
+  Expect(session.ScrollbackTrimTotal() == 0,
+         "no natural scrollback trim should have occurred within the default cap yet");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[3J");
+  // 6 deque rows minus the 3 visible rows == 3 trimmed off the front.
+  Expect(session.ScrollbackTrimTotal() == 3,
+         "ED3 must account its front-trim in ScrollbackTrimTotal so workspace mirrors rebase");
+}
+
+// The private DECXCPR reply (`CSI ? 6 n`) must report the row relative to the visible
+// screen, mirroring the public CPR (`CSI 6 n`) path: on the primary buffer cursor_row_
+// is an absolute deque index that includes scrollback, so a raw cursor_row_+1 grossly
+// overstates the row once scrollback exists. Regression for the missed `?6n` variant.
+void TestTerminalSessionPrivateCursorPositionReportIsScreenRelative() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 3, 20);  // 3-row visible screen
+  // Six lines into a 3-row terminal builds three scrollback rows; the cursor lands on
+  // the last visible row (absolute row 5, screen-relative row 2 => reported row 3) at
+  // column 2 after "L5" (reported column 3).
+  TerminalSessionTestAccess::AppendOutput(session, "L0\r\nL1\r\nL2\r\nL3\r\nL4\r\nL5\x1b[?6n");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[?3;3R",
+         "DECXCPR (?6n) must report the screen-relative row, not the absolute deque row");
+}
+
+// A hard newline (LF) that lands on a pre-existing row must not relabel that row's
+// soft-wrap flag. Regression for AdvanceCursorRowLocked unconditionally stamping
+// wrapped_from_previous=false onto an existing wrapped continuation reached via
+// cursor-up + LF, which corrupted reflow / selection-by-logical-line.
+void TestTerminalSessionHardNewlineOntoExistingRowKeepsWrapFlag() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 3, 4);  // 4-column screen forces a soft wrap
+
+  // "ABCDE" wraps: row0="ABCD", row1="E" (wrapped_from_previous=true), cursor at row1.
+  // CUU moves the cursor up to row0; LF then advances it back down onto the existing
+  // row1 — which must retain its wrapped continuation flag.
+  TerminalSessionTestAccess::AppendOutput(session, "ABCDE\x1b[A\n");
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() >= 2, "soft-wrap fixture should preserve the wrapped second row");
+  Expect(lines[1].wrapped_from_previous,
+         "a hard LF onto an existing wrapped row must not clear its soft-wrap flag");
+}
+
 // IL/DL outside the vertical scroll margins must be a no-op on the alternate
 // screen (DEC STD 070). Regression for the fall-through that ran the primary-screen
 // insert, growing the fixed-height alt grid past rows_ and eventually trimming real
@@ -1646,6 +1697,12 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionCursorSnapshotCapturesPositionAndVisibility);
   AddTest(tests, "TerminalSession/ReportsCursorPositionQueries",
           TestTerminalSessionReportsCursorPositionQueries);
+  AddTest(tests, "TerminalSession/PrivateCursorPositionReportIsScreenRelative",
+          TestTerminalSessionPrivateCursorPositionReportIsScreenRelative);
+  AddTest(tests, "TerminalSession/EraseSavedLinesAccountsScrollbackTrim",
+          TestTerminalSessionEraseSavedLinesAccountsScrollbackTrim);
+  AddTest(tests, "TerminalSession/HardNewlineOntoExistingRowKeepsWrapFlag",
+          TestTerminalSessionHardNewlineOntoExistingRowKeepsWrapFlag);
   AddTest(tests, "TerminalSession/ReportsDeviceAttributesQueries",
           TestTerminalSessionReportsDeviceAttributesQueries);
   AddTest(tests, "TerminalSession/OriginModeMakesCupRelativeToScrollRegion",

@@ -318,6 +318,11 @@ bool AsyncSubprocess::Write(std::string_view data) {
 }
 
 std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int timeout_ms) {
+  // A zero-length request must not fall through to read(fd, buf, 0), which returns 0
+  // and is indistinguishable from EOF — it would tear the child down and reap it.
+  if (max_bytes == 0) {
+    return std::string{};
+  }
   int stdout_fd = -1;
   pid_t current_pid = -1;
   {
