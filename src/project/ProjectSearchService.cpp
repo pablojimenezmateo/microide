@@ -212,11 +212,18 @@ std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
   worker_finished_.store(false, std::memory_order_release);
 
   app::IncrementBackgroundTaskCount();
+  // Balance the increment via an RAII guard captured in the task rather than a plain
+  // decrement in the body: Start() begins with Stop() -> CancelAll(), which clears the
+  // pending queue WITHOUT running dropped tasks. A body-only decrement leaks the count
+  // (+1 per superseded search / panel-close). The guard (a shared_ptr with a decrement
+  // deleter, copyable so it fits std::function) fires exactly once when the task's last
+  // copy is destroyed — whether it ran to completion or was dropped by CancelAll.
+  auto task_guard = std::shared_ptr<void>(
+      nullptr, [](void*) { app::DecrementBackgroundTaskCountAndWake(); });
   task_executor_.Submit(
       [this, root, query = std::move(query), options, indexed_files = std::move(indexed_files),
-       run_id](const util::CancellationToken& token) {
+       run_id, task_guard = std::move(task_guard)](const util::CancellationToken& token) {
         WorkerMain(root, query, options, std::move(indexed_files), run_id, token);
-        app::DecrementBackgroundTaskCountAndWake();
       });
   return run_id;
 }

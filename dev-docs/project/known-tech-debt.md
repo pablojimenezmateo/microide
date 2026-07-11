@@ -281,6 +281,54 @@ regression worse than the defect. Recorded here so they are not silently lost.
 >   `DispatchCommit` already does) remains a larger follow-up. MEDIUM-perf, throttled to
 >   field-switch (not per-keystroke) so bounded. (Git hunter #1, second half.)
 
+> **Deferred 2026-07-11 (pass 14 — cross-subsystem bug hunt):** a four-way fan-out
+> (sidebar/tree/catalog, session-restore/tab-service, plugin interop, app/event-loop/
+> settings) landed 3 fixes (see commit): a MEDIUM plugin use-after-free (the blocking
+> provider-query failure branches in `PluginProviderQueryInterop.cpp` — DiscoverTests,
+> RunTests, SnapshotScm, auth login/refresh/logout, mcp tool — read `it->id` after a
+> plugin PCall that runs with allow_registration=true, so a callback that registers
+> another provider reallocates the runtimes vector and dangles `it`; now uses the
+> caller-owned `provider_id`/`tool_id`, which equals `it->id` for the matched item);
+> a MED-perf sidebar tree fix (`DirectoryTree::AppendDirectory` copied the accumulated
+> `IgnoreMatcher` + stat/opened a usually-absent `.gitignore` for every COLLAPSED
+> directory child on every refresh, then discarded it — the dir's own .gitignore only
+> affects grandchildren walked when expanded, so that work now happens only for
+> expanded dirs); and a background-task-counter leak in `ProjectSearchService::Start`
+> (the decrement lived in the task body, leaked when `Stop()`→`CancelAll()` dropped a
+> still-queued search — now an RAII shared_ptr guard that fires on task destruction
+> whether it ran or was dropped). The session-restore/tab-service subsystem came back
+> clean. NOTE: the plugin UAF fix is validated by the end-of-session ASAN run (a
+> deterministic trigger needs a realloc mid-PCall). Deliberately **not** fixed, recorded:
+> - **`GitRepositoryService` double-counts the global background-task counter (LOW,
+>   latent).** `ScheduleRefresh` increments via `wake_callbacks_.increment_...` (wired
+>   to `app::IncrementBackgroundTaskCount`) AND `background_executor_.PostLatest` fires
+>   the `SerialWorkQueue` on_enqueue hook (also `app::Increment`). Normal completion
+>   decrements twice (manual + on_complete hook); a PostLatest dedup-drop / Shutdown-
+>   cancel fires only the hook → net +1 leak per dropped refresh, plus one redundant
+>   idle wake per completion. LATENT: `GetBackgroundTaskCount()` has ZERO readers (the
+>   counter value drives nothing; only the decrement's SDL wake is functional), so no
+>   functional impact today. NOT fixed because the round-10 refresh state machine AND
+>   its tests (`TestSyncRefreshBalancesBackgroundTaskCount`, `ConcurrentRefreshBurst...`)
+>   are built around the manual counter (tests override `wake_callbacks` to a local
+>   counter the queue hooks don't touch), so removing the redundant manual pair is a
+>   coupled refactor for a dead counter. Fix direction: drop the manual increment/
+>   decrement, rely on the executor hooks, and move the sync-test path's balancing into
+>   `RunRefreshSynchronouslyForTesting` locally; update those two tests.
+> - **`DirectoryTree` `expanded_paths_` / `manually_collapsed_paths_` are never pruned
+>   for deleted directories (LOW).** Only wholesale-`clear()`ed (SetRoot/CollapseAll/
+>   RestoreExpansionState); a slow bounded leak (distinct dirs ever expanded) that also
+>   writes stale keys into the persisted session via `ExpandedRelativePaths()`.
+>   Functionally harmless (`IsExpanded` on an absent path is never queried). Fix: after
+>   `RebuildEntries`, intersect the sets with directories still present in `entries_`,
+>   or drop non-existent keys lazily when serializing.
+> - **Plugin: `QueryAnnotations` range-for + the sync completion/code-action/symbol
+>   overloads share the same reallocation hazard (LOW, latent/test-only).**
+>   `QueryAnnotations` holds a range-for across a registering PCall (worse — can fault on
+>   the success path too) but has no production caller; the sync `*Query*` overloads are
+>   test-only (production uses the `*Async` variants with allow_registration=false). Fuller
+>   systemic fix: run these blocking provider callbacks with allow_registration=false
+>   (matching the async path + the stated design intent) so the vector can't mutate mid-iteration.
+
 > **Resolved 2026-07-10 (bug-inventory review pass — `microide-2026-07-10-bug-inventory.md`):**
 > a ~90-item inventory built against `main` was triaged against the current tree (many
 > items were already closed by the twelfth/thirteenth passes) and ~50 still-live items

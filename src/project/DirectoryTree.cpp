@@ -380,8 +380,17 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
     if (is_directory) {
       std::error_code link_error;
       const bool is_symlink = iterator->is_symlink(link_error);
-      IgnoreMatcher child_matcher = matcher;
-      child_matcher.LoadIgnoreFile(path / ".gitignore");
+      // The dir's own .gitignore only affects its GRANDCHILDREN, which are walked
+      // only when the dir is expanded (AppendDirectory early-returns for a collapsed
+      // dir). The child's own `ignored` flag above uses the parent `matcher`, not
+      // this one. So skip the matcher copy + .gitignore stat/open for collapsed rows
+      // — otherwise every refresh pays ~2 syscalls + a rules-vector copy per collapsed
+      // directory that is immediately discarded (a monorepo has many at the root).
+      IgnoreMatcher child_matcher;
+      if (IsExpanded(path)) {
+        child_matcher = matcher;
+        child_matcher.LoadIgnoreFile(path / ".gitignore");
+      }
       children.push_back(SortableEntry{
           .path = path,
           .sort_key = sort_key,

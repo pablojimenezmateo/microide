@@ -201,7 +201,12 @@ bool DiscoverTests(
   std::string call_error;
   if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
     if (error_message != nullptr) {
-      *error_message = "test discovery provider '" + it->id + "' failed: " + call_error;
+      // NB: use the caller-owned `provider_id` (== it->id for the matched item), not
+      // `it->id`: the PCall above runs with allow_registration=true, so a provider
+      // callback that registers another provider can reallocate the runtimes vector and
+      // dangle `it` before this error path reads it (use-after-free).
+      *error_message =
+          "test discovery provider '" + std::string(provider_id) + "' failed: " + call_error;
     }
     return false;
   }
@@ -275,7 +280,8 @@ bool RunTests(
   std::string call_error;
   if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
     if (error_message != nullptr) {
-      *error_message = "test provider '" + it->id + "' run failed: " + call_error;
+      // provider_id (== it->id) is caller-owned; `it` may dangle after PCall (see above).
+      *error_message = "test provider '" + std::string(provider_id) + "' run failed: " + call_error;
     }
     return false;
   }
@@ -335,7 +341,8 @@ bool SnapshotScm(
   std::string call_error;
   if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(0, 1, &call_error)) {
     if (error_message != nullptr) {
-      *error_message = "scm provider '" + it->id + "' failed: " + call_error;
+      // provider_id (== it->id) is caller-owned; `it` may dangle after PCall (see above).
+      *error_message = "scm provider '" + std::string(provider_id) + "' failed: " + call_error;
     }
     return false;
   }
@@ -489,7 +496,8 @@ bool LoginAuthProvider(
   std::string call_error;
   if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
     if (error_message != nullptr) {
-      *error_message = "auth provider '" + it->id + "' login failed: " + call_error;
+      // provider_id (== it->id) is caller-owned; `it` may dangle after PCall (see above).
+      *error_message = "auth provider '" + std::string(provider_id) + "' login failed: " + call_error;
     }
     return false;
   }
@@ -548,7 +556,9 @@ bool RefreshAuthSession(
   std::string call_error;
   if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
     if (error_message != nullptr) {
-      *error_message = "auth provider '" + it->id + "' refresh failed: " + call_error;
+      // provider_id (== it->id) is caller-owned; `it` may dangle after PCall (see above).
+      *error_message =
+          "auth provider '" + std::string(provider_id) + "' refresh failed: " + call_error;
     }
     return false;
   }
@@ -608,7 +618,9 @@ bool LogoutAuthSession(
   std::string call_error;
   if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 0, &call_error)) {
     if (error_message != nullptr) {
-      *error_message = "auth provider '" + it->id + "' logout failed: " + call_error;
+      // provider_id (== it->id) is caller-owned; `it` may dangle after PCall (see above).
+      *error_message =
+          "auth provider '" + std::string(provider_id) + "' logout failed: " + call_error;
     }
     return false;
   }
@@ -639,7 +651,8 @@ bool InvokeMcpTool(
   std::string call_error;
   if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
     if (error_message != nullptr) {
-      *error_message = "mcp tool '" + it->id + "' failed: " + call_error;
+      // tool_id (== it->id) is caller-owned; `it` may dangle after PCall (see above).
+      *error_message = "mcp tool '" + std::string(tool_id) + "' failed: " + call_error;
     }
     return false;
   }
