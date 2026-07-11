@@ -457,14 +457,33 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
     return;
   }
 
-  const editor::TextViewport* viewport = tab.editor_state.has_value()
-                                             ? &tab.editor_state->viewport
-                                             : &state_.focused_group().welcome_surface.viewport;
-
-  const std::filesystem::path active_path =
-      viewport != nullptr ? viewport->path().lexically_normal() : std::filesystem::path{};
-  tab.path = active_path;
-  tab.title = viewport != nullptr ? EditorTabLabel(*viewport) : "untitled";
+  std::filesystem::path active_path;
+  if (tab.editor_state.has_value()) {
+    const editor::TextViewport& viewport = tab.editor_state->viewport;
+    active_path = viewport.path().lexically_normal();
+    tab.path = active_path;
+    tab.title = EditorTabLabel(viewport);
+  } else if (tab.deferred_handle.has_value() || !tab.path.empty()) {
+    // No live viewport, but the tab has a real identity: a deferred tab whose
+    // file failed to open (e.g. deleted out from under the IDE between restore
+    // and first activation). Do NOT fall through to the group's welcome surface
+    // -- its empty path would clobber the tab's filename/title, stranding the
+    // tab as "Welcome"/"" in the strip and breaking the OpenFileInNewTab dedup
+    // (keyed on tab.path). Keep the restored identity; recover it from the
+    // deferred handle if the path was somehow lost.
+    if (tab.path.empty() && tab.deferred_handle.has_value()) {
+      tab.path = tab.deferred_handle->path.lexically_normal();
+      tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
+    }
+    active_path = tab.path.lexically_normal();
+  } else {
+    // Truly empty editor tab (no state, no handle, no path): mirror the group
+    // welcome surface, as before.
+    const editor::TextViewport& viewport = state_.focused_group().welcome_surface.viewport;
+    active_path = viewport.path().lexically_normal();
+    tab.path = active_path;
+    tab.title = EditorTabLabel(viewport);
+  }
   if (!active_path.empty() && state_.directory_tree.SelectPathIfVisible(active_path)) {
     operations_.reveal_selected_tree_sidebar_line();
   } else if (!active_path.empty() &&

@@ -548,6 +548,11 @@ struct FileIndexWatcher::Impl {
       // Read all available inotify events
       std::vector<IndexUpdateBatch::Change> changes;
       bool overflow_detected = false;
+      // One ignore filter per drain cycle (poll wakeup), reused for every
+      // single-file create/modify event below and rebuilt next wakeup so a
+      // .gitignore edited between cycles is picked up. Constructing it here (not
+      // per event) amortizes the root-.gitignore read across the whole batch.
+      project::ProjectTraversalFilter batch_filter(root, exclude_globs);
       {
         alignas(alignof(struct inotify_event)) std::array<char, 4096> buf{};
         while (true) {
@@ -629,6 +634,17 @@ struct FileIndexWatcher::Impl {
                     change.kind = IndexUpdateBatch::Kind::Deleted;
                     change.entry.relative_path = rel;
                   } else {
+                    // Apply the same regular-file + ignore-filter gate the initial
+                    // scan (CollectTrackedCreations) and poll fallback enforce.
+                    // Without it, a .gitignore/exclude-glob'd file (or a non-regular
+                    // entry like a FIFO/socket/symlink) created in a watched dir
+                    // leaks into the index via this incremental event and only
+                    // vanishes on a full rescan -- an inconsistent, confusing state.
+                    std::error_code type_error;
+                    if (!std::filesystem::is_regular_file(abs_path, type_error) ||
+                        !batch_filter.Includes(abs_path, platform::PathType::RegularFile)) {
+                      continue;
+                    }
                     change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
                     change.entry.relative_path = rel;
                     std::error_code mtime_error;

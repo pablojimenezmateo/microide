@@ -14,6 +14,30 @@ These were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
 a latent API-contract hazard with no live trigger, so a rushed fix risked a
 regression worse than the defect. Recorded here so they are not silently lost.
 
+> **Deferred 2026-07-11 (pass 17 — cross-subsystem bug hunt):** a four-way fan-out
+> landed 2 fixes (workspace deferred-tab identity loss; Linux inotify incremental
+> events bypassing the ignore filter). These findings were **not** fixed and are
+> recorded here:
+> - **macOS: FSEvents incremental events bypass the ignore filter entirely.**
+>   `FileIndexWatcher.cpp` `FsEventsCallback` uses `kFSEventStreamCreateFlagFileEvents`
+>   and only `continue`s on directory events — it has no directory-prune and no
+>   file-level `filter.Includes(...)`, so files under an ignored directory
+>   (e.g. `node_modules/foo.js`) and `.gitignore`'d files are delivered per-file and
+>   indexed. This is the macOS analogue of the Linux inotify leak fixed in this pass;
+>   **not fixed here because it cannot be compiled or run on this Linux workstation**
+>   (same reason the Windows AsyncSubprocess race stays deferred). Fix mirrors the
+>   Linux branch: build one `ProjectTraversalFilter` per callback and gate
+>   `CreatedOrModified` on `is_regular_file` + `filter.Includes(...)`, plus a
+>   directory prune. (Search hunter #1, macOS half.)
+> - **Windows: `IgnoreMatcher::ParseRule` normalizes the glob through
+>   `std::filesystem::path(...).lexically_normal()`** (`IgnoreMatcher.cpp` ~line 362),
+>   so a gitignore pattern containing a backslash-escaped literal (e.g. `foo\ bar`) is
+>   split on the Windows path separator and corrupted. Benign on Linux. (Search #minor.)
+> - **`FileIndex::files(ProjectFileScanMode)` (`FileIndex.cpp` ~line 290) is dead
+>   code** — no callers; returns a `const&` into a cache shared_ptr after releasing the
+>   lock, which would be a data race if ever called from a second reader thread.
+>   Currently harmless (unused); delete or make it return a snapshot. (Search #minor.)
+>
 > **Deferred 2026-07-11 (pass 16 — cross-subsystem bug hunt):** a four-way fan-out
 > landed 4 fixes (editor Ctrl+D ranged multi-carets, terminal primary-screen RI
 > scrollback floor, LSP `RebindReference` first-writer-wins, git conflict-marker

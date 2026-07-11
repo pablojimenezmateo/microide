@@ -1095,6 +1095,73 @@ void TestWorkspaceShellRestoreSessionPreservesIndependentScrollPosition() {
          "restore should preserve the scroll position independent of the caret");
 }
 
+// Regression: activating a deferred (non-active, never-hydrated) editor tab whose
+// file was deleted out from under the IDE must NOT wipe the tab's path/title by
+// falling through to the empty group welcome surface. Losing the path stranded
+// the tab as "Welcome" in the strip and broke the open-file dedup (a re-open then
+// spawned a duplicate tab).
+void TestWorkspaceShellActivatingDeletedDeferredTabPreservesIdentity() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.txt";
+  const std::filesystem::path file_b = root / "beta.txt";
+  WriteFile(file_a, "alpha\n");
+  WriteFile(file_b, "beta\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b);
+  // Make alpha the active tab so beta restores as a deferred, never-hydrated tab
+  // (only the active tab is eager-hydrated on restore). Resolve alpha's index so
+  // the test is robust to any leading welcome tab.
+  {
+    const auto& tabs = WorkspaceShellTestAccess::OpenTabs(shell);
+    std::size_t alpha_index = tabs.size();
+    for (std::size_t i = 0; i < tabs.size(); ++i) {
+      if (tabs[i].path == file_a.lexically_normal()) alpha_index = i;
+    }
+    Expect(alpha_index < tabs.size(), "alpha tab should exist before save");
+    WorkspaceShellTestAccess::ActivateTab(shell, alpha_index);
+  }
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "two-tab session restore should succeed");
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+
+  std::size_t beta_index = 0;
+  {
+    const auto& tabs = WorkspaceShellTestAccess::OpenTabs(restored);
+    beta_index = tabs.size();
+    for (std::size_t i = 0; i < tabs.size(); ++i) {
+      if (tabs[i].path == file_b.lexically_normal()) beta_index = i;
+    }
+    Expect(beta_index < tabs.size(), "beta tab should be restored (deferred)");
+  }
+
+  // Delete beta.txt before it is ever activated, then activate its tab.
+  std::filesystem::remove(file_b);
+  WorkspaceShellTestAccess::ActivateTab(restored, beta_index);
+
+  const auto& tabs = WorkspaceShellTestAccess::OpenTabs(restored);
+  Expect(beta_index < tabs.size() && tabs[beta_index].path == file_b.lexically_normal(),
+         "a deleted deferred tab must keep its real path, not the empty welcome path");
+  Expect(tabs[beta_index].title == "beta.txt",
+         "a deleted deferred tab must keep its filename title, not 'Welcome'");
+}
+
 // Expanded folders + the selected node survive a session round-trip.
 void TestWorkspaceShellRestoreSessionPreservesTreeExpansion() {
   TemporaryDirectory temp_dir;
@@ -2466,6 +2533,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionPreservesIndependentScrollPosition);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesTreeExpansion",
           TestWorkspaceShellRestoreSessionPreservesTreeExpansion);
+  AddTest(tests, "WorkspaceShell/ActivatingDeletedDeferredTabPreservesIdentity",
+          TestWorkspaceShellActivatingDeletedDeferredTabPreservesIdentity);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesDirtyUntitledBufferContent",
           TestWorkspaceShellRestoreSessionPreservesDirtyUntitledBufferContent);
   AddTest(tests, "WorkspaceShell/QuitShutdownPersistsDirtyEditorBuffers",

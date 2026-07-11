@@ -3084,6 +3084,43 @@ void TestWorkspaceShellProjectWatcherIgnoresGitMetadataLockfiles() {
          "project watcher should still detect visible project changes after ignoring git locks");
 }
 
+// Regression: a .gitignore'd file created via an INCREMENTAL watcher event must
+// not leak into the file index. The Linux inotify single-file branch used to emit
+// a CreatedOrModified change without applying the ignore filter (only the initial
+// scan / poll fallback did), so an ignored file appeared in the finder/search
+// mid-session and only vanished on a full rescan.
+void TestWorkspaceShellWatcherIgnoresGitignoredIncrementalCreate() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / ".gitignore", "*.log\n");
+  WriteFile(root / "README.md", "root\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "gitignore watcher fixture should open the project");
+  // Drain the initial scan.
+  for (int attempt = 0; attempt < 20; ++attempt) {
+    if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  // Create both an ignored and a visible file. Same directory => inotify delivers
+  // them in order on one watch, so once the visible one is indexed the ignored
+  // one's earlier event has already been processed (and, correctly, filtered).
+  WriteFile(root / "debug.log", "noise\n");
+  WriteFile(root / "visible.cpp", "int main(){ return 0; }\n");
+  Expect(WaitForProjectReload(shell, std::chrono::milliseconds(1000)),
+         "watcher should observe the newly created files");
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("visible.cpp"), true,
+                              std::chrono::milliseconds(1000)),
+         "a non-ignored file created via an incremental event should be indexed");
+  Expect(!WorkspaceShellTestAccess::FileIndexContainsPath(shell, std::filesystem::path("debug.log")),
+         "a gitignored file created via an incremental event must not enter the index");
+}
+
 void TestWorkspaceShellFileIndexUpdatesDoNotReloadCleanBuffers() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3613,6 +3650,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories);
   AddTest(tests, "WorkspaceShell/ProjectWatcherIgnoresGitMetadataLockfiles",
           TestWorkspaceShellProjectWatcherIgnoresGitMetadataLockfiles);
+  AddTest(tests, "WorkspaceShell/WatcherIgnoresGitignoredIncrementalCreate",
+          TestWorkspaceShellWatcherIgnoresGitignoredIncrementalCreate);
   AddTest(tests, "WorkspaceShell/FileIndexUpdatesDoNotReloadCleanBuffers",
           TestWorkspaceShellFileIndexUpdatesDoNotReloadCleanBuffers);
   AddTest(tests, "WorkspaceShell/FileFinderReflectsFileIndexUpdates",
