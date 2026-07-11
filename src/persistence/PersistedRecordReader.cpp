@@ -7,6 +7,7 @@
 #include <fstream>
 #include <ios>
 #include <optional>
+#include <span>
 #include <system_error>
 #include <vector>
 
@@ -62,7 +63,7 @@ bool ReadAllBytes(const std::filesystem::path& path,
   return true;
 }
 
-bool DecodeRecordFile(const std::vector<std::byte>& file_bytes,
+bool DecodeRecordFile(std::span<const std::byte> file_bytes,
                       PersistedRecordReadResult* result,
                       PersistedRecordReaderError* error) {
   if (result == nullptr) {
@@ -183,8 +184,10 @@ std::optional<PersistedRecordReadResult> PersistedRecordReader::Decode(
     PersistedRecordReaderError* error) {
   PersistedRecordReadResult decoded;
   PersistedRecordReaderError decode_error = PersistedRecordReaderError::None;
-  const std::vector<std::byte> owned_bytes(file_bytes.begin(), file_bytes.end());
-  if (!DecodeRecordFile(owned_bytes, &decoded, &decode_error)) {
+  // DecodeRecordFile only reads through the span (the body is copied into
+  // decoded.body), so decode directly from the caller's view instead of copying
+  // the whole file (up to the 256 MB cap) into an owned buffer first.
+  if (!DecodeRecordFile(file_bytes, &decoded, &decode_error)) {
     SetError(error, decode_error);
     return std::nullopt;
   }

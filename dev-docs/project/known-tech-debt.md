@@ -165,6 +165,41 @@ regression worse than the defect. Recorded here so they are not silently lost.
 > - The syntax-highlighting subsystem was not fully re-hunted this pass (a hunter
 >   aborted on an environment/session limit); carry it into the next pass.
 
+> **Deferred 2026-07-11 (pass 11 — cross-subsystem bug hunt):** a four-way fan-out
+> (syntax highlighting, terminal/PTY, editor primitives, persistence + plugin
+> runtime) landed 4 fixes (see commit): a syntax-highlight perf win (state-only
+> `AdvanceState` replay ran and discarded every pattern-rule regex per line —
+> `HighlightLineScoped` now skips token work when `want_tokens` is false, halving
+> regex work on the visible screen's leading lines and eliminating it entirely for
+> the up-to-512-line synchronous resume-state replay prefix), single-line paste
+> injecting raw CR/LF (a whole-line copy carries a trailing `\n`; `SingleLineEditor::
+> Insert` — the choke point for both Ctrl+V and text-input paste — now strips line
+> breaks so a control byte can't corrupt the search needle / goto-line / rename
+> value), a terminal soft-wrap-onto-existing-row flag bug (`AdvanceCursorRowLocked`
+> only stamped `wrapped_from_previous` on freshly-created rows, so a line printed
+> after a cursor-up that wrapped onto an existing row below split the logical line
+> in two for reflow / command capture), and terminal invalid-UTF-8 storage (an
+> overlong/surrogate scalar was stored as raw bytes; now substituted with U+FFFD).
+> Also a persistence micro-perf: `PersistedRecordReader::Decode` no longer copies
+> the whole input buffer (up to the 256 MB cap) before decoding from a span. The
+> following were investigated and deliberately **not** changed, recorded:
+> - **Terminal: a combining mark after a double-width glyph attaches to the
+>   wide-trailing spacer, not the lead** (hunter #2). Investigated: NOT a live bug —
+>   the inline cell is a 4-byte buffer and the combining-append already guards
+>   `cell.length + glyph.size() <= 4`. Every double-width codepoint is ≥3 UTF-8
+>   bytes and every combining mark is ≥2, so 3+2 > 4 means the mark is dropped
+>   regardless of which cell it targets. The retarget would be dead code unless the
+>   cell buffer grows; revisit only if `TerminalCell::bytes` is ever widened.
+> - **Terminal: ESC inside a charset-designation (`ESC ( <ESC>`) is consumed as the
+>   designator final** instead of aborting the designation (`EscapeMode::
+>   CharsetDesignate`). VERY LOW, malformed-input only. Fix: treat `0x1b/0x18/0x1a`
+>   as an abort there like the CSI/OSC states do. (Terminal hunter #4.)
+> - **Syntax: the thread-local `ReusableMatchData` cache keyed by `CompiledRegex*`
+>   is not invalidated on `ReloadDefinitions`** — a rebuilt rule can reuse a freed
+>   address's match-data block. Benign in practice (syntax rules only read
+>   ovector[0]/[1], always present, so no overflow), but latent. Fix: clear the
+>   cache on registry-revision change or key it by revision. (Syntax hunter.)
+
 > **Resolved 2026-07-10 (bug-inventory review pass — `microide-2026-07-10-bug-inventory.md`):**
 > a ~90-item inventory built against `main` was triaged against the current tree (many
 > items were already closed by the twelfth/thirteenth passes) and ~50 still-live items

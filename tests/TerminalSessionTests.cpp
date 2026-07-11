@@ -1709,6 +1709,67 @@ void TestTerminalSessionScrollRegionReexpandsOnGrow() {
                  "CUP to the new last row must address a real row after the region re-expands");
 }
 
+// Regression: a soft wrap at the right margin onto a row that ALREADY EXISTS
+// (cursor moved up mid-screen, then a long line printed that wraps down) must mark
+// the continuation row as wrapped_from_previous. Stamping only freshly-created
+// rows split the wrapped logical line in two for reflow / command capture.
+void TestTerminalSessionSoftWrapOntoExistingRowMarksContinuation() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 4);
+  // Three hard-started rows on the primary screen.
+  TerminalSessionTestAccess::AppendOutput(session, "a\r\nb\r\nc");
+  // Move to the top row, then print a line longer than the width so it soft-wraps
+  // onto the (pre-existing) second row.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;1Hwxyz1");
+
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() >= 2, "primary buffer should retain the wrapped rows");
+  Expect(lines[1].wrapped_from_previous,
+         "a soft wrap onto a pre-existing row must mark it as a continuation");
+}
+
+// Guard the deliberate inverse: a HARD line feed landing on a pre-existing row
+// that is itself a soft-wrap continuation must NOT relabel it as a hard boundary.
+void TestTerminalSessionHardLineFeedDoesNotRelabelWrappedRow() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 2);
+  // "abc" at width 2: "ab" on row 0, "c" soft-wraps to a fresh row 1 (continuation).
+  TerminalSessionTestAccess::AppendOutput(session, "abc");
+  {
+    const auto lines = session.SnapshotLines();
+    Expect(lines.size() >= 2 && lines[1].wrapped_from_previous,
+           "the wrapped row should start as a continuation");
+  }
+  // Move to the top row and emit a hard line feed onto the existing continuation.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;1H\n");
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() >= 2 && lines[1].wrapped_from_previous,
+         "a hard LF onto an existing wrapped row must not relabel it as a hard start");
+}
+
+// Regression: a well-formed-length but invalid UTF-8 scalar (overlong form,
+// surrogate) must be stored as U+FFFD, not as the raw invalid bytes.
+void TestTerminalSessionInvalidUtf8StoredAsReplacementChar() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 2, 8);
+  // E0 80 80 is an overlong encoding of U+0000 (3-byte length, valid continuation
+  // bytes, invalid scalar).
+  TerminalSessionTestAccess::AppendOutput(session, "\xE0\x80\x80");
+  {
+    const auto lines = session.SnapshotLines();
+    Expect(!lines.empty() && !lines[0].cells.empty(), "the glyph should occupy a cell");
+    Expect(lines[0].cells[0].DisplayText() == "\xEF\xBF\xBD",
+           "an invalid scalar must be stored as the replacement character, not raw bytes");
+  }
+  // A genuinely valid multibyte glyph must still round-trip unchanged.
+  TerminalSessionTestAccess::Reset(session, 2, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "\xC3\xA9");  // U+00E9 'é'
+  const auto lines = session.SnapshotLines();
+  Expect(!lines.empty() && !lines[0].cells.empty() &&
+             lines[0].cells[0].DisplayText() == "\xC3\xA9",
+         "a valid multibyte glyph must be stored unchanged");
+}
+
 }  // namespace
 
 // Regression: CUU (`CSI A`) / CPL (`CSI F`) must clamp at the TOP OF THE VISIBLE
@@ -2056,6 +2117,12 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalSession/RestartResetsNegotiatedState",
           TestTerminalSessionRestartResetsNegotiatedState);
 #if defined(__unix__) || defined(__APPLE__)
+  AddTest(tests, "TerminalSession/SoftWrapOntoExistingRowMarksContinuation",
+          TestTerminalSessionSoftWrapOntoExistingRowMarksContinuation);
+  AddTest(tests, "TerminalSession/HardLineFeedDoesNotRelabelWrappedRow",
+          TestTerminalSessionHardLineFeedDoesNotRelabelWrappedRow);
+  AddTest(tests, "TerminalSession/InvalidUtf8StoredAsReplacementChar",
+          TestTerminalSessionInvalidUtf8StoredAsReplacementChar);
   AddTest(tests, "TerminalSession/StopEscalatesToKillForStubbornChild",
           TestTerminalSessionStopEscalatesToKillForStubbornChild);
 #endif

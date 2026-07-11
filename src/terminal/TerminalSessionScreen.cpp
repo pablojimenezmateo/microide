@@ -181,13 +181,18 @@ void TerminalSession::AdvanceCursorRowLocked(bool wrapped_from_previous) {
 
   ++cursor_row_;
   cursor_column_ = 0;
-  // Only stamp the soft-wrap flag when this row is freshly created. Landing on a
-  // pre-existing row (e.g. a hard LF after cursor-up motion) must not relabel an
-  // existing soft-wrapped continuation as a hard boundary, which would corrupt
-  // reflow / selection-by-logical-line for that row.
+  // Stamp the soft-wrap flag when the row is freshly created, OR whenever this
+  // advance is itself a soft wrap (auto-wrap at the right margin): the row the
+  // wrapped glyph lands on is, by definition, a continuation of the previous row
+  // even if that row already existed (cursor was moved up into mid-screen, then a
+  // long line was printed that wraps onto an existing row below). Only a *hard* LF
+  // (wrapped_from_previous == false) landing on a pre-existing row is left
+  // untouched, so it never relabels an existing soft-wrapped continuation as a
+  // hard boundary. Getting this wrong split the wrapped logical line in two for
+  // reflow / command capture / selection-by-logical-line.
   const bool row_existed = cursor_row_ < lines_.size();
   EnsureCursorLineExistsLocked();
-  if (!row_existed) {
+  if (!row_existed || wrapped_from_previous) {
     lines_[cursor_row_].wrapped_from_previous = wrapped_from_previous;
   }
 }
@@ -233,7 +238,21 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
   // Fast path: a single ASCII byte is always one column, so skip UTF-8 decoding
   // and the width tables entirely for the overwhelmingly common case.
   const bool ascii = glyph.size() == 1 && static_cast<unsigned char>(glyph.front()) < 0x80;
-  const int width = ascii ? 1 : util::CodepointDisplayWidth(util::DecodeUtf8Codepoint(glyph));
+  std::string_view effective_glyph = glyph;
+  int width;
+  if (ascii) {
+    width = 1;
+  } else {
+    const char32_t codepoint = util::DecodeUtf8Codepoint(glyph);
+    // A multibyte sequence that decodes to U+FFFD is malformed (overlong form,
+    // surrogate, or out-of-range). Store the replacement character instead of the
+    // raw invalid bytes so the cell always holds valid UTF-8 (a genuine U+FFFD
+    // encodes to those same bytes, so this substitution is a no-op for it).
+    if (codepoint == 0xFFFD) {
+      effective_glyph = util::kUtf8ReplacementChar;
+    }
+    width = util::CodepointDisplayWidth(codepoint);
+  }
 
   // Zero-width (combining marks, variation selectors, joiners): attach to the
   // previously written cell instead of consuming a column, so accents and emoji
@@ -248,8 +267,8 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
     const std::size_t base = cursor_column_ - 1;
     if (base < line.cells.size()) {
       TerminalCell& cell = line.cells[base];
-      if (cell.length > 0 && cell.length + glyph.size() <= cell.bytes.size()) {
-        for (char byte : glyph) {
+      if (cell.length > 0 && cell.length + effective_glyph.size() <= cell.bytes.size()) {
+        for (char byte : effective_glyph) {
           cell.bytes[cell.length++] = byte;
         }
       }
@@ -271,7 +290,7 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
       auto& line = lines_[cursor_row_];
       ResizeLineLocked(line, cursor_column_ + 1);
       BreakWideGlyphPairForWriteLocked(line, cursor_column_, 1);
-      line.cells[cursor_column_] = MakeUtf8TerminalCell(glyph, current_style_);
+      line.cells[cursor_column_] = MakeUtf8TerminalCell(effective_glyph, current_style_);
       return;
     }
   }
@@ -280,7 +299,7 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
   auto& line = lines_[cursor_row_];
   ResizeLineLocked(line, cursor_column_ + advance);
   BreakWideGlyphPairForWriteLocked(line, cursor_column_, advance);
-  line.cells[cursor_column_] = MakeUtf8TerminalCell(glyph, current_style_);
+  line.cells[cursor_column_] = MakeUtf8TerminalCell(effective_glyph, current_style_);
   if (advance == 2) {
     // Trailing spacer carries the lead's style (so background fills span both
     // columns) plus the wide-trailing marker so the renderer skips painting it.

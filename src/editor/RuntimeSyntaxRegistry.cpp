@@ -745,7 +745,8 @@ void HighlightLineScoped(const Registry& registry,
                          std::uint8_t initial_depth,
                          std::string_view line,
                          std::vector<SyntaxTokenKind>& tokens,
-                         SyntaxState* end_state) {
+                         SyntaxState* end_state,
+                         bool want_tokens) {
   const Definition* definition = DefinitionById(registry, definition_id);
   // Compile this definition's rule regexes (if lazily built) before any of the
   // rule.pattern/start/end.valid() checks below — an uncompiled rule would
@@ -801,13 +802,22 @@ void HighlightLineScoped(const Registry& registry,
     const std::size_t segment_end =
         next_region.has_value() ? next_region->match.start : search_limit;
 
-    const SyntaxTokenKind base_kind =
-        region != nullptr ? region->group : SyntaxTokenKind::Plain;
-    if (definition != nullptr) {
-      ApplyPatternRules(registry, *definition, region_id, tail.substr(0, segment_end), cursor,
-                        tokens, base_kind);
-    } else if (region != nullptr && region->group != SyntaxTokenKind::Plain) {
-      MarkRange(tokens, cursor, cursor + segment_end, region->group);
+    // Pattern-rule application only writes tokens (it never affects region/depth
+    // state — see FindEarliestRegionStart / end_match for that), so in state-only
+    // mode (AdvanceState replaying to establish resume-state) skip it entirely.
+    // Otherwise every pattern regex would run over the whole segment and MarkRange
+    // its results into an empty vector — a pure no-op that doubled regex work on
+    // the visible screen's leading lines and wasted it outright for the whole
+    // [checkpoint .. viewport-top] replay prefix (up to 512 lines synchronously).
+    if (want_tokens) {
+      const SyntaxTokenKind base_kind =
+          region != nullptr ? region->group : SyntaxTokenKind::Plain;
+      if (definition != nullptr) {
+        ApplyPatternRules(registry, *definition, region_id, tail.substr(0, segment_end), cursor,
+                          tokens, base_kind);
+      } else if (region != nullptr && region->group != SyntaxTokenKind::Plain) {
+        MarkRange(tokens, cursor, cursor + segment_end, region->group);
+      }
     }
 
     if (next_region.has_value()) {
@@ -1189,7 +1199,8 @@ HighlightedLine HighlightLine(std::string_view line,
   // matches; otherwise start fresh at the top level.
   const bool resume = state.definition_id == definition_id && state.region_depth > 0;
   HighlightLineScoped(registry, definition_id, resume ? state.region_stack : nullptr,
-                      resume ? state.region_depth : 0, line, result.tokens, &result.end_state);
+                      resume ? state.region_depth : 0, line, result.tokens, &result.end_state,
+                      /*want_tokens=*/true);
   return result;
 }
 
@@ -1217,7 +1228,8 @@ SyntaxState AdvanceState(std::string_view line,
   std::vector<SyntaxTokenKind> no_tokens;
   const bool resume = state.definition_id == definition_id && state.region_depth > 0;
   HighlightLineScoped(registry, definition_id, resume ? state.region_stack : nullptr,
-                      resume ? state.region_depth : 0, line, no_tokens, &end_state);
+                      resume ? state.region_depth : 0, line, no_tokens, &end_state,
+                      /*want_tokens=*/false);
   return end_state;
 }
 

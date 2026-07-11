@@ -104,6 +104,24 @@ bool SingleLineEditor::Insert(std::string_view input) {
   if (input.empty()) {
     return false;
   }
+  // A single-line surface must never hold line breaks. Clipboard paste (Ctrl+V, or
+  // a paste delivered as a text-input event on some platforms — both funnel here)
+  // can carry CR/LF: a whole-line copy includes a trailing '\n', and multi-line
+  // clipboard content brings more. Inserting them raw stores control bytes that
+  // render as garbage cells and corrupt the field's parsed value (search needle,
+  // goto-line target, rename text, ...). Strip CR/LF (collapsing CRLF) before
+  // inserting; typed single characters never contain them, so normal input is
+  // unaffected. Recurse once with the sanitized, newline-free text.
+  if (input.find_first_of("\r\n") != std::string_view::npos) {
+    std::string sanitized;
+    sanitized.reserve(input.size());
+    for (const char ch : input) {
+      if (ch != '\r' && ch != '\n') {
+        sanitized.push_back(ch);
+      }
+    }
+    return Insert(sanitized);
+  }
   Normalize();
   (void)DeleteSelection();
   text_.insert(caret_, input);

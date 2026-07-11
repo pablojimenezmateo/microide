@@ -61,6 +61,26 @@ void TestSingleLineEditorSupportsSelectAllCopyCutPaste() {
   ExpectEditorState(editor, "world", 5, std::nullopt, "paste");
 }
 
+void TestSingleLineEditorStripsLineBreaksOnInsert() {
+  // A single-line surface must never hold CR/LF. The common trigger is pasting a
+  // whole-line copy, which carries a trailing '\n'; multi-line clipboard content
+  // carries interior breaks too. Both Ctrl+V (Paste) and a paste delivered as a
+  // text-input event funnel through Insert, so the stripping lives there.
+  editor::SingleLineEditor editor;
+  Expect(editor.Paste("hello\n"), "pasting whole-line-copy text should insert");
+  ExpectEditorState(editor, "hello", 5, std::nullopt, "trailing-newline paste");
+
+  editor.SetText("");
+  Expect(editor.Insert("a\r\nb\nc\rd"), "inserting multi-line text should insert");
+  ExpectEditorState(editor, "abcd", 4, std::nullopt, "multi-line insert collapses breaks");
+
+  // Pasting only line breaks inserts nothing (sanitized to empty).
+  editor.SetText("keep");
+  editor.MoveEnd(false);
+  Expect(!editor.Paste("\r\n\n"), "pasting only line breaks inserts nothing");
+  ExpectEditorState(editor, "keep", 4, std::nullopt, "newline-only paste is a no-op");
+}
+
 void TestSingleLineKeyHandlerDispatchesClipboardShortcuts() {
   editor::SingleLineEditor editor("hello");
   std::string clipboard;
@@ -182,6 +202,8 @@ void RegisterSingleLineEditorTests(std::vector<TestCase>& tests) {
           TestSingleLineEditorSupportsMovementAndSelectionInvariants);
   AddTest(tests, "SingleLineEditor/SupportsSelectAllCopyCutPaste",
           TestSingleLineEditorSupportsSelectAllCopyCutPaste);
+  AddTest(tests, "SingleLineEditor/StripsLineBreaksOnInsert",
+          TestSingleLineEditorStripsLineBreaksOnInsert);
   AddTest(tests, "SingleLineEditor/KeyHandlerDispatchesClipboardShortcuts",
           TestSingleLineKeyHandlerDispatchesClipboardShortcuts);
   AddTest(tests, "SingleLineEditor/SupportsSnapshotAndAppend",
