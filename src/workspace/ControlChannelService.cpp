@@ -128,11 +128,18 @@ std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
     if (size_ec || file_bytes > kMaxDescriptorFileBytes) {
       continue;
     }
-    std::ifstream in(entry.path());
+    std::ifstream in(entry.path(), std::ios::binary);
     if (!in) {
       continue;
     }
-    std::string contents((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    // Bound the ACTUAL read, not just the file_size() pre-check above: a hostile
+    // local writer can grow the descriptor between the stat and the open (TOCTOU),
+    // and an unbounded istreambuf slurp would then defeat kMaxDescriptorFileBytes and
+    // OOM/stall the driver. Read at most the cap; an over-cap file reads truncated,
+    // fails JSON parsing, and is rejected below.
+    std::string contents(static_cast<std::size_t>(kMaxDescriptorFileBytes), '\0');
+    in.read(contents.data(), static_cast<std::streamsize>(kMaxDescriptorFileBytes));
+    contents.resize(static_cast<std::size_t>(in.gcount()));
     in.close();
     while (!contents.empty() && (contents.back() == '\n' || contents.back() == '\r')) {
       contents.pop_back();

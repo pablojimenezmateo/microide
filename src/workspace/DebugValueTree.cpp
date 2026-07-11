@@ -204,7 +204,12 @@ std::uint32_t DebugValueTree::AddNode(Node node) {
   const std::uint32_t id = next_id_++;
   node.id = id;
   if (node.variables_reference > 0) {
-    reference_to_node_[node.variables_reference] = id;
+    // First-writer-wins: a conformant adapter keeps variablesReference unique while a
+    // stop is live, but a non-conformant one could recycle a still-live reference. Last-
+    // write-wins would then remap the reference to the recycled child, so a later page
+    // fetch for the original container would graft onto the wrong node. Keep the first
+    // mapping (matches the bounded-paging / clamped-totals hostile-adapter defenses).
+    reference_to_node_.try_emplace(node.variables_reference, id);
   }
   nodes_.emplace(id, std::move(node));
   return id;

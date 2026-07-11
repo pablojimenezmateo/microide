@@ -116,6 +116,12 @@ ControlSpec ParseControlSpec(std::string_view json) {
       }
       breakpoint.line = static_cast<std::size_t>(entry["line"].AsInt());
       if (entry.HasKey("enabled")) {
+        // Strict type check, matching "line"/"settings": AsBool coerces any non-bool
+        // to the fallback, so a mistyped "enabled":"false"/0 would silently enable it.
+        if (!entry["enabled"].IsBool()) {
+          spec.parse_error = "breakpoint \"enabled\" must be a boolean";
+          return spec;
+        }
         breakpoint.enabled = entry["enabled"].AsBool(true);
       }
       breakpoint.condition = OptionalString(entry["condition"]);
@@ -143,6 +149,10 @@ ControlSpec ParseControlSpec(std::string_view json) {
         return spec;
       }
       if (entry.HasKey("enabled")) {
+        if (!entry["enabled"].IsBool()) {
+          spec.parse_error = "function breakpoint \"enabled\" must be a boolean";
+          return spec;
+        }
         function_breakpoint.enabled = entry["enabled"].AsBool(true);
       }
       function_breakpoint.condition = OptionalString(entry["condition"]);

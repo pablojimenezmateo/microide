@@ -329,6 +329,48 @@ regression worse than the defect. Recorded here so they are not silently lost.
 >   systemic fix: run these blocking provider callbacks with allow_registration=false
 >   (matching the async path + the stated design intent) so the vector can't mutate mid-iteration.
 
+> **Deferred 2026-07-11 (pass 15 — cross-subsystem bug hunt, session wrap-up):** a
+> four-way fan-out (undo/folding, control-channel deep, DAP variables/eval, cross-cutting
+> lifetime/thread-safety) landed 3 fixes (see commit): a control-channel TOCTOU hardening
+> (`ControlChannelService` descriptor read now caps the ACTUAL read at
+> kMaxDescriptorFileBytes instead of trusting the `file_size` pre-check, so a hostile
+> local writer that grows the descriptor after the stat can't OOM/stall the driver),
+> strict `enabled` boolean validation in `ControlSpec` breakpoints/function-breakpoints
+> (was silently coerced via AsBool(true)), and first-writer-wins for DAP
+> `reference_to_node_` (a non-conformant adapter recycling a live variablesReference can
+> no longer remap it and graft a later page onto the wrong node). Undo/redo internals and
+> the DAP variables/scopes generation-guard paths came back clean. Two MEDIUM findings were
+> deliberately **not** fixed in this wrap-up pass and are recorded for a focused follow-up:
+> - **Folding: collapsed folds silently re-expand after a line-count-changing edit ABOVE
+>   them (incl. undo/redo of such edits).** `FoldingModel::RemapCollapsedFlags`
+>   (FoldingModel.cpp:316) is the sole carrier of user collapse state across the full
+>   recompute that runs after every edit, and it matches previous→new collapsed openers by
+>   ABSOLUTE (opener_line, closer_line). The model never shifts fold ranges by an edit
+>   delta (it is recompute-based; `incremental_resume_line` only anchors the bracket
+>   rescan). So inserting/deleting a line above a collapsed fold shifts its opener, the
+>   absolute match fails, and the collapse is dropped (the fold visually re-expands).
+>   Edits below, or in-line edits that don't change the line count, preserve collapse (line
+>   numbers unchanged) — which is why it's easy to miss. VS Code shift-preserves. MED (UX,
+>   not a crash/data-loss). NOT fixed now because the correct fix plumbs the net edit
+>   line-delta (available on the edit path: the fold edit anchor + inserted/removed line
+>   counts) through `ComputeWithBudget` into `RemapCollapsedFlags`, which then shifts the
+>   previous collapsed openers at/after the edit anchor by the delta BEFORE the
+>   (opener_line, closer_line) compare — a multi-layer change in a perf-sensitive subsystem
+>   that needs its own test pass, not a wrap-up rush.
+> - **`AsyncSubprocess` Windows backend is unsynchronized (MEDIUM, Windows-only).** The
+>   POSIX `Impl` takes `state_mutex` and re-fetches the fd under the lock before
+>   read/write (guarding against a concurrent Close() letting the OS reuse the descriptor);
+>   the `#if defined(_WIN32)` `Impl` (AsyncSubprocess.cpp:74) DECLARES `state_mutex` but
+>   never locks it, and uses a plain `bool running` (POSIX uses `std::atomic<bool>`). The
+>   LSP/DAP io thread (`Read`/`PeekNamedPipe`/`ReadFile`), shutdown thread (`Shutdown`→
+>   `CloseHandle`), and UI thread (`IsRunning`) touch `running`/`exit_code`/the HANDLEs
+>   lock-free → data race + use-after-close/handle-reuse on Windows. NOT fixed now because
+>   it can't be compiled or TSAN-validated on this Linux workstation; writing untested
+>   Windows synchronization risks breaking the Windows build. Fix direction: mechanically
+>   mirror the POSIX branch — lock `state_mutex` around every state access, re-fetch the
+>   HANDLE under the lock immediately before Peek/Read/Write and bail if it changed, and
+>   make `running` atomic. (Cross-cutting lifetime/thread hunter; POSIX paths verified clean.)
+
 > **Resolved 2026-07-10 (bug-inventory review pass — `microide-2026-07-10-bug-inventory.md`):**
 > a ~90-item inventory built against `main` was triaged against the current tree (many
 > items were already closed by the twelfth/thirteenth passes) and ~50 still-live items
