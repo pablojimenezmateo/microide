@@ -7,6 +7,7 @@
 #include "project/PatchGenerator.h"
 #include "project/PatchApplyTypes.h"
 #include "project/ProjectBackgroundExecutor.h"
+#include "workspace/CompareTabReview.h"
 #include "workspace/GitRepositoryService.h"
 #include "workspace/PatchApplyService.h"
 #include "workspace/WorkspaceTabState.h"
@@ -888,6 +889,70 @@ void TestPatchApplyRequestDoesNotCopyModel() {
   executor.Shutdown();
 }
 
+// Regression: a whole-line selection made with the standard gesture (anchor at the
+// start of the target line, cursor dragged to the START of the next line) reports an
+// EXCLUSIVE end — end.column == 0 on the next line, which is NOT selected. BuildRequest
+// must decrement that end line before mapping it to a model row, or a line-scoped
+// stage/unstage/DISCARD spans one extra line. For Discard that silently destroys an
+// unselected working-tree change.
+void TestPatchLineScopeSelectionExcludesExclusiveEndLine() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path();
+
+  microide::project::ProjectBackgroundExecutor executor;
+  microide::workspace::GitRepositoryService git_service(executor);
+  microide::workspace::PatchApplyService service(executor, git_service);
+
+  microide::project::GitRepositoryState repo_state;
+  repo_state.repository_root = repo_path;
+  repo_state.repo_available = true;
+  repo_state.generation = 1;
+  microide::workspace::PatchApplyService::Callbacks callbacks;
+  callbacks.current_repository_state = [repo_state]() { return repo_state; };
+  service.SetCallbacks(std::move(callbacks));
+
+  // Two consecutive CHANGED right lines: b->X (right line 2) and c->Y (right line 3).
+  const std::string left = "a\nb\nc\nd\n";
+  const std::string right = "a\nX\nY\nd\n";
+  microide::workspace::CompareTabState compare_tab;
+  compare_tab.path = repo_path / "file.txt";
+  compare_tab.right_ref = "WORKTREE";
+  compare_tab.model = BuildCompareModel(left, right);
+  compare_tab.right_view_active = true;
+
+  const auto right_path = repo_path / "right.txt";
+  WriteFile(right_path, right);
+  Expect(compare_tab.right_viewport.OpenFile(right_path), "right viewport should open");
+
+  // Select ONLY line index 1 (X): anchor at (1,0), drag cursor to the start of line 2
+  // — end.column == 0, so line 2 (Y) is excluded from the selection.
+  compare_tab.right_viewport.MoveCursorTo(1, 0, /*extend_selection=*/false);
+  compare_tab.right_viewport.MoveCursorTo(2, 0, /*extend_selection=*/true);
+  const auto selection = compare_tab.right_viewport.selection_range();
+  Expect(selection.has_value() && selection->start.line == 1 && selection->end.line == 2 &&
+             selection->end.column == 0,
+         "fixture selection must be the exclusive-end whole-line gesture");
+
+  // The two right lines must map to distinct model rows or the test can't distinguish
+  // the off-by-one.
+  const std::size_t row_line1 =
+      microide::workspace::CompareTabModelRowForRightLine(compare_tab, 1);
+  const std::size_t row_line2 =
+      microide::workspace::CompareTabModelRowForRightLine(compare_tab, 2);
+  Expect(row_line1 != row_line2, "fixture must map the two right lines to different model rows");
+
+  const auto request = service.BuildRequestForTesting(
+      compare_tab, PatchOperationKind::DiscardSelectedLines, /*line_scope=*/true);
+  Expect(request.has_value(), "line-scope discard request should build");
+  Expect(request->target.line_selection.has_value(), "request should carry a line selection");
+  Expect(request->target.line_selection->first_model_row == row_line1,
+         "selection must start at the anchored line's model row");
+  Expect(request->target.line_selection->last_model_row == row_line1,
+         "selection must NOT include the exclusive end line (line 2 / Y)");
+
+  executor.Shutdown();
+}
+
 void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
   tests.push_back({"PatchApply/AppendAfterMissingFinalNewline",
                    TestPatchStageAppendAfterMissingFinalNewline});
@@ -926,6 +991,8 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
                    TestCopyPatchAppliesForAddDeleteSpacesAndNoNewline});
   tests.push_back({"PatchApply/HeaderQuotesUnsafePaths", TestPatchHeaderQuotesUnsafePaths});
   tests.push_back({"PatchApply/RequestDoesNotCopyModel", TestPatchApplyRequestDoesNotCopyModel});
+  tests.push_back({"PatchApply/LineScopeExcludesExclusiveEndLine",
+                   TestPatchLineScopeSelectionExcludesExclusiveEndLine});
 }
 
 }  // namespace microide::tests

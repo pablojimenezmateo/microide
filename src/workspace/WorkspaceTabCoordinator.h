@@ -21,6 +21,16 @@ class TabCoordinator {
     std::function<void(const std::filesystem::path&)> notify_plugin_buffer_open;
     std::function<void(const std::filesystem::path&)> notify_lsp_buffer_open;
     std::function<void(const std::filesystem::path&)> notify_lsp_buffer_close;
+    // Raised after an on-disk reload replaces an already-open buffer's content, so
+    // the LSP server's document mirror is re-synced with a full didChange. The
+    // document is never closed across a reload, so didOpen short-circuits
+    // (HasOpenDocument) and the server would otherwise keep the PRE-reload text —
+    // desyncing diagnostics/hover/completion and corrupting the next incremental
+    // edit (its range is computed against the reloaded buffer but applied to the
+    // stale mirror). Args: (reloaded viewport, before-lines, after-lines).
+    std::function<void(const editor::TextViewport&, const std::vector<std::string>&,
+                       const std::vector<std::string>&)>
+        notify_lsp_buffer_reloaded;
     std::function<std::size_t(const std::filesystem::path&)> count_open_buffer_views;
     // Whole-workspace open-view counts keyed by normalized generic path, built
     // once so closing a multi-tab group is O(views) rather than O(tabs*views).

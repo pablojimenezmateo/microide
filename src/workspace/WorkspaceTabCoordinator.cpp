@@ -516,6 +516,13 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
   operations_.apply_editor_preferences(reopened_view);
   operations_.apply_detected_indent_on_open(reopened_view);
 
+  // Capture the pre-reload buffer content (what the LSP server currently mirrors)
+  // from the first view we replace, so the server can be re-synced to the reloaded
+  // content with a full didChange afterward. All matching views share this path's
+  // single server document, so one sync suffices.
+  std::vector<std::string> lsp_before_lines;
+  bool captured_lsp_before = false;
+
   const std::size_t focused_index = state_.clamped_focused_group_index();
   for (std::size_t g = 0; g < state_.editor_groups.size(); ++g) {
     EditorGroup& group = state_.editor_groups[g];
@@ -526,6 +533,10 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
         continue;
       }
       auto& editor_state = *tab.editor_state;
+      if (!captured_lsp_before) {
+        lsp_before_lines = editor_state.viewport.lines().Snapshot();
+        captured_lsp_before = true;
+      }
       const editor::TextViewport* current_view = &editor_state.viewport;
       editor::TextViewport restored_view = reopened_view;
       restored_view.SetViewportSize(current_view->visible_lines(), current_view->visible_columns());
@@ -545,6 +556,14 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
         operations_.request_editor_surface_redraw();
       }
     }
+  }
+
+  // Re-sync the LSP server's document mirror to the reloaded content (full
+  // didChange). Fired once after all views are swapped, since the server tracks a
+  // single document per path regardless of how many split views show it.
+  if (captured_lsp_before && operations_.notify_lsp_buffer_reloaded) {
+    operations_.notify_lsp_buffer_reloaded(reopened_view, lsp_before_lines,
+                                           reopened_view.lines().Snapshot());
   }
 }
 

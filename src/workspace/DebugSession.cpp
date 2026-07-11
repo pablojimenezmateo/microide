@@ -668,9 +668,13 @@ void DebugSession::SwitchThread(int thread_id) {
     return;
   }
   stopped_thread_id_ = thread_id;
-  dap_protocol::DapStoppedEvent stop = last_stop_;
-  stop.thread_id = thread_id;
-  last_stop_ = stop;
+  last_stop_.thread_id = thread_id;
+  const dap_protocol::DapStoppedEvent stop = last_stop_;
+  // Bump the stop epoch so a still-in-flight stackTrace from the PREVIOUS thread is
+  // dropped instead of projecting the wrong thread's frames — this is exactly the
+  // "superseded by a thread switch" case RequestStackTrace's epoch check documents,
+  // which only holds if the switch actually advances the epoch (mirrors Reactivate).
+  ++stop_epoch_;
   // Reuse the stop path: re-resolve frames for the picked thread and re-emit
   // on_stopped so the host re-focuses it (execution line + Call Stack + scopes).
   RequestStackTrace(stop);

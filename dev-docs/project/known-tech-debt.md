@@ -200,6 +200,57 @@ regression worse than the defect. Recorded here so they are not silently lost.
 >   ovector[0]/[1], always present, so no overflow), but latent. Fix: clear the
 >   cache on registry-revision change or key it by revision. (Syntax hunter.)
 
+> **Deferred 2026-07-11 (pass 12 — cross-subsystem bug hunt):** a four-way fan-out
+> (compare/merge, DAP debugger, LSP service, project file-index + control) landed 4
+> fixes (see commit): a HIGH compare data-loss bug (`PatchApplyService::BuildRequest`
+> line-scope used `selection->end.line` directly, but `selection_range()` reports an
+> EXCLUSIVE end — a whole-line selection ending at column 0 of line N+1 dragged in
+> line N+1, so Discard Selected Lines silently destroyed an unselected working-tree
+> change; now applies the same `end.column==0 && end.line>start.line` correction used
+> everywhere else), a HIGH LSP desync (an on-disk buffer reload replaced the editor
+> content without any `didChange`, so the server kept the pre-reload text and the next
+> incremental edit corrupted its mirror; `TabCoordinator::ReloadEditorTabsForPath` now
+> re-syncs via a new `notify_lsp_buffer_reloaded` hook → `SyncLspForBufferChange`), a
+> LOW file-index teardown stall (the inotify overflow-recovery rescan polled the
+> initial-scan thread's stop flag, which `StopNative` resets to false before joining
+> the worker, so a teardown mid-recovery blocked for the full scan budget; now polls
+> the worker-scoped `stop_native_setup`), and a LOW DAP correctness gap (`SwitchThread`
+> did not bump `stop_epoch_`, so a stale stackTrace from the previous thread was not
+> dropped despite `RequestStackTrace`'s comment claiming thread-switch supersession;
+> now bumps the epoch like `Reactivate`). Also a persistence micro-perf from the pass-11
+> hunter's note (`PersistedRecordReader::Decode` no longer copies the input buffer).
+> The following were deliberately **not** changed and are recorded:
+> - **File index: initial bulk-load can clobber/resurrect files changed during the
+>   scan window (MEDIUM).** `FileIndexWatcher::Watch` starts the native inotify worker
+>   and the initial-scan worker as two threads that both drive the single SetCallback
+>   lambda with only a shared generation guard; an incremental batch applied before the
+>   trailing `is_initial` batch (which `FileIndex::ApplyBatch` applies as a wholesale
+>   `files_` replace) is lost — a file created during the scan goes invisible until its
+>   next modification, a file deleted during the scan resurrects as a ghost entry.
+>   Data-race-free (mutex) but logically wrong; reachable on large trees during an
+>   active build/`git checkout`. NOT fixed because the correct fix is a concurrency
+>   refactor (buffer non-initial batches behind an "initial-applied" gate per watcher
+>   generation, then replay them on top of the initial baseline) across two concurrent
+>   callback threads that cannot be deterministically regression-tested; deferred rather
+>   than rush a threading change validated by a single end-of-session *SAN pass. Fix
+>   direction: add a `std::mutex` + `bool initial_applied` + pending-batch vector to the
+>   coordinator (reset in `WatchProjectFileIndex` before `SetCallback`, safe because
+>   `StopFileIndexWatcher` joins first), refactor the callback body into a per-batch
+>   helper, and on the initial batch replay the buffered incrementals in order.
+> - **LSP: no end-to-end regression test for the reload `didChange`.** Driving it needs
+>   a full shell + fake LSP server with an open served document (SyncLspForBufferChange
+>   no-ops without one), disproportionate for a hook that funnels into the already-tested
+>   `SyncLspForBufferChange` bulk-sync path. If the reload path grows logic beyond the
+>   single full-document sync, add the integration test.
+> - **LSP: tracked-request UI expiry (10s) < transport deadline (30s) + single
+>   `request_in_flight` flag** can't represent two concurrent interactive requests
+>   (hover during an in-flight completion), so the "LSP: working…" indicator can flicker
+>   or clear early. LOW, cosmetic only — callbacks are correctly balanced, no lifecycle
+>   leak. (LSP hunter #2.)
+> - **Merge: `WorkspaceShellRenderMerge.cpp:497` hover-preview allocates a
+>   `vector<string>` per frame** via `MergeChoiceLines` while a result-action button is
+>   hovered — bounded, hover-only, not a regression; cache if that path gets hot.
+
 > **Resolved 2026-07-10 (bug-inventory review pass — `microide-2026-07-10-bug-inventory.md`):**
 > a ~90-item inventory built against `main` was triaged against the current tree (many
 > items were already closed by the twelfth/thirteenth passes) and ~50 still-live items

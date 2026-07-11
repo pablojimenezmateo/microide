@@ -676,7 +676,13 @@ struct FileIndexWatcher::Impl {
         AddWatchRecursive(root, &watch_filter);
         if (callback) {
           project::ProjectTraversalFilter scan_filter(root, exclude_globs);
-          callback(BuildInitialBatch(root, &scan_filter, entry_budget, &stop_initial_scan));
+          // Observe the WORKER's stop flag, not the initial-scan thread's:
+          // StopNative() calls StopInitialScan() (which resets stop_initial_scan to
+          // false) BEFORE it sets stop_native_setup and joins this worker. Polling
+          // stop_initial_scan here would ignore a teardown that arrives mid-recovery
+          // and block worker.join() for the full scan budget. stop_native_setup stays
+          // true across the worker join, so this recovery scan bails promptly.
+          callback(BuildInitialBatch(root, &scan_filter, entry_budget, &stop_native_setup));
         }
         continue;
       }

@@ -107,7 +107,19 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
     }
     const std::size_t first_row =
         ModelRowFromSelectionLine(compare_tab, selection->start.line);
-    const std::size_t last_row = ModelRowFromSelectionLine(compare_tab, selection->end.line);
+    // selection_range() reports an EXCLUSIVE end. A whole-line selection made with
+    // the standard gesture (anchor at line N's start, cursor dragged to line N+1's
+    // start) yields end.column == 0 and end.line == N+1, but line N+1 is not part
+    // of the selection. Without this correction the patch spans one extra line —
+    // and for Discard Selected Lines that silently destroys an unselected
+    // working-tree change (irreversible). Mirror the end.column==0 adjustment used
+    // by every other line-oriented consumer (WorkspaceShellInteraction line-copy,
+    // ShapingActions, DiagnosticsRender, redraw).
+    std::size_t end_line = selection->end.line;
+    if (selection->end.column == 0 && selection->end.line > selection->start.line) {
+      --end_line;
+    }
+    const std::size_t last_row = ModelRowFromSelectionLine(compare_tab, end_line);
     const auto line_selection =
         project::PatchLineSelectionFromModelRows(compare_tab.model, first_row, last_row);
     if (!line_selection.has_value() ||
