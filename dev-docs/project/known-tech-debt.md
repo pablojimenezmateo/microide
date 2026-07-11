@@ -14,6 +14,17 @@ These were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
 a latent API-contract hazard with no live trigger, so a rushed fix risked a
 regression worse than the defect. Recorded here so they are not silently lost.
 
+> **Deferred 2026-07-11 (pass 18 — cross-subsystem bug hunt):** a four-way fan-out
+> landed 2 fixes (split-view stale highlight token cache; AsyncSubprocess moved-from
+> guard symmetry). Render/layout and compare/merge/blame came back clean. One minor
+> item deferred:
+> - **`WorkspaceShell::RevealPathInFileExplorer` runs `xdg-open` synchronously on the
+>   shell thread with an infinite timeout.** `src/workspace/WorkspaceShellTerminal.cpp`
+>   calls `platform::OpenPathInFileManager`, which runs `xdg-open` via `RunSubprocess`
+>   with `timeout_ms = 0` (wait-indefinitely). `xdg-open` normally forks and returns
+>   immediately so there is no practical stall, but a wedged file manager would hang the
+>   UI thread. Defense-in-depth: give that call a finite `timeout_ms`. (Platform #minor.)
+>
 > **Deferred 2026-07-11 (pass 17 — cross-subsystem bug hunt):** a four-way fan-out
 > landed 2 fixes (workspace deferred-tab identity loss; Linux inotify incremental
 > events bypassing the ignore filter). These findings were **not** fixed and are

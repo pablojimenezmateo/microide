@@ -32,6 +32,40 @@ struct ScopedRuntimeSyntaxRegistryReset {
   ~ScopedRuntimeSyntaxRegistryReset() { microide::editor::runtime_syntax::ReloadDefinitions({}); }
 };
 
+// Regression: a split pane shares its sibling's DocumentState but keeps its own
+// highlight caches. When the sibling edits the shared buffer, this pane's stored
+// content_revision goes stale; EnsureHighlightCaches must drop the per-line token
+// cache on that mismatch (the cache is NOT cursor-gated -- HighlightedLineTokens
+// does a bare find()), or the pane keeps painting pre-edit colors until eviction.
+void TestTextViewportSplitSiblingEditRefreshesHighlightTokens() {
+  TextViewport pane_a;
+  pane_a.LoadContent("int a = 1;\nint b = 2;\nint c = 3;\n", "/tmp/split-highlight.cpp");
+  (void)pane_a.HighlightedLineTokens(0);
+  (void)pane_a.HighlightedLineTokens(1);
+
+  // Split: pane B shares the same DocumentState (shared_ptr) but copies the caches.
+  TextViewport pane_b = pane_a;
+  const auto before_span = pane_b.HighlightedLineTokens(1);
+  const std::vector<SyntaxTokenKind> before(before_span.begin(), before_span.end());
+  Expect(std::any_of(before.begin(), before.end(),
+                     [](SyntaxTokenKind kind) { return kind != SyntaxTokenKind::Comment; }),
+         "line 1 should start as non-comment code");
+
+  // Edit through pane A only: open an unterminated block comment on line 0. This
+  // bumps the shared content_revision and purges pane A's caches -- but not pane
+  // B's, whose stored revision now trails the document.
+  pane_a.MoveCursorTo(0, 0);
+  pane_a.InsertText("/*");
+
+  // Pane B repaints and must recompute line 1 as inside the multiline comment,
+  // not serve its stale cached tokens.
+  const auto& after = pane_b.HighlightedLineTokens(1);
+  Expect(!after.empty() &&
+             std::all_of(after.begin(), after.end(),
+                         [](SyntaxTokenKind kind) { return kind == SyntaxTokenKind::Comment; }),
+         "the split sibling pane must recompute tokens after the shared buffer changed");
+}
+
 void TestTextViewportSmallFileKeepsSyntaxHighlighting() {
   TextViewport viewport;
   viewport.LoadContent("int value = 42;\n", "/tmp/sample.cpp");
@@ -2900,6 +2934,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportFastLoadDetectsEncoding);
   AddTest(tests, "TextViewport/SmallFileKeepsSyntaxHighlighting",
           TestTextViewportSmallFileKeepsSyntaxHighlighting);
+  AddTest(tests, "TextViewport/SplitSiblingEditRefreshesHighlightTokens",
+          TestTextViewportSplitSiblingEditRefreshesHighlightTokens);
   AddTest(tests, "TextViewport/LargeCodeFixtureKeepsSyntaxHighlighting",
           TestTextViewportLargeCodeFixtureKeepsSyntaxHighlighting);
   AddTest(tests, "TextViewport/LargePlainFixtureKeepsSyntaxHighlighting",

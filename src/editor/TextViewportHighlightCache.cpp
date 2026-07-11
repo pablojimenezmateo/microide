@@ -163,6 +163,14 @@ void TextViewport::EnsureHighlightCaches() const {
     pending_checkpoint_backfill_target_line_ = 0;
     highlight_state_content_revision_ = document_->content_revision;
     highlight_state_syntax_revision_ = document_->syntax_revision;
+    // The per-line token cache is NOT cursor-gated -- HighlightedLineTokens does a
+    // bare highlight_cache_.find() with no revision check -- so it must be dropped
+    // here too, or a revision bump that this viewport did not itself apply (e.g. a
+    // sibling split pane edited the shared document, or a plugin syntax reload)
+    // keeps serving pre-edit colors until LRU eviction. Mirrors the chain-advance
+    // clear in InstallHighlightCheckpoints and the SyntaxConfig invalidation path.
+    highlight_cache_.clear();
+    highlight_cache_order_.clear();
   }
   if (line_highlight_states_.size() != document_->lines.size()) {
     line_highlight_states_.resize(document_->lines.size());

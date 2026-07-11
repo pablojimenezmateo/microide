@@ -137,6 +137,9 @@ AsyncSubprocess& AsyncSubprocess::operator=(AsyncSubprocess&& other) noexcept {
 
 bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::string& cwd,
                             const SubprocessSandbox& sandbox) {
+  if (impl_ == nullptr) {
+    return false;
+  }
   std::lock_guard lock(impl_->state_mutex);
   if (argv.empty() || impl_->running.load(std::memory_order_acquire)) {
     return false;
@@ -214,6 +217,9 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
 }
 
 bool AsyncSubprocess::IsRunning() const {
+  if (impl_ == nullptr) {
+    return false;
+  }
   std::lock_guard lock(impl_->state_mutex);
   const pid_t current_pid = impl_->pid.load(std::memory_order_acquire);
   if (!impl_->running.load(std::memory_order_acquire) || current_pid < 0) {
@@ -318,6 +324,9 @@ bool AsyncSubprocess::Write(std::string_view data) {
 }
 
 std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int timeout_ms) {
+  if (impl_ == nullptr) {
+    return std::nullopt;
+  }
   // A zero-length request must not fall through to read(fd, buf, 0), which returns 0
   // and is indistinguishable from EOF — it would tear the child down and reap it.
   if (max_bytes == 0) {
@@ -420,6 +429,9 @@ std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int time
 }
 
 std::optional<std::string> AsyncSubprocess::ReadExact(std::size_t n, int timeout_ms) {
+  if (impl_ == nullptr) {
+    return std::nullopt;
+  }
   int stdout_fd = -1;
   {
     std::lock_guard lock(impl_->state_mutex);
