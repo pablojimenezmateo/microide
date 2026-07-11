@@ -371,7 +371,12 @@ std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_vi
       line = candidate;
       ++index;
     }
-    lines.push_back(std::move(line));
+    // A single word wider than the wrap width (a long mangled/template type name, a
+    // URL) is taken unconditionally above; truncate it to the card width so it never
+    // paints past the card edge (hover cards draw with no clip). TruncateToWidth is a
+    // no-op when the line already fits, so multi-word lines are unaffected. Mirrors
+    // the empty-words and trailing-`remaining` truncation paths.
+    lines.push_back(text_renderer_.TruncateToWidth(line, max_width));
   }
 
   std::string remaining;

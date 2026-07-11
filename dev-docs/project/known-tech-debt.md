@@ -251,6 +251,36 @@ regression worse than the defect. Recorded here so they are not silently lost.
 >   `vector<string>` per frame** via `MergeChoiceLines` while a result-action button is
 >   hovered — bounded, hover-only, not a regression; cache if that path gets hot.
 
+> **Deferred 2026-07-11 (pass 13 — cross-subsystem bug hunt):** a four-way fan-out
+> (render/view-model, git commit workflow/blame, prompt/finder/fuzzy, snippet/layout)
+> landed 6 fixes (see commit): hover/diagnostic/signature popup no longer overflows its
+> unclipped card when a single word exceeds the wrap width (`WrapEditorHoverPopupText`
+> truncates the oversized word); the IME/text-input caret anchor guards its size_t
+> `visual_column - h_scroll` / `visual_row - scroll` subtractions against underflow;
+> the empty file-finder recents list no longer drops in-root dot-directory files
+> (`.github/…`, `.vscode/…`) — the escape-root guard now tests the first path COMPONENT
+> for `..` instead of the first byte for `.`; the commit/compare picker and the command
+> palette filter via a precomputed lowercased `search_text` instead of re-lowercasing +
+> concatenating per item on every keystroke (the commit picker can hold thousands of
+> commits); and the commit-workflow refresh no longer runs the identical `git diff
+> --cached --numstat` staged-diff subprocess twice per refresh (`RunCommitPreChecks`
+> takes an optional precomputed summary). Deliberately **not** changed and recorded:
+> - **Merge conflict-preview overlay slices by codepoint using a visual-column scroll
+>   offset** (`WorkspaceShellRenderMerge.cpp:536`): `SliceVisibleColumns`' start arg is a
+>   codepoint count (`Utf8ByteOffsetForCodepointCount`) but `merge_tab->horizontal_scroll`
+>   is a tab-expanded visual column, so a preview line with tabs before the scroll offset
+>   slices at the wrong byte when horizontally scrolled. LOW, cosmetic — independently
+>   flagged by two hunters; the preview draws via non-grid `DrawStringOn` which renders
+>   tabs poorly anyway, so a partial fix wouldn't fully align. Fix direction (if made
+>   airtight): derive a byte offset via `TextLayout::TextColumnForVisualColumn(line,
+>   horizontal_scroll, tab_size)` rather than feeding the visual column to a codepoint slice.
+> - **Commit-workflow `RefreshDerivedState` still runs its git work synchronously on the
+>   shell thread** (`git diff --cached --numstat` + the full `git diff --cached` marker
+>   scan). The duplicate subprocess is now removed, but moving the whole refresh onto
+>   `ProjectBackgroundExecutor` (marshalling results back via the completion mailbox, as
+>   `DispatchCommit` already does) remains a larger follow-up. MEDIUM-perf, throttled to
+>   field-switch (not per-keystroke) so bounded. (Git hunter #1, second half.)
+
 > **Resolved 2026-07-10 (bug-inventory review pass — `microide-2026-07-10-bug-inventory.md`):**
 > a ~90-item inventory built against `main` was triaged against the current tree (many
 > items were already closed by the twelfth/thirteenth passes) and ~50 still-live items

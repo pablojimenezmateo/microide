@@ -163,6 +163,7 @@ struct GitPickerItem {
   std::string apply_label;      // user-facing label applied on selection (short_hash / branch)
   std::string primary_label;    // left column text
   std::string secondary_label;  // right column text (muted)
+  std::string search_text;      // lowercased "primary secondary ref", built once for filtering
   project::GitCommitEntry commit;  // populated when kind == Commit (for open_comparison)
 };
 
@@ -255,6 +256,7 @@ struct CodeActionSessionState {
 struct CommandPaletteItem {
   std::string primary_label;
   std::string secondary_label;
+  std::string search_text;  // lowercased "primary secondary", built once for filtering
   ActionId action = ActionId::CodeActions;  // meaningful only when !is_plugin
   std::string command_token;                // plugin command name when is_plugin
   bool is_plugin = false;

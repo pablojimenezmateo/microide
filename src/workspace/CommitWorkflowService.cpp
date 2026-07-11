@@ -108,9 +108,11 @@ void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state) {
                                 std::to_string(state.staged_summary.added_lines) + "/-" +
                                 std::to_string(state.staged_summary.deleted_lines);
   }
+  // Pass the summary we just built so RunCommitPreChecks does not re-run the identical
+  // `git diff --cached --numstat` subprocess on the shell thread.
   state.checks = project::RunCommitPreChecks(
       repository_state, state.subject.text(), CommitWorkflowBodyText(state.body),
-      state.acknowledged_warning_ids);
+      state.acknowledged_warning_ids, &state.staged_summary);
   if (callbacks_.request_commit_workflow_redraw != nullptr) {
     callbacks_.request_commit_workflow_redraw();
   }

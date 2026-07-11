@@ -253,13 +253,19 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       }
       const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
           text_renderer_, *viewport, *active_editor_pane_rect, 0, LineNumbersEnabled());
+      // Guard the size_t subtractions: scroll is normally clamped to keep the caret
+      // visible, but a transient caret-left-of-scroll (or above scroll_line) would
+      // underflow to a huge value and fling the IME candidate anchor off-screen.
+      const std::size_t visual_column = viewport->cursor_visual_column();
+      const std::size_t h_scroll = viewport->horizontal_scroll();
+      const std::size_t visual_row = viewport->cursor_visual_row();
+      const std::size_t scroll_row = viewport->scroll_line();
       const float cursor_x =
           metrics.text_x +
-          static_cast<float>(viewport->cursor_visual_column() - viewport->horizontal_scroll()) *
-              char_width;
+          static_cast<float>(visual_column > h_scroll ? visual_column - h_scroll : 0) * char_width;
       const float cursor_y =
           metrics.first_line_y +
-          static_cast<float>(viewport->cursor_visual_row() - viewport->scroll_line()) *
+          static_cast<float>(visual_row > scroll_row ? visual_row - scroll_row : 0) *
               metrics.line_height;
       return TextInputVisual{
           .surface = surface,

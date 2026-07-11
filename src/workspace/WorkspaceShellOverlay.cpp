@@ -54,7 +54,11 @@ void WorkspaceShell::ShowOverlay(OverlayMode mode) {
       for (const std::filesystem::path& absolute :
            recents_service_.RecentFilesFor(root, kFileFinderRecentLimit)) {
         std::filesystem::path relative = absolute.lexically_relative(root);
-        if (!relative.empty() && relative.native()[0] != '.') {
+        // Reject only paths that escape the project root — lexically_relative yields a
+        // leading ".." COMPONENT for those. Testing the first byte for '.' also dropped
+        // legitimate in-root dot-directory files (.github/workflows/ci.yml, .vscode/...,
+        // .env), which the index happily surfaces, so they never appeared in recents.
+        if (!relative.empty() && *relative.begin() != "..") {
           recent_relative.push_back(std::move(relative));
         }
       }
@@ -364,6 +368,8 @@ void WorkspaceShell::OpenCommandPalette(std::string seed) {
     palette.items.push_back(CommandPaletteItem{
         .primary_label = std::string(spec.label),
         .secondary_label = std::string(spec.accelerator),
+        .search_text =
+            util::ToLowerAscii(std::string(spec.label) + " " + std::string(spec.accelerator)),
         .action = spec.id,
         .command_token = {},
         .is_plugin = false,
@@ -378,6 +384,7 @@ void WorkspaceShell::OpenCommandPalette(std::string seed) {
     palette.items.push_back(CommandPaletteItem{
         .primary_label = name,
         .secondary_label = {},
+        .search_text = util::ToLowerAscii(name),
         .action = ActionId::CodeActions,
         .command_token = name,
         .is_plugin = true,
@@ -394,12 +401,11 @@ void WorkspaceShell::RefreshCommandPalette() {
   palette.selected_index = 0;
   const std::string query = util::ToLowerAscii(palette.query.text());
   for (const CommandPaletteItem& item : palette.items) {
-    if (!query.empty()) {
-      const std::string haystack =
-          util::ToLowerAscii(item.primary_label + " " + item.secondary_label);
-      if (haystack.find(query) == std::string::npos) {
-        continue;
-      }
+    // item.search_text is the lowercased "primary secondary", precomputed when the
+    // palette was populated — avoids re-lowercasing + concatenating per item on every
+    // keystroke.
+    if (!query.empty() && item.search_text.find(query) == std::string::npos) {
+      continue;
     }
     palette.matches.push_back(item);
   }

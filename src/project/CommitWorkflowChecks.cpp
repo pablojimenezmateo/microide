@@ -158,7 +158,8 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
     const GitRepositoryState& repository_state,
     const std::string_view subject,
     const std::string_view body,
-    const std::unordered_set<std::string>& acknowledged_warning_ids) {
+    const std::unordered_set<std::string>& acknowledged_warning_ids,
+    const CommitStagedSummary* precomputed_summary) {
   (void)body;
   (void)acknowledged_warning_ids;
   std::vector<CommitPreCheck> checks;
@@ -168,7 +169,10 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
     return checks;
   }
 
-  const CommitStagedSummary staged_summary = BuildCommitStagedSummary(repository_state);
+  // Reuse the caller's summary when supplied; otherwise run the staged-diff subprocess.
+  const CommitStagedSummary staged_summary =
+      precomputed_summary != nullptr ? *precomputed_summary
+                                     : BuildCommitStagedSummary(repository_state);
   if (staged_summary.file_count == 0) {
     checks.push_back(MakeCheck(CommitPreCheckKind::EmptySubject, CommitPreCheckSeverity::Blocking,
                                "Nothing is staged for commit"));

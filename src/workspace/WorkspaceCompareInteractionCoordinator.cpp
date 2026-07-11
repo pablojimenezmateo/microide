@@ -38,6 +38,7 @@ GitPickerItem MakeCommitPickerItem(const project::GitCommitEntry& commit) {
   } else {
     item.secondary_label = commit.author;
   }
+  item.search_text = ToLower(item.primary_label + " " + item.secondary_label + " " + item.ref);
   item.commit = commit;
   return item;
 }
@@ -49,6 +50,7 @@ GitPickerItem MakeBranchPickerItem(const project::GitBranchReference& branch) {
   item.apply_label = branch.label;
   item.primary_label = branch.label;
   item.secondary_label = "branch";
+  item.search_text = ToLower(item.primary_label + " " + item.secondary_label + " " + item.ref);
   return item;
 }
 
@@ -163,12 +165,11 @@ void CompareInteractionCoordinator::RefreshPicker() {
 
   const std::string lowered_query = ToLower(picker.query.text());
   for (const auto& item : picker.items) {
-    if (!lowered_query.empty()) {
-      const std::string text =
-          ToLower(item.primary_label + " " + item.secondary_label + " " + item.ref);
-      if (text.find(lowered_query) == std::string::npos) {
-        continue;
-      }
+    // item.search_text is the lowercased "primary secondary ref", precomputed once
+    // when the item was built — avoids re-lowercasing + concatenating three strings
+    // per item on every keystroke over a list that can hold thousands of commits.
+    if (!lowered_query.empty() && item.search_text.find(lowered_query) == std::string::npos) {
+      continue;
     }
     picker.matches.push_back(item);
   }

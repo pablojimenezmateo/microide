@@ -21,6 +21,7 @@ using microide::project::CommitOperationKind;
 using microide::project::CommitOperationResultCategory;
 using microide::project::CommitPreCheckKind;
 using microide::project::CommitPreCheckSeverity;
+using microide::project::BuildCommitStagedSummary;
 using microide::project::CommitPreChecksAllowExecution;
 using microide::project::GitConflictKind;
 using microide::project::GitHeadKind;
@@ -159,6 +160,37 @@ void TestPartialStageWarnsForV2SingleModifiedEntry() {
   Expect(!saw_clean, "a fully-staged (M.) file must not raise the partial-stage warning");
 }
 
+// Regression: RunCommitPreChecks accepts a precomputed staged summary so the
+// commit-workflow refresh does not run the identical `git diff --cached --numstat`
+// subprocess twice per refresh on the shell thread. Passing the summary must produce
+// byte-identical checks to letting the function recompute it internally.
+void TestRunCommitPreChecksPrecomputedSummaryMatchesRecompute() {
+  GitRepositoryState state{
+      .repository_root = "/repo",
+      .repo_available = true,
+      .branch = {.head_kind = GitHeadKind::Normal, .head_oid = "abc", .branch_name = "main"},
+  };
+  state.entries.push_back({
+      .kind = GitRepositoryEntryKind::Ordinary,
+      .status = microide::project::GitFileStatus::Modified,
+      .path = {.relative_path = std::filesystem::path("mm.cpp"), .display_label = "mm.cpp"},
+      .staged = true,
+      .worktree_dirty = true,
+  });
+
+  const auto summary = BuildCommitStagedSummary(state);
+  const auto recomputed = RunCommitPreChecks(state, "subject", "", {});
+  const auto reused = RunCommitPreChecks(state, "subject", "", {}, &summary);
+
+  Expect(reused.size() == recomputed.size(),
+         "precomputed-summary path must yield the same number of checks");
+  for (std::size_t i = 0; i < reused.size() && i < recomputed.size(); ++i) {
+    Expect(reused[i].kind == recomputed[i].kind && reused[i].severity == recomputed[i].severity &&
+               reused[i].message == recomputed[i].message,
+           "precomputed-summary path must yield identical checks");
+  }
+}
+
 void TestClassifyHookFailure() {
   Expect(project::ClassifyCommitFailure(1, "pre-commit hook failed") ==
              CommitOperationResultCategory::HookFailed,
@@ -257,6 +289,8 @@ void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CommitWorkflow/PartialStageWarnsForV2SingleModifiedEntry",
           TestPartialStageWarnsForV2SingleModifiedEntry);
   AddTest(tests, "CommitWorkflow/ClassifyHookFailure", TestClassifyHookFailure);
+  AddTest(tests, "CommitWorkflow/PrecomputedSummaryMatchesRecompute",
+          TestRunCommitPreChecksPrecomputedSummaryMatchesRecompute);
   AddTest(tests, "CommitWorkflow/ExecuteCommitInTempRepo", TestExecuteCommitInTempRepo);
 }
 
