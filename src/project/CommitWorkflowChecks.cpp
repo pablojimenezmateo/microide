@@ -151,7 +151,7 @@ bool StagedDiffContainsConflictMarkers(const std::filesystem::path& repository_r
   if (!diff.success()) {
     return false;
   }
-  return util::ContainsAnyConflictMarker(diff.output);
+  return util::StagedDiffIntroducesConflictMarker(diff.output);
 }
 
 std::vector<CommitPreCheck> RunCommitPreChecks(

@@ -331,17 +331,24 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       if (needle.empty()) return DispatchResult::Handled;
       const std::string_view needle_view = needle;
       const bool case_sensitive = SettingEnabled(context_, "editor.search.case_sensitive", false);
-      auto carets = viewport->secondary_carets();
       if (id == ActionId::AddCursorAtNextMatch) {
         if (const auto next = FindNextLiteralMatchAfterSeedWrapOnce(
                 lines, sel->start.line, a, b, needle_view, case_sensitive);
             next.has_value()) {
-          carets.push_back(editor::TextPosition{
-              next->line, next->column + needle_view.size(),
+          // Add the match as a RANGED secondary caret (anchor at match start,
+          // cursor at match end) so multi-caret typing replaces the occurrence
+          // and copy aggregates it -- VS Code parity. Bare positions through
+          // SetSecondaryCarets would drop the selection anchor. This appends to
+          // and preserves any secondary carets from prior presses.
+          viewport->AddSecondaryCaretWithRange(editor::SelectionRange{
+              editor::TextPosition{next->line, next->column},
+              editor::TextPosition{next->line, next->column + needle_view.size()},
           });
         }
       } else {
-        // Add cursor at every match in the file.
+        // Add a ranged cursor at every match in the file, each keeping its
+        // selection so a following keystroke replaces all occurrences at once.
+        std::vector<editor::SelectionRange> ranges;
         for (std::size_t li = 0; li < lines.LineCount(); ++li) {
           const std::string_view current = lines.LineView(li);
           std::size_t from = 0;
@@ -351,18 +358,21 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
             if (!pos.has_value()) {
               break;
             }
-            // Skip the original selection's end position.
+            // Skip the seed selection; the primary caret already covers it.
             if (li == sel->start.line && *pos == a) {
               from = *pos + needle_view.size();
               continue;
             }
-            carets.push_back(editor::TextPosition{li, *pos + needle_view.size()});
+            ranges.push_back(editor::SelectionRange{
+                editor::TextPosition{li, *pos},
+                editor::TextPosition{li, *pos + needle_view.size()},
+            });
             from = *pos + needle_view.size();
             if (from >= current.size()) break;
           }
         }
+        viewport->SetSecondaryCaretsWithRanges(std::move(ranges));
       }
-      viewport->SetSecondaryCarets(std::move(carets));
       context_.NotifyEditorCaretMoved();
       return DispatchResult::Handled;
     }

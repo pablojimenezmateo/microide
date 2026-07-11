@@ -387,16 +387,23 @@ bool DebugValueTree::RebindReference(Node& node, int new_reference) {
     return false;
   }
   // The structure reference changed (e.g. a scalar became a container): drop any
-  // stale children so a later expand refetches the new contents.
+  // stale children so a later expand refetches the new contents. Erase the old
+  // mapping only if it still points at THIS node -- a non-conformant adapter may
+  // have recycled our old reference onto a sibling that AddNode's first-writer-
+  // wins kept, and an unconditional erase would strand that sibling. Reinstall
+  // the new mapping with try_emplace to match AddNode's first-writer-wins.
   if (node.variables_reference > 0) {
-    reference_to_node_.erase(node.variables_reference);
+    const auto it = reference_to_node_.find(node.variables_reference);
+    if (it != reference_to_node_.end() && it->second == node.id) {
+      reference_to_node_.erase(it);
+    }
   }
   node.variables_reference = new_reference;
   node.children.clear();
   node.children_loaded = false;
   node.expanded = false;
   if (node.variables_reference > 0) {
-    reference_to_node_[node.variables_reference] = node.id;
+    reference_to_node_.try_emplace(node.variables_reference, node.id);
   }
   return true;
 }

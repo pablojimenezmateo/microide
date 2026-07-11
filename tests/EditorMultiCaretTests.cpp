@@ -461,6 +461,52 @@ void TestMultiCaretDeleteSelectionsRemovesAllAndUndoesAtomically() {
          "the multi-caret cut deletion should undo in one step");
 }
 
+// Regression: the "add cursor at next/all match" (Ctrl+D) executor path now
+// registers each match as a RANGED secondary caret via SetSecondaryCaretsWithRanges.
+// Before the fix it pushed bare end-positions through SetSecondaryCarets, which
+// nulls every anchor -- so multi-caret typing inserted at the secondary sites
+// (corrupting text) instead of replacing each occurrence, and copy silently
+// grabbed only the primary match.
+void TestSetSecondaryCaretsWithRangesPreservesSelections() {
+  TextViewport viewport;
+  viewport.LoadContent("foo foo foo", "/tmp/mc-ranges.cpp");
+  viewport.MoveCursorTo(0, 1);
+  viewport.SelectWordAtCursor();  // primary selection over the first "foo"
+  // Mirror the "select all matches" executor path: the two other occurrences
+  // become ranged secondary carets, not bare positions.
+  viewport.SetSecondaryCaretsWithRanges({
+      microide::editor::SelectionRange{TextPosition{0, 4}, TextPosition{0, 7}},
+      microide::editor::SelectionRange{TextPosition{0, 8}, TextPosition{0, 11}},
+  });
+  Expect(viewport.has_multiple_carets(), "should register two secondary carets");
+
+  // Copy aggregates every occurrence -> each secondary kept its selection.
+  const auto copied = viewport.MultiCaretSelectedText();
+  Expect(copied.has_value() && *copied == "foo\nfoo\nfoo",
+         "ranged secondaries let multi-caret copy aggregate every match");
+
+  // Typing replaces every occurrence in one edit (VSCode rename-every-match).
+  viewport.InsertText("x");
+  Expect(viewport.lines().size() == 1 && viewport.lines()[0] == "x x x",
+         "typing over ranged multi-carets replaces each match instead of inserting");
+}
+
+// A degenerate (empty) range in the batch must land as a bare caret with no
+// selection, matching AddSecondaryCaret.
+void TestSetSecondaryCaretsWithRangesEmptyRangeIsBareCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("foo foo", "/tmp/mc-ranges-empty.cpp");
+  viewport.MoveCursorTo(0, 1);
+  viewport.SelectWordAtCursor();
+  viewport.SetSecondaryCaretsWithRanges({
+      microide::editor::SelectionRange{TextPosition{0, 5}, TextPosition{0, 5}},  // empty
+  });
+  // The primary has a selection but the lone secondary does not -> aggregate copy
+  // must decline, exactly as with AddSecondaryCaret.
+  Expect(!viewport.MultiCaretSelectedText().has_value(),
+         "an empty range must produce a selection-less secondary caret");
+}
+
 }  // namespace
 
 void TestPlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine() {
@@ -560,6 +606,10 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestMultiCaretPasteCountMismatchInsertsFullTextAtEachCaret);
   AddTest(tests, "EditorMultiCaret/DeleteSelectionsRemovesAllAndUndoesAtomically",
           TestMultiCaretDeleteSelectionsRemovesAllAndUndoesAtomically);
+  AddTest(tests, "EditorMultiCaret/SetSecondaryCaretsWithRangesPreservesSelections",
+          TestSetSecondaryCaretsWithRangesPreservesSelections);
+  AddTest(tests, "EditorMultiCaret/SetSecondaryCaretsWithRangesEmptyRangeIsBareCaret",
+          TestSetSecondaryCaretsWithRangesEmptyRangeIsBareCaret);
   AddTest(tests, "EditorMultiCaret/DisjointEditPublishesNoAppliedEdit",
           TestMultiCaretDisjointEditPublishesNoAppliedEdit);
   AddTest(tests, "EditorMultiCaret/PairInsertPublishesNoAppliedEdit",

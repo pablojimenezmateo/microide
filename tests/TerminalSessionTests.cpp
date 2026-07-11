@@ -87,6 +87,32 @@ void TestTerminalSessionReverseIndexScrollsTopMargin() {
   ExpectLineText(lines, 3, "C", "reverse index should discard the previous bottom-margin row");
 }
 
+// Regression: Reverse Index (ESC M) on the PRIMARY buffer must floor at the
+// visible-screen top, not deque index 0. Before the fix it decremented the
+// absolute cursor row past the viewport into scrollback, and the next printed
+// glyph silently overwrote a history line the user was no longer looking at.
+void TestTerminalSessionPrimaryReverseIndexDoesNotClimbScrollback() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+
+  // Build scrollback deeper than the 4-row viewport: 6 lines, so the visible top
+  // is absolute row 2 and rows 0-1 are history.
+  TerminalSessionTestAccess::AppendOutput(session, "P0\nP1\nP2\nP3\nP4\nP5");
+  const auto before = session.SnapshotLines();
+  Expect(before.size() == 6, "primary buffer should accumulate scrollback beyond the viewport");
+
+  // Home to the visible top (CSI H floors at the visible top on the primary
+  // buffer), then Reverse Index, then print a marker glyph.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[H\x1bMX");
+
+  const auto after = session.SnapshotLines();
+  Expect(after.size() == 6, "reverse index at the top must not resize the buffer");
+  Expect(LineText(after[1]) == "P1",
+         "reverse index must not climb into and overwrite scrollback (was P1 -> X1)");
+  Expect(LineText(after[2]) == "X2",
+         "reverse index should pin the cursor at the visible top row");
+}
+
 void TestTerminalSessionInsertLineRespectsScrollRegion() {
   microide::terminal::TerminalSession session;
   ResetAlternateScreenFixture(session);
@@ -1959,6 +1985,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionScrollsBottomMarginOnLineFeed);
   AddTest(tests, "TerminalSession/ReverseIndexScrollRegion",
           TestTerminalSessionReverseIndexScrollsTopMargin);
+  AddTest(tests, "TerminalSession/PrimaryReverseIndexDoesNotClimbScrollback",
+          TestTerminalSessionPrimaryReverseIndexDoesNotClimbScrollback);
   AddTest(tests, "TerminalSession/InsertLineScrollRegion",
           TestTerminalSessionInsertLineRespectsScrollRegion);
   AddTest(tests, "TerminalSession/DeleteLineScrollRegion",

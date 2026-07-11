@@ -14,6 +14,35 @@ These were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
 a latent API-contract hazard with no live trigger, so a rushed fix risked a
 regression worse than the defect. Recorded here so they are not silently lost.
 
+> **Deferred 2026-07-11 (pass 16 — cross-subsystem bug hunt):** a four-way fan-out
+> landed 4 fixes (editor Ctrl+D ranged multi-carets, terminal primary-screen RI
+> scrollback floor, LSP `RebindReference` first-writer-wins, git conflict-marker
+> false positive). These genuine lower-severity findings were **not** fixed and
+> are recorded here:
+> - **Merge: non-default `merge.conflictMarkerSize` breaks conflict-output parsing.**
+>   `WorkspaceShellMergeState.cpp` `is_conflict_separator` matches the separator with
+>   an exact `line == "======="` (exactly 7) while the start/base/end sigils use a
+>   length-tolerant `starts_with`. If a repo sets `merge.conflictMarkerSize > 7`, the
+>   `<<<<<<<<` line still enters the conflict branch but the `========` separator never
+>   matches, so `ParseGitConflictOutput` returns nullopt and the resolver falls back to
+>   raw text. Fix: match the separator with the same marker-size tolerance. Only affects
+>   non-default marker size. (Git hunter #2.)
+> - **Compare: ignore-whitespace toggle on a working-tree compare silently narrows
+>   staging.** `ToggleCompareIgnoreWhitespace` applies to WorkingTree tabs that feed
+>   patch-apply; under `ignore_whitespace` a whitespace-only-different line is emitted as
+>   an `Unchanged` row and the patch generator uses `left_text` as context, so staging a
+>   hunk omits the whitespace-only change (index stays != worktree) and discard/reverse
+>   fail their `git apply --check`. No data loss (preflight gate protects discards) but
+>   staging stages less than shown. Needs a semantics decision (disable patch-apply while
+>   ignore_whitespace is active, or generate the apply patch from a non-ws-ignoring
+>   model). (Git hunter #3.)
+> - **Terminal: alt-screen linefeed below a custom scroll region scrolls the whole
+>   screen.** `AdvanceCursorRowLocked` alt-screen fallback, when the cursor is *below* a
+>   custom scroll region and on the last physical row, calls
+>   `ScrollRegionUpLocked(0, terminal_rows-1, 1)` (whole screen). Per DEC/xterm, IND with
+>   the cursor outside the region at the physical bottom should not scroll. Rare (needs a
+>   header/status-split layout on the alt screen); low confidence. (Terminal hunter #2.)
+>
 > **Deferred 2026-07-10 (pass 5 — cross-subsystem bug hunt):** a six-way fan-out
 > landed 8 fixes (see commit); the following genuine findings were deliberately
 > **not** fixed this pass and are recorded here:

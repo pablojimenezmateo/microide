@@ -307,6 +307,12 @@ class TextViewport {
   // by multi-caret surround and by tests; normalizes and clamps the range.
   void AddSecondaryCaretWithRange(SelectionRange range);
   void SetSecondaryCarets(std::vector<TextPosition> carets);
+  // Ranged sibling of SetSecondaryCarets: rebuilds the secondary caret set where
+  // each entry carries an active selection (anchor -> cursor). Used by the
+  // "add cursor at next/all match" (Ctrl+D) flow so multi-caret typing replaces
+  // every matched occurrence and copy aggregates them. One clamp+sort+dedupe
+  // pass keeps this O(k log k) instead of looping AddSecondaryCaretWithRange.
+  void SetSecondaryCaretsWithRanges(std::vector<SelectionRange> ranges);
   void ClearSecondaryCarets();
   // Places zero-width carets on every line between anchor_line and target_line
   // (inclusive) at column. Primary caret moves to target_line; other lines become

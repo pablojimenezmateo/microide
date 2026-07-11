@@ -474,6 +474,51 @@ void TextViewport::SetSecondaryCarets(std::vector<TextPosition> carets) {
   }
 }
 
+void TextViewport::SetSecondaryCaretsWithRanges(std::vector<SelectionRange> ranges) {
+  // Ranged rebuild mirroring SetSecondaryCarets, but each caret keeps its
+  // selection anchor. Ctrl+D ("add cursor at next/all match") needs the
+  // secondaries to retain their match selection so a following keystroke
+  // REPLACES each occurrence (and copy aggregates them); routing bare positions
+  // through SetSecondaryCarets drops the anchors and corrupts the edit. Build
+  // all candidates, sort once, then drop duplicates and the primary -- O(k log k)
+  // instead of the O(k^2 log k) of calling AddSecondaryCaretWithRange in a loop.
+  secondary_carets_.clear();
+  if (ranges.empty() || document_->lines.empty()) {
+    return;
+  }
+  const TextPosition primary{cursor_line_, cursor_column_};
+  std::vector<SecondaryCaret> candidates;
+  candidates.reserve(ranges.size());
+  for (const SelectionRange& range : ranges) {
+    const SelectionRange norm = NormalizeRange(range);
+    if (!detail::ValidateRangeColumns(document_->lines, norm)) {
+      continue;
+    }
+    TextPosition anchor = norm.start;
+    TextPosition cursor_end = norm.end;
+    anchor.column = TextLayout::ClampTextColumn(document_->lines.LineView(anchor.line), anchor.column);
+    cursor_end.column =
+        TextLayout::ClampTextColumn(document_->lines.LineView(cursor_end.line), cursor_end.column);
+    const bool empty_range = anchor == cursor_end;
+    candidates.push_back(SecondaryCaret{
+        .position = cursor_end,
+        .preferred_column = PreferredColumnForCaret(cursor_end),
+        .selection_anchor = empty_range ? std::nullopt : std::optional<TextPosition>(anchor),
+    });
+  }
+  std::sort(candidates.begin(), candidates.end(), detail::SecondaryCaretPositionLess);
+  secondary_carets_.reserve(candidates.size());
+  for (SecondaryCaret& candidate : candidates) {
+    if (candidate.position == primary) {
+      continue;
+    }
+    if (!secondary_carets_.empty() && secondary_carets_.back().position == candidate.position) {
+      continue;
+    }
+    secondary_carets_.push_back(std::move(candidate));
+  }
+}
+
 void TextViewport::ClearSecondaryCarets() {
   secondary_carets_.clear();
 }

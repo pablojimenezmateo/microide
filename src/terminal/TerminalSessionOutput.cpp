@@ -134,8 +134,14 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
           } else if (cursor_row_ > 0) {
             --cursor_row_;
           }
-        } else if (cursor_row_ > 0) {
-          --cursor_row_;
+        } else {
+          // Primary buffer: `cursor_row_` is an absolute index into scrollback,
+          // so RI must floor at the visible-screen top (PrimaryScreenTopLocked),
+          // not deque index 0 -- otherwise "move up one row" climbs above the
+          // viewport into history and later glyphs overwrite it. Mirrors the
+          // CUU/CPL/CUP/VPA clamps, which this branch previously missed.
+          const std::size_t floor_row = PrimaryScreenTopLocked();
+          cursor_row_ = cursor_row_ > floor_row ? cursor_row_ - 1 : floor_row;
         }
       }
       escape_sequence_buffer_.clear();

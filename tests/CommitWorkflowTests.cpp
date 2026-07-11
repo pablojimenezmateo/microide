@@ -6,6 +6,7 @@
 #include <unordered_set>
 
 #include "project/CommitWorkflowChecks.h"
+#include "util/GitConflictMarkers.h"
 #include "project/GitCommitExecutor.h"
 #include "project/GitPorcelainV2Parser.h"
 #include "project/GitRepositoryState.h"
@@ -191,6 +192,54 @@ void TestRunCommitPreChecksPrecomputedSummaryMatchesRecompute() {
   }
 }
 
+// Regression: a staged `=======` section divider (banner comment, RST/Markdown
+// underline) must NOT be mistaken for a leaked conflict marker. Only an *added*
+// line beginning with the unambiguous `<<<<<<<` / `>>>>>>>` sigils blocks the
+// commit. The old substring predicate matched a bare `=======` anywhere in the
+// diff and refused perfectly clean commits.
+void TestStagedDiffConflictMarkerDetection() {
+  using microide::util::StagedDiffIntroducesConflictMarker;
+
+  // A banner divider of `=` is common, benign content -- must not trip.
+  const std::string_view banner_diff =
+      "diff --git a/mod.py b/mod.py\n"
+      "--- a/mod.py\n"
+      "+++ b/mod.py\n"
+      "@@ -1,2 +1,3 @@\n"
+      " # ============================\n"
+      "+VALUE = 1\n"
+      " # section\n";
+  Expect(!StagedDiffIntroducesConflictMarker(banner_diff),
+         "a staged `=======` divider must not be flagged as a conflict marker");
+
+  // An added `<<<<<<<` sigil at line start is a genuine leaked marker.
+  const std::string_view leaked_diff =
+      "diff --git a/mod.cpp b/mod.cpp\n"
+      "--- a/mod.cpp\n"
+      "+++ b/mod.cpp\n"
+      "@@ -1,1 +1,4 @@\n"
+      "+<<<<<<< HEAD\n"
+      "+ours\n"
+      "+=======\n"
+      "+>>>>>>> theirs\n";
+  Expect(StagedDiffIntroducesConflictMarker(leaked_diff),
+         "an added `<<<<<<<` marker must be flagged");
+
+  // A marker that only appears on a context line (already committed) or a removed
+  // line (being resolved) is not introduced by this commit.
+  const std::string_view context_marker_diff =
+      "@@ -1,3 +1,3 @@\n"
+      " <<<<<<< HEAD\n"
+      "-old\n"
+      "+new\n";
+  Expect(!StagedDiffIntroducesConflictMarker(context_marker_diff),
+         "a marker on a context line must not block the commit");
+
+  // The `+++ b/path` file header must not be mistaken for an added marker.
+  Expect(!StagedDiffIntroducesConflictMarker("+++ b/<<<<<<<weird\n"),
+         "the +++ file header must not be treated as a marker line");
+}
+
 void TestClassifyHookFailure() {
   Expect(project::ClassifyCommitFailure(1, "pre-commit hook failed") ==
              CommitOperationResultCategory::HookFailed,
@@ -288,6 +337,8 @@ void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CommitWorkflow/DraftPersistenceRoundTrip", TestCommitDraftPersistenceRoundTrip);
   AddTest(tests, "CommitWorkflow/PartialStageWarnsForV2SingleModifiedEntry",
           TestPartialStageWarnsForV2SingleModifiedEntry);
+  AddTest(tests, "CommitWorkflow/StagedDiffConflictMarkerDetection",
+          TestStagedDiffConflictMarkerDetection);
   AddTest(tests, "CommitWorkflow/ClassifyHookFailure", TestClassifyHookFailure);
   AddTest(tests, "CommitWorkflow/PrecomputedSummaryMatchesRecompute",
           TestRunCommitPreChecksPrecomputedSummaryMatchesRecompute);
