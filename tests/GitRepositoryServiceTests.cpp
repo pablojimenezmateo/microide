@@ -3,8 +3,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <mutex>
 #include <thread>
 #include <type_traits>
+#include <vector>
 
 #include "project/ProjectBackgroundExecutor.h"
 #include "workspace/GitRepositoryService.h"
@@ -156,6 +159,97 @@ void TestSyncRefreshBalancesBackgroundTaskCount() {
   Expect(min_counter >= 0, "the background-task counter must never go negative");
 }
 
+void TestConcurrentRefreshBurstStaysLiveAndBalanced() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "tracked.txt", "before\n");
+  CommitAll(repo_path, "base", "base");
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService service(executor);
+
+  std::mutex counter_mutex;
+  int counter = 0;
+  int min_counter = 0;
+  int max_counter = 0;
+  GitRepositoryService::WakeCallbacks callbacks;
+  callbacks.increment_background_task_count = [&]() {
+    std::lock_guard lock(counter_mutex);
+    ++counter;
+    max_counter = std::max(max_counter, counter);
+  };
+  callbacks.decrement_background_task_count_and_wake = [&]() {
+    std::lock_guard lock(counter_mutex);
+    --counter;
+    min_counter = std::min(min_counter, counter);
+  };
+  service.SetWakeCallbacks(std::move(callbacks));
+
+  // Hammer RequestRefresh from several threads. Each in-flight refresh that is
+  // superseded by a newer generation (bumped by a concurrent RequestRefresh)
+  // must still (a) decrement the background-task counter it incremented and
+  // (b) hand off any deferred follow-up. The pre-fix PublishSnapshot early-return
+  // and ScheduleRefresh early-out skipped one or both, leaking the counter and
+  // freezing refresh_in_flight_ so the sidebar silently stopped updating until
+  // Reset(). This exercises those superseded exits under real contention.
+  constexpr int kThreads = 4;
+  constexpr int kPerThread = 60;
+  std::vector<std::thread> threads;
+  for (int t = 0; t < kThreads; ++t) {
+    threads.emplace_back([&]() {
+      for (int i = 0; i < kPerThread; ++i) {
+        service.RequestRefresh(repo_path, GitSidebarRefreshScope::StatusOnly,
+                               OutgoingBaseChoice{}, false);
+      }
+    });
+  }
+  for (auto& thread : threads) {
+    thread.join();
+  }
+
+  // Quiesce: with the fix every incremented task eventually decrements, so once
+  // the deferred-follow-up chain completes the counter drains to a *stable* zero.
+  // Require several consecutive zero reads so the brief decrement->re-increment
+  // hand-off window between a superseded task and its follow-up is not mistaken
+  // for a drained queue. Bounded so a regression (leaked counter / frozen chain)
+  // fails instead of hanging.
+  int stable_zero = 0;
+  for (int i = 0; i < 1000 && stable_zero < 4; ++i) {
+    {
+      std::lock_guard lock(counter_mutex);
+      stable_zero = (counter == 0) ? stable_zero + 1 : 0;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(3));
+  }
+  {
+    std::lock_guard lock(counter_mutex);
+    Expect(stable_zero >= 4,
+           "concurrent refresh burst must drain the background-task counter to zero");
+    Expect(min_counter >= 0, "the background-task counter must never go negative");
+    Expect(max_counter >= 1, "the burst should have scheduled at least one background refresh");
+  }
+
+  // Liveness: after the burst, refresh_in_flight_ must not be stuck. A fresh
+  // request must schedule, run, and publish a new snapshot. A frozen state
+  // machine would defer this forever and never publish.
+  const std::uint64_t generation_before = service.CurrentState().generation;
+  service.RequestRefresh(repo_path, GitSidebarRefreshScope::Full, OutgoingBaseChoice{}, false);
+  bool published = false;
+  for (int i = 0; i < 1000 && !published; ++i) {
+    GitSidebarState::RefreshSnapshot snapshot;
+    if (service.CurrentState().generation > generation_before &&
+        service.ConsumePendingSidebarSnapshot(&snapshot)) {
+      published = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(3));
+  }
+  Expect(published, "a refresh after the burst must still schedule and publish (no freeze)");
+
+  executor.Shutdown();
+}
+
 }  // namespace
 
 void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
@@ -167,6 +261,8 @@ void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
           TestRefreshSurfacesMergeConflictsInSidebar);
   AddTest(tests, "GitRepositoryService/SyncRefreshBalancesBackgroundTaskCount",
           TestSyncRefreshBalancesBackgroundTaskCount);
+  AddTest(tests, "GitRepositoryService/ConcurrentRefreshBurstStaysLiveAndBalanced",
+          TestConcurrentRefreshBurstStaysLiveAndBalanced);
 }
 
 }  // namespace microide::tests

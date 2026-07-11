@@ -208,34 +208,61 @@ GitSidebarState::RefreshSnapshot GitRepositoryService::BuildSidebarSnapshot(
   return snapshot;
 }
 
+void GitRepositoryService::HandleSupersededRefresh() {
+  std::optional<RefreshRequest> deferred_follow_up;
+  {
+    std::lock_guard lock(mutex_);
+    refresh_in_flight_ = false;
+    if (follow_up_refresh_pending_ && deferred_refresh_.has_value()) {
+      deferred_follow_up = *deferred_refresh_;
+      deferred_refresh_.reset();
+      follow_up_refresh_pending_ = false;
+      refresh_in_flight_ = true;
+      current_state_.refreshing = true;
+    }
+  }
+  if (wake_callbacks_.decrement_background_task_count_and_wake != nullptr) {
+    wake_callbacks_.decrement_background_task_count_and_wake();
+  }
+  if (deferred_follow_up.has_value()) {
+    ScheduleRefresh(std::move(*deferred_follow_up));
+  }
+}
+
 void GitRepositoryService::PublishSnapshot(GitSidebarState::RefreshSnapshot snapshot,
                                            std::uint64_t generation) {
-  bool stored = false;
+  bool superseded = false;
   bool needs_follow_up = false;
   {
     std::lock_guard lock(mutex_);
     if (generation != refresh_generation_) {
-      return;
-    }
-    pending_sidebar_snapshot_ = std::move(snapshot);
-    current_state_.stale = false;
-    current_state_.refreshing = false;
-    refresh_in_flight_ = false;
-    stored = true;
-    if (follow_up_refresh_pending_ && deferred_refresh_.has_value()) {
-      needs_follow_up = true;
-      follow_up_refresh_pending_ = false;
+      // Superseded between the pre-publish generation re-check and here. Route
+      // through the shared superseded-exit path (below, outside the lock) so
+      // refresh_in_flight_ is cleared, the background-task counter is balanced,
+      // and any deferred follow-up still runs. Returning here directly (the old
+      // behavior) leaked the counter and froze the refresh state machine.
+      superseded = true;
+    } else {
+      pending_sidebar_snapshot_ = std::move(snapshot);
+      current_state_.stale = false;
+      current_state_.refreshing = false;
+      refresh_in_flight_ = false;
+      if (follow_up_refresh_pending_ && deferred_refresh_.has_value()) {
+        needs_follow_up = true;
+        follow_up_refresh_pending_ = false;
+      }
     }
   }
 
-  if (stored) {
-    if (wake_callbacks_.push_refresh_ready_event != nullptr) {
-      (void)wake_callbacks_.push_refresh_ready_event();
-    }
-    if (wake_callbacks_.decrement_background_task_count_and_wake != nullptr) {
-      wake_callbacks_.decrement_background_task_count_and_wake();
-    }
-  } else if (wake_callbacks_.decrement_background_task_count_and_wake != nullptr) {
+  if (superseded) {
+    HandleSupersededRefresh();
+    return;
+  }
+
+  if (wake_callbacks_.push_refresh_ready_event != nullptr) {
+    (void)wake_callbacks_.push_refresh_ready_event();
+  }
+  if (wake_callbacks_.decrement_background_task_count_and_wake != nullptr) {
     wake_callbacks_.decrement_background_task_count_and_wake();
   }
 
@@ -263,27 +290,17 @@ void GitRepositoryService::ScheduleRefresh(RefreshRequest request) {
       "git-repository-refresh",
       [this, request = std::move(request)]() mutable {
         project::GitRepositoryState repository_state = BuildRepositoryState(request);
-        std::optional<RefreshRequest> deferred_follow_up;
+        bool superseded = false;
         {
           std::lock_guard lock(mutex_);
           if (request.generation != refresh_generation_) {
-            refresh_in_flight_ = false;
-            if (follow_up_refresh_pending_ && deferred_refresh_.has_value()) {
-              deferred_follow_up = *deferred_refresh_;
-              deferred_refresh_.reset();
-              follow_up_refresh_pending_ = false;
-              refresh_in_flight_ = true;
-              current_state_.refreshing = true;
-            }
+            superseded = true;
           } else {
             current_state_ = repository_state;
           }
         }
-        if (deferred_follow_up.has_value()) {
-          if (wake_callbacks_.decrement_background_task_count_and_wake != nullptr) {
-            wake_callbacks_.decrement_background_task_count_and_wake();
-          }
-          ScheduleRefresh(std::move(*deferred_follow_up));
+        if (superseded) {
+          HandleSupersededRefresh();
           return;
         }
         // Best-effort early-out: skip building a snapshot that a newer refresh
@@ -296,9 +313,7 @@ void GitRepositoryService::ScheduleRefresh(RefreshRequest request) {
           generation_current = request.generation == refresh_generation_;
         }
         if (!generation_current) {
-          if (wake_callbacks_.decrement_background_task_count_and_wake != nullptr) {
-            wake_callbacks_.decrement_background_task_count_and_wake();
-          }
+          HandleSupersededRefresh();
           return;
         }
 

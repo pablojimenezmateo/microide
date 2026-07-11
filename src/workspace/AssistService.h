@@ -52,9 +52,12 @@ class AssistService {
     std::function<bool(std::string_view, const std::vector<std::string>&, std::string*)>
         execute_command_name;
     // Collect the diagnostics for the viewport's file that overlap `range`,
-    // converted to LSP wire form, to populate a codeAction request `context`.
+    // converted to LSP wire form (columns in the server's position encoding), to
+    // populate a codeAction request `context`. The encoding must match the request
+    // Range's, or clangd (UTF-16) fails to match diagnostics on non-ASCII lines.
     std::function<std::vector<LspClient::Diagnostic>(const editor::TextViewport&,
-                                                     const editor::SelectionRange&)>
+                                                     const editor::SelectionRange&,
+                                                     lsp_encoding::PositionEncoding)>
         collect_lsp_context_diagnostics;
     // Apply a code action's inline WorkspaceEdit (0-based edits) directly to the
     // open buffers. Returns false if no target buffer resolved / edit was stale.

@@ -581,12 +581,13 @@ bool AssistService::ShowCodeActionsOverlay(std::string* error_message,
   merge->sources.lsp_authoritative = client != nullptr;
   if (client != nullptr) {
     operations_.ensure_lsp_document_open(*viewport, *client, language_id);
+    const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
     std::vector<LspClient::Diagnostic> context_diagnostics;
     if (operations_.collect_lsp_context_diagnostics) {
-      context_diagnostics = operations_.collect_lsp_context_diagnostics(*viewport, range);
+      context_diagnostics =
+          operations_.collect_lsp_context_diagnostics(*viewport, range, encoding);
     }
     operations_.begin_tracked_lsp_request();
-    const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
     client->RequestCodeActionAsync(
         FileUriForPath(request_path),
         LspClient::Range{

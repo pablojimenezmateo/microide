@@ -432,6 +432,21 @@ void TestWorkspaceIncrementalLiteralSearch() {
          "refine over an empty previous set yields nothing");
   Expect(RefineLiteralSearchMatches(buffer, "", FindLiteralSearchMatches(buffer, "a")).empty(),
          "refine with an empty query yields nothing");
+
+  // Self-overlapping needle regression: extending "a" -> "aa" over a run of 'a's.
+  // The prefix set holds a hit at EVERY offset ("aaaa" -> a@0,1,2,3), so a naive
+  // refine that kept each still-matching offset would report overlapping ranges
+  // {0,2},{1,3},{2,4} and desync next/prev/replace. RefineLiteralSearchMatches now
+  // de-overlaps by advancing past each kept match, matching the fresh scan's
+  // {0,2},{2,4}. Verify refine == fresh for the pathological all-'a' buffer.
+  const microide::editor::TextBuffer overlap_buffer(
+      std::vector<std::string>{"aaaa", "aaa", "aXaa"});
+  const auto overlap_prev = FindLiteralSearchMatches(overlap_buffer, "a");
+  const auto overlap_refined = RefineLiteralSearchMatches(overlap_buffer, "aa", overlap_prev);
+  const auto overlap_fresh = FindLiteralSearchMatches(overlap_buffer, "aa");
+  Expect(same(overlap_refined, overlap_fresh),
+         "refine of a self-overlapping needle must de-overlap to equal a fresh scan");
+  Expect(!overlap_refined.empty(), "self-overlapping refine should still find matches");
 }
 
 }  // namespace

@@ -347,8 +347,10 @@ std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::files
   // `-z`: NUL-delimited, unquoted output. Without it a path containing a newline
   // splits into bogus entries and non-ASCII names come back C-quoted, so lookups by
   // the real path fail (and the wrong file gets opened/diffed/staged).
-  const auto result = repo.Execute(
-      {"diff-tree", "--no-commit-id", "--name-only", "-r", "-z", std::string(commit_hash)});
+  // `--end-of-options` guards a commit_hash that could begin with `-` (matches the
+  // `--` discipline used by CollectGitBranchOutgoingFiles/WorkingTreeDiffFiles).
+  const auto result = repo.Execute({"diff-tree", "--no-commit-id", "--name-only", "-r", "-z",
+                                    "--end-of-options", std::string(commit_hash)});
   if (!result.success() || result.output.empty()) {
     return {};
   }

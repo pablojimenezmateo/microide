@@ -137,6 +137,34 @@ regression worse than the defect. Recorded here so they are not silently lost.
 >   each edit only into the innermost frame and propagate inner aggregates outward on
 >   finish. (Undo hunter #2.)
 
+> **Deferred 2026-07-11 (pass 10 — cross-subsystem bug hunt):** a fan-out over
+> text-search, LSP code-actions, and the git repository/compare services landed 4
+> fixes (see commit): incremental-search refine of a self-overlapping needle
+> (`RefineLiteralSearchMatches` kept overlapping ranges — e.g. "aa" over "aaaa" —
+> desyncing the count/next/prev/replace vs a fresh scan; now de-overlaps like the
+> cold path), LSP code-action **context** diagnostics were sent with raw editor byte
+> columns instead of the server's position encoding (quick-fix mis-targeted on
+> non-ASCII lines under clangd/UTF-16; now routed through `ByteColumnToLspPosition`
+> like the request range), a HIGH git-refresh state-machine freeze/counter-leak
+> (`GitRepositoryService`: the `PublishSnapshot` generation-mismatch early-return and
+> the `ScheduleRefresh` best-effort early-out bypassed the counter decrement and the
+> deferred-follow-up hand-off, so a generation-bump race left `refresh_in_flight_`
+> stuck true — sidebar silently stopped updating until `Reset()` — and leaked the
+> background-task counter; both now route through one `HandleSupersededRefresh`
+> helper), and a LOW `--end-of-options` consistency gap on the explicit-revision git
+> args (`diff-tree <hash>`, `cat-file -e <rev>:<path>`, `show <rev>:<path>`). The
+> following was deliberately **not** added and is recorded:
+> - **LSP: no dedicated integration test for `CollectLspContextDiagnostics` column
+>   conversion.** The fix routes diagnostic byte columns through the same
+>   `ByteColumnToLspPosition` primitive already covered by `LspPositionEncodingTests`
+>   / `LspViewportPositions` round-trip tests, and identical to the code-action range
+>   path in the same function. A full-shell test would need TestAccess to expose the
+>   private method plus a populated diagnostics store and a non-ASCII viewport —
+>   disproportionate for a one-line routing change over a tested primitive. If the
+>   context-diagnostics path grows logic beyond the raw conversion, add the shell test.
+> - The syntax-highlighting subsystem was not fully re-hunted this pass (a hunter
+>   aborted on an environment/session limit); carry it into the next pass.
+
 > **Resolved 2026-07-10 (bug-inventory review pass — `microide-2026-07-10-bug-inventory.md`):**
 > a ~90-item inventory built against `main` was triaged against the current tree (many
 > items were already closed by the twelfth/thirteenth passes) and ~50 still-live items

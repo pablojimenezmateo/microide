@@ -296,8 +296,9 @@ WorkspaceShell::WorkspaceShell() {
               },
           .collect_lsp_context_diagnostics =
               [this](const editor::TextViewport& viewport,
-                     const editor::SelectionRange& range) {
-                return CollectLspContextDiagnostics(viewport, range);
+                     const editor::SelectionRange& range,
+                     lsp_encoding::PositionEncoding encoding) {
+                return CollectLspContextDiagnostics(viewport, range, encoding);
               },
           .apply_lsp_workspace_edit =
               [this](const std::vector<CodeActionEdit>& edits) {
@@ -1452,7 +1453,8 @@ void WorkspaceShell::CommitPendingRenameSave() {
 }
 
 std::vector<LspClient::Diagnostic> WorkspaceShell::CollectLspContextDiagnostics(
-    const editor::TextViewport& viewport, const editor::SelectionRange& range) const {
+    const editor::TextViewport& viewport, const editor::SelectionRange& range,
+    lsp_encoding::PositionEncoding encoding) const {
   std::vector<LspClient::Diagnostic> result;
   const std::vector<editor::PublishedDiagnostic>* diagnostics =
       context_.current_project_state.diagnostics_store.FindByPathKey(viewport.path_key());
@@ -1490,10 +1492,10 @@ std::vector<LspClient::Diagnostic> WorkspaceShell::CollectLspContextDiagnostics(
     }
     result.push_back(LspClient::Diagnostic{
         .range = LspClient::Range{
-            .start = LspClient::Position{static_cast<int>(diagnostic.range.start.line),
-                                         static_cast<int>(diagnostic.range.start.column)},
-            .end = LspClient::Position{static_cast<int>(diagnostic.range.end.line),
-                                       static_cast<int>(diagnostic.range.end.column)},
+            .start = ByteColumnToLspPosition(viewport, diagnostic.range.start.line,
+                                             diagnostic.range.start.column, encoding),
+            .end = ByteColumnToLspPosition(viewport, diagnostic.range.end.line,
+                                           diagnostic.range.end.column, encoding),
         },
         .message = diagnostic.message,
         .severity = severity_code(diagnostic.severity),

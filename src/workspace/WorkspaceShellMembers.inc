@@ -971,7 +971,7 @@
   std::optional<PendingRenameSave> pending_rename_save_;
   // Collect the diagnostics for `viewport`'s file that overlap `range`, in LSP
   // wire form, to populate a textDocument/codeAction request context.
-  std::vector<LspClient::Diagnostic> CollectLspContextDiagnostics(const editor::TextViewport& viewport, const editor::SelectionRange& range) const;
+  std::vector<LspClient::Diagnostic> CollectLspContextDiagnostics(const editor::TextViewport& viewport, const editor::SelectionRange& range, lsp_encoding::PositionEncoding encoding) const;
   // Ghost text (Copilot-style inline suggestion). The plugin publishes a proposal;
   // the host validates it against the live caret, stores at most one (last writer
   // wins), renders it dimmed, inserts it on Tab (Accept), and clears it on Esc

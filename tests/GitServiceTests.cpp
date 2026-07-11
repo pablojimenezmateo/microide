@@ -806,9 +806,46 @@ void TestGitReadFileAtRevisionSurfacesTruncation() {
          "a real non-zero-exit failure stays nullopt, not a bogus empty blob");
 }
 
+void TestGitExplicitRevisionArgsUseEndOfOptions() {
+  using microide::project::CollectGitCommitChangedFiles;
+
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "kept.txt", "one\n");
+  CommitAll(repo_path, "base", "base");
+  WriteFile(repo_path / "added.txt", "two\n");
+  CommitAll(repo_path, "add file", "second");
+
+  const auto recent = CollectGitRecentCommits(repo_path, 10);
+  Expect(recent.size() == 2, "fixture should have two commits");
+  const std::string& head_hash = recent[0].hash;
+  Expect(!head_hash.empty(), "HEAD commit hash should be resolvable");
+
+  // diff-tree over an explicit commit hash now passes the revision after
+  // `--end-of-options`; the changed-file list must still parse correctly.
+  const auto changed = CollectGitCommitChangedFiles(repo_path, head_hash);
+  Expect(std::find(changed.begin(), changed.end(), std::filesystem::path("added.txt")) !=
+             changed.end(),
+         "commit changed-files should list the added path with an explicit revision");
+
+  // cat-file -e / show <rev>:<path> now also carry `--end-of-options`; existence
+  // and content reads at an explicit revision must keep working.
+  GitRepository repo(repo_path);
+  Expect(repo.FileExistsAtRevision("added.txt", head_hash),
+         "an existing file must be detected at an explicit revision");
+  Expect(!repo.FileExistsAtRevision("added.txt", recent[1].hash),
+         "a file absent from the base commit must not be detected there");
+  const auto content = repo.ReadFileAtRevision("added.txt", head_hash);
+  Expect(content.has_value() && *content == "two\n",
+         "file content must round-trip through show at an explicit revision");
+}
+
 void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/ReadFileAtRevisionSurfacesTruncation",
           TestGitReadFileAtRevisionSurfacesTruncation);
+  AddTest(tests, "Git/ExplicitRevisionArgsUseEndOfOptions",
+          TestGitExplicitRevisionArgsUseEndOfOptions);
   AddTest(tests, "Git/PorcelainParserBoundsHostileStatus",
           TestGitPorcelainParserBoundsHostileStatus);
   AddTest(tests, "Git/BuildStatusMapFolderPriorityIsSingleSourced",

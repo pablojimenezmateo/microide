@@ -60,6 +60,11 @@ class GitRepositoryService {
       const RefreshRequest& request) const;
   void PublishSnapshot(GitSidebarState::RefreshSnapshot snapshot, std::uint64_t generation);
   void ScheduleRefresh(RefreshRequest request);
+  // Shared exit for a refresh task whose generation was superseded before it
+  // could publish. Clears refresh_in_flight_, decrements the background-task
+  // counter for the finishing task, and re-schedules a deferred follow-up if
+  // one is pending. Must be called with mutex_ NOT held.
+  void HandleSupersededRefresh();
 
   project::ProjectBackgroundExecutor& background_executor_;
   WakeCallbacks wake_callbacks_;

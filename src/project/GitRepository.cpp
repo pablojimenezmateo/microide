@@ -112,8 +112,8 @@ GitFileHistoryResult GitRepository::GetFileHistory(
 
 bool GitRepository::FileExistsAtRevision(const std::filesystem::path& relative_path,
                                          std::string_view revision) const {
-  return ExecuteSucceeds(
-      {"cat-file", "-e", std::string(revision) + ":" + relative_path.generic_string()});
+  return ExecuteSucceeds({"cat-file", "-e", "--end-of-options",
+                          std::string(revision) + ":" + relative_path.generic_string()});
 }
 
 std::optional<GitRepository::BlobAtRevision> GitRepository::InterpretBlobResult(
@@ -132,8 +132,8 @@ std::optional<GitRepository::BlobAtRevision> GitRepository::InterpretBlobResult(
 std::optional<GitRepository::BlobAtRevision> GitRepository::ReadBlobAtRevision(
     const std::filesystem::path& relative_path,
     std::string_view revision) const {
-  const auto result =
-      Execute({"show", std::string(revision) + ":" + relative_path.generic_string()});
+  const auto result = Execute(
+      {"show", "--end-of-options", std::string(revision) + ":" + relative_path.generic_string()});
   return InterpretBlobResult(result);
 }
 

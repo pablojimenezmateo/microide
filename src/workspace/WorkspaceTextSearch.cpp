@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
 #include <string>
 
 #include "util/StringUtil.h"
@@ -287,11 +288,22 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
   const std::string lowered_query = ToLower(query);
   const std::size_t needle = lowered_query.size();
   matches.reserve(previous.size());
+  // Reproduce the cold path's advance-by-needle de-overlap: `previous` (the shorter
+  // prefix query's match set) holds a hit at EVERY offset, so a self-overlapping
+  // longer needle (e.g. "aa" over "aaaa") would keep overlapping ranges here while a
+  // fresh scan yields non-overlapping ones — inflating the count and desyncing
+  // next/prev/replace. `previous` is ordered ascending by (line, column), so skip any
+  // candidate that would start inside the last kept match on the same line.
+  std::size_t last_line = std::numeric_limits<std::size_t>::max();
+  std::size_t last_end = 0;
   for (const editor::SelectionRange& match : previous) {
     const std::size_t line = match.start.line;
     const std::size_t column = match.start.column;
     if (line >= buffer.LineCount()) {
       continue;
+    }
+    if (line == last_line && column < last_end) {
+      continue;  // would overlap the previously kept match
     }
     const std::string_view text = buffer.LineView(line);
     if (column > text.size() || needle > text.size() - column) {
@@ -309,6 +321,8 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
           .start = editor::TextPosition{line, column},
           .end = editor::TextPosition{line, column + needle},
       });
+      last_line = line;
+      last_end = column + needle;
     }
   }
 
