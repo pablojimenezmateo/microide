@@ -67,9 +67,22 @@ class FileIndexWatcher {
   // Returns false if using poll-fallback mode (native events unavailable).
   bool IsNative() const;
 
+  // Test seam: drive the dispatch wrapper directly, as a background worker would,
+  // so the initial-vs-incremental ordering guard can be exercised deterministically
+  // without racing two real threads.
+  void DispatchBatchForTesting(IndexUpdateBatch batch);
+
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
+  // Ordering guard shared by the (concurrent) initial-scan and native-event workers.
+  // The initial-scan and native workers both drive the callback; a non-initial
+  // (incremental) batch that arrives before the trailing is_initial batch — which
+  // FileIndex::ApplyBatch applies as a wholesale replace — would be lost. SetCallback
+  // wraps the client callback to buffer incrementals until the initial batch lands,
+  // then replays them in order; Watch resets it (workers are joined by Unwatch first).
+  struct DispatchState;
+  std::shared_ptr<DispatchState> dispatch_state_;
 };
 
 namespace detail {

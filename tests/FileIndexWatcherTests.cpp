@@ -667,7 +667,56 @@ void TestFileIndexWatcherInitialBatchRespectsEntryBudget() {
 
 }  // namespace
 
+// Regression: an incremental batch that arrives BEFORE the initial (wholesale-
+// replace) batch — the two workers race during the initial-scan window — is buffered
+// and replayed AFTER the initial batch, so a file created during the scan is not lost
+// and a file deleted during the scan does not resurrect.
+void TestFileIndexWatcherBuffersIncrementalsUntilInitialBatch() {
+  FileIndexWatcher watcher;
+  std::vector<IndexUpdateBatch> received;
+  watcher.SetCallback([&](IndexUpdateBatch batch) { received.push_back(std::move(batch)); });
+
+  const auto make_incremental = [](const std::filesystem::path& rel,
+                                   IndexUpdateBatch::Kind kind) {
+    IndexUpdateBatch batch;
+    batch.is_initial = false;
+    IndexUpdateBatch::Change change;
+    change.kind = kind;
+    change.entry.relative_path = rel;
+    batch.changes.push_back(std::move(change));
+    return batch;
+  };
+  IndexUpdateBatch initial;
+  initial.is_initial = true;
+  IndexUpdateBatch::Change baseline;
+  baseline.kind = IndexUpdateBatch::Kind::CreatedOrModified;
+  baseline.entry.relative_path = "existing.cpp";
+  initial.changes.push_back(std::move(baseline));
+
+  // An incremental "created during the scan" arrives BEFORE the initial batch.
+  watcher.DispatchBatchForTesting(
+      make_incremental("created_during_scan.cpp", IndexUpdateBatch::Kind::CreatedOrModified));
+  Expect(received.empty(), "an incremental before the initial batch is buffered, not delivered");
+
+  // The trailing initial batch lands; it is delivered, then the buffered incremental
+  // is replayed on top of the baseline (never lost to the wholesale replace).
+  watcher.DispatchBatchForTesting(std::move(initial));
+  Expect(received.size() == 2, "the initial batch and the buffered incremental are both delivered");
+  Expect(received[0].is_initial, "the initial (wholesale-replace) batch is delivered first");
+  Expect(!received[1].is_initial &&
+             BatchContainsPath(received[1], "created_during_scan.cpp"),
+         "the buffered incremental replays AFTER the initial batch, preserving the created file");
+
+  // Once the initial batch has landed, later incrementals pass straight through.
+  watcher.DispatchBatchForTesting(
+      make_incremental("later.cpp", IndexUpdateBatch::Kind::CreatedOrModified));
+  Expect(received.size() == 3 && BatchContainsPath(received[2], "later.cpp"),
+         "incrementals after the initial batch are delivered immediately");
+}
+
 void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileIndexWatcher/BuffersIncrementalsUntilInitialBatch",
+          TestFileIndexWatcherBuffersIncrementalsUntilInitialBatch);
   AddTest(tests, "FileIndexWatcher/InitialBatchContainsExistingFiles",
           TestFileIndexWatcherInitialBatchContainsExistingFiles);
   AddTest(tests, "FileIndexWatcher/DetectsCreatedFile",

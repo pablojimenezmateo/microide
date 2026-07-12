@@ -287,13 +287,6 @@ std::vector<std::filesystem::path> FileIndex::SnapshotPaths(ProjectFileScanMode 
   return snapshot.files ? *snapshot.files : std::vector<std::filesystem::path>{};
 }
 
-const std::vector<std::filesystem::path>& FileIndex::files(ProjectFileScanMode mode) const {
-  static const std::vector<std::filesystem::path> kEmpty;
-  EnsureFresh(mode);
-  const auto& bucket = CacheIndex(mode) == 0 ? exclude_hidden_cache_ : include_hidden_cache_;
-  return bucket.files ? *bucket.files : kEmpty;
-}
-
 std::uint64_t FileIndex::version() const {
   std::shared_lock lock(files_mutex_);
   return version_;

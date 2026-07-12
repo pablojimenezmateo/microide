@@ -1455,8 +1455,43 @@ FileIndexWatcher::~FileIndexWatcher() {
   Unwatch();
 }
 
+// Buffering state shared between the wrapper (held by the workers via impl_->callback)
+// and Watch()'s per-watch reset. Defined here so the header only forward-declares it.
+struct FileIndexWatcher::DispatchState {
+  std::mutex mutex;
+  bool initial_applied = false;
+  std::vector<IndexUpdateBatch> pending;
+};
+
 void FileIndexWatcher::SetCallback(Callback callback) {
-  impl_->callback = std::move(callback);
+  auto state = std::make_shared<DispatchState>();
+  dispatch_state_ = state;
+  // Wrap the client callback so the two concurrent workers dispatch in a defined
+  // order: buffer incremental batches until the initial (wholesale-replace) batch
+  // lands, then replay them in order on top of the baseline. The mutex serializes
+  // the workers so batches apply one at a time. Reset per Watch() via dispatch_state_.
+  impl_->callback = [client = std::move(callback), state](IndexUpdateBatch batch) {
+    const bool is_initial = batch.is_initial;
+    std::lock_guard<std::mutex> lock(state->mutex);
+    if (!is_initial && !state->initial_applied) {
+      state->pending.push_back(std::move(batch));
+      return;
+    }
+    if (is_initial) {
+      state->initial_applied = true;
+    }
+    if (client) {
+      client(std::move(batch));
+    }
+    if (is_initial && !state->pending.empty()) {
+      if (client) {
+        for (IndexUpdateBatch& pending : state->pending) {
+          client(std::move(pending));
+        }
+      }
+      state->pending.clear();
+    }
+  };
 }
 
 void FileIndexWatcher::SetExcludeGlobs(std::vector<std::string> globs) {
@@ -1477,6 +1512,14 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
     return false;
   }
   impl_->root = absolute_root.lexically_normal();
+  // Reset the dispatch-ordering guard for this watch: Unwatch() above joined the
+  // previous watch's workers, so no worker can race this reset. The next initial
+  // scan will re-arm initial_applied when its is_initial batch lands.
+  if (dispatch_state_) {
+    std::lock_guard<std::mutex> lock(dispatch_state_->mutex);
+    dispatch_state_->initial_applied = false;
+    dispatch_state_->pending.clear();
+  }
   // The traversal filter (root .gitignore + built-in defaults + exclude_globs) is
   // constructed per-walk on the walk's own thread; exclude_globs / entry_budget are
   // set via the setters before this call and read race-free by those threads.
@@ -1519,6 +1562,12 @@ void FileIndexWatcher::Unwatch() {
 
 bool FileIndexWatcher::IsNative() const {
   return impl_->is_native.load(std::memory_order_acquire);
+}
+
+void FileIndexWatcher::DispatchBatchForTesting(IndexUpdateBatch batch) {
+  if (impl_->callback) {
+    impl_->callback(std::move(batch));
+  }
 }
 
 }  // namespace microide::platform

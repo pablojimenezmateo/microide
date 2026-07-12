@@ -87,8 +87,6 @@ class FileIndex {
       ProjectFileScanMode mode = ProjectFileScanMode::ExcludeHidden) const;
   std::vector<std::filesystem::path> SnapshotPaths(
       ProjectFileScanMode mode = ProjectFileScanMode::ExcludeHidden) const;
-  const std::vector<std::filesystem::path>& files(
-      ProjectFileScanMode mode = ProjectFileScanMode::ExcludeHidden) const;
   std::uint64_t version() const;
 
   const std::filesystem::path& root() const { return root_; }
