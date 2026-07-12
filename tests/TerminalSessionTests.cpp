@@ -1818,18 +1818,27 @@ void TestTerminalSessionCursorUpClampsToVisibleScreenTop() {
   ExpectLineText(lines, 3, "X3", "CUU clamps at the visible-screen top");
 }
 
-// Regression: VT (0x0B) and FF (0x0C) perform an index (line feed), like xterm/VTE.
-// They previously fell through the control switch and were dropped entirely.
+// Regression: VT (0x0B) and FF (0x0C) index like IND (ESC D) — move down one row
+// PRESERVING the column, not resetting to column 0 like LF. VT/FF are never
+// ONLCR-translated, so `a\vb\fc` must staircase (b under the char after a, c
+// under the char after b). Previously they routed through the LF path and zeroed
+// the column, landing b and c at column 0.
 void TestTerminalSessionVerticalTabAndFormFeedIndexLikeLineFeed() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
   TerminalSessionTestAccess::AppendOutput(session, "a\x0b""b\x0c""c");
 
   const auto lines = session.SnapshotLines();
-  Expect(lines.size() == 3, "VT and FF should each open a new row like a line feed");
+  Expect(lines.size() == 3, "VT and FF should each open a new row like an index");
   ExpectLineText(lines, 0, "a", "content before VT stays on the first row");
-  ExpectLineText(lines, 1, "b", "VT moves the cursor down one row like a line feed");
-  ExpectLineText(lines, 2, "c", "FF moves the cursor down another row like a line feed");
+  // 'a' advanced the cursor to column 1, so VT indexes down to (row 1, column 1).
+  Expect(lines[1].cells.size() >= 2 && lines[1].cells[1].ascii_character() == 'b',
+         "VT indexes down preserving the column (b staircases to column 1)");
+  Expect(lines[1].cells[0].ascii_character() != 'b',
+         "VT must not reset the column to 0");
+  // 'b' advanced the cursor to column 2, so FF indexes down to (row 2, column 2).
+  Expect(lines[2].cells.size() >= 3 && lines[2].cells[2].ascii_character() == 'c',
+         "FF indexes down preserving the column (c staircases to column 2)");
 }
 
 // Regression: DECSC (ESC 7) saves the SGR graphic rendition and DECRC (ESC 8)
@@ -1946,7 +1955,108 @@ void TestTerminalSessionDecstbmFullScreenResetsRegion() {
                  "full-screen CSI r must not leave the previous narrower region's top in effect");
 }
 
+// Regression: an ESC appearing where a charset-designation final byte is expected
+// (`ESC ( <ESC>...`) cancels the designation and starts a fresh escape, so the
+// following CSI executes. Previously the ESC was consumed as the G0 final and the
+// CSI's leading bytes printed as literal text.
+void TestTerminalSessionCharsetDesignationAbortsOnEmbeddedEscape() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  // X, then a truncated G0 designation immediately followed by a real SGR + glyph:
+  // ESC ( <ESC>[31m Y. With the abort, Y prints at column 1 in red; without it the
+  // "[31m" bytes print as text.
+  TerminalSessionTestAccess::AppendOutput(session, "X\x1b(\x1b[31mY");
+
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "XY",
+                 "the CSI after an aborted charset designation must execute, not print as text");
+  Expect(!lines.empty() && lines[0].cells.size() >= 2 &&
+             lines[0].cells[1].ascii_character() == 'Y' &&
+             lines[0].cells[1].style.foreground.has_value(),
+         "the SGR after the aborted designation applied (Y is colored)");
+  Expect(!lines[0].cells[0].style.foreground.has_value(),
+         "text before the designation keeps the default color");
+}
+
+// Regression: on the alternate screen with a custom DECSTBM region that does not
+// reach the physical bottom, an index/LF with the cursor BELOW the region at the
+// last physical row must NOT scroll. Previously it scrolled the whole screen,
+// corrupting a header/status-split layout.
+void TestTerminalSessionAltScreenLineFeedBelowRegionDoesNotScroll() {
+  microide::terminal::TerminalSession session;
+  ResetAlternateScreenFixture(session);  // rows: A B C D
+
+  // Region = top two rows only; move to the last physical row (below the region),
+  // write a status marker there, then LF.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;2r\x1b[4;1HZ\n");
+
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 4, "alt-screen row count stays fixed");
+  ExpectLineText(lines, 0, "A", "LF below the region must not scroll the top of the screen");
+  ExpectLineText(lines, 1, "B", "region rows above are untouched");
+  ExpectLineText(lines, 2, "C", "rows between the region and the status line are untouched");
+  ExpectLineText(lines, 3, "Z", "the status row stays put; LF at the bottom does not scroll");
+}
+
+// Regression: a child that exits while on the alternate screen restores the
+// primary buffer before emitting the `[process exited]` marker (matching
+// xterm/VTE), instead of appending the marker onto the alt grid and evicting the
+// still-visible alternate rows from the top.
+void TestTerminalSessionProcessExitMarkerLeavesAlternateScreen() {
+  microide::terminal::TerminalSession session;
+  ResetAlternateScreenFixture(session);  // alternate screen shows A B C D
+  TerminalSessionTestAccess::EmitProcessExitMarker(session);
+
+  const auto lines = session.SnapshotLines();
+  // Concatenate without row separators: the marker text ("[process exited]", 16
+  // chars) wraps across the 8-column fixture, so it is contiguous only when the
+  // rows are joined directly.
+  std::string joined;
+  for (const auto& line : lines) {
+    joined += LineText(line);
+  }
+  Expect(joined.find("[process exited]") != std::string::npos,
+         "the process-exit marker must be shown");
+  Expect(joined.find('D') == std::string::npos,
+         "exiting on the alternate screen restores the primary buffer instead of "
+         "appending the marker onto (and evicting) the alt grid");
+}
+
+// Regression: a basic SGR foreground (30..37) brightens with the bold flag
+// regardless of order (`\e[1m\e[31m` == `\e[31m\e[1m`), and SGR 22 reverts it to
+// the dark shade. Previously the RGB was baked from the bold flag at set-time, so
+// `\e[31m\e[1m` stayed dark and `\e[1;31m\e[22m` stayed bright.
+void TestTerminalSessionBasicForegroundBrightnessTracksBold() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  // A: bold then red. B: red then bold. C: bold+red then SGR22. D: plain red.
+  TerminalSessionTestAccess::AppendOutput(
+      session, "\x1b[1m\x1b[31mA\x1b[0m\x1b[31m\x1b[1mB\x1b[0m\x1b[1;31m\x1b[22mC\x1b[0m\x1b[31mD");
+
+  const auto lines = session.SnapshotLines();
+  Expect(!lines.empty() && lines[0].cells.size() >= 4, "A,B,C,D land on the first row");
+  const auto color_of = [&](std::size_t col) { return lines[0].cells[col].style.foreground; };
+  const auto same = [](const std::optional<SDL_Color>& lhs, const std::optional<SDL_Color>& rhs) {
+    return lhs.has_value() && rhs.has_value() && lhs->r == rhs->r && lhs->g == rhs->g &&
+           lhs->b == rhs->b;
+  };
+  Expect(color_of(0).has_value() && color_of(3).has_value(), "foreground colors were applied");
+  Expect(same(color_of(0), color_of(1)),
+         "bold-then-color and color-then-bold yield the same bright red");
+  Expect(same(color_of(2), color_of(3)),
+         "SGR 22 reverts a bold-brightened basic foreground to the plain (dark) shade");
+  Expect(!same(color_of(0), color_of(3)), "bright red must differ from dark red");
+}
+
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TerminalSession/CharsetDesignationAbortsOnEmbeddedEscape",
+          TestTerminalSessionCharsetDesignationAbortsOnEmbeddedEscape);
+  AddTest(tests, "TerminalSession/AltScreenLineFeedBelowRegionDoesNotScroll",
+          TestTerminalSessionAltScreenLineFeedBelowRegionDoesNotScroll);
+  AddTest(tests, "TerminalSession/ProcessExitMarkerLeavesAlternateScreen",
+          TestTerminalSessionProcessExitMarkerLeavesAlternateScreen);
+  AddTest(tests, "TerminalSession/BasicForegroundBrightnessTracksBold",
+          TestTerminalSessionBasicForegroundBrightnessTracksBold);
   AddTest(tests, "TerminalSession/DecstbmIgnoresEqualMargins",
           TestTerminalSessionDecstbmIgnoresEqualMargins);
   AddTest(tests, "TerminalSession/DecstbmIgnoresInvertedMargins",

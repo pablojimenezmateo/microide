@@ -980,6 +980,36 @@ void TestWorkspaceShellTerminalLeftClickOpensUrls() {
          "opening a terminal URL should not start a text selection");
 }
 
+// Regression: URL hit-testing maps the clicked grid column to a byte offset in the
+// line text before matching, so a multibyte glyph before the URL no longer desyncs
+// the detection. Previously TerminalUrlAtColumn compared a grid column directly
+// against a byte offset, so an accented/wide glyph ahead of the link shifted the
+// match and a click on the URL start missed.
+void TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  // "é" is one column but two UTF-8 bytes, so the URL's byte offset (3) is one
+  // greater than its grid column (2). Clicking the URL's first grid column must
+  // still resolve the link.
+  TerminalSessionTestAccess::AppendOutput(session, "\xc3\xa9 https://example.com/x");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  std::string opened_url;
+  WorkspaceShellTestAccess::SetExternalUrlOpener(shell, [&](std::string_view url) {
+    opened_url = std::string(url);
+    return true;
+  });
+
+  // Grid column 2 is the 'h' of the URL (é at 0, space at 1).
+  const SDL_FPoint point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 2);
+  Expect(SendMouseDown(shell, point.x, point.y, SDL_BUTTON_LEFT),
+         "left-clicking a terminal URL after a multibyte glyph should be handled");
+  Expect(opened_url == "https://example.com/x",
+         "URL hit-testing must map the grid column to a byte offset before matching");
+}
+
 void TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1186,6 +1216,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalSelectionWritesPrimaryBufferAndMiddleClickPastes);
   AddTest(tests, "WorkspaceShell/TerminalLeftClickOpensUrls",
           TestWorkspaceShellTerminalLeftClickOpensUrls);
+  AddTest(tests, "WorkspaceShellTerminal/UrlHitTestHonorsMultibytePrefix",
+          TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix);
   AddTest(tests, "WorkspaceShell/TerminalMouseCaptureSendsButtonEvents",
           TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents);
 }

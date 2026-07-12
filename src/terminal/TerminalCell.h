@@ -30,6 +30,12 @@ enum Bit : std::uint16_t {
   // of its own; the renderer skips it so the wide lead cell paints across both
   // columns. Kept in the style so it travels with snapshot copies.
   kWideTrailing = 1u << 9,
+  // The foreground was set via a basic SGR color (30..37) whose brightness must
+  // track the bold flag: `\e[1m\e[31m` and `\e[31m\e[1m` both yield bright red,
+  // and `\e[22m` reverts to dark red. Bits 11..13 hold the palette index (0..7)
+  // so SGR 1/22 can re-resolve the RGB. Explicit bright colors (90..97) do NOT
+  // set this bit, so `\e[91m…\e[22m` stays bright. Free bits, memory-neutral.
+  kFgBasic = 1u << 10,
 };
 }  // namespace cell_attr
 
@@ -57,6 +63,20 @@ struct TerminalStyle {
   constexpr bool hidden() const { return has(cell_attr::kHidden); }
   constexpr bool strikethrough() const { return has(cell_attr::kStrikethrough); }
   constexpr bool wide_trailing() const { return has(cell_attr::kWideTrailing); }
+
+  // Basic-palette foreground tracking (bits 11..13). See cell_attr::kFgBasic.
+  static constexpr std::uint16_t kFgBasicIndexShift = 11;
+  static constexpr std::uint16_t kFgBasicIndexMask = static_cast<std::uint16_t>(0x7u << 11);
+  constexpr bool has_basic_foreground() const { return has(cell_attr::kFgBasic); }
+  constexpr int basic_foreground_index() const {
+    return (attrs & kFgBasicIndexMask) >> kFgBasicIndexShift;
+  }
+  void set_basic_foreground(int index) {
+    attrs = static_cast<std::uint16_t>((attrs & ~kFgBasicIndexMask) |
+                                       (static_cast<std::uint16_t>(index & 0x7) << kFgBasicIndexShift));
+    set(cell_attr::kFgBasic, true);
+  }
+  void clear_basic_foreground() { set(cell_attr::kFgBasic, false); }
 };
 
 struct TerminalCell {

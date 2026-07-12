@@ -4,13 +4,13 @@
 
 namespace microide::terminal {
 
-std::vector<int> ParseCsiParameters(std::string_view body) {
+void ParseCsiParametersInto(std::string_view body, std::vector<int>& params) {
   // Accumulate each decimal field inline (no per-field heap string); clamp during
   // accumulation so a hostile long digit run can't overflow. Mirrors
   // ParseSgrParametersInto but preserves the optional leading +/- sign that CSI
   // numeric parameters may legally carry.
   constexpr int kMaxParam = 65535;
-  std::vector<int> params;
+  params.clear();
   bool field_active = false;
   bool negative = false;
   bool sign_allowed = true;
@@ -48,6 +48,11 @@ std::vector<int> ParseCsiParameters(std::string_view body) {
   if (field_active || (!body.empty() && body.back() == ';')) {
     flush_field();
   }
+}
+
+std::vector<int> ParseCsiParameters(std::string_view body) {
+  std::vector<int> params;
+  ParseCsiParametersInto(body, params);
   return params;
 }
 

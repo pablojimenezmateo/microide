@@ -170,11 +170,13 @@ void TerminalSession::AdvanceCursorRowLocked(bool wrapped_from_previous) {
       return;
     }
     if (cursor_row_ + 1 >= terminal_rows) {
-      ScrollRegionUpLocked(0, terminal_rows - 1, 1);
-      cursor_row_ = terminal_rows - 1;
+      // The cursor is OUTSIDE the scroll region (a custom DECSTBM region that does
+      // not reach the physical bottom) and on the last physical row. Per DEC/xterm,
+      // IND/LF here does NOT scroll — only motion inside the region scrolls. The
+      // previous ScrollRegionUpLocked(0, rows-1, 1) scrolled the WHOLE screen,
+      // corrupting a header/status-split layout. Clamp at the bottom instead.
       cursor_column_ = 0;
       EnsureCursorLineExistsLocked();
-      lines_[cursor_row_].wrapped_from_previous = wrapped_from_previous;
       return;
     }
   }

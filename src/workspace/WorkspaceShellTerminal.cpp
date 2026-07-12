@@ -54,7 +54,26 @@ std::string TrimTerminalUrl(std::string url) {
   return url;
 }
 
-std::optional<std::string> TerminalUrlAtColumn(std::string_view text, std::size_t column) {
+// Byte offset within TerminalLineText(line) of the start of grid cell `column`,
+// mirroring TerminalLineSliceText's cell→text mapping (wide-trailing spacers
+// contribute no bytes; an empty cell contributes one space; a glyph contributes
+// its UTF-8 bytes). Needed because a wide/multibyte cell BEFORE a URL desyncs a
+// raw grid column from the byte offset TerminalUrlAtColumn works in.
+std::size_t TerminalColumnToByteOffset(const terminal::TerminalLine& line, std::size_t column) {
+  const std::size_t clamped = std::min(column, line.cells.size());
+  std::size_t byte_offset = 0;
+  for (std::size_t cell_index = 0; cell_index < clamped; ++cell_index) {
+    const auto& cell = line.cells[cell_index];
+    if (cell.style.wide_trailing()) {
+      continue;
+    }
+    const auto display_text = cell.DisplayText();
+    byte_offset += display_text.empty() ? 1 : display_text.size();
+  }
+  return byte_offset;
+}
+
+std::optional<std::string> TerminalUrlAtColumn(std::string_view text, std::size_t target_byte) {
   static constexpr std::string_view kSchemes[] = {
       "https://",
       "http://",
@@ -72,7 +91,9 @@ std::optional<std::string> TerminalUrlAtColumn(std::string_view text, std::size_
       }
       std::string url = TrimTerminalUrl(std::string(text.substr(start, end - start)));
       const std::size_t trimmed_end = start + url.size();
-      if (column >= start && column < trimmed_end && !url.empty()) {
+      // `target_byte` is a byte offset into `text` (see TerminalColumnToByteOffset
+      // at the call site), so it compares directly against the URL's byte range.
+      if (target_byte >= start && target_byte < trimmed_end && !url.empty()) {
         return url;
       }
       start = text.find(scheme, start + 1);
@@ -284,8 +305,9 @@ std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) 
     return std::nullopt;
   }
 
-  return TerminalUrlAtColumn(TerminalLineText(lines[position->row - first_row]),
-                             position->column);
+  const terminal::TerminalLine& hit_line = lines[position->row - first_row];
+  return TerminalUrlAtColumn(TerminalLineText(hit_line),
+                             TerminalColumnToByteOffset(hit_line, position->column));
 }
 
 bool WorkspaceShell::OpenExternalUrl(std::string_view url) const {

@@ -42,7 +42,13 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     detail::ApplySgrParameters(current_style_, body);
     return;
   }
-  std::vector<int> params = ParseCsiParameters(body);
+  // Reuse a thread_local buffer so a non-SGR CSI does not heap-allocate a fresh
+  // params vector each call (the SGR fast path above already reuses a thread_local
+  // groups buffer). HandleEscapeSequenceLocked is not re-entered while `params` is
+  // live, so a single shared scratch is safe.
+  thread_local std::vector<int> params_scratch;
+  ParseCsiParametersInto(body, params_scratch);
+  std::vector<int>& params = params_scratch;
 
   // Kitty keyboard protocol negotiation: CSI ? u (query), CSI > flags u (push),
   // CSI < n u (pop), CSI = flags ; mode u (set).

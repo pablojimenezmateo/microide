@@ -47,6 +47,14 @@ void TerminalSession::EmitProcessExitMarkerLocked() {
   // UTF-8 lead bytes so the marker text is not prefixed by a stray glyph.
   AbandonEscapeSequenceLocked();
   pending_utf8_sequence_.clear();
+  // If the child died while on the alternate screen (e.g. a full-screen editor
+  // crashed), hand the primary buffer back first — matching xterm/VTE, which
+  // restore the primary screen when the application exits. Otherwise the marker
+  // append + TrimScrollbackLocked (capped at `rows_` on the alt grid) would erase
+  // the still-visible alternate rows from the top.
+  if (use_alternate_screen_) {
+    SetAlternateScreenLocked(false, false);
+  }
   if (lines_.empty()) {
     lines_.push_back(TerminalLine{});
   }
@@ -150,6 +158,21 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
     }
 
     if (escape_mode_ == EscapeMode::CharsetDesignate) {
+      // ECMA-48: ESC/CAN/SUB appearing where the charset final byte is expected
+      // cancel the designation rather than being consumed as the final. ESC begins
+      // a fresh escape (`ESC ( ESC[2J` must run the CSI, not eat the ESC as the
+      // designator), CAN/SUB abort to ground. Mirrors the CSI/OSC abort handling.
+      if (byte == 0x1b) {
+        escape_sequence_buffer_.clear();
+        escape_mode_ = EscapeMode::AfterEscape;
+        osc_escape_pending_ = false;
+        continue;
+      }
+      if (byte == 0x18 || byte == 0x1a) {
+        escape_sequence_buffer_.clear();
+        escape_mode_ = EscapeMode::None;
+        continue;
+      }
       escape_sequence_buffer_.clear();
       escape_mode_ = EscapeMode::None;
       continue;
@@ -290,10 +313,19 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         cursor_column_ = 0;
         break;
       case '\n':
-      case '\v':  // VT (0x0B): ECMA-48 treats it as index (line feed), like xterm/VTE.
-      case '\f':  // FF (0x0C): likewise index — a bare form feed moves down one row.
         AdvanceCursorRowLocked();
         break;
+      case '\v':  // VT (0x0B)
+      case '\f': {  // FF (0x0C)
+        // ECMA-48 index: move down one row PRESERVING the column (like IND / ESC D),
+        // NOT resetting to column 0 the way LF does. VT/FF are never subject to the
+        // PTY's ONLCR translation, so `A\vB` must staircase (B under the char after
+        // A), not land B at column 0. Mirrors the IND handler above.
+        const std::size_t saved_column = cursor_column_;
+        AdvanceCursorRowLocked();
+        cursor_column_ = saved_column;
+        break;
+      }
       case '\b':
         if (cursor_column_ > 0) {
           --cursor_column_;

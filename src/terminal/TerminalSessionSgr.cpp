@@ -71,6 +71,11 @@ void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
         break;
       case 1:
         style.set(cell_attr::kBold, true);
+        // A basic (30..37) foreground brightens with bold; re-resolve it live so
+        // `\e[31m\e[1m` matches `\e[1m\e[31m` (both bright red).
+        if (style.has_basic_foreground()) {
+          style.foreground = BasicAnsiColor(style.basic_foreground_index(), true);
+        }
         break;
       case 2:
         style.set(cell_attr::kDim, true);
@@ -110,6 +115,10 @@ void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
       case 22:
         style.set(cell_attr::kBold, false);
         style.set(cell_attr::kDim, false);
+        // Revert a bold-brightened basic foreground back to its dark shade.
+        if (style.has_basic_foreground()) {
+          style.foreground = BasicAnsiColor(style.basic_foreground_index(), false);
+        }
         break;
       case 23:
         style.set(cell_attr::kItalic, false);
@@ -133,10 +142,12 @@ void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
       case 38:
         if (auto color = ParseExtendedSgrColor(groups, gi)) {
           style.foreground = *color;
+          style.clear_basic_foreground();
         }
         break;
       case 39:
         style.foreground.reset();
+        style.clear_basic_foreground();
         break;
       case 48:
         if (auto color = ParseExtendedSgrColor(groups, gi)) {
@@ -153,10 +164,14 @@ void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
         break;
       default:
         if (code >= 30 && code <= 37) {
+          // Track the palette index so SGR 1/22 can re-resolve brightness later.
+          style.set_basic_foreground(code - 30);
           style.foreground = BasicAnsiColor(code - 30, style.bold());
         } else if (code >= 40 && code <= 47) {
           style.background = BasicAnsiColor(code - 40, false);
         } else if (code >= 90 && code <= 97) {
+          // Explicit bright color: fixed brightness, not bold-tracked.
+          style.clear_basic_foreground();
           style.foreground = BasicAnsiColor(code - 90, true);
         } else if (code >= 100 && code <= 107) {
           style.background = BasicAnsiColor(code - 100, true);

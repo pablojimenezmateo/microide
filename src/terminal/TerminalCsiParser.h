@@ -6,6 +6,11 @@
 namespace microide::terminal {
 
 std::vector<int> ParseCsiParameters(std::string_view body);
+// Same as ParseCsiParameters but fills a caller-owned reusable buffer so the hot
+// terminal reader path does not heap-allocate a fresh vector per non-SGR CSI
+// (the SGR fast path already reuses a thread_local groups buffer). On return
+// `params` holds exactly the parsed fields; capacity is reused across calls.
+void ParseCsiParametersInto(std::string_view body, std::vector<int>& params);
 int CsiParamOrDefault(const std::vector<int>& params, std::size_t index, int fallback);
 
 // SGR parameters can carry ITU T.416 colon-separated sub-parameters
