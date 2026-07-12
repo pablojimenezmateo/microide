@@ -222,12 +222,12 @@ void TextViewport::ScrollVertical(int delta) {
   scroll_line_ = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
 }
 
-void TextViewport::Page(int direction) {
+void TextViewport::Page(int direction, bool extend_selection) {
   if (direction == 0) {
     return;
   }
   const std::size_t step = visible_lines_ > 1 ? visible_lines_ - 1 : 1;
-  MoveCursorVertical(static_cast<int>(step) * direction);
+  MoveCursorVertical(static_cast<int>(step) * direction, extend_selection);
 }
 
 std::size_t TextViewport::cursor_visual_column() const {

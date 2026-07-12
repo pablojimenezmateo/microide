@@ -324,6 +324,56 @@ void TestControlDiscoveryRejectsOversizedDescriptor() {
   std::filesystem::remove_all(runtime, ec);
 }
 
+// Regression (speed / local-DoS): the sweep bound must count directory entries
+// EXAMINED, not instances accepted. A pid-mismatched descriptor is rejected but
+// never pruned (unlike the dead-pid path), so a directory full of them used to
+// grow `instances` by zero and never trip the `kMaxControlInstances` break — an
+// unbounded scan, each entry formerly paying a 1 MiB zero-fill. Enumeration over a
+// pile of never-pruned junk descriptors must still return promptly and surface the
+// one valid live instance, and the junk must remain on disk (documenting exactly
+// why the bound has to be entries-scanned, not results-accepted).
+void TestControlDiscoveryBoundsHostileSweep() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-sweep-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  const std::filesystem::path instances = runtime / "microide" / "instances";
+  std::filesystem::create_directories(instances, ec);
+
+  // A pile of small `<n>.json` descriptors whose body pid disagrees with the
+  // filename: each clears the stem/size pre-checks, hits the pid-mismatch reject,
+  // and is NOT pruned — the exact adversarial shape the sweep bound guards.
+  const int base = 900000000;  // out of live-pid range, but that path is never reached
+  for (int i = 0; i < 300; ++i) {
+    const int name_pid = base + i;
+    std::ofstream out(instances / (std::to_string(name_pid) + ".json"), std::ios::trunc);
+    out << R"({"pid":)" << (name_pid + 7) << R"(,"socket":"/tmp/x.sock"})";
+  }
+  // One valid, live descriptor mixed in.
+  const int alive_pid = static_cast<int>(::getpid());
+  WriteDescriptor(instances, alive_pid);
+
+  const auto instances_list = microide::workspace::EnumerateControlInstances();
+  bool found_alive = false;
+  for (const auto& descriptor : instances_list) {
+    if (descriptor.pid == alive_pid) {
+      found_alive = true;
+    }
+    Expect(descriptor.pid < base || descriptor.pid > base + 300,
+           "no pid-mismatched junk descriptor should be accepted");
+  }
+  Expect(found_alive, "the one valid live descriptor must still be discovered amid the junk");
+  // The junk is rejected but never pruned: it stays on disk, so only an
+  // entries-examined bound (not the accepted-instance cap) keeps the sweep finite.
+  Expect(std::filesystem::exists(instances / (std::to_string(base) + ".json")),
+         "pid-mismatched descriptors are not pruned, so the scan must be bounded by entries examined");
+
+  std::filesystem::remove_all(runtime, ec);
+}
+
 // Self-heal: some environments delete $XDG_RUNTIME_DIR contents while a process
 // is still alive, silently severing the advertised socket. The I/O thread must
 // detect the missing socket on its idle poll and re-bind a fresh listener at the
@@ -476,6 +526,7 @@ void TestSocketSelfHealsAfterExternalDeletion() {}
 void TestDebugCommandAutoEnablesDebugger() {}
 void TestControlDiscoveryIgnoresForgedSocketAndPid() {}
 void TestControlDiscoveryRejectsOversizedDescriptor() {}
+void TestControlDiscoveryBoundsHostileSweep() {}
 
 #endif
 
@@ -615,6 +666,8 @@ void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
           TestControlDiscoveryIgnoresForgedSocketAndPid);
   AddTest(tests, "ControlChannelService/DiscoveryRejectsOversizedDescriptor",
           TestControlDiscoveryRejectsOversizedDescriptor);
+  AddTest(tests, "ControlChannelService/DiscoveryBoundsHostileSweep",
+          TestControlDiscoveryBoundsHostileSweep);
 }
 
 }  // namespace microide::tests

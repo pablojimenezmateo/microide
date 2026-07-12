@@ -143,12 +143,12 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       }
       case SDLK_PAGEUP: {
         const std::size_t previous_selected_row = compare_tab->selected_row;
-        viewport.Page(-1);
+        viewport.Page(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
         return sync_compare_navigation(previous_selected_row);
       }
       case SDLK_PAGEDOWN: {
         const std::size_t previous_selected_row = compare_tab->selected_row;
-        viewport.Page(1);
+        viewport.Page(1, (modifiers & SDL_KMOD_SHIFT) != 0);
         return sync_compare_navigation(previous_selected_row);
       }
       case SDLK_HOME: {
@@ -366,10 +366,10 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
       viewport.MoveCursorHorizontal(1, (modifiers & SDL_KMOD_SHIFT) != 0);
       return sync_merge_navigation();
     case SDLK_PAGEUP:
-      viewport.Page(-1);
+      viewport.Page(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
       return sync_merge_navigation();
     case SDLK_PAGEDOWN:
-      viewport.Page(1);
+      viewport.Page(1, (modifiers & SDL_KMOD_SHIFT) != 0);
       return sync_merge_navigation();
     case SDLK_HOME:
       if (modifiers & SDL_KMOD_CTRL) {
@@ -468,10 +468,10 @@ bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event
       viewport.MoveCursorHorizontal(1, extend_selection);
       return after_edit();
     case SDLK_PAGEUP:
-      viewport.Page(-1);
+      viewport.Page(-1, extend_selection);
       return after_edit();
     case SDLK_PAGEDOWN:
-      viewport.Page(1);
+      viewport.Page(1, extend_selection);
       return after_edit();
     case SDLK_HOME:
       if (modifiers & SDL_KMOD_CTRL) {
@@ -622,11 +622,11 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       after_editor_caret_motion();
       return true;
     case SDLK_PAGEUP:
-      viewport->Page(-1);
+      viewport->Page(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
       after_editor_caret_motion();
       return true;
     case SDLK_PAGEDOWN:
-      viewport->Page(1);
+      viewport->Page(1, (modifiers & SDL_KMOD_SHIFT) != 0);
       after_editor_caret_motion();
       return true;
     case SDLK_HOME:

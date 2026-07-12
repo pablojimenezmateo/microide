@@ -398,6 +398,39 @@ void TestProjectSearchServiceFlagsTruncatedLargeResultSets() {
          "count-all project search should report every match across all files");
 }
 
+// Regression: count-all must report the EXACT total even when the overwhelming
+// majority of matches fall past the display cap. Past the cap the engine counts
+// matches in a per-worker local (folded into the shared counter once at worker exit)
+// instead of a per-match atomic fetch_add, so the fold arithmetic — including the
+// boundary-race hand-off between the under-cap atomic path and the over-cap local
+// path across multiple workers — must neither drop nor double-count a single match.
+void TestProjectSearchServiceCountAllExactTotalFarPastCap() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  // 40 files x 60 matching lines = 2400 matches, 12x the 200 cap: the first 200 go
+  // through the atomic slot-claim, the remaining 2200 through the local fold.
+  std::string repeated_lines;
+  for (int line = 0; line < 60; ++line) {
+    repeated_lines += "needle\n";
+  }
+  for (int file_index = 0; file_index < 40; ++file_index) {
+    const std::string label =
+        (file_index < 10 ? "0" : "") + std::to_string(file_index);
+    WriteFile(root / ("file" + label + ".txt"), repeated_lines);
+  }
+
+  ProjectSearchOptions count_all_options;
+  count_all_options.count_all_matches = true;
+  const auto counted = RunProjectSearch(root, "needle", count_all_options);
+  Expect(counted.finished, "count-all search should finish");
+  Expect(counted.error.empty(), "count-all search should not error");
+  Expect(counted.truncated, "a far-past-cap count-all search must flag truncation");
+  Expect(counted.results.size() == 200,
+         "count-all still stores only the first cap for display");
+  Expect(counted.total_matches == 40 * 60,
+         "count-all must report every match exactly once across the cap boundary and all workers");
+}
+
 void TestProjectSearchServiceRestartPublishesOnlyLatestRun() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -643,6 +676,8 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServicePublishesStableResultOrdering);
   AddTest(tests, "ProjectSearchService/FlagsTruncatedLargeResultSets",
           TestProjectSearchServiceFlagsTruncatedLargeResultSets);
+  AddTest(tests, "ProjectSearchService/CountAllExactTotalFarPastCap",
+          TestProjectSearchServiceCountAllExactTotalFarPastCap);
   AddTest(tests, "ProjectSearchService/RestartPublishesOnlyLatestRun",
           TestProjectSearchServiceRestartPublishesOnlyLatestRun);
   AddTest(tests, "ProjectSearchService/StopDiscardsLateUpdates",

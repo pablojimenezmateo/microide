@@ -34,6 +34,13 @@ namespace {
 // tiny ones.
 constexpr std::uintmax_t kMaxDescriptorFileBytes = 1u << 20;  // 1 MiB
 constexpr std::size_t kMaxControlInstances = 4096;
+// Cap on directory entries *examined*, independent of how many are accepted. The
+// accepted-instance cap above does NOT bound the sweep: every reject path (bad stem,
+// oversized, unparseable, pid-mismatch) skips the instance push, and the pid-mismatch
+// case is never pruned, so a hostile directory of `<int>.json` files with mismatched
+// bodies would otherwise scan without limit. Legitimate instances number in the dozens;
+// this ceiling is far above any real fleet while still bounding an adversarial sweep.
+constexpr std::size_t kMaxControlInstanceScan = 65536;
 
 int CurrentProcessId() {
 #if defined(__unix__) || defined(__APPLE__)
@@ -105,11 +112,14 @@ std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
   if (!std::filesystem::is_directory(dir, ec)) {
     return instances;
   }
+  std::size_t scanned = 0;
   for (const std::filesystem::directory_entry& entry :
        std::filesystem::directory_iterator(dir, ec)) {
-    // Bound the sweep: a million dropped files must not turn `control-list` into
-    // an unbounded loop / kill-storm / unbounded vector.
-    if (instances.size() >= kMaxControlInstances) {
+    // Bound the sweep by ENTRIES EXAMINED, not instances accepted: a reject path
+    // (bad stem, oversized, unparseable, pid-mismatch) never grows `instances`, so a
+    // million dropped files must not turn `control-list` into an unbounded loop /
+    // kill-storm. Also stop once we have collected the accepted-instance cap.
+    if (++scanned > kMaxControlInstanceScan || instances.size() >= kMaxControlInstances) {
       break;
     }
     if (entry.path().extension() != ".json") {
@@ -135,10 +145,14 @@ std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
     // Bound the ACTUAL read, not just the file_size() pre-check above: a hostile
     // local writer can grow the descriptor between the stat and the open (TOCTOU),
     // and an unbounded istreambuf slurp would then defeat kMaxDescriptorFileBytes and
-    // OOM/stall the driver. Read at most the cap; an over-cap file reads truncated,
-    // fails JSON parsing, and is rejected below.
-    std::string contents(static_cast<std::size_t>(kMaxDescriptorFileBytes), '\0');
-    in.read(contents.data(), static_cast<std::streamsize>(kMaxDescriptorFileBytes));
+    // OOM/stall the driver. Size the buffer to the stat'd length (already proven
+    // <= kMaxDescriptorFileBytes above) rather than pre-allocating and zero-filling the
+    // full 1 MiB cap for every ~1 KB descriptor — a hostile directory of small files
+    // must not amplify into gigabytes of zero-fill. A file grown past its stat reads
+    // truncated, fails JSON parsing, and is rejected below.
+    const std::size_t read_size = static_cast<std::size_t>(file_bytes);
+    std::string contents(read_size, '\0');
+    in.read(contents.data(), static_cast<std::streamsize>(read_size));
     contents.resize(static_cast<std::size_t>(in.gcount()));
     in.close();
     while (!contents.empty() && (contents.back() == '\n' || contents.back() == '\r')) {

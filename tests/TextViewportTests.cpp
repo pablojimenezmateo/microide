@@ -1001,6 +1001,40 @@ void TestTextViewportSoftWrapPageMovesByVisibleRows() {
          "page up should move back by visible wrapped rows under soft wrap");
 }
 
+// Regression: Shift+PageUp / Shift+PageDown must extend the selection like every
+// other shifted motion key. Page() used to drop the modifier entirely and always
+// move with extend_selection=false, so a paging motion discarded the selection
+// instead of growing it.
+void TestTextViewportShiftPageExtendsSelection() {
+  TextViewport viewport;
+  std::string content;
+  for (int i = 0; i < 30; ++i) {
+    content += "line";
+    content += std::to_string(i);
+    content += "\n";
+  }
+  viewport.LoadContent(content, "/tmp/shift-page.txt");
+  viewport.SetViewportSize(10, 80);
+  viewport.MoveCursorTo(20, 2);
+  Expect(!viewport.selection_range().has_value(), "no selection before a paging motion");
+
+  viewport.Page(-1, /*extend_selection=*/true);
+  const auto selection = viewport.selection_range();
+  Expect(selection.has_value(), "Shift+PageUp must create a selection");
+  Expect(viewport.cursor_line() < 20, "the caret must move up a page");
+  const SelectionRange normalized = TextViewport::NormalizeRange(*selection);
+  Expect(normalized.end.line == 20 && normalized.end.column == 2,
+         "the selection anchor stays at the original caret position");
+  Expect(normalized.start.line == viewport.cursor_line() &&
+             normalized.start.column == viewport.cursor_column(),
+         "the selection start follows the paged caret");
+
+  // A paging motion WITHOUT shift collapses the selection, matching arrow keys.
+  viewport.Page(1, /*extend_selection=*/false);
+  Expect(!viewport.selection_range().has_value(),
+         "PageDown without shift must clear the selection");
+}
+
 void TestTextViewportSoftWrapMovesSecondaryCaretsByVisibleRows() {
   TextViewport viewport;
   viewport.LoadContent("abcdefghijklmnopqrst\nabcdefghijk\nqrstuvwxyzabcdefgh\n",
@@ -3010,6 +3044,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSoftWrapCollapsedFoldOpenerVerticalMotionEscapes);
   AddTest(tests, "TextViewport/SoftWrapPageMovesByVisibleRows",
           TestTextViewportSoftWrapPageMovesByVisibleRows);
+  AddTest(tests, "TextViewport/ShiftPageExtendsSelection",
+          TestTextViewportShiftPageExtendsSelection);
   AddTest(tests, "TextViewport/SoftWrapMovesSecondaryCaretsByVisibleRows",
           TestTextViewportSoftWrapMovesSecondaryCaretsByVisibleRows);
   AddTest(tests, "TextViewport/SoftWrapVisualHitRoundTripsContinuationRows",

@@ -14,6 +14,51 @@ These were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
 a latent API-contract hazard with no live trigger, so a rushed fix risked a
 regression worse than the defect. Recorded here so they are not silently lost.
 
+> **Deferred 2026-07-12 (pass 20 — cross-subsystem bug hunt):** a four-way fan-out
+> (control/platform, search/git-state, persistence/session, editor-core) landed 3
+> fixes (control-instance discovery sweep bounded by entries-examined + right-sized
+> descriptor read; count-all search per-worker local match tally to kill shared-atomic
+> contention + inner-loop cancel poll; Shift+PageUp/PageDown now extend the selection).
+> These genuine lower-severity findings were **not** fixed and are recorded here:
+> - **Persistence: no parent-directory fsync after the atomic rename.**
+>   `PersistedRecordWriter::WriteFile` (`src/persistence/PersistedRecordWriter.cpp:85`)
+>   fsyncs the temp file contents (`DurableFile.cpp` `WriteFileBytesDurable`) but never
+>   fsyncs the containing directory after `RenameReplacing`, so on POSIX the rename is
+>   not durable until the dir is synced. A hard power loss immediately after
+>   `FlushSessionStateForCrashSafety` can lose the newest session/config write. Deferred
+>   deliberately: the priority stack is speed-first and a directory fsync on every
+>   (debounced) save is a real cost, and the reader's `.bak` fallback already bounds the
+>   loss to "only the very latest save." `DurableFile.h` documents that directory
+>   durability is the caller's responsibility. (Persistence #1, durability/speed
+>   tradeoff.)
+> - **Persistence: layout float fields are not clamped on restore.**
+>   `WorkspacePersistenceCoordinatorSession.cpp` clamps `group_split_fraction` to
+>   `[0.1,0.9]` but applies `compare_divider_fraction`, `merge_left/right_divider_fraction`,
+>   `sidebar_width`, `bottom_panel_height`, and `right_pane_width` verbatim. A CRC-valid
+>   hand-edited or NaN→0-neutralized value yields a degenerate pane. Not reachable from a
+>   normal save (live values are finite/in-range); robustness only. Fix mirrors the
+>   existing `std::clamp`. (Persistence #2, robustness.)
+> - **Editor: multi-caret soft-tab insert uses the primary caret's column for every
+>   caret.** `TextViewportEditEngine.cpp` `InsertTab` computes the padding width once
+>   from `cursor_visual_column()` (primary) and `InsertText` fans the identical string to
+>   all carets, so carets at ragged columns don't align to their own tab stop. Reachable
+>   via plain multi-caret Tab. Low user impact; the fix needs per-caret string building
+>   through the multi-caret aggregate path (`ApplyMultiCaretEdit` per-caret strings, like
+>   `PasteText`), which is delicate enough to warrant a deliberate change. (Editor #2.)
+> - **Editor: multi-caret Shift+Tab (outdent) drops/strands secondary carets.**
+>   `ShapingActions.cpp` `OutdentSelection` → `ReplaceLines` → `BuildLineHistoryEntry`
+>   snaps the primary to `(range.first,0)` and leaves secondary carets at their pre-edit
+>   columns even though each line de-indented (text shifted left). Fix mirrors
+>   `MoveLineUp/Down`'s `SnapshotCaretsForLineMove`/`RestoreCaretsAfterLineMove` with a
+>   column shift; medium confidence, touches undo grouping — deferred to avoid a
+>   subtly-wrong caret restore. (Editor #3.)
+> - **Search: minor perf-counter/cosmetic notes.** `ProjectSearchService.cpp` `LowerLine`
+>   bumps `SearchProjectLowerLineCalls` even in case-sensitive mode where it only
+>   `clear()`s (counter inflation, not behavior); and a porcelain-v2 rename's `old_path`
+>   gets the same `Modified` tree badge as the new path (the now-deleted source shows
+>   Modified rather than Deleted — cosmetic, overlaps the still-partly-deferred rename
+>   item). (Search hunter, low.)
+>
 > **Deferred 2026-07-12 (pass 19 — cross-subsystem bug hunt):** a four-way fan-out
 > landed 4 fixes (input single-line-surface Cut/Copy/SelectAll data-loss guard;
 > snippet `${1:|choice|}` newline-in-choice corruption; commit-panel per-keystroke

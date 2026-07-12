@@ -365,6 +365,11 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     util::RegexMatchData match_data =
         regex_pattern ? regex_pattern->CreateMatchData() : util::RegexMatchData{};
     std::vector<ProjectSearchResult> batch;
+    // Count-all matches seen after the global display cap is reached. Counted in this
+    // per-worker local (folded into `matches_found` once at worker exit) instead of a
+    // per-match fetch_add on the shared atomic, which would serialize every worker on
+    // one cache line for the whole tail of a common-pattern count-all search.
+    std::size_t local_over_cap_matches = 0;
 
     // Default stops claiming files once the display cap is reached; count-all
     // keeps scanning every file so it can report the exact total.
@@ -424,14 +429,38 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
           // (found 1..cap) keep their match for display; later matches only bump
           // the count and flag truncation, so all workers together store at most
           // the cap regardless of thread interleaving.
-          const std::size_t found = matches_found.fetch_add(1, std::memory_order_relaxed) + 1;
-          if (found > kMaxProjectSearchResults) {
+          //
+          // Past the cap a match can never be stored, so avoid the shared-atomic
+          // fetch_add entirely: hammering `matches_found` once per match makes all
+          // workers ping-pong one cache line (the hot contention point for a common
+          // pattern in count-all), and the inner loop otherwise never polls Stop() —
+          // one enormous single-line file would ignore cancellation for seconds.
+          // Count locally, fold in at worker exit, and poll cancellation here.
+          if (matches_found.load(std::memory_order_relaxed) >= kMaxProjectSearchResults) {
             truncated.store(true, std::memory_order_relaxed);
             if (!count_all) {
               reached_cap = true;
               break;
             }
+            ++local_over_cap_matches;
+            if (local_over_cap_matches % search_internal::kRegexCancelPollInterval == 0 &&
+                cancel_requested_.load(std::memory_order_relaxed)) {
+              reached_cap = true;
+              break;
+            }
             continue;  // count-all keeps scanning without storing past the cap
+          }
+          const std::size_t found = matches_found.fetch_add(1, std::memory_order_relaxed) + 1;
+          if (found > kMaxProjectSearchResults) {
+            // Lost the boundary race to another worker that just filled the last slot.
+            // This match is already counted in the global total via the fetch_add
+            // above, so it must NOT also be added to local_over_cap_matches.
+            truncated.store(true, std::memory_order_relaxed);
+            if (!count_all) {
+              reached_cap = true;
+              break;
+            }
+            continue;
           }
           // Collapse the line for display while mapping this match's byte range
           // into the collapsed preview so the sidebar can highlight it.
@@ -463,6 +492,14 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
         }
         line_start = newline + 1;
       }
+    }
+
+    // Fold this worker's post-cap tally into the global total exactly once. Every
+    // over-cap match was counted here rather than via the shared atomic, so the
+    // count-all total is only complete after this fold. (Under-cap and boundary-race
+    // matches were already counted by the fetch_add above.)
+    if (local_over_cap_matches != 0) {
+      matches_found.fetch_add(local_over_cap_matches, std::memory_order_relaxed);
     }
 
     if (!batch.empty() && !token.IsCancellationRequested()) {

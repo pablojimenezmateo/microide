@@ -136,7 +136,7 @@ class TextViewport {
                                 std::size_t visual_column,
                                 bool extend_selection = false);
   void ScrollVertical(int delta);
-  void Page(int direction);
+  void Page(int direction, bool extend_selection = false);
   void InsertCharacter(char character);
   void InsertText(std::string_view text, bool record_undo = true);
   // Paste with VSCode multi-caret semantics: with N carets and clipboard text of
