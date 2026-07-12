@@ -737,22 +737,26 @@ void TabCoordinator::ReloadVirtualDocumentTabs(const std::filesystem::path& virt
     return;
   }
 
+  // Walk EVERY editor group, not just the focused one: a virtual document open in
+  // both split panes must refresh both copies, matching ReloadEditorTabsForPath.
   bool reloaded_any = false;
-  for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
-    auto& tab = state_.focused_group().open_tabs[i];
-    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() || IsDirty(i)) {
-      continue;
+  for (std::size_t gi = 0; gi < state_.editor_groups.size(); ++gi) {
+    EditorGroup& group = state_.editor_groups[gi];
+    for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
+      auto& tab = group.open_tabs[i];
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+          TabStateIsDirty(tab)) {
+        continue;
+      }
+      if (operations_.editor_view_path(*tab.editor_state) != virtual_path) {
+        continue;
+      }
+      RestoreViewportText(tab.editor_state->viewport, content);
+      reloaded_any = true;
+      if (i == group.active_tab_index) {
+        operations_.apply_editor_preferences(tab.editor_state->viewport);
+      }
     }
-
-    if (operations_.editor_view_path(*tab.editor_state) != virtual_path) {
-      continue;
-    }
-    RestoreViewportText(tab.editor_state->viewport, content);
-    reloaded_any = true;
-    if (i != state_.focused_group().active_tab_index) {
-      continue;
-    }
-    operations_.apply_editor_preferences(tab.editor_state->viewport);
   }
 
   if (reloaded_any) {

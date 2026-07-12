@@ -277,9 +277,14 @@ int RunControlSend(int argc, char** argv) {
     EmitError("could not connect to " + socket->string());
     return 2;
   }
-  // Bound the write by the caller's overall timeout so a peer that accepts but never
-  // reads cannot hang control-send indefinitely (the read side already honors it).
-  if (!client.SendLine(*request, std::chrono::seconds(options.timeout_seconds))) {
+  // ONE overall deadline shared by the send and the read loop. Previously each used
+  // its own full timeout, so a peer that accepts but never reads could cost up to
+  // 2x the requested timeout (a full send timeout followed by a full read timeout).
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(options.timeout_seconds);
+  const auto send_budget = std::chrono::duration_cast<std::chrono::milliseconds>(
+      deadline - std::chrono::steady_clock::now());
+  if (!client.SendLine(*request, send_budget)) {
     EmitError("failed to send request");
     return 2;
   }
@@ -289,9 +294,6 @@ int RunControlSend(int argc, char** argv) {
   if (!options.wait_event.has_value()) {
     client.ShutdownWrite();
   }
-
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(options.timeout_seconds);
   bool response_seen = false;
   bool response_ok = false;
   bool wait_seen = !options.wait_event.has_value();

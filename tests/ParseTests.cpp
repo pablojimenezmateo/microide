@@ -46,6 +46,17 @@ void TestParseFloatParsesFiniteValuesAndRejectsInvalidInput() {
          "parse float should reject leading whitespace");
   Expect(!microide::util::ParseFloat("nan").has_value(),
          "parse float should reject non-finite values");
+  // Regression: match the integer parsers' strictness (std::from_chars). strto*
+  // previously accepted a leading space / '+' / hex-float on an otherwise FINITE
+  // value, making ParseFloat laxer than ParseInt for the same token.
+  Expect(!microide::util::ParseFloat(" 3.5").has_value(),
+         "parse float should reject leading whitespace before a finite value");
+  Expect(!microide::util::ParseFloat("+3.5").has_value(),
+         "parse float should reject a leading '+'");
+  Expect(!microide::util::ParseFloat("0x1p4").has_value(),
+         "parse float should reject hex-float notation");
+  Expect(microide::util::ParseFloat("-3.5").has_value(),
+         "parse float still accepts a leading '-'");
 }
 
 void TestParseRealAcceptsSubnormalsAndRejectsOverflow() {

@@ -35,6 +35,22 @@ std::optional<T> ParseRealExact(std::string_view text, Convert convert) {
   if (text.empty()) {
     return std::nullopt;
   }
+  // Match the integer parsers' strictness (std::from_chars): reject a leading space
+  // and a leading '+', and reject hex-float ("0x…"). strto* would otherwise accept
+  // all three, making ParseFloat/ParseDouble laxer than ParseInt for the same token.
+  {
+    const char first = text.front();
+    if (std::isspace(static_cast<unsigned char>(first)) != 0 || first == '+') {
+      return std::nullopt;
+    }
+    std::string_view body = text;
+    if (body.front() == '-') {
+      body.remove_prefix(1);
+    }
+    if (body.size() >= 2 && body[0] == '0' && (body[1] == 'x' || body[1] == 'X')) {
+      return std::nullopt;
+    }
+  }
   std::string buffer(text);
   errno = 0;
   char* end = nullptr;

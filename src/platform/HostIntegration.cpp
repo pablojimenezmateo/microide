@@ -62,6 +62,11 @@ HostIntegrationResult OpenPathInFileManager(const std::filesystem::path& directo
                                                     .capture_stdout = false,
                                                     .capture_stderr = true,
                                                     .silence_stderr = false,
+                                                    // xdg-open normally forks and returns immediately;
+                                                    // a finite timeout bounds a wedged file manager so
+                                                    // it can never hang the calling (UI) thread with the
+                                                    // default 0 = wait-indefinitely.
+                                                    .timeout_ms = 10000,
                                                 });
   if (!result.success()) {
     return Failure(result.stderr_text.empty() ? "xdg-open failed" : result.stderr_text);

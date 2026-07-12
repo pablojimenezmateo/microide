@@ -2,6 +2,7 @@
 #include "workspace/WorkspacePersistenceCoordinator.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <limits>
 
@@ -484,14 +485,21 @@ bool PersistenceCoordinator::RestoreSessionState() {
 
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::RestoreLayoutState");
+    // A CRC-valid but hand-edited (or NaN/Inf) persisted float would otherwise flow
+    // straight into layout: std::clamp(NaN, …) returns NaN, so the render-time pane
+    // clamps cannot recover it and the pane collapses/explodes. Replace any
+    // non-finite or negative dimension with the schema default here.
+    const auto sanitize_pixels = [](float value, float fallback) {
+      return std::isfinite(value) && value >= 0.0f ? value : fallback;
+    };
     state.sidebar.visible = persisted_session.sidebar_visible;
-    state.sidebar.width = persisted_session.sidebar_width;
-    state.panel.height = persisted_session.bottom_panel_height;
+    state.sidebar.width = sanitize_pixels(persisted_session.sidebar_width, 288.0f);
+    state.panel.height = sanitize_pixels(persisted_session.bottom_panel_height, 156.0f);
     state.sidebar.git.outgoing_base_choice = persisted_session.outgoing_base_choice;
     // Right-side debug pane: restore width/mode always, but only re-open it when the
     // debugger feature is currently enabled (else a pane left open in a prior session
     // would surface debug UI in the default debugger-off state).
-    state.debug_pane.width = persisted_session.right_pane_width;
+    state.debug_pane.width = sanitize_pixels(persisted_session.right_pane_width, 0.0f);
     state.debug_pane.mode = persisted_session.right_pane_mode <=
                                     static_cast<std::uint8_t>(DebugPaneMode::Breakpoints)
                                 ? static_cast<DebugPaneMode>(persisted_session.right_pane_mode)

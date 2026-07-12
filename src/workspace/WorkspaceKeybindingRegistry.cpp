@@ -768,9 +768,18 @@ bool ParseKeyChord(std::string_view chord, SDL_Keycode* key_out, SDL_Keymod* mod
   // Map remaining string to SDL_Keycode.
   const std::string lower_key = util::ToLowerAscii(remaining);
 
+  // SDL's scancode names for letters and function keys are UPPERCASE ("A".."Z",
+  // "F1"..). A plugin binding written "ctrl+a" arrives lowercase, so pass the
+  // canonical uppercase form — otherwise a case-sensitive SDL_GetScancodeFromName
+  // returns SCANCODE_UNKNOWN and the whole binding is silently dropped.
+  std::string sdl_scancode_name = remaining;
+  for (char& character : sdl_scancode_name) {
+    character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+  }
+
   if (lower_key.size() == 1 && std::isalpha(static_cast<unsigned char>(lower_key[0]))) {
     // Single letter: map to SDL keycode via scancode.
-    const SDL_Scancode sc = SDL_GetScancodeFromName(remaining.c_str());
+    const SDL_Scancode sc = SDL_GetScancodeFromName(sdl_scancode_name.c_str());
     if (sc == SDL_SCANCODE_UNKNOWN) {
       return false;
     }
@@ -789,7 +798,7 @@ bool ParseKeyChord(std::string_view chord, SDL_Keycode* key_out, SDL_Keymod* mod
       }
     }
     if (all_digits) {
-      const SDL_Scancode sc = SDL_GetScancodeFromName(remaining.c_str());
+      const SDL_Scancode sc = SDL_GetScancodeFromName(sdl_scancode_name.c_str());
       if (sc != SDL_SCANCODE_UNKNOWN) {
         *key_out = SDL_GetKeyFromScancode(sc, SDL_KMOD_NONE, false);
         *mods_out = mods;

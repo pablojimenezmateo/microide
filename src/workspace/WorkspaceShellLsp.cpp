@@ -228,8 +228,15 @@ void WorkspaceShell::ConsumeControlCallbacks() {
 ControlChannelService::CommandOutcome WorkspaceShell::ExecuteControlCommand(
     const std::string& command_line) {
   ControlChannelService::CommandOutcome outcome;
+  // Snapshot the shared panel feedback before dispatch: it may still hold a message
+  // from a prior unrelated UI action. Only attribute feedback to THIS command if the
+  // command actually changed it, so an ok:true reply does not carry a misleading
+  // stale line.
+  const std::string feedback_before = context_.current_project_state.panel.feedback.text;
   outcome.ok = MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
-  const std::string& feedback = context_.current_project_state.panel.feedback.text;
+  const std::string& feedback_after = context_.current_project_state.panel.feedback.text;
+  const std::string feedback =
+      feedback_after != feedback_before ? feedback_after : std::string{};
   if (outcome.ok) {
     outcome.feedback = feedback;
   } else {
