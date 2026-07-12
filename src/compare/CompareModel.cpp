@@ -248,6 +248,10 @@ bool CanPairAlignedLines(double similarity,
                          std::size_t left_count,
                          std::size_t right_count) {
   if (left_count == 1 && right_count == 1) {
+    // A 1-del/1-add hunk always pairs as a single Modified row, even at ~0
+    // similarity: a single-line change is by-design shown in place with an
+    // intra-line diff (pinned by TestCompareManyTokenLineBoundsAlignmentDp). Do not
+    // gate this on similarity.
     return true;
   }
   if ((left_count == 1 && right_count > 1) || (right_count == 1 && left_count > 1)) {

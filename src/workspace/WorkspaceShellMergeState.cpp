@@ -186,16 +186,17 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
   ParsedGitConflictOutput parsed;
   std::vector<ParsedGitConflictSegment> segments;
   std::size_t line_index = 0;
-  // The conflict separator is exactly "=======" (7 equals). SplitSyntaxLines keeps
-  // a trailing '\r', so a CRLF working-tree file yields "=======\r"; match with a
-  // '\r'-tolerant exact compare. Staying exact (not starts_with) avoids treating a
-  // content line like "=========" or "======= heading" inside the block as the
-  // separator, which the sigil markers can afford via starts_with but this cannot.
+  // Git's conflict separator is a run of '=' whose length is merge.conflictMarkerSize
+  // (default 7, but configurable). SplitSyntaxLines keeps a trailing '\r', so a CRLF
+  // working-tree file yields "=======\r"; strip it, then match "all '=' and length
+  // >= 7" so a non-default marker size still parses. A content line like
+  // "======= heading" (trailing text) is excluded, matching how the sigil markers
+  // stay length-tolerant via starts_with.
   const auto is_conflict_separator = [](std::string_view line) {
     if (!line.empty() && line.back() == '\r') {
       line.remove_suffix(1);
     }
-    return line == "=======";
+    return line.size() >= 7 && line.find_first_not_of('=') == std::string_view::npos;
   };
   while (line_index < lines.size()) {
     if (!lines[line_index].starts_with("<<<<<<<")) {

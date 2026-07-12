@@ -166,7 +166,39 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   const std::size_t visible_start_row = static_cast<std::size_t>(std::max(0, compare_tab->scroll_row));
   const std::size_t visible_end_row =
       visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)) + 64;
-  PopulateCompareSyntaxTokensForWindow(*compare_tab, visible_start_row, visible_end_row);
+  // The compare view collapses large unchanged runs, so a visible presentation row
+  // can map to a MODEL row far below its presentation index. The cumulative
+  // tokenizer indexes by model row, so derive its window in MODEL space from the
+  // presentation rows actually on screen (a CollapsedContext row spans through the
+  // end of its run so rows below inherit the correct syntax state). Feeding the
+  // presentation scroll position directly capped tokenization far below the visible
+  // model rows, leaving hunks deep in a collapsed diff unhighlighted.
+  const std::size_t presentation_row_count = compare_tab->presentation.rows.size();
+  const auto model_row_for_presentation = [&](std::size_t presentation_index) -> std::size_t {
+    if (presentation_row_count == 0) {
+      return compare_tab->model.rows.size();
+    }
+    const compare::ComparePresentationRow* row = CompareTabPresentationRowAt(
+        *compare_tab, std::min(presentation_index, presentation_row_count - 1));
+    if (row == nullptr) {
+      return compare_tab->model.rows.size();
+    }
+    if (row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
+      return row->collapsed_run_start_model_row + row->collapsed_run_length;
+    }
+    return row->model_row_index;
+  };
+  const std::size_t syntax_model_start = model_row_for_presentation(visible_start_row);
+  const std::size_t syntax_model_end =
+      std::min(compare_tab->model.rows.size(), model_row_for_presentation(visible_end_row) + 1);
+  PopulateCompareSyntaxTokensForWindow(*compare_tab, syntax_model_start, syntax_model_end);
+  // The tokenizer is cumulative and capped per frame; if it has not yet reached the
+  // deepest visible model row (e.g. after scrolling past a giant collapsed run),
+  // request another frame so it progressively catches up instead of leaving those
+  // rows permanently unhighlighted. Self-terminates once caught up (no idle redraw).
+  if (compare_tab->syntax_rows_tokenized < syntax_model_end) {
+    RequestRedrawRect(rect);
+  }
   PrepareCompareVisibleLayoutsForWindow(
       *compare_tab, visible_start_row,
       visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)),

@@ -1290,7 +1290,77 @@ void TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable() {
   }
 }
 
+// Regression: syntax highlighting reaches hunks deep in a collapsed large-file
+// diff. The tokenizer window is derived in MODEL space from the visible
+// presentation rows (a collapsed run maps a low presentation index to a high model
+// row), with a continued redraw catching the cumulative tokenizer up. Previously
+// the window used the presentation scroll position, capping tokenization far below
+// the visible model rows, so deep rows drew unhighlighted.
+void TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "big.cpp";
+  // A large file whose long middle is unchanged (so it collapses) with edits at the
+  // top and bottom, so the bottom hunk sits at a high MODEL row behind a collapsed
+  // run of a much smaller PRESENTATION height.
+  std::string base;
+  for (int i = 0; i < 300; ++i) {
+    base += "int v" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  WriteFile(source, base);
+  InitializeGitRepo(root);
+  CommitAll(root, "big base fixture", "big base fixture");
+  std::string edited = base;
+  edited.replace(edited.find("int v0 = 0;"), std::string("int v0 = 0;").size(), "int v0 = 999;");
+  edited.replace(edited.find("int v299 = 299;"), std::string("int v299 = 299;").size(),
+                 "int v299 = 42;");
+  WriteFile(source, edited);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "large collapsed-diff comparison should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const std::size_t model_row_count = compare.model.rows.size();
+  const std::size_t presentation_row_count =
+      WorkspaceShellTestAccess::ActiveComparePresentationRowCount(shell);
+  Expect(model_row_count > presentation_row_count + 100,
+         "the unchanged middle should collapse so model rows far exceed presentation rows");
+
+  // Scroll to the bottom so the deep (high-model-row) hunk is on screen.
+  compare.scroll_row = static_cast<int>(presentation_row_count);
+
+  // Render repeatedly to let the per-frame-capped cumulative tokenizer catch up.
+  SoftwareCanvas canvas(1280, 720);
+  for (int frame = 0; frame < 20; ++frame) {
+    shell.Render(canvas.renderer(), 1280, 720);
+  }
+
+  auto& tokenized_compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(tokenized_compare.syntax_rows_tokenized == tokenized_compare.model.rows.size(),
+         "tokenization reaches the deepest visible model row behind the collapsed run");
+  // A deep content row (the bottom v299 change) is highlighted — not left blank.
+  // Scan the tail (the very last model row is the phantom trailing empty line).
+  bool deep_row_has_tokens = false;
+  const std::size_t tail_start = tokenized_compare.model.rows.size() > 8
+                                     ? tokenized_compare.model.rows.size() - 8
+                                     : 0;
+  for (std::size_t row = tail_start; row < tokenized_compare.model.rows.size(); ++row) {
+    if (!tokenized_compare.left_tokens_by_row[row].empty() ||
+        !tokenized_compare.right_tokens_by_row[row].empty()) {
+      deep_row_has_tokens = true;
+      break;
+    }
+  }
+  Expect(deep_row_has_tokens,
+         "a deep content row behind the collapsed run has syntax tokens (is highlighted)");
+}
+
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/CompareSyntaxReachesDeepCollapsedRows",
+          TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",
           TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareRejectsBinaryAndUnreadable",
