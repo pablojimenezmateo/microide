@@ -14,6 +14,39 @@ These were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
 a latent API-contract hazard with no live trigger, so a rushed fix risked a
 regression worse than the defect. Recorded here so they are not silently lost.
 
+> **Deferred 2026-07-12 (pass 19 — cross-subsystem bug hunt):** a four-way fan-out
+> landed 4 fixes (input single-line-surface Cut/Copy/SelectAll data-loss guard;
+> snippet `${1:|choice|}` newline-in-choice corruption; commit-panel per-keystroke
+> full `git diff --cached` conflict scan gated to dispatch-only; plugin synchronous
+> query registration-during-iteration use-after-free). These lower-severity items
+> were **not** fixed and are recorded here:
+> - **Git: `BuildCommitStagedSummary` still runs `git diff --cached --numstat -z` on
+>   the shell thread on every commit-panel keystroke.** `RefreshDerivedState` calls it
+>   from `OnDraftEdited`, but the staged summary (`N files, +x/-y`) depends only on the
+>   git index, not the subject/body text the user is typing — so it is recomputed
+>   redundantly per keystroke. `--numstat` is bounded (one line per staged file) so the
+>   stall is far smaller than the full-diff conflict scan fixed this pass, but for large
+>   staged sets it is still avoidable work. Fix: cache the summary against the git
+>   generation and only rebuild it when the index changes, not on draft edits. (Git
+>   hunter #3, follow-on.)
+> - **Git: `GitConflictMarkers` stderr coupling / `GitCommandUtil.cpp:100-105`.** The
+>   staged-diff conflict scan treats any non-success `git diff --cached` as "no markers"
+>   — a git error (e.g. a transiently locked index) silently disables the safety check
+>   rather than surfacing. Low severity (the commit still runs git itself, which would
+>   fail loudly), but the check could distinguish "clean" from "could not determine".
+>   (Git hunter #3, minor.)
+> - **Plugin: dead MCP-tool registration code + missing MCP teardown.** The synchronous
+>   query registration fix (this pass) closed the live UAF; separately, an MCP-tool
+>   registration branch appears unreachable from the current verb table and there is no
+>   symmetric teardown path for MCP tools on reload. No live trigger; recorded for a
+>   deliberate plugin-host audit rather than a speculative edit. (Plugin hunter #4,
+>   latent/dead-code.)
+> - **Input: `HandleCompareKeyDown` ascii-dispatch does not re-check the Ctrl modifier**
+>   before treating a printable keysym as a find-bar character, and `ParseKeyChord`
+>   silently drops a chord whose second stroke is unrecognized instead of surfacing it.
+>   Both are narrow behavioral papercuts with no data-loss; recorded, not fixed.
+>   (Input hunter #1, minor.)
+>
 > **Deferred 2026-07-11 (pass 18 — cross-subsystem bug hunt):** a four-way fan-out
 > landed 2 fixes (split-view stale highlight token cache; AsyncSubprocess moved-from
 > guard symmetry). Render/layout and compare/merge/blame came back clean. One minor

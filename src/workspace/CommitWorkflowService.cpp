@@ -98,7 +98,8 @@ PersistedCommitDraftState CommitWorkflowService::BuildPersistedDraft(
   };
 }
 
-void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state) {
+void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state,
+                                                const bool run_blocking_conflict_scan) {
   const project::GitRepositoryState repository_state = git_repository_service_.CurrentState();
   state.staged_summary = project::BuildCommitStagedSummary(repository_state);
   if (state.staged_summary.file_count == 0) {
@@ -109,10 +110,12 @@ void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state) {
                                 std::to_string(state.staged_summary.deleted_lines);
   }
   // Pass the summary we just built so RunCommitPreChecks does not re-run the identical
-  // `git diff --cached --numstat` subprocess on the shell thread.
+  // `git diff --cached --numstat` subprocess on the shell thread. The unbounded
+  // `git diff --cached` conflict-marker scan only runs when a commit is about to
+  // dispatch (run_blocking_conflict_scan); interactive refreshes skip it for speed.
   state.checks = project::RunCommitPreChecks(
       repository_state, state.subject.text(), CommitWorkflowBodyText(state.body),
-      state.acknowledged_warning_ids, &state.staged_summary);
+      state.acknowledged_warning_ids, &state.staged_summary, run_blocking_conflict_scan);
   if (callbacks_.request_commit_workflow_redraw != nullptr) {
     callbacks_.request_commit_workflow_redraw();
   }
@@ -184,7 +187,9 @@ bool CommitWorkflowService::RequestCommit(CommitWorkflowState& state,
   if (!state.open || state.operation_in_flight) {
     return false;
   }
-  RefreshDerivedState(state);
+  // Pre-dispatch refresh runs the full conflict-marker scan; a positive result is a
+  // blocking check that CanExecuteCommit rejects below.
+  RefreshDerivedState(state, /*run_blocking_conflict_scan=*/true);
   if (!CanExecuteCommit(state)) {
     if (callbacks_.set_command_feedback != nullptr) {
       for (const project::CommitPreCheck& check : state.checks) {

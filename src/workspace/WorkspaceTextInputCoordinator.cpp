@@ -417,6 +417,10 @@ bool TextInputCoordinator::HasSelectionAtActiveSingleLineSurface() const {
   return text_state != nullptr && text_state->HasSelection();
 }
 
+bool TextInputCoordinator::HasActiveSingleLineTextSurface() const {
+  return ActiveSingleLineTextState() != nullptr;
+}
+
 std::string TextInputCoordinator::SelectedTextAtActiveSingleLineSurface() const {
   const editor::SingleLineEditor* text_state = ActiveSingleLineTextState();
   return text_state != nullptr ? text_state->SelectedText() : std::string{};

@@ -38,8 +38,10 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
   };
   if (needs_worker) {
     // Synchronous round-trip: the UI thread parks until the worker finishes. Direct
-    // callers (and the test suite) depend on Reload's synchronous bool result.
-    impl_->RunOnWorkerBlocking(snapshot, load_body);
+    // callers (and the test suite) depend on Reload's synchronous bool result. This
+    // is the ONE blocking call that is genuine setup, so it allows registration; every
+    // other blocking caller (queries/providers/commands) takes the safe default (false).
+    impl_->RunOnWorkerBlocking(snapshot, load_body, /*allow_registration=*/true);
   } else {
     impl_->ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true, load_body);
   }

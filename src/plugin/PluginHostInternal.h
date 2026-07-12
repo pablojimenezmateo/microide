@@ -220,12 +220,21 @@ struct PluginHost::Impl {
   // worker job, so a late completion past a timeout is safe to abandon.
   SaveParticipantResult RunSaveParticipantsBounded(const std::filesystem::path& path,
                                                    std::string input);
+  // `allow_registration` defaults to false: a synchronous query/provider/command
+  // round-trip must NOT let its Lua PCall register contributions, because the query
+  // interop iterates a live runtime vector (completion_runtimes, code_action_runtimes,
+  // language_query_runtimes, annotation/scm/test/auth runtimes, …) by reference across
+  // that PCall — a mid-iteration push_back would reallocate the vector and dangle the
+  // loop's `provider` reference (a use-after-free). Only the reload/load body, which is
+  // genuine setup, passes true. This mirrors RunQueryAsync/RunOnWorkerDetached, which
+  // already run with allow_registration=false.
   template <typename F>
-  void RunOnWorkerBlocking(const PluginHostSnapshot& snapshot, F&& fn) {
+  void RunOnWorkerBlocking(const PluginHostSnapshot& snapshot, F&& fn,
+                           const bool allow_registration = false) {
     if (g_exec.executing || worker_ == nullptr) {
       // Already on the worker (re-entrant) or no worker wired: run inline with
       // exclusive access rather than dead-locking on a self-post.
-      ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true,
+      ExecuteWithContext(&snapshot, /*direct=*/true, allow_registration,
                          std::forward<F>(fn));
       return;
     }
@@ -242,7 +251,7 @@ struct PluginHost::Impl {
     // reference are safe: the UI thread blocks on `finished` until the job completes,
     // so every referent outlives the call (which is also why a deadline here would be
     // unsafe -- a late job would touch freed stack locals).
-    worker_->Post([this, &snapshot, &fn, &done]() {
+    worker_->Post([this, &snapshot, &fn, &done, allow_registration]() {
       // Release the UI-thread waiter on EVERY exit path, including a throw from
       // `fn`. The SerialWorkQueue firewall swallows worker exceptions, so without
       // this guard a throwing job would leave `done` unsatisfied and the
@@ -251,7 +260,7 @@ struct PluginHost::Impl {
         std::promise<void>& promise;
         ~ReleaseWaiter() { promise.set_value(); }
       } release_waiter{done};
-      ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true, fn);
+      ExecuteWithContext(&snapshot, /*direct=*/true, allow_registration, fn);
     });
     finished.wait();
   }

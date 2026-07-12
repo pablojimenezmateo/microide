@@ -627,6 +627,11 @@ void WorkspaceActionContext::SelectAll() {
     operations_.reset_caret_blink();
     return;
   }
+  if (operations_.has_active_single_line_text_surface()) {
+    // Active single-line field (possibly empty): consume the shortcut. Falling
+    // through would Select-All the background editor and steal focus to it.
+    return;
+  }
   if (auto* viewport = operations_.active_navigable_viewport(); viewport != nullptr) {
     viewport->SelectAll();
     operations_.reset_caret_blink();
@@ -779,7 +784,10 @@ std::string WorkspaceActionContext::CopySelectionText() const {
   if (state_.surface.focus == FocusTarget::Panel && operations_.terminal_has_selection()) {
     return operations_.selected_terminal_text();
   }
-  if (operations_.has_selection_at_active_single_line_text_surface()) {
+  if (operations_.has_active_single_line_text_surface()) {
+    // A single-line field owns the keystroke. Return its selection (empty when
+    // nothing is selected -> the caller skips the clipboard write) instead of
+    // falling through to the background editor and copying its current line.
     return operations_.selected_text_at_active_single_line_text_surface();
   }
   if (const auto* viewport = operations_.active_navigable_viewport(); viewport != nullptr) {
@@ -810,6 +818,12 @@ std::optional<std::string> WorkspaceActionContext::SelectionTextWithContext() {
 void WorkspaceActionContext::CutSelection() {
   if (operations_.cut_selection_at_active_single_line_text_surface()) {
     operations_.reset_caret_blink();
+    return;
+  }
+  if (operations_.has_active_single_line_text_surface()) {
+    // Active single-line field with nothing selected: consume the shortcut.
+    // Falling through would DeleteCurrentLine() on the background editor -- an
+    // out-of-nowhere data-loss edit behind the focused input surface.
     return;
   }
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {

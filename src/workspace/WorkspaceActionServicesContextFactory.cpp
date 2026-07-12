@@ -600,6 +600,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this]() {
                 return MakeTextInputCoordinator().HasSelectionAtActiveSingleLineSurface();
               },
+          .has_active_single_line_text_surface =
+              [this]() {
+                return MakeTextInputCoordinator().HasActiveSingleLineTextSurface();
+              },
           .selected_text_at_active_single_line_text_surface =
               [this]() {
                 return MakeTextInputCoordinator().SelectedTextAtActiveSingleLineSurface();

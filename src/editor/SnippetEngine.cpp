@@ -91,6 +91,16 @@ SnippetParseResult ParseSnippetBody(std::string_view body) {
               ++j;
             }
             choices.emplace_back(body.substr(start, j - start));
+            // A choice value must stay single-line: ApplyChoiceForTab records the
+            // post-cycle range as `start.column + text.size()` on one line, so a
+            // choice carrying a '\n'/'\r' (ReplaceRange would add a line) leaves a
+            // stale off-line range and orphans the wrapped text on the next cycle.
+            // Reject the malformed snippet (matching VSCode, whose choices cannot
+            // contain newlines, and the other parse-cap failure sentinels here).
+            if (choices.back().find('\n') != std::string::npos ||
+                choices.back().find('\r') != std::string::npos) {
+              return SnippetParseResult{};
+            }
             if (choices.size() > kMaxChoicesPerPlaceholder) {
               return SnippetParseResult{};
             }

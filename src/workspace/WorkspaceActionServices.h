@@ -136,6 +136,7 @@ class WorkspaceActionContext {
     std::function<editor::TextViewport*()> active_editable_viewport;
     std::function<bool(std::string_view)> insert_text_into_active_text_surface;
     std::function<bool()> has_selection_at_active_single_line_text_surface;
+    std::function<bool()> has_active_single_line_text_surface;
     std::function<std::string()> selected_text_at_active_single_line_text_surface;
     std::function<bool()> select_all_at_active_single_line_text_surface;
     std::function<bool()> cut_selection_at_active_single_line_text_surface;

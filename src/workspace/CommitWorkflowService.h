@@ -59,7 +59,11 @@ class CommitWorkflowService {
 
   void Open(CommitWorkflowState& state);
   void Close(CommitWorkflowState& state);
-  void RefreshDerivedState(CommitWorkflowState& state);
+  // `run_blocking_conflict_scan` gates the full `git diff --cached` conflict-marker
+  // scan. Interactive refreshes (open, per-keystroke draft edits, warning acks) pass
+  // false to keep the shell thread responsive; only the pre-dispatch refresh in
+  // RequestCommit pays for the unbounded scan, which still blocks the commit if it fires.
+  void RefreshDerivedState(CommitWorkflowState& state, bool run_blocking_conflict_scan = false);
   void OnDraftEdited(CommitWorkflowState& state);
   void AcknowledgeWarning(CommitWorkflowState& state, std::string_view warning_id);
   bool RequestCommit(CommitWorkflowState& state, project::CommitOperationKind operation);

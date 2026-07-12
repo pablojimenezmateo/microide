@@ -324,6 +324,43 @@ void TestWorkspaceShellBufferSearchIsNonModal() {
          "typing while the editor is focused must not change the find query");
 }
 
+// Regression: Cut/SelectAll shortcuts in a focused single-line surface (find
+// widget, file finder, commit subject, ...) must be consumed by that surface
+// even when it has nothing to act on -- they must NOT fall through to the
+// background editor. The worst case was Ctrl+X with no selection deleting a line
+// from the editor document behind the widget.
+void TestWorkspaceShellCutInSingleLineSurfaceDoesNotEditEditor() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha alpha\nbeta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  const std::size_t lines_before = WorkspaceShellTestAccess::ActiveEditor(shell).lines().LineCount();
+
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should open the find widget");
+  Expect(WorkspaceShellTestAccess::BufferSearchSurfaceFocused(shell),
+         "the freshly opened find query field should hold focus");
+
+  // Ctrl+A on the empty query must not Select-All the editor or steal focus to it.
+  SendKeyDown(shell, SDLK_A, SDL_KMOD_CTRL);
+  Expect(WorkspaceShellTestAccess::BufferSearchSurfaceFocused(shell),
+         "Ctrl+A in a focused single-line field must not move focus to the editor");
+
+  // Type a query (no selection), then Ctrl+X. This must not delete a line from
+  // the editor behind the widget (regression: it ran viewport->DeleteCurrentLine()).
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "alpha"),
+         "the find widget should accept a query");
+  SendKeyDown(shell, SDLK_X, SDL_KMOD_CTRL);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().LineCount() == lines_before,
+         "Ctrl+X in a focused single-line field must not edit the background editor");
+  Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "the background editor must stay clean after Ctrl+X in a single-line field");
+}
+
 void TestWorkspaceShellBufferSearchEnterCyclesMatches() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -484,6 +521,8 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/ProjectSearchSidebarClickMovesToCorrectLine",
           TestWorkspaceShellProjectSearchSidebarClickMovesToCorrectLine);
   AddTest(tests, "WorkspaceShell/BufferSearchIsNonModal", TestWorkspaceShellBufferSearchIsNonModal);
+  AddTest(tests, "WorkspaceShell/CutInSingleLineSurfaceDoesNotEditEditor",
+          TestWorkspaceShellCutInSingleLineSurfaceDoesNotEditEditor);
   AddTest(tests, "WorkspaceShell/BufferSearchEnterCyclesMatches",
           TestWorkspaceShellBufferSearchEnterCyclesMatches);
   AddTest(tests, "WorkspaceShell/BufferSearchReopenKeepsQueryAndRefocuses",

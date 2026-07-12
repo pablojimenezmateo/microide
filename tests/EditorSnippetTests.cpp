@@ -320,9 +320,27 @@ void TestSnippetParseRejectsTooManyChoices() {
          "a placeholder past the choice cap is rejected without unbounded growth");
 }
 
+// Regression: a choice value containing a newline is single-line-unsafe (cycling
+// to it via ApplyChoiceForTab records an off-line range and orphans the wrapped
+// text on the next cycle). The parser must reject such a snippet outright so the
+// corrupting multi-line choice never enters a session.
+void TestSnippetParseRejectsNewlineInChoice() {
+  const auto lf = ParseSnippetBody("${1:|a,b\nc|}$0");
+  Expect(lf.occurrences.empty() && lf.expanded.empty(),
+         "a choice containing a newline must be rejected");
+  const auto cr = ParseSnippetBody("${1:|a,b\rc|}$0");
+  Expect(cr.occurrences.empty() && cr.expanded.empty(),
+         "a choice containing a carriage return must be rejected");
+  // A normal single-line choice still parses.
+  const auto ok = ParseSnippetBody("${1:|aa,bb|}$0");
+  Expect(!ok.occurrences.empty(), "a single-line choice must still parse");
+}
+
 }  // namespace
 
 void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorSnippet/ParseRejectsNewlineInChoice",
+          TestSnippetParseRejectsNewlineInChoice);
   AddTest(tests, "EditorSnippet/CrossTabShiftOnInsert", TestSnippetCrossTabShiftOnInsert);
   AddTest(tests, "EditorSnippet/CrossTabShiftOnBackspace", TestSnippetCrossTabShiftOnBackspace);
   AddTest(tests, "EditorSnippet/CrossTabShiftOnChoice", TestSnippetCrossTabShiftOnChoice);

@@ -327,9 +327,62 @@ void TestCommitResultIsMarshaledToMainThread() {
          "draining completions on the main thread must publish the commit result");
 }
 
+// Regression: the ConflictMarkers pre-check runs an unbounded `git diff --cached`
+// on the calling thread. Interactive commit-panel refreshes (every keystroke) must
+// skip it for speed by passing scan_staged_diff_for_conflict_markers=false; only the
+// pre-dispatch check pays for it. Gating off must not surface the blocking check;
+// gating on must surface it for the same staged content.
+void TestConflictMarkerScanGate() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  using microide::workspace::GitRepositoryService;
+  using microide::workspace::GitSidebarRefreshScope;
+  using microide::workspace::OutgoingBaseChoice;
+  using microide::project::ProjectBackgroundExecutor;
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path& repo = temp_dir.path();
+  InitializeGitRepo(repo);
+  WriteFile(repo / "seed.txt", "seed\n");
+  CommitAll(repo, "base", "base");
+  // Stage a file whose added content leaks a real conflict-marker sigil.
+  WriteFile(repo / "conflict.txt", "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n");
+  RequireGitCommandSuccess(repo, {"add", "conflict.txt"}, "stage leaked conflict markers");
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService git_service(executor);
+  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+                                                OutgoingBaseChoice{}, false);
+  const GitRepositoryState state = git_service.CurrentState();
+  Expect(state.repo_available, "fixture repo should be available");
+  const auto summary = BuildCommitStagedSummary(state);
+
+  auto has_conflict_marker_check = [](const std::vector<microide::project::CommitPreCheck>& checks) {
+    for (const auto& check : checks) {
+      if (check.kind == CommitPreCheckKind::ConflictMarkers &&
+          check.severity == CommitPreCheckSeverity::Blocking) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const auto scanned =
+      RunCommitPreChecks(state, "subject", "", {}, &summary, /*scan=*/true);
+  Expect(has_conflict_marker_check(scanned),
+         "scan=true must surface the blocking conflict-marker check for staged markers");
+
+  const auto skipped =
+      RunCommitPreChecks(state, "subject", "", {}, &summary, /*scan=*/false);
+  Expect(!has_conflict_marker_check(skipped),
+         "scan=false (interactive refresh) must skip the unbounded conflict-marker scan");
+}
+
 }  // namespace
 
 void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "CommitWorkflow/ConflictMarkerScanGate", TestConflictMarkerScanGate);
   AddTest(tests, "CommitWorkflow/ResultMarshaledToMainThread",
           TestCommitResultIsMarshaledToMainThread);
   AddTest(tests, "CommitWorkflow/EmptySubjectBlocks", TestEmptySubjectBlocksCommit);

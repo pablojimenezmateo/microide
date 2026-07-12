@@ -159,7 +159,8 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
     const std::string_view subject,
     const std::string_view body,
     const std::unordered_set<std::string>& acknowledged_warning_ids,
-    const CommitStagedSummary* precomputed_summary) {
+    const CommitStagedSummary* precomputed_summary,
+    const bool scan_staged_diff_for_conflict_markers) {
   (void)body;
   (void)acknowledged_warning_ids;
   std::vector<CommitPreCheck> checks;
@@ -196,7 +197,8 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
                                "Resolve merge conflicts before committing"));
   }
 
-  if (StagedDiffContainsConflictMarkers(repository_state.repository_root)) {
+  if (scan_staged_diff_for_conflict_markers &&
+      StagedDiffContainsConflictMarkers(repository_state.repository_root)) {
     checks.push_back(MakeCheck(CommitPreCheckKind::ConflictMarkers, CommitPreCheckSeverity::Blocking,
                                "Staged changes still contain conflict markers"));
   }

@@ -83,6 +83,11 @@ class TextInputCoordinator {
   bool PasteTextIntoTerminal(std::string text);
   bool InsertTextAtActiveSurface(std::string_view input);
   bool HasSelectionAtActiveSingleLineSurface() const;
+  // True when a single-line text surface (file finder, buffer/project search,
+  // commit subject, pickers, ...) is the active text input. Lets Cut/Copy/SelectAll
+  // consume the shortcut even when the field has nothing to act on, instead of
+  // leaking through to the background editor viewport.
+  bool HasActiveSingleLineTextSurface() const;
   std::string SelectedTextAtActiveSingleLineSurface() const;
   bool SelectAllAtActiveSingleLineSurface();
   bool CutSelectionAtActiveSingleLineSurface();

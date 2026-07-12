@@ -496,6 +496,64 @@ return ide.plugin({
          "a failed-setup plugin's provider must be removed, not left dangling");
 }
 
+// Regression (UAF): QueryCompletions iterates the live completion_runtimes vector by
+// reference across each provider's PCall. The synchronous query used to run with
+// allow_registration=true, so a provider that called ctx.completion.add inside its
+// provide() callback would push_back into the vector mid-iteration, reallocate it, and
+// dangle the loop's `provider` reference. The blocking path now runs with
+// allow_registration=false (matching the async/detached paths): a registration attempt
+// during the query is rejected, the vector is never mutated, and the query returns empty
+// with the rejection surfaced instead of corrupting the runtime vector.
+void TestPluginHostQueryRejectsMidQueryRegistration() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.todo";
+  WriteFile(source, "alpha\n");
+
+  WritePluginInit(
+      global_plugins, "reentrant-register",
+      R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "reentrant-register",
+  setup = function(ctx)
+    ctx.completion.add({
+      id = "reg",
+      language_id = "todo",
+      provide = function(buffer, position, trigger)
+        -- Attempt to grow completion_runtimes WHILE QueryCompletions iterates it.
+        -- With allow_registration=false this raises and the vector is left intact.
+        ctx.completion.add({
+          id = "injected",
+          language_id = "todo",
+          provide = function() return {} end
+        })
+        return { { label = "FIRST", insert_text = "FIRST" } }
+      end
+    })
+  end
+})
+)lua");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "setup-time registration should succeed");
+
+  std::string runtime_error;
+  const auto completions = host.QueryCompletions("todo", source, 1, 0, "", &runtime_error);
+  Expect(completions.empty(),
+         "a query whose provider tries to register mid-iteration must not return results");
+  Expect(runtime_error.find("registration verbs are only supported during plugin setup") !=
+             std::string::npos,
+         "mid-query registration must be rejected rather than mutating the runtime vector");
+}
+
 void TestPluginHostSkipsBackupPluginDirectories() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3463,6 +3521,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostSkipsBackupPluginDirectories);
   AddTest(tests, "PluginHost/SetupFailureTearsDownRegisteredProviders",
           TestPluginHostSetupFailureTearsDownRegisteredProviders);
+  AddTest(tests, "PluginHost/QueryRejectsMidQueryRegistration",
+          TestPluginHostQueryRejectsMidQueryRegistration);
   AddTest(tests, "PluginHost/LuaRuntimeMatchesDocumentedStdlib",
           TestPluginHostLuaRuntimeMatchesDocumentedStdlib);
   AddTest(tests, "PluginHost/PluginsUseIsolatedLuaStates",
