@@ -440,18 +440,37 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
   }
 
   std::vector<std::filesystem::path> affected_paths;
+  std::vector<std::filesystem::path> untracked_paths;
   affected_paths.reserve(state_.sidebar.git.entries.size());
   for (const auto& entry : state_.sidebar.git.entries) {
     if (!IsGitWorkflowSection(entry.section)) {
       continue;
     }
     affected_paths.push_back(entry.path.lexically_normal());
+    // Files with no committed content to restore are the ones DiscardAll would
+    // permanently delete: untracked files (removed by `git clean`) and staged NEW
+    // files (status Added — after `reset HEAD` they become untracked and are
+    // clean-deleted too). Trash them instead (recoverable), mirroring the
+    // single-file untracked-discard policy, and tell DiscardAll to skip its clean.
+    // Modified/Deleted tracked files keep their HEAD content and are restored, not
+    // trashed.
+    if (entry.section == GitSidebarEntry::Section::Untracked ||
+        entry.status == project::GitFileStatus::Added) {
+      untracked_paths.push_back(entry.path.lexically_normal());
+    }
   }
   std::sort(affected_paths.begin(), affected_paths.end());
   affected_paths.erase(std::unique(affected_paths.begin(), affected_paths.end()),
                        affected_paths.end());
 
-  if (!project::GitDiscardAll(project_root_)) {
+  for (const auto& untracked : untracked_paths) {
+    // Best-effort: a failed trash should not abort the tracked discard, but it must
+    // not be silently `git clean`-deleted either — it simply stays as an untracked
+    // file the user can retry on.
+    (void)project::FileOperationService::TrashPath(untracked);
+  }
+
+  if (!project::GitDiscardAll(project_root_, /*remove_untracked=*/false)) {
     return false;
   }
 
@@ -494,7 +513,7 @@ bool SidebarCoordinator::UnstageGitEntry(const std::size_t entry_index) {
     ReportDisabledGitAction(GitSidebarActionId::Unstage, entry_index);
     return false;
   }
-  if (!project::GitUnstagePath(project_root_, entry->path)) {
+  if (!project::GitUnstagePath(project_root_, entry->path, entry->is_staged_rename)) {
     ReportGitOperationFailure("unstage", *entry);
     return false;
   }
@@ -541,7 +560,7 @@ bool SidebarCoordinator::DiscardGitEntry(const std::size_t entry_index,
       ReportGitOperationFailure("discard", *entry);
       return false;
     }
-  } else if (!project::GitDiscardPath(project_root_, entry->path)) {
+  } else if (!project::GitDiscardPath(project_root_, entry->path, entry->is_staged_rename)) {
     ReportGitOperationFailure("discard", *entry);
     return false;
   }

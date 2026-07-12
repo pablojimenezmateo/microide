@@ -78,10 +78,20 @@ class GitRepository {
   bool FileIsWorkingTreeClean(const std::filesystem::path& relative_path) const;
 
   bool Stage(const std::filesystem::path& relative_path) const;
-  bool Unstage(const std::filesystem::path& relative_path) const;
-  bool Discard(const std::filesystem::path& relative_path) const;
+  // `may_be_staged_rename` gates the StagedRenameSource probe (a whole-index
+  // `git diff --cached --name-status -M -z`). The sidebar passes false for the
+  // common non-rename case so a single-file unstage/discard skips that diff; it
+  // defaults true so callers without the hint stay correct.
+  bool Unstage(const std::filesystem::path& relative_path,
+               bool may_be_staged_rename = true) const;
+  bool Discard(const std::filesystem::path& relative_path,
+               bool may_be_staged_rename = true) const;
   bool StageAll() const;
-  bool DiscardAll() const;
+  // `remove_untracked` gates the `git clean -fd` step that permanently deletes
+  // untracked files. The sidebar passes false and trashes untracked files itself
+  // (recoverable), mirroring the single-file untracked-discard policy; it defaults
+  // true so other callers keep the full-clean behavior.
+  bool DiscardAll(bool remove_untracked = true) const;
 
  private:
   // If `dest_relative` is the destination of a currently-staged rename/copy,

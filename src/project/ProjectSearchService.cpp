@@ -134,12 +134,14 @@ class PreparedLiteralQuery {
   // per-line search loop does not allocate/free a fresh string on every line in
   // case-insensitive mode.
   void LowerLine(std::string_view line, std::string& out) const {
-    util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineCalls);
-    util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineBytes, line.size());
     if (case_sensitive_) {
+      // No lowercasing happens in case-sensitive mode (`out` is just cleared), so
+      // do not inflate the lowercase-work counters here.
       out.clear();
       return;
     }
+    util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineCalls);
+    util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineBytes, line.size());
     util::ToLowerAsciiInto(line, out);
   }
 

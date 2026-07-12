@@ -142,14 +142,14 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
   return summary;
 }
 
-bool StagedDiffContainsConflictMarkers(const std::filesystem::path& repository_root) {
+std::optional<bool> StagedDiffContainsConflictMarkers(const std::filesystem::path& repository_root) {
   if (repository_root.empty()) {
     return false;
   }
   GitRepository repo(repository_root);
   const GitRepository::CommandResult diff = repo.Execute({"diff", "--cached"}, true);
   if (!diff.success()) {
-    return false;
+    return std::nullopt;  // could not determine (e.g. locked index) — not "clean"
   }
   return util::StagedDiffIntroducesConflictMarker(diff.output);
 }
@@ -197,10 +197,17 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
                                "Resolve merge conflicts before committing"));
   }
 
-  if (scan_staged_diff_for_conflict_markers &&
-      StagedDiffContainsConflictMarkers(repository_state.repository_root)) {
-    checks.push_back(MakeCheck(CommitPreCheckKind::ConflictMarkers, CommitPreCheckSeverity::Blocking,
-                               "Staged changes still contain conflict markers"));
+  if (scan_staged_diff_for_conflict_markers) {
+    const std::optional<bool> has_markers =
+        StagedDiffContainsConflictMarkers(repository_state.repository_root);
+    if (!has_markers.has_value()) {
+      checks.push_back(MakeCheck(CommitPreCheckKind::ConflictMarkers, CommitPreCheckSeverity::Warning,
+                                 "Could not verify staged changes for conflict markers"));
+    } else if (*has_markers) {
+      checks.push_back(MakeCheck(CommitPreCheckKind::ConflictMarkers,
+                                 CommitPreCheckSeverity::Blocking,
+                                 "Staged changes still contain conflict markers"));
+    }
   }
 
   std::vector<std::filesystem::path> partial_stage_paths;

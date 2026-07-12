@@ -116,6 +116,11 @@ void TestPorcelainV2RenamePair() {
   Expect(state.entries.front().old_path.has_value(), "rename fixture should include old path");
   Expect(state.entries.front().old_path->relative_path == std::filesystem::path("old.txt"),
          "rename fixture old path mismatch");
+  // Regression: the rename SOURCE no longer exists at its old path, so the tree
+  // status map badges it Deleted rather than inheriting the destination's status.
+  Expect(state.tree_git_statuses.count("old.txt") == 1 &&
+             state.tree_git_statuses.at("old.txt") == GitFileStatus::Deleted,
+         "rename source should be badged Deleted in the tree status map");
 }
 
 void TestPorcelainV2RenamePathWithSpaces() {

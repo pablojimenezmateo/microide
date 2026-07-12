@@ -182,18 +182,17 @@ void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::s
     }
 
     PatchApplyResult result = project::ApplyPatchRequest(request, patch_text);
+    const bool patch_applied = result.category == PatchApplyResultCategory::Success;
 
     const project::GitRepositoryState completion_state = callbacks_.current_repository_state();
-    if (result.category == PatchApplyResultCategory::Success &&
-        request.repository_snapshot_generation != completion_state.generation) {
-      result = PatchApplyResult{
-          .category = PatchApplyResultCategory::StaleGeneration,
-          .detail = "repository state changed while the patch was applying",
-      };
-    }
 
-    if (result.category == PatchApplyResultCategory::Success) {
-      result.completed_repository_generation = completion_state.generation;
+    // If the patch actually applied, the working tree / index changed ON DISK — so
+    // run the cache invalidations for the applied path REGARDLESS of a generation
+    // race. A refresh that completed during the apply moves the generation and we
+    // still report StaleGeneration below (so the caller re-syncs its snapshot), but
+    // skipping these invalidations left blame/compare/clean-tab caches stale until
+    // an unrelated refresh and produced a misleading "nothing applied" message.
+    if (patch_applied) {
       git_repository_service_.MarkStale();
       if (callbacks_.request_git_refresh != nullptr) {
         callbacks_.request_git_refresh();
@@ -210,6 +209,16 @@ void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::s
         callbacks_.refresh_compare_tab_for_path(absolute_path);
       }
       (void)diff_generation;
+    }
+
+    if (patch_applied &&
+        request.repository_snapshot_generation != completion_state.generation) {
+      result = PatchApplyResult{
+          .category = PatchApplyResultCategory::StaleGeneration,
+          .detail = "repository state changed while the patch was applying",
+      };
+    } else if (patch_applied) {
+      result.completed_repository_generation = completion_state.generation;
     }
 
     PublishResult(std::move(result), request);

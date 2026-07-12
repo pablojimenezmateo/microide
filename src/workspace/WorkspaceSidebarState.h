@@ -85,6 +85,10 @@ struct GitSidebarEntry {
   project::GitFileStatus status = project::GitFileStatus::Clean;
   bool conflicted = false;
   bool staged = false;
+  // True when this entry is the destination of a staged rename (the repository
+  // entry carried an old_path). Lets unstage/discard skip the whole-index staged
+  // rename-detection diff for the common non-rename case.
+  bool is_staged_rename = false;
   std::string provider_id;
   std::string provider_label;
   bool supports_stage = true;
@@ -123,6 +127,7 @@ struct GitSidebarState {
     project::GitFileStatus status = project::GitFileStatus::Clean;
     bool conflicted = false;
     bool staged = false;
+    bool is_staged_rename = false;
   };
 
   struct RefreshSnapshot {

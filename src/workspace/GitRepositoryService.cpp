@@ -163,6 +163,7 @@ GitSidebarState::RefreshSnapshot GitRepositoryService::BuildSidebarSnapshot(
         .status = entry.conflicted ? project::GitFileStatus::Conflicted : entry.status,
         .conflicted = entry.conflicted,
         .staged = entry.staged,
+        .is_staged_rename = entry.staged && entry.old_path.has_value(),
     });
   }
 

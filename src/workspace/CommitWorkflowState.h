@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <unordered_set>
 
@@ -37,6 +39,11 @@ struct CommitWorkflowState {
   project::CommitDraftContext draft_context;
   project::CommitStagedSummary staged_summary;
   std::string staged_summary_line;
+  // Git generation the cached staged_summary was built against. The staged summary
+  // depends only on the git index, so RefreshDerivedState rebuilds it (a
+  // `git diff --cached --numstat` subprocess) only when the generation changes, not
+  // on every field switch / warning-ack refresh. SIZE_MAX-sentinel forces a rebuild.
+  std::uint64_t staged_summary_generation = std::numeric_limits<std::uint64_t>::max();
   std::vector<project::CommitPreCheck> checks;
   std::unordered_set<std::string> acknowledged_warning_ids;
   std::string status_message;

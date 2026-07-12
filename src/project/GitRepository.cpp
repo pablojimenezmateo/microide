@@ -198,13 +198,16 @@ std::optional<std::filesystem::path> GitRepository::StagedRenameSource(
   return std::nullopt;
 }
 
-bool GitRepository::Unstage(const std::filesystem::path& relative_path) const {
-  if (const auto rename_source = StagedRenameSource(relative_path); rename_source.has_value()) {
-    // Unstaging a staged rename must reset BOTH sides to HEAD, else the source's
-    // staged deletion is orphaned (left staged with the file already gone).
-    return ExecuteSucceeds(std::vector<std::string>{
-        "restore", "--staged", "--", rename_source->generic_string(),
-        relative_path.generic_string()});
+bool GitRepository::Unstage(const std::filesystem::path& relative_path,
+                            bool may_be_staged_rename) const {
+  if (may_be_staged_rename) {
+    if (const auto rename_source = StagedRenameSource(relative_path); rename_source.has_value()) {
+      // Unstaging a staged rename must reset BOTH sides to HEAD, else the source's
+      // staged deletion is orphaned (left staged with the file already gone).
+      return ExecuteSucceeds(std::vector<std::string>{
+          "restore", "--staged", "--", rename_source->generic_string(),
+          relative_path.generic_string()});
+    }
   }
   if (FileExistsAtRevision(relative_path)) {
     return ExecuteSucceeds({"restore", "--staged", "--", relative_path.generic_string()});
@@ -212,15 +215,18 @@ bool GitRepository::Unstage(const std::filesystem::path& relative_path) const {
   return ExecuteSucceeds({"rm", "--cached", "--", relative_path.generic_string()});
 }
 
-bool GitRepository::Discard(const std::filesystem::path& relative_path) const {
-  if (const auto rename_source = StagedRenameSource(relative_path); rename_source.has_value()) {
-    // Discarding a staged rename restores the source (content + tracking) and
-    // removes the destination in one operation, fully undoing the rename. Without
-    // this the source's staged deletion is left behind and its content is lost —
-    // the destination-only path below would delete `new` and orphan `old`.
-    return ExecuteSucceeds(std::vector<std::string>{
-        "restore", "--source=HEAD", "--staged", "--worktree", "--",
-        rename_source->generic_string(), relative_path.generic_string()});
+bool GitRepository::Discard(const std::filesystem::path& relative_path,
+                            bool may_be_staged_rename) const {
+  if (may_be_staged_rename) {
+    if (const auto rename_source = StagedRenameSource(relative_path); rename_source.has_value()) {
+      // Discarding a staged rename restores the source (content + tracking) and
+      // removes the destination in one operation, fully undoing the rename. Without
+      // this the source's staged deletion is left behind and its content is lost —
+      // the destination-only path below would delete `new` and orphan `old`.
+      return ExecuteSucceeds(std::vector<std::string>{
+          "restore", "--source=HEAD", "--staged", "--worktree", "--",
+          rename_source->generic_string(), relative_path.generic_string()});
+    }
   }
   if (FileExistsAtRevision(relative_path)) {
     return ExecuteSucceeds(
@@ -238,15 +244,21 @@ bool GitRepository::StageAll() const {
   return ExecuteSucceeds({"add", "-A", "--", "."});
 }
 
-bool GitRepository::DiscardAll() const {
+bool GitRepository::DiscardAll(bool remove_untracked) const {
   if (HasHeadCommit()) {
-    return ExecuteSucceeds({"reset", "--quiet", "HEAD", "--", "."}) &&
-           ExecuteSucceeds({"restore", "--source=HEAD", "--worktree", "--", "."}) &&
-           ExecuteSucceeds({"clean", "-fd", "--", "."});
+    const bool reset_and_restore =
+        ExecuteSucceeds({"reset", "--quiet", "HEAD", "--", "."}) &&
+        ExecuteSucceeds({"restore", "--source=HEAD", "--worktree", "--", "."});
+    if (!reset_and_restore) {
+      return false;
+    }
+    return !remove_untracked || ExecuteSucceeds({"clean", "-fd", "--", "."});
   }
 
-  return ExecuteSucceeds({"rm", "-r", "-f", "--cached", "--ignore-unmatch", "--", "."}) &&
-         ExecuteSucceeds({"clean", "-fd", "--", "."});
+  if (!ExecuteSucceeds({"rm", "-r", "-f", "--cached", "--ignore-unmatch", "--", "."})) {
+    return false;
+  }
+  return !remove_untracked || ExecuteSucceeds({"clean", "-fd", "--", "."});
 }
 
 }  // namespace microide::project

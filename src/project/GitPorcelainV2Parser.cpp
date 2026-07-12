@@ -84,12 +84,13 @@ bool ParseAheadBehind(std::string_view token, int* ahead, int* behind) {
 void RecordTreeGitStatus(std::unordered_map<std::string, GitFileStatus>& statuses,
                          const GitRepositoryEntry& entry) {
   const GitFileStatus status = entry.conflicted ? GitFileStatus::Conflicted : entry.status;
-  const auto record = [&](const GitRepositoryPathIdentity& identity) {
-    GitPorcelainParser::RecordGitStatus(statuses, identity.relative_path, status);
-  };
-  record(entry.path);
+  GitPorcelainParser::RecordGitStatus(statuses, entry.path.relative_path, status);
   if (entry.old_path.has_value()) {
-    record(*entry.old_path);
+    // The rename/copy source no longer exists at its old path in the working tree,
+    // so badge it Deleted rather than inheriting the destination's status (which
+    // painted the now-gone source as Modified/Added).
+    GitPorcelainParser::RecordGitStatus(statuses, entry.old_path->relative_path,
+                                        GitFileStatus::Deleted);
   }
 }
 

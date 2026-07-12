@@ -25,8 +25,10 @@ std::unordered_map<std::string, GitFileStatus> BuildGitStatusMap(
     std::span<const GitWorkingTreeEntry> entries);
 bool GitStageAll(const std::filesystem::path& root);
 bool GitStagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path);
-bool GitUnstagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path);
-bool GitDiscardAll(const std::filesystem::path& root);
-bool GitDiscardPath(const std::filesystem::path& root, const std::filesystem::path& absolute_path);
+bool GitUnstagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path,
+                    bool may_be_staged_rename = true);
+bool GitDiscardAll(const std::filesystem::path& root, bool remove_untracked = true);
+bool GitDiscardPath(const std::filesystem::path& root, const std::filesystem::path& absolute_path,
+                    bool may_be_staged_rename = true);
 
 }  // namespace microide::project

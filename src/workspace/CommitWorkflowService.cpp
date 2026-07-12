@@ -101,13 +101,21 @@ PersistedCommitDraftState CommitWorkflowService::BuildPersistedDraft(
 void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state,
                                                 const bool run_blocking_conflict_scan) {
   const project::GitRepositoryState repository_state = git_repository_service_.CurrentState();
-  state.staged_summary = project::BuildCommitStagedSummary(repository_state);
-  if (state.staged_summary.file_count == 0) {
-    state.staged_summary_line = "Nothing staged";
-  } else {
-    state.staged_summary_line = std::to_string(state.staged_summary.file_count) + " staged file(s), +" +
-                                std::to_string(state.staged_summary.added_lines) + "/-" +
-                                std::to_string(state.staged_summary.deleted_lines);
+  // The staged summary depends only on the git index (which advances the git
+  // generation when it changes), not on the subject/body being typed. Rebuild the
+  // `git diff --cached --numstat` summary only when the generation moves so a
+  // field-switch / warning-ack refresh does not re-run the subprocess redundantly.
+  if (state.staged_summary_generation != repository_state.generation) {
+    state.staged_summary = project::BuildCommitStagedSummary(repository_state);
+    state.staged_summary_generation = repository_state.generation;
+    if (state.staged_summary.file_count == 0) {
+      state.staged_summary_line = "Nothing staged";
+    } else {
+      state.staged_summary_line =
+          std::to_string(state.staged_summary.file_count) + " staged file(s), +" +
+          std::to_string(state.staged_summary.added_lines) + "/-" +
+          std::to_string(state.staged_summary.deleted_lines);
+    }
   }
   // Pass the summary we just built so RunCommitPreChecks does not re-run the identical
   // `git diff --cached --numstat` subprocess on the shell thread. The unbounded

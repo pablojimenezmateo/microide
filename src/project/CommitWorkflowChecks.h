@@ -33,6 +33,9 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
 bool CommitPreChecksAllowExecution(const std::vector<CommitPreCheck>& checks,
                                    const std::unordered_set<std::string>& acknowledged_warning_ids);
 
-bool StagedDiffContainsConflictMarkers(const std::filesystem::path& repository_root);
+// nullopt when the staged diff could not be read (e.g. a transiently locked
+// index) — distinct from a definitive "no markers" so the caller can surface an
+// advisory instead of silently disabling the safety check.
+std::optional<bool> StagedDiffContainsConflictMarkers(const std::filesystem::path& repository_root);
 
 }  // namespace microide::project
