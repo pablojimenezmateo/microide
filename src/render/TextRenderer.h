@@ -100,6 +100,13 @@ class TextRenderer {
                     SDL_Color background,
                     std::string_view text) const;
 
+  // Monotonic stamp bumped whenever glyph metrics change (font size/family or
+  // presentation scale) — i.e. every time the internal width cache is invalidated.
+  // External width caches keyed on MeasureWidth results (e.g. the menu-bar/popup
+  // label caches) compare this to know when their entries have gone stale, since a
+  // MeasureWidth value is only stable while metrics are unchanged.
+  std::size_t MetricsGeneration() const { return metrics_generation_; }
+
  private:
   void ClearWidthCache() const;
   void RememberMeasuredWidth(std::string text, float width) const;
@@ -124,6 +131,9 @@ class TextRenderer {
   mutable bool width_cache_initialized_ = false;
   mutable std::size_t width_cache_queries_ = 0;
   mutable std::size_t width_cache_hits_ = 0;
+  // Bumped in ClearWidthCache (the single choke point for every metrics-change
+  // invalidation: font size, font family, presentation scale).
+  mutable std::size_t metrics_generation_ = 0;
 
   friend struct ::microide::tests::TextRendererTestAccess;  // test seam
 };

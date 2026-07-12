@@ -367,6 +367,44 @@ void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
 }
 
 void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
+  // A focused/clicked Cancel button (selected_button == 1) means the user DECLINED. The
+  // special-cased actions below were dispatched WITHOUT consulting the selected button,
+  // so clicking Cancel (or pressing Enter on a focused Cancel) ran the confirm action —
+  // destructive for commit amend/no-verify, rename-save, and rename-symbol. Decline each
+  // of the shell's own prompt actions here (running its cancel cleanup) before any branch
+  // can execute; non-shell actions (DiscardPatchPreview, file ops) fall through to the
+  // delegate PathMutationCoordinator, which already handles its own Cancel.
+  if (context_.prompts.surface_visible && context_.prompts.surface.selected_button == 1) {
+    using Action = PromptSurfaceState::Action;
+    switch (context_.prompts.surface.action) {
+      case Action::OpenExternalUrl:
+      case Action::SetGitOutgoingBaseRef:
+      case Action::SetBreakpointCondition:
+      case Action::SetBreakpointHitCondition:
+      case Action::SetBreakpointLogMessage:
+      case Action::AddWatchExpression:
+      case Action::EditWatchExpression:
+      case Action::EvaluateReplInput:
+      case Action::GoToLine:
+      case Action::RenameSymbol:
+        MakePromptSurfaceService().DismissPromptSurface(true);
+        return;
+      case Action::ConfirmRenameSave:
+        DiscardPendingRenameSave();
+        MakePromptSurfaceService().DismissPromptSurface(true);
+        return;
+      case Action::ConfirmCommitAmend:
+      case Action::ConfirmCommitNoVerify:
+        InitializeCommitWorkflowService();
+        commit_workflow_service_.CancelPendingConfirmation(
+            context_.current_project_state.sidebar.git.commit_workflow);
+        MakePromptSurfaceService().DismissPromptSurface(false);
+        context_.current_project_state.surface.focus = FocusTarget::Sidebar;
+        return;
+      default:
+        break;  // delegate handles its own Cancel (DiscardPatchPreview, file ops)
+    }
+  }
   if (context_.prompts.surface_visible &&
       context_.prompts.surface.action == PromptSurfaceState::Action::OpenExternalUrl) {
     const std::string url = context_.prompts.surface.detail;

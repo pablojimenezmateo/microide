@@ -110,6 +110,7 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
     RetargetOpenTabsForRename(state.path, result.resulting_path,
                               resolution != DirtyPathResolution::Discard);
     RetargetDiagnosticsForRename(state.path, result.resulting_path);
+    RetargetPluginDecorationsForRename(state.path, result.resulting_path);
     operations_.clear_editor_blame();
     RefreshProjectViewsAfterMutation(result.resulting_path);
     CurrentProjectState().surface.focus = FocusTarget::Sidebar;
@@ -172,6 +173,7 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
   prompt_surfaces_.DismissPromptSurface(false);
   CloseOpenTabsForPath(state.path);
   ClearDiagnosticsForPath(state.path);
+  ClearPluginDecorationsForPath(state.path);
   operations_.clear_editor_blame();
   RefreshProjectViewsAfterMutation(parent);
   CurrentProjectState().surface.focus = FocusTarget::Sidebar;

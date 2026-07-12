@@ -220,6 +220,36 @@ void PathMutationCoordinator::ClearDiagnosticsForPath(const std::filesystem::pat
   }
 }
 
+void PathMutationCoordinator::RetargetPluginDecorationsForRename(
+    const std::filesystem::path& old_path,
+    const std::filesystem::path& new_path) {
+  auto& state = CurrentProjectState();
+  // Never allocate the bundle just to retarget nothing: if no plugin presentation is
+  // live there are no decorations to move.
+  if (state.plugin_presentation_if_present() == nullptr) {
+    return;
+  }
+  if (state.EnsurePluginPresentation().decorations.RetargetPathPrefix(old_path, new_path)) {
+    operations_.request_editor_surface_redraw();
+  }
+  // Retarget can only shrink/relabel keys, never empty the store, so a release check is
+  // unnecessary here — but harmless and keeps the zero-footprint invariant tight.
+  state.MaybeReleasePluginPresentation();
+}
+
+void PathMutationCoordinator::ClearPluginDecorationsForPath(const std::filesystem::path& path) {
+  auto& state = CurrentProjectState();
+  if (state.plugin_presentation_if_present() == nullptr) {
+    return;
+  }
+  if (state.EnsurePluginPresentation().decorations.ClearPathPrefix(path)) {
+    operations_.request_editor_surface_redraw();
+  }
+  // Deleting the last decorated path can drain the bundle; release it back to zero
+  // footprint (called after the redraw request so no reader holds a store pointer).
+  state.MaybeReleasePluginPresentation();
+}
+
 void PathMutationCoordinator::RefreshProjectViewsAfterMutation(
     const std::filesystem::path& preferred_tree_path) {
   operations_.refresh_project_files();

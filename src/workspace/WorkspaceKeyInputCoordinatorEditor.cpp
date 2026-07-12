@@ -224,6 +224,14 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       operations_.open_working_file_from_compare();
       return true;
     default: {
+      // Only bare / Shift-modified printable keys drive these single-letter compare
+      // actions. An UNBOUND Ctrl+letter (e.g. Ctrl+O — the outline binding is Ctrl+Alt+O,
+      // not plain Ctrl+O) misses HandleGlobalKeyDown and falls through here; KeycodeToAscii
+      // ignores Ctrl/GUI and returns the base letter, so without this guard Ctrl+O would
+      // fire "open working file" and Ctrl+J would scroll the diff selection.
+      if ((modifiers & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0) {
+        return false;
+      }
       const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
       if (input_character == 'j') {
         operations_.move_compare_selection(1);

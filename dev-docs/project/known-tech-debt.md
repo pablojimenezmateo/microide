@@ -14,6 +14,35 @@ These were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
 a latent API-contract hazard with no live trigger, so a rushed fix risked a
 regression worse than the defect. Recorded here so they are not silently lost.
 
+> **Deferred 2026-07-12 (pass 24 — cross-subsystem bug hunt):** a four-way fan-out
+> (render view-model/shell, tab-group/session, palette/keybindings/prompts, plugin
+> decoration/hover) landed 5 fixes (prompt Cancel button no longer executes the confirm
+> action — was destructive for commit-amend/rename-symbol; menu-bar/popup width caches
+> invalidate on a runtime font change via a TextRenderer metrics generation;
+> ApplyEditorPreferencesToAllTabs reaches every editor group not just the focused one;
+> plugin decorations retargeted on rename / cleared on delete like diagnostics; compare
+> read-only ascii dispatch masks Ctrl so unbound Ctrl+letter no longer misfires). Lower-
+> severity secondary findings deferred:
+> - **Tab: `ReloadVirtualDocumentTabs` only refreshes the focused group.**
+>   `WorkspaceTabCoordinator.cpp:734-761` reloads matching virtual-document tabs only in
+>   the focused group, unlike `ReloadEditorTabsForPath` which walks all groups. A virtual
+>   doc open in both split groups leaves the non-focused copy stale after a plugin update.
+>   Fix: loop over all `editor_groups`. (Tab hunter #2.)
+> - **Plugin: surface anchor line lacks the overflow clamp the decoration path has.**
+>   `PluginSurfaceInterop.cpp:298` narrows `line - 1` to `uint32_t` with only a `<= 0`
+>   check, so an anchor line ≥ 2^32+1 wraps and mis-anchors the surface. Mirror
+>   `ReadOneBasedField`'s `kMaxOneBased` reject. (Plugin hunter #2, low.)
+> - **Plugin: surfaces are not path-retargeted on rename.** The pass-24 decoration fix
+>   covers `PluginDecorationStore`; `PluginSurfaceStore` has path anchors in
+>   `anchored_by_path_` but no `RetargetPathPrefix`/`ClearPathPrefix` API, so a rename
+>   leaves a surface's path anchor stale. Needs the store API added first. (Plugin hunter
+>   #1, follow-on.)
+> - **Keybindings: `ParseKeyChord` may drop a lowercase single-letter plugin chord.**
+>   `WorkspaceKeybindingRegistry.cpp:771-777` passes the original-case letter to
+>   `SDL_GetScancodeFromName` (uppercase names), so a plugin binding written `"ctrl+a"`
+>   may yield `SCANCODE_UNKNOWN` if SDL3 is case-sensitive. Unverified in this env; one-line
+>   lowercase fix. (Palette hunter, low confidence.)
+>
 > **Deferred 2026-07-12 (pass 22 — cross-subsystem bug hunt):** a four-way fan-out
 > (text-layout/syntax, file-finder/sidebar, git-ops, debug session) landed 4 fixes
 > (git untracked-discard now trashes instead of `git clean`-deleting despite the prompt's

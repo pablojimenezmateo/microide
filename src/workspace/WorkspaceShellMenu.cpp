@@ -52,6 +52,15 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
   // ComputeVisibleMenuBarItems call — `menu_hover_switch` hits this path many
   // times per frame (round-4 Finding 6).
   static thread_local std::unordered_map<const char*, float> spec_label_width_cache;
+  // Drop the cache when glyph metrics change (a runtime font size/family or scale
+  // change) — a cached MeasureWidth is only valid for the metrics it was taken at, so
+  // without this the menu bar keeps laying out labels at the OLD font width (clipping,
+  // wrong overflow threshold) until restart.
+  static thread_local std::size_t spec_label_cache_generation = 0;
+  if (text_renderer_.MetricsGeneration() != spec_label_cache_generation) {
+    spec_label_width_cache.clear();
+    spec_label_cache_generation = text_renderer_.MetricsGeneration();
+  }
   std::vector<std::pair<MenuId, float>> measured;
   measured.reserve(8);
   float total_x = x;
@@ -186,6 +195,14 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(
   };
   static thread_local std::array<PopupWidthCacheEntry, 6> popup_width_cache;
   static thread_local std::size_t popup_width_cache_next = 0;
+  // Drop cached popup widths/heights when glyph metrics change; a cached MeasureWidth
+  // is only valid for the metrics it was taken at (see the menu-bar cache above).
+  static thread_local std::size_t popup_cache_generation = 0;
+  if (text_renderer_.MetricsGeneration() != popup_cache_generation) {
+    popup_width_cache = {};
+    popup_width_cache_next = 0;
+    popup_cache_generation = text_renderer_.MetricsGeneration();
+  }
 
   const auto readiness =
       const_cast<WorkspaceShell*>(this)->ActiveLspReadinessSnapshot();

@@ -100,6 +100,36 @@ void TestWorkspaceShellGoToLinePromptNavigatesActiveEditor() {
          "Go to Line 4 should move the caret to zero-based line 3");
 }
 
+// Regression (destructive): the on-screen Cancel button (selected_button == 1) must
+// DECLINE a special-cased prompt action, not run it. ConfirmPromptSurface used to ignore
+// the selected button, so clicking Cancel executed the confirm action — Go to Line here
+// stands in for the destructive cases (commit amend, rename symbol). Cancelling must
+// dismiss WITHOUT navigating.
+void TestWorkspaceShellPromptCancelButtonDoesNotExecuteAction() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "l1\nl2\nl3\nl4\nl5\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "fixture project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  Expect(SendKeyDown(shell, SDLK_G, SDL_KMOD_CTRL), "Ctrl+G should be handled");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "Ctrl+G should open the Go to Line modal");
+  WorkspaceShellTestAccess::SetPromptSurfaceInput(shell, "4");
+
+  // Confirm with the Cancel button (index 1) selected.
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell, /*selected_button=*/1);
+
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "cancelling should dismiss the modal");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 0,
+         "cancelling Go to Line must NOT move the caret (the action must not execute)");
+}
+
 void TestWorkspaceShellRenamePromptRetargetsDiagnostics() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";

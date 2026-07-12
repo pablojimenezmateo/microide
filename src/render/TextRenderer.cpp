@@ -226,6 +226,8 @@ void TextRenderer::DrawStringOn(SDL_Renderer* renderer,
 void TextRenderer::ClearWidthCache() const {
   width_cache_.clear();
   width_cache_order_.clear();
+  // Metrics changed (or first init): signal external MeasureWidth-derived caches to drop.
+  ++metrics_generation_;
 }
 
 void TextRenderer::RememberMeasuredWidth(std::string text, float width) const {

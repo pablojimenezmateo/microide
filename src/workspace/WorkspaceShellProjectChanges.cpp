@@ -188,6 +188,17 @@ void WorkspaceShell::ClearDiagnosticsForPath(const std::filesystem::path& path) 
     QueueEditorHoverRefresh();
     RequestEditorSurfaceRedraw();
   }
+  // Plugin/LSP decorations are path-keyed just like diagnostics, so an external delete
+  // (filesystem watcher) must clear them too — otherwise they linger stale and the
+  // plugin-presentation bundle can never drain empty and release. Gated on presence so
+  // a delete of an undecorated file never allocates the bundle.
+  auto& state = context_.current_project_state;
+  if (state.plugin_presentation_if_present() != nullptr) {
+    if (state.EnsurePluginPresentation().decorations.ClearPathPrefix(path)) {
+      RequestEditorSurfaceRedraw();
+    }
+    state.MaybeReleasePluginPresentation();
+  }
 }
 
 }  // namespace microide::workspace

@@ -104,12 +104,19 @@ void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
   MarkLayoutDirty();
   tab_strip_service_.InvalidateEditorTabGeometry();
   RequestWindowRedraw();
-  ApplyEditorPreferences(context_.current_project_state.focused_group().welcome_surface.viewport);
-  for (auto& tab : context_.current_project_state.focused_group().open_tabs) {
-    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-      continue;
+  // Apply to EVERY editor group, not just the focused one: preference fields (tab_size,
+  // soft_wrap, auto_close, smart_indent, save-trim, …) live on each per-tab TextViewport,
+  // so a split's non-focused pane would otherwise keep the stale config and render/behave
+  // differently once clicked into. Mirrors the all-groups walks in ReloadCleanOpenBuffers
+  // and RetargetOpenTabsForRename.
+  for (auto& group : context_.current_project_state.editor_groups) {
+    ApplyEditorPreferences(group.welcome_surface.viewport);
+    for (auto& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+        continue;
+      }
+      ApplyEditorPreferences(tab.editor_state->viewport);
     }
-    ApplyEditorPreferences(tab.editor_state->viewport);
   }
 }
 

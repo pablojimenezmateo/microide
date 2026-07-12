@@ -80,6 +80,13 @@ class PathMutationCoordinator {
   void RetargetDiagnosticsForRename(const std::filesystem::path& old_path,
                                     const std::filesystem::path& new_path);
   void ClearDiagnosticsForPath(const std::filesystem::path& path);
+  // Plugin/LSP decorations are keyed by path just like diagnostics, so they must be
+  // retargeted on rename and cleared on delete too — otherwise the renamed buffer loses
+  // its decorations until the producer republishes, and the stale entries leak (the
+  // plugin-presentation bundle can never drain empty and release).
+  void RetargetPluginDecorationsForRename(const std::filesystem::path& old_path,
+                                          const std::filesystem::path& new_path);
+  void ClearPluginDecorationsForPath(const std::filesystem::path& path);
   void RefreshProjectViewsAfterMutation(const std::filesystem::path& preferred_tree_path);
   void RetargetOpenTabsForRename(const std::filesystem::path& old_path,
                                  const std::filesystem::path& new_path,

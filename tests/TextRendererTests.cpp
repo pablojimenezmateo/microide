@@ -622,7 +622,14 @@ void TestSdlTtfSetFontPointSizeResizesGlyphMetrics() {
   Expect(base_char_width > 0.0f && base_line_height > 0.0f,
          "baseline font metrics should be positive");
 
+  // The metrics generation must advance on a point-size change so external caches keyed
+  // on MeasureWidth results (the menu-bar/popup label caches) know to drop stale widths.
+  const std::size_t base_generation = renderer.MetricsGeneration();
+
   renderer.SetFontPointSize(24.0f);
+  Expect(renderer.MetricsGeneration() != base_generation,
+         "changing the point size must advance the metrics generation");
+  const std::size_t large_generation = renderer.MetricsGeneration();
   const float large_char_width = renderer.CharWidth();
   const float large_line_height = renderer.LineHeight();
   Expect(large_char_width > base_char_width,
@@ -635,6 +642,8 @@ void TestSdlTtfSetFontPointSizeResizesGlyphMetrics() {
   // Restoring the default size restores the original metrics (the backend re-opens
   // the same font at the original point size and refreshes metrics).
   renderer.SetFontPointSize(13.0f);
+  Expect(renderer.MetricsGeneration() != large_generation,
+         "restoring the point size must advance the metrics generation again");
   Expect(std::abs(renderer.CharWidth() - base_char_width) <= 0.5f,
          "restoring the default point size should restore the baseline char width");
   Expect(std::abs(renderer.LineHeight() - base_line_height) <= 0.5f,

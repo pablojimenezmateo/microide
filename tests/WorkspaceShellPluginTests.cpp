@@ -4328,7 +4328,38 @@ void TestWorkspaceShellWorkspaceEditRefreshesFolds() {
          "the stale inner fold at line 1 must be gone after the edit");
 }
 
+// Regression: a live editor-preference change must reach EVERY editor group, not just
+// the focused one. ApplyEditorPreferencesToAllTabs only walked the focused group, so a
+// split's non-focused pane kept the stale per-viewport config (tab_size, soft_wrap, …)
+// until reopened.
+void TestWorkspaceShellEditorPreferencesReachAllSplitGroups() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = project_root / "a.txt";
+  WriteFile(file_a, "\tindented\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, project_root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split-right should succeed with an editor tab active");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "two groups should be open");
+
+  // Change the tab size while the split (group 1) holds focus.
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.tab_size", "8"),
+         "setting editor.tab_size should succeed");
+
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).tab_size() == 8,
+         "the focused group's viewport must pick up the new tab size");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).tab_size() == 8,
+         "the NON-focused split group's viewport must also pick up the new tab size");
+}
+
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/EditorPreferencesReachAllSplitGroups",
+          TestWorkspaceShellEditorPreferencesReachAllSplitGroups);
   AddTest(tests, "WorkspaceShell/WorkspaceEditRefreshesFolds",
           TestWorkspaceShellWorkspaceEditRefreshesFolds);
   AddTest(tests, "WorkspaceShell/MultiBufferWorkspaceEditIndependentBaselines",
