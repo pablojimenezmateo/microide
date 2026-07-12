@@ -1307,12 +1307,34 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
     // full-syncs the active viewport); non-active edited buffers are synced
     // directly through the LSP service so their server mirror + diagnostics stay
     // correct even though they are not the visible tab.
+    // Every edited buffer's fold model must be recomputed. The fold model's
+    // content_revision fingerprint alone does not force a rescan once a file is fully
+    // resolved (see the Undo/Redo guard in WorkspaceActionContext), so a same-line-count
+    // edit — a Format-Document re-indent, a bracket-renesting code action / rename —
+    // would otherwise leave phantom fold markers that hide arbitrary line ranges. Mark
+    // each edited tab's fold model dirty, including non-active tabs a multi-file edit
+    // touched.
+    const auto mark_folds_dirty = [&](editor::TextViewport* edited) {
+      if (edited == nullptr) {
+        return;
+      }
+      for (auto& group : context_.current_project_state.editor_groups) {
+        for (auto& tab : group.open_tabs) {
+          if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+              &tab.editor_state->viewport == edited && tab.editor_state->folding_model) {
+            tab.editor_state->folding_model->MarkDirty();
+            return;
+          }
+        }
+      }
+    };
     bool active_synced = false;
     for (std::size_t i = 0; i < by_viewport.size(); ++i) {
       editor::TextViewport* viewport = by_viewport[i].first;
       if (viewport == nullptr || by_viewport[i].second.empty()) {
         continue;
       }
+      mark_folds_dirty(viewport);
       if (viewport == active_viewport) {
         RequestActiveEditableChangeRedraw(before_snapshots[i], viewport->lines().Snapshot());
         active_synced = true;

@@ -329,6 +329,14 @@ bool AssistService::ApplySelectedCompletion() {
   } else if (!viewport->ReplaceRange(replacement_range, item.insert_text)) {
     return false;
   }
+  // A completion edit mutates the buffer; the fold model's content_revision fingerprint
+  // alone does not force a rescan once a file is fully resolved (see the Undo/Redo path),
+  // so mark it dirty here — like the sibling snippet/insert paths — otherwise a
+  // same-line-count completion (a re-indenting textEdit, an item that inserts a bracket
+  // while replacing a same-line range) leaves stale/phantom fold ranges.
+  if (TabEntry::EditorTabState* tab = operations_.active_editor_tab(); tab != nullptr) {
+    tab->folding_model->MarkDirty();
+  }
   ApplyEditSideEffects(*viewport, snapshot);
   operations_.dismiss_overlay(true);
   return true;

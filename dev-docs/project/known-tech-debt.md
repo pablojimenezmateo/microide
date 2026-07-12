@@ -21,21 +21,6 @@ regression worse than the defect. Recorded here so they are not silently lost.
 > `.gitignore` stat/copy; document-symbol flatten depth-capped; debug watch cascade
 > fetch now issued so a nested watch child doesn't strand on "loading…"). These findings
 > were **not** fixed and are recorded here:
-> - **QUEUED FOR NEXT PASS — fold model goes stale after LSP/plugin/completion edits.**
->   `WorkspaceShell::ApplyLspWorkspaceEdit` (`WorkspaceShellPlugins.cpp:1170`, the
->   code-action / rename / Format-Document / plugin-edit apply path) and
->   `AssistService::ApplySelectedCompletion` (`AssistService.cpp:294` →
->   `ApplyEditSideEffects`) mutate the buffer (bumping `content_revision`) but never call
->   `folding_model->MarkDirty()`. `FoldingModel::EnsureFoldsForVisibleRange`
->   (`FoldingModel.cpp:523`) early-returns on `!dirty_` once a file is fully resolved,
->   ignoring `content_revision`, so a same-line-count edit (a Format-Document re-indent, a
->   completion/code-action that re-nests brackets) leaves stale fold ranges — a fold
->   chevron can hide the wrong line range. The Undo/Redo path already guards this exact
->   hazard (`WorkspaceActionServices.cpp:666-674`). Durable fix: have
->   `EnsureFoldsForVisibleRange`/`IsVisibleRangeResolved` also key on `content_revision` so
->   no mutating caller can forget `MarkDirty`. High value; deferred only to give the
->   FoldingModel freshness change a focused, carefully-verified pass. (Text-layout hunter
->   #1 + #2.)
 > - **Git: sidebar stage/unstage/discard run git subprocesses synchronously on the shell
 >   thread, and unstage/discard force a whole-index `git diff --cached --name-status`.**
 >   `WorkspaceSidebarCoordinatorActions.cpp` calls `GitStagePath`/`GitUnstagePath`/

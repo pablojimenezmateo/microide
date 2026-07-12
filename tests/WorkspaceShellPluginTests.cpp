@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "editor/FoldingModel.h"
 #include "editor/PluginDecorationStore.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/StringUtil.h"
@@ -4267,7 +4268,69 @@ void TestWorkspaceShellMultiBufferWorkspaceEditIndependentBaselines() {
   Expect(ReadFile(b_path) == "bbb\n", "buffer B was never written to disk");
 }
 
+// Regression: an LSP WorkspaceEdit (code action / rename / Format Document / plugin
+// edit) that mutates a buffer must mark the fold model dirty. Without it, a same-line-
+// count edit that moves a fold boundary leaves EnsureActiveFoldingModelFresh early-
+// returning STALE fold ranges (a phantom fold marker that hides the wrong line range).
+void TestWorkspaceShellWorkspaceEditRefreshesFolds() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path src = root / "fold.cpp";
+  WriteFile(src,
+            "void f() {\n"
+            "  if (x) {\n"
+            "    a;\n"
+            "  }\n"
+            "  b;\n"
+            "}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, src);
+
+  const auto inner_closer_for_opener = [&](std::size_t opener) -> std::size_t {
+    editor::FoldingModel* model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+    if (model == nullptr) {
+      return 0;
+    }
+    for (const auto& r : model->ranges()) {
+      if (r.opener_line == opener) {
+        return r.closer_line;
+      }
+    }
+    return 0;
+  };
+
+  // Structure A: the inner brace block opens at line 1 and closes at line 3.
+  Expect(inner_closer_for_opener(1) == 3,
+         "before the edit, the inner fold opens at line 1 and closes at line 3");
+
+  // Replace lines 1..4 reordered so the inner block slides down one line — SAME line
+  // count. This is the same-line-count edit class (a formatter re-indent, a re-nesting
+  // code action) that the fold-model dirty fix guards.
+  const auto range = [](std::size_t l0, std::size_t c0, std::size_t l1, std::size_t c1) {
+    return editor::SelectionRange{editor::TextPosition{l0, c0}, editor::TextPosition{l1, c1}};
+  };
+  const std::vector<microide::workspace::CodeActionEdit> edits = {
+      {src, range(1, 0, 5, 0), "  b;\n  if (x) {\n    a;\n  }\n"},
+  };
+  Expect(WorkspaceShellTestAccess::ApplyLspWorkspaceEdit(shell, edits),
+         "the workspace edit should apply to the open buffer");
+
+  // Structure B: the inner block now opens at line 2 and closes at line 4. Without the
+  // MarkDirty fix, EnsureActiveFoldingModelFresh early-returns the stale structure A.
+  Expect(inner_closer_for_opener(2) == 4,
+         "after the same-line-count edit, the fold model must reflect the moved inner block");
+  Expect(inner_closer_for_opener(1) == 0,
+         "the stale inner fold at line 1 must be gone after the edit");
+}
+
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/WorkspaceEditRefreshesFolds",
+          TestWorkspaceShellWorkspaceEditRefreshesFolds);
   AddTest(tests, "WorkspaceShell/MultiBufferWorkspaceEditIndependentBaselines",
           TestWorkspaceShellMultiBufferWorkspaceEditIndependentBaselines);
   AddTest(tests, "WorkspaceShell/PluginSnippetTabTriggerExpands",

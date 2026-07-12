@@ -29,6 +29,54 @@ FoldRange Find(const std::vector<FoldRange>& ranges, std::size_t opener_line) {
   return FoldRange{};
 }
 
+// Regression: EnsureFoldsForVisibleRange early-returns on !dirty_ once a file is fully
+// resolved, IGNORING the content_revision. So a document edit that moves a fold boundary
+// WITHOUT changing the line count (a formatter re-indent, a completion / code action /
+// plugin edit that re-nests brackets) leaves STALE fold ranges unless the mutating path
+// marks the model dirty. This documents why ApplyLspWorkspaceEdit, the completion-accept
+// path, and Undo/Redo must all call MarkDirty().
+void TestFoldStaleWithoutMarkDirtyAfterSameLineCountEdit() {
+  std::vector<std::string> lines = {
+      "void f() {",  // 0
+      "  if (x) {",  // 1  inner opener (structure A)
+      "    a;",      // 2
+      "  }",         // 3  inner closer (A)
+      "  b;",        // 4
+      "}",           // 5  outer closer
+  };
+  const auto options = DefaultCStyleOptions();
+  FoldingModel model;
+  Expect(model.EnsureFoldsForVisibleRange(lines, options, 0, 5, 100),
+         "initial resolve should finish");
+  Expect(Find(model.ranges(), 1).closer_line == 3,
+         "structure A: the inner bracket fold opens at line 1 and closes at line 3");
+
+  // Mutate to structure B (SAME line count): the inner block slides down one line.
+  lines = {
+      "void f() {",  // 0
+      "  b;",        // 1
+      "  if (x) {",  // 2  inner opener (structure B)
+      "    a;",      // 3
+      "  }",         // 4  inner closer (B)
+      "}",           // 5
+  };
+  // No MarkDirty: the early-return keeps the STALE ranges — the exact phantom-fold
+  // hazard the apply-path fixes guard against.
+  Expect(model.EnsureFoldsForVisibleRange(lines, options, 0, 5, 100),
+         "resolve returns (early) after the same-line-count content change");
+  Expect(Find(model.ranges(), 1).closer_line == 3,
+         "without MarkDirty the fold model is STALE: it still reports the pre-edit inner fold");
+
+  // MarkDirty forces a rescan against the new content.
+  model.MarkDirty();
+  Expect(model.EnsureFoldsForVisibleRange(lines, options, 0, 5, 100),
+         "resolve after MarkDirty should finish");
+  Expect(Find(model.ranges(), 1).closer_line == 0,
+         "after MarkDirty the stale inner fold at line 1 is gone");
+  Expect(Find(model.ranges(), 2).closer_line == 4,
+         "after MarkDirty the inner fold reflects structure B (opens at line 2, closes at line 4)");
+}
+
 void TestBracketFoldEmitsOpenerAndCloser() {
   const std::vector<std::string> lines = {
       "void f() {",
@@ -661,6 +709,8 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
           TestHasAnyCollapsedFoldTracksCounter);
   AddTest(tests, "EditorFolding/RemapCollapsedFlagsPreservesCollapsedAcrossRecompute",
           TestRemapCollapsedFlagsPreservesCollapsedAcrossRecompute);
+  AddTest(tests, "EditorFolding/StaleWithoutMarkDirtyAfterSameLineCountEdit",
+          TestFoldStaleWithoutMarkDirtyAfterSameLineCountEdit);
 }
 
 }  // namespace microide::tests
