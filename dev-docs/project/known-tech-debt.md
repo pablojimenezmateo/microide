@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed on 2026-07-10.
+Reviewed on 2026-07-12.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
 It is deliberately short. Closed debt does not live here — it is archived (see below).
@@ -9,622 +9,149 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-These were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
-**deliberately deferred** — each is either entangled with a semantics decision or
-a latent API-contract hazard with no live trigger, so a rushed fix risked a
-regression worse than the defect. Recorded here so they are not silently lost.
+**Deferred-backlog sweep 2026-07-12.** The 2026-07 cross-subsystem bug-hunt passes
+(5–24, plus the pass-12/13 "deferred from" lists) had recorded a large backlog of
+items that were deliberately not fixed at the time. That backlog was triaged in full
+against the current tree and cleared in nine focused commits ("Deferred backlog sweep
+— Batch A…I"). Each fixed item landed with regression coverage; the full suite plus a
+final ASAN/UBSAN/TSAN pass stay green. What follows is the closing record: what was
+fixed, what is a genuine won't-do, what is platform-only, and the small set that
+remains deliberately deferred.
 
-> **Deferred 2026-07-12 (pass 24 — cross-subsystem bug hunt):** a four-way fan-out
-> (render view-model/shell, tab-group/session, palette/keybindings/prompts, plugin
-> decoration/hover) landed 5 fixes (prompt Cancel button no longer executes the confirm
-> action — was destructive for commit-amend/rename-symbol; menu-bar/popup width caches
-> invalidate on a runtime font change via a TextRenderer metrics generation;
-> ApplyEditorPreferencesToAllTabs reaches every editor group not just the focused one;
-> plugin decorations retargeted on rename / cleared on delete like diagnostics; compare
-> read-only ascii dispatch masks Ctrl so unbound Ctrl+letter no longer misfires). Lower-
-> severity secondary findings deferred:
-> - **Tab: `ReloadVirtualDocumentTabs` only refreshes the focused group.**
->   `WorkspaceTabCoordinator.cpp:734-761` reloads matching virtual-document tabs only in
->   the focused group, unlike `ReloadEditorTabsForPath` which walks all groups. A virtual
->   doc open in both split groups leaves the non-focused copy stale after a plugin update.
->   Fix: loop over all `editor_groups`. (Tab hunter #2.)
-> - **Plugin: surface anchor line lacks the overflow clamp the decoration path has.**
->   `PluginSurfaceInterop.cpp:298` narrows `line - 1` to `uint32_t` with only a `<= 0`
->   check, so an anchor line ≥ 2^32+1 wraps and mis-anchors the surface. Mirror
->   `ReadOneBasedField`'s `kMaxOneBased` reject. (Plugin hunter #2, low.)
-> - **Plugin: surfaces are not path-retargeted on rename.** The pass-24 decoration fix
->   covers `PluginDecorationStore`; `PluginSurfaceStore` has path anchors in
->   `anchored_by_path_` but no `RetargetPathPrefix`/`ClearPathPrefix` API, so a rename
->   leaves a surface's path anchor stale. Needs the store API added first. (Plugin hunter
->   #1, follow-on.)
-> - **Keybindings: `ParseKeyChord` may drop a lowercase single-letter plugin chord.**
->   `WorkspaceKeybindingRegistry.cpp:771-777` passes the original-case letter to
->   `SDL_GetScancodeFromName` (uppercase names), so a plugin binding written `"ctrl+a"`
->   may yield `SCANCODE_UNKNOWN` if SDL3 is case-sensitive. Unverified in this env; one-line
->   lowercase fix. (Palette hunter, low confidence.)
->
-> **Deferred 2026-07-12 (pass 22 — cross-subsystem bug hunt):** a four-way fan-out
-> (text-layout/syntax, file-finder/sidebar, git-ops, debug session) landed 4 fixes
-> (git untracked-discard now trashes instead of `git clean`-deleting despite the prompt's
-> promise; ProjectFileScanner checks dir-ignore with the parent matcher before the
-> `.gitignore` stat/copy; document-symbol flatten depth-capped; debug watch cascade
-> fetch now issued so a nested watch child doesn't strand on "loading…"). These findings
-> were **not** fixed and are recorded here:
-> - **Git: sidebar stage/unstage/discard run git subprocesses synchronously on the shell
->   thread, and unstage/discard force a whole-index `git diff --cached --name-status`.**
->   `WorkspaceSidebarCoordinatorActions.cpp` calls `GitStagePath`/`GitUnstagePath`/
->   `GitDiscardPath`/... which run `GitRepository::Execute` → `platform::RunSubprocess`
->   inline (evading `CheckNoRunSubprocessInWorkspace` because the call lives in
->   `src/project`), and `Unstage`/`Discard` call `StagedRenameSource` first (a full staged
->   diff) even for a single small file. Speed-first concern; the off-thread dispatch via
->   ProjectBackgroundExecutor is a larger change, and gating StagedRenameSource on a
->   porcelain rename hint is the contained win. (Git hunter #2.)
-> - **Git: `DiscardAll`/`git clean -fd -- .` permanently deletes every untracked file.**
->   The single-file untracked discard is fixed to trash this pass; the bulk DiscardAll
->   path (no explicit trash promise in its text) still hard-deletes. Left for a deliberate
->   decision on bulk-discard semantics. (Git hunter #1, follow-on.)
-> - **Debug: permanent "show more…" when an adapter reports total_count > children it
->   returns.** `DebugValueTree::ApplyVariables` (`DebugValueTree.cpp:352-359`) keeps
->   `more_available` true if `total_known` and the over-range page returns success+empty.
->   Self-heals for gdb (it errors the page). Fix: on a `start > 0` page that attaches zero
->   children, force `more_available = false`. (Debug hunter #2, low.)
-> - **Debug: orphaned nodes / stale `reference_to_node_` on child-list replace + rebind.**
->   `ApplyVariables` (start<=0) and `RebindReference` clear `children` but leave old child
->   nodes in `nodes_`/`reference_to_node_`; bounded per stop (`Clear()` wipes them),
->   needs an uncommon structure-changing `setVariable`. (Debug hunter #3, low.)
-> - **File-finder: per-keystroke deep-copies path + string per match, uncapped.**
->   `FileFinder::Refresh` copies a `filesystem::path` + `std::string` for every match on a
->   broad query over a large index; the finder itself has no result cap (only render
->   caps). Fix: store indices into `cached_entries_` and resolve lazily. Pre-existing
->   architecture, not a regression. (File-finder hunter #2.)
-> - **Patch apply raced by a completing refresh is reported "stale" and skips its
->   success-path invalidations.** `PatchApplyService.cpp:186-193` overwrites a Success to
->   StaleGeneration if a refresh completed during the apply, skipping blame/compare
->   invalidation for the applied path. Self-heals on the next refresh; transient stale
->   blame/compare + a misleading message. (Git hunter #3, low.)
->
-> **Deferred 2026-07-12 (pass 21 — cross-subsystem bug hunt):** a four-way fan-out
-> (terminal, DAP/LSP transport, compare/merge/diff, plugin runtime) landed 4 fixes
-> (plugin contribution-cap gap now enforced on the contribution_interop register path;
-> compare hunk-alignment similarity DP capped to stop an O(tokens²) OOM crash on a
-> minified single-line compare; LSP + DAP initialize wait rebased onto a wall-clock
-> deadline so a pre-init notification burst can't force-kill a healthy server). These
-> genuine lower-severity / higher-risk findings were **not** fixed and are recorded here:
-> - **Plugin: `process.run`/`process.run_async` build the Lua result table while
->   non-trivial C++ locals are live.** `PluginProcessInterop.cpp` (~216-244 / ~258-296)
->   runs `lua_createtable`/`lua_pushlstring`/`lua_setfield` while `parsed`
->   (`ProcessRunArgs`, owns argv/cwd/env) and `result` (`SubprocessResult`, owns
->   stdout/stderr) are in scope. Each push allocates through the bounded allocator; a
->   plugin sitting near the 256 MB Lua ceiling can make one of those raise `LUA_ERRMEM`,
->   which longjmps over those locals without running their destructors (the exact hazard
->   class the hard invariant guards, but triggered by an allocation raise rather than
->   `luaL_error`, so the lint does not catch it). Latent: needs an adversarial near-budget
->   plugin. Fix needs care (narrow `parsed`'s scope; build the result table via a
->   protected `lua_pcall` helper so an OOM raise unwinds with no C++ locals live) — a
->   delicate change deferred rather than rushed. (Plugin hunter #2.)
-> - **Terminal: VT (0x0B) and FF (0x0C) reset the cursor column to 0 instead of
->   preserving it.** `TerminalSessionOutput.cpp:292-296` routes `\v`/`\f` through
->   `AdvanceCursorRowLocked` (which zeroes the column) like `\n`, but VT/FF are never
->   ONLCR-translated, so per ECMA-48/xterm/VTE they are index-like (straight down, column
->   preserved) — exactly what the sibling IND handler in the same file does deliberately.
->   Input `A \v B` should staircase (`B` under the char after `A`) but lands `B` at col 0.
->   LOW severity, and an existing test
->   (`TestTerminalSessionVerticalTabAndFormFeedIndexLikeLineFeed`) currently *asserts* the
->   col-0 behavior, so the fix (mirror IND's save/restore) also requires updating that
->   test to the staircase expectation — a deliberate spec call deferred out of a bug pass.
->   (Terminal hunter #1.)
-> - **DAP/LSP: eager document-version bump on a refused `didChange` permanently
->   suppresses later diagnostics for that file.** `WorkspaceLspClient.cpp:187,220` bump
->   `document_versions[uri]` before enqueue, which can return false (queue at
->   kMaxQueuedMessages / stop_io). The staleness gate
->   (`WorkspaceLspClientDispatch.cpp:162`) then drops every later `publishDiagnostics`
->   because the server reports against the last version it received. Only arises under a
->   wedged/overflowing (50000-msg) queue where the session is effectively dead. Fix: only
->   advance the version if the enqueue succeeded. (DAP/LSP hunter #2.)
-> - **Compare: CRLF working-tree files may fail generated-patch context matching.**
->   `SplitLineViews` strips `\r`/`\n` and `PatchGenerator` emits `\n`-terminated context,
->   so against a CRLF blob `git apply --check` context can mismatch and silently disable
->   stage/discard. Fails safe (patch rejected, no corruption); reachability depends on
->   git autocrlf/blob normalization. (Compare hunter, low-confidence lead.)
->
-> **Deferred 2026-07-12 (pass 20 — cross-subsystem bug hunt):** a four-way fan-out
-> (control/platform, search/git-state, persistence/session, editor-core) landed 3
-> fixes (control-instance discovery sweep bounded by entries-examined + right-sized
-> descriptor read; count-all search per-worker local match tally to kill shared-atomic
-> contention + inner-loop cancel poll; Shift+PageUp/PageDown now extend the selection).
-> These genuine lower-severity findings were **not** fixed and are recorded here:
-> - **Persistence: no parent-directory fsync after the atomic rename.**
->   `PersistedRecordWriter::WriteFile` (`src/persistence/PersistedRecordWriter.cpp:85`)
->   fsyncs the temp file contents (`DurableFile.cpp` `WriteFileBytesDurable`) but never
->   fsyncs the containing directory after `RenameReplacing`, so on POSIX the rename is
->   not durable until the dir is synced. A hard power loss immediately after
->   `FlushSessionStateForCrashSafety` can lose the newest session/config write. Deferred
->   deliberately: the priority stack is speed-first and a directory fsync on every
->   (debounced) save is a real cost, and the reader's `.bak` fallback already bounds the
->   loss to "only the very latest save." `DurableFile.h` documents that directory
->   durability is the caller's responsibility. (Persistence #1, durability/speed
->   tradeoff.)
-> - **Persistence: layout float fields are not clamped on restore.**
->   `WorkspacePersistenceCoordinatorSession.cpp` clamps `group_split_fraction` to
->   `[0.1,0.9]` but applies `compare_divider_fraction`, `merge_left/right_divider_fraction`,
->   `sidebar_width`, `bottom_panel_height`, and `right_pane_width` verbatim. A CRC-valid
->   hand-edited or NaN→0-neutralized value yields a degenerate pane. Not reachable from a
->   normal save (live values are finite/in-range); robustness only. Fix mirrors the
->   existing `std::clamp`. (Persistence #2, robustness.)
-> - **Editor: multi-caret soft-tab insert uses the primary caret's column for every
->   caret.** `TextViewportEditEngine.cpp` `InsertTab` computes the padding width once
->   from `cursor_visual_column()` (primary) and `InsertText` fans the identical string to
->   all carets, so carets at ragged columns don't align to their own tab stop. Reachable
->   via plain multi-caret Tab. Low user impact; the fix needs per-caret string building
->   through the multi-caret aggregate path (`ApplyMultiCaretEdit` per-caret strings, like
->   `PasteText`), which is delicate enough to warrant a deliberate change. (Editor #2.)
-> - **Editor: multi-caret Shift+Tab (outdent) drops/strands secondary carets.**
->   `ShapingActions.cpp` `OutdentSelection` → `ReplaceLines` → `BuildLineHistoryEntry`
->   snaps the primary to `(range.first,0)` and leaves secondary carets at their pre-edit
->   columns even though each line de-indented (text shifted left). Fix mirrors
->   `MoveLineUp/Down`'s `SnapshotCaretsForLineMove`/`RestoreCaretsAfterLineMove` with a
->   column shift; medium confidence, touches undo grouping — deferred to avoid a
->   subtly-wrong caret restore. (Editor #3.)
-> - **Search: minor perf-counter/cosmetic notes.** `ProjectSearchService.cpp` `LowerLine`
->   bumps `SearchProjectLowerLineCalls` even in case-sensitive mode where it only
->   `clear()`s (counter inflation, not behavior); and a porcelain-v2 rename's `old_path`
->   gets the same `Modified` tree badge as the new path (the now-deleted source shows
->   Modified rather than Deleted — cosmetic, overlaps the still-partly-deferred rename
->   item). (Search hunter, low.)
->
-> **Deferred 2026-07-12 (pass 19 — cross-subsystem bug hunt):** a four-way fan-out
-> landed 4 fixes (input single-line-surface Cut/Copy/SelectAll data-loss guard;
-> snippet `${1:|choice|}` newline-in-choice corruption; commit-panel per-keystroke
-> full `git diff --cached` conflict scan gated to dispatch-only; plugin synchronous
-> query registration-during-iteration use-after-free). These lower-severity items
-> were **not** fixed and are recorded here:
-> - **Git: `BuildCommitStagedSummary` still runs `git diff --cached --numstat -z` on
->   the shell thread on every commit-panel keystroke.** `RefreshDerivedState` calls it
->   from `OnDraftEdited`, but the staged summary (`N files, +x/-y`) depends only on the
->   git index, not the subject/body text the user is typing — so it is recomputed
->   redundantly per keystroke. `--numstat` is bounded (one line per staged file) so the
->   stall is far smaller than the full-diff conflict scan fixed this pass, but for large
->   staged sets it is still avoidable work. Fix: cache the summary against the git
->   generation and only rebuild it when the index changes, not on draft edits. (Git
->   hunter #3, follow-on.)
-> - **Git: `GitConflictMarkers` stderr coupling / `GitCommandUtil.cpp:100-105`.** The
->   staged-diff conflict scan treats any non-success `git diff --cached` as "no markers"
->   — a git error (e.g. a transiently locked index) silently disables the safety check
->   rather than surfacing. Low severity (the commit still runs git itself, which would
->   fail loudly), but the check could distinguish "clean" from "could not determine".
->   (Git hunter #3, minor.)
-> - **Plugin: dead MCP-tool registration code + missing MCP teardown.** The synchronous
->   query registration fix (this pass) closed the live UAF; separately, an MCP-tool
->   registration branch appears unreachable from the current verb table and there is no
->   symmetric teardown path for MCP tools on reload. No live trigger; recorded for a
->   deliberate plugin-host audit rather than a speculative edit. (Plugin hunter #4,
->   latent/dead-code.)
-> - **Input: `HandleCompareKeyDown` ascii-dispatch does not re-check the Ctrl modifier**
->   before treating a printable keysym as a find-bar character, and `ParseKeyChord`
->   silently drops a chord whose second stroke is unrecognized instead of surfacing it.
->   Both are narrow behavioral papercuts with no data-loss; recorded, not fixed.
->   (Input hunter #1, minor.)
->
-> **Deferred 2026-07-11 (pass 18 — cross-subsystem bug hunt):** a four-way fan-out
-> landed 2 fixes (split-view stale highlight token cache; AsyncSubprocess moved-from
-> guard symmetry). Render/layout and compare/merge/blame came back clean. One minor
-> item deferred:
-> - **`WorkspaceShell::RevealPathInFileExplorer` runs `xdg-open` synchronously on the
->   shell thread with an infinite timeout.** `src/workspace/WorkspaceShellTerminal.cpp`
->   calls `platform::OpenPathInFileManager`, which runs `xdg-open` via `RunSubprocess`
->   with `timeout_ms = 0` (wait-indefinitely). `xdg-open` normally forks and returns
->   immediately so there is no practical stall, but a wedged file manager would hang the
->   UI thread. Defense-in-depth: give that call a finite `timeout_ms`. (Platform #minor.)
->
-> **Deferred 2026-07-11 (pass 17 — cross-subsystem bug hunt):** a four-way fan-out
-> landed 2 fixes (workspace deferred-tab identity loss; Linux inotify incremental
-> events bypassing the ignore filter). These findings were **not** fixed and are
-> recorded here:
-> - **macOS: FSEvents incremental events bypass the ignore filter entirely.**
->   `FileIndexWatcher.cpp` `FsEventsCallback` uses `kFSEventStreamCreateFlagFileEvents`
->   and only `continue`s on directory events — it has no directory-prune and no
->   file-level `filter.Includes(...)`, so files under an ignored directory
->   (e.g. `node_modules/foo.js`) and `.gitignore`'d files are delivered per-file and
->   indexed. This is the macOS analogue of the Linux inotify leak fixed in this pass;
->   **not fixed here because it cannot be compiled or run on this Linux workstation**
->   (same reason the Windows AsyncSubprocess race stays deferred). Fix mirrors the
->   Linux branch: build one `ProjectTraversalFilter` per callback and gate
->   `CreatedOrModified` on `is_regular_file` + `filter.Includes(...)`, plus a
->   directory prune. (Search hunter #1, macOS half.)
-> - **Windows: `IgnoreMatcher::ParseRule` normalizes the glob through
->   `std::filesystem::path(...).lexically_normal()`** (`IgnoreMatcher.cpp` ~line 362),
->   so a gitignore pattern containing a backslash-escaped literal (e.g. `foo\ bar`) is
->   split on the Windows path separator and corrupted. Benign on Linux. (Search #minor.)
-> - **`FileIndex::files(ProjectFileScanMode)` (`FileIndex.cpp` ~line 290) is dead
->   code** — no callers; returns a `const&` into a cache shared_ptr after releasing the
->   lock, which would be a data race if ever called from a second reader thread.
->   Currently harmless (unused); delete or make it return a snapshot. (Search #minor.)
->
-> **Deferred 2026-07-11 (pass 16 — cross-subsystem bug hunt):** a four-way fan-out
-> landed 4 fixes (editor Ctrl+D ranged multi-carets, terminal primary-screen RI
-> scrollback floor, LSP `RebindReference` first-writer-wins, git conflict-marker
-> false positive). These genuine lower-severity findings were **not** fixed and
-> are recorded here:
-> - **Merge: non-default `merge.conflictMarkerSize` breaks conflict-output parsing.**
->   `WorkspaceShellMergeState.cpp` `is_conflict_separator` matches the separator with
->   an exact `line == "======="` (exactly 7) while the start/base/end sigils use a
->   length-tolerant `starts_with`. If a repo sets `merge.conflictMarkerSize > 7`, the
->   `<<<<<<<<` line still enters the conflict branch but the `========` separator never
->   matches, so `ParseGitConflictOutput` returns nullopt and the resolver falls back to
->   raw text. Fix: match the separator with the same marker-size tolerance. Only affects
->   non-default marker size. (Git hunter #2.)
-> - **Compare: ignore-whitespace toggle on a working-tree compare silently narrows
->   staging.** `ToggleCompareIgnoreWhitespace` applies to WorkingTree tabs that feed
->   patch-apply; under `ignore_whitespace` a whitespace-only-different line is emitted as
->   an `Unchanged` row and the patch generator uses `left_text` as context, so staging a
->   hunk omits the whitespace-only change (index stays != worktree) and discard/reverse
->   fail their `git apply --check`. No data loss (preflight gate protects discards) but
->   staging stages less than shown. Needs a semantics decision (disable patch-apply while
->   ignore_whitespace is active, or generate the apply patch from a non-ws-ignoring
->   model). (Git hunter #3.)
-> - **Terminal: alt-screen linefeed below a custom scroll region scrolls the whole
->   screen.** `AdvanceCursorRowLocked` alt-screen fallback, when the cursor is *below* a
->   custom scroll region and on the last physical row, calls
->   `ScrollRegionUpLocked(0, terminal_rows-1, 1)` (whole screen). Per DEC/xterm, IND with
->   the cursor outside the region at the physical bottom should not scroll. Rare (needs a
->   header/status-split layout on the alt screen); low confidence. (Terminal hunter #2.)
->
-> **Deferred 2026-07-10 (pass 5 — cross-subsystem bug hunt):** a six-way fan-out
-> landed 8 fixes (see commit); the following genuine findings were deliberately
-> **not** fixed this pass and are recorded here:
-> - **Terminal: DECSTBM scroll region is not honored on the *primary* screen.**
->   `ScrollRegionUp/DownLocked` and the LF path early-return / ignore margins unless
->   `use_alternate_screen_`, and SU/SD (`CSI S`/`CSI T`) are alt-only. A bottom
->   status-line program that stays on the primary buffer scrolls the whole screen.
->   Implementing primary-screen regions touches scrollback interaction and is a
->   feature, not a one-line fix. (Terminal hunter #2.)
-> - **Terminal: `CSI r` with an out-of-range bottom margin discards the whole
->   command** rather than clamping the bottom to the screen height (xterm/VTE clamp).
->   Low severity behavioral deviation. (Terminal hunter #6.)
-> - **Terminal: primary-screen DL (`CSI M`) at absolute row 0 does not bump
->   `scrollback_trim_total_`**, so workspace scroll/selection mirrors can strand.
->   Narrow reachability; IL/DL are general content edits the mirror only partly
->   tracks — needs a semantics decision, not a rushed accounting patch. (Terminal #5.)
-> - **Terminal: resize full-window scroll-margin re-expansion is applied only to
->   the active screen**, not the saved primary/alternate `scroll_region_*`; a resize
->   between alt-screen switches can restore a stale region. Masked in practice by
->   apps re-issuing `CSI r` on redraw. (Terminal hunter #1.)
-> - **Plugin: contribution registrations lack the per-kind count cap** that
->   `registry_interop` enforces (`kMaxPluginContributionsPerKind`). The parallel
->   `contribution_interop::Register*` path (completions/code-actions/providers/etc.)
->   `push_back`s uncapped, so a tight `setup()` loop can balloon host RSS within the
->   750 ms watchdog. Best fixed by routing all contribution registers through the
->   shared cap helper — a focused refactor worth doing deliberately. (Plugin #3.)
-> - **Windows-only platform gaps** (not built on the Linux-primary tree, so
->   informational): `AsyncSubprocess` Windows `Impl::state_mutex` is declared but
->   never acquired (Read/Write/Shutdown race → HANDLE UAF); `Subprocess::RunSubprocess`
->   Windows ignores `timeout_ms` (`WaitForSingleObject(INFINITE)`) and writes stdin
->   with a blocking `WriteFile` that can deadlock on a full pipe; `DurableFile::
->   RenameReplacing` is non-atomic on Windows (`remove`+`rename`). (Compare/platform
->   hunter #1–4.)
-> - **Git porcelain-v2:** a `'2'` rename record consumes the following record as
->   origPath unconditionally; only matters on truncated/garbled `-z` output. Very low.
+### Resolved this sweep (by subsystem)
 
-> **Deferred 2026-07-10 (pass 6 — cross-subsystem bug hunt):** a four-way fan-out
-> (search/git, editor/compare/merge, persistence/util/control, terminal/plugin)
-> landed 7 fixes (5 plugin harvest-loop clamps, the multi-caret `DeleteCurrentLine`
-> stale-`last_applied_edit_` fix, and the `git diff --end-of-options` guard — see
-> commit). Persistence/util/control and terminal came back clean. Two genuine
-> findings were deliberately **not** fixed and are recorded here:
-> - **Editor: `MoveLineUp`/`MoveLineDown` drop the selection when it ends at
->   column 0 of the line after the block.** `ResolveLineRange` decrements the block's
->   `last` to exclude that trailing line, but `RestoreCaretsAfterLineMove` gates
->   selection restoration on `selection->end.line <= range_last`, so the original
->   `end.line == range_last+1` fails the guard and the code falls to the single-caret
->   branch — the block stays moved but the selection is lost (self-corrects on next
->   selection). A correct fix must shift the trailing column-0 boundary by `delta`
->   and clamp an out-of-bounds end across all orientations (upward selections,
->   MoveLineUp at top-of-file); a subtly-wrong selection is worse than the safe
->   fallback, so this wants a deliberate fix with dedicated tests. (Editor obs #2.)
-> - **Git porcelain-v2 empty-path `'2'` record** (already noted under pass 5): the
->   re-audit confirmed it is truncation-only and harmless — the stray origPath
->   record is dropped by `default: break`. Left as-is. (Search/git #2.)
+- **Terminal (Batch A/B).** VT/FF index preserving the column (like IND) instead of
+  zeroing it; a charset designation aborts on an embedded ESC/CAN/SUB; an alt-screen
+  LF/index below a custom region at the physical bottom no longer scrolls the whole
+  screen; the `[process exited]` marker restores the primary buffer first when the
+  child dies on the alt screen; `ParseCsiParametersInto` reuses a thread_local buffer
+  (no per-CSI heap alloc); basic SGR foregrounds (30–37) track the bold flag for
+  brightness (order-independent, reverted by SGR 22) while explicit bright (90–97)
+  stays fixed; terminal URL hit-testing maps the grid column to a byte offset.
+  **Primary-screen scroll regions**: DECSTBM / SU / SD / IL / DL now honored on the
+  primary buffer (gated on a custom region so the common full-screen path is
+  unchanged); `CSI r` clamps an out-of-range bottom instead of discarding; a C0
+  control embedded mid-CSI is executed then the sequence continues; resize
+  re-expands the saved primary/alternate full-window regions.
+- **Editor / folding (Batch C).** Multi-caret soft-tab aligns each caret to its own
+  next tab stop; multi-caret indent/outdent preserve every caret (shifted by their
+  line's delta); MoveLine carries a whole-line selection whose exclusive end sits at
+  column 0 of the line after the block; **a collapsed fold survives a
+  line-count-changing edit above it** (the remap shifts previous collapsed
+  openers/closers by the net edit delta at/after the edit anchor).
+- **Git (Batch D).** Single-file unstage/discard skips the whole-index staged-rename
+  probe for the common non-rename case (a hint threaded from the sidebar entry);
+  `DiscardAll` trashes files with no committed content (untracked + staged-new)
+  instead of `git clean`-deleting them; the commit staged summary is cached against
+  the git generation; `StagedDiffContainsConflictMarkers` returns optional<bool>
+  ("could not determine" vs "clean"); `PatchApplyService` runs its blame/compare/
+  clean-tab invalidations whenever the patch actually applied (even on a generation
+  race); a rename source is badged Deleted in the tree status map; `LowerLine` no
+  longer inflates the lowercase counters in case-sensitive mode.
+- **Compare / merge (Batch E).** Syntax highlighting reaches hunks deep in a
+  collapsed large-file diff (the tokenizer window is derived in model space from the
+  visible presentation rows, with a continued-redraw catch-up); the merge conflict
+  separator tolerates a non-default `merge.conflictMarkerSize`.
+- **Plugin host (Batch F).** The surface anchor line rejects values that would wrap
+  the uint32_t cast (mirrors `ReadOneBasedField`); `PluginSurfaceStore` gains
+  `RetargetPathPrefix`/`ClearPathPrefix`, wired into the rename/delete coordinator so
+  a renamed file's inline surfaces follow it and a deleted file's are dropped.
+- **LSP / DAP (Batch G).** `didChange`/`didChangeIncremental` advance the document
+  version only on a successful enqueue (a dropped change no longer suppresses later
+  diagnostics); an over-reporting adapter's empty "load more" page clears
+  `more_available`; replacing a debug container's child list recursively erases the
+  old subtree from the node maps.
+- **Control / keybindings / tab / persistence / util / platform (Batch H).**
+  `ParseKeyChord` passes SDL's canonical uppercase scancode name; virtual-document
+  reloads walk every editor group; session restore sanitizes the layout pixel floats
+  (NaN/Inf/negative → default); `xdg-open` gets a finite timeout; ParseFloat/Double
+  reject leading space/`+`/hex-float; the control client shares one deadline across
+  send + read; `ExecuteControlCommand` reports panel feedback only if the command
+  changed it.
+- **File index (Batch I).** The initial-scan and native-event workers no longer race
+  to lose a file changed during the scan window — `SetCallback` buffers incrementals
+  until the initial (wholesale-replace) batch lands, then replays them in order.
+  Deleted the dead `FileIndex::files(ProjectFileScanMode)`.
+- **Already fixed by a later pass (closed, no code):** the plugin contribution
+  per-kind cap; the Close-onto-deferred-neighbor cursor/scroll restore; the
+  commit-summary per-keystroke throttle; the compare Ctrl-mask ascii dispatch.
 
-> **Deferred 2026-07-10 (pass 7 — cross-subsystem bug hunt):** a four-way fan-out
-> (workspace coordinators, LSP/DAP clients, render/view-model/layout, async/subprocess/
-> debug) landed 11 fixes (see commit) plus folding in the pre-staged gdb-detection
-> fix. The following genuine findings were deliberately **not** fixed and are recorded:
-> - **DAP: capabilities race if `initialized` precedes the `initialize` response.**
->   If a non-conformant adapter emits the `initialized` event before its `initialize`
->   response and the main thread drains it before the response is parsed,
->   `DebugSession::HandleEvent("initialized")` reads default (all-false) capabilities,
->   so `supports_configuration_done_request` is misread and launch/configurationDone
->   ordering flips. The DAP spec requires `initialized` *after* the response, so gdb/
->   lldb-dap/debugpy never trigger it. Close by gating the handler on
->   `client_->IsInitialized()` (defer/re-post if false). (LSP/DAP hunter #2.)
-> - **render: `ColorMath::BlendColors` omits the `std::clamp` that `CompositeOver`
->   has.** Provably in-range for the current lerp inputs, so it's a harmless asymmetry
->   rather than a defect; left as-is to avoid adding a branch to a hot color path.
->   (Render hunter hardening note.)
+### Won't-do — verified non-defects
 
-> **Deferred 2026-07-11 (pass 8 — cross-subsystem bug hunt):** a four-way fan-out
-> (sidebar/tree/finder, settings/config/responsive, plugin lifecycle/sandbox,
-> terminal PTY/session) landed 6 fixes (see commit): terminal bracketed-paste
-> marker reconstitution (HIGH security), settings store-path divergence (font_size
-> 999 stored raw not clamped), plugin setup-failure UAF (HIGH — live contributions
-> left bound to a destroyed lua_State), DirectoryTree byte-prefix containment, and
-> the git-sidebar keyboard-nav / collapse-snap desync. The following were
-> deliberately **not** fixed and are recorded:
-> - **Plugin: provider-query loops dereference `provider.state` (StackResetGuard +
->   lua_rawgeti) before the `find_plugin_by_state == nullptr` guard** (~15 sites in
->   PluginProviderQueryInterop / PluginLanguageProviderQueryInterop). With the pass-8
->   setup-failure UAF fixed, the runtime vectors only ever hold live states, so this
->   is latent hardening — the guard is currently non-functional (it dereferences the
->   state it means to reject). Fix by resolving the plugin and bailing BEFORE touching
->   `state`. Deferred to avoid reordering 15 loops (each with distinct return
->   semantics) in the same pass. (Plugin hunter #2.)
-> - **Plugin: `ResetForDisabledRuntime`/`ShutdownForDisabledRuntime` clear only a
->   subset of contribution containers** (commands/sidebars/hovers/plugins), not the
->   runtime-provider vectors. Currently UNREACHABLE — `enabled()` only ever goes
->   true→false once at startup before any plugin loads, with no path back — so the
->   disabled containers are always empty. Route through the full container reset if a
->   runtime enable/disable toggle is ever added. (Plugin hunter #3.)
+- **Terminal: combining mark after a double-width glyph.** Dead code —
+  `TerminalCell::bytes` is 4 bytes and wide(≥3)+combining(≥2) always exceeds it, so
+  the mark is dropped regardless of which cell it targets. Revisit only if the cell
+  buffer widens.
+- **`ColorMath::BlendColors` missing output clamp.** Provably in-range for all lerp
+  inputs; a branch on this hot color path violates speed-first. Left as-is.
+- **Git porcelain-v2 `'2'` rename record consuming the next record.** Working as
+  intended; the truncation-only residue is dropped harmlessly.
+- **Plugin sync `Query*` overloads reallocation hazard.** Production uses the `*Async`
+  variants (allow_registration=false); the sync overloads are test-only.
+- **`ResetForDisabledRuntime`/`ShutdownForDisabledRuntime` subset-clear.** Unreachable
+  — `enabled()` only goes true→false once at startup before any plugin loads.
+- **Compare `AlignHunkLines` 1×1 pairing ignores similarity.** By design — a
+  1-del/1-add hunk always renders as a single Modified row (pinned by
+  `TestCompareManyTokenLineBoundsAlignmentDp`).
+- **Terminal DECSTBM home ignores the scroll-region top under origin mode on the
+  primary buffer.** Consistent with this terminal's primary CUP semantics; a
+  design-consistent choice, not a live divergence.
 
-> **Deferred 2026-07-11 (pass 9 — cross-subsystem bug hunt):** a four-way fan-out
-> (snippet/folding/advanced-editor, compare/merge patch+staging, control-channel
-> deep, undo/redo internals) landed 6 fixes (see commit): folding scroll-resolve
-> gate (folds below the 2000-line compute budget never appeared on scroll), folding
-> incremental-resume dead path (perf — always full-rescanned unless a fold was
-> collapsed), control-channel `--json` id:null correlation (false timeout/exit 2),
-> the MoveCursorTo typing-coalesce boundary (undo merged edits across a click/goto
-> jump), and two git-apply-verified patch-generation bugs (one-sided phantom
-> trailing line inflating the @@ old count; `\ No newline` marker on a non-terminal
-> isolated hunk). The following were deliberately **not** fixed and are recorded:
-> - **Control: `--timeout N` can block ~2N seconds** when a peer accepts but never
->   reads — SendLine and the read loop use two independent full-timeout deadlines
->   instead of one shared overall deadline. Low. Fix: compute one deadline before
->   SendLine and pass the remaining budget to both. (Control hunter #2.)
-> - **Control: command replies can carry stale `panel.feedback`** from a prior
->   unrelated action (ExecuteControlCommand reports the shared panel feedback string
->   without snapshotting/clearing it before dispatch). Low, somewhat uncertain — a
->   headless driver may see a misleading `feedback` on an ok:true reply. Fix: snapshot
->   feedback before ExecuteCommandLine and report only if it changed. (Control #3.)
-> - **Undo: nested undo groups double-fold child edits into the outer frame.**
->   RecordEntry folds each child into every frame on group_stack_, so a re-pushed
->   inner aggregate is folded into the outer frame on top of the raw children it
->   already received. LATENT — no current BeginUndoGroup caller nests a second group
->   inside an open one — but the multi-frame design invites future nesting. Fix: fold
->   each edit only into the innermost frame and propagate inner aggregates outward on
->   finish. (Undo hunter #2.)
+### Won't-do — platform-only, cannot compile/validate on this Linux host
 
-> **Deferred 2026-07-11 (pass 10 — cross-subsystem bug hunt):** a fan-out over
-> text-search, LSP code-actions, and the git repository/compare services landed 4
-> fixes (see commit): incremental-search refine of a self-overlapping needle
-> (`RefineLiteralSearchMatches` kept overlapping ranges — e.g. "aa" over "aaaa" —
-> desyncing the count/next/prev/replace vs a fresh scan; now de-overlaps like the
-> cold path), LSP code-action **context** diagnostics were sent with raw editor byte
-> columns instead of the server's position encoding (quick-fix mis-targeted on
-> non-ASCII lines under clangd/UTF-16; now routed through `ByteColumnToLspPosition`
-> like the request range), a HIGH git-refresh state-machine freeze/counter-leak
-> (`GitRepositoryService`: the `PublishSnapshot` generation-mismatch early-return and
-> the `ScheduleRefresh` best-effort early-out bypassed the counter decrement and the
-> deferred-follow-up hand-off, so a generation-bump race left `refresh_in_flight_`
-> stuck true — sidebar silently stopped updating until `Reset()` — and leaked the
-> background-task counter; both now route through one `HandleSupersededRefresh`
-> helper), and a LOW `--end-of-options` consistency gap on the explicit-revision git
-> args (`diff-tree <hash>`, `cat-file -e <rev>:<path>`, `show <rev>:<path>`). The
-> following was deliberately **not** added and is recorded:
-> - **LSP: no dedicated integration test for `CollectLspContextDiagnostics` column
->   conversion.** The fix routes diagnostic byte columns through the same
->   `ByteColumnToLspPosition` primitive already covered by `LspPositionEncodingTests`
->   / `LspViewportPositions` round-trip tests, and identical to the code-action range
->   path in the same function. A full-shell test would need TestAccess to expose the
->   private method plus a populated diagnostics store and a non-ASCII viewport —
->   disproportionate for a one-line routing change over a tested primitive. If the
->   context-diagnostics path grows logic beyond the raw conversion, add the shell test.
-> - The syntax-highlighting subsystem was not fully re-hunted this pass (a hunter
->   aborted on an environment/session limit); carry it into the next pass.
+Real defects, but writing untested Windows/macOS code risks a worse regression than
+the latent bug. Kept documented with fix direction for a maintainer on that platform.
 
-> **Deferred 2026-07-11 (pass 11 — cross-subsystem bug hunt):** a four-way fan-out
-> (syntax highlighting, terminal/PTY, editor primitives, persistence + plugin
-> runtime) landed 4 fixes (see commit): a syntax-highlight perf win (state-only
-> `AdvanceState` replay ran and discarded every pattern-rule regex per line —
-> `HighlightLineScoped` now skips token work when `want_tokens` is false, halving
-> regex work on the visible screen's leading lines and eliminating it entirely for
-> the up-to-512-line synchronous resume-state replay prefix), single-line paste
-> injecting raw CR/LF (a whole-line copy carries a trailing `\n`; `SingleLineEditor::
-> Insert` — the choke point for both Ctrl+V and text-input paste — now strips line
-> breaks so a control byte can't corrupt the search needle / goto-line / rename
-> value), a terminal soft-wrap-onto-existing-row flag bug (`AdvanceCursorRowLocked`
-> only stamped `wrapped_from_previous` on freshly-created rows, so a line printed
-> after a cursor-up that wrapped onto an existing row below split the logical line
-> in two for reflow / command capture), and terminal invalid-UTF-8 storage (an
-> overlong/surrogate scalar was stored as raw bytes; now substituted with U+FFFD).
-> Also a persistence micro-perf: `PersistedRecordReader::Decode` no longer copies
-> the whole input buffer (up to the 256 MB cap) before decoding from a span. The
-> following were investigated and deliberately **not** changed, recorded:
-> - **Terminal: a combining mark after a double-width glyph attaches to the
->   wide-trailing spacer, not the lead** (hunter #2). Investigated: NOT a live bug —
->   the inline cell is a 4-byte buffer and the combining-append already guards
->   `cell.length + glyph.size() <= 4`. Every double-width codepoint is ≥3 UTF-8
->   bytes and every combining mark is ≥2, so 3+2 > 4 means the mark is dropped
->   regardless of which cell it targets. The retarget would be dead code unless the
->   cell buffer grows; revisit only if `TerminalCell::bytes` is ever widened.
-> - **Terminal: ESC inside a charset-designation (`ESC ( <ESC>`) is consumed as the
->   designator final** instead of aborting the designation (`EscapeMode::
->   CharsetDesignate`). VERY LOW, malformed-input only. Fix: treat `0x1b/0x18/0x1a`
->   as an abort there like the CSI/OSC states do. (Terminal hunter #4.)
-> - **Syntax: the thread-local `ReusableMatchData` cache keyed by `CompiledRegex*`
->   is not invalidated on `ReloadDefinitions`** — a rebuilt rule can reuse a freed
->   address's match-data block. Benign in practice (syntax rules only read
->   ovector[0]/[1], always present, so no overflow), but latent. Fix: clear the
->   cache on registry-revision change or key it by revision. (Syntax hunter.)
+- **Windows `AsyncSubprocess`** declares `state_mutex` but never locks it and uses a
+  non-atomic `running` → HANDLE UAF race. Fix: mechanically mirror the POSIX branch
+  (lock around every state access, re-fetch the HANDLE under the lock, atomic bool).
+- **Windows `RunSubprocess` ignores `options.timeout_ms`** (`WaitForSingleObject
+  INFINITE`). Fix: timed wait + kill/reap, mirroring the POSIX deadline path.
+- **Windows `IgnoreMatcher::ParseRule`** normalizes the glob through
+  `lexically_normal`, corrupting a backslash-escaped literal. Benign on Linux.
+- **macOS FSEvents incremental events bypass the ignore filter** (no directory prune,
+  no per-file `filter.Includes`). Mirror the Linux inotify gate.
 
-> **Deferred 2026-07-11 (pass 12 — cross-subsystem bug hunt):** a four-way fan-out
-> (compare/merge, DAP debugger, LSP service, project file-index + control) landed 4
-> fixes (see commit): a HIGH compare data-loss bug (`PatchApplyService::BuildRequest`
-> line-scope used `selection->end.line` directly, but `selection_range()` reports an
-> EXCLUSIVE end — a whole-line selection ending at column 0 of line N+1 dragged in
-> line N+1, so Discard Selected Lines silently destroyed an unselected working-tree
-> change; now applies the same `end.column==0 && end.line>start.line` correction used
-> everywhere else), a HIGH LSP desync (an on-disk buffer reload replaced the editor
-> content without any `didChange`, so the server kept the pre-reload text and the next
-> incremental edit corrupted its mirror; `TabCoordinator::ReloadEditorTabsForPath` now
-> re-syncs via a new `notify_lsp_buffer_reloaded` hook → `SyncLspForBufferChange`), a
-> LOW file-index teardown stall (the inotify overflow-recovery rescan polled the
-> initial-scan thread's stop flag, which `StopNative` resets to false before joining
-> the worker, so a teardown mid-recovery blocked for the full scan budget; now polls
-> the worker-scoped `stop_native_setup`), and a LOW DAP correctness gap (`SwitchThread`
-> did not bump `stop_epoch_`, so a stale stackTrace from the previous thread was not
-> dropped despite `RequestStackTrace`'s comment claiming thread-switch supersession;
-> now bumps the epoch like `Reactivate`). Also a persistence micro-perf from the pass-11
-> hunter's note (`PersistedRecordReader::Decode` no longer copies the input buffer).
-> The following were deliberately **not** changed and are recorded:
-> - **File index: initial bulk-load can clobber/resurrect files changed during the
->   scan window (MEDIUM).** `FileIndexWatcher::Watch` starts the native inotify worker
->   and the initial-scan worker as two threads that both drive the single SetCallback
->   lambda with only a shared generation guard; an incremental batch applied before the
->   trailing `is_initial` batch (which `FileIndex::ApplyBatch` applies as a wholesale
->   `files_` replace) is lost — a file created during the scan goes invisible until its
->   next modification, a file deleted during the scan resurrects as a ghost entry.
->   Data-race-free (mutex) but logically wrong; reachable on large trees during an
->   active build/`git checkout`. NOT fixed because the correct fix is a concurrency
->   refactor (buffer non-initial batches behind an "initial-applied" gate per watcher
->   generation, then replay them on top of the initial baseline) across two concurrent
->   callback threads that cannot be deterministically regression-tested; deferred rather
->   than rush a threading change validated by a single end-of-session *SAN pass. Fix
->   direction: add a `std::mutex` + `bool initial_applied` + pending-batch vector to the
->   coordinator (reset in `WatchProjectFileIndex` before `SetCallback`, safe because
->   `StopFileIndexWatcher` joins first), refactor the callback body into a per-batch
->   helper, and on the initial batch replay the buffered incrementals in order.
-> - **LSP: no end-to-end regression test for the reload `didChange`.** Driving it needs
->   a full shell + fake LSP server with an open served document (SyncLspForBufferChange
->   no-ops without one), disproportionate for a hook that funnels into the already-tested
->   `SyncLspForBufferChange` bulk-sync path. If the reload path grows logic beyond the
->   single full-document sync, add the integration test.
-> - **LSP: tracked-request UI expiry (10s) < transport deadline (30s) + single
->   `request_in_flight` flag** can't represent two concurrent interactive requests
->   (hover during an in-flight completion), so the "LSP: working…" indicator can flicker
->   or clear early. LOW, cosmetic only — callbacks are correctly balanced, no lifecycle
->   leak. (LSP hunter #2.)
-> - **Merge: `WorkspaceShellRenderMerge.cpp:497` hover-preview allocates a
->   `vector<string>` per frame** via `MergeChoiceLines` while a result-action button is
->   hovered — bounded, hover-only, not a regression; cache if that path gets hot.
+### Still deferred (recorded, lower value / larger / latent)
 
-> **Deferred 2026-07-11 (pass 13 — cross-subsystem bug hunt):** a four-way fan-out
-> (render/view-model, git commit workflow/blame, prompt/finder/fuzzy, snippet/layout)
-> landed 6 fixes (see commit): hover/diagnostic/signature popup no longer overflows its
-> unclipped card when a single word exceeds the wrap width (`WrapEditorHoverPopupText`
-> truncates the oversized word); the IME/text-input caret anchor guards its size_t
-> `visual_column - h_scroll` / `visual_row - scroll` subtractions against underflow;
-> the empty file-finder recents list no longer drops in-root dot-directory files
-> (`.github/…`, `.vscode/…`) — the escape-root guard now tests the first path COMPONENT
-> for `..` instead of the first byte for `.`; the commit/compare picker and the command
-> palette filter via a precomputed lowercased `search_text` instead of re-lowercasing +
-> concatenating per item on every keystroke (the commit picker can hold thousands of
-> commits); and the commit-workflow refresh no longer runs the identical `git diff
-> --cached --numstat` staged-diff subprocess twice per refresh (`RunCommitPreChecks`
-> takes an optional precomputed summary). Deliberately **not** changed and recorded:
-> - **Merge conflict-preview overlay slices by codepoint using a visual-column scroll
->   offset** (`WorkspaceShellRenderMerge.cpp:536`): `SliceVisibleColumns`' start arg is a
->   codepoint count (`Utf8ByteOffsetForCodepointCount`) but `merge_tab->horizontal_scroll`
->   is a tab-expanded visual column, so a preview line with tabs before the scroll offset
->   slices at the wrong byte when horizontally scrolled. LOW, cosmetic — independently
->   flagged by two hunters; the preview draws via non-grid `DrawStringOn` which renders
->   tabs poorly anyway, so a partial fix wouldn't fully align. Fix direction (if made
->   airtight): derive a byte offset via `TextLayout::TextColumnForVisualColumn(line,
->   horizontal_scroll, tab_size)` rather than feeding the visual column to a codepoint slice.
-> - **Commit-workflow `RefreshDerivedState` still runs its git work synchronously on the
->   shell thread** (`git diff --cached --numstat` + the full `git diff --cached` marker
->   scan). The duplicate subprocess is now removed, but moving the whole refresh onto
->   `ProjectBackgroundExecutor` (marshalling results back via the completion mailbox, as
->   `DispatchCommit` already does) remains a larger follow-up. MEDIUM-perf, throttled to
->   field-switch (not per-keystroke) so bounded. (Git hunter #1, second half.)
-
-> **Deferred 2026-07-11 (pass 14 — cross-subsystem bug hunt):** a four-way fan-out
-> (sidebar/tree/catalog, session-restore/tab-service, plugin interop, app/event-loop/
-> settings) landed 3 fixes (see commit): a MEDIUM plugin use-after-free (the blocking
-> provider-query failure branches in `PluginProviderQueryInterop.cpp` — DiscoverTests,
-> RunTests, SnapshotScm, auth login/refresh/logout, mcp tool — read `it->id` after a
-> plugin PCall that runs with allow_registration=true, so a callback that registers
-> another provider reallocates the runtimes vector and dangles `it`; now uses the
-> caller-owned `provider_id`/`tool_id`, which equals `it->id` for the matched item);
-> a MED-perf sidebar tree fix (`DirectoryTree::AppendDirectory` copied the accumulated
-> `IgnoreMatcher` + stat/opened a usually-absent `.gitignore` for every COLLAPSED
-> directory child on every refresh, then discarded it — the dir's own .gitignore only
-> affects grandchildren walked when expanded, so that work now happens only for
-> expanded dirs); and a background-task-counter leak in `ProjectSearchService::Start`
-> (the decrement lived in the task body, leaked when `Stop()`→`CancelAll()` dropped a
-> still-queued search — now an RAII shared_ptr guard that fires on task destruction
-> whether it ran or was dropped). The session-restore/tab-service subsystem came back
-> clean. NOTE: the plugin UAF fix is validated by the end-of-session ASAN run (a
-> deterministic trigger needs a realloc mid-PCall). Deliberately **not** fixed, recorded:
-> - **`GitRepositoryService` double-counts the global background-task counter (LOW,
->   latent).** `ScheduleRefresh` increments via `wake_callbacks_.increment_...` (wired
->   to `app::IncrementBackgroundTaskCount`) AND `background_executor_.PostLatest` fires
->   the `SerialWorkQueue` on_enqueue hook (also `app::Increment`). Normal completion
->   decrements twice (manual + on_complete hook); a PostLatest dedup-drop / Shutdown-
->   cancel fires only the hook → net +1 leak per dropped refresh, plus one redundant
->   idle wake per completion. LATENT: `GetBackgroundTaskCount()` has ZERO readers (the
->   counter value drives nothing; only the decrement's SDL wake is functional), so no
->   functional impact today. NOT fixed because the round-10 refresh state machine AND
->   its tests (`TestSyncRefreshBalancesBackgroundTaskCount`, `ConcurrentRefreshBurst...`)
->   are built around the manual counter (tests override `wake_callbacks` to a local
->   counter the queue hooks don't touch), so removing the redundant manual pair is a
->   coupled refactor for a dead counter. Fix direction: drop the manual increment/
->   decrement, rely on the executor hooks, and move the sync-test path's balancing into
->   `RunRefreshSynchronouslyForTesting` locally; update those two tests.
-> - **`DirectoryTree` `expanded_paths_` / `manually_collapsed_paths_` are never pruned
->   for deleted directories (LOW).** Only wholesale-`clear()`ed (SetRoot/CollapseAll/
->   RestoreExpansionState); a slow bounded leak (distinct dirs ever expanded) that also
->   writes stale keys into the persisted session via `ExpandedRelativePaths()`.
->   Functionally harmless (`IsExpanded` on an absent path is never queried). Fix: after
->   `RebuildEntries`, intersect the sets with directories still present in `entries_`,
->   or drop non-existent keys lazily when serializing.
-> - **Plugin: `QueryAnnotations` range-for + the sync completion/code-action/symbol
->   overloads share the same reallocation hazard (LOW, latent/test-only).**
->   `QueryAnnotations` holds a range-for across a registering PCall (worse — can fault on
->   the success path too) but has no production caller; the sync `*Query*` overloads are
->   test-only (production uses the `*Async` variants with allow_registration=false). Fuller
->   systemic fix: run these blocking provider callbacks with allow_registration=false
->   (matching the async path + the stated design intent) so the vector can't mutate mid-iteration.
-
-> **Deferred 2026-07-11 (pass 15 — cross-subsystem bug hunt, session wrap-up):** a
-> four-way fan-out (undo/folding, control-channel deep, DAP variables/eval, cross-cutting
-> lifetime/thread-safety) landed 3 fixes (see commit): a control-channel TOCTOU hardening
-> (`ControlChannelService` descriptor read now caps the ACTUAL read at
-> kMaxDescriptorFileBytes instead of trusting the `file_size` pre-check, so a hostile
-> local writer that grows the descriptor after the stat can't OOM/stall the driver),
-> strict `enabled` boolean validation in `ControlSpec` breakpoints/function-breakpoints
-> (was silently coerced via AsBool(true)), and first-writer-wins for DAP
-> `reference_to_node_` (a non-conformant adapter recycling a live variablesReference can
-> no longer remap it and graft a later page onto the wrong node). Undo/redo internals and
-> the DAP variables/scopes generation-guard paths came back clean. Two MEDIUM findings were
-> deliberately **not** fixed in this wrap-up pass and are recorded for a focused follow-up:
-> - **Folding: collapsed folds silently re-expand after a line-count-changing edit ABOVE
->   them (incl. undo/redo of such edits).** `FoldingModel::RemapCollapsedFlags`
->   (FoldingModel.cpp:316) is the sole carrier of user collapse state across the full
->   recompute that runs after every edit, and it matches previous→new collapsed openers by
->   ABSOLUTE (opener_line, closer_line). The model never shifts fold ranges by an edit
->   delta (it is recompute-based; `incremental_resume_line` only anchors the bracket
->   rescan). So inserting/deleting a line above a collapsed fold shifts its opener, the
->   absolute match fails, and the collapse is dropped (the fold visually re-expands).
->   Edits below, or in-line edits that don't change the line count, preserve collapse (line
->   numbers unchanged) — which is why it's easy to miss. VS Code shift-preserves. MED (UX,
->   not a crash/data-loss). NOT fixed now because the correct fix plumbs the net edit
->   line-delta (available on the edit path: the fold edit anchor + inserted/removed line
->   counts) through `ComputeWithBudget` into `RemapCollapsedFlags`, which then shifts the
->   previous collapsed openers at/after the edit anchor by the delta BEFORE the
->   (opener_line, closer_line) compare — a multi-layer change in a perf-sensitive subsystem
->   that needs its own test pass, not a wrap-up rush.
-> - **`AsyncSubprocess` Windows backend is unsynchronized (MEDIUM, Windows-only).** The
->   POSIX `Impl` takes `state_mutex` and re-fetches the fd under the lock before
->   read/write (guarding against a concurrent Close() letting the OS reuse the descriptor);
->   the `#if defined(_WIN32)` `Impl` (AsyncSubprocess.cpp:74) DECLARES `state_mutex` but
->   never locks it, and uses a plain `bool running` (POSIX uses `std::atomic<bool>`). The
->   LSP/DAP io thread (`Read`/`PeekNamedPipe`/`ReadFile`), shutdown thread (`Shutdown`→
->   `CloseHandle`), and UI thread (`IsRunning`) touch `running`/`exit_code`/the HANDLEs
->   lock-free → data race + use-after-close/handle-reuse on Windows. NOT fixed now because
->   it can't be compiled or TSAN-validated on this Linux workstation; writing untested
->   Windows synchronization risks breaking the Windows build. Fix direction: mechanically
->   mirror the POSIX branch — lock `state_mutex` around every state access, re-fetch the
->   HANDLE under the lock immediately before Peek/Read/Write and bail if it changed, and
->   make `running` atomic. (Cross-cutting lifetime/thread hunter; POSIX paths verified clean.)
+- **Git: sidebar stage/unstage/discard and commit `RefreshDerivedState` still run git
+  synchronously on the shell thread.** Only the contained wins landed (rename-probe
+  gate, summary cache); the full off-thread dispatch via `ProjectBackgroundExecutor`
+  is a larger change.
+- **Git: `GitRepositoryService` double-counts the global background-task counter.**
+  Functionally inert (the counter has zero readers); a coupled test refactor.
+- **Compare: CRLF working-tree files may fail generated-patch context matching.**
+  Fails safe (patch rejected). Needs the blob's line ending plumbed from the compare
+  model through `PatchGenerationOptions` into the patch emitter.
+- **Compare: ignore-whitespace narrows staging.** Needs a guard at the patch-apply
+  choke point (both the coordinator and keyboard entry points) plus a feedback
+  surface; deferred rather than gate only one path.
+- **Merge: preview overlay codepoint-slice with a visual-column offset; hover-preview
+  `MergeChoiceLines` allocates per frame.** Both LOW/cosmetic in lint-constrained
+  render TUs.
+- **Plugin: `process.run`/`run_async` build the Lua result table while C++ locals are
+  live** (an OOM raise longjmps over them); **provider-query loops dereference
+  `provider.state` before the null-plugin guard** (15 sites, currently guarding only
+  live states); **dead `RegisterMcpTool` + missing MCP teardown.** All latent
+  hardening the notes counsel handling deliberately.
+- **LSP: the tracked-request UI expiry (10 s) is below the transport deadline (30 s)
+  and a single in-flight flag can't represent two concurrent interactive requests.**
+  Cosmetic indicator flicker only.
+- **DAP: capabilities race if `initialized` precedes the `initialize` response.**
+  Only a non-conformant adapter triggers it (gdb/lldb-dap/debugpy are spec-compliant);
+  needs a deferral mechanism the mailbox architecture does not readily provide.
+- **Persistence: no parent-directory fsync after the atomic rename;** per-tab
+  compare/merge divider fractions are not clamped on restore (the session pixel
+  floats now are). The dir-fsync is a deliberate speed/durability tradeoff.
+- **Editor: `DirectoryTree` expand/collapse sets are never pruned for deleted dirs**
+  (a bounded, functionally-harmless leak); **nested undo groups double-fold child
+  edits** (latent — no current caller nests a group).
+- **Platform: `.trashinfo` is written without `O_EXCL`** (a rare concurrent-trash
+  race; needs a reserve-name-first restructure).
+- **Render: `AsciiGlyphAtlas::BlitInto` straight-copies,** erasing an adjacent glyph's
+  overhang (visible only for overhang fonts).
+- **Search: `FileFinder::Refresh` deep-copies path+string per match, uncapped**
+  (pre-existing architecture; store indices and resolve lazily).
 
 > **Resolved 2026-07-10 (bug-inventory review pass — `microide-2026-07-10-bug-inventory.md`):**
 > a ~90-item inventory built against `main` was triaged against the current tree (many
