@@ -319,7 +319,10 @@ struct DebugPaneState {
 };
 
 struct LspUiState {
-  bool request_in_flight = false;
+  // Number of interactive requests currently in flight. A single bool could not
+  // represent two overlapping requests (e.g. outline + hover), so the first to
+  // return would flicker the busy indicator off while the other was still live.
+  int request_in_flight_count = 0;
   Uint64 request_started_ticks = 0;
   Uint64 request_timeout_ticks = 0;
   // Single-slot memo for active-viewport language detection, keyed by path, so the

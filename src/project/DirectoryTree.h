@@ -92,6 +92,11 @@ class DirectoryTree {
                        SymlinkLoopGuard& loop_guard);
   GitFileStatus EntryGitStatus(const std::filesystem::path& path) const;
   bool IsExpanded(const std::filesystem::path& path) const;
+  // Drop expanded/collapsed keys whose directory no longer exists on disk, so the
+  // sets do not grow unbounded across a session and a deleted-then-recreated dir
+  // renders collapsed (like VSCode) rather than pre-expanded. Called from the
+  // fs-resync entry point (Refresh) only.
+  void PruneDeletedDirectoryKeys();
   static std::string NormalizePathKey(const std::filesystem::path& path);
 
   std::filesystem::path root_;

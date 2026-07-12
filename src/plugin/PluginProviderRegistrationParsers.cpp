@@ -390,37 +390,6 @@ bool ParseExternalAgentRegistration(lua_State* state,
   return true;
 }
 
-bool ParseMcpToolRegistration(lua_State* state,
-                              const std::string& plugin_id,
-                              McpToolRegistration* out,
-                              std::string* error_message) {
-  if (out == nullptr) return false;
-  auto id_opt = ReadStringField(state, 1, "id");
-  auto name_opt = ReadStringField(state, 1, "name");
-  auto description_opt = ReadStringField(state, 1, "description");
-  auto schema_opt = ReadStringField(state, 1, "input_schema");
-  if (!id_opt || !name_opt || !description_opt || !schema_opt) return false;
-  const int run_ref = ReadFunctionRefField(state, 1, "run");
-  out->contributed = PluginHost::ContributedMcpTool{
-      .id = plugin_id + "." + *id_opt,
-      .name = std::move(*name_opt),
-      .description = std::move(*description_opt),
-      .input_schema = std::move(*schema_opt),
-      .plugin_id = plugin_id,
-  };
-  out->has_runtime = run_ref != LUA_NOREF;
-  if (out->has_runtime) {
-    out->runtime = runtime_types::McpToolRuntime{
-        .id = out->contributed.id,
-        .plugin_id = plugin_id,
-        .state = state,
-        .run_ref = run_ref,
-    };
-  }
-  if (error_message) error_message->clear();
-  return true;
-}
-
 }  // namespace microide::plugin::registration_parsers
 
 #endif

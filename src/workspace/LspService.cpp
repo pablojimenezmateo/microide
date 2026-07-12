@@ -17,6 +17,7 @@
 #include "util/StringUtil.h"
 #include "workspace/FileUri.h"
 #include "workspace/LanguageDetection.h"
+#include "workspace/LspClientTrace.h"
 #include "workspace/LspFeatureFlags.h"
 #include "workspace/LspPositionEncoding.h"
 #include "workspace/LspViewportPositions.h"
@@ -28,7 +29,15 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr Uint64 kLspRequestTimeoutMs = 10000;
+// Derive the UI busy-indicator backstop from the single source of truth for the
+// transport deadline (LspClientTrace.h) so the two can never drift. The indicator
+// must not expire before the transport itself would fail the request — otherwise
+// a slow-but-alive server makes the UI falsely report idle. A small margin lets
+// the transport's own failure sweep normally resolve the callback first.
+constexpr Uint64 kLspRequestTimeoutMs =
+    static_cast<Uint64>(kLspRequestTimeout.count()) + 2000;
+static_assert(kLspRequestTimeoutMs >= 30000,
+              "the LSP busy-indicator backstop must not expire before the transport deadline");
 
 // Map a document position through a single replacement of [before_start, before_end)
 // whose inserted text ends at `new_end`. Positions at or before the edit start are
@@ -350,7 +359,7 @@ void LspService::ActiveLspStatusStrings(bool ensure_started, std::string& text,
     return;
   }
   const LspClient::ReadinessSnapshot snapshot = ActiveLspReadinessSnapshot(ensure_started);
-  if (CurrentProjectState().lsp.request_in_flight) {
+  if (CurrentProjectState().lsp.request_in_flight_count > 0) {
     text = "LSP: working...";
     tooltip = "Language server request in progress";
     return;
@@ -362,7 +371,10 @@ void LspService::ActiveLspStatusStrings(bool ensure_started, std::string& text,
 
 void LspService::BeginTrackedLspRequest() {
   auto& lsp = CurrentProjectState().lsp;
-  lsp.request_in_flight = true;
+  ++lsp.request_in_flight_count;
+  // Each new request extends the backstop (the conservative choice): the indicator
+  // stays lit until the last outstanding request resolves or the transport deadline
+  // passes for the most recent one.
   lsp.request_started_ticks = SDL_GetTicks();
   lsp.request_timeout_ticks = lsp.request_started_ticks + kLspRequestTimeoutMs;
   operations_.request_chrome_redraw();
@@ -371,23 +383,32 @@ void LspService::BeginTrackedLspRequest() {
 
 void LspService::FinishTrackedLspRequest() {
   auto& lsp = CurrentProjectState().lsp;
-  if (!lsp.request_in_flight) {
+  if (lsp.request_in_flight_count == 0) {
     return;
   }
-  lsp.request_in_flight = false;
-  lsp.request_started_ticks = 0;
-  lsp.request_timeout_ticks = 0;
+  --lsp.request_in_flight_count;
+  if (lsp.request_in_flight_count == 0) {
+    lsp.request_started_ticks = 0;
+    lsp.request_timeout_ticks = 0;
+  }
   operations_.request_chrome_redraw();
   operations_.request_bottom_panel_redraw();
 }
 
 void LspService::ExpireTrackedLspRequestIfNeeded() {
   auto& lsp = CurrentProjectState().lsp;
-  if (!lsp.request_in_flight || lsp.request_timeout_ticks == 0 ||
+  if (lsp.request_in_flight_count == 0 || lsp.request_timeout_ticks == 0 ||
       SDL_GetTicks() < lsp.request_timeout_ticks) {
     return;
   }
-  FinishTrackedLspRequest();
+  // The backstop only trips past the transport deadline, by which point the
+  // transport sweep has already failed every outstanding request — so clear the
+  // whole count, not just one.
+  lsp.request_in_flight_count = 0;
+  lsp.request_started_ticks = 0;
+  lsp.request_timeout_ticks = 0;
+  operations_.request_chrome_redraw();
+  operations_.request_bottom_panel_redraw();
 }
 
 LspManager& LspService::EnsureProjectLspManager(ProjectWorkspaceState& state) {

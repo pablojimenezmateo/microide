@@ -627,48 +627,6 @@ bool LogoutAuthSession(
   return true;
 }
 
-bool InvokeMcpTool(
-    std::string_view tool_id,
-    std::string_view input_json,
-    const std::vector<runtime_types::McpToolRuntime>& mcp_tool_runtimes,
-    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
-    std::string* output_json,
-    std::string* error_message) {
-  const auto it = std::find_if(mcp_tool_runtimes.begin(), mcp_tool_runtimes.end(),
-                               [tool_id](const auto& runtime) { return runtime.id == tool_id; });
-  if (it == mcp_tool_runtimes.end()) {
-    if (error_message != nullptr) {
-      *error_message = "unknown mcp tool: " + std::string(tool_id);
-    }
-    return false;
-  }
-
-  lua_State* state = it->state;
-  const lua_interop::StackResetGuard stack_guard(state);
-  const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
-  lua_rawgeti(state, LUA_REGISTRYINDEX, it->run_ref);
-  lua_pushlstring(state, input_json.data(), input_json.size());
-  std::string call_error;
-  if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
-    if (error_message != nullptr) {
-      // tool_id (== it->id) is caller-owned; `it` may dangle after PCall (see above).
-      *error_message = "mcp tool '" + std::string(tool_id) + "' failed: " + call_error;
-    }
-    return false;
-  }
-  if (lua_isstring(state, -1)) {
-    *output_json = lua_tostring(state, -1);
-  } else if (lua_istable(state, -1)) {
-    lua_interop::GetFieldProtected(state, -1, "output");
-    if (lua_isstring(state, -1)) {
-      *output_json = lua_tostring(state, -1);
-    }
-    lua_pop(state, 1);
-  }
-  lua_pop(state, 1);
-  return true;
-}
-
 bool ExecuteCommand(
     std::string_view name,
     const std::vector<std::string>& args,

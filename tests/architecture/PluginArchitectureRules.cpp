@@ -296,6 +296,40 @@ RuleResult CheckCoreIsNetworkFree(const std::filesystem::path& repo_root) {
   return result;
 }
 
+RuleResult CheckNoUnwiredMcpScaffolding(const std::filesystem::path& repo_root) {
+  // The MCP-tool contribution scaffolding (ContributedMcpTool, McpToolRuntime,
+  // McpToolRegistration, ParseMcpToolRegistration, RegisterMcpTool, InvokeMcpTool)
+  // was a complete but never-dispatched stub: it duplicated the shape of the live
+  // contribution/query/teardown machinery without being wired into the Lua API
+  // registry or host storage, so it could never run. It was deleted as dead code.
+  // This guards against silently re-adding an unwired MCP stub; a real MCP feature
+  // is new work (registry verb + host storage + teardown), not a resurrection.
+  RuleResult result;
+  result.label = "no unwired MCP-tool scaffolding in src/plugin";
+  result.hard_fail = true;
+  const std::filesystem::path plugin_dir = repo_root / "src/plugin";
+  if (!std::filesystem::exists(plugin_dir)) {
+    return result;
+  }
+  const std::regex mcp_token(R"(\b(Mcp|McpTool|RegisterMcpTool|InvokeMcpTool)\b)");
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(plugin_dir)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::string ext = entry.path().extension().string();
+    if (ext != ".cpp" && ext != ".inc" && ext != ".h" && ext != ".hpp") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, mcp_token,
+        "the never-dispatched MCP-tool contribution stub was deleted as dead code; do not "
+        "re-add unwired MCP scaffolding. A real MCP feature needs a Lua-API registry verb, "
+        "host runtime storage, and teardown wiring.");
+  }
+  return result;
+}
+
 std::vector<RuleResult> RunPluginArchitectureRules(const std::filesystem::path& repo_root) {
   std::vector<RuleResult> results;
   const auto run = [&](auto&& fn) { results.push_back(fn(repo_root)); };
@@ -306,6 +340,7 @@ std::vector<RuleResult> RunPluginArchitectureRules(const std::filesystem::path& 
   run(CheckPluginLuaErrorDoesNotLongjmpOverCppLocals);
   run(CheckPluginFieldReadsAreMetamethodProtected);
   run(CheckCoreIsNetworkFree);
+  run(CheckNoUnwiredMcpScaffolding);
   return results;
 }
 

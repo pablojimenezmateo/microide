@@ -395,6 +395,16 @@ void TextViewport::FlushActiveUndoGroup() {
   if (!aggregate.has_value()) {
     return;
   }
+  // A nested group's children were already folded into the enclosing group's
+  // frame by RecordEntry (which fans each child into every active frame). Pushing
+  // this inner aggregate through PushHistoryEntry would re-record it into the
+  // still-active outer frame and double-count those children (corrupting the final
+  // undo entry's line slices). Only the outermost group commits to the stack; both
+  // frames observed the identical child sequence, so discarding the inner
+  // aggregate when still nested is safe.
+  if (UndoGroupActive()) {
+    return;
+  }
   PushHistoryEntry(std::move(*aggregate));
 }
 

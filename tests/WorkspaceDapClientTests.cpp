@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -421,9 +422,94 @@ while True:
   client.Shutdown();
 }
 
+// Regression: a non-conformant adapter that emits the `initialized` event BEFORE
+// the initialize response must not make the client dispatch that event while
+// capabilities are still default-constructed. If it did, the main-thread handshake
+// would read supports_configuration_done_request==false and skip configurationDone,
+// hanging a debuggee that needs it. The client now buffers pre-response messages and
+// replays them only after capabilities are stored.
+void TestWorkspaceDapClientEmitsInitializedBeforeResponseSeesCapabilities() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "reorder-adapter.py";
+  WriteFile(server_path, std::string(R"py(import json
+import sys
+seq = 0
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    global seq
+    seq += 1
+    message["seq"] = seq
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    if msg.get("type") != "request":
+        continue
+    command = msg.get("command")
+    if command == "initialize":
+        # Non-conformant ordering: emit the `initialized` event BEFORE the response.
+        write_message({"type": "event", "event": "initialized"})
+        write_message({"type": "response", "request_seq": msg["seq"], "success": True,
+                       "command": "initialize",
+                       "body": {"supportsConfigurationDoneRequest": True,
+                                "supportsConditionalBreakpoints": True}})
+    elif command == "disconnect":
+        write_message({"type": "response", "request_seq": msg["seq"], "success": True,
+                       "command": "disconnect"})
+        break
+    else:
+        write_message({"type": "response", "request_seq": msg["seq"], "success": False,
+                       "command": command, "message": "unknown"})
+)py"));
+
+  DapClient client;
+  std::optional<bool> caps_when_initialized;
+  client.SetEventCallback([&](const std::string& event, const util::JsonValue&) {
+    if (event == "initialized") {
+      caps_when_initialized = client.Capabilities().supports_configuration_done_request;
+    }
+  });
+  Expect(client.Start({"python3", server_path.string()}, "mock"),
+         "reorder adapter should start");
+  Expect(WaitForInitialized(client, 10000),
+         "client should initialize despite the reordered messages");
+  Expect(PollUntil(client, [&]() { return caps_when_initialized.has_value(); }, 10000),
+         "the buffered initialized event should be delivered");
+  Expect(caps_when_initialized.value_or(false),
+         "capabilities must be parsed before a pre-response initialized event is dispatched");
+  client.Shutdown();
+}
+
 }  // namespace
 
 void RegisterWorkspaceDapClientTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceDapClient/EmitsInitializedBeforeResponseSeesCapabilities",
+          TestWorkspaceDapClientEmitsInitializedBeforeResponseSeesCapabilities);
   AddTest(tests, "WorkspaceDapClient/PreInitializeEventFloodStillInitializes",
           TestWorkspaceDapClientPreInitializeEventFloodStillInitializes);
   AddTest(tests, "WorkspaceDapClient/InitFailureFailsPendingRequest",

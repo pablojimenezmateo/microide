@@ -186,6 +186,14 @@ struct MergeTabState {
   std::uint64_t scrollbar_marker_cache_theme_token = 0;
   SDL_FRect scrollbar_marker_cache_track{};
   std::vector<overview::Marker> scrollbar_marker_cache;
+  // Cache for the hover-preview overlay's choice lines (MergeChoiceLines), keyed
+  // by (conflict, choice, model revision). Rebuilt only on a key change so hover
+  // does not reallocate the incoming/current line vectors every frame.
+  std::vector<std::string> preview_lines_cache;
+  bool preview_lines_cache_valid = false;
+  std::size_t preview_lines_cache_conflict = 0;
+  compare::MergeChoice preview_lines_cache_choice = compare::MergeChoice::Base;
+  std::uint64_t preview_lines_cache_revision = 0;
   float left_divider_fraction = 1.0f / 3.0f;
   float right_divider_fraction = 2.0f / 3.0f;
   bool persistable = true;

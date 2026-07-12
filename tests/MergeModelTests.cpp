@@ -1,8 +1,14 @@
 #include "TestSupport.h"
 
 #include "compare/MergeModel.h"
+#include "editor/TextLayout.h"
+#include "workspace/MergeResolverContext.h"
+#include "workspace/WorkspaceTabState.h"
 
+#include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace microide::tests {
 namespace {
@@ -141,7 +147,71 @@ void TestMergeLargeInputsUseSharedFallbackDiff() {
 
 }  // namespace
 
+// The hover-preview overlay caches its choice lines on the tab (keyed by
+// conflict/choice/model revision) so it no longer reallocates them every frame.
+void TestEnsureMergePreviewLinesCachesByKey() {
+  using microide::workspace::EnsureMergePreviewLines;
+  using microide::workspace::MergeTabState;
+  using microide::workspace::MergeTrackedConflict;
+
+  const auto model = BuildMergeModel("keep\nbase\n", "keep\nincoming\n", "keep\ncurrent\n");
+  Expect(!model.hunks.empty(), "fixture should produce a conflict hunk");
+
+  MergeTabState tab;
+  tab.model = model;
+  tab.conflicts.push_back(MergeTrackedConflict{.hunk_index = 0, .valid = true});
+
+  const auto to_vector = [](std::span<const std::string> lines) {
+    return std::vector<std::string>(lines.begin(), lines.end());
+  };
+
+  const std::span<const std::string> incoming = EnsureMergePreviewLines(
+      tab, 0, microide::compare::MergeChoice::Incoming);
+  Expect(to_vector(incoming) ==
+             MergeChoiceLines(tab.model.hunks[0], microide::compare::MergeChoice::Incoming),
+         "preview should equal MergeChoiceLines for the chosen side");
+  const std::string* cached_ptr = tab.preview_lines_cache.data();
+
+  EnsureMergePreviewLines(tab, 0, microide::compare::MergeChoice::Incoming);
+  Expect(tab.preview_lines_cache.data() == cached_ptr,
+         "an identical key must return the cache without rebuilding");
+
+  const std::span<const std::string> current = EnsureMergePreviewLines(
+      tab, 0, microide::compare::MergeChoice::Current);
+  Expect(to_vector(current) ==
+             MergeChoiceLines(tab.model.hunks[0], microide::compare::MergeChoice::Current),
+         "changing the choice must rebuild with the new content");
+
+  ++tab.model_revision;
+  EnsureMergePreviewLines(tab, 0, microide::compare::MergeChoice::Current);
+  Expect(to_vector(tab.preview_lines_cache) ==
+             MergeChoiceLines(tab.model.hunks[0], microide::compare::MergeChoice::Current),
+         "a model-revision bump must rebuild but stay correct");
+
+  Expect(EnsureMergePreviewLines(tab, 5, microide::compare::MergeChoice::Incoming).empty(),
+         "an out-of-range conflict index returns an empty span");
+
+  MergeTabState invalid_tab;
+  invalid_tab.model = model;
+  invalid_tab.conflicts.push_back(MergeTrackedConflict{.hunk_index = 0, .valid = false});
+  Expect(EnsureMergePreviewLines(invalid_tab, 0, microide::compare::MergeChoice::Incoming).empty(),
+         "an invalid conflict returns an empty span");
+}
+
+// The preview now renders through the tab-aware layout path, so a leading tab
+// expands to tab_size columns instead of the single column a codepoint slice gave.
+void TestMergePreviewLayoutIsTabAware() {
+  const editor::LayoutLine layout =
+      editor::TextLayout::BuildVisibleLine("\tabc", /*horizontal_scroll=*/0,
+                                           /*visible_columns=*/8, /*tab_size=*/4);
+  Expect(layout.visual_columns >= 4 + 3,
+         "a leading tab must expand to tab_size visual columns plus the trailing glyphs");
+}
+
 void RegisterMergeModelTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Merge/EnsureMergePreviewLinesCachesByKey",
+          TestEnsureMergePreviewLinesCachesByKey);
+  AddTest(tests, "Merge/PreviewLayoutIsTabAware", TestMergePreviewLayoutIsTabAware);
   AddTest(tests, "Merge/SingleSidedChange", TestMergeSingleSidedChange);
   AddTest(tests, "Merge/IndependentChanges", TestMergeIndependentChanges);
   AddTest(tests, "Merge/ConflictChoiceHandling", TestMergeConflictChoiceHandling);

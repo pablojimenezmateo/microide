@@ -2,8 +2,10 @@
 
 #include "project/DirectoryTree.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace microide::tests {
@@ -188,7 +190,54 @@ void TestDirectoryTreeStopsExpandingSymlinkCycle() {
 
 }  // namespace
 
+// Expanded/collapsed key sets accumulate forever otherwise; a deleted directory's
+// key must be pruned on the fs-resync Refresh so the sets stay bounded and a
+// deleted-then-recreated dir renders collapsed (like VSCode) instead of expanded.
+void TestDirectoryTreePrunesDeletedDirectoryKeysOnRefresh() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha" / "child.txt", "a\n");
+  WriteFile(root / "collapsed" / "child.txt", "c\n");
+  WriteFile(root / "survivor" / "child.txt", "s\n");
+
+  DirectoryTree tree;
+  Expect(tree.SetRoot(root), "directory tree should open fixture root");
+
+  const auto has = [](const std::vector<std::string>& keys, const std::string& key) {
+    return std::find(keys.begin(), keys.end(), key) != keys.end();
+  };
+
+  Expect(tree.SelectPathIfVisible(root / "alpha"), "alpha should be visible");
+  tree.ExpandSelection();
+  Expect(tree.SelectPathIfVisible(root / "survivor"), "survivor should be visible");
+  tree.ExpandSelection();
+  Expect(tree.SelectPathIfVisible(root / "collapsed"), "collapsed should be visible");
+  tree.ExpandSelection();
+  tree.CollapseSelection();  // Populates the manually-collapsed key set.
+
+  Expect(has(tree.ExpandedRelativePaths(), "alpha"), "alpha should be recorded expanded");
+  Expect(has(tree.ExpandedRelativePaths(), "survivor"), "survivor should be recorded expanded");
+  Expect(has(tree.ManuallyCollapsedRelativePaths(), "collapsed"),
+         "collapsed should be recorded manually-collapsed");
+
+  std::error_code error;
+  std::filesystem::remove_all(root / "alpha", error);
+  std::filesystem::remove_all(root / "collapsed", error);
+  tree.Refresh();
+
+  Expect(!has(tree.ExpandedRelativePaths(), "alpha"),
+         "a deleted directory's expanded key must be pruned on refresh");
+  Expect(!has(tree.ManuallyCollapsedRelativePaths(), "collapsed"),
+         "a deleted directory's collapsed key must be pruned on refresh");
+  Expect(FindEntry(tree, root / "alpha") == nullptr,
+         "the deleted directory should be gone from the tree");
+  Expect(has(tree.ExpandedRelativePaths(), "survivor"),
+         "an existing expanded directory must survive refresh (no over-pruning)");
+}
+
 void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "DirectoryTree/PrunesDeletedDirectoryKeysOnRefresh",
+          TestDirectoryTreePrunesDeletedDirectoryKeysOnRefresh);
   AddTest(tests, "DirectoryTree/TracksIgnoredStatusIndependentlyFromVisibility",
           TestDirectoryTreeTracksIgnoredStatusIndependentlyFromVisibility);
   AddTest(tests, "DirectoryTree/TracksMaterializationIndependentlyFromIgnoredStatus",

@@ -2804,6 +2804,41 @@ void TestTextViewportSaveThenCoalescingKeystrokeStartsFreshEntry() {
   std::filesystem::remove(path);
 }
 
+// Regression: nested undo groups must not double-count child edits. RecordEntry
+// fans each child into every active frame, so when the inner group flushes it must
+// NOT re-record its aggregate into the still-active outer frame (which already
+// captured the same children). Only the outermost group commits one entry.
+void TestTextViewportNestedUndoGroupsDoNotDoubleCount() {
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / "microide-undo-nested.txt";
+  std::filesystem::remove(path);
+  TextViewport viewport;
+  viewport.LoadContent("hello\n", path);
+  viewport.MoveCursorTo(0, 5);
+
+  viewport.BeginUndoGroup();
+  viewport.InsertText("A");
+  viewport.BeginUndoGroup();  // nested
+  viewport.InsertText("B");
+  viewport.EndUndoGroup();    // closes inner — must not push into the outer frame
+  viewport.InsertText("C");
+  viewport.EndUndoGroup();    // closes outer — the single committed entry
+
+  Expect(viewport.lines().LineView(0) == "helloABC", "all three inserts should apply");
+  Expect(!viewport.UndoGroupActive(), "no undo group should remain active");
+  Expect(viewport.line_count() == 2, "line count should be unchanged");
+
+  Expect(viewport.Undo(), "one undo should reverse the whole nested group");
+  Expect(viewport.lines().LineView(0) == "hello",
+         "undo should restore the original line exactly (double-fold corrupts the slice)");
+  Expect(viewport.line_count() == 2, "undo should restore the original line count");
+  Expect(!viewport.Undo(), "exactly one undo entry should have been pushed");
+
+  Expect(viewport.Redo(), "redo should re-apply the grouped edits");
+  Expect(viewport.lines().LineView(0) == "helloABC", "redo should restore the grouped result");
+  std::filesystem::remove(path);
+}
+
 // Data-integrity: a grouped (single-undo) multi-edit interacts with save the same way a
 // single edit does — undo past the save dirties, redo back to it cleans.
 void TestTextViewportGroupedEditSaveUndoMarksDirty() {
@@ -3018,6 +3053,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportUndoGroupMergesKnownRangeChildEdits);
   AddTest(tests, "TextViewport/UndoGroupFallsBackForDisjointChildEdits",
           TestTextViewportUndoGroupFallsBackForDisjointChildEdits);
+  AddTest(tests, "TextViewport/NestedUndoGroupsDoNotDoubleCount",
+          TestTextViewportNestedUndoGroupsDoNotDoubleCount);
   AddTest(tests, "TextViewport/TypedCharactersCoalesceIntoWordUndoSteps",
           TestTextViewportTypedCharactersCoalesceIntoWordUndoSteps);
   AddTest(tests, "TextViewport/CaretJumpBreaksTypingCoalesce",

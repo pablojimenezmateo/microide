@@ -54,11 +54,32 @@ bool DirectoryTree::SetRoot(const std::filesystem::path& root) {
   return true;
 }
 
+void DirectoryTree::PruneDeletedDirectoryKeys() {
+  const std::string root_key = NormalizePathKey(root_);
+  const auto prune = [&](std::unordered_set<std::string>& keys) {
+    for (auto it = keys.begin(); it != keys.end();) {
+      if (*it == root_key) {
+        ++it;  // Never drop the root's own expanded key.
+        continue;
+      }
+      std::error_code error;
+      if (!std::filesystem::is_directory(*it, error)) {
+        it = keys.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  };
+  prune(expanded_paths_);
+  prune(manually_collapsed_paths_);
+}
+
 void DirectoryTree::Refresh() {
   util::PerformanceTrace::Scope perf_scope("DirectoryTree::Refresh");
   if (root_.empty()) {
     return;
   }
+  PruneDeletedDirectoryKeys();
   RebuildEntries(false);
 }
 

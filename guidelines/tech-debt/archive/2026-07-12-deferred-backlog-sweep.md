@@ -106,3 +106,55 @@ focused follow-up commit, each with regression coverage:
   ("Turn off Ignore Whitespace…") instead of silently misstaging a diff whose
   whitespace-only differences are folded into Unchanged rows. Test:
   `PatchApply/RejectsIgnoreWhitespace`.
+
+## Follow-up (2026-07-13) — remaining deferred backlog closeout
+
+The rest of the still-open deferred items were investigated (one agent per item)
+and either fixed with regression coverage or resolved as won't-do. Only the git
+off-thread dispatch (larger change, no invariant violated) and the deliberate
+no-parent-dir-fsync tradeoff remain deferred; see `known-tech-debt.md`.
+
+Fixed, each with a regression test:
+- **Git background-task double-count** — deleted `GitRepositoryService`'s manual
+  counting (`WakeCallbacks::increment/decrement_background_task_count*`); the
+  `ProjectBackgroundExecutor` queue hooks are now the single owner of the global
+  counter. Removed the dead `app/BackgroundTaskCounter.h` include. Tests:
+  `GitRepositoryService/AsyncRefreshCountsGlobalCounterOnce`,
+  `.../SyncRefreshLeavesGlobalCounterUntouched`.
+- **Merge preview overlay** — choice lines cached on the tab
+  (`EnsureMergePreviewLines`, keyed by conflict/choice/revision) so hover no longer
+  reallocates per frame, and the preview now renders through the tab-aware
+  `BuildVisibleLine` + `BuildDecoratedRow(layout)` path (column-aligned with the
+  tab-expanded result viewport) instead of a codepoint slice. Tests:
+  `Merge/EnsureMergePreviewLinesCachesByKey`, `Merge/PreviewLayoutIsTabAware`.
+- **Plugin dead MCP scaffolding** — deleted the never-dispatched
+  `ContributedMcpTool`/`McpToolRuntime`/`McpToolRegistration`/`ParseMcpToolRegistration`/
+  `RegisterMcpTool`/`InvokeMcpTool` stubs. New architecture lint
+  `CheckNoUnwiredMcpScaffolding` guards against re-introduction.
+- **LSP tracked-request indicator** — `request_in_flight` bool → `request_in_flight_count`
+  int (represents concurrent interactive requests), and the UI backstop is now derived
+  from the transport deadline (`kLspRequestTimeout` + margin) with a `static_assert`
+  pinning the two together.
+- **DAP init-race** — pre-`initialize`-response messages are buffered and replayed only
+  after capabilities are stored, so a non-conformant adapter emitting `initialized`
+  first no longer reads default capabilities. Test:
+  `WorkspaceDapClient/EmitsInitializedBeforeResponseSeesCapabilities`.
+- **Editor: DirectoryTree key pruning + nested undo groups** — `Refresh` prunes
+  expanded/collapsed keys for deleted directories (`PruneDeletedDirectoryKeys`), and
+  `FlushActiveUndoGroup` skips the push while an enclosing group is still active (no
+  double-fold). Tests: `DirectoryTree/PrunesDeletedDirectoryKeysOnRefresh`,
+  `TextViewport/NestedUndoGroupsDoNotDoubleCount`.
+- **Platform: `.trashinfo` O_EXCL reservation** — the Linux trash path reserves the
+  metadata name atomically with `O_EXCL` before writing/moving, closing the
+  concurrent-trash overwrite race. Test:
+  `Project/TrashReservationDoesNotOverwriteExistingMetadata`.
+- **Search: `FileFinder::Refresh` allocation** — ranks via lightweight index refs and
+  deep-copies only the capped (`kMaxResults=512`) visible prefix; the full match set is
+  still tracked (uncapped) for forward-typing narrowing. Tests:
+  `FileFinder/CapsBroadResultCount`, `FileFinder/NarrowsToEntryBeyondDisplayCap`.
+
+Resolved as won't-do (see `known-tech-debt.md` for the reasoning): the render glyph-atlas
+overhang blit (unimplementable via SDL surface blits, net-negative on the hot path for
+an invisible artifact), the plugin `process.run` OOM-longjmp / provider-query guard (both
+verified non-defects), and the persistence divider-fraction "clamp" (already neutralized
+by `PrimitiveReader::ReadF32` replacing non-finite floats with 0.0 plus the render clamp).

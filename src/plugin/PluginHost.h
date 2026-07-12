@@ -410,14 +410,6 @@ class PluginHost {
     std::string plugin_id;
   };
 
-  struct ContributedMcpTool {
-    std::string id;
-    std::string name;
-    std::string description;
-    std::string input_schema;
-    std::string plugin_id;
-  };
-
   // Plugin-contributed bracket pair set for a single language. The host merges
   // these on top of built-in defaults during `WorkspaceLanguageContract::Refresh`.
   struct ContributedBracketSet {

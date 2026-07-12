@@ -5,7 +5,6 @@
 #include <unordered_set>
 #include <utility>
 
-#include "app/BackgroundTaskCounter.h"
 #include "workspace/GitSidebarCommandCenter.h"
 #include "project/GitCompareService.h"
 #include "project/GitPorcelainV2Parser.h"
@@ -222,9 +221,6 @@ void GitRepositoryService::HandleSupersededRefresh() {
       current_state_.refreshing = true;
     }
   }
-  if (wake_callbacks_.decrement_background_task_count_and_wake != nullptr) {
-    wake_callbacks_.decrement_background_task_count_and_wake();
-  }
   if (deferred_follow_up.has_value()) {
     ScheduleRefresh(std::move(*deferred_follow_up));
   }
@@ -263,9 +259,6 @@ void GitRepositoryService::PublishSnapshot(GitSidebarState::RefreshSnapshot snap
   if (wake_callbacks_.push_refresh_ready_event != nullptr) {
     (void)wake_callbacks_.push_refresh_ready_event();
   }
-  if (wake_callbacks_.decrement_background_task_count_and_wake != nullptr) {
-    wake_callbacks_.decrement_background_task_count_and_wake();
-  }
 
   if (needs_follow_up) {
     RefreshRequest request;
@@ -283,10 +276,10 @@ void GitRepositoryService::PublishSnapshot(GitSidebarState::RefreshSnapshot snap
 }
 
 void GitRepositoryService::ScheduleRefresh(RefreshRequest request) {
-  if (wake_callbacks_.increment_background_task_count != nullptr) {
-    wake_callbacks_.increment_background_task_count();
-  }
-
+  // The global background-task counter is owned by ProjectBackgroundExecutor's
+  // queue hooks (on_enqueue/on_complete), which balance it exactly once per job
+  // on every exit path — run, cancel-skip, PostLatest dedup-drop, shutdown-drain.
+  // The service adds no manual counting of its own (it would double-count).
   background_executor_.PostLatest(
       "git-repository-refresh",
       [this, request = std::move(request)]() mutable {
@@ -395,14 +388,9 @@ void GitRepositoryService::RunRefreshSynchronouslyForTesting(
     current_state_ = repository_state;
   }
   GitSidebarState::RefreshSnapshot snapshot = BuildSidebarSnapshot(repository_state, request);
-  // PublishSnapshot decrements the background-task counter as the tail of the
-  // asynchronous refresh flow (ScheduleRefresh's increment balances it). This
-  // synchronous path bypasses ScheduleRefresh, so it must supply the matching
-  // increment itself, otherwise repeated synchronous refreshes drive the global
-  // counter negative and trip its underflow assert.
-  if (wake_callbacks_.increment_background_task_count != nullptr) {
-    wake_callbacks_.increment_background_task_count();
-  }
+  // This synchronous test path bypasses ProjectBackgroundExecutor entirely, so it
+  // is counter-neutral: it neither enqueues a job nor manually touches the global
+  // background-task counter.
   PublishSnapshot(std::move(snapshot), request.generation);
 }
 

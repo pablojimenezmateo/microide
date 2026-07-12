@@ -493,10 +493,12 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
 
   if (preview_choice.has_value() && preview_choice->first < merge_tab->conflicts.size()) {
     const auto& conflict = merge_tab->conflicts[preview_choice->first];
-    if (conflict.valid && conflict.hunk_index < merge_tab->model.hunks.size()) {
-      const std::vector<std::string> preview_lines =
-          compare::MergeChoiceLines(merge_tab->model.hunks[conflict.hunk_index],
-                                    preview_choice->second);
+    // Choice lines are cached on the tab (keyed by conflict/choice/revision) so
+    // hovering no longer reallocates them every frame; the copy lives outside this
+    // lint-constrained render TU.
+    const std::span<const std::string> preview_lines =
+        EnsureMergePreviewLines(*merge_tab, preview_choice->first, preview_choice->second);
+    if (!preview_lines.empty()) {
       const std::size_t preview_height_lines =
           std::max(preview_lines.size(), conflict.end_line > conflict.start_line
                                           ? conflict.end_line - conflict.start_line
@@ -533,14 +535,32 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                       theme_.editor_background,
                                       FormatLineNumber(conflict.start_line + line + 1,
                                                        line_number_buf));
-          const editor::VisibleTextWindow window =
-              editor::SliceVisibleColumns(preview_lines[line], merge_tab->horizontal_scroll,
-                                          interaction.result.metrics.visible_columns);
-          if (window.text.empty()) {
-            continue;
-          }
-          text_renderer_.DrawStringOn(renderer, interaction.result.metrics.text_x, y,
-                                      theme_.text_primary, theme_.editor_background, window.text);
+          // Render through the canonical tab-aware decorated-row path (the same one
+          // the result viewport underneath uses) instead of a codepoint slice, so
+          // the preview text stays column-aligned with tab-expanded result rows.
+          const std::string& preview_text = preview_lines[line];
+          const editor::LayoutLine preview_layout = editor::TextLayout::BuildVisibleLine(
+              preview_text, merge_tab->horizontal_scroll,
+              interaction.result.metrics.visible_columns, merge_tab->result_viewport.tab_size());
+          editor::RowDecorationInput preview_input;
+          preview_input.text_x = interaction.result.metrics.text_x;
+          preview_input.y = y;
+          preview_input.char_width = text_renderer_.CharWidth();
+          preview_input.line_height = interaction.result.lines.line_height;
+          preview_input.row_visual_start = merge_tab->horizontal_scroll;
+          preview_input.row_visual_end =
+              merge_tab->horizontal_scroll + interaction.result.metrics.visible_columns;
+          preview_input.text = &preview_text;
+          preview_input.tokens = &kEmptyTokens;
+          preview_input.plain_color = theme_.text_primary;
+          preview_input.layout = &preview_layout;
+          preview_input.tab_size = merge_tab->result_viewport.tab_size();
+          preview_input.has_background_fill = false;
+          preview_input.text_renderer = &text_renderer_;
+          preview_input.theme = &theme_;
+          editor::DecoratedTextRow& preview_row = merge_incoming_scratch_row_;
+          editor::BuildDecoratedRow(preview_row, preview_input);
+          kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, preview_row);
         }
         DrawRect(renderer, *preview_rect, theme_.accent);
       }

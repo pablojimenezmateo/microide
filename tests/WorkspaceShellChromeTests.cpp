@@ -641,7 +641,7 @@ void TestWorkspaceShellStatusRowShowsLspReadinessAndInFlightState() {
          "breadcrumb status row should not duplicate host-owned LSP status");
 
   auto& project = WorkspaceShellTestAccess::CurrentProjectState(shell);
-  project.lsp.request_in_flight = true;
+  project.lsp.request_in_flight_count = 1;
   project.lsp.request_started_ticks = SDL_GetTicks();
   project.lsp.request_timeout_ticks = project.lsp.request_started_ticks + 1000;
 

@@ -725,6 +725,15 @@ struct DapClient::Impl {
 
     DapReadBuf& buf = io_buf;
     bool got_init = false;
+    // Messages that arrive BEFORE the initialize response are buffered here and
+    // dispatched only after `capabilities` is stored and `initialized` is set. A
+    // non-conformant adapter that emits the `initialized` event before its
+    // initialize response would otherwise have that event dispatched to the main
+    // thread while capabilities were still default-constructed — so
+    // SendConfigurationDone would read supports_configuration_done_request==false
+    // and skip configurationDone, hanging a debuggee that needs it. For a
+    // spec-compliant adapter (response first) this stays empty and is zero-cost.
+    std::vector<util::JsonValue> early_messages;
     // Bound the initialize wait by WALL-CLOCK, not an attempt count. proc.Read returns
     // as soon as any data is available and dispatching a buffered message does not read
     // at all, so an adapter that emits a burst of events (e.g. `output`) before its
@@ -760,9 +769,10 @@ struct DapClient::Impl {
       const bool is_init_response =
           type == "response" && static_cast<int>(msg["request_seq"].AsInt()) == init_seq;
       if (!is_init_response) {
-        // Preserve adapter-initiated events that arrive before/around the
-        // initialize response (e.g. an early `output`) by dispatching them.
-        DispatchMessage(util::JsonValue(msg));
+        // Defer adapter-initiated messages that arrive before the initialize
+        // response (e.g. an early `output`, or a non-conformant `initialized`)
+        // until capabilities are stored, preserving arrival order.
+        early_messages.push_back(std::move(*msg_opt));
         continue;
       }
       if (!msg["success"].AsBool(false)) {
@@ -807,6 +817,14 @@ struct DapClient::Impl {
       }
       deferred_messages.clear();
     }
+
+    // Now that capabilities are parsed and `initialized` is set, replay any
+    // pre-response messages in arrival order. A buffered `initialized` event
+    // therefore reaches the main-thread handshake with correct capabilities.
+    for (util::JsonValue& message : early_messages) {
+      DispatchMessage(std::move(message));
+    }
+    early_messages.clear();
 
     OpenWakePipe();
     stop_io.store(false, std::memory_order_release);

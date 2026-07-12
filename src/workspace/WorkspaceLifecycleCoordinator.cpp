@@ -183,8 +183,6 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   });
 
   git_repository_service_.SetWakeCallbacks(GitRepositoryService::WakeCallbacks{
-      .increment_background_task_count = []() { app::IncrementBackgroundTaskCount(); },
-      .decrement_background_task_count_and_wake = []() { app::DecrementBackgroundTaskCountAndWake(); },
       .push_refresh_ready_event =
           [this]() {
             if (git_sidebar_event_type_ == 0) {

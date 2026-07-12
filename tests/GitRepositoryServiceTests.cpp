@@ -4,11 +4,13 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <mutex>
 #include <thread>
 #include <type_traits>
 #include <vector>
 
+#include "app/BackgroundTaskCounter.h"
 #include "project/ProjectBackgroundExecutor.h"
 #include "workspace/GitRepositoryService.h"
 #include "workspace/GitSidebarCommandCenter.h"
@@ -127,7 +129,11 @@ void TestRefreshSurfacesMergeConflictsInSidebar() {
          "conflicted file should not be duplicated in Outgoing");
 }
 
-void TestSyncRefreshBalancesBackgroundTaskCount() {
+// The service no longer counts the global background-task counter itself — the
+// counter is owned entirely by ProjectBackgroundExecutor's queue hooks. An async
+// refresh must therefore raise the global counter by EXACTLY one (the enqueue),
+// never two (the old double-count where the service also incremented manually).
+void TestAsyncRefreshCountsGlobalCounterOnce() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path repo_path = temp_dir.path() / "repo";
   InitializeGitRepo(repo_path);
@@ -136,27 +142,54 @@ void TestSyncRefreshBalancesBackgroundTaskCount() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService service(executor);
-  int counter = 0;
-  int min_counter = 0;
-  GitRepositoryService::WakeCallbacks callbacks;
-  callbacks.increment_background_task_count = [&]() { ++counter; };
-  callbacks.decrement_background_task_count_and_wake = [&]() {
-    --counter;
-    min_counter = std::min(min_counter, counter);
-  };
-  service.SetWakeCallbacks(std::move(callbacks));
 
-  // A synchronous refresh publishes via PublishSnapshot, which decrements the
-  // background-task counter as the tail of the async flow. Without a matching
-  // increment on this path, repeated refreshes drove the shared counter negative
-  // and tripped its underflow assert (crashing the perf harness). Each refresh
-  // must leave the counter balanced and it must never go negative.
+  const int base = microide::app::GetBackgroundTaskCount();
+
+  // Occupy the single serial worker so the git refresh job stays queued (its
+  // on_enqueue hook has fired, but it has not run/completed) while we sample.
+  std::promise<void> running;
+  std::promise<void> gate;
+  executor.Post([&]() {
+    running.set_value();
+    gate.get_future().wait();
+  });
+  running.get_future().wait();
+
+  const int before = microide::app::GetBackgroundTaskCount();
+  Expect(before == base + 1, "the occupying task should raise the global counter by one");
+
+  service.RequestRefresh(repo_path, GitSidebarRefreshScope::StatusOnly, OutgoingBaseChoice{}, false);
+  // Both the executor enqueue and — under the old bug — the service's manual
+  // increment happen synchronously before this line, so the old code reads
+  // before+2 here and fails.
+  Expect(microide::app::GetBackgroundTaskCount() == before + 1,
+         "an async git refresh must raise the global counter by exactly one (no double-count)");
+
+  gate.set_value();
+  executor.Shutdown();
+  Expect(microide::app::GetBackgroundTaskCount() == base,
+         "the global counter must drain back to its baseline");
+}
+
+// The synchronous test path bypasses ProjectBackgroundExecutor entirely, so it is
+// counter-neutral: it must not move the global counter at all.
+void TestSyncRefreshLeavesGlobalCounterUntouched() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "tracked.txt", "before\n");
+  CommitAll(repo_path, "base", "base");
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService service(executor);
+
+  const int base = microide::app::GetBackgroundTaskCount();
   for (int i = 0; i < 5; ++i) {
     service.RunRefreshSynchronouslyForTesting(repo_path, GitSidebarRefreshScope::Full,
                                               OutgoingBaseChoice{}, false);
-    Expect(counter == 0, "each synchronous refresh must balance the background-task counter");
+    Expect(microide::app::GetBackgroundTaskCount() == base,
+           "a synchronous refresh must leave the global counter untouched");
   }
-  Expect(min_counter >= 0, "the background-task counter must never go negative");
 }
 
 void TestConcurrentRefreshBurstStaysLiveAndBalanced() {
@@ -169,22 +202,10 @@ void TestConcurrentRefreshBurstStaysLiveAndBalanced() {
   ProjectBackgroundExecutor executor;
   GitRepositoryService service(executor);
 
-  std::mutex counter_mutex;
-  int counter = 0;
-  int min_counter = 0;
-  int max_counter = 0;
-  GitRepositoryService::WakeCallbacks callbacks;
-  callbacks.increment_background_task_count = [&]() {
-    std::lock_guard lock(counter_mutex);
-    ++counter;
-    max_counter = std::max(max_counter, counter);
-  };
-  callbacks.decrement_background_task_count_and_wake = [&]() {
-    std::lock_guard lock(counter_mutex);
-    --counter;
-    min_counter = std::min(min_counter, counter);
-  };
-  service.SetWakeCallbacks(std::move(callbacks));
+  // The global background-task counter is owned by the executor's queue hooks and
+  // starts at this test's baseline. Every enqueued refresh must eventually drain
+  // back to it, even across superseded generations.
+  const int base = microide::app::GetBackgroundTaskCount();
 
   // Hammer RequestRefresh from several threads. Each in-flight refresh that is
   // superseded by a newer generation (bumped by a concurrent RequestRefresh)
@@ -208,27 +229,19 @@ void TestConcurrentRefreshBurstStaysLiveAndBalanced() {
     thread.join();
   }
 
-  // Quiesce: with the fix every incremented task eventually decrements, so once
-  // the deferred-follow-up chain completes the counter drains to a *stable* zero.
-  // Require several consecutive zero reads so the brief decrement->re-increment
+  // Quiesce: with the fix every enqueued task eventually completes, so once the
+  // deferred-follow-up chain drains the global counter returns to a *stable* base.
+  // Require several consecutive base reads so the brief complete->re-enqueue
   // hand-off window between a superseded task and its follow-up is not mistaken
   // for a drained queue. Bounded so a regression (leaked counter / frozen chain)
   // fails instead of hanging.
-  int stable_zero = 0;
-  for (int i = 0; i < 1000 && stable_zero < 4; ++i) {
-    {
-      std::lock_guard lock(counter_mutex);
-      stable_zero = (counter == 0) ? stable_zero + 1 : 0;
-    }
+  int stable_base = 0;
+  for (int i = 0; i < 1000 && stable_base < 4; ++i) {
+    stable_base = (microide::app::GetBackgroundTaskCount() == base) ? stable_base + 1 : 0;
     std::this_thread::sleep_for(std::chrono::milliseconds(3));
   }
-  {
-    std::lock_guard lock(counter_mutex);
-    Expect(stable_zero >= 4,
-           "concurrent refresh burst must drain the background-task counter to zero");
-    Expect(min_counter >= 0, "the background-task counter must never go negative");
-    Expect(max_counter >= 1, "the burst should have scheduled at least one background refresh");
-  }
+  Expect(stable_base >= 4,
+         "concurrent refresh burst must drain the global background-task counter to baseline");
 
   // Liveness: after the burst, refresh_in_flight_ must not be stuck. A fresh
   // request must schedule, run, and publish a new snapshot. A frozen state
@@ -259,8 +272,10 @@ void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
           TestCurrentStateReadsRemainConsistentDuringRefresh);
   AddTest(tests, "GitRepositoryService/RefreshSurfacesMergeConflictsInSidebar",
           TestRefreshSurfacesMergeConflictsInSidebar);
-  AddTest(tests, "GitRepositoryService/SyncRefreshBalancesBackgroundTaskCount",
-          TestSyncRefreshBalancesBackgroundTaskCount);
+  AddTest(tests, "GitRepositoryService/AsyncRefreshCountsGlobalCounterOnce",
+          TestAsyncRefreshCountsGlobalCounterOnce);
+  AddTest(tests, "GitRepositoryService/SyncRefreshLeavesGlobalCounterUntouched",
+          TestSyncRefreshLeavesGlobalCounterUntouched);
   AddTest(tests, "GitRepositoryService/ConcurrentRefreshBurstStaysLiveAndBalanced",
           TestConcurrentRefreshBurstStaysLiveAndBalanced);
 }

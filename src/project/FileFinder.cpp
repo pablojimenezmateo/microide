@@ -12,6 +12,13 @@
 
 namespace microide::project {
 
+namespace {
+// The finder only ever renders a handful of rows; cap the deep-copied result set
+// so a broad (empty/one-char) query does not materialize the whole index. The
+// full match set is still tracked (uncapped) for forward-typing narrowing.
+constexpr std::size_t kMaxResults = 512;
+}  // namespace
+
 void FileFinder::SetIndex(const FileIndex* index) {
   util::PerformanceTrace::Scope perf_scope("FileFinder::SetIndex");
   index_ = index;
@@ -86,7 +93,17 @@ void FileFinder::Refresh() {
                           lower_query.size() >= last_lower_query_.size() &&
                           lower_query.compare(0, last_lower_query_.size(), last_lower_query_) == 0;
 
-  std::vector<FileFinderResult> ranked;
+  // Rank via lightweight index refs (no per-match allocation) and deep-copy only
+  // the visible, capped prefix into results_. An empty/one-char query matches
+  // nearly the whole index; the old code built ~2N heap allocations (a path + a
+  // string per match) and full-sorted them every keystroke on the UI thread, even
+  // though only a handful of rows are ever shown. VSCode's quick-open caps its
+  // picker the same way.
+  struct RankedRef {
+    std::size_t index;
+    int score;
+  };
+  std::vector<RankedRef> ranked_refs;
   std::vector<std::size_t> matched_indices;
   const auto consider = [&](std::size_t entry_index) {
     const CachedFileEntry& entry = cached_entries_[entry_index];
@@ -98,15 +115,11 @@ void FileFinder::Refresh() {
       return;
     }
     matched_indices.push_back(entry_index);
-    ranked.push_back(FileFinderResult{
-        .relative_path = entry.relative_path,
-        .path_string = entry.path_string,
-        .score = score,
-    });
+    ranked_refs.push_back(RankedRef{entry_index, score});
   };
 
   if (can_narrow) {
-    ranked.reserve(last_matched_indices_.size());
+    ranked_refs.reserve(last_matched_indices_.size());
     matched_indices.reserve(last_matched_indices_.size());
     for (const std::size_t entry_index : last_matched_indices_) {
       consider(entry_index);
@@ -117,18 +130,39 @@ void FileFinder::Refresh() {
     }
   }
 
-  std::sort(ranked.begin(), ranked.end(), [](const auto& lhs, const auto& rhs) {
+  const auto ref_less = [this](const RankedRef& lhs, const RankedRef& rhs) {
     if (lhs.score != rhs.score) {
       return lhs.score < rhs.score;
     }
-    return lhs.path_string < rhs.path_string;
-  });
-  results_.insert(results_.end(), std::make_move_iterator(ranked.begin()),
-                  std::make_move_iterator(ranked.end()));
+    return cached_entries_[lhs.index].path_string < cached_entries_[rhs.index].path_string;
+  };
+
+  // Only materialize (deep-copy) up to kMaxResults rows, accounting for any recent
+  // files already in results_. partial_sort avoids sorting the discarded tail.
+  const std::size_t remaining =
+      results_.size() >= kMaxResults ? 0 : kMaxResults - results_.size();
+  const std::size_t keep = std::min(ranked_refs.size(), remaining);
+  if (keep < ranked_refs.size()) {
+    std::partial_sort(ranked_refs.begin(),
+                      ranked_refs.begin() + static_cast<std::ptrdiff_t>(keep),
+                      ranked_refs.end(), ref_less);
+  } else {
+    std::sort(ranked_refs.begin(), ranked_refs.end(), ref_less);
+  }
+  results_.reserve(results_.size() + keep);
+  for (std::size_t i = 0; i < keep; ++i) {
+    const CachedFileEntry& entry = cached_entries_[ranked_refs[i].index];
+    results_.push_back(FileFinderResult{
+        .relative_path = entry.relative_path,
+        .path_string = entry.path_string,
+        .score = ranked_refs[i].score,
+    });
+  }
 
   // Remember this match set for the next keystroke's narrowing. Only when the
   // query is non-empty: the empty-query set excludes recents, so it is not a
-  // valid base to narrow from.
+  // valid base to narrow from. CRITICAL: this is the FULL, uncapped matched set —
+  // narrowing must still find an entry that ranked past the display cap.
   last_lower_query_ = lower_query;
   last_match_version_ = cached_index_version_;
   has_last_match_ = !lower_query.empty();

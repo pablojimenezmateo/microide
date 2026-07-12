@@ -103,12 +103,6 @@ bool RegisterExternalAgent(lua_State* state,
                            std::vector<PluginHost::ContributedExternalAgent>* agents,
                            std::string* error_message);
 
-bool RegisterMcpTool(lua_State* state,
-                     std::string_view plugin_id,
-                     std::vector<PluginHost::ContributedMcpTool>* tools,
-                     std::vector<runtime_types::McpToolRuntime>* runtimes,
-                     std::string* error_message);
-
 bool RegisterBracketSet(lua_State* state,
                         std::string_view plugin_id,
                         std::vector<PluginHost::ContributedBracketSet>* sets,

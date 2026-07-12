@@ -1,9 +1,11 @@
 #pragma once
 
 #include <filesystem>
+#include <span>
 #include <string>
 
 #include "compare/MergeConflictKind.h"
+#include "compare/MergeModel.h"
 #include "project/GitRepositoryState.h"
 #include "workspace/MergeResultValidation.h"
 #include "workspace/WorkspaceTabState.h"
@@ -35,5 +37,14 @@ MergeResolverStatus BuildMergeResolverStatus(const MergeTabState& merge_tab,
 std::optional<project::GitRepositoryEntry> FindConflictRepositoryEntry(
     const project::GitRepositoryState& repository_state,
     const std::filesystem::path& relative_path);
+
+// Choice lines for the hover-preview overlay, cached on `merge_tab` keyed by
+// (conflict_index, choice, model revision). Returns a view into the tab-owned
+// cache (valid until the next call/model change) so the render TU does not
+// reallocate MergeChoiceLines every hover frame. Returns an empty span for an
+// out-of-range/invalid conflict.
+std::span<const std::string> EnsureMergePreviewLines(MergeTabState& merge_tab,
+                                                     std::size_t conflict_index,
+                                                     compare::MergeChoice choice);
 
 }  // namespace microide::workspace

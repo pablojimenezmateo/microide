@@ -105,12 +105,6 @@ struct ExternalAgentRegistration {
   PluginHost::ContributedExternalAgent contributed;
 };
 
-struct McpToolRegistration {
-  PluginHost::ContributedMcpTool contributed;
-  runtime_types::McpToolRuntime runtime;
-  bool has_runtime = false;
-};
-
 struct BracketSetRegistration {
   PluginHost::ContributedBracketSet contributed;
 };
@@ -228,11 +222,6 @@ bool ParseExternalAgentRegistration(lua_State* state,
                                     const std::string& plugin_id,
                                     ExternalAgentRegistration* out,
                                     std::string* error_message);
-
-bool ParseMcpToolRegistration(lua_State* state,
-                              const std::string& plugin_id,
-                              McpToolRegistration* out,
-                              std::string* error_message);
 
 bool ParseBracketSetRegistration(lua_State* state,
                                  const std::string& plugin_id,

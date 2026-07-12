@@ -141,4 +141,29 @@ std::optional<project::GitRepositoryEntry> FindConflictRepositoryEntry(
   return std::nullopt;
 }
 
+std::span<const std::string> EnsureMergePreviewLines(MergeTabState& merge_tab,
+                                                     std::size_t conflict_index,
+                                                     compare::MergeChoice choice) {
+  if (conflict_index >= merge_tab.conflicts.size()) {
+    return {};
+  }
+  const MergeTrackedConflict& conflict = merge_tab.conflicts[conflict_index];
+  if (!conflict.valid || conflict.hunk_index >= merge_tab.model.hunks.size()) {
+    return {};
+  }
+  if (merge_tab.preview_lines_cache_valid &&
+      merge_tab.preview_lines_cache_conflict == conflict_index &&
+      merge_tab.preview_lines_cache_choice == choice &&
+      merge_tab.preview_lines_cache_revision == merge_tab.model_revision) {
+    return merge_tab.preview_lines_cache;
+  }
+  merge_tab.preview_lines_cache =
+      compare::MergeChoiceLines(merge_tab.model.hunks[conflict.hunk_index], choice);
+  merge_tab.preview_lines_cache_valid = true;
+  merge_tab.preview_lines_cache_conflict = conflict_index;
+  merge_tab.preview_lines_cache_choice = choice;
+  merge_tab.preview_lines_cache_revision = merge_tab.model_revision;
+  return merge_tab.preview_lines_cache;
+}
+
 }  // namespace microide::workspace

@@ -102,14 +102,6 @@ bool LogoutAuthSession(
     const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
     std::string* error_message);
 
-bool InvokeMcpTool(
-    std::string_view tool_id,
-    std::string_view input_json,
-    const std::vector<runtime_types::McpToolRuntime>& mcp_tool_runtimes,
-    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
-    std::string* output_json,
-    std::string* error_message);
-
 bool ExecuteCommand(
     std::string_view name,
     const std::vector<std::string>& args,

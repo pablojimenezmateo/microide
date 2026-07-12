@@ -2,8 +2,10 @@
 
 #include "project/FileFinder.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <initializer_list>
+#include <string>
 #include <vector>
 
 namespace microide::tests {
@@ -197,7 +199,90 @@ void TestFileFinderIncrementalTypingMatchesFreshQuery() {
   }
 }
 
+IndexUpdateBatch MakeInitialBatchFromPaths(const std::vector<std::filesystem::path>& paths) {
+  IndexUpdateBatch batch;
+  batch.is_initial = true;
+  for (const auto& path : paths) {
+    batch.changes.push_back(MakeCreateChange(path));
+  }
+  return batch;
+}
+
+// A broad query (here one character) matches nearly the whole index. The finder
+// only shows a handful of rows, so the deep-copied result set is capped; the old
+// code materialized a FileFinderResult (path + string) per match on every
+// keystroke.
+void TestFileFinderCapsBroadResultCount() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path();
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred),
+         "index root should be set");
+  std::vector<std::filesystem::path> paths;
+  for (int i = 0; i < 600; ++i) {
+    paths.push_back(std::filesystem::path("src/aaa" + std::to_string(i) + ".txt"));
+  }
+  Expect(index.ApplyBatch(MakeInitialBatchFromPaths(paths)), "initial batch should apply");
+
+  FileFinder finder;
+  finder.SetIndex(&index);
+  finder.SetQuery("a");
+  Expect(finder.results().size() == 512,
+         "a broad query must cap the materialized result set at kMaxResults (512)");
+  for (std::size_t i = 1; i < finder.results().size(); ++i) {
+    Expect(finder.results()[i - 1].score <= finder.results()[i].score,
+           "capped results must still be score-sorted");
+  }
+}
+
+// Load-bearing narrowing guard: an entry that ranks past the display cap for a
+// broad query must still be reachable when the query narrows to it. This only
+// holds because the finder tracks the FULL (uncapped) match set for narrowing —
+// capping that set would silently lose the entry.
+void TestFileFinderNarrowsToEntryBeyondDisplayCap() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path();
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred),
+         "index root should be set");
+  std::vector<std::filesystem::path> paths;
+  for (int i = 0; i < 600; ++i) {
+    // No 'z' in these, so they match "a" but not "az".
+    paths.push_back(std::filesystem::path("src/aaa" + std::to_string(i) + ".txt"));
+  }
+  // The single 'z'-bearing target sorts lexicographically last among the "a"
+  // matches, so it ranks past the 512-row display cap for query "a".
+  paths.push_back(std::filesystem::path("src/aaazzz_target.txt"));
+  Expect(index.ApplyBatch(MakeInitialBatchFromPaths(paths)), "initial batch should apply");
+
+  FileFinder finder;
+  finder.SetIndex(&index);
+  finder.SetQuery("a");
+  Expect(finder.results().size() == 512, "broad query result set must be capped");
+  const bool target_visible_for_broad_query =
+      std::any_of(finder.results().begin(), finder.results().end(), [](const auto& r) {
+        return r.path_string.find("aaazzz_target") != std::string::npos;
+      });
+  Expect(!target_visible_for_broad_query,
+         "the target must rank beyond the display cap for the broad query (fixture precondition)");
+
+  finder.SetQuery("az");
+  const bool target_found =
+      std::any_of(finder.results().begin(), finder.results().end(), [](const auto& r) {
+        return r.path_string.find("aaazzz_target") != std::string::npos;
+      });
+  Expect(target_found,
+         "narrowing must reach an entry that ranked beyond the display cap");
+  for (const auto& result : finder.results()) {
+    Expect(result.path_string.find('z') != std::string::npos,
+           "only 'z'-bearing entries should survive the 'az' query");
+  }
+}
+
 void RegisterFileFinderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileFinder/CapsBroadResultCount", TestFileFinderCapsBroadResultCount);
+  AddTest(tests, "FileFinder/NarrowsToEntryBeyondDisplayCap",
+          TestFileFinderNarrowsToEntryBeyondDisplayCap);
   AddTest(tests, "FileFinder/IncrementalTypingMatchesFreshQuery",
           TestFileFinderIncrementalTypingMatchesFreshQuery);
   AddTest(tests, "FileFinder/PrependsRecentsWhenQueryEmpty",

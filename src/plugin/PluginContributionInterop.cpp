@@ -340,29 +340,6 @@ bool RegisterExternalAgent(lua_State* state,
   return true;
 }
 
-bool RegisterMcpTool(lua_State* state,
-                     std::string_view plugin_id,
-                     std::vector<PluginHost::ContributedMcpTool>* tools,
-                     std::vector<runtime_types::McpToolRuntime>* runtimes,
-                     std::string* error_message) {
-  if (tools == nullptr || runtimes == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(tools, error_message)) {
-    return false;
-  }
-  registration_parsers::McpToolRegistration registration;
-  if (!registration_parsers::ParseMcpToolRegistration(state, std::string(plugin_id), &registration,
-                                                      error_message)) {
-    return false;
-  }
-  tools->push_back(std::move(registration.contributed));
-  if (registration.has_runtime) {
-    runtimes->push_back(std::move(registration.runtime));
-  }
-  return true;
-}
-
 bool RegisterBracketSet(lua_State* state,
                         std::string_view plugin_id,
                         std::vector<PluginHost::ContributedBracketSet>* sets,

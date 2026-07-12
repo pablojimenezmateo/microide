@@ -16,8 +16,6 @@ namespace microide::workspace {
 class GitRepositoryService {
  public:
   struct WakeCallbacks {
-    std::function<void()> increment_background_task_count;
-    std::function<void()> decrement_background_task_count_and_wake;
     std::function<bool()> push_refresh_ready_event;
   };
 
@@ -61,9 +59,10 @@ class GitRepositoryService {
   void PublishSnapshot(GitSidebarState::RefreshSnapshot snapshot, std::uint64_t generation);
   void ScheduleRefresh(RefreshRequest request);
   // Shared exit for a refresh task whose generation was superseded before it
-  // could publish. Clears refresh_in_flight_, decrements the background-task
-  // counter for the finishing task, and re-schedules a deferred follow-up if
-  // one is pending. Must be called with mutex_ NOT held.
+  // could publish. Clears refresh_in_flight_ and re-schedules a deferred
+  // follow-up if one is pending. Must be called with mutex_ NOT held. (The
+  // global background-task counter is owned entirely by ProjectBackgroundExecutor's
+  // queue hooks, which balance it once per job on every exit path.)
   void HandleSupersededRefresh();
 
   project::ProjectBackgroundExecutor& background_executor_;

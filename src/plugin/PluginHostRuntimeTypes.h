@@ -170,13 +170,4 @@ struct AuthProviderRuntime {
 #endif
 };
 
-struct McpToolRuntime {
-  std::string id;
-  std::string plugin_id;
-#if MICROIDE_HAS_LUA_PLUGINS
-  lua_State* state = nullptr;
-  int run_ref = LUA_NOREF;
-#endif
-};
-
 }  // namespace microide::plugin::runtime_types

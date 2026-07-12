@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed on 2026-07-12.
+Reviewed on 2026-07-13.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
 It is deliberately short. Closed debt does not live here — it is archived (see below).
@@ -20,36 +20,19 @@ detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
 - **Git: sidebar stage/unstage/discard and commit `RefreshDerivedState` still run git
   synchronously on the shell thread.** Only the contained wins landed (rename-probe
-  gate, summary cache); the full off-thread dispatch via `ProjectBackgroundExecutor`
-  is a larger change.
-- **Git: `GitRepositoryService` double-counts the global background-task counter.**
-  Functionally inert (the counter has zero readers); a coupled test refactor.
-- **Merge: preview overlay codepoint-slice with a visual-column offset; hover-preview
-  `MergeChoiceLines` allocates per frame.** Both LOW/cosmetic in lint-constrained
-  render TUs.
-- **Plugin: `process.run`/`run_async` build the Lua result table while C++ locals are
-  live** (an OOM raise longjmps over them); **provider-query loops dereference
-  `provider.state` before the null-plugin guard** (15 sites, currently guarding only
-  live states); **dead `RegisterMcpTool` + missing MCP teardown.** All latent
-  hardening to handle deliberately.
-- **LSP: the tracked-request UI expiry (10 s) is below the transport deadline (30 s)
-  and a single in-flight flag can't represent two concurrent interactive requests.**
-  Cosmetic indicator flicker only.
-- **DAP: capabilities race if `initialized` precedes the `initialize` response.**
-  Only a non-conformant adapter triggers it (gdb/lldb-dap/debugpy are spec-compliant);
-  needs a deferral mechanism the mailbox architecture does not readily provide.
-- **Persistence: no parent-directory fsync after the atomic rename;** per-tab
-  compare/merge divider fractions are not clamped on restore (the session pixel floats
-  now are). The dir-fsync is a deliberate speed/durability tradeoff.
-- **Editor: `DirectoryTree` expand/collapse sets are never pruned for deleted dirs**
-  (a bounded, functionally-harmless leak); **nested undo groups double-fold child
-  edits** (latent — no current caller nests a group).
-- **Platform: `.trashinfo` is written without `O_EXCL`** (a rare concurrent-trash race;
-  needs a reserve-name-first restructure).
-- **Render: `AsciiGlyphAtlas::BlitInto` straight-copies,** erasing an adjacent glyph's
-  overhang (visible only for overhang fonts).
-- **Search: `FileFinder::Refresh` deep-copies path+string per match, uncapped**
-  (pre-existing architecture; store indices and resolve lazily).
+  gate, summary cache). Investigated 2026-07-13: no hard invariant is violated (the
+  code uses `project::Git*Path` free functions, so the workspace-subprocess/direct-
+  `GitRepository` lints do not fire), and the remaining sites are fast one-shot,
+  user-initiated local-index writes (single-digit ms on normal repos) off the hot
+  render/typing paths. The full off-thread dispatch needs per-op in-flight guards,
+  a completion mailbox, generation guards against stale completions landing on
+  async-reordered entries, and reconcile/refresh reordering across 4–5 call sites —
+  high regression surface (discard data-loss, editor-tab reconcile ordering) for
+  marginal speed benefit. Kept deferred; if pursued, reuse `CommitWorkflowService`'s
+  completion-mailbox + `operation_generation` pattern.
+- **Persistence: no parent-directory fsync after the atomic rename.** A deliberate
+  speed/durability tradeoff: the atomic rename already prevents a torn read; only a
+  crash inside the fs flush window can lose the newest session write. Left as-is.
 
 ### Won't-do — verified non-defects
 
@@ -71,6 +54,30 @@ detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 - **Terminal DECSTBM home ignores the scroll-region top under origin mode on the
   primary buffer.** Consistent with this terminal's primary CUP semantics; a
   design-consistent choice, not a live divergence.
+- **Render: `AsciiGlyphAtlas::BlitInto` straight-copy erases an overhang glyph's
+  spill.** The proposed OR/max-coverage merge is unimplementable via SDL surface
+  blits (`SDL_SetSurfaceBlendMode` rejects custom blend modes; `BLENDMODE_BLEND`
+  premultiplies and thins the common case), and a hand-rolled per-pixel max-alpha
+  merge in the hottest text-compositing path is a net negative under speed-first for
+  an artifact invisible with every monospace font microide ships. Revisit only if an
+  overhang/proportional font is ever routed through this atlas.
+- **Plugin: `process.run`/`run_async` OOM-longjmp over live C++ locals;
+  provider-query loops dereference `provider.state` before the null-plugin guard.**
+  Verified non-defects. `process.run` already defers every deliberate raise to the
+  `.inc` wrapper via `PushMessage` + `kPendingError`; the only remaining `lua_*`
+  calls are unavoidable success-path table pushes shared by ~20 sibling interop
+  functions (the invariant's own SAFE idiom). The provider-query guard is
+  belt-and-suspenders: teardown erases every runtime entry for a state before the
+  state is nulled (single plugin-worker thread), so `find_plugin_by_state` never
+  returns null for a live iterated entry (pinned by
+  `TestPluginHostSetupFailureTearsDownRegisteredProviders`). Reordering fixes no
+  reachable failure and has no constructible regression.
+- **Persistence: per-tab compare/merge divider fractions "unclamped" on restore.**
+  Already neutralized upstream: `PrimitiveReader::ReadF32` replaces any non-finite
+  persisted float with `0.0` at the binary-read source, and the render-time
+  `std::clamp(fraction, min, 1-min)` brings finite out-of-range values (including the
+  `0.0`) into a valid pane split. No NaN ever reaches layout arithmetic, so no
+  restore-time sanitize is needed.
 
 ### Won't-do — platform-only, cannot compile/validate on this Linux host
 
