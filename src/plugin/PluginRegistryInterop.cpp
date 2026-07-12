@@ -4,6 +4,7 @@
 
 #include <algorithm>
 
+#include "plugin/PluginContributionLimits.h"
 #include "plugin/PluginLuaInterop.h"
 
 namespace microide::plugin::registry_interop {
@@ -11,25 +12,9 @@ namespace {
 
 using lua_interop::IsValidIdentifier;
 
-// Per-kind ceiling on plugin contributions. Registration is setup-only, but a
-// plugin's setup() can loop `ctx.commands.add(...)` (or any register verb)
-// without bound; each accepted entry stores a host-side C++ struct + strings that
-// the Lua per-state memory cap does not count, so an unbounded loop amplifies
-// host RSS far past the intended plugin envelope. Mirrors the decoration-interop
-// kMaxEntriesPerKind cap. Self-correcting: the count is the live container size,
-// which drops when the plugin's contributions are torn down.
-constexpr std::size_t kMaxPluginContributionsPerKind = 100000;
-
-template <typename Container>
-bool ContributionLimitReached(const Container* container, std::string* error_message) {
-  if (container != nullptr && container->size() >= kMaxPluginContributionsPerKind) {
-    if (error_message != nullptr) {
-      *error_message = "plugin contribution limit reached";
-    }
-    return true;
-  }
-  return false;
-}
+// The per-kind contribution ceiling (kMaxPluginContributionsPerKind) and
+// ContributionLimitReached now live in plugin/PluginContributionLimits.h so the
+// parallel contribution_interop register path enforces the identical envelope.
 
 void RebuildCommandNamesImpl(
     const std::unordered_map<std::string, runtime_types::PluginCommand>& commands,

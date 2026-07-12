@@ -725,7 +725,15 @@ struct DapClient::Impl {
 
     DapReadBuf& buf = io_buf;
     bool got_init = false;
-    for (int attempts = 0; attempts < 120; ++attempts) {
+    // Bound the initialize wait by WALL-CLOCK, not an attempt count. proc.Read returns
+    // as soon as any data is available and dispatching a buffered message does not read
+    // at all, so an adapter that emits a burst of events (e.g. `output`) before its
+    // initialize response would burn an attempt-count budget in milliseconds and get
+    // force-killed while healthy. A steady_clock deadline spends the budget only as real
+    // time elapses; message supply is bounded per read, so this never spins hot.
+    // Symmetric with the LSP client's initialize wait.
+    const auto init_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (std::chrono::steady_clock::now() < init_deadline) {
       if (stop_init.load(std::memory_order_acquire)) {
         ShutdownProcessOnce();
         FailPendingRequests(false);

@@ -14,6 +14,50 @@ These were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
 a latent API-contract hazard with no live trigger, so a rushed fix risked a
 regression worse than the defect. Recorded here so they are not silently lost.
 
+> **Deferred 2026-07-12 (pass 21 — cross-subsystem bug hunt):** a four-way fan-out
+> (terminal, DAP/LSP transport, compare/merge/diff, plugin runtime) landed 4 fixes
+> (plugin contribution-cap gap now enforced on the contribution_interop register path;
+> compare hunk-alignment similarity DP capped to stop an O(tokens²) OOM crash on a
+> minified single-line compare; LSP + DAP initialize wait rebased onto a wall-clock
+> deadline so a pre-init notification burst can't force-kill a healthy server). These
+> genuine lower-severity / higher-risk findings were **not** fixed and are recorded here:
+> - **Plugin: `process.run`/`process.run_async` build the Lua result table while
+>   non-trivial C++ locals are live.** `PluginProcessInterop.cpp` (~216-244 / ~258-296)
+>   runs `lua_createtable`/`lua_pushlstring`/`lua_setfield` while `parsed`
+>   (`ProcessRunArgs`, owns argv/cwd/env) and `result` (`SubprocessResult`, owns
+>   stdout/stderr) are in scope. Each push allocates through the bounded allocator; a
+>   plugin sitting near the 256 MB Lua ceiling can make one of those raise `LUA_ERRMEM`,
+>   which longjmps over those locals without running their destructors (the exact hazard
+>   class the hard invariant guards, but triggered by an allocation raise rather than
+>   `luaL_error`, so the lint does not catch it). Latent: needs an adversarial near-budget
+>   plugin. Fix needs care (narrow `parsed`'s scope; build the result table via a
+>   protected `lua_pcall` helper so an OOM raise unwinds with no C++ locals live) — a
+>   delicate change deferred rather than rushed. (Plugin hunter #2.)
+> - **Terminal: VT (0x0B) and FF (0x0C) reset the cursor column to 0 instead of
+>   preserving it.** `TerminalSessionOutput.cpp:292-296` routes `\v`/`\f` through
+>   `AdvanceCursorRowLocked` (which zeroes the column) like `\n`, but VT/FF are never
+>   ONLCR-translated, so per ECMA-48/xterm/VTE they are index-like (straight down, column
+>   preserved) — exactly what the sibling IND handler in the same file does deliberately.
+>   Input `A \v B` should staircase (`B` under the char after `A`) but lands `B` at col 0.
+>   LOW severity, and an existing test
+>   (`TestTerminalSessionVerticalTabAndFormFeedIndexLikeLineFeed`) currently *asserts* the
+>   col-0 behavior, so the fix (mirror IND's save/restore) also requires updating that
+>   test to the staircase expectation — a deliberate spec call deferred out of a bug pass.
+>   (Terminal hunter #1.)
+> - **DAP/LSP: eager document-version bump on a refused `didChange` permanently
+>   suppresses later diagnostics for that file.** `WorkspaceLspClient.cpp:187,220` bump
+>   `document_versions[uri]` before enqueue, which can return false (queue at
+>   kMaxQueuedMessages / stop_io). The staleness gate
+>   (`WorkspaceLspClientDispatch.cpp:162`) then drops every later `publishDiagnostics`
+>   because the server reports against the last version it received. Only arises under a
+>   wedged/overflowing (50000-msg) queue where the session is effectively dead. Fix: only
+>   advance the version if the enqueue succeeded. (DAP/LSP hunter #2.)
+> - **Compare: CRLF working-tree files may fail generated-patch context matching.**
+>   `SplitLineViews` strips `\r`/`\n` and `PatchGenerator` emits `\n`-terminated context,
+>   so against a CRLF blob `git apply --check` context can mismatch and silently disable
+>   stage/discard. Fails safe (patch rejected, no corruption); reachability depends on
+>   git autocrlf/blob normalization. (Compare hunter, low-confidence lead.)
+>
 > **Deferred 2026-07-12 (pass 20 — cross-subsystem bug hunt):** a four-way fan-out
 > (control/platform, search/git-state, persistence/session, editor-core) landed 3
 > fixes (control-instance discovery sweep bounded by entries-examined + right-sized

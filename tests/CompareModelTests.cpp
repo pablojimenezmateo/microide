@@ -916,9 +916,57 @@ void TestCompareLongLineSkipsIntralineRefinement() {
          "an over-long modified line should mark the whole right side changed");
 }
 
+// Regression (OOM / UI-thread crash): a single line packed with tens of thousands of
+// distinct significant tokens (a minified bundle: one huge line, changed) forms a 1x1
+// delete/insert hunk that sails past AlignHunkLines' line-COUNT gate. The alignment
+// similarity DP is sized by TOKEN count, so without a token-count cap it allocated
+// O(tokens^2) (~gigabytes) and OOM-crashed the synchronous compare build. Unlike
+// TestCompareLongLineSkipsIntralineRefinement (a single 300 KB run of one repeated
+// char = ~1 token), this line has ~30k *distinct* tokens, so it actually drives the
+// token DP. The build must stay bounded and still align the pair as one Modified row.
+void TestCompareManyTokenLineBoundsAlignmentDp() {
+  std::string left_line;
+  std::string right_line;
+  left_line.reserve(30000 * 7);
+  right_line.reserve(30000 * 7);
+  for (int i = 0; i < 30000; ++i) {
+    if (i != 0) {
+      left_line += ' ';
+      right_line += ' ';
+    }
+    left_line += 'a';
+    left_line += std::to_string(i);
+    right_line += 'b';
+    right_line += std::to_string(i);
+  }
+  const std::string left = left_line + "\n";
+  const std::string right = right_line + "\n";
+
+  // Without the cap this allocates a ~(30001)^2 * 8-byte DP (~7 GB) and OOM-crashes;
+  // with it, BuildCompareModel returns promptly.
+  const auto result = BuildCompareModelProfiled(left, right);
+  // The pair went through the per-cell hunk aligner (passed the 1x1 line gate) rather
+  // than the coarse fallback — i.e. it genuinely exercises the token-DP path.
+  Expect(result.profile.exact_hunk_alignment_calls >= 1,
+         "the 1x1 huge-line hunk must reach the per-cell aligner, not the line-count fallback");
+
+  const CompareRow* modified = nullptr;
+  for (const auto& row : result.model.rows) {
+    if (row.kind == CompareRowKind::Modified) {
+      modified = &row;
+      break;
+    }
+  }
+  Expect(modified != nullptr, "two differing token-dense lines should align as one Modified row");
+  Expect(modified->left_text == left_line && modified->right_text == right_line,
+         "the bounded build must preserve both sides verbatim");
+}
+
 }  // namespace
 
 void RegisterCompareModelTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Compare/ManyTokenLineBoundsAlignmentDp",
+          TestCompareManyTokenLineBoundsAlignmentDp);
   AddTest(tests, "Compare/LongLineSkipsIntralineRefinement",
           TestCompareLongLineSkipsIntralineRefinement);
   AddTest(tests, "Compare/IgnoreWhitespacePreservesRightText",

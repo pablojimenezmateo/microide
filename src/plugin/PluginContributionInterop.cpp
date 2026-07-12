@@ -2,6 +2,8 @@
 
 #if MICROIDE_HAS_LUA_PLUGINS
 
+#include "plugin/PluginContributionLimits.h"
+
 namespace microide::plugin::contribution_interop {
 
 bool RegisterFormatter(lua_State* state,
@@ -9,6 +11,9 @@ bool RegisterFormatter(lua_State* state,
                        std::vector<PluginHost::ContributedFormatter>* formatters,
                        std::string* error_message) {
   if (formatters == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(formatters, error_message)) {
     return false;
   }
   registration_parsers::FormatterRegistration registration;
@@ -28,6 +33,9 @@ bool RegisterSaveParticipant(lua_State* state,
   if (participants == nullptr || runtimes == nullptr) {
     return false;
   }
+  if (ContributionLimitReached(participants, error_message)) {
+    return false;
+  }
   registration_parsers::SaveParticipantRegistration registration;
   if (!registration_parsers::ParseSaveParticipantRegistration(state, std::string(plugin_id),
                                                               &registration, error_message)) {
@@ -44,6 +52,9 @@ bool RegisterCompletion(lua_State* state,
                         std::vector<runtime_types::CompletionRuntime>* runtimes,
                         std::string* error_message) {
   if (contributions == nullptr || runtimes == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(contributions, error_message)) {
     return false;
   }
   registration_parsers::CompletionRegistration registration;
@@ -66,6 +77,9 @@ bool RegisterCodeAction(lua_State* state,
   if (contributions == nullptr || runtimes == nullptr) {
     return false;
   }
+  if (ContributionLimitReached(contributions, error_message)) {
+    return false;
+  }
   registration_parsers::CodeActionRegistration registration;
   if (!registration_parsers::ParseCodeActionRegistration(state, std::string(plugin_id), &registration,
                                                          error_message)) {
@@ -86,6 +100,9 @@ bool RegisterLanguageQuery(lua_State* state,
   if (runtimes == nullptr) {
     return false;
   }
+  if (ContributionLimitReached(runtimes, error_message)) {
+    return false;
+  }
   registration_parsers::LanguageQueryRegistration registration;
   if (!registration_parsers::ParseLanguageQueryRegistration(state, std::string(plugin_id), kind,
                                                             &registration, error_message)) {
@@ -104,6 +121,9 @@ bool RegisterTask(lua_State* state,
   if (tasks == nullptr) {
     return false;
   }
+  if (ContributionLimitReached(tasks, error_message)) {
+    return false;
+  }
   registration_parsers::TaskRegistration registration;
   if (!registration_parsers::ParseTaskRegistration(state, std::string(plugin_id), &registration,
                                                    error_message)) {
@@ -118,6 +138,9 @@ bool RegisterLanguageServer(lua_State* state,
                             std::vector<PluginHost::ContributedLanguageServer>* servers,
                             std::string* error_message) {
   if (servers == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(servers, error_message)) {
     return false;
   }
   registration_parsers::LanguageServerRegistration registration;
@@ -136,6 +159,9 @@ bool RegisterDebugAdapter(lua_State* state,
   if (adapters == nullptr) {
     return false;
   }
+  if (ContributionLimitReached(adapters, error_message)) {
+    return false;
+  }
   registration_parsers::DebugAdapterRegistration registration;
   if (!registration_parsers::ParseDebugAdapterRegistration(state, std::string(plugin_id),
                                                             &registration, error_message)) {
@@ -150,6 +176,9 @@ bool RegisterLaunchConfig(lua_State* state,
                           std::vector<PluginHost::ContributedLaunchConfig>* configs,
                           std::string* error_message) {
   if (configs == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(configs, error_message)) {
     return false;
   }
   registration_parsers::LaunchConfigRegistration registration;
@@ -168,6 +197,9 @@ bool RegisterTool(lua_State* state,
   if (tools == nullptr) {
     return false;
   }
+  if (ContributionLimitReached(tools, error_message)) {
+    return false;
+  }
   registration_parsers::ToolRegistration registration;
   if (!registration_parsers::ParseToolRegistration(state, std::string(plugin_id), &registration,
                                                    error_message)) {
@@ -183,6 +215,9 @@ bool RegisterTestProvider(lua_State* state,
                           std::vector<runtime_types::TestProviderRuntime>* runtimes,
                           std::string* error_message) {
   if (providers == nullptr || runtimes == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(providers, error_message)) {
     return false;
   }
   registration_parsers::TestProviderRegistration registration;
@@ -203,6 +238,9 @@ bool RegisterScmProvider(lua_State* state,
                          std::vector<runtime_types::ScmProviderRuntime>* runtimes,
                          std::string* error_message) {
   if (providers == nullptr || runtimes == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(providers, error_message)) {
     return false;
   }
   registration_parsers::ScmProviderRegistration registration;
@@ -226,6 +264,9 @@ bool RegisterAnnotationProvider(
   if (providers == nullptr || runtimes == nullptr) {
     return false;
   }
+  if (ContributionLimitReached(providers, error_message)) {
+    return false;
+  }
   registration_parsers::AnnotationProviderRegistration registration;
   if (!registration_parsers::ParseAnnotationProviderRegistration(state, std::string(plugin_id),
                                                                  &registration, error_message)) {
@@ -244,6 +285,9 @@ bool RegisterAuthProvider(lua_State* state,
                           std::vector<runtime_types::AuthProviderRuntime>* runtimes,
                           std::string* error_message) {
   if (providers == nullptr || runtimes == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(providers, error_message)) {
     return false;
   }
   registration_parsers::AuthProviderRegistration registration;
@@ -265,6 +309,9 @@ bool RegisterAiProvider(lua_State* state,
   if (providers == nullptr) {
     return false;
   }
+  if (ContributionLimitReached(providers, error_message)) {
+    return false;
+  }
   registration_parsers::AiProviderRegistration registration;
   if (!registration_parsers::ParseAiProviderRegistration(state, std::string(plugin_id), &registration,
                                                          error_message)) {
@@ -279,6 +326,9 @@ bool RegisterExternalAgent(lua_State* state,
                            std::vector<PluginHost::ContributedExternalAgent>* agents,
                            std::string* error_message) {
   if (agents == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(agents, error_message)) {
     return false;
   }
   registration_parsers::ExternalAgentRegistration registration;
@@ -296,6 +346,9 @@ bool RegisterMcpTool(lua_State* state,
                      std::vector<runtime_types::McpToolRuntime>* runtimes,
                      std::string* error_message) {
   if (tools == nullptr || runtimes == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(tools, error_message)) {
     return false;
   }
   registration_parsers::McpToolRegistration registration;
@@ -317,6 +370,9 @@ bool RegisterBracketSet(lua_State* state,
   if (sets == nullptr) {
     return false;
   }
+  if (ContributionLimitReached(sets, error_message)) {
+    return false;
+  }
   registration_parsers::BracketSetRegistration registration;
   if (!registration_parsers::ParseBracketSetRegistration(state, std::string(plugin_id),
                                                          &registration, error_message)) {
@@ -331,6 +387,9 @@ bool RegisterCommentMarkers(lua_State* state,
                             std::vector<PluginHost::ContributedCommentMarkers>* markers,
                             std::string* error_message) {
   if (markers == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(markers, error_message)) {
     return false;
   }
   registration_parsers::CommentMarkersRegistration registration;
@@ -349,6 +408,9 @@ bool RegisterIndentRules(lua_State* state,
   if (rules == nullptr) {
     return false;
   }
+  if (ContributionLimitReached(rules, error_message)) {
+    return false;
+  }
   registration_parsers::IndentRulesRegistration registration;
   if (!registration_parsers::ParseIndentRulesRegistration(state, std::string(plugin_id),
                                                           &registration, error_message)) {
@@ -363,6 +425,9 @@ bool RegisterSnippet(lua_State* state,
                      std::vector<PluginHost::ContributedSnippet>* snippets,
                      std::string* error_message) {
   if (snippets == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(snippets, error_message)) {
     return false;
   }
   registration_parsers::SnippetRegistration registration;

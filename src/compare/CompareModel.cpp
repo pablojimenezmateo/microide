@@ -173,6 +173,18 @@ std::size_t CommonSignificantTokenBytes(const TokenizedLine& left, const Tokeniz
     return 0;
   }
 
+  // Cap the token-LCS DP exactly as the intraline-span path (PopulateTokenChangedSpans)
+  // does. AlignHunkLines only gates on the number of LINES, so a 1x1 hunk of a single
+  // enormous line (a minified bundle: one ~MB line, one byte changed) sails past that
+  // gate and reaches here, where an ungated `(left_count+1)*(right_count+1)` DP is
+  // O(tokens^2) — hundreds of GB / an OOM crash on the synchronous UI-thread compare
+  // build. Over budget, report no common tokens: LineSimilarity maps that to 0.0, so
+  // the pair falls back to the same correct Delete+Insert alignment the coarse path
+  // already produces for oversized hunks.
+  if (ProductExceeds(left_count + 1, right_count + 1, kMaxIntralineLcsMatrixCells)) {
+    return 0;
+  }
+
   // Reuse the caller-owned scratch (assign re-zeroes the boundary that value-init
   // provided), so a dense modified hunk that calls this up to left*right times no
   // longer mallocs a throwaway DP buffer per pair.

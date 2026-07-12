@@ -1030,6 +1030,86 @@ while True:
 #endif
 }
 
+// Regression: the initialize-wait budget is wall-clock (each miss does a ~500 ms
+// bounded read; 60 attempts ≈ 30 s). Dispatching a pre-initialize frame must NOT spend
+// a budget slot, or a chatty server that emits a burst of notifications before its
+// initialize response exhausts the budget in milliseconds and gets force-killed while
+// perfectly healthy. This server floods far more than 60 notifications ahead of the
+// response; the client must still initialize.
+void TestWorkspaceLspClientPreInitializeNotificationFloodStillInitializes() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#else
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(
+      server_path,
+      std::string(R"py(import json
+import sys
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        # Flood 200 pre-initialize notifications (> the 60-attempt budget), THEN respond.
+        for i in range(200):
+            write_message({
+                "jsonrpc": "2.0",
+                "method": "window/logMessage",
+                "params": {"type": 3, "message": "pre-init " + str(i)},
+            })
+        write_message({
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": {"capabilities": {"textDocumentSync": 1}},
+        })
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+
+  LspClient client;
+  Expect(client.Start({"python3", server_path.string()}, "file:///tmp", "python"),
+         "pre-initialize flood fixture should start");
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < deadline && !client.IsInitialized()) {
+    client.DrainCallbacks();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(client.IsInitialized(),
+         "a burst of pre-initialize notifications must not exhaust the init budget and kill "
+         "a healthy server");
+  client.Shutdown();
+#endif
+}
+
 // Diagnostics computed against a document version the client has already
 // superseded with a newer edit must be dropped — applying stale ranges to the
 // newer buffer paints squiggles on the wrong spans. The server replies to the
@@ -1708,6 +1788,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientSkipsOversizedFrameAndResyncs);
   AddTest(tests, "WorkspaceLspClient/DispatchesPreInitializeFrames",
           TestWorkspaceLspClientDispatchesPreInitializeFrames);
+  AddTest(tests, "WorkspaceLspClient/PreInitializeNotificationFloodStillInitializes",
+          TestWorkspaceLspClientPreInitializeNotificationFloodStillInitializes);
   AddTest(tests, "WorkspaceLspClient/DropsStaleDiagnosticsVersion",
           TestWorkspaceLspClientDropsStaleDiagnosticsVersion);
   AddTest(tests, "WorkspaceLspClient/DropsStaleDiagnosticsFloatVersion",

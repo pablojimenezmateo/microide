@@ -346,9 +346,86 @@ time.sleep(0.3)
   client.Shutdown();
 }
 
+// Regression (symmetric with the LSP client): the initialize wait is bounded by
+// wall-clock, not an attempt count. proc.Read returns as soon as any data is available,
+// so an adapter that emits a burst of events before its initialize response used to
+// exhaust the attempt budget in milliseconds and get force-killed while healthy. This
+// adapter floods 200 `output` events ahead of the response; the client must still
+// initialize.
+void TestWorkspaceDapClientPreInitializeEventFloodStillInitializes() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "flood-adapter.py";
+  WriteFile(server_path, std::string(R"py(import json
+import sys
+seq = 0
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    global seq
+    seq += 1
+    message["seq"] = seq
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    if msg.get("type") != "request":
+        continue
+    command = msg.get("command")
+    if command == "initialize":
+        # Flood 200 output events (> the old 120 attempt budget), THEN respond.
+        for i in range(200):
+            write_message({"type": "event", "event": "output",
+                           "body": {"category": "stdout", "output": "pre-init " + str(i) + "\n"}})
+        write_message({"type": "response", "request_seq": msg["seq"], "success": True,
+                       "command": "initialize", "body": {}})
+        write_message({"type": "event", "event": "initialized"})
+    elif command == "disconnect":
+        write_message({"type": "response", "request_seq": msg["seq"], "success": True,
+                       "command": "disconnect"})
+        break
+    else:
+        write_message({"type": "response", "request_seq": msg["seq"], "success": False,
+                       "command": command, "message": "unknown"})
+)py"));
+
+  DapClient client;
+  Expect(client.Start({"python3", server_path.string()}, "mock"),
+         "flood adapter should start");
+  Expect(WaitForInitialized(client, 10000),
+         "a burst of pre-initialize events must not exhaust the init budget and kill "
+         "a healthy adapter");
+  client.Shutdown();
+}
+
 }  // namespace
 
 void RegisterWorkspaceDapClientTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceDapClient/PreInitializeEventFloodStillInitializes",
+          TestWorkspaceDapClientPreInitializeEventFloodStillInitializes);
   AddTest(tests, "WorkspaceDapClient/InitFailureFailsPendingRequest",
           TestWorkspaceDapClientInitFailureFailsPendingRequest);
   AddTest(tests, "WorkspaceDapClient/InitializeHandshakeReportsCapabilities",

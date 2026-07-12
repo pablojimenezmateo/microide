@@ -7,6 +7,7 @@
 #include "plugin/PluginDecorationInterop.h"
 #include "plugin/PluginDiagnosticsInterop.h"
 #include "plugin/PluginLuaInterop.h"
+#include "plugin/PluginContributionLimits.h"
 #include "workspace/WorkspacePluginAssetMonitor.h"
 
 #include <chrono>
@@ -494,6 +495,29 @@ return ide.plugin({
   const auto completions = host.QueryCompletions("todo", source, 1, 0, "", &runtime_error);
   Expect(completions.empty(),
          "a failed-setup plugin's provider must be removed, not left dangling");
+}
+
+// Regression: both plugin register paths must enforce the same per-kind contribution
+// ceiling. registry_interop (commands/sidebars/hovers/...) always gated on this helper;
+// the parallel contribution_interop path (completions/code-actions/providers/snippets/
+// ...) previously push_back'd uncapped, so a setup() loop calling a register verb
+// millions of times ballooned host RSS (each entry is a host-side C++ struct + strings
+// + a luaL_ref the Lua memory cap does not count). Both paths now share this helper.
+void TestPluginContributionLimitHelperBoundsEachKind() {
+  std::string error;
+  std::vector<int> below(microide::plugin::kMaxPluginContributionsPerKind - 1);
+  Expect(!microide::plugin::ContributionLimitReached(&below, &error),
+         "a container below the per-kind cap must accept further contributions");
+  Expect(error.empty(), "no error is surfaced below the cap");
+
+  std::vector<int> at_cap(microide::plugin::kMaxPluginContributionsPerKind);
+  Expect(microide::plugin::ContributionLimitReached(&at_cap, &error),
+         "a container at the per-kind cap must refuse further contributions");
+  Expect(error == "plugin contribution limit reached",
+         "the cap refusal must surface the shared error message");
+
+  Expect(!microide::plugin::ContributionLimitReached<std::vector<int>>(nullptr, nullptr),
+         "a null container is treated as not-at-cap");
 }
 
 // Regression (UAF): QueryCompletions iterates the live completion_runtimes vector by
@@ -3523,6 +3547,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostSetupFailureTearsDownRegisteredProviders);
   AddTest(tests, "PluginHost/QueryRejectsMidQueryRegistration",
           TestPluginHostQueryRejectsMidQueryRegistration);
+  AddTest(tests, "PluginHost/ContributionLimitHelperBoundsEachKind",
+          TestPluginContributionLimitHelperBoundsEachKind);
   AddTest(tests, "PluginHost/LuaRuntimeMatchesDocumentedStdlib",
           TestPluginHostLuaRuntimeMatchesDocumentedStdlib);
   AddTest(tests, "PluginHost/PluginsUseIsolatedLuaStates",

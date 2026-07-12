@@ -262,7 +262,16 @@ void LspClient::Impl::DoInitializeBlocking() {
   bool got_init = false;
   {
     util::StartupTrace::Scope wait_init_scope("LspClient::DoInitializeBlocking::WaitInitializeResponse");
-    for (int attempts = 0; attempts < 60; ++attempts) {
+    // Bound the initialize wait by WALL-CLOCK, not an attempt count. The old
+    // `for (attempts < 60)` treated each loop turn as ~500 ms, but proc.Read returns
+    // as soon as any data is available and dispatching a buffered frame does not read
+    // at all — so a chatty server emitting a burst of notifications (window/logMessage,
+    // $/progress) before its initialize response burned dozens of turns in milliseconds
+    // and got force-killed while perfectly healthy. A steady_clock deadline spends the
+    // budget only as real time elapses; frame supply is bounded per read, so this never
+    // spins hot.
+    const auto init_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (std::chrono::steady_clock::now() < init_deadline) {
       if (stop_init.load(std::memory_order_acquire)) {
         ShutdownProcessOnce();
         FailPendingRequests(false);
