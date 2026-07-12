@@ -118,6 +118,15 @@ class PluginSurfaceStore {
   // TextViewport::path_key). Allocation-free: the map uses heterogeneous lookup.
   std::span<const AnchoredSurface> AnchoredSurfacesForPathKey(std::string_view path_key) const;
 
+  // Retarget every surface anchor at/under `old_prefix` to `new_prefix` (a file or
+  // directory rename), mirroring PluginDecorationStore::RetargetPathPrefix so a
+  // renamed file's inline surfaces follow it instead of stranding on the old path.
+  bool RetargetPathPrefix(const std::filesystem::path& old_prefix,
+                          const std::filesystem::path& new_prefix);
+  // Drop the anchor of every surface at/under `path_prefix` (a file/dir delete), so
+  // a deleted file's surfaces no longer anchor to a path that no longer exists.
+  bool ClearPathPrefix(const std::filesystem::path& path_prefix);
+
   bool has_anchored() const { return !anchored_by_path_.empty(); }
   std::uint64_t revision() const { return revision_; }
   bool empty() const { return by_owner_.empty(); }

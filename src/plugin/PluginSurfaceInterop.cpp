@@ -289,7 +289,13 @@ bool ReadAnchor(lua_State* state, int spec_index,
   const lua_Integer line = lua_isinteger(state, -1) ? lua_tointeger(state, -1) : 0;
   lua_pop(state, 1);
   lua_pop(state, 1);  // anchor
-  if (raw_path.empty() || line <= 0) {
+  // The anchor line is stored 0-based (line - 1) in a uint32_t, so the largest
+  // representable 1-based input is UINT32_MAX + 1. Reject anything above that (and
+  // non-positive) — without the upper bound the cast below wraps (e.g. 2^32 + 1 ->
+  // 0), silently mis-anchoring the surface. Mirrors ReadOneBasedField.
+  constexpr lua_Integer kMaxOneBased =
+      static_cast<lua_Integer>(std::numeric_limits<std::uint32_t>::max()) + 1;
+  if (raw_path.empty() || line <= 0 || line > kMaxOneBased) {
     if (error != nullptr) *error = "anchor requires a non-empty path and a 1-based line";
     return false;
   }

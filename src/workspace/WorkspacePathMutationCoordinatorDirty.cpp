@@ -229,7 +229,11 @@ void PathMutationCoordinator::RetargetPluginDecorationsForRename(
   if (state.plugin_presentation_if_present() == nullptr) {
     return;
   }
-  if (state.EnsurePluginPresentation().decorations.RetargetPathPrefix(old_path, new_path)) {
+  auto& presentation = state.EnsurePluginPresentation();
+  bool changed = presentation.decorations.RetargetPathPrefix(old_path, new_path);
+  // Anchored surfaces follow the rename too, mirroring the decoration retarget.
+  changed = presentation.surfaces.RetargetPathPrefix(old_path, new_path) || changed;
+  if (changed) {
     operations_.request_editor_surface_redraw();
   }
   // Retarget can only shrink/relabel keys, never empty the store, so a release check is
@@ -242,7 +246,11 @@ void PathMutationCoordinator::ClearPluginDecorationsForPath(const std::filesyste
   if (state.plugin_presentation_if_present() == nullptr) {
     return;
   }
-  if (state.EnsurePluginPresentation().decorations.ClearPathPrefix(path)) {
+  auto& presentation = state.EnsurePluginPresentation();
+  bool changed = presentation.decorations.ClearPathPrefix(path);
+  // Drop anchored surfaces for the deleted path too, mirroring the decoration clear.
+  changed = presentation.surfaces.ClearPathPrefix(path) || changed;
+  if (changed) {
     operations_.request_editor_surface_redraw();
   }
   // Deleting the last decorated path can drain the bundle; release it back to zero

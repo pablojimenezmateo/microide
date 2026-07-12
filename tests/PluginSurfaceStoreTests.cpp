@@ -117,7 +117,31 @@ void TestPerOwnerSurfaceCountIsBounded() {
 
 }  // namespace
 
+// Regression: a rename retargets anchored surfaces so they follow the file, and a
+// delete drops them — mirroring PluginDecorationStore, which previously left plugin
+// surfaces stranded on the old path after a rename/delete.
+void TestRetargetAndClearPathPrefix() {
+  PluginSurfaceStore store;
+  SurfaceContent a = RasterSurface(1, SurfacePreviewSlot::None);
+  a.anchor = SurfaceAnchor{.path = "/proj/src/main.cpp", .line = 4};
+  store.ReplaceForOwnerSurface("p", "s1", std::move(a));
+
+  Expect(store.RetargetPathPrefix("/proj/src", "/proj/lib"),
+         "retargeting a covering prefix should move the surface anchor");
+  Expect(store.AnchoredSurfacesForPath("/proj/src/main.cpp").empty(),
+         "the surface no longer anchors to the old path");
+  const auto moved = store.AnchoredSurfacesForPath("/proj/lib/main.cpp");
+  Expect(moved.size() == 1 && moved[0].line == 4,
+         "the surface follows the rename to the new path (line preserved)");
+
+  Expect(store.ClearPathPrefix("/proj/lib"),
+         "clearing a covering prefix should drop the surface anchor");
+  Expect(store.AnchoredSurfacesForPath("/proj/lib/main.cpp").empty(),
+         "the deleted path has no anchored surfaces");
+}
+
 void RegisterPluginSurfaceStoreTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PluginSurfaceStore/RetargetAndClearPathPrefix", TestRetargetAndClearPathPrefix);
   AddTest(tests, "PluginSurfaceStore/ReplaceFindAndIdempotency", TestReplaceFindAndIdempotency);
   AddTest(tests, "PluginSurfaceStore/ClearPaths", TestClearPaths);
   AddTest(tests, "PluginSurfaceStore/PreviewSurfacesSortedAndToggle",

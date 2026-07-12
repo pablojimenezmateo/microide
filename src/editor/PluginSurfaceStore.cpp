@@ -1,6 +1,7 @@
 #include "editor/PluginSurfaceStore.h"
 
 #include "editor/PathKey.h"
+#include "util/PathMatch.h"
 
 #include <algorithm>
 #include <utility>
@@ -33,6 +34,56 @@ void PluginSurfaceStore::RebuildAnchorIndex() {
       return a.surface_id < b.surface_id;
     });
   }
+}
+
+bool PluginSurfaceStore::RetargetPathPrefix(const std::filesystem::path& old_prefix,
+                                            const std::filesystem::path& new_prefix) {
+  const std::filesystem::path normalized_old = old_prefix.lexically_normal();
+  const std::filesystem::path normalized_new = new_prefix.lexically_normal();
+  if (normalized_old.empty() || normalized_new.empty() || normalized_old == normalized_new) {
+    return false;
+  }
+  bool changed = false;
+  for (auto& [owner, surfaces] : by_owner_) {
+    for (auto& [surface_id, content] : surfaces) {
+      if (!content.anchor.has_value()) {
+        continue;
+      }
+      if (!util::PathEqualsOrWithin(content.anchor->path, normalized_old)) {
+        continue;
+      }
+      content.anchor->path = util::ReplacePathPrefix(content.anchor->path, normalized_old,
+                                                     normalized_new);
+      changed = true;
+    }
+  }
+  if (changed) {
+    RebuildAnchorIndex();
+    ++revision_;
+  }
+  return changed;
+}
+
+bool PluginSurfaceStore::ClearPathPrefix(const std::filesystem::path& path_prefix) {
+  const std::filesystem::path normalized_prefix = path_prefix.lexically_normal();
+  if (normalized_prefix.empty()) {
+    return false;
+  }
+  bool changed = false;
+  for (auto& [owner, surfaces] : by_owner_) {
+    for (auto& [surface_id, content] : surfaces) {
+      if (content.anchor.has_value() &&
+          util::PathEqualsOrWithin(content.anchor->path, normalized_prefix)) {
+        content.anchor.reset();
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    RebuildAnchorIndex();
+    ++revision_;
+  }
+  return changed;
 }
 
 bool PluginSurfaceStore::ReplaceForOwnerSurface(std::string_view owner,
