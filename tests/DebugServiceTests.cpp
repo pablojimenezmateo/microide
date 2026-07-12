@@ -1321,6 +1321,55 @@ void TestDebugVariablesModelTreeBehavior() {
   Expect(model.Empty() && model.Rows().empty(), "Clear empties the tree");
 }
 
+// Regression: an adapter that over-reports a container's total_count and then
+// answers a "load more" (start > 0) page with an empty success must not leave the
+// "show more…" affordance forever. The empty over-range page clears more_available.
+void TestDebugVariablesShowMoreClearsOnEmptyOverReportedPage() {
+  DebugVariablesModel model;
+  model.BeginFrame(1);
+  model.ApplyScopes({codec::DapScope{.name = "Arguments", .variables_reference = 1000}});
+  model.ToggleRow(0);  // expand the scope
+  // A child container that CLAIMS 5 indexed children (count_reported) but will only
+  // ever return 2.
+  model.ApplyVariables(1000,
+                       {codec::DapVariable{.name = "arr",
+                                           .value = "[...]",
+                                           .type = "int[]",
+                                           .variables_reference = 1001,
+                                           .indexed_variables = 5,
+                                           .count_reported = true}},
+                       0);
+  // Expand arr and load its first (short) page of 2 of the claimed 5.
+  std::size_t arr_row = 0;
+  for (std::size_t i = 0; i < model.Rows().size(); ++i) {
+    if (model.Rows()[i].display_name == "arr") {
+      arr_row = i;
+      break;
+    }
+  }
+  model.ToggleRow(arr_row);
+  model.ApplyVariables(
+      1001,
+      {codec::DapVariable{.name = "[0]", .value = "1", .variables_reference = 0},
+       codec::DapVariable{.name = "[1]", .value = "2", .variables_reference = 0}},
+      0);
+  bool has_show_more = false;
+  for (const auto& row : model.Rows()) {
+    has_show_more = has_show_more || row.is_show_more;
+  }
+  Expect(has_show_more, "an over-reported total leaves a 'show more' affordance after the first page");
+
+  // The adapter answers the next page (start = 2) with an empty success; the
+  // affordance must clear rather than persist forever.
+  model.ApplyVariables(1001, {}, 2);
+  bool still_show_more = false;
+  for (const auto& row : model.Rows()) {
+    still_show_more = still_show_more || row.is_show_more;
+  }
+  Expect(!still_show_more,
+         "an empty over-range page clears 'show more' instead of persisting it forever");
+}
+
 // Locals is auto-expanded once per session (open by default) via the same bounded
 // re-expansion path a manual expand uses; a manual collapse is respected for the
 // rest of the session, and a new session (Clear) reopens it.
@@ -3035,6 +3084,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionSetVariableGatedOnCapability",
           TestDebugSessionSetVariableGatedOnCapability);
   AddTest(tests, "DebugService/VariablesModelTreeBehavior", TestDebugVariablesModelTreeBehavior);
+  AddTest(tests, "DebugService/VariablesShowMoreClearsOnEmptyOverReportedPage",
+          TestDebugVariablesShowMoreClearsOnEmptyOverReportedPage);
   AddTest(tests, "DebugService/VariablesLocalsOpenByDefault",
           TestDebugVariablesLocalsOpenByDefault);
   AddTest(tests, "DebugService/VariablesScopeCountDoesNotOverflow",

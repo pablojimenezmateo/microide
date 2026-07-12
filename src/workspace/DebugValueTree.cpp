@@ -315,6 +315,12 @@ std::vector<DebugValueTree::ChildFetch> DebugValueTree::ApplyVariables(
   parent->children_loaded = true;
   parent->load_error = false;
   if (start <= 0) {
+    // A fresh first page replaces the child list; erase the previous children's
+    // subtrees so their Node objects and reference mappings are not orphaned in
+    // nodes_/reference_to_node_. `parent` stays valid (only OTHER nodes are erased).
+    for (const std::uint32_t child_id : parent->children) {
+      EraseSubtree(child_id);
+    }
     parent->children.clear();
     parent->loaded_count = 0;
   }
@@ -357,6 +363,14 @@ std::vector<DebugValueTree::ChildFetch> DebugValueTree::ApplyVariables(
   } else {
     parent->more_available = static_cast<int>(variables.size()) >= kChildPageSize;
   }
+  // A page requested past the already-loaded children (start > 0) that returns
+  // NOTHING means the adapter has no more to give, even if its reported total_count
+  // over-counts. Force more_available false so the "show more…" affordance does not
+  // persist forever for an over-reporting adapter that answers the page with an
+  // empty success rather than an error (which MarkChildrenError would have cleared).
+  if (start > 0 && variables.empty()) {
+    parent->more_available = false;
+  }
   // Restore any of these children the user had expanded before this stop.
   std::vector<ChildFetch> fetches = CollectAutoExpand(new_child_ids);
   Rebuild();
@@ -382,6 +396,29 @@ void DebugValueTree::MarkChildrenError(int variables_reference) {
   Rebuild();
 }
 
+void DebugValueTree::EraseSubtree(std::uint32_t node_id) {
+  const auto it = nodes_.find(node_id);
+  if (it == nodes_.end()) {
+    return;
+  }
+  // Capture what we need before erasing (the erase invalidates `it` but leaves
+  // pointers/references to OTHER nodes valid, so the recursion below is safe).
+  std::vector<std::uint32_t> children = std::move(it->second.children);
+  const int reference = it->second.variables_reference;
+  // Drop the reference mapping only if it still points at this node — first-writer-
+  // wins may have handed our old reference to a sibling we must not strand.
+  if (reference > 0) {
+    const auto ref_it = reference_to_node_.find(reference);
+    if (ref_it != reference_to_node_.end() && ref_it->second == node_id) {
+      reference_to_node_.erase(ref_it);
+    }
+  }
+  nodes_.erase(node_id);
+  for (const std::uint32_t child_id : children) {
+    EraseSubtree(child_id);
+  }
+}
+
 bool DebugValueTree::RebindReference(Node& node, int new_reference) {
   if (new_reference == node.variables_reference) {
     return false;
@@ -399,6 +436,11 @@ bool DebugValueTree::RebindReference(Node& node, int new_reference) {
     }
   }
   node.variables_reference = new_reference;
+  // Erase the stale children's subtrees so they are not orphaned in the node maps
+  // (node itself stays valid — only its descendants are removed).
+  for (const std::uint32_t child_id : node.children) {
+    EraseSubtree(child_id);
+  }
   node.children.clear();
   node.children_loaded = false;
   node.expanded = false;

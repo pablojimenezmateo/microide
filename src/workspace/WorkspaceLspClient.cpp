@@ -184,13 +184,16 @@ bool LspClient::DidChange(const std::string& uri, const std::string& text) {
   int version = 0;
   {
     std::lock_guard lock(impl_->mutex);
-    version = ++impl_->document_versions[uri];
+    // Compute the NEXT version but do not commit it yet: if the enqueue below fails
+    // (queue at capacity / stopped), the server never receives this version, so
+    // advancing document_versions[uri] would make the staleness gate drop every
+    // later publishDiagnostics (the server reports against the last version it saw).
+    version = impl_->document_versions[uri] + 1;
   }
   // Defer to the I/O thread: the whole-document copy into the JsonValue and the
-  // serialization (both proportional to document size) run off the UI thread. The
-  // version was bumped eagerly above so ordering/monotonicity is unaffected. `text`
-  // must be captured by value — the caller owns the buffer only for this call.
-  return impl_->SendMessageBuilderAfterInitialize(
+  // serialization (both proportional to document size) run off the UI thread.
+  // `text` must be captured by value — the caller owns the buffer only for this call.
+  const bool queued = impl_->SendMessageBuilderAfterInitialize(
       [impl = impl_, uri, text, version]() mutable {
         using namespace util;
         JsonObject text_doc;
@@ -206,6 +209,11 @@ bool LspClient::DidChange(const std::string& uri, const std::string& text) {
         return impl->SerializeMessage(
             impl->MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
       });
+  if (queued) {
+    std::lock_guard lock(impl_->mutex);
+    impl_->document_versions[uri] = std::max(impl_->document_versions[uri], version);
+  }
+  return queued;
 }
 
 bool LspClient::DidChangeIncremental(const std::string& uri,
@@ -217,9 +225,11 @@ bool LspClient::DidChangeIncremental(const std::string& uri,
   int version = 0;
   {
     std::lock_guard lock(impl_->mutex);
-    version = ++impl_->document_versions[uri];
+    // See DidChange: compute the next version but commit it only on a successful
+    // enqueue so a dropped change does not permanently suppress later diagnostics.
+    version = impl_->document_versions[uri] + 1;
   }
-  return impl_->SendMessageBuilderAfterInitialize(
+  const bool queued = impl_->SendMessageBuilderAfterInitialize(
       [impl = impl_, uri, changed_range, new_text, version]() mutable {
         using namespace util;
         JsonObject text_doc;
@@ -236,6 +246,11 @@ bool LspClient::DidChangeIncremental(const std::string& uri,
         return impl->SerializeMessage(
             impl->MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
       });
+  if (queued) {
+    std::lock_guard lock(impl_->mutex);
+    impl_->document_versions[uri] = std::max(impl_->document_versions[uri], version);
+  }
+  return queued;
 }
 
 bool LspClient::DidSave(const std::string& uri) {

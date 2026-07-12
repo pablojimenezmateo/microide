@@ -198,6 +198,11 @@ class DebugValueTree {
   const Node* FindNode(std::uint32_t id) const;
   Node* FindNodeByReference(int variables_reference);
   std::uint32_t AddNode(Node node);
+  // Recursively remove a node and all its descendants from nodes_ and
+  // reference_to_node_. Used when a container's child list is replaced (a fresh
+  // start<=0 page or a RebindReference) so the old child Node objects and their
+  // reference mappings are not orphaned/leaked in the maps.
+  void EraseSubtree(std::uint32_t node_id);
   // Path key (root→node name chain) used to track expansion across rebuilds, since
   // variables references are not stable between stops.
   std::string PathKey(const Node& node) const;
