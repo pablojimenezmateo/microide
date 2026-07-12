@@ -55,6 +55,14 @@ struct CompareModel {
   // — so the patch generator can emit `/dev/null` headers.
   bool left_empty = false;
   bool right_empty = false;
+  // True when the corresponding source buffer uses CRLF line terminators.
+  // SplitLineViews strips the ending, so a CRLF file's rows carry bare text —
+  // but git stores the `\r` as part of each line's content, so a generated patch
+  // must re-emit `text\r\n` for its context/`-`/`+` body lines to byte-match the
+  // CRLF blob under `git apply`. Without this, staging/discarding a hunk of a
+  // CRLF working-tree file fails context matching (fails safe: patch rejected).
+  bool left_uses_crlf = false;
+  bool right_uses_crlf = false;
 };
 
 struct CompareBuildProfile {

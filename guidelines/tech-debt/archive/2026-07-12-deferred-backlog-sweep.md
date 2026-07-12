@@ -79,6 +79,30 @@ Verified non-defects (combining-mark-after-wide dead code, `BlendColors` clamp,
 porcelain-v2 rename record, test-only plugin sync-query overloads, unreachable
 disabled-runtime reset, 1×1 compare pairing, primary DECSTBM origin-mode) stay
 won't-do. Four Windows/macOS items stay platform-deferred. A small set of
-lower-value / larger / latent items (full git off-thread dispatch, CRLF patch
-context, ignore-whitespace staging guard, a few LOW render/plugin/persistence/undo
-items) stay deliberately deferred — see the current `known-tech-debt.md`.
+lower-value / larger / latent items (full git off-thread dispatch, a few LOW
+render/plugin/persistence/undo items) stay deliberately deferred — see the current
+`known-tech-debt.md`.
+
+## Follow-up (same day) — compare staging fidelity
+
+The two most user-facing deferred items from the sweep were then closed in a
+focused follow-up commit, each with regression coverage:
+
+- **Compare: CRLF working-tree files failed generated-patch context matching.**
+  `BuildCompareModelProfiled` now classifies each side's line terminator
+  (`CompareModel::left_uses_crlf` / `right_uses_crlf`, from the first newline), and
+  `PatchGenerator` re-emits the trailing `\r` on every body line whose originating
+  side is CRLF (context/`-` from the left/pre-image side, `+` from the right/post-
+  image side; suppressed on a no-newline final line). git stores the `\r` as blob
+  content, so staging/discarding a hunk of a CRLF file now byte-matches under `git
+  apply` and the staged blob preserves the file's endings exactly. Tests:
+  `PatchApply/CrlfContextLines` (strengthened), `PatchApply/StageCrlfFileApplies`
+  (end-to-end real-repo stage of a CRLF file).
+- **Compare: ignore-whitespace narrowed staging.** `PatchApplyService` now refuses
+  every apply operation (stage/unstage/discard, hunk and line scope) while
+  `build_options.ignore_whitespace` is set, via `RejectIgnoreWhitespaceApply` at the
+  shared `Request*` choke point that both the keyboard and menu/coordinator paths
+  funnel through. The refusal surfaces a specific, actionable message
+  ("Turn off Ignore Whitespace…") instead of silently misstaging a diff whose
+  whitespace-only differences are folded into Unchanged rows. Test:
+  `PatchApply/RejectsIgnoreWhitespace`.

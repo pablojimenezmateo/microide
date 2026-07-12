@@ -280,9 +280,116 @@ void TestPatchGeneratorSelectedLinesBesideBlankContext() {
 
 void TestPatchGeneratorCrlfContextLines() {
   const CompareModel model = BuildCompareModel("keep\r\n\r\nold\r\n", "keep\r\n\r\nnew\r\n");
+  Expect(model.left_uses_crlf && model.right_uses_crlf, "model should classify both sides as CRLF");
   const auto patch = GenerateComparePatch(model, "file.txt", 0);
   Expect(patch.has_value(), "CRLF compare patch should be generated");
   Expect(PatchHunkCountsMatchBody(*patch), "CRLF context should keep hunk counts aligned");
+  // git keeps each CRLF line's trailing `\r` in the blob, so every body line must
+  // re-emit the carriage return before the patch's own `\n`. A bare-LF context
+  // line here would fail to match the CRLF blob under `git apply`.
+  Expect(patch->find(" keep\r\n") != std::string::npos,
+         "CRLF context line must carry a carriage return");
+  Expect(patch->find("-old\r\n") != std::string::npos,
+         "CRLF deletion line must carry a carriage return");
+  Expect(patch->find("+new\r\n") != std::string::npos,
+         "CRLF addition line must carry a carriage return");
+}
+
+// Regression: staging a hunk of a CRLF working-tree file failed context matching
+// under `git apply --cached` because the generated patch emitted bare-LF body
+// lines while the blob content keeps the `\r`. The patch must re-emit CRLF so the
+// stage succeeds AND the staged blob preserves the file's line endings exactly.
+void TestPatchStageCrlfFileApplies() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  std::filesystem::create_directories(repo_path);
+  InitializeGitRepo(repo_path);
+  // Keep git from normalizing CRLF so the blob stores the bytes verbatim.
+  RequireGitCommandSuccess(repo_path, {"config", "core.autocrlf", "false"}, "disable autocrlf");
+  const auto file_path = repo_path / "crlf.txt";
+  WriteFile(file_path, "line1\r\nline2\r\n");
+  CommitAll(repo_path, "base", "base");
+
+  WriteFile(file_path, "line1\r\nline2\r\nline3\r\n");
+  const CompareModel model =
+      BuildCompareModel("line1\r\nline2\r\n", "line1\r\nline2\r\nline3\r\n");
+  Expect(model.right_uses_crlf, "model should detect a CRLF right side");
+  const auto patch = GenerateComparePatch(model, "crlf.txt", 0);
+  Expect(patch.has_value(), "CRLF stage patch should be generated");
+  Expect(patch->find("+line3\r\n") != std::string::npos,
+         "the added CRLF line must carry a carriage return");
+
+  PatchApplyRequest request{
+      .operation = PatchOperationKind::StageHunk,
+      .target{
+          .repository_root = repo_path,
+          .relative_path = std::filesystem::path("crlf.txt"),
+          .hunk = std::nullopt,
+          .line_selection = std::nullopt,
+      },
+      .model = model,
+  };
+  const auto result = ApplyPatchRequest(request, *patch);
+  Expect(result.category == PatchApplyResultCategory::Success,
+         "git apply --cached should accept the CRLF patch");
+
+  GitRepository repo(repo_path);
+  const auto staged = repo.Execute({"show", ":crlf.txt"});
+  Expect(staged.success(), "staged blob should be readable");
+  Expect(staged.output == "line1\r\nline2\r\nline3\r\n",
+         "staged blob must preserve CRLF endings on the added line");
+}
+
+// Ignore-whitespace folds whitespace-only differences into Unchanged rows, so a
+// generated patch cannot faithfully represent the working tree. Every apply entry
+// point must refuse — the shared choke point covers both the keyboard and menu
+// paths — with a specific, actionable message rather than silently misstaging.
+void TestPatchApplyRejectsIgnoreWhitespace() {
+  microide::project::ProjectBackgroundExecutor executor;
+  microide::workspace::GitRepositoryService git_service(executor);
+  microide::workspace::PatchApplyService service(executor, git_service);
+
+  std::string feedback;
+  microide::workspace::PatchApplyService::Callbacks callbacks;
+  callbacks.current_repository_state = []() {
+    return microide::project::GitRepositoryState{};
+  };
+  callbacks.set_command_feedback = [&feedback](std::string_view message) {
+    feedback = std::string(message);
+  };
+  service.SetCallbacks(std::move(callbacks));
+
+  microide::workspace::CompareTabState compare_tab;
+  compare_tab.path = std::filesystem::path("/unused/file.txt");
+  compare_tab.review_mode = microide::compare::CompareReviewMode::WorkingTree;
+  compare_tab.right_ref = "WORKTREE";
+  compare_tab.model = BuildCompareModel("a\n", "a\nb\n");
+  compare_tab.build_options.ignore_whitespace = true;
+
+  const auto expect_refused = [&](bool result, const char* label) {
+    Expect(!result, label);
+    Expect(feedback.find("Ignore Whitespace") != std::string::npos,
+           "refusal message should name Ignore Whitespace");
+    feedback.clear();
+  };
+  expect_refused(service.RequestStageHunk(compare_tab), "stage hunk must be refused");
+  expect_refused(service.RequestStageSelectedLines(compare_tab), "stage lines must be refused");
+  expect_refused(service.RequestUnstageHunk(compare_tab), "unstage hunk must be refused");
+  expect_refused(service.RequestUnstageSelectedLines(compare_tab), "unstage lines must be refused");
+  expect_refused(service.RequestDiscardHunkPreview(compare_tab), "discard hunk must be refused");
+  expect_refused(service.RequestDiscardSelectedLinesPreview(compare_tab),
+                 "discard lines must be refused");
+
+  // With the option off, the guard must not fire: the same tab now fails later for
+  // lack of a repository, and that message never mentions ignore-whitespace.
+  compare_tab.build_options.ignore_whitespace = false;
+  feedback.clear();
+  Expect(!service.RequestStageHunk(compare_tab),
+         "stage still fails without a repository");
+  Expect(feedback.find("Ignore Whitespace") == std::string::npos,
+         "with ignore-whitespace off the guard must not fire");
+
+  executor.Shutdown();
 }
 
 void TestPatchUnstageSelectedLinesWithStagedAndUnstagedChanges() {
@@ -975,6 +1082,8 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
   tests.push_back({"PatchApply/SelectedLinesBlankContext",
                    TestPatchGeneratorSelectedLinesBesideBlankContext});
   tests.push_back({"PatchApply/CrlfContextLines", TestPatchGeneratorCrlfContextLines});
+  tests.push_back({"PatchApply/StageCrlfFileApplies", TestPatchStageCrlfFileApplies});
+  tests.push_back({"PatchApply/RejectsIgnoreWhitespace", TestPatchApplyRejectsIgnoreWhitespace});
   tests.push_back({"PatchApply/UnstageMixedIndexWorktree",
                    TestPatchUnstageSelectedLinesWithStagedAndUnstagedChanges});
   tests.push_back({"PatchApply/StagePureInsertionNoContextApplies",

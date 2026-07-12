@@ -1137,6 +1137,14 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
   model.right_final_newline_missing = !right.empty() && right.back() != '\n';
   model.left_empty = left.empty();
   model.right_empty = right.empty();
+  // Classify each side's line terminator from its first newline. git keeps the
+  // `\r` of a CRLF file inside the blob, so the patch generator must re-emit it.
+  const auto uses_crlf = [](const std::string& buffer) {
+    const std::size_t newline = buffer.find('\n');
+    return newline != std::string::npos && newline > 0 && buffer[newline - 1] == '\r';
+  };
+  model.left_uses_crlf = uses_crlf(left);
+  model.right_uses_crlf = uses_crlf(right);
 
   const Clock::time_point total_start = Clock::now();
 

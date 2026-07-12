@@ -77,9 +77,18 @@ std::string QuoteGitHeaderPath(std::string_view prefix, std::string_view path) {
 }
 
 // CompareRow line text never carries a trailing newline (SplitLineViews strips
-// endings), so patch lines are emitted verbatim with a single terminator.
-void AppendPatchLine(std::ostringstream& stream, char prefix, std::string_view text) {
-  stream << prefix << text << '\n';
+// both `\n` and `\r\n` endings). git keeps the `\r` of a CRLF file as part of
+// each line's blob content, so for a CRLF source the body line must re-emit the
+// carriage return *before* the patch's own `\n` separator — otherwise `git
+// apply` can't byte-match the context against the CRLF blob. `crlf` is set from
+// the originating side's line terminator; it is false for a no-newline final
+// line (which has no trailing `\r` either).
+void AppendPatchLine(std::ostringstream& stream, char prefix, std::string_view text, bool crlf) {
+  stream << prefix << text;
+  if (crlf) {
+    stream << '\r';
+  }
+  stream << '\n';
 }
 
 // git's exact marker (leading backslash-space) after a line whose source file
@@ -365,9 +374,14 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
       : new_range_count == 0 ? PrecedingSideLine(model, start_row, true)
                              : FirstPatchLineNumber(model, start_row, end_row, true);
 
+  // A `+` line is new content destined for the post-image (right) side; a context
+  // (` `) or `-` line must byte-match the pre-image (left) side. Re-emit each
+  // line's carriage return from its own side's terminator so a CRLF file stages
+  // and discards cleanly. A no-newline final line has no trailing `\r`.
   std::ostringstream body;
   for (const PatchBodyLine& line : body_lines) {
-    AppendPatchLine(body, line.prefix, line.text);
+    const bool side_crlf = line.prefix == '+' ? model.right_uses_crlf : model.left_uses_crlf;
+    AppendPatchLine(body, line.prefix, line.text, side_crlf && !line.no_newline_after);
     if (line.no_newline_after) {
       body << kNoNewlineMarker;
     }

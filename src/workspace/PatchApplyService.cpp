@@ -260,7 +260,21 @@ void PatchApplyService::ReportResult(const project::PatchApplyResult& result) {
   }
 }
 
+bool PatchApplyService::RejectIgnoreWhitespaceApply(const CompareTabState& compare_tab) {
+  if (!compare_tab.build_options.ignore_whitespace) {
+    return false;
+  }
+  ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
+                .detail = "Turn off Ignore Whitespace to stage, unstage, or discard changes — "
+                          "whitespace-only differences are hidden, so the patch would not match "
+                          "the working tree."});
+  return true;
+}
+
 bool PatchApplyService::RequestStageHunk(CompareTabState& compare_tab) {
+  if (RejectIgnoreWhitespaceApply(compare_tab)) {
+    return false;
+  }
   const auto request = BuildRequest(compare_tab, PatchOperationKind::StageHunk, false);
   if (!request.has_value()) {
     ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
@@ -278,6 +292,9 @@ bool PatchApplyService::RequestStageHunk(CompareTabState& compare_tab) {
 }
 
 bool PatchApplyService::RequestStageSelectedLines(CompareTabState& compare_tab) {
+  if (RejectIgnoreWhitespaceApply(compare_tab)) {
+    return false;
+  }
   const auto request = BuildRequest(compare_tab, PatchOperationKind::StageSelectedLines, true);
   if (!request.has_value()) {
     ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
@@ -295,6 +312,9 @@ bool PatchApplyService::RequestStageSelectedLines(CompareTabState& compare_tab) 
 }
 
 bool PatchApplyService::RequestUnstageHunk(CompareTabState& compare_tab) {
+  if (RejectIgnoreWhitespaceApply(compare_tab)) {
+    return false;
+  }
   const auto request = BuildRequest(compare_tab, PatchOperationKind::UnstageHunk, false);
   if (!request.has_value()) {
     ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
@@ -312,6 +332,9 @@ bool PatchApplyService::RequestUnstageHunk(CompareTabState& compare_tab) {
 }
 
 bool PatchApplyService::RequestUnstageSelectedLines(CompareTabState& compare_tab) {
+  if (RejectIgnoreWhitespaceApply(compare_tab)) {
+    return false;
+  }
   const auto request = BuildRequest(compare_tab, PatchOperationKind::UnstageSelectedLines, true);
   if (!request.has_value()) {
     ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
@@ -329,6 +352,9 @@ bool PatchApplyService::RequestUnstageSelectedLines(CompareTabState& compare_tab
 }
 
 bool PatchApplyService::RequestDiscardHunkPreview(CompareTabState& compare_tab) {
+  if (RejectIgnoreWhitespaceApply(compare_tab)) {
+    return false;
+  }
   const auto request = BuildRequest(compare_tab, PatchOperationKind::DiscardHunk, false);
   if (!request.has_value()) {
     ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
@@ -356,6 +382,9 @@ bool PatchApplyService::RequestDiscardHunkPreview(CompareTabState& compare_tab) 
 }
 
 bool PatchApplyService::RequestDiscardSelectedLinesPreview(CompareTabState& compare_tab) {
+  if (RejectIgnoreWhitespaceApply(compare_tab)) {
+    return false;
+  }
   const auto request = BuildRequest(compare_tab, PatchOperationKind::DiscardSelectedLines, true);
   if (!request.has_value()) {
     ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,

@@ -24,12 +24,6 @@ detail lives in the `Deferred backlog sweep — Batch A…I` commits.
   is a larger change.
 - **Git: `GitRepositoryService` double-counts the global background-task counter.**
   Functionally inert (the counter has zero readers); a coupled test refactor.
-- **Compare: CRLF working-tree files may fail generated-patch context matching.**
-  Fails safe (patch rejected). Needs the blob's line ending plumbed from the compare
-  model through `PatchGenerationOptions` into the patch emitter.
-- **Compare: ignore-whitespace narrows staging.** Needs a guard at the patch-apply
-  choke point (both the coordinator and keyboard entry points) plus a feedback
-  surface; deferred rather than gate only one path.
 - **Merge: preview overlay codepoint-slice with a visual-column offset; hover-preview
   `MergeChoiceLines` allocates per frame.** Both LOW/cosmetic in lint-constrained
   render TUs.

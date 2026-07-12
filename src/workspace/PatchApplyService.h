@@ -73,6 +73,14 @@ class PatchApplyService {
   void PublishResult(project::PatchApplyResult result,
                      const project::PatchApplyRequest& request);
   void ReportResult(const project::PatchApplyResult& result);
+  // Ignore-whitespace narrows the diff model: lines that differ only in
+  // whitespace are folded into Unchanged rows, so a generated patch can neither
+  // stage a whitespace-only change nor discard cleanly (its context, built from
+  // the index side, no longer byte-matches the working tree). Rather than gate a
+  // single entry point, block every apply here — the shared choke point for both
+  // the keyboard and menu/coordinator paths — and surface why. Returns true (and
+  // reports feedback) when the operation must be refused.
+  bool RejectIgnoreWhitespaceApply(const CompareTabState& compare_tab);
 
   project::ProjectBackgroundExecutor& background_executor_;
   GitRepositoryService& git_repository_service_;
