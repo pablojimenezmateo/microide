@@ -183,13 +183,27 @@ void RestoreCaretsAfterLineMove(TextViewport& viewport,
     return shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
   };
 
+  // A whole-line selection ends at column 0 of the line AFTER the block, so its
+  // end.line is range_last + 1 (ResolveLineRange excludes that trailing line from
+  // the moved range). That exclusive boundary moved with the block, so extend the
+  // shiftable range to range_last + 1 for the end. Without this the guard below
+  // rejected the selection and the whole thing fell to the single-caret branch,
+  // silently dropping the selection after the move.
+  const auto shift_boundary = [&](std::size_t line) -> std::size_t {
+    if (line < range_first || line > range_last + 1) return line;
+    const std::ptrdiff_t shifted = static_cast<std::ptrdiff_t>(line) + delta;
+    return shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
+  };
+
   viewport.ClearSecondaryCarets();
-  if (snapshot.selection.has_value() &&
-      snapshot.selection->start.line >= range_first &&
-      snapshot.selection->end.line <= range_last) {
+  const bool selection_covers_block =
+      snapshot.selection.has_value() && snapshot.selection->start.line >= range_first &&
+      (snapshot.selection->end.line <= range_last ||
+       (snapshot.selection->end.line == range_last + 1 && snapshot.selection->end.column == 0));
+  if (selection_covers_block) {
     viewport.MoveCursorTo(shift(snapshot.selection->start.line),
                           snapshot.selection->start.column);
-    viewport.MoveCursorTo(shift(snapshot.selection->end.line),
+    viewport.MoveCursorTo(shift_boundary(snapshot.selection->end.line),
                           snapshot.selection->end.column, /*extend_selection=*/true);
   } else {
     viewport.MoveCursorTo(shift(snapshot.primary_line), snapshot.primary_column);
@@ -304,6 +318,50 @@ void RestoreSelectionAcrossLines(TextViewport& viewport,
                         /*extend_selection=*/true);
 }
 
+// Restore carets after an indent/outdent that changed each line's leading
+// whitespace IN PLACE (lines are not reordered). Each caret's column shifts by
+// the delta applied to its line (clamped at 0 and the new line length); the
+// primary selection and every secondary caret shift the same way. Used for the
+// multi-caret and single-caret-no-selection paths, which the selection-only
+// RestoreSelectionAcrossLines could not carry — it dropped every secondary caret
+// and snapped the primary to (first_line, 0).
+void RestoreCaretsAfterIndentEdit(TextViewport& viewport,
+                                  const LineMoveCaretSnapshot& snapshot,
+                                  std::size_t first_line,
+                                  const std::vector<std::ptrdiff_t>& per_line_delta) {
+  const auto shift_col = [&](std::size_t line, std::size_t column) -> std::size_t {
+    std::size_t result = column;
+    if (line >= first_line && line - first_line < per_line_delta.size()) {
+      const std::ptrdiff_t shifted =
+          static_cast<std::ptrdiff_t>(column) + per_line_delta[line - first_line];
+      result = shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
+    }
+    if (line < viewport.line_count()) {
+      result = std::min(result, viewport.lines()[line].size());
+    }
+    return result;
+  };
+
+  viewport.ClearSecondaryCarets();
+  if (snapshot.selection.has_value()) {
+    viewport.MoveCursorTo(snapshot.selection->start.line,
+                          shift_col(snapshot.selection->start.line, snapshot.selection->start.column));
+    viewport.MoveCursorTo(snapshot.selection->end.line,
+                          shift_col(snapshot.selection->end.line, snapshot.selection->end.column),
+                          /*extend_selection=*/true);
+  } else {
+    viewport.MoveCursorTo(snapshot.primary_line,
+                          shift_col(snapshot.primary_line, snapshot.primary_column));
+  }
+
+  std::vector<TextPosition> shifted;
+  shifted.reserve(snapshot.secondaries.size());
+  for (const TextPosition& secondary : snapshot.secondaries) {
+    shifted.push_back(TextPosition{secondary.line, shift_col(secondary.line, secondary.column)});
+  }
+  viewport.SetSecondaryCarets(std::move(shifted));
+}
+
 }  // namespace
 
 bool IndentSelection(TextViewport& viewport) {
@@ -318,21 +376,35 @@ bool IndentSelection(TextViewport& viewport) {
   }
   std::vector<std::string> updated;
   updated.reserve(range.last - range.first + 1);
+  std::vector<std::ptrdiff_t> per_line_delta;
+  per_line_delta.reserve(range.last - range.first + 1);
   for (std::size_t i = range.first; i <= range.last; ++i) {
     if (lines[i].empty()) {
       updated.push_back(lines[i]);
+      per_line_delta.push_back(0);
     } else {
       std::string line = indent_unit;
       line += lines[i];
       updated.push_back(std::move(line));
+      per_line_delta.push_back(static_cast<std::ptrdiff_t>(indent_unit.size()));
     }
   }
   const bool had_selection = viewport.has_selection();
+  const bool multi = viewport.has_multiple_carets();
+  const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
+  // Group the replace + caret restore so the aggregate undo entry's after_state
+  // captures the restored carets (else redo snaps to (first,0) and drops carets).
+  viewport.BeginUndoGroup();
   const bool changed = viewport.ReplaceLines(range.first, range.last + 1, updated,
                                              /*record_undo=*/true);
   if (changed) {
-    RestoreSelectionAcrossLines(viewport, range.first, range.last, had_selection);
+    if (multi || !had_selection) {
+      RestoreCaretsAfterIndentEdit(viewport, snapshot, range.first, per_line_delta);
+    } else {
+      RestoreSelectionAcrossLines(viewport, range.first, range.last, had_selection);
+    }
   }
+  viewport.EndUndoGroup();
   return changed;
 }
 
@@ -343,11 +415,14 @@ bool OutdentSelection(TextViewport& viewport) {
   std::size_t indent_width = viewport.indent_width() == 0 ? 4 : viewport.indent_width();
   std::vector<std::string> updated;
   updated.reserve(range.last - range.first + 1);
+  std::vector<std::ptrdiff_t> per_line_delta;
+  per_line_delta.reserve(range.last - range.first + 1);
   bool any_change = false;
   for (std::size_t i = range.first; i <= range.last; ++i) {
     const std::string& line = lines[i];
     if (line.empty()) {
       updated.push_back(line);
+      per_line_delta.push_back(0);
       continue;
     }
     std::size_t strip = 0;
@@ -358,18 +433,29 @@ bool OutdentSelection(TextViewport& viewport) {
     }
     if (strip == 0) {
       updated.push_back(line);
+      per_line_delta.push_back(0);
     } else {
       updated.emplace_back(line.substr(strip));
+      per_line_delta.push_back(-static_cast<std::ptrdiff_t>(strip));
       any_change = true;
     }
   }
   if (!any_change) return false;
   const bool had_selection = viewport.has_selection();
+  const bool multi = viewport.has_multiple_carets();
+  const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
+  // See IndentSelection: group the replace + caret restore so redo keeps carets.
+  viewport.BeginUndoGroup();
   const bool changed = viewport.ReplaceLines(range.first, range.last + 1, updated,
                                              /*record_undo=*/true);
   if (changed) {
-    RestoreSelectionAcrossLines(viewport, range.first, range.last, had_selection);
+    if (multi || !had_selection) {
+      RestoreCaretsAfterIndentEdit(viewport, snapshot, range.first, per_line_delta);
+    } else {
+      RestoreSelectionAcrossLines(viewport, range.first, range.last, had_selection);
+    }
   }
+  viewport.EndUndoGroup();
   return changed;
 }
 

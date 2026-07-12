@@ -419,6 +419,37 @@ bool TextViewport::DeleteMultiCaretSelections(bool record_undo) {
   return ApplyMultiCaretEdit(MultiCaretEditKind::Backspace, "", record_undo);
 }
 
+bool TextViewport::ApplyMultiCaretSoftTab(bool record_undo) {
+  // Build the same sorted + position-deduped caret set ApplyMultiCaretEdit derives
+  // internally so the per-caret space strings line up by index, then size each
+  // caret's soft tab to its own next tab stop.
+  std::vector<TextPosition> positions;
+  positions.reserve(secondary_carets_.size() + 1);
+  for (const SecondaryCaret& secondary : secondary_carets_) {
+    positions.push_back(secondary.position);
+  }
+  positions.push_back(TextPosition{cursor_line_, cursor_column_});
+  std::sort(positions.begin(), positions.end(), detail::PositionLess);
+  positions.erase(std::unique(positions.begin(), positions.end()), positions.end());
+
+  const std::size_t safe_indent_width = std::max<std::size_t>(1, indent_width_);
+  std::vector<std::string> parts;
+  parts.reserve(positions.size());
+  for (const TextPosition& position : positions) {
+    std::size_t visual_column = 0;
+    if (!document_->lines.empty() && position.line < document_->lines.size()) {
+      const std::size_t column =
+          TextLayout::ClampTextColumn(document_->lines[position.line], position.column);
+      visual_column = TextLayout::VisualColumnForTextColumn(document_->lines[position.line], column,
+                                                            tab_size_);
+    }
+    const std::size_t remainder = visual_column % safe_indent_width;
+    const std::size_t spaces = remainder == 0 ? safe_indent_width : safe_indent_width - remainder;
+    parts.emplace_back(std::max<std::size_t>(1, spaces), ' ');
+  }
+  return ApplyMultiCaretEdit(MultiCaretEditKind::Insert, "", record_undo, &parts);
+}
+
 bool TextViewport::PasteText(std::string_view text, bool record_undo) {
   if (!has_multiple_carets()) {
     InsertText(text, record_undo);

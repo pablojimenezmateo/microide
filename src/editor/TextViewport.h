@@ -461,6 +461,9 @@ class TextViewport {
                            bool record_undo,
                            const std::vector<std::string>* per_caret_insert = nullptr);
   bool ApplyMultiCaretInsert(std::string_view text, bool record_undo);
+  // Soft-tab insert across all carets, sizing each caret's padding to ITS OWN next
+  // tab stop (a caret at a ragged column aligns to its own stop, not the primary's).
+  bool ApplyMultiCaretSoftTab(bool record_undo);
   bool ApplyMultiCaretBackspace(bool record_undo);
   bool ApplyMultiCaretDeleteForward(bool record_undo);
   // Extract the document text spanned by a normalized (start <= end) range.

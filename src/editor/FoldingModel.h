@@ -167,6 +167,11 @@ class FoldingModel {
   bool dirty_ = true;
   std::size_t revision_ = 0;
   std::size_t resolved_prefix_line_count_ = 0;
+  // Line count of the buffer at the last compute. The difference against the
+  // current line count gives the net edit delta used to shift previous collapsed
+  // fold openers so a collapsed fold survives a line-count-changing edit above it
+  // (VS Code shift-preserves; matching by absolute opener/closer alone dropped it).
+  std::size_t computed_line_count_ = 0;
 
   mutable std::size_t cached_revision_ = std::numeric_limits<std::size_t>::max();
   mutable std::vector<CollapsedInterval> cached_collapsed_intervals_;

@@ -318,20 +318,35 @@ void RemapCollapsedFlags(const std::vector<FoldRange>& previous_ranges,
                          std::size_t previous_collapsed_count,
                          const std::vector<FoldRange>& new_ranges,
                          std::vector<bool>& out_collapsed,
-                         std::size_t& out_collapsed_count) {
+                         std::size_t& out_collapsed_count,
+                         std::size_t edit_anchor_line,
+                         std::ptrdiff_t line_delta) {
   out_collapsed.assign(new_ranges.size(), false);
   out_collapsed_count = 0;
   if (previous_collapsed_count == 0 || previous_ranges.empty() || new_ranges.empty()) {
     return;
   }
 
+  // A line-count-changing edit at/after `edit_anchor_line` shifts every fold line
+  // below the anchor by `line_delta`. Shifting the PREVIOUS collapsed opener/closer
+  // by that delta before the equality match lets a collapsed fold survive such an
+  // edit (its opener moved, so an absolute match would fail and re-expand it).
+  const auto shift_line = [&](std::size_t line) -> std::size_t {
+    if (line_delta == 0 || line < edit_anchor_line) {
+      return line;
+    }
+    const std::ptrdiff_t shifted = static_cast<std::ptrdiff_t>(line) + line_delta;
+    return shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
+  };
+
   // Collect just the collapsed previous openers (typically tiny: only ranges
-  // the user explicitly toggled), sorted by opener_line for a binary search.
+  // the user explicitly toggled), sorted by the SHIFTED opener_line for a binary
+  // search against the new ranges.
   std::vector<std::pair<std::size_t, std::size_t>> collapsed_index;
   collapsed_index.reserve(previous_collapsed_count);
   for (std::size_t j = 0; j < previous_ranges.size(); ++j) {
     if (previous_collapsed[j]) {
-      collapsed_index.emplace_back(previous_ranges[j].opener_line, j);
+      collapsed_index.emplace_back(shift_line(previous_ranges[j].opener_line), j);
     }
   }
   std::sort(collapsed_index.begin(), collapsed_index.end());
@@ -344,7 +359,7 @@ void RemapCollapsedFlags(const std::vector<FoldRange>& previous_ranges,
         [](const auto& a, const auto& b) { return a.first < b.first; });
     while (it != collapsed_index.end() && it->first == nr.opener_line) {
       const FoldRange& pr = previous_ranges[it->second];
-      if (pr.closer_line == nr.closer_line && pr.source == nr.source) {
+      if (shift_line(pr.closer_line) == nr.closer_line && pr.source == nr.source) {
         out_collapsed[i] = true;
         ++out_collapsed_count;
         break;
@@ -403,6 +418,12 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
   // Skip the expensive previous-state copies unless the remap or the resume needs
   // them; the collapse remap is a no-op (all-false) when nothing was collapsed.
   const std::size_t previous_collapsed_count = collapsed_count_;
+  // Net line-count change since the previous compute (whose ranges we are about to
+  // remap collapse flags from). Combined with the edit anchor it lets the remap
+  // shift collapsed openers so a fold survives a line-count-changing edit above it.
+  const std::ptrdiff_t collapse_line_delta =
+      static_cast<std::ptrdiff_t>(line_count) - static_cast<std::ptrdiff_t>(computed_line_count_);
+  const std::size_t collapse_edit_anchor = incremental_resume_line;  // kNoResume => no shift
   std::vector<FoldRange> previous_ranges;
   std::vector<bool> previous_collapsed;
   if (previous_collapsed_count > 0 || resume_valid) {
@@ -433,11 +454,14 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
     SortDedupeRangesByOpener(ranges_);
     if (previous_collapsed_count > 0) {
       RemapCollapsedFlags(previous_ranges, previous_collapsed, previous_collapsed_count,
-                          ranges_, collapsed_, collapsed_count_);
+                          ranges_, collapsed_, collapsed_count_, collapse_edit_anchor,
+                          collapse_line_delta);
     } else {
       collapsed_.assign(ranges_.size(), false);
       collapsed_count_ = 0;
     }
+    // Record the line count these ranges were computed against for the next remap.
+    computed_line_count_ = line_count;
     complete_ = complete_ && bracket_scan_complete && scan_end >= line_count;
     // Record how far the scan actually resolved. When the budget cut the scan
     // short (`!complete_`, only possible for a finite `max_lines`) the scan may
@@ -746,6 +770,7 @@ void FoldingModel::Clear() {
   complete_ = true;
   dirty_ = true;
   resolved_prefix_line_count_ = 0;
+  computed_line_count_ = 0;
   ++revision_;
 }
 

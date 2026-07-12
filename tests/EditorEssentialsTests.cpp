@@ -109,6 +109,26 @@ void TestShapingMoveLineDown() {
          "first two lines should swap on MoveLineDown");
 }
 
+// Regression: a whole-line selection ends at column 0 of the line AFTER the block,
+// so ResolveLineRange excludes that trailing line and its end.line is range_last+1.
+// MoveLineDown must carry the selection with the moved block instead of dropping it
+// to the single-caret fallback.
+void TestShapingMoveLineDownKeepsWholeLineSelection() {
+  TextViewport viewport;
+  viewport.LoadContent("a\nb\nc\nd", "/tmp/moveline-sel.txt");
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(2, 0, /*extend_selection=*/true);  // whole-line selection of a,b
+  Expect(microide::editor::MoveLineDown(viewport), "MoveLineDown on the a,b block should succeed");
+  Expect(viewport.lines()[0] == "c" && viewport.lines()[1] == "a" && viewport.lines()[2] == "b" &&
+             viewport.lines()[3] == "d",
+         "block [a,b] moves below c");
+  const auto selection = viewport.selection_range();
+  Expect(selection.has_value(), "the whole-line selection must survive the move, not be dropped");
+  Expect(selection->start == microide::editor::TextPosition{1, 0} &&
+             selection->end == microide::editor::TextPosition{3, 0},
+         "the selection follows the moved block (now lines 1..2, exclusive end at line 3)");
+}
+
 void TestShapingMoveLineDownMultiCaretSingleUndoStep() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\nd", "/tmp/sample.txt");
@@ -1089,6 +1109,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestBracketScannerNoMatchWhenAnchorInsideString);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDown",
           TestShapingMoveLineDown);
+  AddTest(tests, "EditorEssentials/Shaping/MoveLineDownKeepsWholeLineSelection",
+          TestShapingMoveLineDownKeepsWholeLineSelection);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDownMultiCaretSingleUndoStep",
           TestShapingMoveLineDownMultiCaretSingleUndoStep);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDownRedoPreservesMultiCaret",

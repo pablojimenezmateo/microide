@@ -89,6 +89,13 @@ void TextViewport::InsertTab() {
     return;
   }
 
+  // Multi-caret: each caret aligns to its OWN next tab stop rather than reusing the
+  // primary caret's column for identical padding at every (ragged-column) caret.
+  if (has_multiple_carets()) {
+    (void)ApplyMultiCaretSoftTab(true);
+    return;
+  }
+
   const std::size_t safe_indent_width = std::max<std::size_t>(1, indent_width_);
   const std::size_t visual_column = cursor_visual_column();
   const std::size_t remainder = visual_column % safe_indent_width;

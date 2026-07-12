@@ -273,6 +273,43 @@ void TestIncrementalBracketScanReusesPrefixAndCollapseState() {
          "collapse state should remap across incremental bracket recompute");
 }
 
+// Regression: a collapsed fold survives a line-count-changing edit ABOVE it. The
+// recompute matched previous collapsed openers by ABSOLUTE line, so inserting lines
+// above shifted the opener, failed the match, and dropped the collapse (the fold
+// visually re-expanded). The remap now shifts previous collapsed openers/closers by
+// the net edit delta at/after the edit anchor before matching (VS Code shift-preserves).
+void TestCollapsedFoldSurvivesInsertionAbove() {
+  std::vector<std::string> before = {
+      "void a() {",  // 0
+      "}",           // 1
+      "void b() {",  // 2  <- collapse this fold
+      "  body();",   // 3
+      "}",           // 4
+  };
+  FoldingModel model;
+  Expect(model.Compute(before, DefaultCStyleOptions()), "initial compute should finish");
+  Expect(model.Collapse(2), "the b() fold should accept collapse");
+  Expect(model.IsCollapsedAtOpener(2), "the b() fold should be collapsed");
+
+  // Insert two lines at the very top; the b() opener shifts from line 2 to line 4.
+  std::vector<std::string> after = {
+      "// inserted 1",  // 0
+      "// inserted 2",  // 1
+      "void a() {",     // 2
+      "}",              // 3
+      "void b() {",     // 4  <- opener shifted down by 2
+      "  body();",      // 5
+      "}",              // 6
+  };
+  // Edit anchor at line 0 (top); the net +2 line delta is inferred from the change
+  // in line count since the previous compute.
+  Expect(model.ComputeWithBudget(after, DefaultCStyleOptions(), /*max_lines=*/0, /*resume=*/0),
+         "recompute after the insertion should finish");
+  Expect(!model.IsCollapsedAtOpener(2), "nothing is collapsed at the old opener line any more");
+  Expect(model.IsCollapsedAtOpener(4),
+         "the collapse follows the fold to its shifted opener line");
+}
+
 void TestEnsureFoldsForVisibleRangeResolvesWithinBudgetWindow() {
   std::vector<std::string> lines;
   lines.reserve(256);
@@ -685,6 +722,8 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
           TestToggleFoldHidesInteriorLines);
   AddTest(tests, "EditorFolding/Incremental/ReusesPrefixAndCollapse",
           TestIncrementalBracketScanReusesPrefixAndCollapseState);
+  AddTest(tests, "EditorFolding/Incremental/CollapsedFoldSurvivesInsertionAbove",
+          TestCollapsedFoldSurvivesInsertionAbove);
   AddTest(tests, "EditorFolding/VisibleRange/ResolvesWithinBudgetWindow",
           TestEnsureFoldsForVisibleRangeResolvesWithinBudgetWindow);
   AddTest(tests, "EditorFolding/VisibleRange/ResolvesVisibleOpenerWithDistantCloser",

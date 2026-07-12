@@ -563,7 +563,51 @@ void TestMultiCaretPairInsertPublishesNoAppliedEdit() {
          "multi-caret character insert must not publish a single contiguous AppliedEdit");
 }
 
+// Regression: a soft-tab insert with several carets at ragged columns aligns EACH
+// caret to its own next tab stop, instead of padding every caret with the primary
+// caret's space count.
+void TestMultiCaretSoftTabAlignsEachCaretToItsOwnStop() {
+  TextViewport viewport;
+  viewport.LoadContent("ab\nabcd", "/tmp/mc-softtab.cpp");
+  viewport.SetSoftTabs(true);
+  viewport.SetIndentWidth(4);
+  viewport.MoveCursorTo(0, 2);            // column 2 -> needs 2 spaces to reach stop 4
+  viewport.SetSecondaryCarets({{1, 4}});  // column 4 -> a full 4 spaces to reach stop 8
+
+  viewport.InsertTab();
+
+  Expect(viewport.lines()[0] == "ab  ",
+         "the caret at column 2 pads 2 spaces to its own next tab stop");
+  Expect(viewport.lines()[1] == "abcd    ",
+         "the caret at column 4 pads a full indent to its own next tab stop");
+}
+
+// Regression: multi-caret outdent keeps every caret (shifted left by the amount its
+// line de-indented), instead of dropping the secondary carets and snapping the
+// primary to (first_line, 0).
+void TestMultiCaretOutdentPreservesCarets() {
+  TextViewport viewport;
+  viewport.LoadContent("    foo\n    bar", "/tmp/mc-outdent.cpp");
+  viewport.SetSoftTabs(true);
+  viewport.SetIndentWidth(4);
+  viewport.MoveCursorTo(0, 6);            // inside "foo"
+  viewport.SetSecondaryCarets({{1, 6}});  // inside "bar"
+
+  Expect(microide::editor::OutdentSelection(viewport), "outdent should change both lines");
+  Expect(viewport.lines()[0] == "foo" && viewport.lines()[1] == "bar",
+         "both lines lose one indent level");
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 2,
+         "the primary caret shifts left by the 4 removed spaces (clamped into 'foo')");
+  Expect(viewport.secondary_carets().size() == 1 &&
+             viewport.secondary_carets().front() == TextPosition{1, 2},
+         "the secondary caret survives and shifts left with its line");
+}
+
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorMultiCaret/MultiCaretSoftTabAlignsEachCaretToItsOwnStop",
+          TestMultiCaretSoftTabAlignsEachCaretToItsOwnStop);
+  AddTest(tests, "EditorMultiCaret/MultiCaretOutdentPreservesCarets",
+          TestMultiCaretOutdentPreservesCarets);
   AddTest(tests, "EditorMultiCaret/PromotedCaretToggleLineCommentAtomicUndo",
           TestPromotedCaretToggleLineCommentAtomicUndo);
   AddTest(tests, "EditorMultiCaret/FoldAwareVerticalMotionSkipsHiddenLines",
