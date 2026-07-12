@@ -258,6 +258,10 @@ class DebugService {
   // re-opens descendants), so the callback re-invokes this for each returned fetch.
   // Used by both manual expand (ToggleVariableRow) and stop-time expansion restore.
   void FetchVariablesPage(int reference, int start, int count);
+  // Watch-tree sibling of FetchVariablesPage: fetches a watch child page under the
+  // watch_generation_ guard and re-invokes itself for each cascade fetch the apply
+  // returns, so an auto-expanded nested watch child does not strand on "loading…".
+  void FetchWatchChildren(int reference, int start, int count);
   // Project a stop (call stack + focused frame) of the active session into the
   // shared transient views: build the execution view, focus the top frame, surface
   // the Call Stack panel, and jump the editor to the top frame.

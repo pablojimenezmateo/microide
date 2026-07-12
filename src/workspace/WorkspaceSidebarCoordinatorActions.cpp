@@ -9,6 +9,7 @@
 #include <optional>
 
 #include "editor/TextViewport.h"
+#include "project/FileOperationService.h"
 #include "project/GitStatusService.h"
 #include "workspace/SelectionMovement.h"
 #include "workspace/WorkspaceActionTypes.h"
@@ -528,7 +529,19 @@ bool SidebarCoordinator::DiscardGitEntry(const std::size_t entry_index,
     }
     return false;
   }
-  if (!project::GitDiscardPath(project_root_, entry->path)) {
+  // An untracked file has no committed content to restore — "discarding" it deletes a
+  // file the user created. The confirm prompt promises "Existing file-operation policy
+  // applies (trash when configured)", and the file tree's Delete honors exactly that, so
+  // route untracked discard through the same TrashPath (recoverable when trash is on).
+  // GitDiscardPath's untracked branch runs `git clean -fd`, which permanently destroys
+  // the file despite the prompt — a silent data-loss contract violation. Tracked-path
+  // discard stays a git restore.
+  if (entry->section == GitSidebarEntry::Section::Untracked) {
+    if (!project::FileOperationService::TrashPath(entry->path).ok) {
+      ReportGitOperationFailure("discard", *entry);
+      return false;
+    }
+  } else if (!project::GitDiscardPath(project_root_, entry->path)) {
     ReportGitOperationFailure("discard", *entry);
     return false;
   }

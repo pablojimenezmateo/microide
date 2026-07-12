@@ -33,6 +33,14 @@ void FlattenDocumentSymbols(const std::vector<plugin::PluginHost::DocumentSymbol
                             const std::filesystem::path& path,
                             int depth,
                             std::vector<plugin::PluginHost::SidebarItem>* out) {
+  // The node tree originates from a language server (QueryDocumentSymbolsAsync) or a
+  // plugin (SnapshotSidebarAsync) — semi-trusted input. A pathologically deep
+  // documentSymbol response would overflow the native stack via this recursion; cap the
+  // depth well above any legitimate outline (real code nests a handful of levels).
+  constexpr int kMaxDocumentSymbolDepth = 256;
+  if (depth > kMaxDocumentSymbolDepth) {
+    return;
+  }
   for (const auto& node : nodes) {
     out->push_back(plugin::PluginHost::SidebarItem{
         .label = node.name,

@@ -67,12 +67,19 @@ void CollectFiles(const std::filesystem::path& root,
     }
 
     if (is_directory) {
-      IgnoreMatcher child_matcher = matcher;
-      child_matcher.LoadIgnoreFile(path / ".gitignore");
-      if (child_matcher.Ignored(relative, true)) {
+      // Decide the directory's own ignore status with the PARENT matcher first: a rule
+      // loaded from `dir/.gitignore` can never change `dir`'s own status (Rule::Matches
+      // bails via the base==relative guard), so the decision is identical either way.
+      // Only build the child matcher + stat/open `dir/.gitignore` for directories we
+      // actually descend into — otherwise every ignored dir (node_modules, build, .git,
+      // target, dist, __pycache__) pays a rules-vector copy + 2 syscalls per refresh just
+      // to be discarded. Mirrors DirectoryTree::AppendDirectory.
+      if (matcher.Ignored(relative, true)) {
         iterator.increment(error);
         continue;
       }
+      IgnoreMatcher child_matcher = matcher;
+      child_matcher.LoadIgnoreFile(path / ".gitignore");
       std::error_code link_error;
       const bool is_symlink = iterator->is_symlink(link_error);
       const SymlinkLoopGuard::Scope scope = loop_guard.TryEnter(path, is_symlink && !link_error);

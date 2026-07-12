@@ -14,6 +14,61 @@ These were surfaced by the 2026-07 cross-subsystem bug-hunt passes and
 a latent API-contract hazard with no live trigger, so a rushed fix risked a
 regression worse than the defect. Recorded here so they are not silently lost.
 
+> **Deferred 2026-07-12 (pass 22 — cross-subsystem bug hunt):** a four-way fan-out
+> (text-layout/syntax, file-finder/sidebar, git-ops, debug session) landed 4 fixes
+> (git untracked-discard now trashes instead of `git clean`-deleting despite the prompt's
+> promise; ProjectFileScanner checks dir-ignore with the parent matcher before the
+> `.gitignore` stat/copy; document-symbol flatten depth-capped; debug watch cascade
+> fetch now issued so a nested watch child doesn't strand on "loading…"). These findings
+> were **not** fixed and are recorded here:
+> - **QUEUED FOR NEXT PASS — fold model goes stale after LSP/plugin/completion edits.**
+>   `WorkspaceShell::ApplyLspWorkspaceEdit` (`WorkspaceShellPlugins.cpp:1170`, the
+>   code-action / rename / Format-Document / plugin-edit apply path) and
+>   `AssistService::ApplySelectedCompletion` (`AssistService.cpp:294` →
+>   `ApplyEditSideEffects`) mutate the buffer (bumping `content_revision`) but never call
+>   `folding_model->MarkDirty()`. `FoldingModel::EnsureFoldsForVisibleRange`
+>   (`FoldingModel.cpp:523`) early-returns on `!dirty_` once a file is fully resolved,
+>   ignoring `content_revision`, so a same-line-count edit (a Format-Document re-indent, a
+>   completion/code-action that re-nests brackets) leaves stale fold ranges — a fold
+>   chevron can hide the wrong line range. The Undo/Redo path already guards this exact
+>   hazard (`WorkspaceActionServices.cpp:666-674`). Durable fix: have
+>   `EnsureFoldsForVisibleRange`/`IsVisibleRangeResolved` also key on `content_revision` so
+>   no mutating caller can forget `MarkDirty`. High value; deferred only to give the
+>   FoldingModel freshness change a focused, carefully-verified pass. (Text-layout hunter
+>   #1 + #2.)
+> - **Git: sidebar stage/unstage/discard run git subprocesses synchronously on the shell
+>   thread, and unstage/discard force a whole-index `git diff --cached --name-status`.**
+>   `WorkspaceSidebarCoordinatorActions.cpp` calls `GitStagePath`/`GitUnstagePath`/
+>   `GitDiscardPath`/... which run `GitRepository::Execute` → `platform::RunSubprocess`
+>   inline (evading `CheckNoRunSubprocessInWorkspace` because the call lives in
+>   `src/project`), and `Unstage`/`Discard` call `StagedRenameSource` first (a full staged
+>   diff) even for a single small file. Speed-first concern; the off-thread dispatch via
+>   ProjectBackgroundExecutor is a larger change, and gating StagedRenameSource on a
+>   porcelain rename hint is the contained win. (Git hunter #2.)
+> - **Git: `DiscardAll`/`git clean -fd -- .` permanently deletes every untracked file.**
+>   The single-file untracked discard is fixed to trash this pass; the bulk DiscardAll
+>   path (no explicit trash promise in its text) still hard-deletes. Left for a deliberate
+>   decision on bulk-discard semantics. (Git hunter #1, follow-on.)
+> - **Debug: permanent "show more…" when an adapter reports total_count > children it
+>   returns.** `DebugValueTree::ApplyVariables` (`DebugValueTree.cpp:352-359`) keeps
+>   `more_available` true if `total_known` and the over-range page returns success+empty.
+>   Self-heals for gdb (it errors the page). Fix: on a `start > 0` page that attaches zero
+>   children, force `more_available = false`. (Debug hunter #2, low.)
+> - **Debug: orphaned nodes / stale `reference_to_node_` on child-list replace + rebind.**
+>   `ApplyVariables` (start<=0) and `RebindReference` clear `children` but leave old child
+>   nodes in `nodes_`/`reference_to_node_`; bounded per stop (`Clear()` wipes them),
+>   needs an uncommon structure-changing `setVariable`. (Debug hunter #3, low.)
+> - **File-finder: per-keystroke deep-copies path + string per match, uncapped.**
+>   `FileFinder::Refresh` copies a `filesystem::path` + `std::string` for every match on a
+>   broad query over a large index; the finder itself has no result cap (only render
+>   caps). Fix: store indices into `cached_entries_` and resolve lazily. Pre-existing
+>   architecture, not a regression. (File-finder hunter #2.)
+> - **Patch apply raced by a completing refresh is reported "stale" and skips its
+>   success-path invalidations.** `PatchApplyService.cpp:186-193` overwrites a Success to
+>   StaleGeneration if a refresh completed during the apply, skipping blame/compare
+>   invalidation for the applied path. Self-heals on the next refresh; transient stale
+>   blame/compare + a misleading message. (Git hunter #3, low.)
+>
 > **Deferred 2026-07-12 (pass 21 — cross-subsystem bug hunt):** a four-way fan-out
 > (terminal, DAP/LSP transport, compare/merge/diff, plugin runtime) landed 4 fixes
 > (plugin contribution-cap gap now enforced on the contribution_interop register path;

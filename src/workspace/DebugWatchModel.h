@@ -48,9 +48,13 @@ class DebugWatchModel {
   // Tree pass-throughs (lazy expand + child setVariable edit reuse the shared
   // DebugValueTree verbatim).
   DebugValueTree::ChildFetch ToggleRow(std::size_t row_index) { return tree_.ToggleRow(row_index); }
-  void ApplyVariables(int variables_reference,
-                      const std::vector<dap_protocol::DapVariable>& variables, int start) {
-    tree_.ApplyVariables(variables_reference, variables, start);
+  // Returns the cascade fetches DebugValueTree::ApplyVariables produced (auto-expand of
+  // a freshly-attached child whose path is still remembered in expanded_paths_). The
+  // caller MUST issue them, exactly like the Variables pane does — dropping them leaves
+  // an auto-expanded nested child stuck on the "loading…" placeholder forever.
+  [[nodiscard]] std::vector<DebugValueTree::ChildFetch> ApplyVariables(
+      int variables_reference, const std::vector<dap_protocol::DapVariable>& variables, int start) {
+    return tree_.ApplyVariables(variables_reference, variables, start);
   }
   void MarkChildrenError(int variables_reference) { tree_.MarkChildrenError(variables_reference); }
   void ApplySetVariable(std::uint32_t node_id, const dap_protocol::DapSetVariableResult& result) {

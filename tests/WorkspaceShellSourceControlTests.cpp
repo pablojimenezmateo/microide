@@ -559,6 +559,66 @@ void TestWorkspaceShellGitSidebarDiscardRequiresConfirmation() {
          "confirmed discard should restore the committed file contents");
 }
 
+// Regression (data loss): discarding an UNTRACKED file from the git sidebar must honor
+// the confirm prompt's promise ("Existing file-operation policy applies (trash when
+// configured)") and route through the same trash the file tree's Delete uses — NOT
+// `git clean -fd`, which permanently destroys a file the user created. The trashed file
+// must be recoverable from the freedesktop trash under XDG_DATA_HOME.
+void TestWorkspaceShellGitSidebarDiscardUntrackedFileTrashesNotDeletes() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path trash_home = temp_dir.path() / "xdg-data-home";
+  ScopedEnvVar scoped_xdg_data_home("XDG_DATA_HOME", trash_home.string());
+
+  const std::filesystem::path tracked = root / "tracked.cpp";
+  WriteFile(tracked, "int main() { return 0; }\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  // A brand-new untracked file with content that must survive as recoverable.
+  const std::filesystem::path untracked = root / "notes.txt";
+  WriteFile(untracked, "important untracked notes\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "the untracked file should surface as one git sidebar row");
+  const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
+  Expect(!entries.empty() &&
+             entries[0].section == WorkspaceShell::GitSidebarEntry::Section::Untracked,
+         "the row should be classified as untracked");
+
+  WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
+  Expect(SendKeyDown(shell, SDLK_X, SDL_KMOD_NONE),
+         "discard shortcut should be handled by the git sidebar");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "discarding an untracked file should open a confirmation prompt");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  Expect(WaitForGitSidebarEntryCount(shell, 0),
+         "confirmed discard should remove the untracked row after refresh");
+  Expect(!std::filesystem::exists(untracked),
+         "the untracked file should be gone from the worktree after discard");
+
+  // The correctness property: it was TRASHED (recoverable), not `git clean`-deleted.
+  const std::filesystem::path trash_files = trash_home / "Trash" / "files";
+  bool trashed_content_found = false;
+  std::error_code ec;
+  if (std::filesystem::is_directory(trash_files, ec)) {
+    for (const auto& entry : std::filesystem::directory_iterator(trash_files, ec)) {
+      if (entry.is_regular_file(ec) &&
+          ReadFile(entry.path()).find("important untracked notes") != std::string::npos) {
+        trashed_content_found = true;
+        break;
+      }
+    }
+  }
+  Expect(trashed_content_found,
+         "the untracked file's content must be recoverable from trash, proving discard trashed "
+         "it rather than permanently deleting it with git clean");
+}
+
 void TestWorkspaceShellGitSidebarKeyboardStageShortcut() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -724,6 +784,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarGroupsWorkflowSections);
   AddTest(tests, "WorkspaceShell/GitSidebarDiscardRequiresConfirmation",
           TestWorkspaceShellGitSidebarDiscardRequiresConfirmation);
+  AddTest(tests, "WorkspaceShell/GitSidebarDiscardUntrackedFileTrashesNotDeletes",
+          TestWorkspaceShellGitSidebarDiscardUntrackedFileTrashesNotDeletes);
   AddTest(tests, "WorkspaceShell/GitSidebarKeyboardStageShortcut",
           TestWorkspaceShellGitSidebarKeyboardStageShortcut);
   AddTest(tests, "WorkspaceShell/GitStageFailureSurfacesFeedback",

@@ -1706,8 +1706,10 @@ void TestDebugWatchModelBehavior() {
   // Expand the structured watch root via the shared tree machinery.
   Expect(model.ToggleRow(1).reference == 900,
          "expanding a structured root returns its reference to fetch");
-  model.ApplyVariables(
+  const auto scalar_child_cascade = model.ApplyVariables(
       900, {codec::DapVariable{.name = "field", .value = "7", .variables_reference = 0}}, 0);
+  Expect(scalar_child_cascade.empty(),
+         "a freshly-attached scalar child produces no cascade fetch");
   Expect(model.Rows().size() == 3 && model.Rows()[2].depth == 1, "the child folds at depth 1");
   Expect(!model.ExpressionIndexForRow(2).has_value(), "a child row is not an expression root");
 
@@ -1731,6 +1733,43 @@ void TestDebugWatchModelBehavior() {
   Expect(model.Expressions().size() == 2, "ClearResults keeps the persistent expression list");
   Expect(model.Rows().size() == 2 && model.Rows()[0].display_value.empty(),
          "ClearResults blanks evaluated values but keeps the placeholder rows");
+}
+
+// Regression: DebugWatchModel::ApplyVariables must RETURN the cascade fetches produced
+// when a freshly-attached child auto-expands (its path was remembered), and the service
+// must issue them. The old service code discarded the return, so a nested watch child
+// re-attached after a re-evaluation sat on the "loading…" placeholder forever.
+void TestDebugWatchNestedChildCascadeFetchIsReturned() {
+  DebugWatchModel model;
+  model.AddExpression("obj");
+  model.ApplyEvaluate(
+      0, codec::DapEvaluateResult{.result = "{...}", .type = "Obj", .variables_reference = 900});
+
+  // Expand obj, then expand its structured child `inner` — recording the nested path.
+  Expect(model.ToggleRow(0).reference == 900, "expanding obj returns its fetch reference");
+  const auto obj_cascade = model.ApplyVariables(
+      900, {codec::DapVariable{.name = "inner", .value = "{...}", .variables_reference = 901}}, 0);
+  Expect(obj_cascade.empty(),
+         "inner is not yet expanded, so applying obj's children cascades nothing");
+  Expect(model.ToggleRow(1).reference == 901, "expanding inner returns its fetch reference");
+  const auto inner_cascade = model.ApplyVariables(
+      901, {codec::DapVariable{.name = "leaf", .value = "7", .variables_reference = 0}}, 0);
+  Expect(inner_cascade.empty(), "a scalar leaf cascades nothing");
+
+  // Re-apply obj's children as a re-evaluation would (fresh reference for the remembered
+  // `inner`): inner must auto-expand and its fetch must be RETURNED for the service to
+  // issue. Dropping it (the old bug) stranded inner on "loading…".
+  const auto re_cascade = model.ApplyVariables(
+      900, {codec::DapVariable{.name = "inner", .value = "{...}", .variables_reference = 921}}, 0);
+  bool has_inner_fetch = false;
+  for (const auto& fetch : re_cascade) {
+    if (fetch.reference == 921) {
+      has_inner_fetch = true;
+    }
+  }
+  Expect(has_inner_fetch,
+         "re-applying a watch root's children must return a cascade fetch for the remembered "
+         "nested child so the service can issue it");
 }
 
 // Restart via the DAP `restart` request: the adapter re-runs its handshake and
@@ -3006,6 +3045,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/GdbAdapterClampsValueFormatting",
           TestGdbAdapterClampsValueFormatting);
   AddTest(tests, "DebugService/WatchModelBehavior", TestDebugWatchModelBehavior);
+  AddTest(tests, "DebugService/WatchNestedChildCascadeFetchIsReturned",
+          TestDebugWatchNestedChildCascadeFetchIsReturned);
   AddTest(tests, "DebugService/ManagerRejectsUnknownAdapterType",
           TestDebugManagerRejectsUnknownAdapterType);
   AddTest(tests, "DebugService/ManagerRetainAdaptersDropsStaleTypes",
