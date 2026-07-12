@@ -179,6 +179,40 @@ void TerminalSession::AdvanceCursorRowLocked(bool wrapped_from_previous) {
       EnsureCursorLineExistsLocked();
       return;
     }
+  } else if (HasCustomScrollRegionLocked()) {
+    // Primary buffer with a custom DECSTBM region (e.g. a bottom-status-line
+    // program that stays off the alternate screen). Respect the region instead of
+    // accumulating scrollback across it. Without a custom region we fall through
+    // to the normal grow-scrollback path below (the common, well-tested case).
+    const std::size_t terminal_rows = std::max<std::size_t>(1, rows_);
+    const std::size_t screen_top = PrimaryScreenTopLocked();
+    const std::size_t rel_top = ActiveScrollRegionTopLocked();
+    const std::size_t rel_bottom = ActiveScrollRegionBottomLocked();
+    const std::size_t region_top_abs = screen_top + rel_top;
+    const std::size_t region_bottom_abs = screen_top + rel_bottom;
+    if (cursor_row_ >= region_top_abs && cursor_row_ <= region_bottom_abs) {
+      if (cursor_row_ == region_bottom_abs) {
+        ScrollRegionUpLocked(rel_top, rel_bottom, 1);
+        cursor_column_ = 0;
+        EnsureCursorLineExistsLocked();
+        lines_[cursor_row_].wrapped_from_previous = wrapped_from_previous;
+        return;
+      }
+      ++cursor_row_;
+      cursor_column_ = 0;
+      EnsureCursorLineExistsLocked();
+      lines_[cursor_row_].wrapped_from_previous = wrapped_from_previous;
+      return;
+    }
+    // Cursor below the region: clamp at the physical screen bottom (no scroll),
+    // matching the alt-screen rule above.
+    if (cursor_row_ > region_bottom_abs && cursor_row_ + 1 >= screen_top + terminal_rows) {
+      cursor_column_ = 0;
+      EnsureCursorLineExistsLocked();
+      return;
+    }
+    // Otherwise (above the region, or below it but not yet at the bottom) fall
+    // through to the plain advance.
   }
 
   ++cursor_row_;
@@ -554,18 +588,31 @@ std::size_t TerminalSession::ActiveScrollRegionBottomLocked() const {
   return std::clamp(scroll_region_bottom_, ActiveScrollRegionTopLocked(), rows_ - 1);
 }
 
+bool TerminalSession::HasCustomScrollRegionLocked() const {
+  if (rows_ == 0) {
+    return false;
+  }
+  return ActiveScrollRegionTopLocked() != 0 || ActiveScrollRegionBottomLocked() != rows_ - 1;
+}
+
 void TerminalSession::ScrollRegionUpLocked(std::size_t top, std::size_t bottom, std::size_t count) {
-  if (!use_alternate_screen_ || rows_ == 0) {
+  if (rows_ == 0) {
     return;
   }
 
+  // `top`/`bottom` are screen-relative. On the primary buffer the visible screen
+  // begins at PrimaryScreenTopLocked() within the scrollback deque, so offset the
+  // rotate range by that base; on the alt screen the base is 0.
   const std::size_t terminal_rows = std::max<std::size_t>(1, rows_);
-  if (lines_.size() < terminal_rows) {
-    lines_.resize(terminal_rows);
+  const std::size_t screen_top = use_alternate_screen_ ? 0 : PrimaryScreenTopLocked();
+  if (lines_.size() < screen_top + terminal_rows) {
+    lines_.resize(screen_top + terminal_rows);
   }
 
-  const std::size_t clamped_top = std::min(top, terminal_rows - 1);
-  const std::size_t clamped_bottom = std::clamp(bottom, clamped_top, terminal_rows - 1);
+  const std::size_t rel_top = std::min(top, terminal_rows - 1);
+  const std::size_t rel_bottom = std::clamp(bottom, rel_top, terminal_rows - 1);
+  const std::size_t clamped_top = rel_top + screen_top;
+  const std::size_t clamped_bottom = rel_bottom + screen_top;
   const std::size_t region_size = clamped_bottom - clamped_top + 1;
   const std::size_t shift = std::min(count, region_size);
   if (shift == 0) {
@@ -585,17 +632,20 @@ void TerminalSession::ScrollRegionUpLocked(std::size_t top, std::size_t bottom, 
 void TerminalSession::ScrollRegionDownLocked(std::size_t top,
                                              std::size_t bottom,
                                              std::size_t count) {
-  if (!use_alternate_screen_ || rows_ == 0) {
+  if (rows_ == 0) {
     return;
   }
 
   const std::size_t terminal_rows = std::max<std::size_t>(1, rows_);
-  if (lines_.size() < terminal_rows) {
-    lines_.resize(terminal_rows);
+  const std::size_t screen_top = use_alternate_screen_ ? 0 : PrimaryScreenTopLocked();
+  if (lines_.size() < screen_top + terminal_rows) {
+    lines_.resize(screen_top + terminal_rows);
   }
 
-  const std::size_t clamped_top = std::min(top, terminal_rows - 1);
-  const std::size_t clamped_bottom = std::clamp(bottom, clamped_top, terminal_rows - 1);
+  const std::size_t rel_top = std::min(top, terminal_rows - 1);
+  const std::size_t rel_bottom = std::clamp(bottom, rel_top, terminal_rows - 1);
+  const std::size_t clamped_top = rel_top + screen_top;
+  const std::size_t clamped_bottom = rel_bottom + screen_top;
   const std::size_t region_size = clamped_bottom - clamped_top + 1;
   const std::size_t shift = std::min(count, region_size);
   if (shift == 0) {

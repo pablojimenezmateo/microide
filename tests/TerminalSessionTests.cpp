@@ -2048,7 +2048,80 @@ void TestTerminalSessionBasicForegroundBrightnessTracksBold() {
   Expect(!same(color_of(0), color_of(3)), "bright red must differ from dark red");
 }
 
+// Regression: DECSTBM is honored on the PRIMARY buffer (not just the alt screen).
+// A bottom-status-line program that stays off the alternate screen previously had
+// its LF scroll the whole screen; now a custom region scrolls only within itself,
+// leaving rows above and below untouched.
+void TestTerminalSessionPrimaryScreenScrollRegionScrollsOnlyRegion() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "L0\nL1\nL2\nL3");
+  // Region = rows 1..2 (CSI 2;3r). Position at the region bottom (row 2), LF.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;3r\x1b[3;1H\n");
+
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 4, "primary scroll region must not grow the screen");
+  ExpectLineText(lines, 0, "L0", "rows above the region are untouched");
+  ExpectLineText(lines, 1, "L2", "the region body scrolled up within the margins");
+  ExpectLineText(lines, 2, "", "a blank line was exposed at the region bottom");
+  ExpectLineText(lines, 3, "L3", "rows below the region are untouched");
+}
+
+// Regression: CSI r with a bottom margin past the screen height clamps to the last
+// row (xterm/VTE) instead of discarding the whole command.
+void TestTerminalSessionDecstbmClampsOutOfRangeBottom() {
+  microide::terminal::TerminalSession session;
+  ResetAlternateScreenFixture(session);  // rows A B C D
+  // Bottom margin 99 > 4: clamp to row 3, region = rows 1..3. Scroll at the bottom
+  // must keep row 0 (A). If the command were discarded, the region would be the
+  // full screen and A would scroll away.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;99r\x1b[4;1H\n");
+
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "A", "an out-of-range bottom margin clamps, keeping the top row fixed");
+  ExpectLineText(lines, 1, "C", "the clamped region scrolled its body up");
+}
+
+// Regression: a C0 control embedded mid-CSI (here LF) is executed immediately and
+// the control sequence then continues. Previously it was buffered as a parameter
+// byte, so the cursor did not move and the dispatch was corrupted.
+void TestTerminalSessionC0ControlExecutesMidCsi() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  // A, then ESC[ opens a CSI, a LF is executed mid-sequence, 'm' closes the (empty)
+  // SGR, then B prints on the new row.
+  TerminalSessionTestAccess::AppendOutput(session, "A\x1b[\nmB");
+
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 2, "the mid-CSI line feed opened a new row");
+  ExpectLineText(lines, 0, "A", "content before the CSI stays on the first row");
+  ExpectLineText(lines, 1, "B", "the mid-CSI line feed moved the cursor down before B printed");
+}
+
+// Regression: a full-window scroll region saved before a grow-resize follows the
+// new height when the screen is restored, instead of staying frozen at the old
+// height (ClampScrollRegionLocked only ever shrinks the bottom margin).
+void TestTerminalSessionResizeReexpandsSavedScrollRegion() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  // Enter the alt screen (saves the primary buffer's full-window region 0..3),
+  // grow to 6 rows, then leave the alt screen (restores the primary region).
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049h");
+  session.Resize(6, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049l");
+  Expect(TerminalSessionTestAccess::ScrollRegionBottom(session) == 5,
+         "the restored primary region re-expands to the new full height (row 5)");
+}
+
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TerminalSession/PrimaryScreenScrollRegionScrollsOnlyRegion",
+          TestTerminalSessionPrimaryScreenScrollRegionScrollsOnlyRegion);
+  AddTest(tests, "TerminalSession/DecstbmClampsOutOfRangeBottom",
+          TestTerminalSessionDecstbmClampsOutOfRangeBottom);
+  AddTest(tests, "TerminalSession/C0ControlExecutesMidCsi",
+          TestTerminalSessionC0ControlExecutesMidCsi);
+  AddTest(tests, "TerminalSession/ResizeReexpandsSavedScrollRegion",
+          TestTerminalSessionResizeReexpandsSavedScrollRegion);
   AddTest(tests, "TerminalSession/CharsetDesignationAbortsOnEmbeddedEscape",
           TestTerminalSessionCharsetDesignationAbortsOnEmbeddedEscape);
   AddTest(tests, "TerminalSession/AltScreenLineFeedBelowRegionDoesNotScroll",

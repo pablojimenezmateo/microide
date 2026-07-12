@@ -337,6 +337,21 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
       scroll_region_top_ = 0;
       scroll_region_bottom_ = rows_ - 1;
     }
+    // Mirror the re-expansion onto the SAVED primary/alternate regions too. The
+    // active screen's live fields above are authoritative, but RestoreSavedScreen
+    // loads the inactive screen's saved region verbatim — so a full-window region
+    // saved before a grow-resize would otherwise restore frozen at the old height
+    // (ClampScrollRegionLocked only shrinks, never grows).
+    if (old_rows > 0 && rows_ > 0) {
+      if (primary_screen_.scroll_region_top == 0 &&
+          primary_screen_.scroll_region_bottom == old_rows - 1) {
+        primary_screen_.scroll_region_bottom = rows_ - 1;
+      }
+      if (alternate_screen_.scroll_region_top == 0 &&
+          alternate_screen_.scroll_region_bottom == old_rows - 1) {
+        alternate_screen_.scroll_region_bottom = rows_ - 1;
+      }
+    }
     if (use_alternate_screen_ && rows_ > 0) {
       cursor_row_ = std::min(cursor_row_, rows_ - 1);
       saved_cursor_row_ = std::min(saved_cursor_row_, rows_ - 1);

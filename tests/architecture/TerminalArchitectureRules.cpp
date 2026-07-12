@@ -147,7 +147,10 @@ RuleResult CheckTerminalSessionPrivateMethodCount(const std::filesystem::path& r
   RuleResult result;
   result.label = "TerminalSession.h private method count";
   result.hard_fail = true;
-  constexpr std::size_t kCap = 40;
+  // 41: +1 for HasCustomScrollRegionLocked, the named predicate that gates
+  // primary-buffer DECSTBM scroll-region behavior (used by AdvanceCursorRowLocked,
+  // Reverse Index, and SU/SD) so the common full-screen path stays untouched.
+  constexpr std::size_t kCap = 41;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::string text = ReadText(path);
   const std::regex locked_helper_pattern(R"((?:void|bool|std::size_t)\s+\w+Locked\s*\()");

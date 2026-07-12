@@ -142,6 +142,19 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
           } else if (cursor_row_ > 0) {
             --cursor_row_;
           }
+        } else if (HasCustomScrollRegionLocked()) {
+          // Primary buffer with a custom DECSTBM region: RI at the region top
+          // scrolls the region down (opens a blank line at the top margin), like
+          // the alt-screen branch above; elsewhere it just moves up, floored at
+          // the visible-screen top.
+          const std::size_t screen_top = PrimaryScreenTopLocked();
+          const std::size_t rel_top = ActiveScrollRegionTopLocked();
+          const std::size_t rel_bottom = ActiveScrollRegionBottomLocked();
+          if (cursor_row_ == screen_top + rel_top) {
+            ScrollRegionDownLocked(rel_top, rel_bottom, 1);
+          } else if (cursor_row_ > screen_top) {
+            --cursor_row_;
+          }
         } else {
           // Primary buffer: `cursor_row_` is an absolute index into scrollback,
           // so RI must floor at the visible-screen top (PrimaryScreenTopLocked),
@@ -193,6 +206,40 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
       if (byte == 0x18 || byte == 0x1a) {
         escape_sequence_buffer_.clear();
         escape_mode_ = EscapeMode::None;
+        continue;
+      }
+      // ECMA-48: a C0 control other than ESC/CAN/SUB embedded mid-CSI is EXECUTED
+      // immediately and the control sequence then continues. CSI parameter (0x20..
+      // 0x3F), intermediate, and final (0x40..0x7E) bytes are all >= 0x20, so any
+      // byte < 0x20 here is unambiguously a C0 to run, not sequence content. The
+      // previous code buffered it as a parameter byte and corrupted the dispatch.
+      if (byte < 0x20) {
+        switch (byte) {
+          case '\r':
+            cursor_column_ = 0;
+            break;
+          case '\n':
+            AdvanceCursorRowLocked();
+            break;
+          case '\v':
+          case '\f': {
+            const std::size_t saved_column = cursor_column_;
+            AdvanceCursorRowLocked();
+            cursor_column_ = saved_column;
+            break;
+          }
+          case '\b':
+            if (cursor_column_ > 0) {
+              --cursor_column_;
+            }
+            break;
+          case '\t':
+            cursor_column_ = NextTabStopLocked(cursor_column_);
+            break;
+          default:
+            // BEL and the remaining C0 controls have no positional effect here.
+            break;
+        }
         continue;
       }
       escape_sequence_buffer_.push_back(static_cast<char>(byte));

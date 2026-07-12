@@ -188,9 +188,20 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
         // deque past rows_ and eventually trim real content off the top.
         return;
       }
-      lines_.insert(lines_.begin() + static_cast<std::ptrdiff_t>(cursor_row_), count,
-                    TerminalLine{});
-      TrimScrollbackLocked();
+      // Primary buffer: IL is bounded by the scroll region (or the visible screen
+      // when no custom region is set), NOT the whole scrollback deque. Inserting
+      // into the absolute deque and trimming the front shifted the scrollback /
+      // visible boundary. ScrollRegionDownLocked opens `count` blank lines at the
+      // cursor and discards lines pushed past the region bottom.
+      {
+        const std::size_t screen_top = PrimaryScreenTopLocked();
+        const std::size_t rel_bottom = ActiveScrollRegionBottomLocked();
+        const std::size_t region_top_abs = screen_top + ActiveScrollRegionTopLocked();
+        const std::size_t region_bottom_abs = screen_top + rel_bottom;
+        if (cursor_row_ >= region_top_abs && cursor_row_ <= region_bottom_abs) {
+          ScrollRegionDownLocked(cursor_row_ - screen_top, rel_bottom, count);
+        }
+      }
       return;
     }
     case 'M': {
@@ -205,9 +216,19 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
         // DL outside the scroll margins is a no-op on the alt grid (see IL above).
         return;
       }
-      const std::size_t erase_end = std::min(lines_.size(), cursor_row_ + count);
-      lines_.erase(lines_.begin() + static_cast<std::ptrdiff_t>(cursor_row_),
-                   lines_.begin() + static_cast<std::ptrdiff_t>(erase_end));
+      // Primary buffer: DL is bounded by the scroll region (or the visible screen),
+      // NOT the whole deque. ScrollRegionUpLocked deletes `count` lines at the
+      // cursor and pulls blank lines in at the region bottom, leaving scrollback
+      // and the visible boundary intact.
+      {
+        const std::size_t screen_top = PrimaryScreenTopLocked();
+        const std::size_t rel_bottom = ActiveScrollRegionBottomLocked();
+        const std::size_t region_top_abs = screen_top + ActiveScrollRegionTopLocked();
+        const std::size_t region_bottom_abs = screen_top + rel_bottom;
+        if (cursor_row_ >= region_top_abs && cursor_row_ <= region_bottom_abs) {
+          ScrollRegionUpLocked(cursor_row_ - screen_top, rel_bottom, count);
+        }
+      }
       EnsureCursorLineExistsLocked();
       return;
     }
@@ -314,13 +335,17 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       }
       return;
     case 'S':
-      if (use_alternate_screen_) {
+      // SU scrolls the scroll region up. Works on the alt screen, and on the
+      // primary buffer when a custom DECSTBM region is active (a full-screen
+      // primary SU would discard the top line rather than accumulate scrollback,
+      // so it stays a no-op there — the common case is unchanged).
+      if (use_alternate_screen_ || HasCustomScrollRegionLocked()) {
         ScrollRegionUpLocked(ActiveScrollRegionTopLocked(), ActiveScrollRegionBottomLocked(),
                              static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)));
       }
       return;
     case 'T':
-      if (use_alternate_screen_) {
+      if (use_alternate_screen_ || HasCustomScrollRegionLocked()) {
         ScrollRegionDownLocked(ActiveScrollRegionTopLocked(), ActiveScrollRegionBottomLocked(),
                                static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)));
       }
@@ -361,14 +386,17 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
           static_cast<std::size_t>(std::max(0, scroll_region_top_param - 1));
       const std::size_t scroll_region_bottom =
           static_cast<std::size_t>(std::max(0, scroll_region_bottom_param - 1));
+      // xterm/VTE clamp a bottom margin past the screen height to the last row
+      // rather than discarding the whole command (a program that sizes its region
+      // to a slightly stale row count still gets a valid region).
+      const std::size_t clamped_bottom = std::min(scroll_region_bottom, terminal_rows - 1);
       // Per DEC/VT (DECSTBM) the top margin must be strictly above the bottom;
       // an equal (one-line) or inverted region is invalid and must be ignored.
-      if (scroll_region_top >= terminal_rows || scroll_region_bottom >= terminal_rows ||
-          scroll_region_top >= scroll_region_bottom) {
+      if (scroll_region_top >= terminal_rows || scroll_region_top >= clamped_bottom) {
         return;
       }
       scroll_region_top_ = scroll_region_top;
-      scroll_region_bottom_ = scroll_region_bottom;
+      scroll_region_bottom_ = clamped_bottom;
       MoveCursorLocked(PrimaryScreenTopLocked(), 0);
       return;
     }

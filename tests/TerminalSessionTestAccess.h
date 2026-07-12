@@ -135,6 +135,11 @@ struct TerminalSessionTestAccess {
     return session.tab_stops_.size();
   }
 
+  static std::size_t ScrollRegionBottom(const microide::terminal::TerminalSession& session) {
+    std::scoped_lock lock(session.mutex_);
+    return session.scroll_region_bottom_;
+  }
+
   static std::string SentBytes(const microide::terminal::TerminalSession& session) {
 #ifdef MICROIDE_TESTING
     std::scoped_lock lock(session.mutex_);

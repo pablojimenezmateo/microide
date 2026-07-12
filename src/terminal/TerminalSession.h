@@ -254,6 +254,10 @@ class TerminalSession {
   void ClampScrollRegionLocked();
   std::size_t ActiveScrollRegionTopLocked() const;
   std::size_t ActiveScrollRegionBottomLocked() const;
+  // True when a DECSTBM region narrower than the full screen is in effect. Used
+  // to gate primary-buffer scroll-region behavior so the common full-screen path
+  // (infinite scrollback accumulation) is untouched.
+  bool HasCustomScrollRegionLocked() const;
   void ScrollRegionUpLocked(std::size_t top, std::size_t bottom, std::size_t count);
   void ScrollRegionDownLocked(std::size_t top, std::size_t bottom, std::size_t count);
   void SaveCursorLocked();
