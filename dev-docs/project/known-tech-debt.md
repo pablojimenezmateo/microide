@@ -969,6 +969,251 @@ test proves it is unreachable.
   hash before/after reindex or add a separate `binding_revision` vs `value_revision`. Add a perf test
   for switching between projects with identical settings.
 
+#### 2026-07-13 deep subsystem audit backlog — fourth tranche
+
+##### File watching, indexing, and tree traversal
+
+- **Linux `FileIndexWatcher` degrades to a partial native watch tree instead of a reliable fallback.**
+  When `AddWatchRecursive` hits `ENOSPC` or the internal watch-entry cap, setup logs once and keeps
+  the root plus whatever subdirectories were already registered. Files in unwatched subtrees then stop
+  updating until a full rescan, but the UI still sees a live watcher. Fix direction: switch to poll
+  fallback or mark the index as degraded with a visible status and periodic full resync. Add an
+  injected watch-budget test that creates a deep tree and verifies changes below the cap boundary are
+  not silently missed.
+- **Moved-in directory indexing ignores subtree truncation.** `AppendSubtreeCreations` calls
+  `CollectTrackedCreations` but discards the returned `truncated` bit. A large directory moved into
+  the project can enqueue only the first `entry_budget` files with no follow-up full scan and no
+  user-visible "index incomplete" state. Fix direction: propagate truncation into the batch and trigger
+  an initial-style resync or degraded-index status. Add an inotify-oriented unit seam that moves in a
+  directory above the cap.
+- **Inotify drain batches have no per-batch change cap.** A single drain cycle can accumulate
+  creations, recursive deletions, and moved-in subtree entries into one `changes` vector. Kernel input
+  is chunked, but the loop drains repeatedly before publishing. A high-churn generator can build a very
+  large batch on the watcher thread and then force one large consumer update. Fix direction: cap
+  incremental batches, publish in chunks, or fall back to a full resync after the cap. Add a synthetic
+  inotify-event builder test that asserts chunking.
+- **Poll fallback builds full snapshots without the same entry budget as native setup.** The poll
+  worker's `build_snapshot` walks the whole tree into a `std::map` every 750 ms and does not consult
+  `entry_budget`. On a huge tree, the fallback path can consume more CPU/memory than the native path it
+  replaced. Fix direction: apply the same budget/truncated state to poll snapshots and lengthen or
+  disable polling when the tree is too large. Add a poll-mode fixture with a budgeted fake tree.
+- **Poll fallback diff materializes complete previous and current maps before deciding nothing
+  changed.** Even when a repo is stable, each cycle rebuilds `current`, compares it to `snapshot`, and
+  replaces the old map. That is predictable but expensive for large projects, and it runs even when the
+  file index is already known truncated/degraded. Fix direction: use mtime directory probes, a slower
+  cadence for large trees, or an incremental snapshot visitor that can stop at the budget. Add perf
+  coverage for poll fallback over a large synthetic tree.
+- **`FileTreeWatcher::SetRoots` can spend startup time collecting a native watch list for a tree that
+  is later superseded.** The method snapshots roots under lock, releases it, builds native watch paths
+  and maybe a full snapshot, then discards the prepared result if roots changed. Rapid project switches
+  can repeatedly pay the whole traversal cost for stale roots. Fix direction: thread a generation or
+  cancellation token through `CollectRecursiveWatchPaths` / `CaptureTreeSnapshot`. Add a test that
+  calls `SetRoots` repeatedly with slow injected traversal.
+- **`CollectProjectFiles` returns a partial file list on traversal-budget exhaustion without a
+  truncation signal.** The scanner stops when `platform::kTreeTraversalEntryBudget` is reached and
+  returns whatever was collected. Callers cannot distinguish "project has N files" from "scanner gave
+  up at N". Fix direction: return `{files, truncated}` or publish scanner status through the file index
+  service. Add scanner tests for exactly-at-budget and over-budget trees.
+- **Project file scanning and index watching can disagree about hidden files.** `CollectProjectFiles`
+  has an explicit `ExcludeHidden` mode based on filename dot-prefixes, while the file index watcher
+  relies on traversal filters and `.git` checks. Surfaces that use different sources can show hidden
+  files in one picker and not another. Fix direction: route all tree surfaces through one
+  `ProjectTraversalFilter` policy with an explicit hidden-file flag. Add fixtures for `.env`,
+  `.config/file`, and non-hidden files inside hidden directories.
+
+##### Project search, finder, and command completion
+
+- **Project search silently skips unreadable, binary, and too-large files.** `ReadFileForTextSearch`
+  returns false for all of those cases, and the search result only reports matches/truncation. Users
+  can believe a term is absent even though files were skipped. Fix direction: return classified skip
+  counts (`unreadable`, `binary`, `too_large`) and surface a compact status footer. Add tests with one
+  matching unreadable file and one oversized text file.
+- **Project search result ordering is nondeterministic under parallel workers.** Matches are published
+  in worker-claim and batch timing order, not in stable path/line order. The same query can reorder
+  results between runs depending on file sizes and scheduling. Fix direction: either sort by
+  path/line before publishing final results or document streaming order while keeping a stable final
+  presentation pass. Add a deterministic fixture with two workers and deliberately uneven files.
+- **Count-all project search can finish with stale-looking progress.** Over-cap matches are counted in
+  worker-local counters and folded into `matches_found` only at worker exit. During a long common-term
+  count-all search, progress can advance by files while the visible match count remains stuck at the
+  display cap. Fix direction: periodically fold local over-cap counts or expose "counting..." distinct
+  from exact total. Add a common-literal count-all test that observes progress before completion.
+- **File finder cache rebuild lowercases and stores the entire file index on the UI thread.**
+  `EnsureCacheBuilt` deep-copies every path plus lowercase path and filename whenever the index version
+  changes. Large repos can stutter the finder even if the query only needs a small prefix. Fix
+  direction: build the cache incrementally off the UI thread or keep lowercase keys in `FileIndex`.
+  Add a perf scenario for opening the finder after a 100k-file index update.
+- **File finder recent-path matching uses raw `path.string()` identity.** Recents are compared to
+  cached index paths without platform normalization beyond the stored string. Case-only renames on
+  Windows/macOS, slash spelling differences, or Unicode normalization can make a recent file disappear
+  from the empty-query lead section even though it is indexed. Fix direction: key recents through
+  `editor::PathKey` / host-platform normalization. Add host-platform override tests.
+- **Command palette path completion has no per-directory cap.** `CompletePath` iterates every entry in
+  the target directory, builds candidates, then sorts all matches on the UI thread. Completing `/usr/`
+  or a generated directory with hundreds of thousands of entries can freeze the prompt. Fix direction:
+  cap candidate collection, use partial sorting for visible rows, and surface "more matches" status.
+  Add a temp-dir fixture with cap+1 files.
+- **Command palette path completion can enumerate absolute filesystem roots from any project.** A
+  token beginning with `/` searches from the filesystem root rather than the project root. That may be
+  useful for power users, but it is a broader read/enumeration surface than most project commands
+  need. Fix direction: decide which commands allow absolute completion and gate it per command
+  metadata. Add tests for `open /`, `debug-run /`, and project-relative-only commands.
+- **Command parsing has no token-count or input-length cap.** `ParseCommandLine` appends tokens until
+  input end, so a pasted megabyte command or thousands of quoted tokens can allocate and drive
+  completion/dispatch work on the UI thread. Fix direction: cap prompt input size and token count with
+  visible rejection before parsing. Add parser tests for cap and dangling quote/escape at cap.
+
+##### Plugin runtime and extension boundaries
+
+- **`workspace.open_file` lets plugins request arbitrary absolute paths without capability or
+  containment checks.** The API resolves the path and calls the host `open_file` callback directly;
+  unlike `files.read_text`/`write_text`, it does not consult `ContainPath` or filesystem capabilities.
+  Fix direction: decide whether opening external files is a plugin capability; otherwise contain to the
+  project root and mark external opens read-only. Add plugin tests for `/etc/passwd` and
+  `../outside.txt`.
+- **Plugin `workspace.open_file` line/column arguments are only checked as Lua integers.** Positive
+  `lua_Integer` values are cast to `std::size_t` with no upper bound. A plugin can request enormous
+  coordinates and leave each editor/open path to clamp consistently. Fix direction: clamp to a shared
+  maximum or reject values outside the document range after load. Add plugin tests with
+  `math.maxinteger`.
+- **Plugin `process.run_async` still blocks the plugin worker thread.** The API name and callback
+  shape suggest async behavior, but it calls `platform::RunSubprocess` synchronously and invokes the
+  callback before returning from the Lua interop call. A long formatter/test command can stall every
+  later plugin task for up to the 120 s timeout. Fix direction: route async process work through a
+  bounded process worker pool and post the callback back into the plugin runtime. Add a test where a
+  slow `run_async` does not delay an unrelated provider query.
+- **Plugin process allowlists match by basename, enabling project-local binary shadowing.** If a plugin
+  is allowed to run `eslint`, `ProgramAllowed` also accepts `./eslint` or
+  `<project>/tools/eslint`. That may be wanted for tool wrappers, but it weakens the meaning of an
+  allowlist entry that looked like a system binary. Fix direction: distinguish exact path entries from
+  basename entries in the manifest schema. Add tests for `eslint`, `/usr/bin/eslint`, and
+  `./eslint`.
+- **Plugin process stdin size is not separately capped.** `ParseProcessRunArgs` copies `options.stdin`
+  into a `std::string` and passes it to the subprocess layer. Lua's memory budget is the only bound,
+  so one call can push a very large stdin payload through the plugin worker. Fix direction: set a
+  process-stdin byte cap distinct from Lua heap size and return a plugin-visible error. Add a process
+  interop test with cap+1 stdin bytes.
+- **Plugin surface anchors are lexical, not containment-checked.** `ReadAnchor` resolves
+  `{path,line}` through `ResolveRuntimePath` and stores the result. A plugin surface can anchor itself
+  to an external absolute path or `../` path, then later participate in navigation and refresh logic.
+  Fix direction: use `ContainPath` for anchors or explicitly model external anchors. Add plugin
+  surface tests for project, outside-project, and missing paths.
+- **Plugin surface hit-region commands are raw command strings.** `ReadHitRegions` accepts arbitrary
+  command text per region; clicking the region can execute the same parser surface as user commands.
+  That is powerful, but there is no distinction between invoking a registered plugin command and
+  synthesizing host command-line text. Fix direction: prefer structured command ids plus arguments, or
+  mark raw command-line hit regions as privileged. Add a test that a hit region cannot smuggle a
+  multi-command or malformed quoted string if raw commands are restricted.
+- **Plugin hit-region rectangles are not normalized at interop parse time.** Negative widths/heights,
+  NaN-ish numeric inputs converted through `ReadNumberField`, or huge coordinates are left for surface
+  layout/hit testing to interpret. Fix direction: reject non-finite and non-positive rectangles at
+  parse time and clamp to content bounds. Add parser tests for negative `w`, negative `h`, and huge
+  coordinates.
+- **Plugin SCM snapshots can report paths outside the project.** `SnapshotScm` resolves each entry path
+  with `resolve_runtime_path` and accepts any non-empty result. A plugin SCM provider can populate the
+  SCM view with external files, after which stage/discard/navigation semantics become ambiguous. Fix
+  direction: contain paths or explicitly tag external SCM entries with disabled mutations. Add provider
+  tests for absolute outside paths and relative `../` paths.
+- **Plugin test discovery can report external files and negative lines.** `DiscoverTests` resolves
+  test files lexically and stores `line` as whatever integer the plugin returns. External files and
+  negative/zero lines then flow into test navigation. Fix direction: contain or mark external files,
+  and require positive one-based lines before converting to UI positions. Add plugin test-provider
+  fixtures.
+
+##### Terminal backend, emulation, and terminal UI
+
+- **POSIX terminal writes are blocking and have no deadline.** `PosixTerminalBackend::Write` loops on
+  `write(master_fd, ...)` until the whole buffer is sent or an error occurs. Key input, focus events,
+  query replies, and paste all call this path; if the child stops reading from the PTY input side, the
+  UI thread or reader callback can block. Fix direction: make the master fd nonblocking and use
+  poll-driven deadlines or a bounded write queue owned by the backend thread. Add a PTY fixture with a
+  child that never reads stdin.
+- **Terminal `Stop()` can wait on a child shutdown path without user-visible escalation.** POSIX stop
+  asks `RequestTerminalChildShutdown(child_pid)` and then joins the reader. If shutdown takes a long
+  time, closing a terminal tab or quitting can feel hung. Fix direction: surface "terminating
+  terminal..." after a short threshold and hard-kill after the existing bounded policy if not already
+  enforced in `ShellProcess`. Add tests with a child ignoring SIGTERM.
+- **OSC 7 accepts any `file://host/path` host as a local path.** `DecodeOsc7Path` strips `file://`,
+  finds the first slash after the host, and stores the path regardless of hostname. Remote shells can
+  report `file://remote/home/user/project`, which the UI may treat as a local working directory. Fix
+  direction: accept empty, `localhost`, and the current hostname only; otherwise ignore or mark remote.
+  Add OSC 7 tests for local, localhost, and remote host payloads.
+- **OSC 7 working directories are stored without containment or existence checks.** The decoded path is
+  assigned to `reported_working_directory_` directly. Later terminal affordances can seed new terminals
+  or labels from a path that no longer exists or points outside the active project. Fix direction:
+  classify reported cwd as project-contained/external/missing and constrain commands that reuse it.
+  Add tests for missing path and outside-project path.
+- **Terminal selection copy inserts newlines across soft-wrapped rows.**
+  `ExtractTerminalSelectionText` appends `'\n'` between every selected row and ignores
+  `TerminalLine::wrapped_from_previous`. Copying a long wrapped shell command can paste back with hard
+  newlines that were never in the terminal stream. Fix direction: omit the newline when the next row is
+  marked wrapped-from-previous, while preserving real line breaks. Add selection tests spanning a soft
+  wrap and a hard newline.
+- **Terminal URL detection is ASCII-lowercase and punctuation-blind.** `TerminalUrlAtColumn` searches
+  fixed lowercase schemes and trims trailing punctuation one byte at a time. It misses `HTTPS://...`
+  and can over-trim URLs whose final `)` or `]` is balanced content. Fix direction: case-fold the
+  scheme and use a small balanced-delimiter trim heuristic. Add URL hit tests for uppercase schemes and
+  parentheses.
+- **Terminal copy helpers treat empty cells as spaces even inside wide-glyph sequences.** Wide trailing
+  cells are skipped, but other empty cells in a selection become spaces. For applications that use
+  absolute cursor moves, this can copy rectangular padding that was never text. Fix direction: offer a
+  "stream copy" mode based on line dirty extents/wrap metadata in addition to grid copy. Add tests for
+  cursor-positioned output with gaps.
+
+##### App startup, control specs, debug, and commit workflow
+
+- **`--dap-log`'s optional argument can consume the project path.** `ParseAppStartupOptions` treats the
+  next non-flag token as the log path. `microide --dap-log /repo` therefore logs to `/repo` and opens
+  no explicit project, which is surprising because `--control-spec` requires its argument while most
+  other options are fixed-arity. Fix direction: require `--dap-log=<path>` for custom paths or add a
+  separate `--dap-log-path`. Add CLI parse tests for `--dap-log /repo` and `--dap-log --safe-mode`.
+- **Control spec arrays have no item-count caps.** The file size is capped at 1 MiB, but settings,
+  breakpoints, open files, function breakpoints, and commands can still contain many small entries that
+  expand into a much larger command list. Fix direction: cap each array and the generated command
+  count, with parse errors before execution. Add `ParseControlSpec` tests for cap and cap+1.
+- **Control spec `commands` bypass structured validation and ordering guarantees.** Raw command strings
+  are appended after generated breakpoint/open/launch commands. A spec can include malformed quoting,
+  commands that mutate the project before later commands, or commands that undo earlier generated
+  setup. This is likely intended for power users, but it needs a product contract. Fix direction:
+  either keep raw commands but mark them "unsafe escape hatch" in the spec, or add structured command
+  entries with explicit arguments and validation. Add tests that raw command failures are surfaced and
+  do not abort later entries unless requested.
+- **Control spec breakpoint paths are resolved against the project root without containment.**
+  `ResolveAgainstProject` normalizes `../outside.cpp` to an absolute outside path and the generated
+  breakpoint command then targets it. If debugging external files is allowed, this should be explicit;
+  otherwise specs can seed out-of-project breakpoints. Fix direction: contain spec paths by default and
+  add an `external` opt-in if needed. Add spec tests for `../outside.cpp`.
+- **Debug exception-filter seeding is per model, not per adapter identity.** Once `seeded_` is true,
+  `SetAdvertisedFilters` no longer adopts defaults from a newly advertised filter set. Switching debug
+  adapters in the same project can leave the old adapter's enabled filters applied to the new adapter.
+  Fix direction: store the adapter id/fingerprint with seeded defaults and reseed when it changes.
+  Add tests that switch from one fake adapter's exception filters to another's.
+- **Exception filter conditions can outlive the advertised filter set.** `ClearAdvertisedFilters`
+  clears `advertised_` but not `filter_conditions_`. If a later adapter advertises the same filter id,
+  an old condition can silently apply. Fix direction: clear conditions for filters that are no longer
+  advertised or key them by adapter id. Add tests for adapter switch with reused filter ids.
+- **Debug variable expansion keys collide for duplicate sibling names.** `DebugValueTree::PathKey`
+  joins the root-to-node name chain. Two siblings with the same `name` under the same parent share an
+  expansion key, so expanding/collapsing one can affect the other across stops. This is common in array
+  pages or maps that present repeated labels. Fix direction: include adapter variables reference,
+  indexed position, or a stable sibling ordinal in the path key. Add a variable tree test with duplicate
+  child names.
+- **Commit subject length is byte-counted, not character-counted.** `RunCommitPreChecks` blocks when
+  `subject.size() > kCommitSubjectMaxLength`. Non-ASCII subjects can hit the byte limit with far fewer
+  user-visible characters. Fix direction: count Unicode scalar values or display cells according to
+  the commit-message policy. Add tests with accented and CJK subjects near the limit.
+- **Commit staged-summary line counts silently drop out-of-range numstat values.** `BuildCommitStagedSummary`
+  parses added/deleted counts with `ParseInt`; values outside `int` range become absent and contribute
+  zero. A generated or hostile repo diff can under-report huge staged changes. Fix direction: parse
+  into 64-bit with saturation and mark the summary as truncated/approximate. Add parser tests with
+  very large numstat counts.
+- **Conflict-marker precheck can miss markers beyond git output capture limits.** The staged diff scan
+  asks git for the whole cached diff and then searches the captured output. If the command capture layer
+  truncates large output, a marker after the cap is indistinguishable from "no marker". Fix direction:
+  stream the diff scan or have `GitRepository::CommandResult` expose `truncated` and convert that into
+  a warning/blocking precheck. Add a staged-diff fixture with marker after the capture cap using an
+  injected command result.
+
 ### Won't-do — verified non-defects
 
 - **Terminal: combining mark after a double-width glyph.** Dead code —
