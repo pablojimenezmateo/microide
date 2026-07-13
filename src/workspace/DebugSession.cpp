@@ -181,12 +181,26 @@ void DebugSession::SendConfigurationDone() {
   }
   client_->SendRequestAsync("configurationDone", util::JsonValue(nullptr),
                             [this](const dap_protocol::DapResponse& response) {
-                              if (!response.success && last_error_.empty()) {
-                                last_error_ = response.message.empty()
-                                                  ? "configurationDone was rejected"
-                                                  : response.message;
+                              const bool in_handshake = state_ == State::Configuring ||
+                                                        state_ == State::Initializing;
+                              if (!response.success) {
+                                // A rejected configurationDone *during the handshake* means
+                                // launch/configuration was invalid and the debuggee will not
+                                // run: treat it as terminal instead of showing a Running
+                                // session that never starts (mirrors the launch-failure path).
+                                // If we already reached Running (launch response landed first),
+                                // leave a synthetic failure — e.g. the adapter dying — to the
+                                // reconciliation path so it is not double-handled here.
+                                if (in_handshake) {
+                                  TransitionToTerminal(State::Failed,
+                                                       response.message.empty()
+                                                           ? "configurationDone was rejected"
+                                                           : response.message);
+                                  client_->BeginShutdown();
+                                }
+                                return;
                               }
-                              if (state_ == State::Configuring || state_ == State::Initializing) {
+                              if (in_handshake) {
                                 SetState(State::Running);
                               }
                             });
