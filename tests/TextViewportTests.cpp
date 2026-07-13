@@ -1781,6 +1781,28 @@ void TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories() {
          "plugin region syntax definitions should highlight string spans");
 }
 
+// Regression: a syntax definition file with a runaway top-level loop must not
+// hang the reload/startup path. The instruction-count hook turns it into a clean
+// load error. (Without the hook this test would loop forever.)
+void TestRuntimeSyntaxLoaderBoundsInfiniteLoop() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  ScopedRuntimeSyntaxRegistryReset syntax_reset;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path syntax_dir = temp_dir.path() / "syntax";
+  WriteFile(syntax_dir / "loop.lua",
+            "local n = 0\nwhile true do n = n + 1 end\n"
+            "return { filetype = \"loopy\", files = { \"\\\\.loopy$\" } }\n");
+
+  std::vector<std::string> loader_errors;
+  const auto definitions =
+      microide::editor::runtime_syntax::LoadDefinitionsFromDirectories({syntax_dir}, &loader_errors);
+  Expect(definitions.empty(), "an infinite-loop syntax file loads no definitions");
+  Expect(!loader_errors.empty(),
+         "the instruction budget surfaces a load error instead of hanging");
+}
+
 // A pathologically long line (a minified bundle with no newline) must not be
 // tokenized synchronously on the UI thread: highlighting scans the whole line
 // with the syntax rules, O(line) work on every token-cache miss. Over the length
@@ -3165,6 +3187,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestRuntimeSyntaxInitialStateAllocationIsDocumentSizeIndependent);
   AddTest(tests, "TextViewport/LoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories",
           TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories);
+  AddTest(tests, "TextViewport/RuntimeSyntaxLoaderBoundsInfiniteLoop",
+          TestRuntimeSyntaxLoaderBoundsInfiniteLoop);
   AddTest(tests, "TextViewport/SyntaxHighlightNestedRegionResumesParentScope",
           TestSyntaxHighlightNestedRegionResumesParentScope);
   AddTest(tests, "TextViewport/SyntaxHighlightSkipsOverlongLine",

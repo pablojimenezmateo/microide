@@ -24,6 +24,24 @@ namespace {
 
 using microide::plugin::LuaErrorString;
 
+// Robustness caps: a plugin syntax file is untrusted-ish input evaluated on the
+// reload/startup path, so bound every array length it can declare and the total
+// instructions its top-level chunk may execute. A malicious or accidental sparse
+// table with a huge `#` length, or a `while true do end`, must not hang or
+// exhaust memory during a plugin reload.
+constexpr std::size_t kMaxDefinitionsPerFile = 256;
+constexpr std::size_t kMaxStringArrayEntries = 4096;
+constexpr std::size_t kMaxRulesPerArray = 4096;
+constexpr int kSyntaxLoadInstructionBudget = 20'000'000;
+
+void SyntaxLoadInstructionGuard(lua_State* state, lua_Debug* /*ar*/) {
+  // Fired once the instruction budget is exhausted. Raising a Lua error longjmps
+  // back to the enclosing lua_pcall (the project links the C build of Lua and
+  // there are no C++ locals on the interpreter frame between them), turning an
+  // infinite loop into a clean load failure instead of a frozen UI.
+  luaL_error(state, "syntax definition exceeded the instruction budget");
+}
+
 bool ReadStringArrayField(lua_State* state,
                           int table_index,
                           const char* field_name,
@@ -59,7 +77,7 @@ bool ReadStringArrayField(lua_State* state,
     return false;
   }
 
-  const std::size_t count = lua_rawlen(state, -1);
+  const std::size_t count = std::min<std::size_t>(lua_rawlen(state, -1), kMaxStringArrayEntries);
   values->reserve(count);
   for (std::size_t i = 1; i <= count; ++i) {
     lua_rawgeti(state, -1, static_cast<lua_Integer>(i));
@@ -160,7 +178,7 @@ bool LoadRuleArray(lua_State* state,
     return false;
   }
 
-  const std::size_t count = lua_rawlen(state, -1);
+  const std::size_t count = std::min<std::size_t>(lua_rawlen(state, -1), kMaxRulesPerArray);
   rules->reserve(count);
   for (std::size_t i = 1; i <= count; ++i) {
     lua_rawgeti(state, -1, static_cast<lua_Integer>(i));
@@ -321,7 +339,13 @@ bool LoadDefinitionFile(const std::filesystem::path& source_path,
     return false;
   }
 
-  if (lua_pcall(state, 0, 1, 0) != LUA_OK) {
+  // Bound the top-level chunk's execution so a runaway loop cannot hang the
+  // reload/startup path. The hook fires every kSyntaxLoadInstructionBudget
+  // instructions and raises, which lua_pcall catches below.
+  lua_sethook(state, SyntaxLoadInstructionGuard, LUA_MASKCOUNT, kSyntaxLoadInstructionBudget);
+  const int pcall_status = lua_pcall(state, 0, 1, 0);
+  lua_sethook(state, nullptr, 0, 0);
+  if (pcall_status != LUA_OK) {
     if (error_message != nullptr) {
       *error_message = "failed to evaluate syntax definition " + source_path.string() + ": " +
                        LuaErrorString(state);
@@ -354,7 +378,8 @@ bool LoadDefinitionFile(const std::filesystem::path& source_path,
     return loaded;
   }
 
-  const std::size_t count = lua_rawlen(state, root_index);
+  const std::size_t count =
+      std::min<std::size_t>(lua_rawlen(state, root_index), kMaxDefinitionsPerFile);
   if (count == 0) {
     if (error_message != nullptr) {
       *error_message = "syntax definition " + source_path.string() +
