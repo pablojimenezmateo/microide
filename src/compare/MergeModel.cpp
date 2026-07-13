@@ -362,7 +362,6 @@ std::string MergeResultText(const MergeModel& model, std::string_view separator)
 
 MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
   MergeDisplayModel display;
-  const std::vector<std::string> result_lines = MergeResultLines(model);
 
   int base_cursor = 0;
   int incoming_line = 1;
@@ -411,11 +410,18 @@ MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
           .current_changed = current_changed,
       });
     }
-    display.hunks.push_back(CompareHunk{
-        .index = hunk.index,
-        .start_row = start_row,
-        .end_row = static_cast<int>(display.rows.size()) - 1,
-    });
+    // A hunk whose selected incoming/current/result lines are all empty
+    // (row_count == 0, e.g. an auto-resolved both-sides deletion) contributes no
+    // display rows. Recording it would yield end_row = start_row - 1 (an inverted
+    // range) that navigation/minimap code reads as a zero-or-negative span. Skip
+    // the display hunk when no rows were emitted.
+    if (static_cast<int>(display.rows.size()) > start_row) {
+      display.hunks.push_back(CompareHunk{
+          .index = hunk.index,
+          .start_row = start_row,
+          .end_row = static_cast<int>(display.rows.size()) - 1,
+      });
+    }
     base_cursor = hunk.base_end;
   }
 
@@ -436,7 +442,11 @@ MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
     });
   }
 
-  if (display.rows.empty() && !result_lines.empty()) {
+  // Only materialize the full merge result for the empty-display fallback; a
+  // non-empty display (the common case) never needs it, so a large clean merge
+  // no longer allocates the whole output on every display rebuild.
+  if (display.rows.empty()) {
+    const std::vector<std::string> result_lines = MergeResultLines(model);
     for (const std::string& text : result_lines) {
       display.rows.push_back(MergeDisplayRow{
           .incoming_text = text,

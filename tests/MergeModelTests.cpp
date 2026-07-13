@@ -13,12 +13,31 @@
 namespace microide::tests {
 namespace {
 
+using microide::compare::BuildMergeDisplayModel;
 using microide::compare::BuildMergeModel;
 using microide::compare::BootstrapMergeResultText;
 using microide::compare::MergeChoice;
 using microide::compare::MergeChoiceLines;
 using microide::compare::MergeResultLines;
 using microide::compare::MergeResultText;
+
+void TestMergeDisplayModelSkipsZeroRowDeletionHunks() {
+  // Both sides delete the same middle line — an auto-resolved deletion whose
+  // selected lines are all empty (row_count == 0). The display hunk must not be
+  // recorded with an inverted end_row < start_row range.
+  auto model = BuildMergeModel("a\nb\nc\n", "a\nc\n", "a\nc\n");
+  const auto display = BuildMergeDisplayModel(model);
+  for (const auto& hunk : display.hunks) {
+    Expect(hunk.end_row >= hunk.start_row,
+           "every display hunk must have a non-inverted row range");
+    Expect(hunk.start_row >= 0 && hunk.end_row < static_cast<int>(display.rows.size()),
+           "display hunk row range stays within the row list");
+  }
+  // The resolved result still drops the deleted line.
+  const auto result = MergeResultLines(model);
+  Expect(result.size() == 3, "both-sides deletion resolves to a\\nc\\n plus trailing empty");
+  Expect(result[0] == "a" && result[1] == "c", "the shared deletion is applied");
+}
 
 void TestMergeSingleSidedChange() {
   auto model = BuildMergeModel("alpha\nbeta\ngamma\n", "alpha\nbeta-incoming\ngamma\n",
@@ -227,6 +246,8 @@ void RegisterMergeModelTests(std::vector<TestCase>& tests) {
           TestMergeResultTextHonorsRequestedLineEnding);
   AddTest(tests, "Merge/LargeInputsUseSharedFallbackDiff",
           TestMergeLargeInputsUseSharedFallbackDiff);
+  AddTest(tests, "Merge/DisplayModelSkipsZeroRowDeletionHunks",
+          TestMergeDisplayModelSkipsZeroRowDeletionHunks);
 }
 
 }  // namespace microide::tests
