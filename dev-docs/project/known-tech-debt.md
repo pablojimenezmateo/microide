@@ -1,6 +1,8 @@
 # MicroIDE Known Tech Debt
 
-Reviewed on 2026-07-13.
+Reviewed on 2026-07-13. A follow-on deferred-backlog full sweep is in progress
+(see "Fixed in the 2026-07-13 deferred-backlog full sweep" below); closed tranche
+entries have been pruned as they land.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
 Keep current priorities summarized first; deep-audit backlogs may be longer when they are intended
@@ -160,7 +162,91 @@ entries below were removed. Detail lives in the sweep commit(s).
   non-finite x/y/w/h to 0 and clamps negative width/height to >= 0, so a NaN or inverted
   hit-region/op rect can't poison layout/scroll extents or hit-testing.
 
+### Fixed in the 2026-07-13 deferred-backlog full sweep
+
+A follow-on sweep working the deferred tranches below. Each closed item shipped
+regression coverage unless noted; the matching tranche/residue entries were removed.
+Detail per batch lives in the sweep commits.
+
+- **Unicode simple case-fold helpers added to `util/StringUtil`** (`SimpleFoldCodepoint`,
+  `Utf8CaseFold(Into)`, `Utf8QueryHasCaseVariation`, `Utf8IsIdentifierCodepoint`) covering
+  ASCII/Latin-1/Latin-Ext-A/Greek/Cyrillic. Shared infra for the "ASCII-only"
+  search/replace/finder/word-motion/icon items (consumers still to be wired per subsystem).
+- **Startup rejects a second positional project path** instead of silently opening the last.
+- **`--dap-log` uses the attached `--dap-log=<path>` form**; the bare flag defaults its sink
+  and no longer swallows a following project path.
+- **`FileOperationService::CreateDirectory` creates-first then classifies via status**,
+  removing the exists()-then-create TOCTOU. (`CreateFile` already used `O_EXCL`; the sole
+  production caller already enforces project containment.)
+- **Compare `TokenizeLine` reserves a half-length heuristic** (tokens are grouped runs, not
+  per-byte); **`LineVisualColumnMap` caps its per-line reserve hint** (one entry per code
+  point, not per byte).
+- **`SettingsOverlayService::FilteredFontFamilies` is memoized by query text** (was recomputed
+  per interaction); the family list is capped at 100k so the picker's `size_t`→`int` row math
+  cannot overflow.
+- **`OrderedSidebarViews` pre-indexes policies by id** and resolves each view once instead of
+  re-scanning the policy list inside the filter and sort comparator.
+- **`BuildMergeDisplayModel` computes the full merge result only for the empty-display
+  fallback**; a zero-row (both-sides deletion) hunk is no longer recorded with an inverted
+  `end_row < start_row` range. (The "merge can't represent an empty file" entry is a
+  non-defect: `JoinLines([""])` and `JoinLines([])` both serialize to zero bytes, and `[""]`
+  is the canonical empty buffer — moved to won't-do.)
+- **`DebugValueTree::EraseSubtree` is iterative** (was recursive → stack overflow on a deeply
+  nested hostile adapter tree); `FlattenInto` caps recursion depth at 256.
+- **`DebugWatchModel` caps the expression list (512) and each expression length (4096)** so a
+  paste/control flood cannot make every stop arbitrarily expensive.
+- **Syntax definition loading has an instruction deadline** (`lua_sethook` 20M budget →
+  `while true do end` becomes a clean load error) and **clamps every declared array length**
+  (256 defs/file, 4096 string entries, 4096 rules/array).
+- **`GitRepository::Discard` no longer recursively deletes an untracked directory**: it refuses
+  a directory target and drops `-d` so a single-row discard cleans only the file (data-loss fix).
+- **Commit-failure hook classification is anchored** to known hook-phase names (dropped the
+  broad `find("hook")` that misclassified any failure whose output mentioned "hook").
+- **LSP/DAP spawn-failure errors redact argv** via a shared `workspace/CommandSummary.h`
+  (executable basename + arg count) instead of leaking `--token=…` secrets/paths.
+- **LSP response-id narrowing is strict** (in-range-or-skip) so an out-of-int-range id from a
+  hostile server cannot wrap and collide with a live pending request id.
+- **Tool downloader publishes atomically** (copy to `.partial` → verify sha → rename) and
+  **parses `file://` URIs** (empty/localhost host only; percent-decoded path).
+- **Status-bar language cache keys on `runtime_syntax::RegistryRevision()`** so the language
+  label re-detects after a syntax reload.
+
+#### Newly found during the sweep (not from the tranches)
+
+- **`DapManager::StartSession` spawn-failure path segfaults** in a DAP client I/O thread when
+  the configured adapter binary does not exist / spawns then immediately dies while the session
+  is torn down mid-`initialize`. Reachable via a misconfigured adapter path. Needs DAP client
+  subprocess/thread-teardown hardening (pairs with the [[lsp-dap-stdio-transport-parallel]]
+  duplication); reproduce by registering an adapter with a nonexistent command and starting it.
+
 ### Still open (deferred, lower value / larger / latent)
+
+- **Persistence: `LoadStructuredRecord` ignores `used_backup`**, so `PersistenceService` does not
+  suppress auto-overwriting a present-but-corrupt primary with stale backup state (the reader
+  already surfaces `used_backup`/`primary_error`; `UnsupportedVersion` already blocks fallback).
+  Needs the bit plumbed through every `Load*` plus a per-path `loaded_from_backup` gate on save —
+  a broad save-policy change, hard to test without injected read failures.
+- **Persistence: `ReadAllBytes` reads the whole file (≤256 MiB) before header validation.** A
+  header-first bounded read is low-threat (state files live in the user's own config dir).
+- **Git: commit message passed as `-m` args** (argv exposure / length for huge bodies) — wants
+  `git commit -F -`, which needs stdin plumbing through `GitRepository::Execute`.
+- **Debug value node ids are 32-bit (`next_id_`) and can wrap** over a very long session with
+  huge trees. Widening to `uint64_t` ripples through `DebugVariablesModel`/service/view-models.
+- **Status bar: LSP tone via `find("Ready")` substring** misclassifies `Not Ready`/`Readying`/
+  server names — wants a typed LSP status severity from `active_lsp_status_strings`.
+- **Status bar: repo availability cached by `project_root` only** — transient staleness after
+  `git init` / `.git` removal until a real git refresh supersedes it (a per-frame `.git` stat
+  would defeat the cache).
+- **Tool downloader: `GetCachedTool` does not verify the hash** (no expected-sha param) and
+  HTTP(S) download is unimplemented (fails cleanly today); async hashing blocks the caller.
+- **RuntimeSyntaxRegistry regex/match budgets** (separate file from the loader): per-pattern &
+  joined-pattern byte cap before PCRE compile, per-line match budget in `FindAllRegex`,
+  region-start budget, fingerprint-metadata-first, dedup definition dirs, explicit `overrides`
+  for filetype shadowing, prewarm cold filetype, prefetch key by document-id, `FindFirstRegex`
+  skip-mask incremental.
+- **`FileOperationService::RenamePath` destination `exists()`-then-move race** — needs a
+  no-overwrite `MovePath` primitive (renameat2 `RENAME_NOREPLACE` / link+unlink with cross-device
+  fallback); coordinator + service both pre-check, so the window is small.
 
 - **Git: sidebar stage/unstage/discard and commit `RefreshDerivedState` still run git
   synchronously on the shell thread.** Only the contained wins landed (rename-probe
@@ -244,12 +330,6 @@ behavioral contract before changing code.
 
 ##### Startup, app plumbing, and file operations
 
-- **Startup silently accepts multiple positional project paths and opens the last one.**
-  `ParseAppStartupOptions` overwrites the saved positional argument when another positional token is
-  encountered. Repro: run `microide /tmp/repo-a /tmp/repo-b`; `/tmp/repo-b` wins with no warning even
-  though the user likely made a command-line mistake. Fix direction: reject a second positional path
-  with the usage text, or explicitly document/support a project-list mode. Add an
-  `AppStartupOptions` regression that passes two roots and expects failure.
 - **Windows terminal launch does not quote or pass `lpApplicationName` for custom shells.**
   In `src/platform/TerminalBackend.cpp`, the Windows PTY backend builds `command_line = shell` and
   passes it to `CreateProcessW(nullptr, mutable_command.data(), ...)`. A custom shell under a path
@@ -754,13 +834,6 @@ test proves it is unreachable.
   length is seen inside a header block, drop through the next blank line and optionally require a
   bounded resync window before accepting another frame. Add a fixture with malformed header plus body
   containing a fake `Content-Length`.
-- **LSP response id narrowing still uses raw `static_cast<int>`.** `WorkspaceLspClientDispatch`
-  checks `id` is integer-like, then casts `msg["id"].AsInt()` to `int` instead of using
-  `protocol_numeric::JsonIntInRange`. A hostile or buggy server can return an out-of-range id and hit
-  implementation-defined narrowing. The usual outcome is a missed pending request, but wrapping into
-  an existing id would dispatch the wrong callback. Fix direction: apply the shared numeric helper
-  and reject ids outside the request-id domain before map lookup. Add a regression with
-  `9223372036854775807`.
 - **String-valued JSON-RPC response ids are ignored.** The client only accepts integer or double ids.
   This matches requests emitted by MicroIDE today, but some intermediaries and test harnesses stringify
   ids. If a server echoes `"id":"5"` the pending request times out and then degrades as an empty
@@ -915,11 +988,6 @@ test proves it is unreachable.
   servers will not get hover requests for valid Unicode identifiers. Fix direction: use language
   server position under cursor even when local identifier extraction fails, or extend identifier
   classification to Unicode. Add hover-target tests for `café` and `变量`.
-- **`LineVisualColumnMap` reserves O(byte length) memory for each mapped line.** It stores one entry
-  per UTF-8 code point, but reserves `line.size() + 1` for both vectors. Very long multibyte lines or
-  hover paths that build maps transiently can over-reserve significantly. Fix direction: reserve a
-  bounded estimate or build lazily for the queried column on hot hover paths. Add a perf regression
-  fixture for a long multibyte line.
 - **Inlay hint column math trusts plugin/LSP label widths after truncation but not aggregate overflow.**
   Individual inlay labels are capped, yet `InlayLineTotalCells` and displacement sums can still grow
   large when many hints target one line. Fix direction: saturate aggregate cell counts per visual row
@@ -1124,11 +1192,6 @@ test proves it is unreachable.
 
 ##### App startup, control specs, debug, and commit workflow
 
-- **`--dap-log`'s optional argument can consume the project path.** `ParseAppStartupOptions` treats the
-  next non-flag token as the log path. `microide --dap-log /repo` therefore logs to `/repo` and opens
-  no explicit project, which is surprising because `--control-spec` requires its argument while most
-  other options are fixed-arity. Fix direction: require `--dap-log=<path>` for custom paths or add a
-  separate `--dap-log-path`. Add CLI parse tests for `--dap-log /repo` and `--dap-log --safe-mode`.
 - **Control spec arrays have no item-count caps.** The file size is capped at 1 MiB, but settings,
   breakpoints, open files, function breakpoints, and commands can still contain many small entries that
   expand into a much larger command list. Fix direction: cap each array and the generated command
@@ -1222,16 +1285,6 @@ test proves it is unreachable.
 
 ##### Runtime syntax and highlighting
 
-- **Lua syntax definition evaluation has no instruction deadline.** `LoadDefinitionFile` creates a Lua
-  state and `lua_pcall`s the file without an instruction hook. A plugin syntax file containing
-  `while true do end` can hang plugin reload or startup even though no libraries are opened. Fix
-  direction: install a count hook with a tight instruction budget for syntax-definition loading, and
-  treat timeout as a load error. Add a syntax loader test with an infinite loop fixture.
-- **Runtime syntax definition arrays have no count caps.** The loader trusts `lua_rawlen` for returned
-  definition arrays, string arrays, and child-rule arrays, reserves that count, and then walks every
-  entry. A malicious or accidental sparse table with a huge array length can allocate or stall during
-  plugin reload. Fix direction: cap definitions per file, patterns per definition, child rules per
-  rule, and total runtime rules. Add loader tests for cap and cap+1.
 - **Runtime syntax regex source length is uncapped before PCRE compilation.** Plugin definitions can
   provide very large filename/header/signature/rule patterns; `JoinSyntaxPatterns` and
   `CompileSyntaxRegex` materialize and compile them on the main reload path. Fix direction: enforce a
@@ -1292,11 +1345,6 @@ test proves it is unreachable.
   modified without similarity checks. The exact path would often emit delete/insert rows instead. Fix
   direction: run a cheap similarity gate on fallback pairs or prefer delete+insert over low-confidence
   positional pairs. Add a large-hunk fixture with unrelated reordered blocks.
-- **Compare line tokenization over-reserves one token per byte.** `TokenizeLine` calls
-  `tokens.reserve(text.size())`, so a 64 KiB multibyte line reserves far more tokens than it can use;
-  exact hunk alignment tokenizes every line in budgeted hunks. Fix direction: reserve a smaller
-  heuristic such as `min(text.size(), text.size()/2 + 8)` or avoid reserving for long lines. Add a
-  memory-oriented compare test with CJK-heavy long lines.
 - **Compare model row and line fields are `int` even though inputs are `size_t`.** Very large generated
   diffs can overflow row indices, hunk row ranges, or line numbers when casting from vector sizes. Fix
   direction: keep model indices as `std::size_t` internally and clamp only at rendering boundaries.
@@ -1306,21 +1354,6 @@ test proves it is unreachable.
   counts. Users cannot tell whether a line is fully changed or just too expensive to refine. Fix
   direction: record a per-row `intraline_truncated` flag and show a subtle status/tooltip. Add tests
   for long-line and DP-budget fallback rows.
-- **Merge results cannot represent an actually empty file.** `BootstrapMergeResultLines` and
-  `MergeResultLines` push one empty line when the computed result vector is empty. If both sides delete
-  all content, saving the merge result produces an empty line rather than a zero-byte file. Fix
-  direction: represent empty-file result separately from one empty line and teach serializers to honor
-  it. Add merge tests for base one-line deleted by both sides and all three inputs empty.
-- **Auto-resolved deletion hunks can produce degenerate display hunk ranges.** A hunk whose selected
-  incoming/current/base lines are all empty has `row_count == 0`, then `BuildMergeDisplayModel` records
-  `end_row = display.rows.size() - 1`. Navigation and minimap code can see a hunk with no display rows
-  and an end before start. Fix direction: either render a placeholder deletion row or omit non-conflict
-  zero-row hunks from display navigation. Add a merge-display test for both-sides deletion.
-- **`BuildMergeDisplayModel` materializes the full merge result even when rows are non-empty.** The
-  method computes `result_lines = MergeResultLines(model)` and only uses it for the empty-display
-  fallback. Large merges therefore allocate the complete output on every display rebuild unnecessarily.
-  Fix direction: lazily compute the fallback only after `display.rows.empty()` is known. Add a perf
-  counter/test around display rebuild for a large clean merge.
 - **`Both` merge choices concatenate sides without provenance or separator rows.** For real conflicts,
   `BothIncomingFirst` and `BothCurrentFirst` append one side's lines directly after the other. Adjacent
   edits can become ambiguous or syntactically fused when saved. Fix direction: decide whether "both"
@@ -1496,10 +1529,6 @@ test proves it is unreachable.
   `SidebarViewIds` sorts/uniques the combined list, so a plugin registering `tree` or `git` becomes
   unreachable or ambiguously hidden. Fix direction: reject plugin sidebar IDs that match built-in view
   ids. Add plugin registration tests for `tree`, `search`, and a valid plugin id.
-- **Sidebar view policy sorting repeatedly scans the policy list.** `OrderedSidebarViews` calls
-  `EffectiveSidebarViewPolicy` inside erase and stable-sort comparisons. With many plugin sidebars and
-  policies, this becomes O(views log views * policies) on every rebuild. Fix direction: pre-index
-  policies by view id for the duration of ordering. Add a perf test with hundreds of plugin sidebars.
 
 ##### Status bar, settings overlay, and notifications
 
@@ -1509,11 +1538,6 @@ test proves it is unreachable.
   `no-scm`/repo state until the root changes or another path clears the cache. Fix direction: include
   repository metadata generation or `.git` mtime in the cache key. Add tests for creating and deleting
   `.git` under an open project.
-- **Status-bar language cache ignores syntax registry revision.** The language segment is cached by
-  viewport pointer, content revision, and path. A plugin syntax reload or built-in syntax update can
-  change filetype detection without changing any of those keys, leaving the status bar with a stale
-  language label. Fix direction: include `runtime_syntax::RegistryRevision()` in the cache key. Add a
-  test where a runtime syntax definition changes the detected filetype for an open file.
 - **LSP status tone is derived by substring search for `Ready`.** `StatusBarModelService` treats any
   text containing `Ready` as default tone. Labels such as `Not Ready`, `Readying`, or a server name
   containing that word are misclassified. Fix direction: have the LSP service return a typed status
@@ -1524,16 +1548,6 @@ test proves it is unreachable.
   reorder between revisions or platforms, causing visual jitter. Fix direction: add stable tie-breakers
   (`plugin_id`, `id`) or use `stable_sort` over registration order. Add status-item ordering tests with
   equal priority contributions.
-- **Settings font filtering rebuilds the filtered vector repeatedly per interaction.**
-  `FilteredFontFamilies()` allocates/returns a fresh vector and is called by row count, file index,
-  highlight, and scroll methods. Large font lists or rapid typing multiply the same scan. Fix
-  direction: cache the filtered font list by value-editor revision. Add a perf test with a large
-  injected font list.
-- **Settings picker row counts cast `size_t` to `int`.** `PickerRowCount`,
-  `PickerChooseFileIndex`, and picker scrolling convert filtered family counts to `int`. A hostile or
-  broken font provider returning an enormous list can overflow selection math. Fix direction: cap font
-  family count before storing and keep row counts in `std::size_t` internally. Add a test with a lowered
-  cap seam.
 - **Settings overlay pane cycling assumes every mode has three panes.** `CycleFocusedPane` wraps over
   a fixed count of three even in Help/About mode, which has no filter/value editing panes. Keyboard
   navigation can focus invisible panes and make input handling mode-dependent in surprising ways. Fix
@@ -1577,20 +1591,11 @@ test proves it is unreachable.
   large cached tool still freezes the shell until the digest subprocess finishes. Fix direction: make
   downloads fully async with progress/completion callbacks, or require callers to dispatch `Download`
   off-thread. Add a test with a fake slow hash worker.
-- **Tool downloader writes directly to the final cache path.** `copy_file(... overwrite_existing)`
-  publishes the destination before hash verification completes. A crash or process kill can leave a
-  partial executable at the cache path, and another caller can observe it. Fix direction: copy to a
-  unique temp file, verify hash, set permissions, then atomically rename into place. Add fault-injection
-  tests for interrupted copy and failed hash.
 - **Tool downloader only implements local/file sources despite storing `download_url`.** HTTP(S) URLs
   simply fail `ResolveToolSourcePath`, while the registry field name suggests network download support.
   Fix direction: either rename the field to `source_path` until network download exists, or implement a
   bounded HTTPS downloader with TLS and progress. Add tests that HTTP URLs produce an explicit
   unsupported-source error.
-- **`file://` tool URLs are not URI-decoded or host-validated.** `ResolveToolSourcePath` strips the
-  prefix and treats the rest as a path. Percent-encoded spaces fail, and `file://remote/path` is
-  interpreted as a local path string. Fix direction: parse file URIs, accept only empty/localhost hosts,
-  and percent-decode paths. Add tests for `%20`, localhost, and remote hosts.
 - **Tool cache APIs do not verify hash on `GetCachedTool`.** Once a caller has a tool id, `GetCachedTool`
   returns any existing cache file without checking the expected digest. A later launch path can use a
   tampered cache entry if it bypasses `Download`. Fix direction: require expected sha for cache lookup
@@ -1606,10 +1611,6 @@ test proves it is unreachable.
 
 ##### Debug pane, watch expressions, and value trees
 
-- **Debug watch expressions are unbounded.** `DebugWatchModel::AddExpression` appends every non-empty
-  expression and `BeginEvaluation` rebuilds roots for all of them. A paste or control command can add
-  thousands of watch expressions and make every stop expensive. Fix direction: cap watch count and
-  expression length, with visible feedback. Add tests for cap and cap+1 expressions.
 - **Debug watch expressions are not deduplicated or normalized.** The same expression can be added many
   times and evaluated separately on every stop. That is sometimes intentional, but accidental repeated
   adds from keyboard/control flows waste DAP requests. Fix direction: decide whether duplicates are
@@ -1623,10 +1624,6 @@ test proves it is unreachable.
   emits every expanded child and descendant. A large expanded tree can build thousands of rows on every
   variable update or selection change. Fix direction: virtualize rows or cap flattened rows with "more"
   at the view layer. Add a synthetic variables tree perf test.
-- **Debug value tree recursion can overflow the C++ stack on hostile adapter data.** `FlattenInto` and
-  `EraseSubtree` recurse through child chains. A malicious adapter can return a deeply nested one-child
-  tree and trigger stack exhaustion during rebuild or clear. Fix direction: rewrite traversal/erase as
-  iterative stack-based walks with a depth cap. Add tests with a deep synthetic variable tree.
 - **Debug value node ids can wrap.** `next_id_` intentionally never resets, but it is a 32-bit id. Long
   sessions with repeated stops and large variable trees can eventually wrap and alias stale rows or
   async responses. Fix direction: use 64-bit ids or detect wrap and clear generations. Add a lowered-id
@@ -1716,12 +1713,6 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   `DrainCallbacks` or shutdown pass, joined clients stay resident longer than needed. Fix direction:
   collect after each retirement or enqueue a bounded cleanup pass. Add a test that repeatedly
   re-registers a server and asserts the retired list drains.
-- **Language-server start errors echo full command arguments into user-visible text.** Both LSP and
-  DAP manager helpers append `"[command: " + JoinCommand(command) + "]"` to failures. Many adapter
-  commands legitimately include tokens, paths to private checkouts, or one-shot credentials. Fix
-  direction: show executable basename plus an argv count in UI, with full argv available only in an
-  opt-in diagnostic log that redacts known secret-looking values. Add tests for `--token=secret` and
-  environment-variable-style arguments.
 - **`DidClose` drops local document-version state before the close notification is known to be
   queued.** The local version entry is erased before the send path confirms it accepted the
   notification. If the client is shutting down or the queue rejects the send, the server can still
@@ -1887,11 +1878,6 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   ambiguous results. Fix direction: validate revision strings before use or prefer `git cat-file`
   plumbing with separated object resolution. Add tests for paths with colon-like names on platforms
   that allow them and invalid custom revisions.
-- **`GitRepository::Discard` treats an untracked directory target as `git clean -fd -- path`.** That
-  can recursively delete a whole untracked directory from a single file-row discard if the row path is
-  stale or points at a directory. Fix direction: classify the selected entry as file/directory at the
-  UI boundary and require a directory-specific confirmation for recursive clean. Add tests for
-  untracked directory discard and stale file-to-directory replacement.
 - **Patch apply preflight and apply are not atomic.** `ApplyGitPatch` runs `git apply --check` and then
   `git apply`. The working tree/index can change between the two commands, especially because the
   operation is on a background queue while other git operations can run. Fix direction: rely on the
@@ -1932,11 +1918,6 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   repository switch and still clear the current draft. Fix direction: compare captured root/head/generation
   on completion and only clear the matching workflow. Add tests for project switch and external commit
   during in-flight commit.
-- **Commit failure classification treats any output containing `hook` as hook failure.**
-  `ClassifyCommitFailure` lowercases all output and searches broad substrings. A non-hook error that
-  mentions "hook" in a path, branch, or commit message can be misreported, hiding the real failure.
-  Fix direction: prefer git exit context and anchored known messages, and keep unknown output as
-  unknown. Add table tests for false-positive strings.
 - **Commit subject/body are passed as command-line `-m` arguments.** This is functionally correct but
   exposes commit text to process listings on some platforms and can hit argv length limits for large
   bodies. Fix direction: write the message to a temporary file or pipe and use `git commit -F -`, with
@@ -1994,11 +1975,6 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   operations can write or move outside the workspace. Fix direction: make the service root-scoped or
   require an explicit `AllowExternalPath` mode. Add tests for `../outside` and absolute external paths
   through every caller.
-- **`CreateDirectory` uses an exists-then-create sequence.** A racing process can create a non-directory
-  at the target after the exists check and before `create_directories`; the current error collapses to
-  "failed to create directory" with no distinction, and some platform behaviours may leave partial
-  parents. Fix direction: call `create_directories` first and then verify the result is a directory,
-  using non-throwing status. Add a race/injected filesystem test.
 - **`RenamePath` uses exists checks before `MovePath`, so destination races are reported late and
   unclearly.** Another process can create the destination after the check. Depending on `MovePath`
   implementation, the operation may fail, overwrite, or perform cross-device fallback work before
