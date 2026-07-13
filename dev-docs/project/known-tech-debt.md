@@ -234,13 +234,20 @@ Detail per batch lives in the sweep commits.
   sends `pause` to a target that already stopped/terminated. (The broader DAP resume-on-reject
   restore + session-token guards remain a recorded follow-up cluster.)
 
-#### Newly found during the sweep (not from the tranches)
+#### Investigated during the sweep — DAP spawn-failure "crash" is a test-lifetime hazard, not a product bug
 
-- **`DapManager::StartSession` spawn-failure path segfaults** in a DAP client I/O thread when
-  the configured adapter binary does not exist / spawns then immediately dies while the session
-  is torn down mid-`initialize`. Reachable via a misconfigured adapter path. Needs DAP client
-  subprocess/thread-teardown hardening (pairs with the [[lsp-dap-stdio-transport-parallel]]
-  duplication); reproduce by registering an adapter with a nonexistent command and starting it.
+- **A `DapManager` session for a nonexistent adapter binary can crash on teardown *if a
+  test declares the callback-referenced state after the manager*.** Root-caused with a symbolized
+  gdb repro: the crash is a use-after-free of the test's local `CapturedSession` (captured *by
+  reference* in `MakeCallbacks`), which is destroyed at scope exit **before** the `DapManager`
+  whose worker threads still invoke those callbacks during teardown. `~DapClient` correctly joins
+  both `init_thread` and `io_thread` before deleting its `Impl`, so the client itself is sound.
+  **Not product-reachable**: production callbacks reference shell/project-owned state that outlives
+  the manager (ordered shutdown), never a shorter-lived local. Test-authoring rule: declare
+  callback-referenced fixtures **before** the `DapManager`, or shut the manager down explicitly
+  first. Minor robustness follow-up (recorded, not a crash): audit whether `DapClient` dispatches
+  `event_callback` synchronously on the io thread vs. only via `main_mailbox`, so a future caller
+  can't be surprised by a worker-thread callback.
 
 ### Still open (deferred, lower value / larger / latent)
 
