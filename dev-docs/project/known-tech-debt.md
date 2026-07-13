@@ -1771,6 +1771,391 @@ test proves it is unreachable.
   replies with terminal backend generation and drop on stop/restart. Add tests for query immediately
   followed by terminal stop.
 
+### Deep audit tranche 7 — LSP/DAP/session/git/search/workflow bugs (2026-07-13)
+
+This tranche continues the cross-subsystem bug hunt without fixing code. It focuses on ownership,
+generation, and semantic-validation bugs in the LSP/DAP registry paths, debug UI callbacks,
+persistence decode, git refresh/patch/commit workflows, project search, recents, and file operations.
+
+#### Scope audited in this tranche
+
+- `src/workspace/WorkspaceLspClient*.cpp`, `WorkspaceLspManager.cpp`, and related LSP lifecycle
+  request/dispatch paths.
+- `src/workspace/WorkspaceDapClient*.cpp`, `WorkspaceDapManager.cpp`, `DebugSession*.cpp`,
+  `DebugService*.cpp`, and debug persistence records.
+- `src/workspace/PersistenceService.cpp`,
+  `WorkspacePersistenceBinaryFormat{,Sessions,Debug}.cpp`, and workspace-session restore/save.
+- `src/project/GitRepository*.cpp`, `GitStatusService.cpp`, `GitCompareService.cpp`,
+  `GitCommitExecutor.cpp`, `GitPatchApply.cpp`, `ProjectSearchService.cpp`,
+  `FileOperationService.cpp`, and workspace services that orchestrate them.
+
+#### LSP registry, document lifecycle, and server errors
+
+- **LSP server re-registration leaves aliases for removed language ids.** `LspManager::RegisterServer`
+  overwrites an existing server entry keyed by the first language id, but it does not erase aliases
+  that belonged to the old `language_ids` vector and are absent from the new one. Re-registering a
+  `["cpp", "c"]` server as `["cpp"]` leaves `alias_["c"] = "cpp"`, so `HasServer("c")` and
+  `GetServer("c")` still resolve to the C++ server even though C support was removed. Fix direction:
+  remove every alias owned by the old entry before replacing it, then install aliases from the new
+  entry. Add a unit test that drops one language id and verifies the old alias is gone.
+- **LSP overlapping registrations can create unreachable duplicate server entries.** The canonical
+  key is `language_ids.front()`. Registering one plugin as `["cpp", "c"]` and another as
+  `["c", "cpp"]` creates two `servers_` entries, then aliases both ids to whichever registration ran
+  last. The older entry can remain in `servers_` with a live or retiring client but no alias path to
+  reach it. Fix direction: canonicalize language-id sets, or reject/retire any existing entry whose
+  alias set intersects the new registration. Add tests for swapped-order language ids and partial
+  overlaps.
+- **LSP sandbox changes are ignored by the registration equality check.** `RegisterServer` reuses an
+  existing client when language ids, command, root URI, cwd, initialization options, and settings
+  match; the `SubprocessSandbox` is not part of the comparison. A plugin or settings reload that
+  tightens process limits or permissions can leave the old less-restricted server running. Fix
+  direction: include a stable sandbox fingerprint in the equality check and force retirement when it
+  changes. Add a test that changes only sandbox limits.
+- **Retired LSP clients can accumulate until an unrelated drain path runs.** A changed registration
+  calls `BeginShutdown()` and pushes the old client into `retiring_clients_`, but plain
+  `RegisterServer` does not call `CollectRetiredClients`. If reloads happen without a subsequent
+  `DrainCallbacks` or shutdown pass, joined clients stay resident longer than needed. Fix direction:
+  collect after each retirement or enqueue a bounded cleanup pass. Add a test that repeatedly
+  re-registers a server and asserts the retired list drains.
+- **Language-server start errors echo full command arguments into user-visible text.** Both LSP and
+  DAP manager helpers append `"[command: " + JoinCommand(command) + "]"` to failures. Many adapter
+  commands legitimately include tokens, paths to private checkouts, or one-shot credentials. Fix
+  direction: show executable basename plus an argv count in UI, with full argv available only in an
+  opt-in diagnostic log that redacts known secret-looking values. Add tests for `--token=secret` and
+  environment-variable-style arguments.
+- **`DidChange` can create a tracked document version for a URI that was never opened.** The LSP
+  client increments `impl_->document_versions[uri]`, which inserts a default entry when the URI is
+  unknown or has already been closed. A caller bug can therefore send `textDocument/didChange`
+  without a preceding `didOpen`, and the client will treat future diagnostics as version-gated for
+  that URI. Fix direction: require an existing open-document entry for every change; otherwise reject
+  or log and do not send. Add tests for change-before-open and change-after-close.
+- **`DidClose` drops local document-version state before the close notification is known to be
+  queued.** The local version entry is erased before the send path confirms it accepted the
+  notification. If the client is shutting down or the queue rejects the send, the server can still
+  think the document is open while the host has lost the version gate that would classify later
+  diagnostics. Fix direction: erase only after queue acceptance, or store a `close_pending` state
+  until shutdown/close completion. Add a test with a stopped transport that rejects `didClose`.
+- **`DidSave` has no open-document guard.** Save notifications can be emitted for unopened or already
+  closed URIs. Some servers tolerate that, but strict servers may report protocol errors or run file
+  watchers twice. Fix direction: either send only for open text documents or explicitly use
+  workspace-level file-change notifications for closed files. Add a fake-server test asserting no
+  `didSave` for an unopened URI.
+- **Live LSP protocol errors are not surfaced through `LastServerError`.** `LastServerError` returns
+  the manager entry's cached `last_error`, which is mainly start/exited state. A running client can
+  accumulate transport/protocol failure information in the client itself while status UI still reports
+  an empty manager error. Fix direction: merge `entry.last_error` with `entry.client->LastError()` and
+  define precedence. Add a test where a running fake client sets a late protocol error.
+- **Serializing full JSON settings on every LSP registration is avoidable reload-path work.**
+  `RegisterServer` compares initialization options and settings by `SerializeJson` for each
+  registration. Large plugin-provided settings trees can turn project activation or plugin refresh
+  into repeated full-string materialization. Fix direction: precompute/store a stable JSON hash or
+  compare `JsonValue` structurally without allocating. Add a perf fixture registering a server with a
+  large settings object.
+
+#### DAP manager/session/debug callback edges
+
+- **Stopping all debug sessions blocks the shell on adapter shutdown joins.** `DebugService::StopAllDebugging`
+  calls `manager.BeginShutdownAll()` and then `manager.ShutdownAll()`, whose session/client teardown
+  joins adapter I/O threads. A wedged adapter or slow pipe close can freeze the UI during the stop-all
+  command. Fix direction: use the same bounded drain model as plugin teardown: request shutdown,
+  return to the event loop, and prune/join in bounded slices. Add a fake adapter that delays I/O exit.
+- **Restart fallback blocks the shell while replacing the active session.** When an adapter lacks
+  `supportsRestartRequest`, `DebugService::Restart` calls `LaunchSession(..., replace=true)`;
+  `ReplaceActiveSession` shuts down the old session synchronously before launching the new one. Fix
+  direction: model fallback restart as an async two-phase operation: terminate old session, show
+  restarting state, launch when the bounded drain completes. Add a slow-terminate adapter test.
+- **Clearing the active DAP entry can synchronously destroy a live session.** Manager paths that
+  replace or clear sessions can call destructors from UI-initiated commands. Destructors are allowed
+  to join transport threads, so a seemingly cheap focus/replace/close action can inherit subprocess
+  teardown latency. Fix direction: separate "remove from visible list" from "destroy transport" and
+  drain on the existing callback tick. Add tests with a fake session whose destructor blocks until a
+  latch is released.
+- **DAP session ids are `int` and can wrap.** `next_session_id_` increments forever, while console
+  channels, active-session ids, and control notifications use that id as an identity. Long-running
+  debug-heavy sessions can eventually reuse a prior id and route output or termination events to the
+  wrong console. Fix direction: use `std::uint64_t` session ids or detect wrap and refuse/reseed. Add
+  a lowered-wrap test seam.
+- **Adapter retention can remove a type while sessions using that type are still running.** Adapter
+  registry refresh paths can retain only currently advertised adapter types; an active session that
+  was launched from a removed type keeps running, but restart, relaunch, or UI labelling can no longer
+  resolve the adapter entry. Fix direction: pin adapter metadata while any session of that type is
+  active, or mark it retired-but-session-owned. Add a test with an active session and a plugin reload
+  that drops its adapter.
+- **Line breakpoint resend can overflow the DAP 1-based line conversion.** Breakpoint snapshots store
+  line indexes as size-like values, but `SendBreakpointsForFile` converts with
+  `static_cast<int>(breakpoint.line) + 1`. A forged or corrupt persisted breakpoint near
+  `INT_MAX`/`SIZE_MAX` wraps to a negative or unrelated DAP line. Fix direction: clamp/reject
+  persisted and live breakpoint lines before DAP serialization. Add tests for `INT_MAX` and
+  `INT_MAX + 1` line values.
+- **Function breakpoint verification is positional but not bounded to the requested count.**
+  `on_function_breakpoints_verified` pushes every returned breakpoint, then applies it against the
+  requested names. A non-conformant adapter returning more results than requested can update extra
+  store entries or leave confusing unmatched verification state, depending on store behavior. Fix
+  direction: mirror line-breakpoint handling: ignore results beyond `requested_names.size()` and log a
+  protocol warning. Add a fake adapter response with cap+1 function breakpoint results.
+- **Function breakpoint by-name commands affect only the first matching name.** `RemoveFunctionBreakpointByName`,
+  `ToggleFunctionBreakpointByName`, and `SetFunctionBreakpointConditionByName` search the first exact
+  name. If duplicates are allowed, commands can mutate the wrong duplicate; if duplicates are not
+  intended, the store should reject them earlier. Fix direction: either enforce unique names or address
+  rows by stable id. Add tests for two function breakpoints named `main`.
+- **REPL evaluation callbacks are not generation-gated.** `EvaluateRepl` captures the session id and
+  console label, then appends results when async evaluate/variables callbacks arrive. If the session
+  ends and a new session reuses or reclaims nearby UI state before the callback drains, stale results
+  can be printed into an obsolete console tab. Fix direction: include session generation or verify
+  `SessionById(session_id)` is still the same active/evaluating session before appending. Add a test
+  that terminates the session before the evaluate response.
+- **REPL structured-result expansion can spam unbounded console text.** A result with
+  `variablesReference` triggers one eager page of variables and appends each child line to the console.
+  The page size is bounded, but child names/values are not truncated at the console handoff, and a
+  malicious adapter can return very large strings for every child. Fix direction: truncate REPL child
+  output by line and aggregate byte budget before appending. Add a fake evaluate result with large
+  child values.
+- **Debug hover evaluation is not tied to frame generation.** `EvaluateHover` uses the hover model's
+  own generation, but it does not compare against `frame_generation_`. A frame switch can clear the
+  model, then a late hover response may still resolve into the hover cache if the hover generation
+  happens to match the latest hover slot. Fix direction: capture both hover generation and frame
+  generation/frame id, then drop on either mismatch. Add a test for hover request followed by frame
+  focus before response.
+- **Variable and watch edit commits do not report adapter failures.** `CommitVariableEdit` and
+  `CommitWatchEdit` leave edit mode immediately; on `SetVariable` failure, the callbacks only redraw.
+  Users see the old value reappear with no feedback, and automated control cannot distinguish failure
+  from a no-op. Fix direction: keep a per-row failure/status field or append a debug-console message.
+  Add fake adapter tests for failed `setVariable`.
+- **Watch/variable child fetches mark loading errors without requesting redraw on the no-session path.**
+  `FetchVariablesPage` and `FetchWatchChildren` call `MarkChildrenError` when no session exists, then
+  return without `request_debug_pane_redraw`. The UI can leave the row showing "loading" until some
+  unrelated event repaints. Fix direction: request a debug-pane redraw after all synchronous error
+  transitions. Add tests for toggling a variable row after session teardown.
+- **Debug stop projection can focus source paths outside the active project.** `BuildExecutionView`
+  trusts `frame.source.path`, and `ProjectStop` calls `focus_source_location` on it. An adapter can
+  send absolute paths outside the project root, causing the editor to open arbitrary files when a
+  debuggee stops. That may be useful for system libraries, but it needs an explicit policy. Fix
+  direction: define debug source-opening policy: project-only by default with prompt/setting for
+  external files, or read-only external buffers with clear labelling. Add tests for `/etc/passwd` or a
+  temp path outside root.
+
+#### Persistence decode and session-state validation
+
+- **Project-session decoded layout floats accept finite out-of-range values.** `SidebarWidth`,
+  `BottomPanelHeight`, `GroupSplitFraction`, and `RightPaneWidth` rely on the primitive reader to
+  neutralize non-finite floats, but finite negative/huge values are still stored and deferred to later
+  layout code. Fix direction: clamp to product ranges during decode so persisted state is semantic
+  before any UI service reads it. Add fuzz and unit tests for negative widths, zero split fractions,
+  and huge finite values.
+- **Project-session enum-like bytes are not validated.** `GroupSplitOrientation` and `RightPaneMode`
+  decode arbitrary `u8` values. Later switch statements may fall through to defaults or render
+  impossible pane state. Fix direction: validate against the known enum domain and either reject the
+  record or normalize to defaults. Add decode tests with 255.
+- **Project-session tree path lists are not capped.** `expanded_tree_paths` and `collapsed_tree_paths`
+  append every record until the outer record reader cap. A hostile session can allocate thousands of
+  path strings and make tree restore expensive. Fix direction: cap expanded/collapsed path counts and
+  total decoded string bytes per session record. Add cap+1 decode tests.
+- **Workspace-session project root list is uncapped and not deduplicated.** `DecodeWorkspaceSessionRecord`
+  appends every `ProjectRoot`, and restore attempts each surviving root. A corrupt file can trigger a
+  large startup loop and duplicate project tabs. Fix direction: cap roots to the product tab limit,
+  dedupe after path normalization, and mark truncation for diagnostics. Add tests for duplicate roots
+  and cap+1 roots.
+- **Workspace-session active index is not semantically validated during decode.** The raw size value is
+  accepted and remapped during restore. That is mostly safe, but it means a corrupt session can hide
+  invalid data until restore and cannot report "bad active index" distinctly. Fix direction: validate
+  after root decode and normalize with a warning/error state. Add decode tests with an active index far
+  beyond root count.
+- **User/project settings persistence keeps duplicate setting ids.** `DecodeUserConfigRecord` and
+  `DecodeProjectConfigRecord` append every setting pair. Later layering decides which value wins by
+  iteration order, so duplicate records are a silent split-brain state. Fix direction: dedupe by id
+  during decode with last-writer-wins or reject duplicate ids as corrupt. Add tests with duplicate
+  `editor.tab_size` and plugin setting ids.
+- **Legacy persistence cleanup deletes sidecar files based only on the requested structured path's
+  existence.** `RemoveLegacyPersistenceArtifactsFor` removes fixed legacy filenames from the parent
+  directory when the structured target exists. If a caller points at an unexpected directory, the
+  cleanup can delete unrelated same-named files in that directory. Fix direction: restrict cleanup to
+  known app state/config roots or require the target filename to be one of the expected structured
+  artifacts. Add tests using a temp directory with unrelated `project.state.legacy`.
+- **Debug persisted file-breakpoint paths are not normalized or project-contained during decode.**
+  `DecodeFileBreakpoints` accepts any path payload, including absolute external paths or `..`
+  relative paths. Later breakpoint restore can display or send breakpoints for paths outside the
+  project. Fix direction: normalize and contain-check when hydrating debug state into a project, and
+  reject external persisted breakpoints. Add tests for absolute and parent-traversal paths.
+- **Persisted selected launch-config index is not clamped to the decoded launch-config count.**
+  `SelectedLaunchConfigIndex` decodes independently of `LaunchConfig` records. UI code must remember
+  to clamp every time it reads it; a forged high index can select no row or hit fallback behaviour.
+  Fix direction: normalize after decode once the launch list is known. Add tests for index == count and
+  index >> count.
+- **Persisted launch configs accept empty type/request and arbitrary arguments JSON.**
+  The decoder stores strings without checking that `type` maps to a registered adapter, `request` is
+  `launch`/`attach`, or `arguments_json` parses to an object. Later launch code becomes the error
+  boundary. Fix direction: validate when loading into the debug model and annotate invalid configs in
+  UI instead of letting them fail at launch time. Add tests for empty type, unknown request, and array
+  JSON.
+
+#### Git repository refresh, compare, patch, and commit workflows
+
+- **Git refresh generation does not include the project root.** `RequestRefresh` increments a single
+  generation counter and stores `active_project_root_`, but publish/supersede checks compare only the
+  numeric generation. A delayed job from root A cannot normally match a newer generation for root B,
+  but test/synchronous paths and reset/reopen sequences make the contract fragile. Fix direction:
+  carry `(root, generation)` as the identity on every refresh and publish only if both match. Add a
+  test switching projects while a refresh job is blocked.
+- **`GitRepositoryService::Reset` cancels the shared project background executor.** The service owns no
+  private queue; `background_executor_.Cancel()` can drop unrelated queued jobs from commit, patch, or
+  other project services if reset runs during project switching. Fix direction: give git refresh a
+  cancellable task namespace instead of cancelling the whole executor, or use per-service executors.
+  Add an integration test with an in-flight commit/patch job followed by git reset/project switch.
+- **Git sidebar outgoing base resolution can run extra subprocesses inside every full refresh.**
+  `BuildSidebarSnapshot` calls `ResolveGitOutgoingBase`, which can run several git commands after the
+  status parse. A repo with slow config/ref storage can make a "status" refresh do multiple serial git
+  reads. Fix direction: cache resolved base by HEAD/upstream/config generation, or fold needed refs
+  into one git command. Add perf tests on a repo with many refs and slow packed-refs access.
+- **Branch collection reports remote refs as labels rather than full refs.** `CollectGitBranches`
+  pushes `{.ref = label, .label = label}` after stripping `refs/remotes/`. For `origin/main`, later
+  code that expects a verified ref passes `origin/main` instead of `refs/remotes/origin/main`. Git
+  usually resolves that, but ambiguous local/remote names can compare the wrong target. Fix direction:
+  keep the full ref in `.ref` and short label only in `.label`. Add tests with both local `origin/main`
+  and remote `origin/main`-like names.
+- **Base-reference config values are not constrained before `show-ref`.** `ResolveNamedBranchReference`
+  builds ref strings from `branch.<name>.gh-merge-base` and remote config. Weird values containing
+  `..`, spaces, or ref metacharacters are passed to git commands. `--verify` protects option parsing,
+  but the UI can still show and later diff surprising refs. Fix direction: validate configured base
+  names against git refname rules or use `git check-ref-format --branch` in the background. Add tests
+  for invalid base config values.
+- **Specific outgoing base refs are accepted without existence validation.** `ResolveGitOutgoingBase`
+  for `SpecificRef` copies `custom_ref` straight into sidebar state. Later outgoing-file collection
+  fails to empty lists with little distinction between "no outgoing files" and "bad base ref". Fix
+  direction: validate specific refs in the background refresh, surface an explicit invalid-base error,
+  and avoid running outgoing diff when invalid. Add tests for typo refs and option-looking refs.
+- **`GitRepository::FileExistsAtRevision` still concatenates `revision:path` into one argument.** The
+  call uses `--end-of-options`, but `revision` and path are still a single revspec string. A path with
+  syntax meaningful to git rev parsing, or a revision containing a colon from user input, can produce
+  ambiguous results. Fix direction: validate revision strings before use or prefer `git cat-file`
+  plumbing with separated object resolution. Add tests for paths with colon-like names on platforms
+  that allow them and invalid custom revisions.
+- **`GitRepository::Discard` treats an untracked directory target as `git clean -fd -- path`.** That
+  can recursively delete a whole untracked directory from a single file-row discard if the row path is
+  stale or points at a directory. Fix direction: classify the selected entry as file/directory at the
+  UI boundary and require a directory-specific confirmation for recursive clean. Add tests for
+  untracked directory discard and stale file-to-directory replacement.
+- **Patch apply preflight and apply are not atomic.** `ApplyGitPatch` runs `git apply --check` and then
+  `git apply`. The working tree/index can change between the two commands, especially because the
+  operation is on a background queue while other git operations can run. Fix direction: rely on the
+  real apply result as authoritative, or serialize patch operations with other git mutators and refresh
+  generation checks. Add tests where the file changes after preflight but before apply.
+- **Patch apply dispatch reads current repository state from a background thread through callbacks.**
+  `DispatchApply` calls `callbacks_.current_repository_state()` inside the executor job. If that
+  callback is backed by UI-owned state or takes locks in UI order, it risks races/deadlocks and makes
+  the project mutation boundary unclear. Fix direction: capture the repository root/generation needed
+  for preflight at request build time and marshal all UI-state reads back through the completion
+  mailbox. Add TSAN coverage for patch apply while refreshing git state.
+- **Patch apply completions are not marshalled through a mailbox.** Unlike the commit workflow,
+  `PatchApplyService::DispatchApply` calls `PublishResult`, `ReportResult`, and UI callbacks directly
+  from the background executor job. That mutates command feedback, refreshes compare tabs, and touches
+  blame/editor callbacks off the main thread. Fix direction: add a completion mailbox/wake event like
+  `CommitWorkflowService`, and run all callbacks on the shell thread. Add TSAN tests for staged hunk
+  apply.
+- **Pending discard preview stores patch text without a repository/diff freshness re-check at confirm
+  time.** `ConfirmPendingDiscard` dispatches the previously generated patch. The request carries
+  generations, but there is no user-facing warning if the preview is old and the confirm happens much
+  later; the background path reports stale only after queue execution. Fix direction: re-check current
+  diff/repository generation before dispatching confirm and close the prompt with explicit stale
+  feedback. Add tests for refresh between preview and confirm.
+- **Commit workflow captures `CommitWorkflowState&` across a background operation.** `DispatchCommit`
+  captures `&state` in the worker and completion lambda. If the overlay/project is closed, switched,
+  or the state object is moved before completion drains, the completion can write to the wrong or dead
+  state. Fix direction: identify the project and workflow instance by stable generation/id, store
+  results in a mailbox independent of the state address, and apply only if the instance is still
+  current. Add tests closing the commit overlay and switching projects before a fake commit returns.
+- **Commit workflow does not cancel or invalidate an in-flight commit on close.** `Close` sets
+  `operation_in_flight = false`, but it does not increment `operation_generation_`. A later completion
+  with the same captured generation can still publish output, close/reset fields, or notify after the
+  user intentionally closed the workflow. Fix direction: bump the generation on close/project switch
+  and decide whether an in-flight commit remains visible in an output channel. Add a test closing while
+  the executor job is blocked.
+- **Commit success does not verify that HEAD advanced from the captured repository generation.**
+  `PublishResult` ignores `repository_generation`; a successful `git commit` can race with a refresh or
+  repository switch and still clear the current draft. Fix direction: compare captured root/head/generation
+  on completion and only clear the matching workflow. Add tests for project switch and external commit
+  during in-flight commit.
+- **Commit failure classification treats any output containing `hook` as hook failure.**
+  `ClassifyCommitFailure` lowercases all output and searches broad substrings. A non-hook error that
+  mentions "hook" in a path, branch, or commit message can be misreported, hiding the real failure.
+  Fix direction: prefer git exit context and anchored known messages, and keep unknown output as
+  unknown. Add table tests for false-positive strings.
+- **Commit subject/body are passed as command-line `-m` arguments.** This is functionally correct but
+  exposes commit text to process listings on some platforms and can hit argv length limits for large
+  bodies. Fix direction: write the message to a temporary file or pipe and use `git commit -F -`, with
+  careful cleanup and tests for large bodies. Add a test near platform argv limits.
+
+#### Project search, recents, and file operations
+
+- **Project search helper thread creation is unbounded relative to process-wide workload.** Each search
+  can spawn up to eight helper threads inside a background executor job. Multiple subsystems also use
+  background work, so a search in a huge repo can occupy cores and delay git/plugin tasks. Fix
+  direction: route search through a shared worker pool or expose a global concurrency budget. Add perf
+  tests with concurrent search and git refresh.
+- **`MICROIDE_SEARCH_WORKER_LIMIT` has no upper clamp.** The environment override accepts any integer
+  >= 1 and stores it in `unsigned int`. A bad environment can request thousands of helper threads,
+  bounded only by `total_files`. Fix direction: clamp the override to a small product maximum and log
+  when it is reduced. Add tests for `0`, `1`, `999999`, and non-numeric values.
+- **Literal smart-case search is ASCII-only but UI likely presents it as general smart case.**
+  `UsesCaseSensitiveSearch` and lowercasing use ASCII helpers. Queries with non-ASCII uppercase
+  letters behave as case-insensitive ASCII-only search, producing mismatches for Unicode text. Fix
+  direction: document smart-case as ASCII-only or add UTF-8 case folding for search. Add tests with
+  `Ä`/`ä` and Greek/Cyrillic examples.
+- **Case-insensitive literal search reports byte columns from lowercased ASCII buffers only.** That is
+  correct for ASCII lowercasing, but if Unicode case folding is later added naively, byte offsets will
+  no longer line up with original text. Fix direction: lock in an offset-preserving search contract
+  before adding Unicode folding. Add regression tests that assert reported columns are original byte
+  offsets.
+- **Project search result ordering is thread-scheduling dependent.** Results are published in batches
+  from multiple helpers as files are claimed by an atomic cursor. Display order can vary between runs
+  even with the same indexed file list, which hurts keyboard workflows and tests. Fix direction:
+  collect stable `(file_index,line,column)` order before display or sort pending batches on the UI
+  side with incremental merge. Add deterministic-order tests with worker limit > 1.
+- **Project search progress counts files claimed, not files fully searched.** `files_visited` is
+  incremented before file read/search work. Progress can show a file as searched while a slow read or
+  regex scan is still running, and final progress can briefly reach total before results drain. Fix
+  direction: track claimed and completed separately; display completed. Add tests with a blocking file
+  read seam.
+- **Project search cancellation does not join helper threads until the worker task returns.** `Stop`
+  requests cancel and cancels the task queue, but if a running worker spawned helper threads, they join
+  only inside `RunSearch` after each helper observes cancellation. Pathological file reads or regex
+  calls can still keep the old search alive while a new run starts. Fix direction: use a shared
+  cancellable pool with bounded join latency or make file reads interruptible. Add a stress test
+  starting/stopping searches rapidly on a slow filesystem seam.
+- **Search pending updates can accumulate large result vectors between UI drains.** The worker caps
+  total stored results, but `pending_update_.results.insert` can still move a large number of preview
+  strings into one mailbox update if the UI is busy. Fix direction: cap pending-update bytes and keep
+  overflow in a service-side result store. Add tests where the UI does not drain until search finishes.
+- **Recents are compared and deduped by raw path value.** `RecordProjectOpen`, `RecordFileOpen`, and
+  `RecentFilesFor` use direct `std::filesystem::path` equality. The same path can appear multiple
+  times via symlinks, relative-vs-absolute spelling, case differences on case-insensitive filesystems,
+  or lexical `..`. Fix direction: normalize/canonicalize paths at record time with platform-aware
+  case policy. Add tests for lexical aliases and symlink aliases.
+- **Recent-file entries are not pruned when their project root changes or disappears.** `RecentFilesFor`
+  filters by exact project root but never removes stale files/projects. Long use across moved repos can
+  leave dead entries and make file pickers noisy. Fix direction: prune missing roots/files lazily with
+  a budget and update MRU storage. Add tests for missing project root on startup.
+- **File create/rename operations allow targets outside the active project unless the caller checks.**
+  `FileOperationService` normalizes absolute paths and performs the operation; it has no root
+  containment policy. If any UI/control/plugin caller passes an arbitrary absolute path, project file
+  operations can write or move outside the workspace. Fix direction: make the service root-scoped or
+  require an explicit `AllowExternalPath` mode. Add tests for `../outside` and absolute external paths
+  through every caller.
+- **`CreateDirectory` uses an exists-then-create sequence.** A racing process can create a non-directory
+  at the target after the exists check and before `create_directories`; the current error collapses to
+  "failed to create directory" with no distinction, and some platform behaviours may leave partial
+  parents. Fix direction: call `create_directories` first and then verify the result is a directory,
+  using non-throwing status. Add a race/injected filesystem test.
+- **`RenamePath` uses exists checks before `MovePath`, so destination races are reported late and
+  unclearly.** Another process can create the destination after the check. Depending on `MovePath`
+  implementation, the operation may fail, overwrite, or perform cross-device fallback work before
+  discovering the race. Fix direction: make `MovePath` expose no-overwrite semantics end-to-end and
+  return structured errors. Add tests with destination created between check and move via a seam.
+- **Reserved-component validation checks only the destination filename after normalization.** For file
+  create/rename, earlier path components can include reserved names before lexical normalization, and
+  platform-specific reserved names (`CON`, `NUL`, trailing spaces/dots on Windows) are not checked
+  here. Fix direction: validate every user-entered component before normalization and add
+  platform-specific reserved-name rules. Add Windows tests for device names and trailing-dot paths.
+
 ### Won't-do — verified non-defects
 
 - **Terminal: combining mark after a double-width glyph.** Dead code —
