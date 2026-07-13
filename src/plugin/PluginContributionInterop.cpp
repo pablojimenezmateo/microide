@@ -177,6 +177,10 @@ bool RegisterLanguageServer(lua_State* state,
                                                              &registration, error_message)) {
     return false;
   }
+  if (DuplicateContributionId(*servers, registration.contributed, "language server",
+                              error_message)) {
+    return false;
+  }
   servers->push_back(std::move(registration.contributed));
   return true;
 }
