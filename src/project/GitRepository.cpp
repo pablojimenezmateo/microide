@@ -4,6 +4,9 @@
 #include "project/GitPorcelainParser.h"
 #include "util/StringUtil.h"
 
+#include <filesystem>
+#include <system_error>
+
 namespace microide::project {
 
 namespace gitutil = microide::project::internal;
@@ -234,10 +237,20 @@ bool GitRepository::Discard(const std::filesystem::path& relative_path,
          relative_path.generic_string()});
   }
 
+  // The remaining case is an untracked file row. `git status --untracked-files=all`
+  // lists individual files (never bare directories), so a single-row discard must
+  // never recurse: `clean -fd <path>` on a path that is (or became, via a stale
+  // row) a directory would delete the entire subtree — silent data loss. Refuse a
+  // directory target here (a recursive clean must go through an explicit,
+  // separately-confirmed directory flow) and drop `-d` so only the file is removed.
+  std::error_code dir_error;
+  if (std::filesystem::is_directory(root_ / relative_path, dir_error)) {
+    return false;
+  }
   return ExecuteSucceeds(
              {"rm", "-f", "--cached", "--ignore-unmatch", "--",
               relative_path.generic_string()}) &&
-         ExecuteSucceeds({"clean", "-fd", "--", relative_path.generic_string()});
+         ExecuteSucceeds({"clean", "-f", "--", relative_path.generic_string()});
 }
 
 bool GitRepository::StageAll() const {

@@ -185,6 +185,17 @@ void TestGitWorkingTreeStatusAndActions() {
          "discard should restore modified tracked file");
   Expect(ReadFile(modified_file) == ReadFile(base_dir / "README.md"),
          "discard should restore tracked file to HEAD content");
+
+  // Regression: a single-row discard whose path points at an untracked directory
+  // must NOT recursively `git clean -fd` the whole subtree (silent data loss). It
+  // refuses and leaves the directory and its contents intact.
+  const auto untracked_dir = repo_path / "untracked_pkg";
+  std::filesystem::create_directories(untracked_dir);
+  WriteFile(untracked_dir / "keep.txt", "precious\n");
+  Expect(!GitDiscardPath(repo_path, untracked_dir),
+         "discarding an untracked directory row is refused, not a recursive clean");
+  Expect(std::filesystem::exists(untracked_dir / "keep.txt"),
+         "the untracked directory and its files survive a refused discard");
 }
 
 void TestGitOutgoingBranchFiles() {
