@@ -210,6 +210,20 @@ Detail per batch lives in the sweep commits.
   **parses `file://` URIs** (empty/localhost host only; percent-decoded path).
 - **Status-bar language cache keys on `runtime_syntax::RegistryRevision()`** so the language
   label re-detects after a syntax reload.
+- **Project search + file finder + single-line word motion + file icons are Unicode-aware.**
+  Wired the length-preserving `Utf8CaseFold` into project-search smart-case/insensitive literal
+  matching (byte columns stay aligned), file-finder query/cache lowering, and file-icon matcher
+  keys; single-line word movement decodes code points (`Utf8IsIdentifierCodepoint`). (Editor
+  case-insensitive replace + identifier hover ranges remain ASCII — still open below.)
+- **`SurfaceTextureCache` retries a transient `SDL_CreateTexture` failure** (bounded to 3, then
+  treats it as permanent) instead of leaving the marker set and suppressing a valid decoded image
+  until `Clear()` — matching the sibling `renderer == nullptr` path. (`ComputeDisplayListHash`
+  hashing "struct padding" is a verified non-defect: it hashes each field individually and the
+  field types have no internal padding.)
+- **Plugin task/tool/debug-adapter/launch-config contributions reject a duplicate local id** at
+  the interop boundary (shared `DuplicateContributionId`) so first-match consumers are
+  deterministic. (Remaining id-shaped kinds — language servers, AI providers, agents, snippets —
+  still to extend.)
 
 #### Newly found during the sweep (not from the tranches)
 
@@ -286,11 +300,6 @@ Detail per batch lives in the sweep commits.
   hunk can reach ~4.3e9 token comparisons synchronously on the UI thread. Memoization
   gives nothing (every cell is required); any tighter cap flips pinned behavior. Bounded
   perf cliff, not a bug.
-- **`SurfaceTextureCache` transient `SDL_CreateTexture` failure leaves the
-  `in_flight_or_failed_` marker set**, permanently suppressing a valid decoded image
-  until `Clear()` — inconsistent with the sibling `renderer == nullptr` path that erases
-  the marker. Dropping the marker changes retry policy (risk: re-decode-every-frame on a
-  genuinely un-creatable texture), so deferred as a retry-semantics judgment call.
 - **Multi-caret overlapping *selections* are not merged** (`TextViewportMultiCaret`
   dedups only on equal caret position). The reverse-walk apply would double-edit if two
   carets held overlapping selections. Not reachable via normal UI (Ctrl+D / box-select
@@ -758,11 +767,6 @@ test proves it is unreachable.
   case-insensitive paths and separator normalization can show duplicates or fail to match a recent
   whose casing changed. Fix direction: use the same normalized path key as editor tabs/decorations for
   recent lookup. Add host-platform-override tests with `Src/Main.cpp` vs `src/main.cpp`.
-- **File finder fuzzy matching is byte/ASCII-based for UTF-8 paths.** Query lowercasing and
-  subsequence scoring use ASCII byte comparisons. Non-ASCII filenames are indexed but not matched in
-  expected case-insensitive ways, and combining characters can rank oddly. Fix direction: either
-  document ASCII matching or add Unicode case-folding/grapheme-aware scoring. Add finder tests for
-  `Résumé.cpp` and query `resume` / `rés`.
 - **File finder keeps the full uncapped matched-index set for narrowing.** This preserves correctness
   for later typing, but an empty/one-character query over a huge index stores every match index. The
   index itself is capped elsewhere, yet this can still be a noticeable allocation on the shell thread.
@@ -973,11 +977,6 @@ test proves it is unreachable.
   direction: choose a product policy per field: replace line breaks with spaces for search/commands,
   take first line for paths/renames, or reject with visible feedback. Add paste tests for search,
   command palette, and rename prompt.
-- **Single-line word movement is ASCII identifier based.** `MoveWordLeft`/`MoveWordRight` use
-  `IsIdentifierByte`, so non-ASCII letters are treated as punctuation and camel/identifier movement
-  in prompts breaks for many languages. Fix direction: either document ASCII-only command semantics or
-  use a UTF-8 codepoint category helper shared with editor word motion. Add tests with accented and
-  CJK text.
 - **Text visual width treats every non-tab code point as one cell.** `AdvanceVisualColumn` ignores
   East Asian wide characters, emoji width, zero-width joiners, and combining marks. This affects caret
   hit testing, horizontal scroll, hover target mapping, compare alignment, and inlay placement for
@@ -1401,11 +1400,6 @@ test proves it is unreachable.
 
 ##### Rendering, plugin display lists, and image assets
 
-- **Display-list hashing includes raw struct padding.** `ComputeDisplayListHash` hashes `SDL_FRect`,
-  `SDL_Color`, `data_offset`, and `data_count` memory directly. Padding bytes can be uninitialized or
-  ABI-dependent, making identical plugin display lists hash differently across builds or runs. Fix
-  direction: hash fields explicitly in a stable byte order. Add a deterministic hash test that
-  constructs ops through different initialization paths.
 - **Display-list validation accepts huge finite rectangles that are later clamped silently.** Replay
   clamps to +/-1,000,000 before int conversion, but validation does not report geometry far outside
   content bounds. A plugin can create impossible hit/paint extents and get clipped in surprising ways.
@@ -1420,11 +1414,6 @@ test proves it is unreachable.
   incorrectly for corrected bytes, the image never retries and no diagnostic identifies the bad cache
   key. Fix direction: include declared byte size/format in the request key or reject plugin-supplied
   hash reuse with mismatched metadata. Add a test that requests same hash with bad then good bytes.
-- **Texture upload failure leaves a decoded image in permanent pending/failed limbo.** If
-  `SDL_CreateTexture` fails, `Upload` continues without erasing the pending marker or recording a
-  retry policy. A transient renderer/resource failure can suppress that image until cache clear. Fix
-  direction: classify upload failure separately from decode failure and retry after renderer/device
-  recovery with a bounded count. Add an SDL texture-creation failure seam test.
 - **Raw RGBA plugin images are copied twice before upload.** `Request` takes `bytes` by value, the
   worker moves it into `WrapRgba8`, then `WrapRgba8` copies into `out.rgba`, and SDL copies again on
   upload. Large plugin images pay avoidable memory bandwidth. Fix direction: move the validated RGBA
@@ -1567,12 +1556,6 @@ test proves it is unreachable.
   and memory use impractical. Fix direction: use per-kind caps sized to product needs, e.g. low
   hundreds for visible UI contributions and separate caps for data-heavy providers. Add registration
   tests for each cap.
-- **Many vector-backed plugin contributions do not reject duplicate ids.** Tasks, tools, language
-  servers, debug adapters, launch configs, AI providers, external agents, bracket sets, comment markers,
-  indent rules, and snippets are appended to vectors with no duplicate-id check in
-  `contribution_interop`. First-match consumers then get order-dependent behavior. Fix direction:
-  centralize duplicate-id validation for every contributed type. Add plugin setup tests registering the
-  same local id twice for each vector-backed kind.
 - **Malformed LSP `initialization_options` and `settings` JSON is silently ignored.** The parser leaves
   the fields null when JSON parsing fails, but registration still succeeds. Plugin authors get a server
   launched with missing configuration and no actionable error. Fix direction: reject present-but-invalid
@@ -1644,11 +1627,6 @@ test proves it is unreachable.
   `Clear()`. Plugin reload or one provider failing rediscovery cannot remove just that provider's
   tests. Fix direction: store items by provider and discovery generation. Add tests with two providers
   where one reloads.
-- **File icon registry lowercases only ASCII.** `WorkspaceFileIconRegistry::Resolve` uses
-  `ToLowerAsciiInto`, so Unicode case variants in filenames/extensions do not match plugin rules or
-  built-ins consistently across platforms. Fix direction: define icon matching as ASCII-only in the
-  spec or add platform-normalized case folding for filenames. Add tests for non-ASCII uppercase
-  extension characters.
 - **File icon theme rules are last-writer-wins without priority or diagnostics.** `Rebuild` overwrites
   `by_name_`/`by_extension_` entries as it walks contributed themes. Two plugins matching the same
   extension silently depend on registration order. Fix direction: add explicit priority or report
@@ -1930,11 +1908,6 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   background work, so a search in a huge repo can occupy cores and delay git/plugin tasks. Fix
   direction: route search through a shared worker pool or expose a global concurrency budget. Add perf
   tests with concurrent search and git refresh.
-- **Literal smart-case search is ASCII-only but UI likely presents it as general smart case.**
-  `UsesCaseSensitiveSearch` and lowercasing use ASCII helpers. Queries with non-ASCII uppercase
-  letters behave as case-insensitive ASCII-only search, producing mismatches for Unicode text. Fix
-  direction: document smart-case as ASCII-only or add UTF-8 case folding for search. Add tests with
-  `Ä`/`ä` and Greek/Cyrillic examples.
 - **Case-insensitive literal search reports byte columns from lowercased ASCII buffers only.** That is
   correct for ASCII lowercasing, but if Unicode case folding is later added naively, byte offsets will
   no longer line up with original text. Fix direction: lock in an offset-preserving search contract
