@@ -245,9 +245,10 @@ Detail per batch lives in the sweep commits.
   **Not product-reachable**: production callbacks reference shell/project-owned state that outlives
   the manager (ordered shutdown), never a shorter-lived local. Test-authoring rule: declare
   callback-referenced fixtures **before** the `DapManager`, or shut the manager down explicitly
-  first. Minor robustness follow-up (recorded, not a crash): audit whether `DapClient` dispatches
-  `event_callback` synchronously on the io thread vs. only via `main_mailbox`, so a future caller
-  can't be surprised by a worker-thread callback.
+  first. Verified: `DapClient::HandleEvent` dispatches `event_callback` via `main_mailbox.Post`
+  (runs on the main thread when drained), never synchronously on the io thread — so the session's
+  callbacks always fire on the main thread and a worker thread can never invoke them, confirming
+  production soundness. Nothing further to do here.
 
 ### Still open (deferred, lower value / larger / latent)
 
