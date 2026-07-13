@@ -224,13 +224,14 @@ behavioral contract before changing code.
 
 ##### Workspace orchestration, LSP, code actions, and plugin-facing edits
 
-- **Server-initiated `WorkspaceEdit` ignores `documentChanges` and resource operations.**
-  `ApplyServerWorkspaceEdit` flattens only URI-keyed text `changes`; LSP edits that include
-  `documentChanges`, `TextDocumentEdit`, `CreateFile`, `RenameFile`, or `DeleteFile` are partially
-  or wholly dropped. Rename/code-action providers commonly use those shapes. Fix direction: extend
-  the LSP parser and applier to support versioned text-document edits and resource operations through
-  the existing `FileOperationService`, with project-root containment checks. Add fixtures for a
-  server rename that both edits imports and renames a file.
+- **Server-initiated `WorkspaceEdit` ignores resource operations and version semantics.**
+  The LSP parser now flattens URI-keyed `changes` and `TextDocumentEdit` entries from
+  `documentChanges`, but it still skips `CreateFile`, `RenameFile`, and `DeleteFile` and ignores
+  `textDocument.version`. Rename/code-action providers commonly use those shapes. Fix direction:
+  support resource operations through the existing `FileOperationService`, reject or rebase stale
+  versioned text edits against the current open-buffer version, and keep project-root containment
+  checks. Add fixtures for a server rename that both edits imports and renames a file, plus a stale
+  versioned edit.
 - **Server workspace edits return false when every edit is filtered, without surfacing why.**
   `ApplyServerWorkspaceEdit` skips non-file URIs and paths outside the project/open buffers; if that
   leaves no edits it returns false. From the user's perspective a code action may appear to do
@@ -683,6 +684,290 @@ test proves it is unreachable.
   "operation failed", "truncated", or "fallback used"; the status bar currently has ad hoc call sites.
   Fix direction: define a small status-message service with severity, source, expiry, and replace
   rules. This is a prerequisite for several silent-failure fixes above.
+
+#### 2026-07-13 deep subsystem audit backlog — third tranche
+
+##### LSP / DAP protocol framing and request semantics
+
+- **`LspMessageFramer` only accepts an exact `Content-Length: ` header spelling.** The framer drops
+  any first header line that is lower/mixed case, lacks the post-colon space, or carries otherwise
+  valid header syntax. Most test servers emit the exact spelling, but JSON-RPC-over-header peers are
+  often HTTP-style tolerant, and a real server using `Content-Length:42` would make the client consume
+  the body as header noise until the read-buffer cap or a lucky resync. Fix direction: parse header
+  lines case-insensitively, allow optional whitespace around the value, and keep the malformed-frame
+  resync behavior. Add framing tests for lowercase, no-space, and extra-whitespace variants.
+- **Malformed LSP frame recovery can scan arbitrary body bytes as future headers.** When the
+  `Content-Length` value is nonnumeric or nonpositive, `LspMessageFramer::Next` consumes only that
+  line and then tries to resync line-by-line. If the malformed frame also has a blank line and a large
+  body, the body is interpreted as candidate headers, causing avoidable CPU churn and occasionally a
+  false resync if the payload contains a `Content-Length:` line. Fix direction: once a malformed
+  length is seen inside a header block, drop through the next blank line and optionally require a
+  bounded resync window before accepting another frame. Add a fixture with malformed header plus body
+  containing a fake `Content-Length`.
+- **LSP response id narrowing still uses raw `static_cast<int>`.** `WorkspaceLspClientDispatch`
+  checks `id` is integer-like, then casts `msg["id"].AsInt()` to `int` instead of using
+  `protocol_numeric::JsonIntInRange`. A hostile or buggy server can return an out-of-range id and hit
+  implementation-defined narrowing. The usual outcome is a missed pending request, but wrapping into
+  an existing id would dispatch the wrong callback. Fix direction: apply the shared numeric helper
+  and reject ids outside the request-id domain before map lookup. Add a regression with
+  `9223372036854775807`.
+- **String-valued JSON-RPC response ids are ignored.** The client only accepts integer or double ids.
+  This matches requests emitted by MicroIDE today, but some intermediaries and test harnesses stringify
+  ids. If a server echoes `"id":"5"` the pending request times out and then degrades as an empty
+  response. Fix direction: decide whether to reject string ids explicitly with a trace entry or accept
+  exact decimal strings that match in-flight integer ids. Add one LSP transport fixture either way.
+- **LSP request timeouts and server exits are delivered as empty success-shaped objects.**
+  `FailPendingRequests` invokes callbacks with `{}` and no error envelope, so completion, definition,
+  semantic tokens, hover, and code-action handlers cannot distinguish "server did not answer" from a
+  legitimate empty result. The UI then reports no matches/actions instead of "language server timed
+  out/exited". Fix direction: introduce a small `LspRequestOutcome` or JSON-RPC error envelope and
+  plumb it through request callbacks. Add tests for timeout and EOF on at least definition and code
+  action surfaces.
+- **`window/showMessageRequest` is auto-dismissed without surfacing server actions.** Server requests
+  for user choice are answered with `null`. That is valid protocol-wise, but servers use this for
+  "install component", "reload project", or "apply workspace setting" prompts; silently declining can
+  make language features appear broken. Fix direction: route the request through the prompt surface
+  with bounded action labels, then return the selected action or `null` on dismissal. Add a fake server
+  that offers two actions and asserts the selected action is sent back.
+- **`window/showDocument` requests are auto-rejected/ignored.** The dispatch path returns `null` for
+  server document-open requests, so servers cannot open generated documentation, external build logs,
+  or source files from server-side commands. Fix direction: support `file:` URIs inside the project
+  through the normal open-file path and explicitly reject external/web URIs with visible feedback.
+  Add containment tests for project file, outside-project file, and `https:` URI.
+- **LSP `workspace/configuration` does not resolve dotted section names.** The handler checks
+  `settings.HasKey(section)` directly. Servers commonly ask for sections such as
+  `rust-analyzer.cargo`, `clangd.arguments`, or nested workspace keys, while persisted settings may be
+  stored as hierarchical objects or prefixed ids. Fix direction: define one mapping between MicroIDE
+  settings ids and LSP section keys, including dotted paths, and test common clangd/rust-analyzer
+  requests against real configured values.
+- **LSP diagnostics accept out-of-spec severity values.** `ParseDiagnostic` stores
+  `JsonIntInRange(value["severity"], 1)` but does not clamp to the LSP range 1..4. Downstream severity
+  filters, colors, and "most severe" status logic may misclassify severity 0, 99, or a huge clamped
+  `INT_MAX`. Fix direction: clamp to 1..4 or treat invalid values as the default severity. Add parser
+  tests for missing, zero, five, and huge severities.
+- **LSP result truncation is silent on locations, diagnostics, symbols, workspace edits, semantic
+  tokens, inlay hints, and signature help.** The parser caps several arrays to protect the UI thread,
+  but it returns the same type whether the result was complete or clipped. Users see an incomplete
+  references list or outline with no indication. Fix direction: return a `truncated` bit alongside
+  parsed results and surface it through status/messages and picker footers. Add parser tests that hit
+  each cap and UI tests that assert visible truncation feedback.
+- **Single-string/object hover content is uncapped.** `ParseHoverContents` bounds array hover content,
+  but a bare string or `MarkupContent { value }` is returned in full. A server can send one tens-of-MiB
+  hover payload inside the 64 MiB frame cap and force allocation/render work on the main callback path.
+  Fix direction: apply the same byte cap and explicit truncation marker to all hover shapes. Add tests
+  for bare string, markup object, marked-string object, and array variants.
+- **Signature-help parameter label offsets are treated as byte offsets.** The LSP offsets in
+  `SignatureInformation.parameters[].label` are UTF-16 code-unit offsets into the signature label.
+  `ParseSignatureHelp` slices the UTF-8 byte string directly, which breaks non-ASCII function labels
+  and can drop or corrupt the active parameter display. Fix direction: convert UTF-16 offsets to UTF-8
+  byte offsets before slicing, rejecting invalid ranges. Add tests with `f(é, β)`-style labels.
+- **Signature-help labels and documentation have no per-field byte cap.** Counts are capped, but each
+  signature label, parameter label, and documentation string is copied as-is. A single hostile result
+  can consume large memory and render time without exceeding count limits. Fix direction: cap each
+  copied string on UTF-8 boundaries, with a truncation marker where user-facing. Add parser tests with
+  one oversized label/documentation field.
+- **Semantic-token parsing silently ignores trailing partial groups and invalid coordinates.** This is
+  currently defensive, but it also hides a server/protocol bug and can shift token colors with no user
+  feedback. Fix direction: keep ignoring malformed tokens for robustness, but trace and expose a
+  per-response dropped-token count to diagnostics/status in debug builds. Add parser tests that assert
+  the dropped count for partial groups, negative deltas, and overflow coordinates.
+- **DAP and LSP framing rules are implemented separately and can drift.** DAP has an inline parser in
+  `WorkspaceDapClientInternal.h` while LSP uses `LspMessageFramer`. Any header tolerance, cap, or
+  malformed-frame recovery fix must be duplicated by hand. Fix direction: extract a shared
+  `ContentLengthFramer` parameterized by protocol name and cap, then reuse it in both clients. Add
+  shared framing tests plus one DAP integration smoke test.
+
+##### Patch apply, compare review, and git boundaries
+
+- **Patch apply background work calls shell callbacks from the background executor.**
+  `PatchApplyService::DispatchApply` invokes `current_repository_state`, `request_git_refresh`,
+  `invalidate_editor_blame_path`, `reload_clean_editor_tabs_for_path`, `refresh_compare_tab_for_path`,
+  and `set_command_feedback` from the posted worker lambda. Several of those callbacks are shell/UI
+  state operations and are not documented thread-safe. Fix direction: keep git apply on the worker but
+  marshal all shell/service callbacks back to the main mailbox; make the callback type names reflect
+  thread affinity. Add TSAN coverage around rapid stage/discard plus tab close/project switch.
+- **Patch apply stale checks compare only repository generation, not repository identity.** A delayed
+  apply request captures a repository root and generation, but the worker compares the generation
+  against the current active repository state. If the user switches projects and the new state happens
+  to have the same generation, the stale check can pass while callbacks refresh the wrong project and
+  feedback is attributed to the wrong shell context. Fix direction: compare repository root and a
+  project/session token as well as generation; drop or re-route completion when the originating project
+  is no longer active. Add a two-repo fixture where both states start at generation 0.
+- **`diff_model_generation` is captured then intentionally unused.** Patch text is generated
+  synchronously before dispatch, but confirmation flows and async apply still carry a model revision
+  that is never checked. If the compare tab is refreshed/rebased without a repository generation bump
+  between request construction and destructive discard confirmation, the prompt can apply a patch the
+  visible model no longer represents. Fix direction: either remove the field and document the invariant
+  or validate the originating compare tab/model revision before dispatch and completion. Add tests for
+  discard confirmation followed by compare refresh before confirm.
+- **Patch generation hardcodes file modes for create/delete.** `PatchGenerator` emits
+  `new file mode 100644` and `deleted file mode 100644` and has no representation for executable bits
+  or symlink mode. Staging/discarding a created executable script, deleted executable, or symlink can
+  produce an index/worktree state with wrong mode metadata. Fix direction: thread mode metadata from
+  compare semantic metadata or git diff headers into the patch generator. Add git fixtures for
+  executable create/delete and symlink create/delete.
+- **Mode-only changes have no patch-apply path.** The patch-review UI gates on text semantic files and
+  `PatchGenerator` only emits content hunks. A chmod-only change or symlink-target mode change can
+  appear in git status but cannot be staged/discarded from compare review. Fix direction: model
+  mode-only changes as first-class compare entries with explicit stage/discard commands, not fake text
+  hunks. Add git fixtures for `chmod +x file` with no content change.
+- **Rename/copy metadata is flattened to the new path for review operations.**
+  `ParseGitBranchDiffNameStatusZ` reports only the new path for rename/copy records, and patch
+  generation emits `diff --git a/<path> b/<path>` for a single path. Content hunk staging on renamed
+  files can lose rename context, and branch/outgoing file lists cannot open the old side by identity.
+  Fix direction: keep old path, new path, and similarity score in the semantic file model; teach patch
+  generation about `rename from` / `rename to` when needed. Add fixtures for staged and unstaged
+  renames with additional edits.
+- **Branch base resolution accepts arbitrary config strings as refs.** `ResolveGitBaseReference` reads
+  `branch.<name>.gh-merge-base` and `branch.<name>.remote`, concatenates them into refs, and falls
+  back to checking the raw branch name. Commands are argument-vector based, but invalid refname bytes,
+  path traversal-looking names, or names beginning with option-like text can still produce surprising
+  resolution and labels. Fix direction: validate config-derived names with `git check-ref-format
+  --branch` or stricter local rules before using them as refs/labels. Add fixtures with malformed
+  config values and option-looking names.
+- **Recent-commit parsing remains unbounded at the parser API.** `CollectGitRecentCommits` caps its
+  requested limit, but `GitPorcelainParser::ParseLog` itself still materializes everything it is given
+  and is called directly by tests and repository helpers. Future call sites can accidentally re-open
+  the unbounded path. Fix direction: add a parser-level cap parameter or a streaming parser used by
+  all callers. Add a parser unit test that feeds >1000 synthetic records and asserts the configured
+  cap.
+
+##### Control channel, socket lifecycle, and command transport
+
+- **Control socket startup unlinks the target path without verifying it is a socket.**
+  `ControlSocketServer::Start` and rebind call `::unlink(path)` after creating the parent directory.
+  Under a compromised or reused runtime directory this can delete any user-owned regular file at that
+  path. Fix direction: `lstat` first, remove only sockets owned by the current user, and fail loudly on
+  regular files/symlinks. Add a POSIX test that pre-creates a regular file at the socket path and
+  expects startup failure with the file intact.
+- **Control socket file permissions are fixed after bind, leaving a short wider-permission window.**
+  The server binds with the process umask, then calls `chmod(0600)`. On permissive umasks there is a
+  small interval where another local user could connect before the chmod. Fix direction: set a
+  restrictive temporary umask around bind or create the containing runtime directory with 0700 and
+  verify it before binding. Add a test for parent directory permissions where practical.
+- **Control client `connect()` is still blocking and outside the timeout budget.** After connecting,
+  send/read paths are poll-deadline driven, but `ControlSocketClient::Connect` calls blocking
+  `connect()` first. AF_UNIX connects are normally quick, yet a pathological socket/backlog or
+  filesystem-backed endpoint can stall the CLI before `--timeout` applies. Fix direction: create the
+  fd nonblocking, handle `EINPROGRESS`, and poll for writability within the caller's deadline. Add a
+  test with a socket that does not accept promptly if the harness can make one deterministic.
+- **Control `SendLine` decrements in-flight even when the write buffer overflowed and the reply was
+  dropped.** This lets linger logic reap a half-closed connection as "answered" even though the
+  specific response was discarded due to a stalled reader. The connection is flagged for drop, so the
+  data loss is bounded, but control callers see EOF rather than a structured overflow error. Fix
+  direction: send an explicit overflow/error line before dropping when possible, or keep accounting as
+  failed-not-answered for diagnostics. Add a slow-reader broadcast/reply test.
+- **Inbound control queue overflow drops the flooding connection after partially queueing earlier
+  lines.** `IngestReadBuffer` can enqueue some requests, then hit `kMaxInboundQueued` and drop the
+  peer. Those already-queued requests may still execute while later requests from the same client are
+  lost. Fix direction: define overflow semantics: either reject the whole batch atomically before
+  enqueueing, or send a clear overflow response for the cut point. Add a flood test that verifies
+  exactly which requests execute.
+- **Control socket rebind only checks that some filesystem node exists at the socket path.**
+  `MaybeRebindSocket` calls `stat(path)` and returns when it succeeds. If the socket path is replaced
+  by a regular file, directory, or symlink, the advertised descriptor remains present but clients can
+  no longer connect to the live listener, and the server will not repair it. Fix direction: use
+  `lstat`, verify the node is the expected socket type, and rebind or fail visibly when it is not.
+  Add a test that replaces the socket path with a regular file after startup.
+
+##### Editor primitives, text layout, and Unicode correctness
+
+- **`SingleLineEditor::SetCaret` and selection anchors clamp only to byte length, not UTF-8
+  boundaries.** Mouse hit testing, tests, or plugin-driven surfaces can place the caret in the middle
+  of a multibyte character. The next insert can split the code point and corrupt the field. Fix
+  direction: clamp caret and anchor through `TextLayout::ClampTextColumn` or an equivalent UTF-8
+  boundary helper inside `Normalize`. Add single-line editor tests that set caret inside `é` and then
+  insert/delete.
+- **`SingleLineEditor::Append` bypasses single-line sanitization.** `Insert` strips CR/LF, but
+  `Append` appends raw text after normalization. Today it is mainly used by tests, but it is part of
+  the public primitive and future surfaces can accidentally store line breaks in a single-line field.
+  Fix direction: make `Append` share the same sanitization path as `Insert`, or rename it to a
+  test-only raw append helper. Add tests for CRLF input.
+- **Multi-line paste into single-line fields concatenates tokens with no separator.** `Insert`
+  removes CR/LF entirely, so pasting `foo\nbar` becomes `foobar` rather than `foo bar` or `foo`.
+  That can silently change search needles, rename targets, branch names, or command args. Fix
+  direction: choose a product policy per field: replace line breaks with spaces for search/commands,
+  take first line for paths/renames, or reject with visible feedback. Add paste tests for search,
+  command palette, and rename prompt.
+- **Single-line word movement is ASCII identifier based.** `MoveWordLeft`/`MoveWordRight` use
+  `IsIdentifierByte`, so non-ASCII letters are treated as punctuation and camel/identifier movement
+  in prompts breaks for many languages. Fix direction: either document ASCII-only command semantics or
+  use a UTF-8 codepoint category helper shared with editor word motion. Add tests with accented and
+  CJK text.
+- **Text visual width treats every non-tab code point as one cell.** `AdvanceVisualColumn` ignores
+  East Asian wide characters, emoji width, zero-width joiners, and combining marks. This affects caret
+  hit testing, horizontal scroll, hover target mapping, compare alignment, and inlay placement for
+  valid UTF-8 documents. Fix direction: add a small wcwidth/grapheme-width layer with deterministic
+  tests and keep a fast ASCII path. Add layout tests for CJK, emoji, and combining sequences.
+- **Identifier hover ranges are ASCII-only.** `TextLayout::IdentifierRangeAt` refuses non-ASCII
+  identifier bytes before LSP hover/definition lookup, so Rust, Python, JavaScript, and many language
+  servers will not get hover requests for valid Unicode identifiers. Fix direction: use language
+  server position under cursor even when local identifier extraction fails, or extend identifier
+  classification to Unicode. Add hover-target tests for `café` and `变量`.
+- **`LineVisualColumnMap` reserves O(byte length) memory for each mapped line.** It stores one entry
+  per UTF-8 code point, but reserves `line.size() + 1` for both vectors. Very long multibyte lines or
+  hover paths that build maps transiently can over-reserve significantly. Fix direction: reserve a
+  bounded estimate or build lazily for the queried column on hot hover paths. Add a perf regression
+  fixture for a long multibyte line.
+- **Inlay hint column math trusts plugin/LSP label widths after truncation but not aggregate overflow.**
+  Individual inlay labels are capped, yet `InlayLineTotalCells` and displacement sums can still grow
+  large when many hints target one line. Fix direction: saturate aggregate cell counts per visual row
+  and surface truncation when inlays are dropped. Add a test with thousands of hints at one anchor.
+
+##### Theme, rendering, and UI output
+
+- **Theme includes have no maximum depth or include count.** Cycles are detected by the current stack,
+  but a long acyclic chain or broad include tree can recursively open many files and grow stack/work
+  before failing. Fix direction: add a maximum include depth and total include count, with an error
+  message that names the include chain. Add theme loader tests for cycle, deep chain, and broad fanout.
+- **Theme include cycles are silently accepted.** If an included theme is already in `include_stack`,
+  `LoadThemeStyles` returns true and continues. That avoids infinite recursion but leaves users with a
+  partially applied theme and no explanation. Fix direction: return a structured cycle error or at
+  least trace/status it. Add a cycle fixture that asserts the error text.
+- **Theme numeric color tokens are accepted for any all-digit integer.** `ParseThemeColor` passes the
+  parsed value to `Ansi256Color`, so values above 255 depend on palette helper clamping/wrapping
+  semantics rather than a user-facing validation error. Fix direction: reject numeric color tokens
+  outside 0..255 and surface the invalid group. Add parser tests for `255`, `256`, and a huge number.
+- **`TruncateToWidthView` returns a thread-local scratch view that is easy to invalidate.** The
+  lifetime is documented in a member comment, but render code can accidentally store a returned view
+  or call the truncator again before drawing the previous value, causing wrong labels. Fix direction:
+  use a small explicit scratch object passed by the caller or return an owning string in paths that
+  need more than immediate draw. Add a render unit test that exercises two truncations before drawing.
+- **Output-panel context snippet highlighting assumes token count is at least visible byte length.**
+  The render path falls back to plain text when `highlighted->tokens.size() < visible_code.size()`,
+  but it does not distinguish "highlight missing" from "tokenization stale/truncated". Fix direction:
+  carry a highlighted-range generation and a truncation reason so stale syntax data does not quietly
+  disappear. Add tests for output snippet refresh after file edit.
+- **Output-panel reference path context is sticky until an empty line or new reference changes it.**
+  A context snippet updates `current_reference_path`; unrelated following lines inherit that path for
+  click/reference handling until an empty line resets it. Build tools often emit dense logs without
+  blank lines, so clicks can open the previous file for unrelated text. Fix direction: attach the
+  resolved reference path to each parsed output entry instead of maintaining render-time mutable
+  context. Add output-channel tests with reference, snippet, unrelated line, and click.
+- **Compare/merge truncation still happens inside render translation units.** The current lint allows
+  `TruncateLabelView` hot-path calls, but every call can measure multiple prefixes and touch the width
+  cache during drawing. This keeps product logic out of render but still leaves variable CPU in the
+  render pass. Fix direction: move stable truncated labels into view models where dimensions are known
+  or cache truncation per label+width revision. Add perf counters for compare/merge truncation calls.
+
+##### Settings and persistence edge cases
+
+- **Duplicate persisted setting keys resolve differently before and after mutation.** Reindexing
+  iterates the raw vector and lets later duplicates win, while `settings_layer::Upsert` updates the
+  first duplicate and `Find` returns the first duplicate for overlay labels. A corrupted or manually
+  edited config with duplicate keys can show one value in the UI and apply another until reset erases
+  all copies. Fix direction: canonicalize duplicates during persistence load or make all operations
+  consistently last-wins. Add persistence fixtures with duplicate user and project setting ids.
+- **Settings ids are not validated at mutation boundaries.** `SetUser`/`SetProject` accept any string
+  id from callers/control flows. Empty ids or ids containing newlines/pathlike separators can enter
+  persisted layers and confuse overlays, LSP configuration mapping, or future typed settings. Fix
+  direction: centralize setting id validation and reject invalid ids with visible feedback. Add tests
+  for empty, whitespace, newline, and unknown ids.
+- **`SettingsStore::Revision` increments on every bind even when resolved values are unchanged.** That
+  is safe but causes downstream live-settings application and render preparation to re-run on project
+  switches or reloads that do not change effective settings. Fix direction: compute a cheap resolved
+  hash before/after reindex or add a separate `binding_revision` vs `value_revision`. Add a perf test
+  for switching between projects with identical settings.
 
 ### Won't-do — verified non-defects
 
