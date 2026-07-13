@@ -23,26 +23,49 @@ std::size_t ClampCaret(std::string_view text, std::size_t offset) {
   return offset;
 }
 
-// Previous word edge: skip non-word bytes immediately left of `caret`, then the word.
+// Whether the code point beginning at byte `index` is identifier content. Unlike
+// the byte-wise IsIdentifierByte this decodes the whole scalar, so non-ASCII
+// letters (é, ä, CJK, …) count as word characters and word motion does not stop
+// at every multibyte boundary.
+bool IsIdentifierCodepointAt(std::string_view text, std::size_t index) {
+  const std::size_t len = util::Utf8SequenceLength(text, index);
+  const std::size_t clamped_len = (len == 0) ? 1 : len;
+  return util::Utf8IsIdentifierCodepoint(
+      util::DecodeUtf8Codepoint(text.substr(index, clamped_len)));
+}
+
+// Previous word edge: skip non-word code points immediately left of `caret`, then the word.
 std::size_t WordBoundaryLeft(std::string_view text, std::size_t caret) {
   std::size_t index = std::min(caret, text.size());
-  while (index > 0 && !IsIdentifierByte(text[index - 1])) {
-    --index;
+  while (index > 0) {
+    const std::size_t start = util::PreviousUtf8Boundary(text, index);
+    if (IsIdentifierCodepointAt(text, start)) {
+      break;
+    }
+    index = start;
   }
-  while (index > 0 && IsIdentifierByte(text[index - 1])) {
-    --index;
+  while (index > 0) {
+    const std::size_t start = util::PreviousUtf8Boundary(text, index);
+    if (!IsIdentifierCodepointAt(text, start)) {
+      break;
+    }
+    index = start;
   }
   return index;
 }
 
-// Next word edge: skip non-word bytes at `caret`, then the word.
+// Next word edge: skip non-word code points at `caret`, then the word.
 std::size_t WordBoundaryRight(std::string_view text, std::size_t caret) {
   std::size_t index = std::min(caret, text.size());
-  while (index < text.size() && !IsIdentifierByte(text[index])) {
-    ++index;
+  const auto advance = [&]() {
+    const std::size_t len = util::Utf8SequenceLength(text, index);
+    index += (len == 0) ? 1 : len;
+  };
+  while (index < text.size() && !IsIdentifierCodepointAt(text, index)) {
+    advance();
   }
-  while (index < text.size() && IsIdentifierByte(text[index])) {
-    ++index;
+  while (index < text.size() && IsIdentifierCodepointAt(text, index)) {
+    advance();
   }
   return index;
 }

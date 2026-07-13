@@ -204,6 +204,18 @@ void TestSingleLineEditorSupportsWordMotionAndDeletion() {
   ExpectEditorState(deleter, " bar ", 0, std::nullopt, "delete-word-right");
 }
 
+void TestSingleLineEditorWordMotionHandlesUnicode() {
+  // "café ñoño": é (bytes 3-4) and ñ (2 bytes each) are word characters, so word
+  // motion must treat the accented words as whole words, not stop at every byte.
+  editor::SingleLineEditor editor("café ñoño");  // 12 bytes, caret starts at end
+  Expect(editor.MoveWordLeft(), "word-left enters the second accented word");
+  ExpectEditorState(editor, "café ñoño", 6, std::nullopt, "word-left to start of ñoño");
+  Expect(editor.MoveWordLeft(), "word-left crosses the space to the first word");
+  ExpectEditorState(editor, "café ñoño", 0, std::nullopt, "word-left to start of café");
+  Expect(editor.MoveWordRight(), "word-right moves past the accented first word");
+  ExpectEditorState(editor, "café ñoño", 5, std::nullopt, "word-right past café");
+}
+
 void TestSingleLineKeyHandlerBindsWordShortcuts() {
   editor::SingleLineEditor editor("alpha beta");
   const editor::SingleLineKeyHandler::Clipboard io{};
@@ -240,6 +252,8 @@ void RegisterSingleLineEditorTests(std::vector<TestCase>& tests) {
           TestSingleLineEditorSelectsWordAtOffset);
   AddTest(tests, "SingleLineEditor/SupportsWordMotionAndDeletion",
           TestSingleLineEditorSupportsWordMotionAndDeletion);
+  AddTest(tests, "SingleLineEditor/WordMotionHandlesUnicode",
+          TestSingleLineEditorWordMotionHandlesUnicode);
   AddTest(tests, "SingleLineEditor/KeyHandlerBindsWordShortcuts",
           TestSingleLineKeyHandlerBindsWordShortcuts);
 }

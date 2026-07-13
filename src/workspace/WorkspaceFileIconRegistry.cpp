@@ -103,10 +103,12 @@ void WorkspaceFileIconRegistry::Rebuild(const plugin::PluginHost& host) {
         continue;  // unknown shape name → ignore the rule (already lower-cased)
       }
       const Icon icon{*shape, rule.color};
+      // Case-fold the matcher key (it is already ASCII-lowered upstream; folding
+      // additionally normalizes non-ASCII case) so lookups fold-match consistently.
       if (rule.match_filename) {
-        by_name_[rule.matcher] = icon;
+        by_name_[util::Utf8CaseFold(rule.matcher)] = icon;
       } else {
-        by_extension_[rule.matcher] = icon;
+        by_extension_[util::Utf8CaseFold(rule.matcher)] = icon;
       }
     }
   }
@@ -117,9 +119,10 @@ std::optional<WorkspaceFileIconRegistry::Icon> WorkspaceFileIconRegistry::Resolv
   if (filename.empty()) {
     return std::nullopt;
   }
-  // Lowercase once into the reused scratch buffer; every lookup below works on a
-  // view of it, so a warmed registry resolves with zero heap allocation.
-  util::ToLowerAsciiInto(filename, lower_scratch_);
+  // Case-fold once into the reused scratch buffer (ASCII fast path preserved);
+  // every lookup below works on a view of it, so a warmed registry resolves with
+  // zero heap allocation, and non-ASCII extensions/names match case-insensitively.
+  util::Utf8CaseFoldInto(filename, lower_scratch_);
   const std::string_view lower_name = lower_scratch_;
   if (!by_name_.empty()) {
     if (const auto it = by_name_.find(lower_name); it != by_name_.end()) {
