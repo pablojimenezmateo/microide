@@ -3,6 +3,7 @@
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 
 #include "plugin/PluginLuaInterop.h"
@@ -417,7 +418,12 @@ bool ParseStatusItemRegistration(lua_State* state,
   float progress = -1.0f;
   lua_interop::GetFieldProtected(state, table_index, "progress");
   if (lua_isnumber(state, -1)) {
-    progress = std::clamp(static_cast<float>(lua_tonumber(state, -1)), 0.0f, 1.0f);
+    // NaN survives std::clamp (all comparisons false), so reject non-finite
+    // progress explicitly; it would otherwise poison the progress-bar layout.
+    const double raw = lua_tonumber(state, -1);
+    if (std::isfinite(raw)) {
+      progress = std::clamp(static_cast<float>(raw), 0.0f, 1.0f);
+    }
   }
   lua_pop(state, 1);
   out->contributed = PluginHost::ContributedStatusItem{

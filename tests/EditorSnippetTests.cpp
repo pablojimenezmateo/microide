@@ -336,9 +336,32 @@ void TestSnippetParseRejectsNewlineInChoice() {
   Expect(!ok.occurrences.empty(), "a single-line choice must still parse");
 }
 
+// Regression: VSCode-style escapes inside a placeholder must insert the literal
+// delimiter instead of terminating early. Previously the parser walked to the
+// first raw `}`, `,`, or `|`, truncating any default/choice that contained one.
+void TestSnippetParseHonorsEscapedDelimiters() {
+  // Escaped brace in default text: `${1:a\}b}` -> default "a}b".
+  const auto brace = ParseSnippetBody("${1:a\\}b}");
+  Expect(brace.occurrences.size() == 1 && brace.expanded == "a}b",
+         "an escaped } in default text is literal, not a terminator");
+
+  // Escaped dollar in default text: `${1:price \$5}` -> "price $5".
+  const auto dollar = ParseSnippetBody("${1:price \\$5}");
+  Expect(dollar.expanded == "price $5", "an escaped $ is literal in default text");
+
+  // Escaped comma inside a choice yields the two options "a,b" and "c".
+  const auto choice = ParseSnippetBody("${1:|a\\,b,c|}");
+  Expect(choice.occurrences.size() == 1 && choice.occurrences[0].choices.size() == 2 &&
+             choice.occurrences[0].choices[0] == "a,b" &&
+             choice.occurrences[0].choices[1] == "c",
+         "an escaped comma stays inside the choice value");
+}
+
 }  // namespace
 
 void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorSnippet/ParseHonorsEscapedDelimiters",
+          TestSnippetParseHonorsEscapedDelimiters);
   AddTest(tests, "EditorSnippet/ParseRejectsNewlineInChoice",
           TestSnippetParseRejectsNewlineInChoice);
   AddTest(tests, "EditorSnippet/CrossTabShiftOnInsert", TestSnippetCrossTabShiftOnInsert);

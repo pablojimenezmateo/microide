@@ -9,6 +9,8 @@
 #include "plugin/PluginPathInterop.h"
 #include "plugin/PluginSurfaceInterop.h"
 
+#include <cmath>
+
 namespace microide::plugin::runtime_api_interop {
 namespace {
 
@@ -20,7 +22,15 @@ std::size_t ReadIndexField(lua_State* state, int table_index, const char* field)
   lua_interop::GetFieldProtected(state, table_index, field);
   const double value = lua_isnumber(state, -1) ? lua_tonumber(state, -1) : 0.0;
   lua_pop(state, 1);
-  return value >= 1.0 ? static_cast<std::size_t>(value) : 0;
+  // Reject non-finite values (`inf`/NaN) and anything below 1 — casting a
+  // non-finite double to size_t is undefined behavior. Clamp absurdly large
+  // finite values so the double→size_t cast stays in range. A fractional value
+  // truncates toward zero (its long-standing behavior).
+  if (!std::isfinite(value) || value < 1.0) {
+    return 0;
+  }
+  constexpr double kMaxIndex = 1e15;  // beyond any real document, safely < 2^53
+  return static_cast<std::size_t>(value < kMaxIndex ? value : kMaxIndex);
 }
 
 // Resolves an optional `path` field on the spec table at index 1 against the
@@ -231,6 +241,16 @@ int LuaEditorApplyEdits(lua_State* state,
           edit.end_line = ReadIndexField(state, edit_index, "end_line");
           edit.end_column = ReadIndexField(state, edit_index, "end_col");
           lua_interop::ReadStringField(state, edit_index, "text", &edit.text);
+          // ReadIndexField yields 0 for any coordinate that was not a finite,
+          // in-range 1-based index (fractional-below-1, negative, inf/NaN). Such
+          // an edit is malformed; drop it rather than let a 0 clamp to a wild
+          // insertion at the buffer start. If every edit is dropped the apply
+          // resolves to "no edits" and is reported as failed to the plugin.
+          if (edit.start_line == 0 || edit.start_column == 0 || edit.end_line == 0 ||
+              edit.end_column == 0) {
+            lua_pop(state, 1);
+            continue;
+          }
           request.edits.push_back(std::move(edit));
         }
         lua_pop(state, 1);

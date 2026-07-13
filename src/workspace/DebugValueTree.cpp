@@ -131,20 +131,40 @@ const DebugValueTree::Node* DebugValueTree::FindNode(std::uint32_t id) const {
 }
 
 std::string DebugValueTree::PathKey(const Node& node) const {
-  // Root→node name chain joined by a unit separator (a byte that cannot appear in
-  // a DAP variable name), so distinct paths never collide.
-  std::vector<std::string_view> parts;
+  // Root→node chain joined by a unit separator (a byte that cannot appear in a
+  // DAP variable name). Each segment is the sibling ordinal plus the name, so
+  // two siblings that share a name — common in array pages and maps with
+  // repeated labels — get distinct keys and expand/collapse independently.
+  struct Segment {
+    std::size_t ordinal;
+    std::string_view name;
+  };
+  std::vector<Segment> parts;
   const Node* cur = &node;
   while (cur != nullptr) {
-    parts.emplace_back(cur->name);
-    cur = cur->parent_id == 0 ? nullptr : FindNode(cur->parent_id);
+    const Node* parent = cur->parent_id == 0 ? nullptr : FindNode(cur->parent_id);
+    // Position among siblings: index in the parent's children vector, or among
+    // the roots for a top-level node. Falls back to 0 if not found (unreachable
+    // in practice, but keeps the key well-defined).
+    std::size_t ordinal = 0;
+    const std::vector<std::uint32_t>& siblings = parent != nullptr ? parent->children : roots_;
+    for (std::size_t i = 0; i < siblings.size(); ++i) {
+      if (siblings[i] == cur->id) {
+        ordinal = i;
+        break;
+      }
+    }
+    parts.push_back(Segment{ordinal, cur->name});
+    cur = parent;
   }
   std::string key;
   for (auto it = parts.rbegin(); it != parts.rend(); ++it) {
     if (!key.empty()) {
       key.push_back('\x1f');
     }
-    key.append(*it);
+    key.append(std::to_string(it->ordinal));
+    key.push_back(':');
+    key.append(it->name);
   }
   return key;
 }

@@ -517,7 +517,12 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
   unsigned int worker_cap = 8;
   if (const char* limit = std::getenv("MICROIDE_SEARCH_WORKER_LIMIT")) {
     if (const auto parsed = util::ParseInt(limit); parsed.has_value() && *parsed >= 1) {
-      worker_cap = static_cast<unsigned int>(*parsed);
+      // Clamp the override to a small product maximum. Without this a bad
+      // environment (e.g. 999999) lets the cap rise to full hardware
+      // concurrency on a many-core box, spawning far more helper threads than
+      // search ever benefits from and starving other background subsystems.
+      constexpr int kMaxSearchWorkerOverride = 64;
+      worker_cap = static_cast<unsigned int>(std::min(*parsed, kMaxSearchWorkerOverride));
     }
   }
   const unsigned int hardware_threads = std::thread::hardware_concurrency();

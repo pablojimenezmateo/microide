@@ -70,6 +70,10 @@ class BranchReviewStateService {
 
  private:
   static std::uint64_t NowUnixMs();
+  // Find an existing target for mutation WITHOUT creating one or bumping the
+  // revision. Delete/unmark paths use this so operating on an unknown target is a
+  // clean no-op instead of creating empty state and persisting noise.
+  BranchReviewTargetState* FindMutableTarget(const BranchReviewTargetIdentity& target);
   void TouchTarget(BranchReviewTargetState& target_state);
   void PruneTarget(BranchReviewTargetState& target_state);
 

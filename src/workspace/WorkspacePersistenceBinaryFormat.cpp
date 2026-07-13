@@ -60,7 +60,17 @@ bool DecodeUserConfigRecord(std::span<const std::byte> input, PersistedUserConfi
                    if (!DecodeSettingPair(payload, &setting)) {
                      return false;
                    }
-                   state->settings.push_back(std::move(setting));
+                   // Dedupe by id, last-writer-wins: a corrupt/hand-edited config
+                   // with duplicate keys must not become a split-brain state where
+                   // the UI shows one value and layering applies another.
+                   auto existing = std::find_if(
+                       state->settings.begin(), state->settings.end(),
+                       [&](const auto& s) { return s.first == setting.first; });
+                   if (existing != state->settings.end()) {
+                     existing->second = std::move(setting.second);
+                   } else {
+                     state->settings.push_back(std::move(setting));
+                   }
                    return true;
                  }
                  case UserConfigTag::DisabledKeybinding: {
@@ -211,7 +221,15 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
                    if (!DecodeSettingPair(payload, &setting)) {
                      return false;
                    }
-                   state->settings.push_back(std::move(setting));
+                   // Dedupe by id, last-writer-wins (see DecodeUserConfigRecord).
+                   auto existing = std::find_if(
+                       state->settings.begin(), state->settings.end(),
+                       [&](const auto& s) { return s.first == setting.first; });
+                   if (existing != state->settings.end()) {
+                     existing->second = std::move(setting.second);
+                   } else {
+                     state->settings.push_back(std::move(setting));
+                   }
                    return true;
                  }
                 case ProjectConfigTag::SidebarPolicy: {

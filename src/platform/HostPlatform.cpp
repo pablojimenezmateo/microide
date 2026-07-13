@@ -33,6 +33,17 @@ HostPlatform CurrentHostPlatform() {
   return NativeHostPlatform();
 }
 
+bool HostPathsAreCaseInsensitive() {
+  switch (CurrentHostPlatform()) {
+    case HostPlatform::Windows:
+    case HostPlatform::MacOS:
+      return true;
+    case HostPlatform::Linux:
+      return false;
+  }
+  return false;
+}
+
 std::string_view HostPlatformName(HostPlatform platform) {
   switch (platform) {
     case HostPlatform::Linux:

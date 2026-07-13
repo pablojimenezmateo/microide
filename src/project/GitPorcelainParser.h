@@ -32,7 +32,12 @@ class GitPorcelainParser {
 
   static std::unordered_map<std::string, GitFileStatus> ParseStatusV1(std::string_view output);
   static std::vector<GitWorkingTreeEntry> ParseWorkingTreeEntries(std::string_view output);
-  static std::vector<GitCommitEntry> ParseLog(std::string_view output);
+  // Parse `git log` porcelain into commit entries. `max_entries` bounds the
+  // result so a future caller (or a hostile/corrupt log stream) cannot
+  // materialize an unbounded vector; the default is a generous safety cap.
+  static constexpr std::size_t kDefaultParseLogCap = 100000;
+  static std::vector<GitCommitEntry> ParseLog(std::string_view output,
+                                              std::size_t max_entries = kDefaultParseLogCap);
 
   static void RecordGitStatus(std::unordered_map<std::string, GitFileStatus>& statuses,
                               std::filesystem::path relative_path,

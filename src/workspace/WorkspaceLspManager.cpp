@@ -82,6 +82,16 @@ void LspManager::RegisterServer(const std::vector<std::string>& language_ids,
   entry.initialization_options = initialization_options;
   entry.settings = settings;
   entry.sandbox = sandbox;
+  // Drop any aliases left over from a prior registration of this key before
+  // installing the new set. Re-registering `["cpp","c"]` as `["cpp"]` must not
+  // leave `alias_["c"] = "cpp"` resolving to a server that no longer serves C.
+  for (auto alias_it = alias_.begin(); alias_it != alias_.end();) {
+    if (alias_it->second == key) {
+      alias_it = alias_.erase(alias_it);
+    } else {
+      ++alias_it;
+    }
+  }
   for (const std::string& id : language_ids) {
     alias_[id] = key;
   }

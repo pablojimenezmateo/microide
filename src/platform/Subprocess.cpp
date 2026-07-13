@@ -739,10 +739,26 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
   }
   stdin_write.Reset();
 
-  WaitForSingleObject(process_info.hProcess, INFINITE);
+  // Honor options.timeout_ms, mirroring the POSIX deadline path: a bounded wait,
+  // then TerminateProcess + a short reap so a hung/slow child cannot hold the
+  // synchronous caller forever. timeout_ms <= 0 waits indefinitely as before.
+  if (options.timeout_ms > 0) {
+    const DWORD wait_result =
+        WaitForSingleObject(process_info.hProcess, static_cast<DWORD>(options.timeout_ms));
+    if (wait_result == WAIT_TIMEOUT) {
+      result.timed_out = true;
+      TerminateProcess(process_info.hProcess, 1);
+      WaitForSingleObject(process_info.hProcess, 2000);  // reap the killed child
+    }
+  } else {
+    WaitForSingleObject(process_info.hProcess, INFINITE);
+  }
   DWORD exit_code = 0;
   if (GetExitCodeProcess(process_info.hProcess, &exit_code)) {
     result.exit_code = static_cast<int>(exit_code);
+  }
+  if (result.timed_out) {
+    result.exit_code = -1;
   }
 
   if (stdout_thread.joinable()) {

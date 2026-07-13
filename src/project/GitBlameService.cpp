@@ -20,6 +20,7 @@
 #include "project/GitCommandUtil.h"
 #include "util/TransparentStringHash.h"
 #include "util/Parse.h"
+#include "util/SaturatingMath.h"
 #include "util/TaskExecutor.h"
 
 namespace microide::project {
@@ -115,8 +116,11 @@ Span NormalizeWindow(std::size_t visible_start_line,
   }
 
   const std::size_t clamped_start = std::min(visible_start_line, total_line_count - 1);
-  const std::size_t visible_end =
-      std::min(total_line_count - 1, clamped_start + visible_line_count - 1);
+  // Saturating add: a public/test seam can pass a near-SIZE_MAX visible_line_count,
+  // and a bare `clamped_start + visible_line_count - 1` would wrap and make the min
+  // pick a bogus (tiny) end, hiding data or marking stale coverage as fresh.
+  const std::size_t visible_end = std::min(
+      total_line_count - 1, util::SaturatingAdd(clamped_start, visible_line_count - 1));
   const std::size_t padding = std::max(visible_line_count, kPadLineCount);
   std::size_t start = clamped_start > padding ? clamped_start - padding : 0;
   std::size_t end =
@@ -378,8 +382,11 @@ struct GitBlameService::Impl {
 
     const Span visible_window{
         .start = std::min(request.visible_start_line, request.total_line_count - 1),
+        // Saturating add so a huge visible_line_count cannot wrap and collapse the
+        // window (see NormalizeWindow). visible_line_count is > 0 here.
         .end = std::min(request.total_line_count - 1,
-                        request.visible_start_line + request.visible_line_count - 1),
+                        util::SaturatingAdd(request.visible_start_line,
+                                            request.visible_line_count - 1)),
     };
     // Lines actually materialized into the snapshot: the caller's result window
     // (caret +/- a row for inline blame) clamped to the loaded visible window, or

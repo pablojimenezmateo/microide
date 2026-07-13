@@ -29,6 +29,23 @@ namespace microide::platform {
 
 namespace {
 
+// Remove a stale socket at `path` in preparation for binding, but ONLY if the
+// existing node is actually a socket owned by the current user. Returns false if
+// the path holds a regular file, directory, or symlink (or a socket owned by
+// someone else) — the caller must fail rather than blindly `unlink()` a
+// user-owned file that happens to sit at the socket path. Returns true when the
+// path is now clear (absent, or a stale socket we removed).
+bool ClearStaleSocketPath(const std::string& path) {
+  struct stat st{};
+  if (::lstat(path.c_str(), &st) != 0) {
+    return errno == ENOENT;  // nothing there → clear; other errors → refuse
+  }
+  if (!S_ISSOCK(st.st_mode) || st.st_uid != ::geteuid()) {
+    return false;  // not our socket — do not delete it
+  }
+  return ::unlink(path.c_str()) == 0 || errno == ENOENT;
+}
+
 // How long a half-closed connection is kept alive waiting for replies to the
 // requests it already sent. A client may legitimately close its write side
 // immediately after sending (socat, `echo | nc`), so we must flush pending
@@ -432,7 +449,11 @@ bool ControlSocketServer::Start(const std::filesystem::path& socket_path) {
 
   std::error_code ec;
   std::filesystem::create_directories(socket_path.parent_path(), ec);
-  ::unlink(path_string.c_str());
+  // Only clear a stale socket of our own; refuse to start (rather than delete an
+  // unrelated user file) if a regular file / dir / symlink sits at the path.
+  if (!ClearStaleSocketPath(path_string)) {
+    return false;
+  }
 
   const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
   if (fd < 0) {

@@ -62,6 +62,12 @@ bool MovePath(const std::filesystem::path& source, const std::filesystem::path& 
     return false;
   }
   if (!RemovePath(source)) {
+    // The copy succeeded but the source could not be removed (permissions, a
+    // sharing violation, a read-only parent). Leaving the destination behind
+    // turns a failed move into a silent duplicate — for a trash move that hides
+    // "deleted" content at the new path; for a rename it poisons retries with an
+    // already-existing target. Roll the copy back so a failed move is a no-op.
+    RemovePath(destination);
     return false;
   }
   return true;

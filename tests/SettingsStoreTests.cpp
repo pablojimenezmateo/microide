@@ -106,9 +106,31 @@ void TestReindexAfterInPlaceReload() {
   Expect(ResolveOr(store, "debug.enabled", "?") == "true", "reindex picks up second key");
 }
 
+// Regression: invalid setting ids (empty, whitespace, control bytes, newlines)
+// must be rejected at the mutation boundary so they never reach the persisted
+// layer where they would corrupt the text encoding / overlays / LSP mapping.
+void TestRejectsInvalidSettingIds() {
+  Expect(SettingsStore::IsValidSettingId("editor.tab_size"), "a normal dotted id is valid");
+  Expect(SettingsStore::IsValidSettingId("plugin_id.setting-1"), "dashes/underscores are valid");
+  Expect(!SettingsStore::IsValidSettingId(""), "an empty id is invalid");
+  Expect(!SettingsStore::IsValidSettingId("has space"), "an id with a space is invalid");
+  Expect(!SettingsStore::IsValidSettingId("has\nnewline"), "an id with a newline is invalid");
+  Expect(!SettingsStore::IsValidSettingId(std::string("tab\t")), "an id with a tab is invalid");
+
+  SettingsLayer user;
+  SettingsStore store;
+  store.BindUserLayer(&user);
+  store.SetUser("bad id", "x");
+  Expect(store.Resolve("bad id") == nullptr, "an invalid id must not enter the store");
+  Expect(user.empty(), "an invalid id must not reach the persisted layer");
+  store.SetUser("good.id", "y");
+  Expect(ResolveOr(store, "good.id", "?") == "y", "a valid id still applies");
+}
+
 }  // namespace
 
 void RegisterSettingsStoreTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "SettingsStore/RejectsInvalidSettingIds", TestRejectsInvalidSettingIds);
   AddTest(tests, "SettingsStore/UserLayerWinsOverProject", TestUserLayerWinsOverProject);
   AddTest(tests, "SettingsStore/ResetRestoresUnderlyingLayer", TestResetRestoresUnderlyingLayer);
   AddTest(tests, "SettingsStore/RebindActiveProjectAfterMove", TestRebindActiveProjectAfterMove);

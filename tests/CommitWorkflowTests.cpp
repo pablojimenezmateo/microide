@@ -82,6 +82,32 @@ void TestEmptySubjectBlocksCommit() {
   Expect(!CommitPreChecksAllowExecution(checks, {}), "blocking checks should prevent commit");
 }
 
+// Regression: the subject-length gate counts Unicode scalar values, not bytes.
+// A subject that is well within the character limit but exceeds it in bytes
+// (accented / CJK text) must NOT be flagged as too long.
+void TestCommitSubjectLengthCountsCharactersNotBytes() {
+  const GitRepositoryState state = MakeRepositoryState();
+  const microide::project::CommitStagedSummary summary{.file_count = 1};
+  const auto has_long_subject = [&](const std::vector<microide::project::CommitPreCheck>& checks) {
+    for (const auto& check : checks) {
+      if (check.kind == microide::project::CommitPreCheckKind::LongSubject) return true;
+    }
+    return false;
+  };
+
+  // 40 three-byte CJK characters = 120 bytes but only 40 characters — under the
+  // 72-character limit, so no long-subject check should fire.
+  std::string cjk;
+  for (int i = 0; i < 40; ++i) cjk += "\xe5\xad\x97";  // 字
+  Expect(!has_long_subject(RunCommitPreChecks(state, cjk, "", {}, &summary)),
+         "a 40-character (120-byte) subject must not be flagged as too long");
+
+  // 80 characters really is over the limit and must still block.
+  const std::string too_long(80, 'a');
+  Expect(has_long_subject(RunCommitPreChecks(state, too_long, "", {}, &summary)),
+         "an 80-character subject must still be flagged as too long");
+}
+
 void TestWarningsRequireAcknowledgement() {
   const GitRepositoryState state = MakeRepositoryState();
   const auto checks = RunCommitPreChecks(state, "subject", "", {});
@@ -386,6 +412,8 @@ void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CommitWorkflow/ResultMarshaledToMainThread",
           TestCommitResultIsMarshaledToMainThread);
   AddTest(tests, "CommitWorkflow/EmptySubjectBlocks", TestEmptySubjectBlocksCommit);
+  AddTest(tests, "CommitWorkflow/SubjectLengthCountsCharactersNotBytes",
+          TestCommitSubjectLengthCountsCharactersNotBytes);
   AddTest(tests, "CommitWorkflow/WarningsRequireAck", TestWarningsRequireAcknowledgement);
   AddTest(tests, "CommitWorkflow/DraftPersistenceRoundTrip", TestCommitDraftPersistenceRoundTrip);
   AddTest(tests, "CommitWorkflow/PartialStageWarnsForV2SingleModifiedEntry",

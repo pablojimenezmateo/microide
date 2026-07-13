@@ -80,6 +80,13 @@ const char* ParseProcessRunArgs(lua_State* state,
     if (lua_isstring(state, -1)) {
       size_t length = 0;
       const char* text = lua_tolstring(state, -1, &length);
+      // Cap process stdin independently of Lua's heap budget so one call cannot
+      // push an enormous payload through the plugin worker / subprocess pipe.
+      constexpr size_t kMaxProcessStdinBytes = 16 * 1024 * 1024;
+      if (length > kMaxProcessStdinBytes) {
+        lua_pop(state, 1);
+        return "process stdin exceeds the 16 MiB limit";
+      }
       out->stdin_text.assign(text, length);
     }
     lua_pop(state, 1);

@@ -1738,6 +1738,41 @@ return ide.plugin({
          "a language_ids array should be preserved in order for one shared server");
 }
 
+// Regression: a language-server registration whose language_ids array contains an
+// empty/whitespace entry must be rejected, not seed a "" key into the activation
+// table.
+void TestPluginHostLspRegistrationRejectsEmptyLanguageId() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "empty lang id\n");
+  WritePluginInit(
+      global_plugins, "badlsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "badlsp",
+  setup = function(ctx)
+    ctx.lsp.add({ id = "bad", language_ids = { "", "cpp" }, command = { "clangd" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  host.Reload(project_root);
+  // The empty-language-id server must be rejected — it never enters the registry
+  // (whether the reject surfaces as a setup error or a skipped contribution).
+  for (const auto& server : host.ContributedLanguageServers()) {
+    Expect(server.id != "badlsp.bad",
+           "a language server with an empty language id must not be registered");
+  }
+}
+
 void TestPluginHostDebugAdapterRegistration() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2309,6 +2344,50 @@ void TestPluginDecorationRejectsLineBeyondUint32Range() {
       &error_message);
   Expect(boundary, "the maximum representable 1-based line must be accepted");
   Expect(published, "the boundary decoration set must publish");
+  lua_pop(state, 1);
+}
+
+// Regression: a text-style decoration with start_col > end_col is an inverted
+// (negative-width) range; downstream render/merge assumes start <= end. It must be
+// rejected at parse time, not published.
+void TestPluginDecorationRejectsInvertedColumnRange() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  std::string create_error;
+  auto runtime = microide::plugin::LuaRuntime::Create(&create_error);
+  Expect(runtime != nullptr, "lua runtime should create");
+  lua_State* state = runtime->state();
+
+  bool published = false;
+  PluginHost::Callbacks callbacks;
+  callbacks.publish_decorations = [&](std::string_view, const std::filesystem::path&,
+                                      microide::editor::PluginDecorationData) { published = true; };
+  const std::filesystem::path project_root = "/tmp/decoration-inverted";
+
+  Expect(luaL_dostring(state, "return { text_styles = { { line = 1, start_col = 8, "
+                              "end_col = 3 } } }") == LUA_OK,
+         "the inverted-range decoration table should evaluate");
+  std::string error_message;
+  const bool ok = microide::plugin::decoration_interop::PublishDecorations(
+      state, "test.plugin", project_root, "README.md", lua_gettop(state), callbacks,
+      &error_message);
+  Expect(!ok, "an inverted start_col > end_col decoration must be rejected");
+  Expect(error_message.find("start_col must not exceed end_col") != std::string::npos,
+         "the rejection should name the inverted-range problem");
+  Expect(!published, "a rejected inverted-range decoration set must not publish");
+  lua_pop(state, 1);
+
+  // Sanity: an equal start/end (single-column span) is still accepted.
+  published = false;
+  Expect(luaL_dostring(state, "return { text_styles = { { line = 1, start_col = 3, "
+                              "end_col = 3 } } }") == LUA_OK,
+         "the equal-column decoration table should evaluate");
+  error_message.clear();
+  const bool equal_ok = microide::plugin::decoration_interop::PublishDecorations(
+      state, "test.plugin", project_root, "README.md", lua_gettop(state), callbacks,
+      &error_message);
+  Expect(equal_ok && published, "an equal start_col == end_col span is a valid range");
   lua_pop(state, 1);
 }
 
@@ -3591,6 +3670,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostShorthandRejectsBadArgsWithoutLongjmp);
   AddTest(tests, "PluginHost/Phase5WorkspaceApis", TestPluginHostPhase5WorkspaceApis);
   AddTest(tests, "PluginHost/Phase5LspApis", TestPluginHostPhase5LspApis);
+  AddTest(tests, "PluginHost/LspRegistrationRejectsEmptyLanguageId",
+          TestPluginHostLspRegistrationRejectsEmptyLanguageId);
   AddTest(tests, "PluginHost/DebugAdapterRegistration", TestPluginHostDebugAdapterRegistration);
   AddTest(tests, "PluginHost/DebugAdapterRequiresProcessExec",
           TestPluginHostDebugAdapterRequiresProcessExec);
@@ -3607,6 +3688,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostProcessRunReportsArgumentErrorsWithoutCorruptingState);
   AddTest(tests, "PluginHost/DecorationRejectsLineBeyondUint32Range",
           TestPluginDecorationRejectsLineBeyondUint32Range);
+  AddTest(tests, "PluginHost/DecorationRejectsInvertedColumnRange",
+          TestPluginDecorationRejectsInvertedColumnRange);
   AddTest(tests, "PluginHost/GetFieldProtectedCatchesRaisingIndexMetamethod",
           TestGetFieldProtectedCatchesRaisingIndexMetamethod);
   AddTest(tests, "PluginHost/PublishDiagnosticsSurvivesHostileIndexMetamethod",

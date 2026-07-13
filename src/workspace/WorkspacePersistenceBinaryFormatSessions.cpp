@@ -4,6 +4,11 @@ namespace microide::workspace {
 
 namespace {
 
+// Cap the number of expanded/collapsed tree paths a single decoded session may
+// carry. A real project tree never approaches this; the bound stops a hostile or
+// corrupt session file from allocating an unbounded string vector at restore.
+constexpr std::size_t kMaxSessionTreePaths = 100000;
+
 std::string SerializeOutgoingBaseChoiceKind(OutgoingBaseChoice::Kind kind) {
   switch (kind) {
     case OutgoingBaseChoice::Kind::Auto:
@@ -156,7 +161,11 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                    if (!reader.ReadString(&value) || reader.remaining() != 0) {
                      return false;
                    }
-                   state->expanded_tree_paths.push_back(std::move(value));
+                   // Drop paths past the cap rather than failing the whole
+                   // record: a corrupt session still restores its other state.
+                   if (state->expanded_tree_paths.size() < kMaxSessionTreePaths) {
+                     state->expanded_tree_paths.push_back(std::move(value));
+                   }
                    return true;
                  }
                  case ProjectSessionTag::CollapsedTreePath: {
@@ -164,7 +173,9 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                    if (!reader.ReadString(&value) || reader.remaining() != 0) {
                      return false;
                    }
-                   state->collapsed_tree_paths.push_back(std::move(value));
+                   if (state->collapsed_tree_paths.size() < kMaxSessionTreePaths) {
+                     state->collapsed_tree_paths.push_back(std::move(value));
+                   }
                    return true;
                  }
                  case ProjectSessionTag::SelectedTreePath:
@@ -249,7 +260,20 @@ bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
                    if (!reader.ReadPath(&root) || reader.remaining() != 0) {
                      return false;
                    }
-                   state->project_roots.push_back(std::move(root));
+                   // Cap and dedupe: a corrupt session with thousands of (or
+                   // duplicate) roots would otherwise spin up a large startup loop
+                   // and duplicate project tabs. 256 is far past any real workspace.
+                   constexpr std::size_t kMaxWorkspaceProjectRoots = 256;
+                   const std::filesystem::path normalized = root.lexically_normal();
+                   const bool already_present =
+                       std::any_of(state->project_roots.begin(), state->project_roots.end(),
+                                   [&](const std::filesystem::path& existing) {
+                                     return existing.lexically_normal() == normalized;
+                                   });
+                   if (!already_present &&
+                       state->project_roots.size() < kMaxWorkspaceProjectRoots) {
+                     state->project_roots.push_back(std::move(root));
+                   }
                    return true;
                  }
                  case WorkspaceSessionTag::ActiveProjectIndex:

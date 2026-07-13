@@ -43,6 +43,11 @@ class SettingsStore {
   // copy the value if it must outlive that.
   const std::string* Resolve(std::string_view id) const;
 
+  // A well-formed setting id: non-empty, no whitespace or control bytes. Invalid
+  // ids are rejected at the SetUser/SetProject boundary so no malformed id can
+  // reach the persisted layer.
+  static bool IsValidSettingId(std::string_view id);
+
   // Single mutation choke point. Each updates the backing vector and the index.
   void SetUser(std::string_view id, std::string value);
   void SetProject(std::string_view id, std::string value);

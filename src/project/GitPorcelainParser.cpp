@@ -196,7 +196,8 @@ std::vector<GitWorkingTreeEntry> GitPorcelainParser::ParseWorkingTreeEntries(std
   return entries;
 }
 
-std::vector<GitCommitEntry> GitPorcelainParser::ParseLog(std::string_view output) {
+std::vector<GitCommitEntry> GitPorcelainParser::ParseLog(std::string_view output,
+                                                         std::size_t max_entries) {
   // Expected line layout, unit-separator (US, 0x1f) delimited, subject last so it
   // may contain the delimiter (it never realistically does):
   //   <hash>\x1f<short_hash>\x1f<author>\x1f<relative_date>\x1f<subject>
@@ -205,7 +206,7 @@ std::vector<GitCommitEntry> GitPorcelainParser::ParseLog(std::string_view output
   constexpr char kSep = '\x1f';
   std::vector<GitCommitEntry> commits;
   std::size_t line_start = 0;
-  while (line_start < output.size()) {
+  while (line_start < output.size() && commits.size() < max_entries) {
     const std::size_t newline = output.find('\n', line_start);
     const std::string_view line =
         output.substr(line_start, (newline == std::string_view::npos ? output.size() : newline) -

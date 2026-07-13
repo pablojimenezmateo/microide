@@ -6,12 +6,17 @@
 #include "util/Parse.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
 #include <utility>
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <unistd.h>
+#endif
 
 namespace microide::terminal {
 
@@ -31,14 +36,64 @@ std::string FormatOscRgbReply(SDL_Color color) {
   return "rgb:" + component(color.r) + "/" + component(color.g) + "/" + component(color.b);
 }
 
+// Lowercased local machine hostname (short name), or empty if unavailable.
+// Used to distinguish a local OSC 7 report from a remote (SSH) shell's report.
+std::string LocalHostNameLower() {
+#if defined(__unix__) || defined(__APPLE__)
+  char buffer[256] = {0};
+  if (::gethostname(buffer, sizeof(buffer) - 1) != 0) {
+    return {};
+  }
+  std::string name(buffer);
+  // Compare against the short hostname only; drop any DNS domain suffix.
+  if (const std::size_t dot = name.find('.'); dot != std::string::npos) {
+    name.resize(dot);
+  }
+  for (char& ch : name) {
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  }
+  return name;
+#else
+  return {};
+#endif
+}
+
+// True when an OSC 7 host component names this machine: empty, `localhost`, or
+// the local short hostname. Remote (SSH) shells report a foreign hostname whose
+// paths do not exist locally.
+bool Osc7HostIsLocal(std::string_view host) {
+  if (host.empty()) {
+    return true;
+  }
+  std::string host_lower(host);
+  for (char& ch : host_lower) {
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  }
+  if (const std::size_t dot = host_lower.find('.'); dot != std::string::npos) {
+    host_lower.resize(dot);
+  }
+  if (host_lower == "localhost") {
+    return true;
+  }
+  const std::string local = LocalHostNameLower();
+  return !local.empty() && host_lower == local;
+}
+
 // Extract the filesystem path from an OSC 7 `file://host/path` payload, decoding
-// percent-escapes.
+// percent-escapes. Returns empty for a report from a non-local host.
 std::string DecodeOsc7Path(std::string_view payload) {
   std::string_view path = payload;
   if (path.rfind("file://", 0) == 0) {
     path.remove_prefix(7);
     const std::size_t slash = path.find('/');
     if (slash == std::string_view::npos) {
+      return {};
+    }
+    // Reject cwd reports for a non-local host. `file://remote/home/user` refers
+    // to a *remote* machine's filesystem; treating it as a local working
+    // directory would seed local file operations from a path that does not
+    // exist here.
+    if (!Osc7HostIsLocal(path.substr(0, slash))) {
       return {};
     }
     path = path.substr(slash);

@@ -134,9 +134,17 @@ void ToolDownloader::SetCacheDir(const std::filesystem::path& dir) { cache_dir_ 
 
 std::optional<std::filesystem::path> ToolDownloader::Download(const std::string& tool_id,
                                                                const std::string& url,
-                                                               const std::string& expected_sha256) {
+                                                               const std::string& expected_sha256_in) {
   if (!IsSafeToolId(tool_id)) {
     return std::nullopt;
+  }
+
+  // Compare digests case-insensitively: `ComputeSha256Blocking` returns lowercase,
+  // but the expected digest may be uppercase (manifests accept either case), so
+  // normalize once here to cover every comparison below.
+  std::string expected_sha256 = expected_sha256_in;
+  for (char& c : expected_sha256) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   }
 
   const std::filesystem::path cached_path = cache_dir_ / tool_id;

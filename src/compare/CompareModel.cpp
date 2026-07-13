@@ -10,6 +10,7 @@
 #include <string_view>
 #include <vector>
 
+#include "util/SaturatingMath.h"
 #include "util/StringUtil.h"
 
 namespace microide::compare {
@@ -1289,9 +1290,13 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
   }
 
   profile.total_ns = DurationNs(total_start, Clock::now());
-  profile.row_assembly_ns =
-      profile.total_ns - profile.split_lines_ns - profile.line_alignment_ns -
-      profile.hunk_alignment_ns - profile.intraline_ns;
+  // Saturating subtract: the residual row-assembly time is total minus the
+  // measured sub-steps, but clock jitter / nested measurement overhead can make
+  // the sub-steps sum to slightly more than total. On unsigned fields that would
+  // wrap to an enormous value and pollute the perf profile, so floor at zero.
+  const std::uint64_t measured_substeps = profile.split_lines_ns + profile.line_alignment_ns +
+                                          profile.hunk_alignment_ns + profile.intraline_ns;
+  profile.row_assembly_ns = util::SaturatingSub(profile.total_ns, measured_substeps);
   return result;
 }
 

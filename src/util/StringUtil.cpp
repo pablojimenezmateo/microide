@@ -68,6 +68,13 @@ char32_t DecodeUtf8Codepoint(std::string_view glyph) {
 }
 
 void AppendUtf8(std::string& out, char32_t codepoint) {
+  // Never emit invalid UTF-8: surrogate scalars and values above U+10FFFF are
+  // not encodable and would produce a byte sequence no decoder accepts. Fold
+  // them to U+FFFD so callers (JSON \u escapes, terminal input) can never push
+  // malformed bytes downstream.
+  if (codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+    codepoint = 0xFFFD;
+  }
   if (codepoint <= 0x7F) {
     out += static_cast<char>(codepoint);
   } else if (codepoint <= 0x7FF) {

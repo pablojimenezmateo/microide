@@ -146,6 +146,32 @@ void TestSingleLineEditorSupportsSnapshotAndAppend() {
   editor.Append("-omega");
   ExpectEditorState(editor, "alpha-omega", 11, std::nullopt,
                     "append should extend text and collapse selection");
+
+  // Append shares Insert's single-line sanitization: CR/LF are stripped so the
+  // field never stores line breaks even via this public helper.
+  editor::SingleLineEditor sanitized("x");
+  sanitized.Append("a\r\nb\nc");
+  ExpectEditorState(sanitized, "xabc", 4, std::nullopt, "append strips CR/LF");
+}
+
+void TestSingleLineEditorCaretSnapsToUtf8Boundary() {
+  // "é" is two UTF-8 bytes (0xC3 0xA9). Placing the caret at byte offset 1 lands
+  // mid-codepoint; it must snap back to the scalar start (0) so a following edit
+  // cannot split the code point and corrupt the field.
+  editor::SingleLineEditor editor("\xc3\xa9xy");
+  editor.SetCaret(1);
+  Expect(editor.caret() == 0, "a caret inside a multibyte scalar snaps to its start");
+
+  // A boundary offset (start of 'x' at byte 2) is preserved exactly.
+  editor.SetCaret(2);
+  Expect(editor.caret() == 2, "a valid UTF-8 boundary caret is preserved");
+
+  // A selection anchor is snapped the same way; inserting there stays valid UTF-8.
+  editor.SetCaret(2);
+  editor.SetSelectionAnchor(1);  // mid-"é" -> snaps to 0
+  const auto selection = editor.Selection();
+  Expect(selection.has_value() && selection->start == 0 && selection->end == 2,
+         "a selection anchor inside a multibyte scalar snaps to a boundary");
 }
 
 void TestSingleLineEditorSupportsWordMotionAndDeletion() {
@@ -208,6 +234,8 @@ void RegisterSingleLineEditorTests(std::vector<TestCase>& tests) {
           TestSingleLineKeyHandlerDispatchesClipboardShortcuts);
   AddTest(tests, "SingleLineEditor/SupportsSnapshotAndAppend",
           TestSingleLineEditorSupportsSnapshotAndAppend);
+  AddTest(tests, "SingleLineEditor/CaretSnapsToUtf8Boundary",
+          TestSingleLineEditorCaretSnapsToUtf8Boundary);
   AddTest(tests, "SingleLineEditor/SelectsWordAtOffset",
           TestSingleLineEditorSelectsWordAtOffset);
   AddTest(tests, "SingleLineEditor/SupportsWordMotionAndDeletion",

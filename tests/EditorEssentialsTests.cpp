@@ -427,6 +427,24 @@ void TestIndentDetectTabsMajority() {
   Expect(detected.non_blank_lines_inspected == 3, "tab-majority sample uses three non-blank lines");
 }
 
+// Regression: a leading whitespace run that has spaces before a tab (`"  \tcode"`,
+// a common Makefile/Python mixed style) is tab-indented in effect. Detection must
+// classify it by the presence of a tab, not by the first byte only — otherwise a
+// tab-indented file whose lines start with alignment spaces is misdetected as
+// space-indented.
+void TestIndentDetectMixedLeadingTabsCountAsTabs() {
+  std::vector<std::string> lines = {
+      "def f():",
+      "  \tfoo",   // spaces then a tab
+      "  \tbar",
+      "\tbaz",
+  };
+  auto detected = microide::editor::DetectIndent(lines);
+  Expect(detected.detected, "mixed leading tabs should still detect indentation");
+  Expect(!detected.soft_tabs,
+         "leading whitespace containing a tab must count as tab indentation, not spaces");
+}
+
 void TestIndentDetectMaxInspectBoundsNonBlankCount() {
   std::vector<std::string> lines;
   lines.reserve(400);
@@ -1149,6 +1167,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestIndentDetectSpacesMajority);
   AddTest(tests, "EditorEssentials/IndentDetect/TabsMajority",
           TestIndentDetectTabsMajority);
+  AddTest(tests, "EditorEssentials/IndentDetect/MixedLeadingTabsCountAsTabs",
+          TestIndentDetectMixedLeadingTabsCountAsTabs);
   AddTest(tests, "EditorEssentials/IndentDetect/MaxInspectBoundsNonBlankCount",
           TestIndentDetectMaxInspectBoundsNonBlankCount);
   AddTest(tests, "EditorEssentials/IndentDetect/ApplyOnOpenUpdatesViewport",

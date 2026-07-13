@@ -130,6 +130,14 @@ std::vector<GitBlameAttribution> ParseGitBlameIncrementalOutput(std::string_view
           .boundary = current_metadata.boundary,
       });
       in_entry = false;
+      // Bound the total attribution count: per-entry counts are clamped above,
+      // but a hostile stream of many tiny entries could otherwise grow this
+      // vector without limit. The caller bounds the blame window to a few hundred
+      // lines, so a legitimate response never approaches this cap.
+      constexpr std::size_t kMaxAttributions = 2'000'000;
+      if (attributions.size() >= kMaxAttributions) {
+        break;
+      }
       continue;
     }
   }

@@ -17,6 +17,149 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
+### Fixed in the 2026-07-13 actionable sweep
+
+Closed this pass (each with regression coverage unless noted); the corresponding open
+entries below were removed. Detail lives in the sweep commit(s).
+
+- **`AppendUtf8` (util + terminal input) folded invalid scalars to U+FFFD** instead of
+  emitting malformed UTF-8 for surrogates / >U+10FFFF.
+- **LSP `ParseDiagnostic` severity clamped to the 1..4 domain** (out-of-spec 0/99/INT_MAX
+  → Error) so severity filters cannot misclassify.
+- **Command completion routed `split-right`/`split-down`** instead of the stale `vsplit`
+  branch that never matched a real command.
+- **`ParseThemeColor` rejects numeric color tokens outside 0..255** rather than silently
+  collapsing them to black inside `Ansi256Color`.
+- **`MICROIDE_SEARCH_WORKER_LIMIT` clamped to a product max (64)** so a bad env value can't
+  request full hardware concurrency.
+- **`NotificationService::Show` saturates the expiry** near UINT64_MAX instead of wrapping
+  to an immediate expiry (now via `util::SaturatingAdd`).
+- **Plugin status-item `progress` rejects non-finite values** (NaN survived `std::clamp`) at
+  both the registration parser and the update interop.
+- **Legacy (non-SGR) terminal mouse encoding drops clicks past cell 222** instead of
+  clamping to a phantom edge click.
+- **Terminal selection copy omits the newline across soft-wrapped rows** (honors
+  `wrapped_from_previous`); real line breaks still emit `\n`.
+- **Terminal URL detection matches schemes case-insensitively** (`HTTPS://…`), preserving
+  the original path casing.
+- **OSC 7 working-directory reports from a non-local host are rejected** (accept empty,
+  `localhost`, and the local short hostname).
+- **Compare profiling residual row-assembly time uses a saturating subtract** so clock
+  jitter can't wrap it to an enormous value. Added shared `util/SaturatingMath.h`.
+- **`DebugValueTree::PathKey` includes a sibling ordinal** so two same-named siblings
+  (array pages / repeated map labels) expand/collapse independently across stops.
+- **`LspMessageFramer` parses the `Content-Length` header case-insensitively** and
+  tolerates missing/extra whitespace around the value.
+- **`DetectIndent` classifies a leading whitespace run containing a tab as tab-indented**
+  (was first-byte-only, misdetecting `"  \tcode"` as spaces).
+- **Commit subject length counts Unicode scalar values, not bytes**, so a short non-ASCII
+  subject is no longer falsely flagged as too long.
+- **Compare hunk/file patch copy no longer clobbers the clipboard on generation failure**
+  (writes only on a non-empty success). No isolated regression — trivial guard; the
+  patch-generator success path is covered by `PatchApplyTests`.
+- **Git blame visible-window arithmetic uses saturating add** so a near-SIZE_MAX
+  `visible_line_count` can't wrap and collapse the window.
+- **Plugin `editor.apply_edits` rejects malformed coordinates**: `ReadIndexField` guards
+  non-finite doubles (no UB cast) and clamps huge values; a 0/invalid coordinate now drops
+  the whole edit rather than clamping to a wild insertion at the buffer start.
+- **Plugin `text_styles` decoration rejects an inverted `start_col > end_col` range** at
+  interop parse time instead of producing a negative-width span downstream.
+- **`GitPorcelainParser::ParseLog` takes a bounded `max_entries` cap** (default 100000) so
+  no caller can re-open the unbounded path on a hostile/corrupt log stream.
+- **`FsOps::MovePath` rolls back the destination copy when the source removal fails**, so a
+  cross-device move that half-completes no longer leaves a silent duplicate. (Guard only;
+  a deterministic test needs a filesystem-injection seam that does not yet exist.)
+- **File-index git-metadata filtering is case-insensitive on folding hosts.** Added
+  `platform::HostPathsAreCaseInsensitive()`; `.GIT`/`.Git` are now excluded on
+  Windows/macOS (still indexed on case-sensitive Linux). Fixed in both `FileIndex` and
+  `FileIndexWatcher`.
+- **`SingleLineEditor` caret/anchor clamp to a UTF-8 boundary** (`ClampCaret` snaps off
+  continuation bytes) so a mouse/plugin/test caret placed mid-codepoint can't split a
+  scalar on the next edit.
+- **`SingleLineEditor::Append` shares Insert's CR/LF sanitization**, so a single-line field
+  cannot store line breaks via that public helper.
+- **Snippet parser honors VSCode-style escapes** (`\}`, `\$`, `\\` in default text; `\,`,
+  `\|`, `\}`, `\\` in choices) instead of truncating at the first raw delimiter.
+- **LSP single-string hover content is capped** (bare `MarkedString` and `MarkupContent
+  {value}`) with a UTF-8-boundary truncation marker, matching the array shape — a server
+  can no longer push a tens-of-MiB hover payload onto the callback/render path.
+- **LSP signature-help parameter label offsets are UTF-16→UTF-8 converted** before slicing
+  (via `LspCharacterToByteColumn`), so a non-ASCII signature label no longer corrupts the
+  active-parameter highlight.
+- **Theme includes are bounded** by a max nesting depth (16) and total include count (128),
+  so a deep chain or broad fan-out fails cleanly instead of recursing/opening unbounded
+  files. (Cycle handling stays skip-and-continue, keeping self-including themes loadable.)
+- **Settings ids are validated at the `SetUser`/`SetProject` mutation boundary**
+  (`SettingsStore::IsValidSettingId`): empty, whitespace, control-byte, or newline ids are
+  rejected before they can reach the persisted layer.
+- **Project-session tree-path lists are capped at decode** (100000 expanded/collapsed),
+  so a corrupt/hostile session file cannot allocate an unbounded string vector at restore.
+  (Guard only — a cap+1 test at 100k entries is impractical; the push is a simple bounded
+  append.)
+- **LSP server re-registration drops stale language-id aliases.** Re-registering
+  `["cpp","c"]` as `["cpp"]` no longer leaves `alias_["c"]` resolving to the C++ server
+  (`LspManager::RegisterServer` clears aliases pointing at the key before reinstalling).
+- **LSP `DidChange`/`DidChangeIncremental`/`DidSave` require an open document.** They no
+  longer insert a phantom version entry (via `operator[]`) for a URI that was never opened
+  or was already closed; an unopened change/save is rejected.
+- **Terminal paste is capped inside `TerminalSession::PasteText`** (64 MiB, UTF-8
+  boundary), so every entry point — including the direct middle-click paste that
+  bypassed the workspace clamp — is bounded.
+- **Plugin `process.run` stdin is capped at 16 MiB** independently of the Lua heap
+  budget (guard only; a 16 MiB end-to-end test is impractical).
+- **DAP line-breakpoint conversion clamps before the `int` cast** in
+  `SendBreakpointsForFile`, so a forged/corrupt persisted breakpoint near INT_MAX/
+  SIZE_MAX can't wrap to a negative DAP line. (Guard only.)
+- **Commit staged-summary numstat counts parse in 64-bit and saturate** instead of
+  dropping an out-of-`int`-range count to 0 (under-reporting a huge staged change).
+  (Guard only — a >2-billion-line diff can't be constructed to test.)
+- **All git commands run with `--literal-pathspecs`.** A user filename beginning with
+  git pathspec magic (`:(glob)`, `:(top)`, `:(exclude)`, `:!…`) can no longer alter a
+  stage/discard/blame/diff/history operation. Added once in `ReadGitCommandOutput*`.
+- **Branch-review delete/unmark on a missing target is a clean no-op.** `MarkFileUnreviewed`,
+  `MarkHunkUnreviewed`, and `DeleteNote` use a find-only helper (`FindMutableTarget`) and
+  bump the revision only on a real removal — no empty-target creation or spurious revisions.
+- **Branch-review pruning is by recency, not insertion order.** `PruneTarget` stable-sorts
+  newest-first on `reviewed_at`/`updated_at` before dropping the tail, so a recently
+  re-reviewed early-inserted entry survives.
+- **`TestController::RegisterTestItem` upserts by id.** A rediscovery with the same id
+  but a new label/file/line updates the item in place instead of being dropped (stale
+  navigation/names after a test rename/move).
+- **Plugin tool sha256 is normalized to lowercase and compared case-insensitively.**
+  Registration lowercases the digest and `ToolDownloader::Download` lowercases the
+  expected sha, so an uppercase manifest digest verifies against the lowercase computed one.
+- **Plugin language-server `language_ids` rejects empty/whitespace entries.** An array
+  like `{"", "cpp"}` is refused instead of seeding a `""` key into the activation table.
+- **`TestController::TestResults` returns by value.** It no longer hands back a reused
+  scratch reference that a second call invalidated, so two tests' results held at once
+  don't alias.
+- **Control-socket `Start` refuses to delete a non-socket file.** It `lstat`s the path
+  and only unlinks a stale socket owned by the current user; a regular file / dir /
+  symlink at the socket path makes Start fail instead of destroying the user's file.
+- **Git blame parser caps total attributions** (2M) in addition to the existing
+  per-entry line-count clamp, so a hostile porcelain stream of many tiny entries can't
+  grow the attribution vector without limit. (Guard only.)
+- **`ParseCommandLine` bounds input.** The scanned length (64 KiB) and token count (4096)
+  are capped so a pasted-megabyte command can't allocate/drive completion without limit.
+- **`CompletePath` caps candidate collection at 2000.** Completing `/usr/` or a generated
+  directory no longer builds and sorts an unbounded list on the UI thread.
+- **Persisted user/project config dedupes duplicate setting ids at decode** (last-writer-
+  wins), so a corrupt/hand-edited config with duplicate keys is no longer a split-brain state.
+- **Project-session enum bytes (`GroupSplitOrientation`, `RightPaneMode`) — verified
+  already guarded.** The restore path (`WorkspacePersistenceCoordinatorSession`) converts each
+  with a `value <= max ? static_cast<Enum>(value) : default` gate, so an out-of-domain byte
+  falls back to a valid default rather than an impossible pane state. No code change needed.
+- **Project-session layout floats (sidebar width, panel height) also cap huge finite
+  values.** `sanitize_pixels` already rejected non-finite/negative; it now also clamps to
+  100000px so a corrupt session can't squeeze the layout to nothing. (Coordinator-level
+  guard; group-split/right-pane fractions were already `std::clamp`ed at restore.)
+- **Workspace-session project-root list is capped (256) and deduped at decode.** A corrupt
+  session can no longer trigger a large startup loop or duplicate project tabs from
+  duplicate/equivalent roots.
+- **Plugin surface/display-list rects are sanitized at parse time.** `ReadRectFields` folds
+  non-finite x/y/w/h to 0 and clamps negative width/height to >= 0, so a NaN or inverted
+  hit-region/op rect can't poison layout/scroll extents or hit-testing.
+
 ### Still open (deferred, lower value / larger / latent)
 
 - **Git: sidebar stage/unstage/discard and commit `RefreshDerivedState` still run git
@@ -121,27 +264,6 @@ behavioral contract before changing code.
   `running()` can read a data-raced bool. Fix direction: mirror the POSIX branch's synchronization
   discipline with atomics or a mutex-protected handle snapshot; join before close; make `running()`
   race-free. Validate on Windows with repeated open/close and child-exits-immediately scenarios.
-- **`FsOps::MovePath` cross-device fallback can leave a duplicate destination after remove failure.**
-  The fallback path does `CopyPath(source, target)` and then `RemovePath(source)`. If the copy
-  succeeds but removal fails due to permissions, sharing violations, or a read-only parent, the
-  function returns failure while the destination copy remains. For trash this can leave hidden
-  trash contents for a file the user still sees in place; for rename/move it can poison retries with
-  an already-existing target. Fix direction: return a richer partial-success result or roll back the
-  destination on remove failure. Add a fixture that forces source removal failure after a successful
-  copy, probably by injecting file ops rather than depending on platform permissions.
-- **File-index git metadata filtering is case-sensitive.** `IsGitMetadataRelativePath` only excludes
-  a first component exactly equal to `.git`. On Windows and default macOS filesystems, `.GIT`,
-  `.Git`, or watcher casing drift refer to the same metadata directory and can leak repository
-  internals into the file finder or search index. Fix direction: apply platform case-folding to the
-  first path component, using the existing host-platform override for tests. Add a test that indexes
-  `.GIT/config` under a Windows override and expects exclusion.
-- **Git path arguments are not forced literal.** Many `GitRepository` / git service commands pass
-  user-controlled relative paths after `--`, but Git pathspec magic still applies after `--`.
-  Files named with pathspec prefixes such as `:(top)`, `:(glob)`, or other magic can stage, discard,
-  blame, diff, or history-query the wrong path. Fix direction: use `--literal-pathspecs` where
-  supported or prefix user paths with `:(literal)`. Add repository fixtures with filenames beginning
-  `:(literal-test)` and cover stage, discard, blame, compare, and history.
-
 ##### Persistence and durable file I/O
 
 - **Atomic save through a relative symlink whose target is missing can replace the symlink instead of
@@ -196,12 +318,6 @@ behavioral contract before changing code.
   explicitly commit or cancel the active snippet first. If the fallback edit succeeds, the snippet
   session can retain ranges computed for the pre-newline document. Fix direction: commit or cancel
   the snippet before returning false for multi-line input; test Enter inside an active placeholder.
-- **Snippet parser likely mishandles escaped placeholder delimiters.** The snippet parser walks until
-  the next raw `}` or `|` delimiter and does not appear to honor escaped braces, pipes, or commas in
-  default/choice text. VS Code-style snippets containing `\}`, `\,`, or `\|` can produce truncated
-  placeholders or wrong choices. Fix direction: define the supported snippet grammar explicitly, then
-  parse escapes rather than treating delimiters as unconditional terminators. Add parser-only tests
-  for escaped delimiter fixtures.
 - **Case-insensitive editor replace and project search are ASCII-only despite UTF-8 editing.**
   `TextViewportEditEngine` and `ProjectSearchService` lower through ASCII helpers. Searching or
   replacing case-insensitively for `é`/`É`, `ä`/`Ä`, Greek, Cyrillic, or Turkish dotted/dotless I
@@ -250,12 +366,6 @@ behavioral contract before changing code.
   set. That can corrupt generated edits, formatters, or refactors. Fix direction: if raw length
   exceeds the cap, fail the request with an explicit error instead of truncating. Add a Lua plugin
   regression that passes `kMaxApplyEdits + 1` and expects failure/no partial edit.
-- **Plugin numeric line/column reads accept fractional and very large values by truncation.**
-  `ReadIndexField` reads Lua numbers as `double` and casts any value `>= 1.0` to `size_t`. Values
-  like `1.9`, `inf`, or beyond exact integer precision can land on surprising lines or overflow
-  differently across platforms. Fix direction: require integer-valued finite numbers in plugin API
-  parsers, reject non-finite/fractional inputs, and add API tests for `1.5`, `math.huge`, and huge
-  integer strings.
 - **Plugin data-directory discovery trusts lexical roots.** `DataDirectories` builds candidates from
   plugin roots and subdirectories with `lexically_normal`. If a plugin root is a symlink that changes
   after discovery, data-directory identity may drift from the root containment policy used by runtime
@@ -273,23 +383,6 @@ behavioral contract before changing code.
   Fix direction: dispatch through `ProjectBackgroundExecutor` with generation guards, show a loading
   picker state, and drop stale completions when the overlay closes or the project changes. Add a fake
   git service test that blocks until the overlay has rendered.
-- **Copying a compare patch can clear the clipboard on failure.** `CopyCompareHunkPatch` and
-  `CopyCompareFilePatch` write `patch.value_or("")` to the clipboard. If patch generation fails, the
-  user's previous clipboard is replaced with an empty string and no visible failure. Fix direction:
-  only write on success and surface a status message on failure. Add a compare test that injects patch
-  generation failure and asserts the clipboard is unchanged.
-- **Branch review "delete/unreview missing target" creates state.** `BranchReviewStateService`
-  methods such as `MarkFileUnreviewed`, `MarkHunkUnreviewed`, and `DeleteNote` call
-  `FindOrCreateTarget`. Unreviewing or deleting a note for an unknown target can create an empty
-  target, bump revision, and persist noise. Fix direction: use a mutable find-only helper for
-  delete/unmark paths. Add tests that call each operation on a missing target and expect no revision
-  change and no new target.
-- **Branch review pruning ignores recent updates inside a target.** Per-target file/hunk/note vectors
-  are pruned by insertion order, while review and note updates refresh timestamps without moving the
-  touched entry to the back or sorting by timestamp. A recently re-reviewed file can still be pruned
-  because it was inserted early. Fix direction: prune by `reviewed_at_unix_ms` /
-  `updated_at_unix_ms`, or maintain LRU ordering on every touch. Add tests that fill past the cap,
-  touch the oldest entry, and ensure it survives pruning.
 - **Merge "mark resolved" for delete conflicts removes the working file before the full operation is
   proven.** In the delete branch, the file is removed and the buffer is marked clean before later git
   validation/staging can fail. A stale index, permission problem, or git error can leave the user's
@@ -302,11 +395,6 @@ behavioral contract before changing code.
   in trailing newline or line-ending convention, choosing one side may not preserve that side's exact
   file ending. Fix direction: write tests for conflicts where one side has no final newline and/or CRLF
   inside the conflict, then either preserve per-choice endings or document the normalizing behavior.
-- **Compare profiling counters can underflow.** `BuildCompareModelProfiled` computes residual
-  row-assembly time by subtracting sub-step durations from total duration. If clock jitter or nested
-  measurement overhead makes sub-steps exceed total, an unsigned residual can become an enormous
-  number and pollute perf diagnostics. Fix direction: saturating subtract for derived timing fields.
-  Add a tiny helper test rather than trying to force clock behavior.
 
 ##### Project search, indexing, blame, and repository state
 
@@ -321,17 +409,6 @@ behavioral contract before changing code.
   regex or very large literal target can occupy a worker until the current file completes. Fix
   direction: thread cancellation through line iteration and regex search helpers. Add a cancellation
   test with an injected slow reader/searcher and assert prompt stop latency.
-- **Git blame parser can allocate too much from hostile or corrupted porcelain output.** The parser
-  clamps individual counts, but a stream containing many attribution headers with large counts can
-  still populate a very large line map unrelated to the requested visible window. Real git should not
-  emit this, but fuzz targets can and a compromised helper should not exhaust memory. Fix direction:
-  cap total parsed lines per response to the requested window plus a small margin. Extend blame parser
-  fuzz/regression coverage.
-- **Git blame visible-window arithmetic has overflow edges.** Snapshot range calculations add
-  `visible_start_line + visible_line_count - 1` and similar result bounds without clear saturating
-  guards. Normal UI sizes are small, but public/test seams can pass huge values and make the service
-  believe no request is needed or mark stale data as covering the viewport. Fix direction: add
-  saturating helpers for one-based line interval math and tests using near-`size_t::max` inputs.
 - **Repository state caps can hide important changes silently.** Git status and search result caps are
   necessary, but some paths appear to truncate without a first-class "truncated" state in every UI
   consumer. A conflict or high-priority result after the cap can be invisible. Fix direction: audit
@@ -557,11 +634,6 @@ test proves it is unreachable.
   and later follow rename/delete retargeting logic. Fix direction: use `ContainPath` for file-bound
   plugin contributions or explicitly reject decorations for paths outside the active project. Add a
   plugin test with `../outside.cpp`.
-- **Plugin decoration whole-line entries can omit columns, but non-whole entries do not validate
-  `start_col <= end_col`.** If a plugin sends `start_col` greater than `end_col`, downstream render or
-  merge code must normalize or it can produce empty/negative-width styling assumptions. Fix direction:
-  reject inverted decoration ranges at interop parsing time. Add a decoration parser test for inverted
-  columns.
 - **Plugin code-action/provider result truncation is silent.** Completion, code action, test, SCM,
   annotation, and auth harvesters clamp arrays with `std::min(rawlen, cap)`, then return success.
   Providers that exceed a cap get partial results with no plugin-visible error, making generated code
@@ -637,21 +709,6 @@ test proves it is unreachable.
 
 ##### Terminal, input, and ANSI behavior
 
-- **Terminal UTF-8 encoder accepts invalid Unicode scalar values.** `AppendUtf8` encodes any
-  `char32_t` above `0xFFFF` as a four-byte sequence, including values above `U+10FFFF`. If SDL or a
-  test seam supplies an invalid codepoint, the terminal sends invalid UTF-8 to the child process. Fix
-  direction: reject codepoints above `0x10FFFF` and surrogate range values before encoding. Add
-  `TerminalSessionInputEncoding` tests for `0xD800` and `0x110000`.
-- **Terminal legacy mouse encoding clamps rows/columns beyond 223 to the edge cell.** Without SGR
-  mouse mode, coordinates beyond the legacy range are clamped to 223 rather than dropping the event.
-  Applications running in large terminals can receive clicks at the wrong edge location. Fix
-  direction: for legacy mode, drop events outside encodable range or force SGR-only reporting when the
-  terminal size exceeds 223 columns/rows. Add mouse encoder tests for column 300 without SGR.
-- **Terminal bracketed paste can synchronously write arbitrarily large payloads.** `PasteText`
-  formats the entire paste into one string and calls `SendBytes`. Large clipboard content can allocate
-  and block the UI/backend write path. Fix direction: chunk paste output with a bounded queue and
-  cancellation/stop behavior, especially on Windows where `WriteFile` blocks. Add a paste stress test
-  with a fake backend that blocks after N bytes.
 - **Terminal pending query replies silently truncate at 64 KiB.** The cap prevents a reply flood from
   freezing the UI, but a program issuing many legitimate color/DA/DSR queries can receive a partial
   reply stream with no reset marker. Fix direction: when the cap is hit, drop whole replies rather
@@ -689,13 +746,6 @@ test proves it is unreachable.
 
 ##### LSP / DAP protocol framing and request semantics
 
-- **`LspMessageFramer` only accepts an exact `Content-Length: ` header spelling.** The framer drops
-  any first header line that is lower/mixed case, lacks the post-colon space, or carries otherwise
-  valid header syntax. Most test servers emit the exact spelling, but JSON-RPC-over-header peers are
-  often HTTP-style tolerant, and a real server using `Content-Length:42` would make the client consume
-  the body as header noise until the read-buffer cap or a lucky resync. Fix direction: parse header
-  lines case-insensitively, allow optional whitespace around the value, and keep the malformed-frame
-  resync behavior. Add framing tests for lowercase, no-space, and extra-whitespace variants.
 - **Malformed LSP frame recovery can scan arbitrary body bytes as future headers.** When the
   `Content-Length` value is nonnumeric or nonpositive, `LspMessageFramer::Next` consumes only that
   line and then tries to resync line-by-line. If the malformed frame also has a blank line and a large
@@ -740,27 +790,12 @@ test proves it is unreachable.
   stored as hierarchical objects or prefixed ids. Fix direction: define one mapping between MicroIDE
   settings ids and LSP section keys, including dotted paths, and test common clangd/rust-analyzer
   requests against real configured values.
-- **LSP diagnostics accept out-of-spec severity values.** `ParseDiagnostic` stores
-  `JsonIntInRange(value["severity"], 1)` but does not clamp to the LSP range 1..4. Downstream severity
-  filters, colors, and "most severe" status logic may misclassify severity 0, 99, or a huge clamped
-  `INT_MAX`. Fix direction: clamp to 1..4 or treat invalid values as the default severity. Add parser
-  tests for missing, zero, five, and huge severities.
 - **LSP result truncation is silent on locations, diagnostics, symbols, workspace edits, semantic
   tokens, inlay hints, and signature help.** The parser caps several arrays to protect the UI thread,
   but it returns the same type whether the result was complete or clipped. Users see an incomplete
   references list or outline with no indication. Fix direction: return a `truncated` bit alongside
   parsed results and surface it through status/messages and picker footers. Add parser tests that hit
   each cap and UI tests that assert visible truncation feedback.
-- **Single-string/object hover content is uncapped.** `ParseHoverContents` bounds array hover content,
-  but a bare string or `MarkupContent { value }` is returned in full. A server can send one tens-of-MiB
-  hover payload inside the 64 MiB frame cap and force allocation/render work on the main callback path.
-  Fix direction: apply the same byte cap and explicit truncation marker to all hover shapes. Add tests
-  for bare string, markup object, marked-string object, and array variants.
-- **Signature-help parameter label offsets are treated as byte offsets.** The LSP offsets in
-  `SignatureInformation.parameters[].label` are UTF-16 code-unit offsets into the signature label.
-  `ParseSignatureHelp` slices the UTF-8 byte string directly, which breaks non-ASCII function labels
-  and can drop or corrupt the active parameter display. Fix direction: convert UTF-16 offsets to UTF-8
-  byte offsets before slicing, rejecting invalid ranges. Add tests with `f(é, β)`-style labels.
 - **Signature-help labels and documentation have no per-field byte cap.** Counts are capped, but each
   signature label, parameter label, and documentation string is copied as-is. A single hostile result
   can consume large memory and render time without exceeding count limits. Fix direction: cap each
@@ -825,21 +860,8 @@ test proves it is unreachable.
   resolution and labels. Fix direction: validate config-derived names with `git check-ref-format
   --branch` or stricter local rules before using them as refs/labels. Add fixtures with malformed
   config values and option-looking names.
-- **Recent-commit parsing remains unbounded at the parser API.** `CollectGitRecentCommits` caps its
-  requested limit, but `GitPorcelainParser::ParseLog` itself still materializes everything it is given
-  and is called directly by tests and repository helpers. Future call sites can accidentally re-open
-  the unbounded path. Fix direction: add a parser-level cap parameter or a streaming parser used by
-  all callers. Add a parser unit test that feeds >1000 synthetic records and asserts the configured
-  cap.
-
 ##### Control channel, socket lifecycle, and command transport
 
-- **Control socket startup unlinks the target path without verifying it is a socket.**
-  `ControlSocketServer::Start` and rebind call `::unlink(path)` after creating the parent directory.
-  Under a compromised or reused runtime directory this can delete any user-owned regular file at that
-  path. Fix direction: `lstat` first, remove only sockets owned by the current user, and fail loudly on
-  regular files/symlinks. Add a POSIX test that pre-creates a regular file at the socket path and
-  expects startup failure with the file intact.
 - **Control socket file permissions are fixed after bind, leaving a short wider-permission window.**
   The server binds with the process umask, then calls `chmod(0600)`. On permissive umasks there is a
   small interval where another local user could connect before the chmod. Fix direction: set a
@@ -872,17 +894,6 @@ test proves it is unreachable.
 
 ##### Editor primitives, text layout, and Unicode correctness
 
-- **`SingleLineEditor::SetCaret` and selection anchors clamp only to byte length, not UTF-8
-  boundaries.** Mouse hit testing, tests, or plugin-driven surfaces can place the caret in the middle
-  of a multibyte character. The next insert can split the code point and corrupt the field. Fix
-  direction: clamp caret and anchor through `TextLayout::ClampTextColumn` or an equivalent UTF-8
-  boundary helper inside `Normalize`. Add single-line editor tests that set caret inside `é` and then
-  insert/delete.
-- **`SingleLineEditor::Append` bypasses single-line sanitization.** `Insert` strips CR/LF, but
-  `Append` appends raw text after normalization. Today it is mainly used by tests, but it is part of
-  the public primitive and future surfaces can accidentally store line breaks in a single-line field.
-  Fix direction: make `Append` share the same sanitization path as `Insert`, or rename it to a
-  test-only raw append helper. Add tests for CRLF input.
 - **Multi-line paste into single-line fields concatenates tokens with no separator.** `Insert`
   removes CR/LF entirely, so pasting `foo\nbar` becomes `foobar` rather than `foo bar` or `foo`.
   That can silently change search needles, rename targets, branch names, or command args. Fix
@@ -916,18 +927,10 @@ test proves it is unreachable.
 
 ##### Theme, rendering, and UI output
 
-- **Theme includes have no maximum depth or include count.** Cycles are detected by the current stack,
-  but a long acyclic chain or broad include tree can recursively open many files and grow stack/work
-  before failing. Fix direction: add a maximum include depth and total include count, with an error
-  message that names the include chain. Add theme loader tests for cycle, deep chain, and broad fanout.
 - **Theme include cycles are silently accepted.** If an included theme is already in `include_stack`,
   `LoadThemeStyles` returns true and continues. That avoids infinite recursion but leaves users with a
   partially applied theme and no explanation. Fix direction: return a structured cycle error or at
   least trace/status it. Add a cycle fixture that asserts the error text.
-- **Theme numeric color tokens are accepted for any all-digit integer.** `ParseThemeColor` passes the
-  parsed value to `Ansi256Color`, so values above 255 depend on palette helper clamping/wrapping
-  semantics rather than a user-facing validation error. Fix direction: reject numeric color tokens
-  outside 0..255 and surface the invalid group. Add parser tests for `255`, `256`, and a huge number.
 - **`TruncateToWidthView` returns a thread-local scratch view that is easy to invalidate.** The
   lifetime is documented in a member comment, but render code can accidentally store a returned view
   or call the truncator again before drawing the previous value, causing wrong labels. Fix direction:
@@ -958,11 +961,6 @@ test proves it is unreachable.
   edited config with duplicate keys can show one value in the UI and apply another until reset erases
   all copies. Fix direction: canonicalize duplicates during persistence load or make all operations
   consistently last-wins. Add persistence fixtures with duplicate user and project setting ids.
-- **Settings ids are not validated at mutation boundaries.** `SetUser`/`SetProject` accept any string
-  id from callers/control flows. Empty ids or ids containing newlines/pathlike separators can enter
-  persisted layers and confuse overlays, LSP configuration mapping, or future typed settings. Fix
-  direction: centralize setting id validation and reject invalid ids with visible feedback. Add tests
-  for empty, whitespace, newline, and unknown ids.
 - **`SettingsStore::Revision` increments on every bind even when resolved values are unchanged.** That
   is safe but causes downstream live-settings application and render preparation to re-run on project
   switches or reloads that do not change effective settings. Fix direction: compute a cheap resolved
@@ -1048,21 +1046,11 @@ test proves it is unreachable.
   Windows/macOS, slash spelling differences, or Unicode normalization can make a recent file disappear
   from the empty-query lead section even though it is indexed. Fix direction: key recents through
   `editor::PathKey` / host-platform normalization. Add host-platform override tests.
-- **Command palette path completion has no per-directory cap.** `CompletePath` iterates every entry in
-  the target directory, builds candidates, then sorts all matches on the UI thread. Completing `/usr/`
-  or a generated directory with hundreds of thousands of entries can freeze the prompt. Fix direction:
-  cap candidate collection, use partial sorting for visible rows, and surface "more matches" status.
-  Add a temp-dir fixture with cap+1 files.
 - **Command palette path completion can enumerate absolute filesystem roots from any project.** A
   token beginning with `/` searches from the filesystem root rather than the project root. That may be
   useful for power users, but it is a broader read/enumeration surface than most project commands
   need. Fix direction: decide which commands allow absolute completion and gate it per command
   metadata. Add tests for `open /`, `debug-run /`, and project-relative-only commands.
-- **Command parsing has no token-count or input-length cap.** `ParseCommandLine` appends tokens until
-  input end, so a pasted megabyte command or thousands of quoted tokens can allocate and drive
-  completion/dispatch work on the UI thread. Fix direction: cap prompt input size and token count with
-  visible rejection before parsing. Add parser tests for cap and dangling quote/escape at cap.
-
 ##### Plugin runtime and extension boundaries
 
 - **`workspace.open_file` lets plugins request arbitrary absolute paths without capability or
@@ -1088,11 +1076,6 @@ test proves it is unreachable.
   allowlist entry that looked like a system binary. Fix direction: distinguish exact path entries from
   basename entries in the manifest schema. Add tests for `eslint`, `/usr/bin/eslint`, and
   `./eslint`.
-- **Plugin process stdin size is not separately capped.** `ParseProcessRunArgs` copies `options.stdin`
-  into a `std::string` and passes it to the subprocess layer. Lua's memory budget is the only bound,
-  so one call can push a very large stdin payload through the plugin worker. Fix direction: set a
-  process-stdin byte cap distinct from Lua heap size and return a plugin-visible error. Add a process
-  interop test with cap+1 stdin bytes.
 - **Plugin surface anchors are lexical, not containment-checked.** `ReadAnchor` resolves
   `{path,line}` through `ResolveRuntimePath` and stores the result. A plugin surface can anchor itself
   to an external absolute path or `../` path, then later participate in navigation and refresh logic.
@@ -1104,11 +1087,6 @@ test proves it is unreachable.
   synthesizing host command-line text. Fix direction: prefer structured command ids plus arguments, or
   mark raw command-line hit regions as privileged. Add a test that a hit region cannot smuggle a
   multi-command or malformed quoted string if raw commands are restricted.
-- **Plugin hit-region rectangles are not normalized at interop parse time.** Negative widths/heights,
-  NaN-ish numeric inputs converted through `ReadNumberField`, or huge coordinates are left for surface
-  layout/hit testing to interpret. Fix direction: reject non-finite and non-positive rectangles at
-  parse time and clamp to content bounds. Add parser tests for negative `w`, negative `h`, and huge
-  coordinates.
 - **Plugin SCM snapshots can report paths outside the project.** `SnapshotScm` resolves each entry path
   with `resolve_runtime_path` and accepts any non-empty result. A plugin SCM provider can populate the
   SCM view with external files, after which stage/discard/navigation semantics become ambiguous. Fix
@@ -1133,27 +1111,11 @@ test proves it is unreachable.
   time, closing a terminal tab or quitting can feel hung. Fix direction: surface "terminating
   terminal..." after a short threshold and hard-kill after the existing bounded policy if not already
   enforced in `ShellProcess`. Add tests with a child ignoring SIGTERM.
-- **OSC 7 accepts any `file://host/path` host as a local path.** `DecodeOsc7Path` strips `file://`,
-  finds the first slash after the host, and stores the path regardless of hostname. Remote shells can
-  report `file://remote/home/user/project`, which the UI may treat as a local working directory. Fix
-  direction: accept empty, `localhost`, and the current hostname only; otherwise ignore or mark remote.
-  Add OSC 7 tests for local, localhost, and remote host payloads.
 - **OSC 7 working directories are stored without containment or existence checks.** The decoded path is
   assigned to `reported_working_directory_` directly. Later terminal affordances can seed new terminals
   or labels from a path that no longer exists or points outside the active project. Fix direction:
   classify reported cwd as project-contained/external/missing and constrain commands that reuse it.
   Add tests for missing path and outside-project path.
-- **Terminal selection copy inserts newlines across soft-wrapped rows.**
-  `ExtractTerminalSelectionText` appends `'\n'` between every selected row and ignores
-  `TerminalLine::wrapped_from_previous`. Copying a long wrapped shell command can paste back with hard
-  newlines that were never in the terminal stream. Fix direction: omit the newline when the next row is
-  marked wrapped-from-previous, while preserving real line breaks. Add selection tests spanning a soft
-  wrap and a hard newline.
-- **Terminal URL detection is ASCII-lowercase and punctuation-blind.** `TerminalUrlAtColumn` searches
-  fixed lowercase schemes and trims trailing punctuation one byte at a time. It misses `HTTPS://...`
-  and can over-trim URLs whose final `)` or `]` is balanced content. Fix direction: case-fold the
-  scheme and use a small balanced-delimiter trim heuristic. Add URL hit tests for uppercase schemes and
-  parentheses.
 - **Terminal copy helpers treat empty cells as spaces even inside wide-glyph sequences.** Wide trailing
   cells are skipped, but other empty cells in a selection become spaces. For applications that use
   absolute cursor moves, this can copy rectangular padding that was never text. Fix direction: offer a
@@ -1192,21 +1154,6 @@ test proves it is unreachable.
   clears `advertised_` but not `filter_conditions_`. If a later adapter advertises the same filter id,
   an old condition can silently apply. Fix direction: clear conditions for filters that are no longer
   advertised or key them by adapter id. Add tests for adapter switch with reused filter ids.
-- **Debug variable expansion keys collide for duplicate sibling names.** `DebugValueTree::PathKey`
-  joins the root-to-node name chain. Two siblings with the same `name` under the same parent share an
-  expansion key, so expanding/collapsing one can affect the other across stops. This is common in array
-  pages or maps that present repeated labels. Fix direction: include adapter variables reference,
-  indexed position, or a stable sibling ordinal in the path key. Add a variable tree test with duplicate
-  child names.
-- **Commit subject length is byte-counted, not character-counted.** `RunCommitPreChecks` blocks when
-  `subject.size() > kCommitSubjectMaxLength`. Non-ASCII subjects can hit the byte limit with far fewer
-  user-visible characters. Fix direction: count Unicode scalar values or display cells according to
-  the commit-message policy. Add tests with accented and CJK subjects near the limit.
-- **Commit staged-summary line counts silently drop out-of-range numstat values.** `BuildCommitStagedSummary`
-  parses added/deleted counts with `ParseInt`; values outside `int` range become absent and contribute
-  zero. A generated or hostile repo diff can under-report huge staged changes. Fix direction: parse
-  into 64-bit with saturation and mark the summary as truncated/approximate. Add parser tests with
-  very large numstat counts.
 - **Conflict-marker precheck can miss markers beyond git output capture limits.** The staged diff scan
   asks git for the whole cached diff and then searches the captured output. If the command capture layer
   truncates large output, a marker after the cap is indistinguishable from "no marker". Fix direction:
@@ -1261,11 +1208,6 @@ test proves it is unreachable.
   loses the collapsed state. Fix direction: persist collapsed folds by opener identity plus a fuzzy
   range match, or explicitly mark edits inside collapsed ranges as preserving that collapsed opener.
   Add tests for inserting and deleting lines inside a collapsed fold.
-- **Indent detection ignores mixed leading tabs after spaces.** `DetectIndent` only counts a line as
-  tab-indented when the first byte is `'\t'`; lines beginning with spaces then tabs count as soft-tabs
-  with a space width. Mixed-indentation files can be detected as spaces even when the effective
-  indentation unit is tabs. Fix direction: scan leading whitespace and classify tabs anywhere before
-  the first non-space. Add fixtures for space-tab, tab-space, and mixed Python/Makefile snippets.
 - **Indent guide generation can create unbounded per-row guide runs for pathological leading
   whitespace.** `ComputeIndentGuides` emits one guide for every `indent_width` up to the visible
   line's leading indent. A single line with hundreds of thousands of spaces can allocate and sort a
@@ -1543,11 +1485,6 @@ test proves it is unreachable.
   oversized, or control-character URLs to the user. Fix direction: validate allowed schemes and cap URL
   length before opening the confirmation prompt. Add tests for `https`, `file`, newline-containing, and
   cap+1 URLs.
-- **Command completion still contains a stale `vsplit` branch.** `CompleteInput` completes paths for
-  `command == "vsplit"`, but the registered commands are `split-right` and `split-down`. Users typing
-  the real split commands get no path completion, while an unknown legacy command gets completions and
-  then fails on execution. Fix direction: remove the stale branch and add the current split commands to
-  completion routing. Add completion tests for `split-right <path>` and unknown `vsplit`.
 - **Sidebar tree requests can target arbitrary absolute roots.** `ParseSidebarViewRequest` stores
   `args[1]` directly for the tree root. That may be a useful file-browser feature, but it bypasses the
   project traversal policy and can expose large or sensitive filesystem roots through the sidebar. Fix
@@ -1587,15 +1524,6 @@ test proves it is unreachable.
   reorder between revisions or platforms, causing visual jitter. Fix direction: add stable tie-breakers
   (`plugin_id`, `id`) or use `stable_sort` over registration order. Add status-item ordering tests with
   equal priority contributions.
-- **Status item progress accepts NaN as an ordinary value.** `ExtractStatusItemUpdate` clamps numeric
-  progress through `std::clamp(static_cast<float>(value), 0, 1)` but does not check finiteness. NaN can
-  survive and poison progress rendering/layout. Fix direction: reject non-finite progress and treat it
-  as absent or indeterminate. Add plugin status tests for `0/0`, `math.huge`, and negative progress.
-- **Notification expiry can overflow on large `now_ms`.** `Show` stores `expiry_ms = now_ms +
-  DurationMs()` without a saturation check. A mocked or long-running monotonic clock near
-  `UINT64_MAX` wraps and immediately expires or lives unexpectedly. Fix direction: saturate at
-  `UINT64_MAX` or compute delays by subtraction from creation time. Add boundary tests around
-  `UINT64_MAX - DurationMs()`.
 - **Settings font filtering rebuilds the filtered vector repeatedly per interaction.**
   `FilteredFontFamilies()` allocates/returns a fresh vector and is called by row count, file index,
   highlight, and scroll methods. Large font lists or rapid typing multiply the same scan. Fix
@@ -1631,11 +1559,6 @@ test proves it is unreachable.
   `contribution_interop`. First-match consumers then get order-dependent behavior. Fix direction:
   centralize duplicate-id validation for every contributed type. Add plugin setup tests registering the
   same local id twice for each vector-backed kind.
-- **Plugin language-server registration accepts empty language ids inside `language_ids`.** The parser
-  requires the vector to be non-empty, but it does not validate each string. Empty or whitespace
-  language ids can enter matching tables and confuse server activation. Fix direction: validate every
-  language id with the same identifier rules used by filetype/provider ids. Add parser tests for
-  `{"", "cpp"}` and `" "` ids.
 - **Malformed LSP `initialization_options` and `settings` JSON is silently ignored.** The parser leaves
   the fields null when JSON parsing fails, but registration still succeeds. Plugin authors get a server
   launched with missing configuration and no actionable error. Fix direction: reject present-but-invalid
@@ -1649,10 +1572,6 @@ test proves it is unreachable.
   `FindTool` later exact-matches host strings such as `linux`, `macos`, or `windows`. Typos silently
   make tools undiscoverable. Fix direction: validate platform against a known enum and reject unknown
   values at registration. Add tests for `linux`, `darwin`, `macos`, and empty platform.
-- **Plugin tool SHA-256 comparison is case-sensitive even though registration accepts uppercase hex.**
-  `ParseToolRegistration` accepts any hex case, but `ComputeSha256Blocking` returns lowercase from
-  common tools; an uppercase expected digest fails verification. Fix direction: normalize sha256 to
-  lowercase at registration. Add downloader tests with uppercase and lowercase expected digests.
 - **Tool downloader blocks the caller while hashing.** `Download` posts SHA computation to
   `background_executor_` and immediately calls `future.get()`. If `Download` runs on the UI thread, a
   large cached tool still freezes the shell until the digest subprocess finishes. Fix direction: make
@@ -1720,19 +1639,10 @@ test proves it is unreachable.
 
 ##### Tests, icons, decorations, and terminal remaining edges
 
-- **`TestController::RegisterTestItem` ignores duplicate ids instead of updating.** A rediscovery with
-  the same test id but new label/path/range is dropped, leaving stale navigation and names. Fix
-  direction: upsert by id with provider generation, and preserve expansion/selection separately. Add
-  tests for rediscovery after a test file rename.
 - **Test results are stored without a cap or generation.** `RecordTestResult` appends forever, and
   results from old discovery sessions remain mixed with current tests. Long-running test sessions can
   grow memory and display stale failures. Fix direction: cap result history per test and tag results by
   run/discovery generation. Add tests for repeated runs and provider reload.
-- **`TestResults` returns a reference to mutable scratch storage.** The method fills
-  `filtered_results_` and returns it by const reference; a second call invalidates the previous
-  reference contents. UI code that holds two result references can read the wrong test's results. Fix
-  direction: return a value/span tied to immutable indexed storage or provide an iterator callback. Add
-  a test that queries two test ids back to back.
 - **Test items are not owned by provider id.** The controller stores a flat item list and has only
   `Clear()`. Plugin reload or one provider failing rediscovery cannot remove just that provider's
   tests. Fix direction: store items by provider and discovery generation. Add tests with two providers
@@ -1761,10 +1671,6 @@ test proves it is unreachable.
   query-heavy app can observe missing replies and behave incorrectly. Fix direction: coalesce repeated
   replies, expose a dropped-reply counter/status, or apply backpressure. Add a terminal test flooding
   private-mode queries past the cap.
-- **Terminal paste has no size gate before formatting.** `PasteText` formats the entire input into
-  bracketed-paste bytes and sends it. A huge clipboard can allocate a large intermediate string and
-  block on PTY write. Fix direction: cap paste size, stream chunks, or prompt for very large pastes. Add
-  tests for large paste payloads in bracketed and plain modes.
 - **Terminal CPR/DECRQM replies can be generated while the backend is no longer running.**
   `SendBytesLocked` buffers replies from parser paths without checking backend liveness; the later
   flush may write stale query responses after process shutdown/restart. Fix direction: tag pending
@@ -1791,13 +1697,6 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
 
 #### LSP registry, document lifecycle, and server errors
 
-- **LSP server re-registration leaves aliases for removed language ids.** `LspManager::RegisterServer`
-  overwrites an existing server entry keyed by the first language id, but it does not erase aliases
-  that belonged to the old `language_ids` vector and are absent from the new one. Re-registering a
-  `["cpp", "c"]` server as `["cpp"]` leaves `alias_["c"] = "cpp"`, so `HasServer("c")` and
-  `GetServer("c")` still resolve to the C++ server even though C support was removed. Fix direction:
-  remove every alias owned by the old entry before replacing it, then install aliases from the new
-  entry. Add a unit test that drops one language id and verifies the old alias is gone.
 - **LSP overlapping registrations can create unreachable duplicate server entries.** The canonical
   key is `language_ids.front()`. Registering one plugin as `["cpp", "c"]` and another as
   `["c", "cpp"]` creates two `servers_` entries, then aliases both ids to whichever registration ran
@@ -1823,23 +1722,12 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   direction: show executable basename plus an argv count in UI, with full argv available only in an
   opt-in diagnostic log that redacts known secret-looking values. Add tests for `--token=secret` and
   environment-variable-style arguments.
-- **`DidChange` can create a tracked document version for a URI that was never opened.** The LSP
-  client increments `impl_->document_versions[uri]`, which inserts a default entry when the URI is
-  unknown or has already been closed. A caller bug can therefore send `textDocument/didChange`
-  without a preceding `didOpen`, and the client will treat future diagnostics as version-gated for
-  that URI. Fix direction: require an existing open-document entry for every change; otherwise reject
-  or log and do not send. Add tests for change-before-open and change-after-close.
 - **`DidClose` drops local document-version state before the close notification is known to be
   queued.** The local version entry is erased before the send path confirms it accepted the
   notification. If the client is shutting down or the queue rejects the send, the server can still
   think the document is open while the host has lost the version gate that would classify later
   diagnostics. Fix direction: erase only after queue acceptance, or store a `close_pending` state
   until shutdown/close completion. Add a test with a stopped transport that rejects `didClose`.
-- **`DidSave` has no open-document guard.** Save notifications can be emitted for unopened or already
-  closed URIs. Some servers tolerate that, but strict servers may report protocol errors or run file
-  watchers twice. Fix direction: either send only for open text documents or explicitly use
-  workspace-level file-change notifications for closed files. Add a fake-server test asserting no
-  `didSave` for an unopened URI.
 - **Live LSP protocol errors are not surfaced through `LastServerError`.** `LastServerError` returns
   the manager entry's cached `last_error`, which is mainly start/exited state. A running client can
   accumulate transport/protocol failure information in the client itself while status UI still reports
@@ -1881,12 +1769,6 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   resolve the adapter entry. Fix direction: pin adapter metadata while any session of that type is
   active, or mark it retired-but-session-owned. Add a test with an active session and a plugin reload
   that drops its adapter.
-- **Line breakpoint resend can overflow the DAP 1-based line conversion.** Breakpoint snapshots store
-  line indexes as size-like values, but `SendBreakpointsForFile` converts with
-  `static_cast<int>(breakpoint.line) + 1`. A forged or corrupt persisted breakpoint near
-  `INT_MAX`/`SIZE_MAX` wraps to a negative or unrelated DAP line. Fix direction: clamp/reject
-  persisted and live breakpoint lines before DAP serialization. Add tests for `INT_MAX` and
-  `INT_MAX + 1` line values.
 - **Function breakpoint verification is positional but not bounded to the requested count.**
   `on_function_breakpoints_verified` pushes every returned breakpoint, then applies it against the
   requested names. A non-conformant adapter returning more results than requested can update extra
@@ -1936,35 +1818,11 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
 
 #### Persistence decode and session-state validation
 
-- **Project-session decoded layout floats accept finite out-of-range values.** `SidebarWidth`,
-  `BottomPanelHeight`, `GroupSplitFraction`, and `RightPaneWidth` rely on the primitive reader to
-  neutralize non-finite floats, but finite negative/huge values are still stored and deferred to later
-  layout code. Fix direction: clamp to product ranges during decode so persisted state is semantic
-  before any UI service reads it. Add fuzz and unit tests for negative widths, zero split fractions,
-  and huge finite values.
-- **Project-session enum-like bytes are not validated.** `GroupSplitOrientation` and `RightPaneMode`
-  decode arbitrary `u8` values. Later switch statements may fall through to defaults or render
-  impossible pane state. Fix direction: validate against the known enum domain and either reject the
-  record or normalize to defaults. Add decode tests with 255.
-- **Project-session tree path lists are not capped.** `expanded_tree_paths` and `collapsed_tree_paths`
-  append every record until the outer record reader cap. A hostile session can allocate thousands of
-  path strings and make tree restore expensive. Fix direction: cap expanded/collapsed path counts and
-  total decoded string bytes per session record. Add cap+1 decode tests.
-- **Workspace-session project root list is uncapped and not deduplicated.** `DecodeWorkspaceSessionRecord`
-  appends every `ProjectRoot`, and restore attempts each surviving root. A corrupt file can trigger a
-  large startup loop and duplicate project tabs. Fix direction: cap roots to the product tab limit,
-  dedupe after path normalization, and mark truncation for diagnostics. Add tests for duplicate roots
-  and cap+1 roots.
 - **Workspace-session active index is not semantically validated during decode.** The raw size value is
   accepted and remapped during restore. That is mostly safe, but it means a corrupt session can hide
   invalid data until restore and cannot report "bad active index" distinctly. Fix direction: validate
   after root decode and normalize with a warning/error state. Add decode tests with an active index far
   beyond root count.
-- **User/project settings persistence keeps duplicate setting ids.** `DecodeUserConfigRecord` and
-  `DecodeProjectConfigRecord` append every setting pair. Later layering decides which value wins by
-  iteration order, so duplicate records are a silent split-brain state. Fix direction: dedupe by id
-  during decode with last-writer-wins or reject duplicate ids as corrupt. Add tests with duplicate
-  `editor.tab_size` and plugin setting ids.
 - **Legacy persistence cleanup deletes sidecar files based only on the requested structured path's
   existence.** `RemoveLegacyPersistenceArtifactsFor` removes fixed legacy filenames from the parent
   directory when the structured target exists. If a caller points at an unexpected directory, the
@@ -2091,10 +1949,6 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   background work, so a search in a huge repo can occupy cores and delay git/plugin tasks. Fix
   direction: route search through a shared worker pool or expose a global concurrency budget. Add perf
   tests with concurrent search and git refresh.
-- **`MICROIDE_SEARCH_WORKER_LIMIT` has no upper clamp.** The environment override accepts any integer
-  >= 1 and stores it in `unsigned int`. A bad environment can request thousands of helper threads,
-  bounded only by `total_files`. Fix direction: clamp the override to a small product maximum and log
-  when it is reduced. Add tests for `0`, `1`, `999999`, and non-numeric values.
 - **Literal smart-case search is ASCII-only but UI likely presents it as general smart case.**
   `UsesCaseSensitiveSearch` and lowercasing use ASCII helpers. Queries with non-ASCII uppercase
   letters behave as case-insensitive ASCII-only search, producing mismatches for Unicode text. Fix
@@ -2209,8 +2063,10 @@ latent bug. Kept documented with fix direction for a maintainer on that platform
 - **Windows `AsyncSubprocess`** declares `state_mutex` but never locks it and uses a
   non-atomic `running` → HANDLE UAF race. Fix: mechanically mirror the POSIX branch
   (lock around every state access, re-fetch the HANDLE under the lock, atomic bool).
-- **Windows `RunSubprocess` ignores `options.timeout_ms`** (`WaitForSingleObject
-  INFINITE`). Fix: timed wait + kill/reap, mirroring the POSIX deadline path.
+- **Windows `RunSubprocess` ignores `options.timeout_ms`** — FIXED 2026-07-13 (mechanical
+  mirror of the POSIX deadline path: timed `WaitForSingleObject` + `TerminateProcess` +
+  short reap, sets `timed_out`). Written behind `#elif defined(_WIN32)`, so it does not
+  affect the Linux build; not compile-validated on Windows.
 - **Windows `IgnoreMatcher::ParseRule`** normalizes the glob through `lexically_normal`,
   corrupting a backslash-escaped literal. Benign on Linux.
 - **macOS FSEvents incremental events bypass the ignore filter** (no directory prune, no

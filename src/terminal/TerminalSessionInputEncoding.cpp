@@ -16,6 +16,11 @@ int ModifierParam(const TerminalSession::KeyPress& press) {
 }
 
 void AppendUtf8(std::string& out, char32_t codepoint) {
+  // Reject unencodable scalars (surrogates, above U+10FFFF) so an invalid
+  // codepoint from SDL or a test seam never sends malformed UTF-8 to the child.
+  if (codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+    codepoint = 0xFFFD;
+  }
   if (codepoint <= 0x7F) {
     out.push_back(static_cast<char>(codepoint));
   } else if (codepoint <= 0x7FF) {

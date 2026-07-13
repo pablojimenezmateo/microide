@@ -42,6 +42,31 @@ using microide::workspace::PersistedSidebarViewPolicy;
 using microide::workspace::PersistedUserConfigState;
 using microide::workspace::PersistedWorkspaceSessionState;
 
+// Regression: a config record with duplicate setting ids (a corrupt/hand-edited
+// file) must decode to a single last-writer-wins entry, not a split-brain state
+// where the UI shows one value and layering applies another.
+void TestPersistedStateConfigDedupesDuplicateSettingIds() {
+  PersistedUserConfigState user{
+      .ui_scale = 1.0f,
+      .settings = {{"editor.tab_size", "2"}, {"other", "x"}, {"editor.tab_size", "8"}},
+  };
+  std::vector<std::byte> encoded;
+  Expect(EncodeUserConfigRecord(user, &encoded), "encode should succeed");
+  PersistedUserConfigState decoded;
+  Expect(DecodeUserConfigRecord(encoded, &decoded), "decode should succeed");
+
+  int tab_size_count = 0;
+  std::string tab_size_value;
+  for (const auto& [id, value] : decoded.settings) {
+    if (id == "editor.tab_size") {
+      ++tab_size_count;
+      tab_size_value = value;
+    }
+  }
+  Expect(tab_size_count == 1, "a duplicate setting id must decode to exactly one entry");
+  Expect(tab_size_value == "8", "the last value wins for a duplicate setting id");
+}
+
 void TestPersistedStateUserAndProjectConfigRecordRoundTrip() {
   PersistedUserConfigState user{
       .ui_scale = 1.5f,
@@ -223,6 +248,19 @@ void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
              decoded_workspace.project_roots[1] == "/tmp/project-b" &&
              decoded_workspace.active_project_index == 1,
          "workspace session should round-trip");
+
+  // Regression: duplicate roots (a corrupt session) are deduped at decode so
+  // restore does not open duplicate project tabs.
+  PersistedWorkspaceSessionState dup{
+      .project_roots = {"/tmp/p", "/tmp/p", "/tmp/./p", "/tmp/q"},
+      .active_project_index = 0,
+  };
+  std::vector<std::byte> dup_record;
+  Expect(EncodeWorkspaceSessionRecord(dup, &dup_record), "dup encode should succeed");
+  PersistedWorkspaceSessionState decoded_dup;
+  Expect(DecodeWorkspaceSessionRecord(dup_record, &decoded_dup), "dup decode should succeed");
+  Expect(decoded_dup.project_roots.size() == 2,
+         "duplicate/equivalent roots collapse to unique entries at decode");
 }
 
 void TestPersistedStateProjectSessionRoundTripsTreeState() {
@@ -815,6 +853,8 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
           TestPersistedStateRejectsAdversarialLengthWithoutOom);
   AddTest(tests, "PersistedStateRecord/UserAndProjectConfigRoundTrip",
           TestPersistedStateUserAndProjectConfigRecordRoundTrip);
+  AddTest(tests, "PersistedState/ConfigDedupesDuplicateSettingIds",
+          TestPersistedStateConfigDedupesDuplicateSettingIds);
   AddTest(tests, "PersistedStateRecord/ProjectSessionRoundTripOmitsChatRegistry",
           TestPersistedStateProjectSessionRoundTripOmitsChatRegistry);
   AddTest(tests, "PersistedStateRecord/ProjectSessionAcceptsLegacyChatRegistryTag",

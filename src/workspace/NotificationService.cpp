@@ -1,6 +1,7 @@
 #include "workspace/NotificationService.h"
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace microide::workspace {
@@ -19,10 +20,15 @@ void NotificationService::Show(Tone tone, std::string message, std::uint64_t now
   if (message.empty()) {
     return;
   }
+  // Saturate rather than wrap: a monotonic clock near UINT64_MAX would otherwise
+  // overflow to a tiny expiry and drop the notification on the next ExpireDue.
+  const std::uint64_t expiry_ms = now_ms > std::numeric_limits<std::uint64_t>::max() - DurationMs()
+                                      ? std::numeric_limits<std::uint64_t>::max()
+                                      : now_ms + DurationMs();
   notifications_.push_back(Notification{
       .tone = tone,
       .message = std::move(message),
-      .expiry_ms = now_ms + DurationMs(),
+      .expiry_ms = expiry_ms,
   });
   if (notifications_.size() > MaxVisible()) {
     notifications_.erase(notifications_.begin(),

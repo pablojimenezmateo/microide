@@ -1,5 +1,6 @@
 #include "platform/FileIndexWatcher.h"
 
+#include "platform/HostPlatform.h"
 #include "project/ProjectTraversalFilter.h"
 #include "util/StringUtil.h"
 
@@ -51,7 +52,22 @@ void CloseIfValid(int fd) {
 
 bool IsGitMetadataRelativePath(const std::filesystem::path& relative_path) {
   const auto it = relative_path.begin();
-  return it != relative_path.end() && *it == std::filesystem::path(".git");
+  if (it == relative_path.end()) {
+    return false;
+  }
+  const std::string first = it->string();
+  if (first == ".git") {
+    return true;
+  }
+  // Case-insensitive hosts (Windows / default macOS): `.GIT`/`.Git` name the same
+  // metadata directory and must also be excluded from the watched index.
+  if (HostPathsAreCaseInsensitive() && first.size() == 4) {
+    return (first[0] == '.') &&
+           (first[1] == 'g' || first[1] == 'G') &&
+           (first[2] == 'i' || first[2] == 'I') &&
+           (first[3] == 't' || first[3] == 'T');
+  }
+  return false;
 }
 
 // True when a computed relative path escapes the project root — either it is

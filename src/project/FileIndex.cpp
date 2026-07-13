@@ -5,6 +5,7 @@
 #include <shared_mutex>
 #include <system_error>
 
+#include "platform/HostPlatform.h"
 #include "project/ProjectFileScanner.h"
 #include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
@@ -309,7 +310,23 @@ bool FileIndex::IsHiddenRelativePath(const std::filesystem::path& path) {
 
 bool FileIndex::IsGitMetadataRelativePath(const std::filesystem::path& path) {
   const auto it = path.begin();
-  return it != path.end() && *it == std::filesystem::path(".git");
+  if (it == path.end()) {
+    return false;
+  }
+  const std::string first = it->string();
+  if (first == ".git") {
+    return true;
+  }
+  // On a case-insensitive host (Windows / default macOS), `.GIT`, `.Git`, or
+  // watcher casing drift name the same metadata directory and must also be
+  // excluded, or repository internals can leak into the finder / search index.
+  if (platform::HostPathsAreCaseInsensitive() && first.size() == 4) {
+    return (first[0] == '.') &&
+           (first[1] == 'g' || first[1] == 'G') &&
+           (first[2] == 'i' || first[2] == 'I') &&
+           (first[3] == 't' || first[3] == 'T');
+  }
+  return false;
 }
 
 bool FileIndex::LessProjectPath(const ProjectFile& lhs, const std::filesystem::path& rhs) {

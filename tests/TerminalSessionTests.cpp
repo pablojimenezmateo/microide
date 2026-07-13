@@ -645,10 +645,23 @@ void TestTerminalSessionReportsWorkingDirectoryAndColors() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
+  // An empty host names the local machine; the percent-decoded path is recorded.
   TerminalSessionTestAccess::AppendOutput(session,
-                                          "\x1b]7;file://host/home/user/proj%20x\x07");
+                                          "\x1b]7;file:///home/user/proj%20x\x07");
   Expect(session.reported_working_directory() == std::filesystem::path("/home/user/proj x"),
          "OSC 7 should record the percent-decoded working directory");
+
+  // `localhost` is also local.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]7;file://localhost/tmp/local\x07");
+  Expect(session.reported_working_directory() == std::filesystem::path("/tmp/local"),
+         "OSC 7 with a localhost host should be treated as local");
+
+  // A remote (SSH) host's report must be REJECTED, not treated as a local cwd —
+  // the previous local value is retained.
+  TerminalSessionTestAccess::AppendOutput(session,
+                                          "\x1b]7;file://some-remote-box/remote/path\x07");
+  Expect(session.reported_working_directory() == std::filesystem::path("/tmp/local"),
+         "OSC 7 from a non-local host must be ignored, keeping the last local cwd");
 
   // OSC 11 background query must receive an rgb: reply terminated by ST.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b]11;?\x1b\\");
@@ -998,6 +1011,41 @@ void TestTerminalMouseEncodingUsesExactByteSequences() {
   Expect(EncodeTerminalMouseEvent(request, bytes), "SGR mouse release should encode");
   Expect(bytes == "\x1b[<0;7;5m",
          "SGR mouse release must keep the real button (0) and use trailing m, not code 3");
+
+  // Legacy (non-SGR) encoding cannot represent coordinates past cell 222 (223 + 33
+  // overflows a single byte). A click beyond that range must be DROPPED, not
+  // clamped to the edge cell where the app would see a phantom click.
+  {
+    TerminalMouseEncodeRequest big{
+        .tracking_mode = TerminalMouseTrackingMode::Normal,
+        .mouse_sgr_ext_mode = false,
+        .rows = 400,
+        .columns = 400,
+        .button = TerminalMouseButton::Left,
+        .pressed = true,
+        .motion = false,
+        .row = 5,
+        .column = 250,
+        .modifiers = SDL_KMOD_NONE,
+    };
+    std::string dropped;
+    Expect(!EncodeTerminalMouseEvent(big, dropped),
+           "legacy mouse encoding should drop clicks beyond column 222");
+    Expect(dropped.empty(), "dropped legacy mouse event must not emit bytes");
+
+    // The last encodable cell (222, 0-based) still encodes; 223 drops.
+    big.column = 222;
+    Expect(EncodeTerminalMouseEvent(big, dropped),
+           "legacy mouse encoding should still encode column 222");
+    big.column = 223;
+    Expect(!EncodeTerminalMouseEvent(big, dropped),
+           "legacy mouse encoding should drop column 223");
+    // SGR mode has no such limit.
+    big.mouse_sgr_ext_mode = true;
+    big.column = 250;
+    Expect(EncodeTerminalMouseEvent(big, dropped),
+           "SGR mouse encoding should encode large coordinates");
+  }
 }
 
 void TestTerminalSessionMouseEncodingUsesExactByteSequences() {

@@ -104,6 +104,40 @@ void TestWorkspaceSharedParseCommandLineIncompleteState() {
   Expect(quoted.open_quote == '"', "unterminated quote should be reported");
 }
 
+// Regression: ParseCommandLine bounds a pasted-huge command — the scanned length
+// and the token count are capped so it cannot allocate/drive completion without
+// limit on the UI thread.
+void TestWorkspaceSharedParseCommandLineBoundsHugeInput() {
+  // Far more space-separated tokens than the 4096 cap.
+  std::string many;
+  for (int i = 0; i < 10000; ++i) {
+    many += "t ";
+  }
+  const auto parsed = ParseCommandLine(many);
+  Expect(parsed.tokens.size() <= 4096, "token count is capped");
+
+  // A megabyte single token is clamped to the scanned-length ceiling.
+  const auto huge = ParseCommandLine(std::string(1024 * 1024, 'x'));
+  Expect(huge.tokens.size() == 1 && huge.tokens.front().text.size() <= 64 * 1024,
+         "an over-long token is truncated to the scanned-length cap");
+}
+
+// Regression: CompletePath bounds candidate collection so completing a directory
+// with a huge number of entries cannot build and sort an unbounded list on the UI
+// thread.
+void TestWorkspaceSharedCompletePathIsBounded() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "many";
+  std::filesystem::create_directories(root);
+  for (int i = 0; i < 2100; ++i) {
+    WriteFile(root / ("f" + std::to_string(i) + ".txt"), "x");
+  }
+  const auto candidates = microide::workspace::CompletePath(root, "", /*directories_only=*/false);
+  Expect(candidates.size() <= 2000, "path completion caps the candidate count, got " +
+                                        std::to_string(candidates.size()));
+  Expect(!candidates.empty(), "path completion still returns candidates up to the cap");
+}
+
 void TestWorkspaceSharedUiScaleParsing() {
   const auto percent = ParseUiScaleValue("125%");
   Expect(percent.has_value() && *percent == 1.25f, "percent ui scale should parse to ratio");
@@ -608,7 +642,10 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/ParseCommandLine", TestWorkspaceSharedParseCommandLine);
   AddTest(tests, "WorkspaceShared/ParseCommandLineIncompleteState",
           TestWorkspaceSharedParseCommandLineIncompleteState);
+  AddTest(tests, "WorkspaceShellSharedCore/ParseCommandLineBoundsHugeInput",
+          TestWorkspaceSharedParseCommandLineBoundsHugeInput);
   AddTest(tests, "WorkspaceShared/UiScaleParsing", TestWorkspaceSharedUiScaleParsing);
+  AddTest(tests, "WorkspaceShared/CompletePathIsBounded", TestWorkspaceSharedCompletePathIsBounded);
   AddTest(tests, "WorkspaceShared/QuoteAndLineEndings", TestWorkspaceSharedQuoteAndLineEndings);
   AddTest(tests, "WorkspaceShared/SplitSyntaxLines", TestWorkspaceSharedSplitSyntaxLines);
   AddTest(tests, "WorkspaceShared/SerializeLines", TestWorkspaceSharedSerializeLines);

@@ -852,6 +852,7 @@ add_executable(microide_tests
   tests/WindowPresentationTests.cpp
   tests/WorkspaceMenuRegistryTests.cpp
   tests/SettingsStoreTests.cpp
+  tests/WorkspaceTestControllerTests.cpp
   tests/WorkspaceSettingsRegistryTests.cpp
   tests/WorkspaceShellChromeTests.cpp
   tests/WorkspaceShellEditorBlameTests.cpp

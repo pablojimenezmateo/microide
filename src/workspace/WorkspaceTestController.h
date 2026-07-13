@@ -49,8 +49,11 @@ class TestController {
   // Record a test result.
   void RecordTestResult(const TestResult& result);
 
-  // Get results for a test item.
-  const std::vector<TestResult>& TestResults(const std::string& test_id) const;
+  // Get results for a test item. Returns by value: a previous implementation
+  // returned a reference to a reused scratch member, so two back-to-back calls
+  // aliased the same storage and a caller holding both references read the wrong
+  // test's results.
+  std::vector<TestResult> TestResults(const std::string& test_id) const;
 
   // Clear all test items and results.
   void Clear();
@@ -58,7 +61,6 @@ class TestController {
  private:
   std::vector<TestItem> test_items_;
   std::vector<TestResult> results_;
-  mutable std::vector<TestResult> filtered_results_;
 };
 
 }  // namespace microide::workspace

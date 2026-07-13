@@ -7,10 +7,13 @@ TestController::TestController() = default;
 TestController::~TestController() = default;
 
 void TestController::RegisterTestItem(const TestItem& item) {
-  // Check for duplicate
-  for (const auto& existing : test_items_) {
+  // Upsert by id: a rediscovery with the same id but a new label/path/range must
+  // UPDATE the existing item, not be dropped. Dropping it left stale navigation
+  // and names after a test moved or was renamed.
+  for (auto& existing : test_items_) {
     if (existing.id == item.id) {
-      return;  // Already registered
+      existing = item;
+      return;
     }
   }
   test_items_.push_back(item);
@@ -29,21 +32,19 @@ void TestController::RecordTestResult(const TestResult& result) {
   results_.push_back(result);
 }
 
-const std::vector<TestResult>& TestController::TestResults(const std::string& test_id) const {
-  static const std::vector<TestResult> kEmpty;
-  filtered_results_.clear();
+std::vector<TestResult> TestController::TestResults(const std::string& test_id) const {
+  std::vector<TestResult> filtered;
   for (const auto& result : results_) {
     if (result.test_id == test_id) {
-      filtered_results_.push_back(result);
+      filtered.push_back(result);
     }
   }
-  return filtered_results_.empty() ? kEmpty : filtered_results_;
+  return filtered;
 }
 
 void TestController::Clear() {
   test_items_.clear();
   results_.clear();
-  filtered_results_.clear();
 }
 
 }  // namespace microide::workspace

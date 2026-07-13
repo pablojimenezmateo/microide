@@ -2,7 +2,11 @@
 
 #include "compare/CompareModel.h"
 #include "util/Hex.h"
+#include "util/SaturatingMath.h"
 #include "util/StringUtil.h"
+
+#include <cstdint>
+#include <limits>
 
 #include <vector>
 
@@ -187,6 +191,19 @@ void TestStringUtilAppendUtf8EncodesAllSequenceLengths() {
   microide::util::AppendUtf8(astral, char32_t{0x1F600});
   Expect(microide::util::DecodeUtf8Codepoint(astral) == char32_t{0x1F600},
          "AppendUtf8 should round-trip through DecodeUtf8Codepoint");
+
+  // Unencodable scalars (lone surrogate, above U+10FFFF) must fold to U+FFFD so
+  // AppendUtf8 never emits invalid UTF-8 downstream.
+  const std::string replacement = {
+      static_cast<char>(0xEF), static_cast<char>(0xBF), static_cast<char>(0xBD)};
+  std::string surrogate;
+  microide::util::AppendUtf8(surrogate, char32_t{0xD800});
+  Expect(surrogate == replacement, "AppendUtf8 should fold a lone surrogate to U+FFFD");
+  std::string above_max;
+  microide::util::AppendUtf8(above_max, char32_t{0x110000});
+  Expect(above_max == replacement, "AppendUtf8 should fold >U+10FFFF to U+FFFD");
+  Expect(microide::util::IsValidUtf8(surrogate) && microide::util::IsValidUtf8(above_max),
+         "AppendUtf8 replacement output should be valid UTF-8");
 }
 
 void TestStringUtilIsAllAsciiDigits() {
@@ -274,11 +291,29 @@ void TestPercentDecode() {
          "input without escapes is returned unchanged");
 }
 
+void TestSaturatingMath() {
+  using microide::util::SaturatingAdd;
+  using microide::util::SaturatingSub;
+  using U64 = std::uint64_t;
+  constexpr U64 kMax = std::numeric_limits<U64>::max();
+
+  Expect(SaturatingSub<U64>(10, 3) == 7, "normal subtraction");
+  Expect(SaturatingSub<U64>(3, 10) == 0, "underflow floors at zero rather than wrapping");
+  Expect(SaturatingSub<U64>(0, 0) == 0, "zero minus zero is zero");
+  Expect(SaturatingSub<U64>(kMax, 1) == kMax - 1, "subtracting from the max is exact");
+
+  Expect(SaturatingAdd<U64>(10, 3) == 13, "normal addition");
+  Expect(SaturatingAdd<U64>(kMax, 1) == kMax, "overflow clamps to the max");
+  Expect(SaturatingAdd<U64>(kMax - 5, 5) == kMax, "addition up to the max is exact");
+  Expect(SaturatingAdd<U64>(kMax, kMax) == kMax, "doubling the max clamps to the max");
+}
+
 }  // namespace
 
 void RegisterStringUtilTests(std::vector<TestCase>& tests) {
   AddTest(tests, "StringUtil/AppendUtf8EncodesAllSequenceLengths",
           TestStringUtilAppendUtf8EncodesAllSequenceLengths);
+  AddTest(tests, "Util/SaturatingMath", TestSaturatingMath);
   AddTest(tests, "StringUtil/IsAllAsciiDigits", TestStringUtilIsAllAsciiDigits);
   AddTest(tests, "StringUtil/SplitAsciiWhitespace", TestStringUtilSplitAsciiWhitespace);
   AddTest(tests, "StringUtil/DecodeLinesSinglePassRegression",

@@ -62,31 +62,39 @@ const BranchReviewTargetState* BranchReviewStateService::FindTarget(
   return nullptr;
 }
 
+BranchReviewTargetState* BranchReviewStateService::FindMutableTarget(
+    const BranchReviewTargetIdentity& target) {
+  for (BranchReviewTargetState& existing : targets_) {
+    if (existing.target == target) {
+      return &existing;
+    }
+  }
+  return nullptr;
+}
+
 void BranchReviewStateService::TouchTarget(BranchReviewTargetState& target_state) {
   target_state.last_accessed_unix_ms = NowUnixMs();
 }
 
 void BranchReviewStateService::PruneTarget(BranchReviewTargetState& target_state) {
-  if (target_state.reviewed_files.size() > kMaxFileEntriesPerTarget) {
-    target_state.reviewed_files.erase(
-        target_state.reviewed_files.begin(),
-        target_state.reviewed_files.begin() +
-            static_cast<std::ptrdiff_t>(target_state.reviewed_files.size() -
-                                        kMaxFileEntriesPerTarget));
-  }
-  if (target_state.reviewed_hunks.size() > kMaxHunkEntriesPerTarget) {
-    target_state.reviewed_hunks.erase(
-        target_state.reviewed_hunks.begin(),
-        target_state.reviewed_hunks.begin() +
-            static_cast<std::ptrdiff_t>(target_state.reviewed_hunks.size() -
-                                        kMaxHunkEntriesPerTarget));
-  }
-  if (target_state.notes.size() > kMaxNotesPerTarget) {
-    target_state.notes.erase(
-        target_state.notes.begin(),
-        target_state.notes.begin() + static_cast<std::ptrdiff_t>(target_state.notes.size() -
-                                                                 kMaxNotesPerTarget));
-  }
+  // Prune by RECENCY, not insertion order. Re-reviewing a file/hunk or editing a
+  // note refreshes its timestamp without moving it in the vector; pruning the
+  // front (oldest-inserted) would drop a recently-touched entry that happened to
+  // be inserted early. Stable-sort newest-first, then drop the tail past the cap.
+  const auto prune = [](auto& entries, std::size_t cap, auto timestamp_of) {
+    if (entries.size() <= cap) {
+      return;
+    }
+    std::stable_sort(entries.begin(), entries.end(),
+                     [&](const auto& a, const auto& b) { return timestamp_of(a) > timestamp_of(b); });
+    entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(cap), entries.end());
+  };
+  prune(target_state.reviewed_files, kMaxFileEntriesPerTarget,
+        [](const BranchReviewFileReviewEntry& e) { return e.reviewed_at_unix_ms; });
+  prune(target_state.reviewed_hunks, kMaxHunkEntriesPerTarget,
+        [](const BranchReviewHunkReviewEntry& e) { return e.reviewed_at_unix_ms; });
+  prune(target_state.notes, kMaxNotesPerTarget,
+        [](const BranchReviewNote& e) { return e.updated_at_unix_ms; });
 }
 
 void BranchReviewStateService::MarkFileReviewed(const BranchReviewTargetIdentity& target,
@@ -114,17 +122,23 @@ void BranchReviewStateService::MarkFileReviewed(const BranchReviewTargetIdentity
 
 void BranchReviewStateService::MarkFileUnreviewed(const BranchReviewTargetIdentity& target,
                                                   const std::filesystem::path& path) {
-  BranchReviewTargetState* target_state = FindOrCreateTarget(target);
+  // Find-only: unreviewing a file for an unknown target must not create empty
+  // state or bump the revision. Only a real removal bumps the revision.
+  BranchReviewTargetState* target_state = FindMutableTarget(target);
   if (target_state == nullptr) {
     return;
   }
   const std::filesystem::path normalized = NormalizeReviewPath(path);
   auto& files = target_state->reviewed_files;
+  const std::size_t before = files.size();
   files.erase(std::remove_if(files.begin(), files.end(),
                              [&](const BranchReviewFileReviewEntry& entry) {
                                return PathsEqual(entry.path, normalized);
                              }),
               files.end());
+  if (files.size() != before) {
+    ++revision_;
+  }
 }
 
 void BranchReviewStateService::MarkHunkReviewed(const BranchReviewTargetIdentity& target,
@@ -157,7 +171,8 @@ void BranchReviewStateService::MarkHunkReviewed(const BranchReviewTargetIdentity
 
 void BranchReviewStateService::MarkHunkUnreviewed(const BranchReviewTargetIdentity& target,
                                                   const BranchReviewHunkIdentity& identity) {
-  BranchReviewTargetState* target_state = FindOrCreateTarget(target);
+  // Find-only: unreviewing a hunk for an unknown target is a clean no-op.
+  BranchReviewTargetState* target_state = FindMutableTarget(target);
   if (target_state == nullptr) {
     return;
   }
@@ -170,11 +185,15 @@ void BranchReviewStateService::MarkHunkUnreviewed(const BranchReviewTargetIdenti
       .content_hash = identity.content_hash,
   };
   auto& hunks = target_state->reviewed_hunks;
+  const std::size_t before = hunks.size();
   hunks.erase(std::remove_if(hunks.begin(), hunks.end(),
                              [&](const BranchReviewHunkReviewEntry& entry) {
                                return HunkIdentitiesEqual(entry.identity, normalized);
                              }),
               hunks.end());
+  if (hunks.size() != before) {
+    ++revision_;
+  }
 }
 
 void BranchReviewStateService::SetNote(const BranchReviewTargetIdentity& target,
@@ -220,7 +239,8 @@ void BranchReviewStateService::DeleteNote(const BranchReviewTargetIdentity& targ
                                           const BranchReviewNoteScope scope,
                                           const std::filesystem::path& path,
                                           const std::optional<BranchReviewHunkIdentity>& hunk_identity) {
-  BranchReviewTargetState* target_state = FindOrCreateTarget(target);
+  // Find-only: deleting a note for an unknown target is a clean no-op.
+  BranchReviewTargetState* target_state = FindMutableTarget(target);
   if (target_state == nullptr) {
     return;
   }
@@ -231,6 +251,7 @@ void BranchReviewStateService::DeleteNote(const BranchReviewTargetIdentity& targ
     normalized_hunk->path = NormalizeReviewPath(normalized_hunk->path);
   }
   auto& notes = target_state->notes;
+  const std::size_t before = notes.size();
   notes.erase(std::remove_if(notes.begin(), notes.end(),
                              [&](const BranchReviewNote& note) {
                                const bool same_scope = note.scope == scope;
@@ -242,6 +263,9 @@ void BranchReviewStateService::DeleteNote(const BranchReviewTargetIdentity& targ
                                return same_scope && same_path && same_hunk;
                              }),
               notes.end());
+  if (notes.size() != before) {
+    ++revision_;
+  }
 }
 
 void BranchReviewStateService::ClearTarget(const BranchReviewTargetIdentity& target) {

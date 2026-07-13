@@ -19,8 +19,16 @@ std::size_t LeadingSpaces(const std::string& line) {
   return i;
 }
 
+// True when the line's leading whitespace run contains a tab anywhere before the
+// first non-whitespace byte. A mixed run like `"  \tcode"` (spaces then a tab) is
+// tab-indented in effect; classifying it by its first byte alone would miscount
+// the file as space-indented.
 bool LineLeadsWithTab(const std::string& line) {
-  return !line.empty() && line[0] == '\t';
+  for (char c : line) {
+    if (c == '\t') return true;
+    if (c != ' ') return false;
+  }
+  return false;
 }
 
 }  // namespace

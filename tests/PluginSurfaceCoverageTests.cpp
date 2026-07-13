@@ -19,6 +19,7 @@
 
 #include "plugin/PluginHost.h"
 
+#include <cmath>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -189,6 +190,9 @@ return ide.plugin({
     ctx.surface.set("qa-surface", {
       title = "QA",
       display_list = { width = 10, height = 10, ops = { { op = "rect", x = 0, y = 0, w = 10, h = 10, color = "#101010" } } },
+      -- A hit region with an inverted (negative-w) and non-finite rect: the host
+      -- must sanitize it (w clamped to >= 0, NaN folded to 0) at parse time.
+      hit_regions = { { x = 0/0, y = 5, w = -8, h = 4, command = "noop" } },
     })
 
     -- ---- buffer-edit + ghost-text seams (invoked via command) ------------
@@ -210,6 +214,7 @@ struct CallbackProbe {
   bool surface_published = false;
   bool edit_applied = false;
   bool ghost_published = false;
+  std::optional<editor::SurfaceContent> last_surface;
 };
 
 PluginHost::Callbacks MakeProbingCallbacks(CallbackProbe* probe) {
@@ -228,8 +233,9 @@ PluginHost::Callbacks MakeProbingCallbacks(CallbackProbe* probe) {
         probe->decorations_published = true;
       };
   callbacks.publish_surface =
-      [probe](std::string_view, std::string_view, editor::SurfaceContent) {
+      [probe](std::string_view, std::string_view, editor::SurfaceContent content) {
         probe->surface_published = true;
+        probe->last_surface = std::move(content);
       };
   callbacks.apply_workspace_edit =
       [probe](std::string_view, const PluginHost::WorkspaceEditRequest&) {
@@ -338,6 +344,15 @@ void TestPluginSurfaceCoverageRegistersEverySurface() {
   Expect(probe.diagnostics_published, "ctx.diagnostics.publish seam should fire");
   Expect(probe.decorations_published, "ctx.decorations.set seam should fire");
   Expect(probe.surface_published, "ctx.surface.set seam should fire");
+  // The published surface's hit-region rect must be sanitized: NaN x folded to 0,
+  // negative width clamped to >= 0.
+  Expect(probe.last_surface.has_value() && !probe.last_surface->hit_regions.empty(),
+         "the published surface should carry the hit region");
+  if (probe.last_surface.has_value() && !probe.last_surface->hit_regions.empty()) {
+    const SDL_FRect& rect = probe.last_surface->hit_regions.front().rect;
+    Expect(std::isfinite(rect.x) && rect.x == 0.0f, "a NaN x is folded to 0");
+    Expect(rect.w >= 0.0f, "a negative width is clamped to >= 0");
+  }
   Expect(probe.edit_applied, "ctx.editor.apply_edits seam should fire");
   Expect(probe.ghost_published, "ctx.editor.set_ghost_text seam should fire");
   Expect(!probe.notifications.empty() && probe.notifications.front() == "info:coverage-notify",

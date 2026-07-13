@@ -106,6 +106,14 @@ bool ReadTextStyles(lua_State* state, int table_index, editor::PluginDecorationD
                  (!ReadOneBasedField(state, entry, "start_col", &ts.start_column, error_message) ||
                   !ReadOneBasedField(state, entry, "end_col", &ts.end_column, error_message))) {
         ok = false;
+      } else if (!whole && ts.start_column > ts.end_column) {
+        // Reject an inverted column range at parse time: downstream render/merge
+        // assumes start <= end, and a negative-width span would style nothing or
+        // corrupt layout assumptions.
+        if (error_message != nullptr) {
+          *error_message = "text_styles entry start_col must not exceed end_col";
+        }
+        ok = false;
       } else if (!ReadOptionalColorField(state, entry, "fg", &ts.foreground, error_message) ||
                  !ReadOptionalColorField(state, entry, "bg", &ts.background, error_message) ||
                  !ReadOptionalColorField(state, entry, "line_color", &ts.line_color,

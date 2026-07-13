@@ -157,6 +157,40 @@ void TestFileIndexExcludesGitMetadataFromInitialAndIncrementalBatches() {
          "incremental .git metadata update should not change file index version");
 }
 
+// Regression: on a case-insensitive host (Windows / default macOS) `.GIT` names
+// the same metadata directory as `.git`, so it must also be excluded — otherwise
+// repository internals leak into the file finder / search index. On a
+// case-sensitive host `.GIT` is a real, different directory and is NOT excluded.
+void TestFileIndexExcludesGitMetadataCaseInsensitiveOnFoldingHosts() {
+  const auto index_with_git_variant = [](const char* variant_path) {
+    TemporaryDirectory temp_dir;
+    const std::filesystem::path root = temp_dir.path() / "workspace";
+    WriteFile(root / "README.md", "root\n");
+    FileIndex index;
+    index.SetRoot(root, FileIndex::RootPopulationMode::Deferred);
+    IndexUpdateBatch batch;
+    batch.is_initial = true;
+    batch.changes.push_back(MakeCreateChange(variant_path, 100));
+    batch.changes.push_back(MakeCreateChange("src/main.cpp", 7));
+    index.ApplyBatch(batch);
+    return index.Snapshot();
+  };
+
+  {
+    ScopedHostPlatformOverride windows(platform::HostPlatform::Windows);
+    const auto snapshot = index_with_git_variant(".GIT/config");
+    Expect(snapshot.size() == 1 &&
+               snapshot.front().relative_path == std::filesystem::path("src/main.cpp"),
+           "a case-insensitive host must exclude .GIT metadata like .git");
+  }
+  {
+    ScopedHostPlatformOverride linux(platform::HostPlatform::Linux);
+    const auto snapshot = index_with_git_variant(".GIT/config");
+    // On Linux `.GIT` is a genuine directory; it is indexed, not excluded.
+    Expect(snapshot.size() == 2, "a case-sensitive host treats .GIT as a real directory");
+  }
+}
+
 void TestFileIndexInitialBatchAbortsWhenCancelled() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -269,6 +303,8 @@ void RegisterFileIndexTests(std::vector<TestCase>& tests) {
           TestFileIndexIncrementalBatchVersionChangesOnlyOnRealMutations);
   AddTest(tests, "FileIndex/ExcludesGitMetadataFromInitialAndIncrementalBatches",
           TestFileIndexExcludesGitMetadataFromInitialAndIncrementalBatches);
+  AddTest(tests, "FileIndex/ExcludesGitMetadataCaseInsensitiveOnFoldingHosts",
+          TestFileIndexExcludesGitMetadataCaseInsensitiveOnFoldingHosts);
   AddTest(tests, "FileIndex/InitialBatchAbortsWhenCancelled",
           TestFileIndexInitialBatchAbortsWhenCancelled);
 }

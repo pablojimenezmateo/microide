@@ -76,6 +76,22 @@ void TestLspProtocolParsesDiagnosticSeverityDefault() {
                "message":"cannot find name","severity":1,"code":2304})");
   Expect(codec::ParseDiagnostic(int_code).code == "2304",
          "integer diagnostic code must be preserved as its decimal string");
+
+  // Out-of-spec severity values (0, 99, INT_MAX) must be clamped to the LSP
+  // domain (1..4) at parse time so they cannot misclassify severity filters or
+  // "most severe" status logic; anything invalid defaults to Error (1).
+  const auto severity_of = [](const char* value) {
+    std::string body = R"({"range":{"start":{"line":0,"character":0},)"
+                       R"("end":{"line":0,"character":2}},"message":"m","severity":)";
+    body += value;
+    body += "}";
+    return codec::ParseDiagnostic(Json(body)).severity;
+  };
+  Expect(severity_of("0") == 1, "severity 0 clamps to Error");
+  Expect(severity_of("5") == 1, "severity 5 is out of range and clamps to Error");
+  Expect(severity_of("99") == 1, "severity 99 clamps to Error");
+  Expect(severity_of("2147483647") == 1, "INT_MAX severity clamps to Error");
+  Expect(severity_of("4") == 4, "in-range severity 4 (Hint) is preserved");
 }
 
 void TestLspProtocolParsesDocumentSymbolShapes() {
@@ -253,6 +269,20 @@ void TestLspProtocolHoverContentsAreBounded() {
     Expect(mpos != std::string::npos, "utf8 hover is truncated + marked");
     Expect(mpos % 3 == 0, "truncation lands on a UTF-8 boundary (no split multibyte char)");
   }
+
+  // Regression: the single-string shapes were previously UNCAPPED. A bare
+  // MarkedString and a MarkupContent {value} must be capped + marked too, so a
+  // server cannot push a tens-of-MiB hover payload onto the callback/render path.
+  {
+    const std::string big(200 * 1024, 'y');
+    const std::string bare = codec::ParseHoverContents(Json(std::string(R"({"contents":")") + big + R"("})"));
+    Expect(bare.size() < 64 * 1024 && bare.rfind(marker) != std::string::npos,
+           "a bare-string hover is capped and marked");
+    const std::string value_body = std::string(R"({"contents":{"kind":"markdown","value":")") + big + R"("}})";
+    const std::string value = codec::ParseHoverContents(Json(value_body));
+    Expect(value.size() < 64 * 1024 && value.rfind(marker) != std::string::npos,
+           "a MarkupContent {value} hover is capped and marked");
+  }
 }
 
 // J26: LSP positions narrow to `int` deterministically. Out-of-int-range
@@ -342,6 +372,20 @@ void TestLspProtocolParsesSignatureHelp() {
          "first parameter label resolved from offsets");
   Expect(offset_parsed.signatures[0].parameters[1].label == "y",
          "second parameter label resolved from offsets");
+
+  // Regression: parameter label offsets are UTF-16 code units, not bytes. For a
+  // non-ASCII label they must be converted before slicing. Label "f(é, β)" has
+  // é (2 bytes) and β (2 bytes); the UTF-16 offsets of é are [2,3] and of β [5,6].
+  // Byte-slicing those offsets would split the multibyte characters.
+  const std::string unicode_label = "f(\xc3\xa9, \xce\xb2)";
+  const JsonValue unicode = Json(std::string(R"({"signatures":[{"label":")") + unicode_label +
+                                 R"(","parameters":[{"label":[2,3]},{"label":[5,6]}]}]})");
+  const LspClient::SignatureHelp unicode_parsed = codec::ParseSignatureHelp(unicode);
+  Expect(unicode_parsed.signatures.size() == 1, "unicode-label signature parses");
+  Expect(unicode_parsed.signatures[0].parameters[0].label == "\xc3\xa9",
+         "UTF-16 offsets [2,3] resolve to the whole é, not a split byte");
+  Expect(unicode_parsed.signatures[0].parameters[1].label == "\xce\xb2",
+         "UTF-16 offsets [5,6] resolve to the whole β");
 
   // Out-of-range offsets are ignored rather than reading past the label.
   const JsonValue bad = Json(R"({"signatures":[{"label":"z","parameters":[{"label":[3,9]}]}]})");

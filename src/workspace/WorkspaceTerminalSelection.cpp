@@ -53,7 +53,12 @@ std::string ExtractTerminalSelectionText(const std::vector<terminal::TerminalLin
     // mid-selection span may legitimately end on blank cells.
     text.append(TerminalLineSliceText(line, start_column, end_column, /*trim_trailing=*/false));
     if (row != end_row) {
-      text.push_back('\n');
+      // Only emit a hard newline at a *real* line boundary. If the next row is a
+      // soft-wrap continuation of this one, the terminal never saw a newline
+      // there, so copying a long wrapped command must not inject one either.
+      if (!lines[row + 1].wrapped_from_previous) {
+        text.push_back('\n');
+      }
     }
   }
   return text;

@@ -68,11 +68,29 @@ const std::string* SettingsStore::Resolve(std::string_view id) const {
   return it == resolved_.end() ? nullptr : &it->second;
 }
 
+// A setting id must be a non-empty token with no whitespace or control bytes.
+// An empty id, or one containing a newline / space / pathlike separator, would
+// corrupt the persisted layer's text encoding and confuse overlays and LSP
+// configuration mapping. Rejecting it at the mutation boundary keeps every
+// downstream reader dealing only with well-formed ids.
+bool SettingsStore::IsValidSettingId(std::string_view id) {
+  if (id.empty()) {
+    return false;
+  }
+  for (const char ch : id) {
+    const unsigned char byte = static_cast<unsigned char>(ch);
+    if (byte <= 0x20 || byte == 0x7F) {  // control chars and space
+      return false;
+    }
+  }
+  return true;
+}
+
 // Mutations are cold (user actions, config load, control spec) — never per
 // frame — so each rebuilds the index wholesale. This keeps precedence trivially
 // correct and avoids any chance of the vectors and index drifting apart.
 void SettingsStore::SetUser(std::string_view id, std::string value) {
-  if (user_ == nullptr) {
+  if (user_ == nullptr || !IsValidSettingId(id)) {
     return;
   }
   settings_layer::Upsert(*user_, id, std::move(value));
@@ -80,7 +98,7 @@ void SettingsStore::SetUser(std::string_view id, std::string value) {
 }
 
 void SettingsStore::SetProject(std::string_view id, std::string value) {
-  if (project_ == nullptr) {
+  if (project_ == nullptr || !IsValidSettingId(id)) {
     return;
   }
   settings_layer::Upsert(*project_, id, std::move(value));

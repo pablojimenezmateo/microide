@@ -1321,6 +1321,52 @@ void TestDebugVariablesModelTreeBehavior() {
   Expect(model.Empty() && model.Rows().empty(), "Clear empties the tree");
 }
 
+// Regression: expansion state is path-tracked across stops by node identity, and
+// two siblings that share a name (array pages, maps with repeated labels) must
+// NOT share expansion state. Previously the path key was the name chain only, so
+// expanding one "item" re-expanded every same-named sibling on the next stop.
+void TestDebugVariablesModelExpansionIsPerSiblingNotByNameOnly() {
+  DebugVariablesModel model;
+  model.BeginFrame(1);
+  model.ApplyScopes({codec::DapScope{.name = "Arguments", .variables_reference = 1000}});
+  Expect(model.ToggleRow(0).reference == 1000, "expanding the scope fetches its ref");
+  // Two expandable children that share the name "item".
+  model.ApplyVariables(1000,
+                       {
+                           codec::DapVariable{.name = "item",
+                                              .value = "a",
+                                              .type = "T",
+                                              .variables_reference = 1001},
+                           codec::DapVariable{.name = "item",
+                                              .value = "b",
+                                              .type = "T",
+                                              .variables_reference = 1002},
+                       },
+                       0);
+  Expect(model.Rows().size() == 3, "scope plus two same-named children flatten to three rows");
+  // Expand ONLY the first "item".
+  Expect(model.ToggleRow(1).reference == 1001, "expanding the first item fetches its ref");
+  model.ApplyVariables(
+      1001, {codec::DapVariable{.name = "leaf", .value = "1", .variables_reference = 0}}, 0);
+  Expect(model.Rows().size() == 4 && model.Rows()[1].expanded && !model.Rows()[3].expanded,
+         "only the first item is expanded before the next stop");
+
+  // Next stop: references are not stable, so expansion is restored by path.
+  model.BeginFrame(2);
+  model.ApplyScopes({codec::DapScope{.name = "Arguments", .variables_reference = 2000}});
+  const auto child_fetches = model.ApplyVariables(
+      2000,
+      {
+          codec::DapVariable{.name = "item", .value = "a", .type = "T", .variables_reference = 2001},
+          codec::DapVariable{.name = "item", .value = "b", .type = "T", .variables_reference = 2002},
+      },
+      0);
+  // Only the first sibling was expanded, so only its (new) reference is refetched.
+  // With the name-only key both siblings would have been restored (size 2).
+  Expect(child_fetches.size() == 1 && child_fetches[0].reference == 2001,
+         "restore must re-expand only the specific sibling that was open, not every same-named one");
+}
+
 // Regression: an adapter that over-reports a container's total_count and then
 // answers a "load more" (start > 0) page with an empty success must not leave the
 // "show more…" affordance forever. The empty over-range page clears more_available.
@@ -2424,13 +2470,13 @@ void TestDebugServiceBackgroundStopDoesNotBroadcast() {
 void TestDebugValueTreeNodeIdsAreMonotonic() {
   DebugVariablesModel model;
   model.BeginFrame(1);
-  model.ApplyScopes({codec::DapScope{.name = "Locals", .variables_reference = 1000}});
+  model.ApplyScopes({codec::DapScope{.name = "Arguments", .variables_reference = 1000}});
   Expect(!model.Rows().empty(), "first frame builds a scope row");
   const std::uint32_t first_id = model.Rows()[0].node_id;
 
   // A new frame Clears + rebuilds the tree. Ids must not restart at 1.
   model.BeginFrame(2);
-  model.ApplyScopes({codec::DapScope{.name = "Locals", .variables_reference = 1000}});
+  model.ApplyScopes({codec::DapScope{.name = "Arguments", .variables_reference = 1000}});
   Expect(!model.Rows().empty(), "second frame builds a scope row");
   const std::uint32_t second_id = model.Rows()[0].node_id;
   Expect(second_id > first_id, "node ids stay globally monotonic across rebuilds");
@@ -2806,61 +2852,68 @@ void TestGdbRealFunctionBreakpointsE2E() {
   {
     util::JsonObject args;
     args["program"] = JsonValue(exe.string());
+    // Deterministic gating: stop at the beginning of main BEFORE the inferior
+    // runs. The old flow resumed the inferior on configurationDone and inserted
+    // the pending function breakpoint "a beat later"; under CPU load gdb could
+    // start the program without ever binding it, so the test needed a bounded
+    // session-level retry to be reliable. Stopping at main first guarantees the
+    // program is loaded and halted while we confirm the breakpoint is bound, so
+    // the subsequent Continue() hits add() every time — no retry, no race.
+    args["stopAtBeginningOfMainSubprogram"] = JsonValue(true);
     config.arguments = JsonValue(std::move(args));
   }
 
-  // Retry the whole session a few times. Even with the looping inferior above,
-  // real gdb under heavy load occasionally starts the program without ever binding
-  // the pending function breakpoint (observed: the session reaches Running with the
-  // breakpoint still unverified and no stop arrives). That is a transient gdb-side
-  // race the client cannot drive; a fresh gdb binds reliably, so a bounded retry
-  // makes the outcome deterministic in practice. Each attempt uses its own capture
-  // and callbacks so verification state never leaks across attempts.
-  bool stopped_in_add = false;
-  for (int attempt = 0; attempt < 3 && !stopped_in_add; ++attempt) {
-    fn_store.ResetVerification();
-    CapturedSession captured;
-    DebugSession::Callbacks callbacks = MakeCallbacks(captured);
-    callbacks.function_breakpoint_provider = [&fn_store]() { return fn_store.All(); };
-    callbacks.on_function_breakpoints_verified =
-        [&fn_store](const std::vector<std::string>& names,
-                    const std::vector<codec::DapBreakpoint>& bps) {
-          std::vector<editor::VerifiedFunctionBreakpoint> results;
-          for (const codec::DapBreakpoint& bp : bps) {
-            results.push_back(editor::VerifiedFunctionBreakpoint{
-                .id = bp.id, .verified = bp.verified, .message = bp.message});
-          }
-          fn_store.ApplyVerification(names, results);
-        };
-    // gdb reports a function breakpoint `pending` in the response, then verifies it
-    // via a `breakpoint` event once the inferior binds it — route that to the store.
-    callbacks.on_breakpoint_changed = [&fn_store](const std::filesystem::path&,
-                                                  const codec::DapBreakpoint& bp) {
-      fn_store.ApplyBreakpointEvent(editor::VerifiedFunctionBreakpoint{
-          .id = bp.id, .verified = bp.verified, .message = bp.message});
-    };
+  CapturedSession captured;
+  DebugSession::Callbacks callbacks = MakeCallbacks(captured);
+  callbacks.function_breakpoint_provider = [&fn_store]() { return fn_store.All(); };
+  callbacks.on_function_breakpoints_verified =
+      [&fn_store](const std::vector<std::string>& names,
+                  const std::vector<codec::DapBreakpoint>& bps) {
+        std::vector<editor::VerifiedFunctionBreakpoint> results;
+        for (const codec::DapBreakpoint& bp : bps) {
+          results.push_back(editor::VerifiedFunctionBreakpoint{
+              .id = bp.id, .verified = bp.verified, .message = bp.message});
+        }
+        fn_store.ApplyVerification(names, results);
+      };
+  // gdb reports a function breakpoint `pending` in the response, then verifies it
+  // via a `breakpoint` event once the inferior binds it — route that to the store.
+  callbacks.on_breakpoint_changed = [&fn_store](const std::filesystem::path&,
+                                                const codec::DapBreakpoint& bp) {
+    fn_store.ApplyBreakpointEvent(editor::VerifiedFunctionBreakpoint{
+        .id = bp.id, .verified = bp.verified, .message = bp.message});
+  };
 
-    if (!manager.StartSession(config, std::move(callbacks))) {
-      continue;
-    }
-    // gdb indexes DWARF, spawns the inferior, binds the breakpoint, and the loop
-    // hits it — all gated on gdb being scheduled. The inferior loops far longer
-    // than this window, so within an attempt the breakpoint is never missed by the
-    // program exiting first; give a wide budget so slowness is not a failure.
-    if (PollUntil(manager, [&]() { return captured.stop_count >= 1; }, 20000)) {
-      stopped_in_add = !captured.last_frames.empty() &&
-                       captured.last_frames[0].name.find("add") != std::string::npos;
-      if (stopped_in_add) {
-        Expect(PollUntil(manager,
-                         [&]() { return !fn_store.All().empty() && fn_store.All()[0].verified; },
-                         5000),
-               "the function breakpoint verifies against real gdb");
-      }
-    }
-    manager.ShutdownAll();
+  Expect(manager.StartSession(config, std::move(callbacks)),
+         "the gdb session should start");
+
+  // First stop: the beginning of main. gdb has loaded the program, so the pending
+  // `add` function breakpoint resolves here. Wait for it to be verified before
+  // resuming so nothing about the hit depends on timing.
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }, 20000),
+         "gdb should stop at the beginning of main");
+  const bool stopped_at_add_directly =
+      !captured.last_frames.empty() &&
+      captured.last_frames[0].name.find("add") != std::string::npos;
+  Expect(PollUntil(manager,
+                   [&]() { return !fn_store.All().empty() && fn_store.All()[0].verified; },
+                   10000),
+         "the function breakpoint verifies against real gdb while stopped at main");
+
+  bool stopped_in_add = stopped_at_add_directly;
+  if (!stopped_in_add) {
+    // Resume from main; the loop calls add() and the now-bound breakpoint fires.
+    const int stops_before = captured.stop_count;
+    DebugSession* session = manager.ActiveSession();
+    Expect(session != nullptr, "the session should be active while stopped at main");
+    session->Continue();
+    Expect(PollUntil(manager, [&]() { return captured.stop_count > stops_before; }, 20000),
+           "gdb should stop again once add() is called");
+    stopped_in_add = !captured.last_frames.empty() &&
+                     captured.last_frames[0].name.find("add") != std::string::npos;
   }
-  Expect(stopped_in_add,
-         "gdb should stop inside add() via the function breakpoint (within a few attempts)");
+  manager.ShutdownAll();
+  Expect(stopped_in_add, "gdb should stop inside add() via the function breakpoint");
 }
 
 // E3 regression (through the production DebugService callback wiring against the
@@ -3084,6 +3137,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionSetVariableGatedOnCapability",
           TestDebugSessionSetVariableGatedOnCapability);
   AddTest(tests, "DebugService/VariablesModelTreeBehavior", TestDebugVariablesModelTreeBehavior);
+  AddTest(tests, "DebugService/VariablesModelExpansionIsPerSibling",
+          TestDebugVariablesModelExpansionIsPerSiblingNotByNameOnly);
   AddTest(tests, "DebugService/VariablesShowMoreClearsOnEmptyOverReportedPage",
           TestDebugVariablesShowMoreClearsOnEmptyOverReportedPage);
   AddTest(tests, "DebugService/VariablesLocalsOpenByDefault",

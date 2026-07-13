@@ -1,6 +1,7 @@
 #include "project/CommitWorkflowChecks.h"
 
 #include <algorithm>
+#include <limits>
 
 #include "project/GitRepository.h"
 #include "util/GitConflictMarkers.h"
@@ -111,14 +112,20 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
       path_text = fields[i + 2];  // rename: [i+1]=old, [i+2]=new
       i += 2;
     }
+    // Parse in 64-bit and saturate into the int field. A very large (generated or
+    // hostile) numstat count exceeds INT_MAX; `ParseInt` returned nullopt for
+    // those, silently under-reporting the change as 0. Saturating keeps the
+    // summary monotonic and non-zero.
     if (added_text != "-") {
-      if (const auto parsed = util::ParseInt(added_text)) {
-        file_summary.added_lines = std::max(0, *parsed);
+      if (const auto parsed = util::ParseInt64(added_text)) {
+        file_summary.added_lines = static_cast<int>(
+            std::clamp<std::int64_t>(*parsed, 0, std::numeric_limits<int>::max()));
       }
     }
     if (deleted_text != "-") {
-      if (const auto parsed = util::ParseInt(deleted_text)) {
-        file_summary.deleted_lines = std::max(0, *parsed);
+      if (const auto parsed = util::ParseInt64(deleted_text)) {
+        file_summary.deleted_lines = static_cast<int>(
+            std::clamp<std::int64_t>(*parsed, 0, std::numeric_limits<int>::max()));
       }
     }
     file_summary.relative_path = std::filesystem::path(path_text);
@@ -183,7 +190,10 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
   if (subject.empty()) {
     checks.push_back(MakeCheck(CommitPreCheckKind::EmptySubject, CommitPreCheckSeverity::Blocking,
                                "Commit subject is required"));
-  } else if (subject.size() > kCommitSubjectMaxLength) {
+  } else if (util::Utf8CodepointCount(subject) > kCommitSubjectMaxLength) {
+    // Count Unicode scalar values, not bytes: a non-ASCII subject (accented or
+    // CJK text) has more bytes than visible characters, so a byte-length gate
+    // would reject a subject the user sees as well within the limit.
     checks.push_back(MakeCheck(
         CommitPreCheckKind::LongSubject, CommitPreCheckSeverity::Blocking,
         "Commit subject exceeds " + std::to_string(kCommitSubjectMaxLength) + " characters"));

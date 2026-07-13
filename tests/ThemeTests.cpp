@@ -2,6 +2,7 @@
 
 #include "render/AnsiPalette.h"
 #include "render/Theme.h"
+#include "render/ThemeFile.h"
 #include "terminal/TerminalAnsiColors.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 
@@ -195,6 +196,26 @@ void ExpectAnsi256ColorClampsOutOfRangeIndices() {
          "index 255 remains the top of the grayscale ramp (0xEE)");
 }
 
+void ExpectParseThemeColorRejectsOutOfRangeNumericTokens() {
+  const auto same = [](SDL_Color a, SDL_Color b) {
+    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+  };
+  // 0..255 name a real palette entry and parse to that colour.
+  const auto zero = render::ParseThemeColor("0");
+  Expect(zero.has_value() && same(*zero, render::Ansi256Color(0)),
+         "numeric token 0 resolves to palette index 0");
+  const auto max = render::ParseThemeColor("255");
+  Expect(max.has_value() && same(*max, render::Ansi256Color(255)),
+         "numeric token 255 resolves to palette index 255");
+  // Regression: out-of-range or overflowing numeric tokens used to silently
+  // collapse to black inside Ansi256Color. They must now report as unset so the
+  // caller treats the group as default rather than mis-rendering it.
+  Expect(!render::ParseThemeColor("256").has_value(),
+         "numeric token 256 is out of range and must be rejected");
+  Expect(!render::ParseThemeColor("99999999999999999999").has_value(),
+         "an overflowing numeric token must be rejected, not folded to black");
+}
+
 void ExpectSelfIncludingThemeLoadsWithoutRecursion() {
   // A colorscheme that includes itself must terminate via the include-cycle
   // guard rather than recursing forever, and still apply its own color-links.
@@ -221,6 +242,33 @@ void ExpectSelfIncludingThemeLoadsWithoutRecursion() {
   Expect(resolved_name == "loop", "self-including colorscheme should resolve to its own name");
   ExpectContrastAtLeast("self-include default text", theme.text_primary, theme.editor_background,
                         4.5f);
+}
+
+void ExpectDeepThemeIncludeChainIsBounded() {
+  // A long acyclic include chain must fail cleanly at the depth cap rather than
+  // recursing unbounded. Build chain0 -> chain1 -> ... -> chain30.
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() / "microide_theme_depth_test";
+  std::error_code ec;
+  std::filesystem::remove_all(dir, ec);
+  std::filesystem::create_directories(dir, ec);
+  Expect(!ec, "should be able to create a temp theme directory");
+  for (int i = 0; i < 30; ++i) {
+    std::ofstream out(dir / ("chain" + std::to_string(i) + ".microide"));
+    out << "include \"chain" << (i + 1) << "\"\n";
+    out << "color-link default \"#ffffff,#101010\"\n";
+  }
+  // The final file terminates the chain.
+  { std::ofstream out(dir / "chain30.microide"); out << "color-link default \"#ffffff,#101010\"\n"; }
+
+  render::Theme theme;
+  std::string resolved_name;
+  std::string error;
+  const bool loaded = render::LoadThemeByName("chain0", theme, &resolved_name, &error, dir);
+  std::filesystem::remove_all(dir, ec);
+  Expect(!loaded, "an over-deep include chain must fail to load");
+  Expect(error.find("too deep") != std::string::npos,
+         "the failure should name the include-depth limit: " + error);
 }
 
 void ExpectBuiltinLightThemeIsSelectableAndReadable() {
@@ -257,8 +305,11 @@ void RegisterThemeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Theme shared ANSI palette parity", ExpectSharedAnsiPaletteParity);
   AddTest(tests, "Theme ANSI 256 colour clamps out-of-range indices",
           ExpectAnsi256ColorClampsOutOfRangeIndices);
+  AddTest(tests, "Theme numeric colour tokens reject out-of-range values",
+          ExpectParseThemeColorRejectsOutOfRangeNumericTokens);
   AddTest(tests, "Theme self-including colorscheme loads without recursion",
           ExpectSelfIncludingThemeLoadsWithoutRecursion);
+  AddTest(tests, "Theme deep include chain is bounded", ExpectDeepThemeIncludeChainIsBounded);
   AddTest(tests, "Theme default foregrounds preserve readable contrast",
           ExpectReadableDefaultThemeForegrounds);
   AddTest(tests, "Theme default decoration underlays stay readable",

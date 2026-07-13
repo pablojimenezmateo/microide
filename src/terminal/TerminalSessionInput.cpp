@@ -3,6 +3,7 @@
 #include "terminal/TerminalInternalConstants.h"
 #include "terminal/TerminalSessionInputEncoding.h"
 #include "platform/TerminalBackend.h"
+#include "util/StringUtil.h"
 
 namespace microide::terminal {
 
@@ -68,6 +69,15 @@ bool TerminalSession::SendKeyPress(const KeyPress& press) {
 void TerminalSession::PasteText(std::string_view text) {
   if (text.empty()) {
     return;
+  }
+
+  // Cap the paste at the session boundary so EVERY entry point is protected —
+  // the middle-click paste path calls this directly, bypassing the workspace-
+  // level clamp. A huge clipboard would otherwise allocate a huge formatted
+  // buffer and block the backend write. Truncate on a UTF-8 boundary.
+  constexpr std::size_t kMaxTerminalPasteBytes = 64u << 20;
+  if (text.size() > kMaxTerminalPasteBytes) {
+    text = text.substr(0, util::PreviousUtf8Boundary(text, kMaxTerminalPasteBytes));
   }
 
   std::string bytes;

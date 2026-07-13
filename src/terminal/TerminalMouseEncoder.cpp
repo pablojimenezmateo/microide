@@ -89,11 +89,17 @@ bool EncodeTerminalMouseEvent(const TerminalMouseEncodeRequest& request, std::st
     return true;
   }
 
+  // Legacy X10 encoding can only represent coordinates up to column/row 223
+  // (cell + 33 must fit in one byte). Beyond that, clamping to the edge cell
+  // would deliver the event at the wrong location; drop it instead so the app
+  // never sees a phantom edge click. Terminals this large should enable SGR
+  // (1006) reporting, which has no such limit.
+  if (clamped_column > 222 || clamped_row > 222) {
+    return false;
+  }
   const int encoded_button = std::clamp(32 + code, 0, 255);
-  const int encoded_column =
-      std::clamp(33 + static_cast<int>(std::min<std::size_t>(clamped_column, 222)), 0, 255);
-  const int encoded_row =
-      std::clamp(33 + static_cast<int>(std::min<std::size_t>(clamped_row, 222)), 0, 255);
+  const int encoded_column = 33 + static_cast<int>(clamped_column);
+  const int encoded_row = 33 + static_cast<int>(clamped_row);
   out_bytes.push_back('\x1b');
   out_bytes.push_back('[');
   out_bytes.push_back('M');

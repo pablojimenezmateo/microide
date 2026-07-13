@@ -115,6 +115,26 @@ bool WaitForConnectionCount(const ControlSocketServer& server, std::size_t targe
 // socat / `echo | nc` do) lost its reply because the server reaped the
 // connection in the same poll iteration as the EOF, before the host drained and
 // answered the request.
+// Regression: Start must not blindly unlink whatever sits at the socket path. If
+// a regular (non-socket) file is there, it refuses to start and leaves the file
+// intact rather than deleting a user-owned file.
+void TestStartRefusesToDeleteNonSocketFile() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path socket_path = temp_dir.path() / "not-a-socket";
+  WriteFile(socket_path, "precious user data\n");
+
+  ControlSocketServer server;
+  Expect(!server.Start(socket_path),
+         "Start must refuse when a non-socket file occupies the socket path");
+  Expect(std::filesystem::exists(socket_path), "the user's file must not be deleted");
+  Expect(ReadFile(socket_path) == "precious user data\n", "the file's contents are intact");
+
+  // A clean path still starts (and a subsequent restart clears its own stale socket).
+  const std::filesystem::path clean_path = temp_dir.path() / "control.sock";
+  ControlSocketServer clean_server;
+  Expect(clean_server.Start(clean_path), "Start succeeds on a clean path");
+}
+
 void TestHalfClosedClientStillReceivesReply() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
@@ -306,6 +326,8 @@ void TestIdleConnectionFloodIsCapped() {
 
 void RegisterControlSocketServerTests(std::vector<TestCase>& tests) {
 #if defined(__unix__) || defined(__APPLE__)
+  AddTest(tests, "ControlSocketServer/StartRefusesToDeleteNonSocketFile",
+          TestStartRefusesToDeleteNonSocketFile);
   AddTest(tests, "ControlSocketServer/HalfClosedClientStillReceivesReply",
           TestHalfClosedClientStillReceivesReply);
   AddTest(tests, "ControlSocketServer/PartialLineAtEofReapsCleanly",

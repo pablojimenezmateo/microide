@@ -792,6 +792,23 @@ void TestWorkspaceShellTerminalPasteActionCapsClipboardBytes() {
          "terminal paste cap should preserve the retained payload bytes");
 }
 
+// Regression: the cap lives in TerminalSession::PasteText itself, so the direct
+// paste path (middle-click paste calls session.PasteText without the workspace
+// clamp) is also bounded — a huge clipboard cannot allocate a huge formatted
+// buffer and block the backend write.
+void TestWorkspaceShellTerminalDirectPasteIsCapped() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  constexpr std::size_t kMaxPasteBytes = 64u << 20;
+  session.PasteText(std::string(kMaxPasteBytes + 4096, 'x'));
+  const std::string sent = TerminalSessionTestAccess::SentBytes(session);
+  Expect(sent.size() <= kMaxPasteBytes && sent.size() >= kMaxPasteBytes - 4,
+         "direct PasteText should cap sent bytes, sent " + std::to_string(sent.size()));
+}
+
 void TestWorkspaceShellTerminalTabsDragReorderToStart() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1010,6 +1027,33 @@ void TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix() {
          "URL hit-testing must map the grid column to a byte offset before matching");
 }
 
+// Regression: URL schemes are case-insensitive, so an uppercase or mixed-case
+// scheme (`HTTPS://`) must still be detected. Previously the scheme match was a
+// literal case-sensitive find and only lowercase schemes were recognized.
+void TestWorkspaceShellTerminalUrlHitTestHonorsUppercaseScheme() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "go HTTPS://Example.COM/Path");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  std::string opened_url;
+  WorkspaceShellTestAccess::SetExternalUrlOpener(shell, [&](std::string_view url) {
+    opened_url = std::string(url);
+    return true;
+  });
+
+  // Grid column 3 is the 'H' of the URL ("go " is columns 0-2).
+  const SDL_FPoint point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 3);
+  Expect(SendMouseDown(shell, point.x, point.y, SDL_BUTTON_LEFT),
+         "left-clicking an uppercase-scheme terminal URL should be handled");
+  // The path casing is preserved from the original text; only scheme matching
+  // is case-insensitive.
+  Expect(opened_url == "HTTPS://Example.COM/Path",
+         "uppercase-scheme URLs must be detected with original casing preserved");
+}
+
 void TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1204,6 +1248,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalPasteActionTargetsPanelFocus);
   AddTest(tests, "WorkspaceShell/TerminalPasteActionCapsClipboardBytes",
           TestWorkspaceShellTerminalPasteActionCapsClipboardBytes);
+  AddTest(tests, "WorkspaceShell/TerminalDirectPasteIsCapped",
+          TestWorkspaceShellTerminalDirectPasteIsCapped);
   AddTest(tests, "WorkspaceShell/TerminalTabsDragReorderToStart",
           TestWorkspaceShellTerminalTabsDragReorderToStart);
   AddTest(tests, "WorkspaceShell/TerminalTabsOverflowReachableViaHeaderWheel",
@@ -1218,6 +1264,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalLeftClickOpensUrls);
   AddTest(tests, "WorkspaceShellTerminal/UrlHitTestHonorsMultibytePrefix",
           TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix);
+  AddTest(tests, "WorkspaceShellTerminal/UrlHitTestHonorsUppercaseScheme",
+          TestWorkspaceShellTerminalUrlHitTestHonorsUppercaseScheme);
   AddTest(tests, "WorkspaceShell/TerminalMouseCaptureSendsButtonEvents",
           TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents);
 }

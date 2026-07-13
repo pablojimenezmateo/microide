@@ -86,11 +86,22 @@ SnippetParseResult ParseSnippetBody(std::string_view body) {
               ++j;
               break;
             }
-            const std::size_t start = j;
+            // Honor escapes inside a choice value: `\,`, `\|`, `\}`, and `\\`
+            // insert the literal character instead of ending the choice, so a
+            // choice like `${1|a\,b,c|}` yields the two options "a,b" and "c".
+            std::string value;
             while (j < body.size() && body[j] != ',' && body[j] != '|') {
-              ++j;
+              if (body[j] == '\\' && j + 1 < body.size() &&
+                  (body[j + 1] == ',' || body[j + 1] == '|' || body[j + 1] == '}' ||
+                   body[j + 1] == '\\')) {
+                value += body[j + 1];
+                j += 2;
+              } else {
+                value += body[j];
+                ++j;
+              }
             }
-            choices.emplace_back(body.substr(start, j - start));
+            choices.emplace_back(std::move(value));
             // A choice value must stay single-line: ApplyChoiceForTab records the
             // post-cycle range as `start.column + text.size()` on one line, so a
             // choice carrying a '\n'/'\r' (ReplaceRange would add a line) leaves a
@@ -110,11 +121,22 @@ SnippetParseResult ParseSnippetBody(std::string_view body) {
           }
           default_text = choices.empty() ? std::string{} : choices.front();
         } else {
-          const std::size_t start = j;
+          // Honor VSCode-style escapes inside the default text: `\}`, `\$`, and
+          // `\\` insert the literal character instead of terminating the
+          // placeholder. Without this, a default containing a brace or dollar
+          // (e.g. `${1:obj\}}`) truncated at the first raw `}`.
+          std::string dt;
           while (j < body.size() && body[j] != '}') {
-            ++j;
+            if (body[j] == '\\' && j + 1 < body.size() &&
+                (body[j + 1] == '}' || body[j + 1] == '$' || body[j + 1] == '\\')) {
+              dt += body[j + 1];
+              j += 2;
+            } else {
+              dt += body[j];
+              ++j;
+            }
           }
-          default_text = std::string(body.substr(start, j - start));
+          default_text = std::move(dt);
         }
       }
       if (j < body.size() && body[j] == '}') {

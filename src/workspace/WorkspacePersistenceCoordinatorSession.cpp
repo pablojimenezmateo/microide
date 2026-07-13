@@ -490,7 +490,13 @@ bool PersistenceCoordinator::RestoreSessionState() {
     // clamps cannot recover it and the pane collapses/explodes. Replace any
     // non-finite or negative dimension with the schema default here.
     const auto sanitize_pixels = [](float value, float fallback) {
-      return std::isfinite(value) && value >= 0.0f ? value : fallback;
+      // Reject non-finite and negative, AND cap an absurd finite value: a corrupt
+      // session could store a huge width/height that would squeeze the rest of the
+      // layout to nothing until the next resize. 100000px is far past any display.
+      if (!std::isfinite(value) || value < 0.0f) {
+        return fallback;
+      }
+      return std::min(value, 100000.0f);
     };
     state.sidebar.visible = persisted_session.sidebar_visible;
     state.sidebar.width = sanitize_pixels(persisted_session.sidebar_width, 288.0f);

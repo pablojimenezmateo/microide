@@ -24,6 +24,28 @@ using microide::workspace::PersistedProjectConfigState;
 using microide::workspace::ToPersistedBranchReviewState;
 
 void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
+  // Regression: unreviewing / deleting for an unknown target must be a clean
+  // no-op — it must not create empty target state or bump the revision.
+  tests.push_back({"BranchReviewState/UnreviewMissingTargetIsNoOp",
+                   [] {
+                     const BranchReviewTargetIdentity target =
+                         MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 1);
+                     BranchReviewStateService service;
+                     const std::uint64_t before = service.revision();
+                     service.MarkFileUnreviewed(target, std::filesystem::path("nope.cpp"));
+                     Expect(service.FindTarget(target) == nullptr,
+                            "unreviewing an unknown target must not create state");
+                     Expect(service.revision() == before,
+                            "a no-op unreview must not bump the revision");
+
+                     // A real unreview (after a review) DOES bump the revision.
+                     service.MarkFileReviewed(target, std::filesystem::path("a.cpp"));
+                     const std::uint64_t after_review = service.revision();
+                     service.MarkFileUnreviewed(target, std::filesystem::path("a.cpp"));
+                     Expect(service.revision() > after_review,
+                            "removing a real review bumps the revision");
+                   }});
+
   tests.push_back({"BranchReviewState/HunkIdentityAndChangedMarker",
                    [] {
                      const auto model = BuildCompareModel("old line\n", "new line\n");

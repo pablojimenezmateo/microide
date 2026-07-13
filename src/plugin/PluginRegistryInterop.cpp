@@ -3,6 +3,7 @@
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include <algorithm>
+#include <cmath>
 
 #include "plugin/PluginContributionLimits.h"
 #include "plugin/PluginLuaInterop.h"
@@ -486,8 +487,12 @@ bool ExtractStatusItemUpdate(lua_State* state,
   lua_interop::GetFieldProtected(state, 2, "progress");
   if (lua_isnumber(state, -1)) {
     const double value = lua_tonumber(state, -1);
-    out->has_progress = true;
-    out->progress = value < 0.0 ? -1.0f : std::clamp(static_cast<float>(value), 0.0f, 1.0f);
+    // Ignore non-finite progress (NaN slips through std::clamp) so it cannot
+    // reach the status-bar progress-bar layout; treat it as "no bar".
+    if (std::isfinite(value)) {
+      out->has_progress = true;
+      out->progress = value < 0.0 ? -1.0f : std::clamp(static_cast<float>(value), 0.0f, 1.0f);
+    }
   }
   lua_pop(state, 1);
   return true;

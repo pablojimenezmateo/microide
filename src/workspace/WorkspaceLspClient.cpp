@@ -184,11 +184,19 @@ bool LspClient::DidChange(const std::string& uri, const std::string& text) {
   int version = 0;
   {
     std::lock_guard lock(impl_->mutex);
+    // Require an open document. Using operator[] here would insert a phantom
+    // version entry for a URI that was never opened (or was already closed),
+    // making the client version-gate future diagnostics for a document the
+    // server does not consider open.
+    const auto it = impl_->document_versions.find(uri);
+    if (it == impl_->document_versions.end()) {
+      return false;
+    }
     // Compute the NEXT version but do not commit it yet: if the enqueue below fails
     // (queue at capacity / stopped), the server never receives this version, so
     // advancing document_versions[uri] would make the staleness gate drop every
     // later publishDiagnostics (the server reports against the last version it saw).
-    version = impl_->document_versions[uri] + 1;
+    version = it->second + 1;
   }
   // Defer to the I/O thread: the whole-document copy into the JsonValue and the
   // serialization (both proportional to document size) run off the UI thread.
@@ -225,9 +233,13 @@ bool LspClient::DidChangeIncremental(const std::string& uri,
   int version = 0;
   {
     std::lock_guard lock(impl_->mutex);
-    // See DidChange: compute the next version but commit it only on a successful
-    // enqueue so a dropped change does not permanently suppress later diagnostics.
-    version = impl_->document_versions[uri] + 1;
+    // See DidChange: require an open document (no phantom version entry) and
+    // commit the next version only on a successful enqueue.
+    const auto it = impl_->document_versions.find(uri);
+    if (it == impl_->document_versions.end()) {
+      return false;
+    }
+    version = it->second + 1;
   }
   const bool queued = impl_->SendMessageBuilderAfterInitialize(
       [impl = impl_, uri, changed_range, new_text, version]() mutable {
@@ -255,6 +267,14 @@ bool LspClient::DidChangeIncremental(const std::string& uri,
 
 bool LspClient::DidSave(const std::string& uri) {
   using namespace util;
+  // Only notify for an open document. A save for an unopened/closed URI can make
+  // strict servers report a protocol error or double-run file watchers.
+  {
+    std::lock_guard lock(impl_->mutex);
+    if (!impl_->document_versions.contains(uri)) {
+      return false;
+    }
+  }
   JsonObject text_doc;
   text_doc["uri"] = JsonValue(uri);
   JsonObject params;

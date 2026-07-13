@@ -11,7 +11,16 @@ namespace microide::editor {
 namespace {
 
 std::size_t ClampCaret(std::string_view text, std::size_t offset) {
-  return std::min(offset, text.size());
+  offset = std::min(offset, text.size());
+  // Snap to a UTF-8 boundary: mouse hit-testing, tests, or plugin-driven surfaces
+  // can request a caret in the middle of a multibyte character, and the next
+  // insert/delete there would split the code point and corrupt the field. Walk
+  // back off any continuation byte (0b10xxxxxx) to the start of its scalar.
+  while (offset > 0 && offset < text.size() &&
+         (static_cast<unsigned char>(text[offset]) & 0xC0) == 0x80) {
+    --offset;
+  }
+  return offset;
 }
 
 // Previous word edge: skip non-word bytes immediately left of `caret`, then the word.
@@ -61,6 +70,22 @@ void SingleLineEditor::SetText(std::string text) {
 void SingleLineEditor::Append(std::string text) {
   if (text.empty()) {
     return;
+  }
+  // Share Insert's single-line sanitization: a single-line field must never store
+  // CR/LF, even via this public helper. Strip line breaks (collapsing CRLF) so a
+  // future caller cannot smuggle control bytes past the field's invariant.
+  if (text.find_first_of("\r\n") != std::string::npos) {
+    std::string sanitized;
+    sanitized.reserve(text.size());
+    for (const char ch : text) {
+      if (ch != '\r' && ch != '\n') {
+        sanitized.push_back(ch);
+      }
+    }
+    text = std::move(sanitized);
+    if (text.empty()) {
+      return;
+    }
   }
   Normalize();
   text_.append(text);

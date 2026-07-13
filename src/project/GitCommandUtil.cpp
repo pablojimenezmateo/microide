@@ -84,6 +84,12 @@ CommandResult ReadGitCommandOutputWithStdin(const std::filesystem::path& root,
   // never touch .git/index.lock; concurrent invocations and killed subprocesses
   // previously left stale locks that blocked the user's own `git commit`.
   command.emplace_back("--no-optional-locks");
+  // Force every pathspec across all git commands to be a literal path. Without
+  // this, a file whose name begins with git pathspec magic — `:(glob)`, `:(top)`,
+  // `:(exclude)`, `:!…`, etc. — passed after `--` still triggers that magic and
+  // could stage/discard/blame/diff/history the wrong path. No git call in this
+  // codebase intentionally uses pathspec magic, so this is a pure safety gate.
+  command.emplace_back("--literal-pathspecs");
   command.emplace_back("-C");
   command.push_back(root.lexically_normal().string());
   for (std::string& argument : arguments) {

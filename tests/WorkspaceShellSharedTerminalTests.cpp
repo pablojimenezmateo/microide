@@ -71,6 +71,23 @@ void TestWorkspaceSharedTerminalSelectionHelpers() {
          "terminal selection should include full interior rows");
   Expect(!TerminalSelectionContainsCell(selection, 2, 4),
          "terminal selection should exclude the end column");
+
+  // Soft-wrapped rows (a long line the terminal auto-wrapped) must be joined
+  // WITHOUT a newline when copied, because the terminal stream never contained
+  // one there. A real (hard) line break still emits '\n'.
+  std::vector<microide::terminal::TerminalLine> wrapped_lines = {
+      MakeTerminalLine("foobar"),
+      MakeTerminalLine("baz"),   // soft continuation of "foobar"
+      MakeTerminalLine("next"),  // a real new line
+  };
+  wrapped_lines[1].wrapped_from_previous = true;
+  wrapped_lines[2].wrapped_from_previous = false;
+  const TerminalSelectionBounds wrapped_selection{
+      .start = TerminalSelectionPoint{.row = 0, .column = 0},
+      .end = TerminalSelectionPoint{.row = 2, .column = 4},
+  };
+  Expect(ExtractTerminalSelectionText(wrapped_lines, wrapped_selection) == "foobarbaz\nnext",
+         "soft-wrapped rows must join without an injected newline; hard breaks keep it");
 }
 
 void TestWorkspaceSharedTerminalMouseHelpers() {

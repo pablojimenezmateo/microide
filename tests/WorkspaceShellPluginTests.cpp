@@ -3560,6 +3560,15 @@ return ide.plugin({
       })
       ctx.log(ok and "applied" or "rejected")
     end)
+    ctx.commands.add("editops.infinite_coords", function()
+      -- math.huge must not be cast to size_t (undefined behavior); the interop
+      -- layer maps it to an invalid (0) index so no wild edit lands.
+      local ok = ctx.editor.apply_edits({
+        edits = { { start_line = math.huge, start_col = 1, end_line = math.huge,
+                    end_col = 6, text = "INF" } },
+      })
+      ctx.log(ok and "applied" or "rejected")
+    end)
   end
 })
 )");
@@ -3661,6 +3670,37 @@ void TestWorkspaceShellPluginApplyEditsRejectsUnopenedPath() {
          "editing a path that is not open should return (false, message), not raise");
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
   Expect(editor.lines()[0] == "hello", "a rejected edit must not touch the active buffer");
+}
+
+// Regression: non-finite plugin edit coordinates (`math.huge`) must not be cast
+// from double to size_t — that is undefined behavior. The interop layer maps them
+// to an invalid (0) index so the command completes without a crash or wild edit.
+// (Also exercised under UBSAN, which flags the bad cast directly.)
+void TestWorkspaceShellPluginApplyEditsRejectsNonFiniteCoords() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  RunEditPluginSetup(shell, plugins_root, project_root, source, "hello\nworld\n");
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+
+  WorkspaceShellTestAccess::ClearPluginMessages(shell);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "editops.infinite_coords"),
+         "infinite-coordinate command should dispatch without crashing");
+  // The malformed edit is dropped (no valid 1-based coordinate), so the apply
+  // resolves to no edits and reports rejection — the buffer is untouched.
+  const auto& messages = WorkspaceShellTestAccess::PluginMessages(shell);
+  Expect(!messages.empty() && messages.back() == "editops: rejected",
+         "math.huge coordinates must reject the edit, not apply it at a clamped position");
+  Expect(editor.lines()[0] == "hello" && editor.lines()[1] == "world",
+         "math.huge coordinates must leave the buffer completely untouched");
 }
 
 // Seeds an "lsp:semantic" recolor overlay for `path` (as an async clangd
@@ -4384,6 +4424,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginApplyEditsSetsSelection);
   AddTest(tests, "WorkspaceShell/PluginApplyEditsRejectsUnopenedPath",
           TestWorkspaceShellPluginApplyEditsRejectsUnopenedPath);
+  AddTest(tests, "WorkspaceShell/PluginApplyEditsRejectsNonFiniteCoords",
+          TestWorkspaceShellPluginApplyEditsRejectsNonFiniteCoords);
   AddTest(tests, "WorkspaceShell/PluginApplyEditsClampsOutOfBounds",
           TestWorkspaceShellPluginApplyEditsClampsOutOfBounds);
   AddTest(tests, "WorkspaceShell/LspSemanticOverlayClearedOnEditAndUndo",

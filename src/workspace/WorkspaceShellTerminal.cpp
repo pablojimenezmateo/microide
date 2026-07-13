@@ -82,8 +82,18 @@ std::optional<std::string> TerminalUrlAtColumn(std::string_view text, std::size_
       "git://",
   };
 
+  // URL schemes are case-insensitive (RFC 3986 §3.1), so match against a
+  // lowercased copy of the line while slicing the URL out of the original text
+  // to preserve the real casing of the path/query. Without this, `HTTPS://…`
+  // or `File://…` links were never detected.
+  std::string lowered(text);
+  for (char& ch : lowered) {
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  }
+  const std::string_view lowered_view(lowered);
+
   for (std::string_view scheme : kSchemes) {
-    std::size_t start = text.find(scheme);
+    std::size_t start = lowered_view.find(scheme);
     while (start != std::string_view::npos) {
       std::size_t end = start + scheme.size();
       while (end < text.size() && !IsTerminalUrlTerminator(text[end])) {
@@ -96,7 +106,7 @@ std::optional<std::string> TerminalUrlAtColumn(std::string_view text, std::size_
       if (target_byte >= start && target_byte < trimmed_end && !url.empty()) {
         return url;
       }
-      start = text.find(scheme, start + 1);
+      start = lowered_view.find(scheme, start + 1);
     }
   }
 

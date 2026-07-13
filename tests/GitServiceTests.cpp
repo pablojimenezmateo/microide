@@ -399,6 +399,33 @@ void TestGitBulkStageAndDiscard() {
          "git discard all should remove untracked files");
 }
 
+// Regression: git pathspec magic must not fire for user filenames. A file named
+// with a magic prefix like ":(glob)…" is staged literally because every git
+// command runs with --literal-pathspecs; without it, git would interpret the
+// prefix as magic and stage the wrong path (or nothing).
+void TestGitStageHonorsLiteralPathspecs() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  std::filesystem::create_directories(repo_path);
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "seed.txt", "seed\n");
+  CommitAll(repo_path, "base", "base");
+
+  const std::filesystem::path magic_rel(":(glob)weird.txt");
+  WriteFile(repo_path / magic_rel, "content\n");
+  Expect(GitStagePath(repo_path, repo_path / magic_rel),
+         "staging a pathspec-magic-named file should succeed");
+
+  const auto entries = CollectGitWorkingTreeEntries(repo_path);
+  bool found_staged = false;
+  for (const auto& entry : entries) {
+    if (entry.relative_path == magic_rel && entry.staged) {
+      found_staged = true;
+    }
+  }
+  Expect(found_staged, "the literal magic-named file must be staged, not interpreted as magic");
+}
+
 void TestGitDiscardStagedRenameRestoresSource() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -615,6 +642,17 @@ void TestGitPorcelainParserLog() {
   Expect(tab_commits[0].relative_date == "5 minutes ago",
          "relative date must not absorb the author's tail");
   Expect(tab_commits[0].subject == "tabbed author", "subject must stay intact");
+
+  // The parser-level cap bounds the result so a hostile/corrupt log stream cannot
+  // materialize an unbounded vector, regardless of caller.
+  std::string many;
+  for (int i = 0; i < 50; ++i) {
+    many += "aaaabbbbccccdddd\x1f" "aaaabbb\x1f" "Ada\x1f" "now\x1f" "s\n";
+  }
+  const auto capped = GitPorcelainParser::ParseLog(many, /*max_entries=*/10);
+  Expect(capped.size() == 10, "ParseLog must stop at the requested cap");
+  const auto uncapped = GitPorcelainParser::ParseLog(many);
+  Expect(uncapped.size() == 50, "the default cap is generous enough for a normal log");
 }
 
 // Git-independent regression for the `-z` name-status parser. The prior parser
@@ -859,6 +897,7 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/ResolvePrBaseReferenceFromGhMergeBase",
           TestGitResolvePrBaseReferenceFromGhMergeBase);
   AddTest(tests, "Git/BulkStageAndDiscard", TestGitBulkStageAndDiscard);
+  AddTest(tests, "Git/StageHonorsLiteralPathspecs", TestGitStageHonorsLiteralPathspecs);
   AddTest(tests, "Git/DiscardStagedRenameRestoresSource", TestGitDiscardStagedRenameRestoresSource);
   AddTest(tests, "Git/UnstageStagedRenameResetsBothSides", TestGitUnstageStagedRenameResetsBothSides);
   AddTest(tests, "Git/RepositoryDirectApi", TestGitRepositoryDirectApi);

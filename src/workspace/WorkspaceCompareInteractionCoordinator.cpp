@@ -386,7 +386,11 @@ void CompareInteractionCoordinator::CopyCompareHunkPatch() {
   // than a display-only approximation.
   const std::optional<std::string> patch =
       project::GenerateComparePatch(compare_tab->model, relative, hunk_index);
-  operations_.write_clipboard_text(patch.value_or(std::string{}));
+  // Only overwrite the clipboard when patch generation succeeded. Writing an
+  // empty string on failure would silently destroy whatever the user had copied.
+  if (patch.has_value() && !patch->empty()) {
+    operations_.write_clipboard_text(*patch);
+  }
 }
 
 void CompareInteractionCoordinator::CopyCompareFilePatch() {
@@ -395,7 +399,7 @@ void CompareInteractionCoordinator::CopyCompareFilePatch() {
     return;
   }
   if (compare_tab->model.rows.empty()) {
-    operations_.write_clipboard_text(std::string{});
+    // Nothing to copy; leave the user's existing clipboard intact.
     return;
   }
   const std::filesystem::path relative = RelativeToRootOrSelf(compare_tab->path, state_.root);
@@ -404,7 +408,11 @@ void CompareInteractionCoordinator::CopyCompareFilePatch() {
   // not the fake `@@ hunk N @@` headers the display-only exporter emitted.
   const std::optional<std::string> patch = project::GenerateComparePatchForRows(
       compare_tab->model, relative, 0, compare_tab->model.rows.size() - 1);
-  operations_.write_clipboard_text(patch.value_or(std::string{}));
+  // Only overwrite the clipboard on success — do not clobber it with an empty
+  // string when patch generation fails.
+  if (patch.has_value() && !patch->empty()) {
+    operations_.write_clipboard_text(*patch);
+  }
 }
 
 void CompareInteractionCoordinator::ToggleCompareIgnoreWhitespace() {

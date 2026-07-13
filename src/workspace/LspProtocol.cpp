@@ -4,6 +4,7 @@
 #include <limits>
 #include <utility>
 
+#include "workspace/LspPositionEncoding.h"
 #include "workspace/ProtocolNumeric.h"
 
 namespace microide::workspace::lsp_protocol {
@@ -76,7 +77,13 @@ LspClient::Diagnostic ParseDiagnostic(const JsonValue& value) {
   LspClient::Diagnostic diagnostic;
   diagnostic.range = ParseRange(value["range"]);
   diagnostic.message = value["message"].AsString();
-  diagnostic.severity = JsonIntInRange(value["severity"], 1);
+  // Clamp to the LSP severity domain (1=Error … 4=Hint). Out-of-spec values
+  // (0, 99, INT_MAX) must not slip through to severity filters or "most severe"
+  // status logic where they would misclassify; anything invalid defaults to Error.
+  {
+    const int raw = JsonIntInRange(value["severity"], 1);
+    diagnostic.severity = (raw >= 1 && raw <= 4) ? raw : 1;
+  }
   // LSP `Diagnostic.code` is `integer | string`. Many servers (TypeScript's 2304,
   // and most compiler-backed servers) report a numeric code; AsString() yields ""
   // for those, silently dropping the code from the UI. Capture the int form too.
@@ -321,17 +328,25 @@ LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
         LspClient::SignatureParameter out_parameter;
         const JsonValue& label = parameter["label"];
         if (label.IsArray()) {
-          // `[start, end]` offsets into the signature label (server position
-          // encoding; treated as byte offsets — exact for ASCII signatures, which
-          // is the common case for the labels servers return here).
+          // `[start, end]` are UTF-16 code-unit offsets into the signature label
+          // (LSP §SignatureInformation). Convert them to UTF-8 byte offsets before
+          // slicing — treating them as bytes corrupted the active-parameter
+          // highlight for any non-ASCII label (e.g. `f(é, β)`). Exact for ASCII.
           const auto& bounds = label.AsArray();
           if (bounds.size() == 2) {
             const std::int64_t start = bounds[0].AsInt(0);
             const std::int64_t end = bounds[1].AsInt(0);
-            if (start >= 0 && end >= start &&
-                static_cast<std::size_t>(end) <= info.label.size()) {
-              out_parameter.label = info.label.substr(static_cast<std::size_t>(start),
-                                                      static_cast<std::size_t>(end - start));
+            if (start >= 0 && end >= start) {
+              const std::size_t start_byte = lsp_encoding::LspCharacterToByteColumn(
+                  info.label, static_cast<std::size_t>(start),
+                  lsp_encoding::PositionEncoding::Utf16);
+              const std::size_t end_byte = lsp_encoding::LspCharacterToByteColumn(
+                  info.label, static_cast<std::size_t>(end),
+                  lsp_encoding::PositionEncoding::Utf16);
+              if (end_byte >= start_byte) {
+                out_parameter.label =
+                    info.label.substr(start_byte, end_byte - start_byte);
+              }
             }
           }
         } else {
@@ -347,6 +362,20 @@ LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
 }
 
 std::string ParseHoverContents(const JsonValue& hover_result) {
+  constexpr std::size_t kMaxHoverBytes = 32 * 1024;
+  static constexpr char kTruncationMarker[] = "\n\n… (truncated)";
+  // Cap ANY single hover string on a UTF-8 boundary with a visible marker. A bare
+  // string or `MarkupContent { value }` was previously returned in full, so a
+  // server could push a tens-of-MiB hover payload (inside the 64 MiB frame cap)
+  // onto the callback/render path. The array shape already caps below.
+  const auto cap_string = [&](std::string s) {
+    if (s.size() > kMaxHoverBytes) {
+      TruncateUtf8InPlace(s, kMaxHoverBytes);
+      s += kTruncationMarker;
+    }
+    return s;
+  };
+
   if (!hover_result.HasKey("contents")) {
     return {};
   }
@@ -354,7 +383,7 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
   // MarkupContent ({kind, value}) and the object form of MarkedString ({language,
   // value}) both carry a "value" — take it directly.
   if (contents.HasKey("value")) {
-    return contents["value"].AsString();
+    return cap_string(contents["value"].AsString());
   }
   // MarkedString[]: join each element's text with a blank line between blocks.
   // Bound both the element count and the accumulated byte size so a hostile server
@@ -364,8 +393,6 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
   // explicit marker so the user sees the content was clipped.
   if (contents.IsArray()) {
     constexpr std::size_t kMaxHoverElements = 128;
-    constexpr std::size_t kMaxHoverBytes = 32 * 1024;
-    static constexpr char kTruncationMarker[] = "\n\n… (truncated)";
     std::string out;
     std::size_t elements = 0;
     bool truncated = false;
@@ -396,7 +423,7 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
   }
   // Bare MarkedString.
   if (contents.IsString()) {
-    return contents.AsString();
+    return cap_string(contents.AsString());
   }
   return {};
 }

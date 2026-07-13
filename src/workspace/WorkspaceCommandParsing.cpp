@@ -65,6 +65,15 @@ float StepUiScale(float current_scale, int delta) {
 
 ParsedCommandLine ParseCommandLine(std::string_view input) {
   ParsedCommandLine parsed;
+  // Bound the parse: a pasted megabyte command or thousands of quoted tokens must
+  // not allocate/drive completion work without limit on the UI thread. The prompt
+  // is a single command line — real ones are tiny — so clamp the scanned length
+  // and the token count well above any legitimate input.
+  constexpr std::size_t kMaxCommandInputBytes = 64 * 1024;
+  constexpr std::size_t kMaxCommandTokens = 4096;
+  if (input.size() > kMaxCommandInputBytes) {
+    input = input.substr(0, kMaxCommandInputBytes);
+  }
   std::string current;
   std::size_t token_start = 0;
   bool token_active = false;
@@ -81,7 +90,9 @@ ParsedCommandLine ParseCommandLine(std::string_view input) {
     if (!token_active) {
       return;
     }
-    parsed.tokens.push_back(ParsedCommandToken{current, token_start});
+    if (parsed.tokens.size() < kMaxCommandTokens) {
+      parsed.tokens.push_back(ParsedCommandToken{current, token_start});
+    }
     current.clear();
     token_active = false;
   };
@@ -272,6 +283,13 @@ std::vector<CommandCompletionCandidate> CompletePath(const std::filesystem::path
         .value = std::move(value),
         .append_space = !is_directory,
     });
+    // Bound candidate collection: completing `/usr/` or a generated directory with
+    // hundreds of thousands of entries would otherwise build and sort a huge list
+    // on the UI thread. The menu only shows a handful; this cap is well past that.
+    constexpr std::size_t kMaxPathCandidates = 2000;
+    if (matches.size() >= kMaxPathCandidates) {
+      break;
+    }
   }
 
   std::sort(matches.begin(), matches.end(), [](const auto& lhs, const auto& rhs) {

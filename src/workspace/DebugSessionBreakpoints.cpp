@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -38,8 +39,12 @@ void DebugSession::SendBreakpointsForFile(const editor::BreakpointStore::FileBre
       continue;
     }
     dap_protocol::SetBreakpointInput input;
-    // BreakpointStore stores 0-based buffer lines; DAP wants 1-based.
-    input.line = static_cast<int>(breakpoint.line) + 1;
+    // BreakpointStore stores 0-based buffer lines; DAP wants 1-based. Clamp before
+    // the narrowing cast so a forged/corrupt persisted breakpoint near INT_MAX /
+    // SIZE_MAX cannot wrap to a negative or unrelated DAP line.
+    input.line = breakpoint.line >= static_cast<std::size_t>(std::numeric_limits<int>::max() - 1)
+                     ? std::numeric_limits<int>::max()
+                     : static_cast<int>(breakpoint.line) + 1;
     // Phase 6 fields, gated on adapter capabilities so we never send a key an
     // adapter rejects. Empty values are omitted by the encoder regardless.
     if (caps.supports_conditional_breakpoints && breakpoint.condition) {

@@ -2,6 +2,7 @@
 
 #if MICROIDE_HAS_LUA_PLUGINS
 
+#include <algorithm>
 #include <cctype>
 #include <optional>
 #include <string_view>
@@ -37,6 +38,18 @@ bool ParseLanguageServerRegistration(lua_State* state,
     if (auto single = ReadStringField(state, 1, "language_id")) {
       if (!single->empty()) language_ids.push_back(std::move(*single));
     }
+  }
+  // Reject empty/whitespace-only language ids: an array like {"", "cpp"} would
+  // otherwise seed an unusable "" key into the activation table. The array must be
+  // non-empty AND every entry must be a real token.
+  const auto is_blank = [](const std::string& value) {
+    return value.empty() || value.find_first_not_of(" \t\r\n") == std::string::npos;
+  };
+  if (std::any_of(language_ids.begin(), language_ids.end(), is_blank)) {
+    if (error_message != nullptr) {
+      *error_message = "language server language_ids must not contain empty entries";
+    }
+    return false;
   }
   if (!id_opt || language_ids.empty() || !command_opt || command_opt->empty()) return false;
   out->contributed = PluginHost::ContributedLanguageServer{
@@ -187,6 +200,12 @@ bool ParseToolRegistration(lua_State* state,
       *error_message = "tool sha256 must be a 64-character hex digest";
     }
     return false;
+  }
+  // Normalize to lowercase: registration accepts either case, but the downloader
+  // compares against `ComputeSha256Blocking`, which returns lowercase. An
+  // uppercase expected digest would otherwise fail verification for a correct file.
+  for (char& c : *sha256_opt) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   }
   std::string label;
   if (auto value = ReadStringField(state, 1, "label")) label = std::move(*value);

@@ -3,6 +3,7 @@
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -31,10 +32,16 @@ bool ReadColorField(lua_State* state, int table_index, SDL_Color* out, std::stri
 }
 
 SDL_FRect ReadRectFields(lua_State* state, int table_index) {
-  return SDL_FRect{ReadNumberField(state, table_index, "x", 0.0f),
-                   ReadNumberField(state, table_index, "y", 0.0f),
-                   ReadNumberField(state, table_index, "w", 0.0f),
-                   ReadNumberField(state, table_index, "h", 0.0f)};
+  // Sanitize plugin-provided geometry at parse time: a non-finite coordinate
+  // (NaN/inf from a bad computation) would poison layout/scroll extents, and a
+  // negative width/height is a meaningless inverted rect. Fold non-finite to 0 and
+  // clamp dimensions to >= 0 so hit-testing and display-list replay see valid rects.
+  const auto finite_or_zero = [](float v) { return std::isfinite(v) ? v : 0.0f; };
+  const float x = finite_or_zero(ReadNumberField(state, table_index, "x", 0.0f));
+  const float y = finite_or_zero(ReadNumberField(state, table_index, "y", 0.0f));
+  const float w = std::max(0.0f, finite_or_zero(ReadNumberField(state, table_index, "w", 0.0f)));
+  const float h = std::max(0.0f, finite_or_zero(ReadNumberField(state, table_index, "h", 0.0f)));
+  return SDL_FRect{x, y, w, h};
 }
 
 // Parse one display-list op table (already on the stack at `entry`) into the list.

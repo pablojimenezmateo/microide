@@ -2,6 +2,7 @@
 
 #include "workspace/NotificationService.h"
 
+#include <limits>
 #include <vector>
 
 namespace microide::tests {
@@ -51,6 +52,19 @@ void TestNotificationServiceDropsOldestBeyondMax() {
          "the newest notification should be retained at the back");
 }
 
+void TestNotificationServiceExpirySaturatesNearMax() {
+  NotificationService service;
+  // A monotonic clock near UINT64_MAX must not wrap the expiry to a tiny value
+  // (which would drop the notification immediately). It saturates instead.
+  const std::uint64_t near_max = std::numeric_limits<std::uint64_t>::max() - 1;
+  service.Show(NotificationService::Tone::Info, "late", near_max);
+  Expect(service.Active().size() == 1, "notification shown near clock max stays active");
+  Expect(service.Active().front().expiry_ms == std::numeric_limits<std::uint64_t>::max(),
+         "expiry should saturate at UINT64_MAX rather than wrap");
+  Expect(!service.ExpireDue(near_max),
+         "the saturated notification must not be treated as already expired");
+}
+
 void TestNotificationServiceToneAndEmptyHandling() {
   Expect(NotificationService::ToneFromLevel("error") == NotificationService::Tone::Error,
          "'error' should map to the error tone");
@@ -73,6 +87,8 @@ void RegisterNotificationServiceTests(std::vector<TestCase>& tests) {
           TestNotificationServiceDelayClampsToZeroWhenDue);
   AddTest(tests, "NotificationService/DropsOldestBeyondMax",
           TestNotificationServiceDropsOldestBeyondMax);
+  AddTest(tests, "NotificationService/ExpirySaturatesNearMax",
+          TestNotificationServiceExpirySaturatesNearMax);
   AddTest(tests, "NotificationService/ToneAndEmptyHandling",
           TestNotificationServiceToneAndEmptyHandling);
 }

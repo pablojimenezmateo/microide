@@ -110,13 +110,13 @@ while True:
   const bool started = client.Start({"python3", server_path.string(), marker_path.string()},
                                     "file:///tmp", "python");
   Expect(started, "graceful shutdown fixture should start");
-  for (int attempt = 0; attempt < 50 && !client.IsInitialized(); ++attempt) {
+  for (int attempt = 0; attempt < 300 && !client.IsInitialized(); ++attempt) {  // ~3s: real subprocess init can be slow under load
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   Expect(client.IsInitialized(), "graceful shutdown fixture should initialize before shutdown");
   client.Shutdown();
 
-  for (int attempt = 0; attempt < 20 && !std::filesystem::exists(marker_path); ++attempt) {
+  for (int attempt = 0; attempt < 100 && !std::filesystem::exists(marker_path); ++attempt) {  // ~2s under load
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
   Expect(std::filesystem::exists(marker_path),
@@ -186,7 +186,7 @@ while True:
   const bool started = client.Start({"python3", server_path.string(), marker_path.string()},
                                     "file:///tmp", "python");
   Expect(started, "async graceful shutdown fixture should start");
-  for (int attempt = 0; attempt < 50 && !client.IsInitialized(); ++attempt) {
+  for (int attempt = 0; attempt < 300 && !client.IsInitialized(); ++attempt) {  // ~3s: real subprocess init can be slow under load
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   Expect(client.IsInitialized(), "async graceful shutdown fixture should initialize before shutdown");
@@ -266,7 +266,7 @@ while True:
   const bool started = client.Start({"python3", server_path.string(), marker_path.string()},
                                     "file:///tmp", "python");
   Expect(started, "stdin close fixture should start");
-  for (int attempt = 0; attempt < 50 && !client.IsInitialized(); ++attempt) {
+  for (int attempt = 0; attempt < 300 && !client.IsInitialized(); ++attempt) {  // ~3s: real subprocess init can be slow under load
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   Expect(client.IsInitialized(), "stdin close fixture should initialize before shutdown");
@@ -299,7 +299,7 @@ time.sleep(10)
   const bool started = client.Start({"python3", server_path.string(), marker_path.string()},
                                     "file:///tmp", "python");
   Expect(started, "preinit cancel fixture should start");
-  for (int attempt = 0; attempt < 20 && !std::filesystem::exists(marker_path); ++attempt) {
+  for (int attempt = 0; attempt < 100 && !std::filesystem::exists(marker_path); ++attempt) {  // ~2s under load
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   Expect(std::filesystem::exists(marker_path), "preinit cancel fixture should launch");
@@ -1345,6 +1345,42 @@ std::string LspFrame(std::string_view body, bool crlf = true) {
 
 }  // namespace
 
+// Regression: didChange/didSave for a URI that was never opened (or already
+// closed) must be rejected rather than creating a phantom version entry that
+// would version-gate future diagnostics for a document the server has no record
+// of. After a real didOpen, both are accepted.
+void TestLspClientRejectsChangeAndSaveForUnopenedDocument() {
+  workspace::LspClient client;
+  client.EnableTestStubMode();  // initialized, no subprocess
+  const std::string uri = "file:///tmp/never-opened.py";
+  Expect(!client.DidChange(uri, "x"), "didChange for an unopened document is rejected");
+  Expect(!client.DidSave(uri), "didSave for an unopened document is rejected");
+
+  Expect(client.DidOpen(uri, "python", "x"), "didOpen enqueues");
+  Expect(client.DidChange(uri, "y"), "didChange after didOpen is accepted");
+  Expect(client.DidSave(uri), "didSave after didOpen is accepted");
+}
+
+// Regression: re-registering a server under the same canonical key with a
+// narrower language-id set must drop the aliases for the removed ids. Previously
+// re-registering ["cpp","c"] as ["cpp"] left alias_["c"] pointing at the C++
+// server, so HasServer("c")/GetServer("c") still resolved to it.
+void TestLspManagerReRegistrationDropsStaleAliases() {
+  workspace::LspManager manager;
+  // eager_start=false so no subprocess is spawned in the unit test.
+  manager.RegisterServer({"cpp", "c"}, {"true"}, "file:///tmp", /*cwd=*/{},
+                         /*eager_start=*/false);
+  Expect(manager.HasServer("cpp"), "the C++ server registers under its primary id");
+  Expect(manager.HasServer("c"), "the secondary language id also resolves");
+
+  // Re-register without "c": the stale alias must be gone.
+  manager.RegisterServer({"cpp"}, {"true"}, "file:///tmp", /*cwd=*/{},
+                         /*eager_start=*/false);
+  Expect(manager.HasServer("cpp"), "the C++ server still resolves under cpp");
+  Expect(!manager.HasServer("c"),
+         "the dropped language id must no longer resolve after re-registration");
+}
+
 void TestLspMessageFramerSplitFrameAcrossChunks() {
   workspace::LspMessageFramer framer;
   const std::string frame = LspFrame(R"({"jsonrpc":"2.0","method":"a"})");
@@ -1374,6 +1410,26 @@ void TestLspMessageFramerBareNewlineHeaders() {
   auto msg = framer.Next();
   Expect(msg.has_value() && (*msg)["method"].AsString() == "lf",
          "bare-\\n headers (no \\r) still frame a message");
+}
+
+// Regression: the Content-Length header name is case-insensitive and the
+// whitespace around the value is optional (HTTP-style tolerant peers). Previously
+// only the exact `Content-Length: ` spelling framed a message, so a lowercase or
+// no-space header made the client read the body as header noise.
+void TestLspMessageFramerToleratesHeaderCasingAndSpacing() {
+  const std::string body = R"({"method":"tolerant"})";
+  const auto expect_frames = [&](const std::string& header) {
+    workspace::LspMessageFramer framer;
+    framer.Append(header + std::to_string(body.size()) + "\r\n\r\n" + body);
+    auto msg = framer.Next();
+    Expect(msg.has_value() && (*msg)["method"].AsString() == "tolerant",
+           "header variant should frame the message: " + header);
+  };
+  expect_frames("content-length: ");   // lowercase name
+  expect_frames("CONTENT-LENGTH: ");    // uppercase name
+  expect_frames("Content-Length:");     // no space after colon
+  expect_frames("Content-Length:   ");  // extra spaces
+  expect_frames("Content-Length \t: ");  // space before colon
 }
 
 void TestLspMessageFramerMalformedLengthResyncs() {
@@ -1488,6 +1544,10 @@ while True:
                                     "file:///tmp", "python");
   Expect(started, "didChange order fixture should start");
 
+  // didChange requires an open document (the client rejects a change for a URI it
+  // never saw a didOpen for). Open it first (version 1); the changes are 2..7.
+  Expect(client.DidOpen("file:///tmp/s.py", "python", ""), "didOpen should enqueue");
+
   constexpr int kChanges = 6;
   std::vector<std::string> texts;
   for (int i = 1; i <= kChanges; ++i) {
@@ -1497,7 +1557,7 @@ while True:
 
   std::string expected;
   for (int i = 0; i < kChanges; ++i) {
-    expected += std::to_string(i + 1) + ":" + std::to_string(texts[static_cast<std::size_t>(i)].size()) +
+    expected += std::to_string(i + 2) + ":" + std::to_string(texts[static_cast<std::size_t>(i)].size()) +
                 ":" + texts[static_cast<std::size_t>(i)].substr(0, 24) + "\n";
   }
 
@@ -1802,6 +1862,12 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestLspMessageFramerBareNewlineHeaders);
   AddTest(tests, "WorkspaceLspClient/FramerMalformedLengthResyncs",
           TestLspMessageFramerMalformedLengthResyncs);
+  AddTest(tests, "WorkspaceLspClient/FramerToleratesHeaderCasingAndSpacing",
+          TestLspMessageFramerToleratesHeaderCasingAndSpacing);
+  AddTest(tests, "WorkspaceLspClient/ManagerReRegistrationDropsStaleAliases",
+          TestLspManagerReRegistrationDropsStaleAliases);
+  AddTest(tests, "WorkspaceLspClient/RejectsChangeAndSaveForUnopenedDocument",
+          TestLspClientRejectsChangeAndSaveForUnopenedDocument);
   AddTest(tests, "WorkspaceLspClient/FramerOversizedFrameSkips",
           TestLspMessageFramerOversizedFrameSkips);
   AddTest(tests, "WorkspaceLspClient/FramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync",

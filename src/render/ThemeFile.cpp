@@ -33,7 +33,15 @@ std::optional<SDL_Color> ParseThemeColor(std::string_view text) {
   }
 
   if (util::IsAllAsciiDigits(token)) {
-    return Ansi256Color(util::ParseInt(token).value_or(0));
+    // Only 0..255 name a real 256-colour palette entry. Reject out-of-range or
+    // overflowing tokens (`256`, a huge number) as an invalid color instead of
+    // silently collapsing them to black inside Ansi256Color, so the caller can
+    // treat the group as unset/default rather than mis-render it.
+    const auto index = util::ParseInt(token);
+    if (!index || *index < 0 || *index > 255) {
+      return std::nullopt;
+    }
+    return Ansi256Color(*index);
   }
 
   if (token == "black") {
@@ -188,11 +196,19 @@ std::filesystem::path FindThemeFile(const std::filesystem::path& theme_directory
   return {};
 }
 
-bool LoadThemeStyles(const std::filesystem::path& theme_directory,
-                     std::string_view name,
-                     ThemeStyleMap& styles,
-                     std::vector<std::string>& include_stack,
-                     std::string& error) {
+namespace {
+
+// Bound include recursion so a deep acyclic chain or a broad include tree cannot
+// grow the stack / open an unbounded number of files before failing.
+constexpr std::size_t kMaxThemeIncludeDepth = 16;
+constexpr std::size_t kMaxThemeIncludeCount = 128;
+
+bool LoadThemeStylesRec(const std::filesystem::path& theme_directory,
+                        std::string_view name,
+                        ThemeStyleMap& styles,
+                        std::vector<std::string>& include_stack,
+                        std::size_t& total_loaded,
+                        std::string& error) {
   const std::filesystem::path theme_path = FindThemeFile(theme_directory, name);
   if (theme_path.empty()) {
     error = "Unknown colorscheme: " + std::string(name);
@@ -201,7 +217,20 @@ bool LoadThemeStyles(const std::filesystem::path& theme_directory,
 
   const std::string normalized_name = util::ToLowerAscii(theme_path.stem().string());
   if (std::find(include_stack.begin(), include_stack.end(), normalized_name) != include_stack.end()) {
+    // Already on the active include chain: skip to break the cycle. The file's
+    // styles are (being) applied by the outer frame, so this is a no-op, not a
+    // failure — a self- or mutually-including theme still loads.
     return true;
+  }
+  if (include_stack.size() >= kMaxThemeIncludeDepth) {
+    error = "Colorscheme include nesting too deep (limit " +
+            std::to_string(kMaxThemeIncludeDepth) + "): " + normalized_name;
+    return false;
+  }
+  if (++total_loaded > kMaxThemeIncludeCount) {
+    error = "Colorscheme include tree too large (limit " +
+            std::to_string(kMaxThemeIncludeCount) + ")";
+    return false;
   }
 
   std::ifstream file(theme_path);
@@ -221,7 +250,8 @@ bool LoadThemeStyles(const std::filesystem::path& theme_directory,
     if (const std::optional<std::string> include_name =
             ParseQuotedDirectiveValue(trimmed, "include ");
         include_name.has_value()) {
-      if (!LoadThemeStyles(theme_directory, *include_name, styles, include_stack, error)) {
+      if (!LoadThemeStylesRec(theme_directory, *include_name, styles, include_stack, total_loaded,
+                              error)) {
         include_stack.pop_back();
         return false;
       }
@@ -238,6 +268,17 @@ bool LoadThemeStyles(const std::filesystem::path& theme_directory,
 
   include_stack.pop_back();
   return true;
+}
+
+}  // namespace
+
+bool LoadThemeStyles(const std::filesystem::path& theme_directory,
+                     std::string_view name,
+                     ThemeStyleMap& styles,
+                     std::vector<std::string>& include_stack,
+                     std::string& error) {
+  std::size_t total_loaded = 0;
+  return LoadThemeStylesRec(theme_directory, name, styles, include_stack, total_loaded, error);
 }
 
 }  // namespace microide::render
