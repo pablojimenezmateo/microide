@@ -59,6 +59,29 @@ void TestFileOperationService() {
 #endif
 }
 
+void TestCreateDirectoryClassifiesExistingTargets() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::filesystem::create_directories(root);
+
+  // Re-creating an existing directory reports "already exists", not a hard error.
+  const auto again = FileOperationService::CreateDirectory(root);
+  Expect(!again.ok, "creating an existing directory should fail");
+  Expect(again.error_message == "The directory already exists",
+         "existing directory is classified distinctly");
+
+  // A regular file occupying the target path is reported as a non-directory
+  // clash (the create-first path classifies via status, no TOCTOU probe).
+  const auto file_target = root / "occupied";
+  WriteFile(file_target, "not a directory");
+  const auto clash = FileOperationService::CreateDirectory(file_target);
+  Expect(!clash.ok, "creating a directory over a file should fail");
+  Expect(clash.error_message == "A non-directory already exists at that path",
+         "file clash is classified distinctly from a real create failure");
+  Expect(std::filesystem::is_regular_file(file_target),
+         "the pre-existing file must be left untouched");
+}
+
 #if defined(__linux__)
 // Regression: the .trashinfo file is now reserved atomically with O_EXCL, so a
 // trash whose base name's metadata already exists must NOT overwrite it — it must
@@ -103,6 +126,8 @@ void TestTrashReservationDoesNotOverwriteExistingMetadata() {
 
 void RegisterFileOperationServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Project/FileOperationService", TestFileOperationService);
+  AddTest(tests, "Project/CreateDirectoryClassifiesExistingTargets",
+          TestCreateDirectoryClassifiesExistingTargets);
 #if defined(__linux__)
   AddTest(tests, "Project/TrashReservationDoesNotOverwriteExistingMetadata",
           TestTrashReservationDoesNotOverwriteExistingMetadata);

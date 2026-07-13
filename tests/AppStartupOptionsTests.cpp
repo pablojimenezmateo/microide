@@ -92,18 +92,44 @@ void TestParseSetOverridesAreRepeatable() {
          "positional path after --set pairs should still be captured");
 }
 
-void TestParseDapLogDefaultsPath() {
+void TestParseDapLogDoesNotSwallowProjectPath() {
+  // Regression: `--dap-log /repo` used to consume /repo as the log path and open
+  // no project. The bare flag now defaults its path and the token is the project.
   std::vector<std::string> args = {"microide", "--dap-log", "/tmp/project"};
   auto argv = ArgvFromStrings(args);
   const auto parsed = ParseAppStartupOptions(static_cast<int>(argv.size()), argv.data());
   Expect(parsed.exit_code == 0, "--dap-log should parse cleanly");
-  // A following non-flag token is the project path, not the log path, so the log
-  // path falls back to the default.
   Expect(parsed.options.dap_log_path.has_value() &&
-             parsed.options.dap_log_path->generic_string() == "/tmp/project",
-         "--dap-log should consume a non-flag token as its path");
-  Expect(!parsed.options.project_path.has_value(),
-         "the consumed token is the log path, not a project path");
+             parsed.options.dap_log_path->generic_string() == "/tmp/microide-dap.log",
+         "bare --dap-log uses the default sink");
+  Expect(parsed.options.project_path.has_value() &&
+             parsed.options.project_path->generic_string() == "/tmp/project",
+         "the following token is the project path, not the log path");
+}
+
+void TestParseDapLogAttachedPath() {
+  std::vector<std::string> args = {"microide", "--dap-log=/tmp/trace.log", "/tmp/project"};
+  auto argv = ArgvFromStrings(args);
+  const auto parsed = ParseAppStartupOptions(static_cast<int>(argv.size()), argv.data());
+  Expect(parsed.exit_code == 0, "--dap-log=<path> should parse cleanly");
+  Expect(parsed.options.dap_log_path.has_value() &&
+             parsed.options.dap_log_path->generic_string() == "/tmp/trace.log",
+         "attached --dap-log=<path> sets the custom sink");
+  Expect(parsed.options.project_path.has_value() &&
+             parsed.options.project_path->generic_string() == "/tmp/project",
+         "the project path is still captured alongside --dap-log=<path>");
+  std::vector<std::string> empty_args = {"microide", "--dap-log="};
+  auto empty_argv = ArgvFromStrings(empty_args);
+  const auto empty_parsed =
+      ParseAppStartupOptions(static_cast<int>(empty_argv.size()), empty_argv.data());
+  Expect(empty_parsed.exit_code == 2, "--dap-log= with an empty path exits 2");
+}
+
+void TestParseRejectsSecondPositionalPath() {
+  std::vector<std::string> args = {"microide", "/tmp/repo-a", "/tmp/repo-b"};
+  auto argv = ArgvFromStrings(args);
+  const auto parsed = ParseAppStartupOptions(static_cast<int>(argv.size()), argv.data());
+  Expect(parsed.exit_code == 2, "a second positional project path should exit 2");
 }
 
 void TestParseDapLogBeforeFlagUsesDefault() {
@@ -221,7 +247,11 @@ void RegisterAppStartupOptionsTests(std::vector<TestCase>& tests) {
           TestParseSetOverridesAreRepeatable);
   AddTest(tests, "AppStartupOptions/ParseSetMissingTokensFails", TestParseSetMissingTokensFails);
   AddTest(tests, "AppStartupOptions/ParseVersionFlag", TestParseVersionFlag);
-  AddTest(tests, "AppStartupOptions/ParseDapLogDefaultsPath", TestParseDapLogDefaultsPath);
+  AddTest(tests, "AppStartupOptions/ParseDapLogDoesNotSwallowProjectPath",
+          TestParseDapLogDoesNotSwallowProjectPath);
+  AddTest(tests, "AppStartupOptions/ParseDapLogAttachedPath", TestParseDapLogAttachedPath);
+  AddTest(tests, "AppStartupOptions/ParseRejectsSecondPositionalPath",
+          TestParseRejectsSecondPositionalPath);
   AddTest(tests, "AppStartupOptions/ParseDapLogBeforeFlagUsesDefault",
           TestParseDapLogBeforeFlagUsesDefault);
   AddTest(tests, "AppStartupOptions/DisablePluginsSkipsPluginsAndSyntax",

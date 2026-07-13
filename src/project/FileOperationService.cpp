@@ -117,16 +117,26 @@ FileOperationResult FileOperationService::CreateDirectory(const std::filesystem:
     return Failure("Invalid directory name");
   }
 
+  // Create-first, then classify. A prior exists() probe followed by
+  // create_directories is a TOCTOU: a racing process can drop a non-directory at
+  // the target in the window between the two calls. create_directories is the
+  // authoritative step — it returns false without error when the path already
+  // exists — so we distinguish "already exists" from a real failure by status.
   std::error_code error;
-  if (std::filesystem::exists(normalized_path, error)) {
+  const bool created = std::filesystem::create_directories(normalized_path, error);
+  if (created) {
+    return Success(normalized_path);
+  }
+  std::error_code status_error;
+  const std::filesystem::file_status status =
+      std::filesystem::status(normalized_path, status_error);
+  if (!status_error && std::filesystem::is_directory(status)) {
     return Failure("The directory already exists");
   }
-
-  std::filesystem::create_directories(normalized_path, error);
-  if (error) {
-    return Failure("Failed to create the directory");
+  if (!status_error && std::filesystem::exists(status)) {
+    return Failure("A non-directory already exists at that path");
   }
-  return Success(normalized_path);
+  return Failure("Failed to create the directory");
 }
 
 FileOperationResult FileOperationService::RenamePath(const std::filesystem::path& source,

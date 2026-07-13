@@ -49,13 +49,20 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
       continue;
     }
     if (arg == "--dap-log") {
-      // Optional path argument: consume the next token only when it is not
-      // itself a flag, mirroring how --control-spec validates its argument.
-      if (i + 1 < argc && argv[i + 1] != nullptr && !IsFlag(argv[i + 1])) {
-        result.options.dap_log_path = std::filesystem::path(argv[++i]);
-      } else {
-        result.options.dap_log_path = std::filesystem::path("/tmp/microide-dap.log");
+      // Bare form: default sink. A custom path uses the attached `--dap-log=<path>`
+      // form below so a following positional project path is never swallowed
+      // (`microide --dap-log /repo` opens /repo, it does not log to it).
+      result.options.dap_log_path = std::filesystem::path("/tmp/microide-dap.log");
+      continue;
+    }
+    if (arg.starts_with("--dap-log=")) {
+      const std::string_view value = arg.substr(std::string_view("--dap-log=").size());
+      if (value.empty()) {
+        std::cerr << "--dap-log=<path> requires a non-empty path\n";
+        result.exit_code = 2;
+        return result;
       }
+      result.options.dap_log_path = std::filesystem::path(value);
       continue;
     }
     if (arg == "--set") {
@@ -75,7 +82,7 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
     if (arg == "--help" || arg == "-h") {
       std::cerr << "usage: microide [--disable-plugins] [--safe-mode] [--control] "
                    "[--set <id> <value>]...\n"
-                   "                [--control-spec <file>] [--dap-log [path]] [--version] "
+                   "                [--control-spec <file>] [--dap-log[=path]] [--version] "
                    "[project-path]\n"
                    "       microide control-send [...]   send one command/query to an instance\n"
                    "       microide control-help         protocol + spec reference\n"
@@ -97,6 +104,14 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
     }
     if (IsFlag(arg)) {
       std::cerr << "unknown option: " << arg << '\n';
+      result.exit_code = 2;
+      return result;
+    }
+    if (positional.has_value()) {
+      // A second positional path is almost always a command-line mistake; opening
+      // only the last one silently would hide it. Reject with usage guidance.
+      std::cerr << "unexpected extra project path: " << arg
+                << " (only one project path may be given)\n";
       result.exit_code = 2;
       return result;
     }
