@@ -4,7 +4,33 @@
 
 #include "plugin/PluginContributionLimits.h"
 
+#include <algorithm>
+#include <string>
+#include <vector>
+
 namespace microide::plugin::contribution_interop {
+
+namespace {
+
+// Reject a contribution whose non-empty `.id` already exists in the target
+// vector. First-match consumers (task runner, tool/adapter/launch lookup) would
+// otherwise behave order-dependently on a duplicate local id. Empty ids are left
+// to the per-type parser's own validation.
+template <typename T>
+bool DuplicateContributionId(const std::vector<T>& items, const T& candidate,
+                             std::string_view kind, std::string* error_message) {
+  if (candidate.id.empty()) {
+    return false;
+  }
+  const bool duplicate = std::any_of(
+      items.begin(), items.end(), [&](const T& e) { return e.id == candidate.id; });
+  if (duplicate && error_message != nullptr) {
+    *error_message = "duplicate " + std::string(kind) + " id '" + candidate.id + "'";
+  }
+  return duplicate;
+}
+
+}  // namespace
 
 bool RegisterFormatter(lua_State* state,
                        std::string_view plugin_id,
@@ -129,6 +155,9 @@ bool RegisterTask(lua_State* state,
                                                    error_message)) {
     return false;
   }
+  if (DuplicateContributionId(*tasks, registration.contributed, "task", error_message)) {
+    return false;
+  }
   tasks->push_back(std::move(registration.contributed));
   return true;
 }
@@ -167,6 +196,10 @@ bool RegisterDebugAdapter(lua_State* state,
                                                             &registration, error_message)) {
     return false;
   }
+  if (DuplicateContributionId(*adapters, registration.contributed, "debug adapter",
+                              error_message)) {
+    return false;
+  }
   adapters->push_back(std::move(registration.contributed));
   return true;
 }
@@ -186,6 +219,10 @@ bool RegisterLaunchConfig(lua_State* state,
                                                            &registration, error_message)) {
     return false;
   }
+  if (DuplicateContributionId(*configs, registration.contributed, "launch config",
+                              error_message)) {
+    return false;
+  }
   configs->push_back(std::move(registration.contributed));
   return true;
 }
@@ -203,6 +240,9 @@ bool RegisterTool(lua_State* state,
   registration_parsers::ToolRegistration registration;
   if (!registration_parsers::ParseToolRegistration(state, std::string(plugin_id), &registration,
                                                    error_message)) {
+    return false;
+  }
+  if (DuplicateContributionId(*tools, registration.contributed, "tool", error_message)) {
     return false;
   }
   tools->push_back(std::move(registration.contributed));

@@ -1996,6 +1996,42 @@ return ide.plugin({
          "empty/short/non-hex sha256 registrations must be rejected at registration time");
 }
 
+void TestPluginHostRejectsDuplicateContributionId() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "duplicate id fixture\n");
+
+  WritePluginInit(
+      global_plugins, "dup-id",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "dup.id",
+  setup = function(ctx)
+    local sha = string.rep("a", 64)
+    pcall(function() ctx.tools.add({ id = "dup", label = "first", platform = "linux-x64",
+      url = "file:///tmp/dup", sha256 = sha, install_dir = "dup" }) end)
+    -- Same local id: must be rejected so first-match lookups are deterministic.
+    pcall(function() ctx.tools.add({ id = "dup", label = "second", platform = "linux-x64",
+      url = "file:///tmp/dup2", sha256 = sha, install_dir = "dup2" }) end)
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  host.Reload(project_root);
+
+  const auto& tools = host.ContributedTools();
+  Expect(tools.size() == 1, "a duplicate tool id must be rejected; only the first survives");
+  Expect(tools[0].label == "first", "the first registration with a given id wins");
+}
+
 void TestRepoTypescriptLspPluginUsesAbsoluteProjectBinary() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3678,6 +3714,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/LaunchConfigRegistration", TestPluginHostLaunchConfigRegistration);
   AddTest(tests, "PluginHost/ToolRegistrationValidatesSha256",
           TestPluginHostToolRegistrationValidatesSha256);
+  AddTest(tests, "PluginHost/RejectsDuplicateContributionId",
+          TestPluginHostRejectsDuplicateContributionId);
   AddTest(tests, "PluginHost/LaunchConfigRequiresProcessExec",
           TestPluginHostLaunchConfigRequiresProcessExec);
   AddTest(tests, "PluginHost/RepoTypescriptLspPluginUsesAbsoluteProjectBinary",
