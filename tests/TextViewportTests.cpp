@@ -1815,6 +1815,46 @@ void TestRuntimeSyntaxLoaderBoundsInfiniteLoop() {
          "the instruction budget surfaces a load error instead of hanging");
 }
 
+// Regression: a syntax rule that matches single characters on a long (but under
+// the overlong cap) line must not produce an unbounded match list. FindAllRegex
+// caps matches per rule per line (8192), so highlighting stays bounded: the first
+// matches are colored, bytes past the budget fall back to Plain, and the
+// one-token-per-byte contract holds.
+void TestRuntimeSyntaxMatchBudgetBoundsPathologicalRule() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  ScopedRuntimeSyntaxRegistryReset syntax_reset;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path syntax_dir = temp_dir.path() / "syntax";
+  // A rule whose pattern matches every single 'a' — pathological match density.
+  WriteFile(syntax_dir / "dense.lua",
+            R"(return {
+  filetype = "dense",
+  files = { "\\.dense$" },
+  rules = {
+    { pattern = "a", group = "keyword" }
+  }
+}
+)");
+  std::vector<std::string> loader_errors;
+  const auto definitions =
+      microide::editor::runtime_syntax::LoadDefinitionsFromDirectories({syntax_dir}, &loader_errors);
+  std::vector<std::string> reload_errors;
+  microide::editor::runtime_syntax::ReloadDefinitions(definitions, &reload_errors);
+
+  std::string line(20000, 'a');  // under the overlong cap, so rules DO run
+  TextViewport viewport;
+  viewport.LoadContent(line + "\n", "/tmp/dense.dense");
+  const auto& tokens = viewport.HighlightedLineTokens(0);
+  // Contract preserved and highlighting completed (no hang) despite 20k potential matches.
+  Expect(tokens.size() == line.size(), "one token per byte is preserved on a dense-match line");
+  Expect(tokens.front() == SyntaxTokenKind::Keyword,
+         "the first matches within the budget are highlighted");
+  Expect(tokens.back() == SyntaxTokenKind::Plain,
+         "bytes past the per-line match budget fall back to Plain instead of matching unbounded");
+}
+
 // A pathologically long line (a minified bundle with no newline) must not be
 // tokenized synchronously on the UI thread: highlighting scans the whole line
 // with the syntax rules, O(line) work on every token-cache miss. Over the length
@@ -3203,6 +3243,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories);
   AddTest(tests, "TextViewport/RuntimeSyntaxLoaderBoundsInfiniteLoop",
           TestRuntimeSyntaxLoaderBoundsInfiniteLoop);
+  AddTest(tests, "TextViewport/RuntimeSyntaxMatchBudgetBoundsPathologicalRule",
+          TestRuntimeSyntaxMatchBudgetBoundsPathologicalRule);
   AddTest(tests, "TextViewport/SyntaxHighlightNestedRegionResumesParentScope",
           TestSyntaxHighlightNestedRegionResumesParentScope);
   AddTest(tests, "TextViewport/SyntaxHighlightSkipsOverlongLine",

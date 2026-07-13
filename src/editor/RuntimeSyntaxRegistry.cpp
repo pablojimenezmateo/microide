@@ -136,6 +136,14 @@ std::optional<MatchRange> FindFirstRegex(std::string_view text,
   return MatchRange{range.start, range.end};
 }
 
+// Per-call match budget for a single rule on a single line. Lines are allowed up
+// to ~100 KiB, so a rule that matches single characters could otherwise push
+// ~100k matches, and a definition with many such rules multiplies that on the
+// highlight hot path. Beyond this the line is left partially highlighted —
+// acceptable degradation for a pathological pattern, and far above any real
+// token count on a visible line.
+constexpr std::size_t kMaxMatchesPerRulePerLine = 8192;
+
 void FindAllRegex(std::string_view text,
                   const CompiledRegex& pattern,
                   std::vector<MatchRange>& matches) {
@@ -149,7 +157,8 @@ void FindAllRegex(std::string_view text,
     return;
   }
 
-  for (std::size_t offset = 0; offset <= text.size();) {
+  for (std::size_t offset = 0;
+       offset <= text.size() && matches.size() < kMaxMatchesPerRulePerLine;) {
     const int rc = pattern.Match(text, offset, match_data);
     if (rc < 0) {
       break;

@@ -271,8 +271,7 @@ Detail per batch lives in the sweep commits.
 - **Tool downloader: `GetCachedTool` does not verify the hash** (no expected-sha param) and
   HTTP(S) download is unimplemented (fails cleanly today); async hashing blocks the caller.
 - **RuntimeSyntaxRegistry regex/match budgets** (separate file from the loader): per-pattern &
-  joined-pattern byte cap before PCRE compile, per-line match budget in `FindAllRegex`,
-  region-start budget, fingerprint-metadata-first, dedup definition dirs, explicit `overrides`
+  joined-pattern byte cap before PCRE compile, region-start budget, fingerprint-metadata-first, dedup definition dirs, explicit `overrides`
   for filetype shadowing, prewarm cold filetype, prefetch key by document-id, `FindFirstRegex`
   skip-mask incremental.
 - **`FileOperationService::RenamePath` destination `exists()`-then-move race** — needs a
