@@ -59,7 +59,7 @@ void FileFinder::Refresh() {
   }
   EnsureCacheBuilt();
 
-  const std::string lower_query = util::ToLowerAscii(query_.text());
+  const std::string lower_query = util::Utf8CaseFold(query_.text());
 
   // While the query is empty, lead with recent files (newest-first) so the finder is
   // useful before the user types. Only recents still present in the index are shown;
@@ -269,8 +269,8 @@ void FileFinder::EnsureCacheBuilt() {
     cached_entries_.push_back(CachedFileEntry{
         .relative_path = path.relative_path,
         .path_string = path_string,
-        .lower_path = util::ToLowerAscii(path_string),
-        .lower_filename = util::ToLowerAscii(path.relative_path.filename().string()),
+        .lower_path = util::Utf8CaseFold(path_string),
+        .lower_filename = util::Utf8CaseFold(path.relative_path.filename().string()),
     });
   }
   cached_index_version_ = snapshot.version;

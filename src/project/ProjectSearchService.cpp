@@ -36,7 +36,10 @@ bool UsesCaseSensitiveSearch(std::string_view query, ProjectSearchCaseMode case_
       return false;
     case ProjectSearchCaseMode::Smart:
     default:
-      return util::QueryHasUppercaseAscii(query);
+      // Smart case is Unicode-aware: an uppercase letter in any covered script
+      // (Latin-1/Greek/Cyrillic/…), not just ASCII A-Z, forces a case-sensitive
+      // search. Matches the case folding used for the insensitive path below.
+      return util::Utf8QueryHasCaseVariation(query);
   }
 }
 
@@ -119,7 +122,10 @@ class PreparedLiteralQuery {
   PreparedLiteralQuery(std::string_view query, ProjectSearchCaseMode case_mode)
       : query_(query),
         case_sensitive_(UsesCaseSensitiveSearch(query, case_mode)),
-        lowered_query_(case_sensitive_ ? std::string{} : util::ToLowerAscii(query)) {
+        // Case fold (not just ASCII-lower) so `É`/`é`, `Δ`/`δ`, `А`/`а` match. The
+        // covered folds are all length-preserving in UTF-8, so folded byte offsets
+        // stay aligned with the original line and reported columns remain correct.
+        lowered_query_(case_sensitive_ ? std::string{} : util::Utf8CaseFold(query)) {
     if (query_.empty()) {
       error_ = "Project search query is empty";
     }
@@ -142,7 +148,10 @@ class PreparedLiteralQuery {
     }
     util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineCalls);
     util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineBytes, line.size());
-    util::ToLowerAsciiInto(line, out);
+    // Unicode case fold with an ASCII fast path (the common case stays a byte
+    // copy). Length-preserving, so match offsets into the folded line map back to
+    // the original line's byte columns.
+    util::Utf8CaseFoldInto(line, out);
   }
 
   bool FindNext(std::string_view line,

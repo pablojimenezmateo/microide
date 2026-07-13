@@ -149,6 +149,28 @@ void TestProjectSearchServiceLiteralModesAndCaseControls() {
          "literal metacharacter search should find the literal text");
 }
 
+void TestProjectSearchServiceUnicodeCaseFolding() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  // "café" (lowercase é U+00E9), "CAFÉ" (uppercase É U+00C9), plus Cyrillic pair.
+  WriteFile(root / "unicode.txt", "café CAFÉ ПРИВЕТ привет\n");
+
+  // Smart-case, all-lowercase query: folds and matches both case variants.
+  const auto cafe = RunProjectSearch(root, "café");
+  Expect(cafe.finished && cafe.error.empty(), "unicode smart-case search finishes");
+  Expect(cafe.results.size() == 2, "café matches both café and CAFÉ via Unicode case fold");
+  // Length-preserving fold keeps reported byte columns aligned with the source.
+  Expect(cafe.results[0].column == 0 && cafe.results[1].column == 6,
+         "reported columns are original byte offsets, not folded-buffer offsets");
+
+  const auto privet = RunProjectSearch(root, "привет");
+  Expect(privet.results.size() == 2, "Cyrillic привет matches ПРИВЕТ and привет");
+
+  // An uppercase non-ASCII letter in the query makes smart-case sensitive.
+  const auto sensitive = RunProjectSearch(root, "CAFÉ");
+  Expect(sensitive.results.size() == 1, "uppercase É forces a case-sensitive smart search");
+}
+
 void TestProjectSearchServiceNormalizesPreviewWhitespace() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -660,6 +682,8 @@ void TestProjectFileScannerTerminatesOnSymlinkLoop() {
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ProjectSearchService/LiteralModesAndCaseControls",
           TestProjectSearchServiceLiteralModesAndCaseControls);
+  AddTest(tests, "ProjectSearchService/UnicodeCaseFolding",
+          TestProjectSearchServiceUnicodeCaseFolding);
   AddTest(tests, "ProjectSearchService/NormalizesPreviewWhitespace",
           TestProjectSearchServiceNormalizesPreviewWhitespace);
   AddTest(tests, "ProjectSearchService/RegexModeAndInvalidRegex",
