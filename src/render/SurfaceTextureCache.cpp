@@ -110,8 +110,18 @@ void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
                                              SDL_TEXTUREACCESS_STATIC, decoded.width,
                                              decoded.height);
     if (texture == nullptr) {
+      // The bytes decoded fine; only texture creation failed. Treat a bounded
+      // number of failures as transient (a renderer re-create / momentary VRAM
+      // pressure) and drop the marker so a later Upload retries — mirroring the
+      // renderer==nullptr path above. Past the cap, keep the marker so a
+      // permanently un-creatable texture stops re-decoding every request.
+      constexpr int kMaxTextureCreateRetries = 3;
+      if (++texture_create_failures_[decoded.hash] < kMaxTextureCreateRetries) {
+        in_flight_or_failed_.erase(pending);
+      }
       continue;
     }
+    texture_create_failures_.erase(decoded.hash);
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     SDL_UpdateTexture(texture, nullptr, decoded.rgba.data(),
                       decoded.width * 4);
@@ -175,6 +185,7 @@ void SurfaceTextureCache::Clear() {
   lru_.clear();
   lru_pos_.clear();
   in_flight_or_failed_.clear();
+  texture_create_failures_.clear();
   vram_bytes_ = 0;
 }
 

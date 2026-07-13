@@ -102,6 +102,11 @@ class SurfaceTextureCache {
 
   // Hashes that are decoding or have permanently failed: suppresses re-requests.
   std::unordered_map<std::uint64_t, bool> in_flight_or_failed_;  // value unused
+  // Count of consecutive SDL_CreateTexture failures per (successfully decoded)
+  // hash. A transient GPU/renderer hiccup should let the valid bytes retry, but a
+  // genuinely un-creatable texture (e.g. dimensions past the GPU max) must stop
+  // re-decoding after a bounded number of attempts.
+  std::unordered_map<std::uint64_t, int> texture_create_failures_;
 };
 
 }  // namespace microide::render
