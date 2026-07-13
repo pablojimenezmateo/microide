@@ -139,9 +139,62 @@ void TestToolDownloaderEmptyHashReCopiesFromLocalSource() {
          "empty-hash download must re-copy from the local source, not serve the stale cache");
 }
 
+void TestToolDownloaderFileUriPercentDecodesLocalHost() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path cache_dir = temp_dir.path() / "cache";
+  const std::filesystem::path source = temp_dir.path() / "my tool.bin";  // space in name
+  WriteFile(source, "uri-bytes\n");
+
+  ToolDownloader downloader;
+  downloader.SetCacheDir(cache_dir);
+  // file://<empty host>/<percent-encoded path> resolves to the real local file.
+  const std::string encoded = "file://" + (temp_dir.path() / "my%20tool.bin").generic_string();
+  const auto path = downloader.Download("tool", encoded, "");
+  Expect(path.has_value(), "a percent-encoded file:// URL resolves to the local file");
+  Expect(ReadFile(cache_dir / "tool") == "uri-bytes\n", "the decoded local source is copied");
+}
+
+void TestToolDownloaderRejectsRemoteFileUri() {
+  TemporaryDirectory temp_dir;
+  ToolDownloader downloader;
+  downloader.SetCacheDir(temp_dir.path() / "cache");
+  // file://remote/... is NOT this machine and must not be read as the relative
+  // path "remote/...".
+  Expect(!downloader.Download("tool", "file://remote/etc/passwd", "").has_value(),
+         "a non-local file:// host is rejected");
+}
+
+void TestToolDownloaderHashMismatchLeavesNoPartialFile() {
+#if defined(_WIN32)
+  return;
+#else
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path cache_dir = temp_dir.path() / "cache";
+  const std::filesystem::path source = temp_dir.path() / "tool.bin";
+  WriteFile(source, "payload\n");
+
+  ToolDownloader downloader;
+  downloader.SetCacheDir(cache_dir);
+  // A wrong expected hash must fail AND leave neither the published cache entry
+  // nor the temp ".partial" sibling behind (atomic temp-then-verify-then-rename).
+  const auto path = downloader.Download("tool", source.string(), std::string(64, 'b'));
+  Expect(!path.has_value(), "a hash mismatch fails the download");
+  Expect(!std::filesystem::exists(cache_dir / "tool"),
+         "no partial/unverified executable is published at the cache path");
+  Expect(!std::filesystem::exists(cache_dir / "tool.partial"),
+         "the temporary partial file is cleaned up on mismatch");
+#endif
+}
+
 }  // namespace
 
 void RegisterWorkspaceToolDownloaderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceToolDownloader/FileUriPercentDecodesLocalHost",
+          TestToolDownloaderFileUriPercentDecodesLocalHost);
+  AddTest(tests, "WorkspaceToolDownloader/RejectsRemoteFileUri",
+          TestToolDownloaderRejectsRemoteFileUri);
+  AddTest(tests, "WorkspaceToolDownloader/HashMismatchLeavesNoPartialFile",
+          TestToolDownloaderHashMismatchLeavesNoPartialFile);
   AddTest(tests, "WorkspaceToolDownloader/FallsBackToShasumWhenSha256sumMissing",
           TestToolDownloaderFallsBackToShasumWhenSha256sumMissing);
   AddTest(tests, "WorkspaceToolDownloader/AcceptsUppercaseExpectedSha",

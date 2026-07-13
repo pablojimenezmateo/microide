@@ -6,6 +6,7 @@
 #include <future>
 
 #include "project/SubprocessHelper.h"
+#include "util/Hex.h"
 
 namespace microide::workspace {
 
@@ -27,7 +28,23 @@ bool IsSafeToolId(std::string_view tool_id) {
 std::optional<std::filesystem::path> ResolveToolSourcePath(const std::string& url) {
   static constexpr std::string_view kFileScheme = "file://";
   if (url.starts_with(kFileScheme)) {
-    return std::filesystem::path(url.substr(kFileScheme.size())).lexically_normal();
+    // Parse the file URI properly: `file://<host>/<path>`. Only an empty or
+    // localhost host is a local path; `file://remote/x` is NOT this machine and
+    // must be rejected rather than read as the relative path "remote/x". The path
+    // component is percent-decoded so `%20` etc. resolve to the real filename.
+    std::string_view rest = std::string_view(url).substr(kFileScheme.size());
+    const std::size_t slash = rest.find('/');
+    const std::string_view host = rest.substr(0, slash);
+    if (!host.empty() && host != "localhost") {
+      return std::nullopt;
+    }
+    const std::string_view path_part = (slash == std::string_view::npos)
+                                           ? std::string_view{}
+                                           : rest.substr(slash);
+    if (path_part.empty()) {
+      return std::nullopt;
+    }
+    return std::filesystem::path(util::PercentDecode(path_part)).lexically_normal();
   }
 
   const std::filesystem::path candidate(url);
@@ -196,20 +213,36 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
     });
   }
 
+  // Copy to a temp sibling, verify the hash there, then atomically rename into
+  // place. Writing the final path directly and verifying afterwards left a
+  // partial/unverified executable at cached_path on a crash or failed hash — one
+  // a concurrent GetCachedTool/IsCached would observe and hand to a launcher.
+  std::filesystem::path temp_path = cached_path;
+  temp_path += ".partial";
   error.clear();
-  std::filesystem::copy_file(*source_path, cached_path,
+  std::filesystem::remove(temp_path, error);
+  error.clear();
+  std::filesystem::copy_file(*source_path, temp_path,
                              std::filesystem::copy_options::overwrite_existing, error);
   if (error) {
     return std::nullopt;
   }
 
   if (!expected_sha256.empty()) {
-    const auto digest = compute_sha256_async(cached_path);
+    const auto digest = compute_sha256_async(temp_path);
     if (!digest.has_value() || *digest != expected_sha256) {
       std::error_code remove_error;
-      std::filesystem::remove(cached_path, remove_error);
+      std::filesystem::remove(temp_path, remove_error);
       return std::nullopt;
     }
+  }
+
+  error.clear();
+  std::filesystem::rename(temp_path, cached_path, error);
+  if (error) {
+    std::error_code remove_error;
+    std::filesystem::remove(temp_path, remove_error);
+    return std::nullopt;
   }
 
   if (on_progress_) {
