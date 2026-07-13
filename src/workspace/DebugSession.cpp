@@ -600,7 +600,9 @@ void DebugSession::Pause() {
   // `pause` requires a threadId. When running we have no stopped thread, so ask
   // the adapter for its threads and pause the first one.
   RequestThreads([this](std::vector<dap_protocol::DapThread> threads) {
-    if (threads.empty()) {
+    // The target may have stopped, terminated, or another action may have run
+    // before this threads response landed — only send `pause` if still Running.
+    if (state_ != State::Running || threads.empty()) {
       return;
     }
     client_->SendRequestAsync("pause", ThreadIdArgs(threads.front().id), {});
@@ -654,7 +656,11 @@ void DebugSession::RefreshThreadList() {
   // repopulated for a superseded stop.
   const std::uint64_t epoch = stop_epoch_;
   RequestThreads([this, epoch](std::vector<dap_protocol::DapThread> threads) {
-    if (epoch != stop_epoch_) {
+    // Also require we are still Stopped: a `continued` event moves us to Running
+    // WITHOUT bumping stop_epoch_ (see RequestStackTrace), so the epoch check alone
+    // would let a late thread-list response repopulate the Call Stack selector
+    // after a full resume. Mirror RequestStackTrace's combined guard.
+    if (epoch != stop_epoch_ || state_ != State::Stopped) {
       return;
     }
     if (callbacks_.on_threads) {
