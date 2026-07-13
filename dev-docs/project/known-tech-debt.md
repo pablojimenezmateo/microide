@@ -224,6 +224,15 @@ Detail per batch lives in the sweep commits.
   the interop boundary (shared `DuplicateContributionId`) so first-match consumers are
   deterministic. (Remaining id-shaped kinds — language servers, AI providers, agents, snippets —
   still to extend.)
+- **`TextViewport::ReplaceAll` case-insensitive match folds** (Unicode), completing the editor
+  side of the case-insensitive item (identifier hover ranges remain ASCII, still open below).
+- **`CollectGitBranches` uses the full refname as the branch `.ref`** (short form only as the
+  label) so an ambiguous local/remote name can't resolve the wrong target — matching the other
+  `GitBranchReference` builders.
+- **DAP `RefreshThreadList` and `Pause` guard on session state**: a late thread-list response can
+  no longer repopulate the Call Stack selector after a `continued` resume, and `Pause` no longer
+  sends `pause` to a target that already stopped/terminated. (The broader DAP resume-on-reject
+  restore + session-token guards remain a recorded follow-up cluster.)
 
 #### Newly found during the sweep (not from the tranches)
 
@@ -407,12 +416,6 @@ behavioral contract before changing code.
   explicitly commit or cancel the active snippet first. If the fallback edit succeeds, the snippet
   session can retain ranges computed for the pre-newline document. Fix direction: commit or cancel
   the snippet before returning false for multi-line input; test Enter inside an active placeholder.
-- **Case-insensitive editor replace and project search are ASCII-only despite UTF-8 editing.**
-  `TextViewportEditEngine` and `ProjectSearchService` lower through ASCII helpers. Searching or
-  replacing case-insensitively for `é`/`É`, `ä`/`Ä`, Greek, Cyrillic, or Turkish dotted/dotless I
-  will miss expected matches. Fix direction: either implement Unicode case folding for literal
-  case-insensitive paths or explicitly constrain the UI label to ASCII case-insensitive matching.
-  Add editor replace and project-search tests with simple non-ASCII pairs.
 - **Closed-file LSP workspace edits silently clamp out-of-range positions and then save.**
   `ApplyLspEditsToClosedFilesOnDisk` maps LSP positions by clamping lines and columns to the scratch
   viewport. A server bug that sends a range beyond EOF mutates the last line instead of rejecting the
@@ -676,16 +679,6 @@ test proves it is unreachable.
   and variable state are cleared while the target remains stopped. Fix direction: either wait for
   response success before clearing, or restore stopped state on failure. Add fake adapter tests for
   rejected continue and rejected step.
-- **DAP `Pause()` picks the first thread from a late thread-list response with no running-state guard.**
-  `Pause` requests threads while Running; if the target stops, terminates, or another session action
-  happens before the reply, the callback still sends `pause` to the first returned thread. Fix
-  direction: capture a session/state token and require `state_ == Running` at callback time. Add a
-  test where a stop event arrives before the threads response.
-- **DAP thread-list refresh applies while Running after a continued event.** `RefreshThreadList`
-  guards only `stop_epoch_`, not state. A thread-list response requested during a stop can land after
-  a full resume without an epoch bump and repopulate the Call Stack thread selector. Fix direction:
-  mirror `RequestStackTrace` and require `state_ == Stopped` before invoking `on_threads`. Add a fake
-  client test with stop -> refresh threads -> continued -> threads response.
 - **DAP breakpoint responses are matched by send order, not stable breakpoint identity.** The
   `setBreakpoints` response mirrors input order in the spec, but adapters that omit or reorder
   unverified breakpoints can mark the wrong local breakpoint if matching is positional only. Fix
@@ -1833,12 +1826,6 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   status parse. A repo with slow config/ref storage can make a "status" refresh do multiple serial git
   reads. Fix direction: cache resolved base by HEAD/upstream/config generation, or fold needed refs
   into one git command. Add perf tests on a repo with many refs and slow packed-refs access.
-- **Branch collection reports remote refs as labels rather than full refs.** `CollectGitBranches`
-  pushes `{.ref = label, .label = label}` after stripping `refs/remotes/`. For `origin/main`, later
-  code that expects a verified ref passes `origin/main` instead of `refs/remotes/origin/main`. Git
-  usually resolves that, but ambiguous local/remote names can compare the wrong target. Fix direction:
-  keep the full ref in `.ref` and short label only in `.label`. Add tests with both local `origin/main`
-  and remote `origin/main`-like names.
 - **Base-reference config values are not constrained before `show-ref`.** `ResolveNamedBranchReference`
   builds ref strings from `branch.<name>.gh-merge-base` and remote config. Weird values containing
   `..`, spaces, or ref metacharacters are passed to git commands. `--verify` protects option parsing,
