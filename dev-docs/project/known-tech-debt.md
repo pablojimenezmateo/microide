@@ -428,6 +428,262 @@ behavioral contract before changing code.
   item, first add a failing test named after the debt entry and then either delete the entry on fix or
   update it with the new blocker. This is a process debt item, not a source-code change.
 
+#### 2026-07-13 deep subsystem audit backlog — additional tranche
+
+This is a second pass over less-central code paths and second-order failure modes. Treat these as
+bug-investigation tickets: add the reproducer first, then fix or explicitly demote the item if the
+test proves it is unreachable.
+
+##### Persistence, JSON, and protocol framing
+
+- **Persisted-record writer leaves a stale backup after every successful write.** The writer renames
+  the old primary to `*.bak`, renames the new temp into place, then returns success without deleting
+  or refreshing the backup. That is useful for recovery, but it means backup contents can be many
+  sessions old and still get trusted by `ReadFile` after a future primary failure. Fix direction:
+  define the backup contract explicitly: either keep a previous-good generation with metadata and
+  visible recovery, or delete backup after successful primary write if backup is only for rollback.
+  Add tests that write A, B, C, corrupt C, and verify whether recovery is allowed to return B or must
+  fail closed.
+- **Persisted-record write failure after backup rename can leave the primary restored best-effort
+  only.** If `RenameReplacing(temp, path)` fails after the primary was moved to `*.bak`, the rollback
+  call `RenameReplacing(backup_path, path)` is best effort and its failure is ignored. A rename
+  failure on flaky storage can leave no primary and only a backup, with no surfaced "manual recovery
+  required" state. Fix direction: return a richer error category for rollback failure and preserve
+  enough context for the caller/status bar. Add an injected `RenameReplacing` seam so the test can
+  force both rename and rollback failure deterministically.
+- **Persisted-record reads allocate the full 256 MiB cap before validating header/body size.**
+  `ReadAllBytes` reads the whole file into memory, then `DecodeRecordFile` checks magic, version, CRC,
+  and body. A hostile 256 MiB file in the config/state path can allocate the cap on startup just to be
+  rejected. Fix direction: read and validate the fixed header first, reject impossible body lengths,
+  then stream or bounded-read only the declared body. Add a test with a large bogus file that proves
+  startup/read memory stays below a small threshold using an injected reader.
+- **JSON parsing has no aggregate array/object entry cap.** The parser bounds recursion depth, and DAP
+  list parsers cap selected arrays after parsing, but `ParseJson` can still materialize a flat
+  millions-entry array/object inside one message before any domain cap runs. A DAP/LSP peer can spend
+  memory and CPU in the generic JSON layer even if the later parser truncates. Fix direction: add a
+  parser-level node/byte budget or message-size-specific parse context, and make LSP/DAP clients pass
+  protocol frame caps. Add JSON parser tests for a huge flat array and huge object.
+- **JSON object duplicate keys use "last wins" with no signal.** `ParseObject` assigns
+  `obj[key->AsString()] = value`, silently replacing earlier keys. That is legal-ish in many parsers,
+  but DAP/LSP messages with duplicate `seq`, `command`, `success`, or `body` fields can be interpreted
+  differently from peers. Fix direction: decide whether duplicate object keys should reject protocol
+  JSON or be recorded as a diagnostic. Add a DAP/LSP parser test with duplicate `success` and `body`
+  keys.
+- **JSON serialization silently converts non-finite doubles to `null`.** This prevents invalid JSON,
+  but protocol callers may believe they sent a numeric value. A malformed internal value could turn a
+  DAP/LSP numeric request field into `null` without an error path. Fix direction: keep this fallback
+  for generic serialization if needed, but reject non-finite numbers at protocol argument builders
+  where the caller expects a number. Add unit tests for `Make*Arguments` with bad numeric inputs once
+  those builders expose typed validation.
+- **Protocol message-size policy is split between JSON, DAP, LSP, and control surfaces.** JSON can
+  parse a payload as long as it reaches it; DAP/LSP framing has separate Content-Length handling; the
+  control socket has its own line buffer cap. Fix direction: document and enforce a single inbound
+  message budget per protocol, with parse budgets below transport caps. Add tests that verify
+  over-budget DAP/LSP/control messages fail before JSON allocation.
+
+##### DAP and debug workflow
+
+- **DAP launch/configuration callbacks capture `this` without a session-generation guard.**
+  `DebugSession` async callbacks check state in some places, but launch, configurationDone, pause,
+  restart, evaluate, variables, scopes, setVariable, and breakpoint response callbacks all capture the
+  session object directly. If a session is stopped/replaced while responses remain queued, a stale
+  callback can mutate the new state or call host callbacks after termination. Fix direction: add a
+  monotonically increasing session token bumped on `Start`/terminal transition and validate it in
+  every DAP response callback. Add a fake DAP client test that queues a response, terminates/restarts,
+  then drains the old callback.
+- **DAP `RequestStop` can leave the UI active if `terminate` is sent but the adapter never answers.**
+  For adapters advertising `supportsTerminateRequest`, `RequestStop` sends `terminate` and waits for
+  `terminated`/process exit; it does not appear to set a timeout or transition optimistically. A hung
+  adapter can leave the session in Running/Stopped with stop requested. Fix direction: start a bounded
+  terminate timer, then disconnect/kill the adapter and transition to Terminated or Failed. Add a fake
+  adapter test that accepts `terminate` and never emits `terminated`.
+- **DAP `configurationDone` rejection records an error but still transitions to Running.** The
+  callback sets `last_error_` when the response fails, then moves `Configuring`/`Initializing` to
+  `Running` regardless. Some adapters reject configurationDone because launch/configuration is invalid;
+  the UI can show a running session that will not run. Fix direction: classify configurationDone
+  failure as terminal unless a known adapter requires tolerance. Add a DAP client test with a failed
+  configurationDone response.
+- **DAP resume commands optimistically clear stopped UI without checking request success.** `Continue`,
+  step commands, reverse commands, and the deferred no-thread resume path send a request and set state
+  to Running immediately. If the adapter rejects `continue`/`next`/`stepIn`, the execution highlight
+  and variable state are cleared while the target remains stopped. Fix direction: either wait for
+  response success before clearing, or restore stopped state on failure. Add fake adapter tests for
+  rejected continue and rejected step.
+- **DAP `Pause()` picks the first thread from a late thread-list response with no running-state guard.**
+  `Pause` requests threads while Running; if the target stops, terminates, or another session action
+  happens before the reply, the callback still sends `pause` to the first returned thread. Fix
+  direction: capture a session/state token and require `state_ == Running` at callback time. Add a
+  test where a stop event arrives before the threads response.
+- **DAP thread-list refresh applies while Running after a continued event.** `RefreshThreadList`
+  guards only `stop_epoch_`, not state. A thread-list response requested during a stop can land after
+  a full resume without an epoch bump and repopulate the Call Stack thread selector. Fix direction:
+  mirror `RequestStackTrace` and require `state_ == Stopped` before invoking `on_threads`. Add a fake
+  client test with stop -> refresh threads -> continued -> threads response.
+- **DAP breakpoint responses are matched by send order, not stable breakpoint identity.** The
+  `setBreakpoints` response mirrors input order in the spec, but adapters that omit or reorder
+  unverified breakpoints can mark the wrong local breakpoint if matching is positional only. Fix
+  direction: match returned breakpoint line/source when present, fall back to order only for missing
+  line data, and surface unmatched adapter breakpoints. Add a response fixture with reordered
+  breakpoints.
+- **DAP source paths from adapter events are trusted as filesystem paths.** Breakpoint/source events
+  parse `source.path` directly into `std::filesystem::path`. If later callbacks open/focus the path
+  without containment or existence checks, a debug adapter can navigate the editor outside the project.
+  Fix direction: audit every DAP path consumer, then route through a "debug external path" policy:
+  allow read-only focus with a banner, or require project containment. Add tests for a breakpoint event
+  with `/etc/passwd` or a temp path outside the workspace.
+- **DAP value-size limits are gdb-name heuristics.** `CommandLooksLikeGdb` matches any basename
+  containing `gdb`, and false negatives restore the freeze risk while false positives send gdb-only
+  REPL commands to another adapter. Fix direction: prefer adapter capability/type configuration or a
+  user setting, then keep basename heuristic as fallback. Add tests for `arm-none-eabi-gdb`,
+  `gdbserver-adapter`, and `notgdb-but-name-contains-gdb`.
+- **DAP variables/scopes list truncation has no visible "more data omitted" state.** Parsers cap at
+  10,000 entries; the debug tree likely renders what arrives as complete. A hostile adapter is the
+  security case, but a legitimate giant array can also be silently incomplete. Fix direction: propagate
+  a `truncated` bit from protocol parsing into the debug pane and request paging when adapter counts
+  are available. Add parser/UI tests for 10,001 variables.
+
+##### Plugins and extension data
+
+- **Plugin decoration publish can allocate and sort huge valid payloads up to four times per call.**
+  Each decoration kind allows 100,000 entries, so one `decorations.set` can materialize up to 400,000
+  host records before store merge/render costs. The cap is protective but still high for a
+  shell-owned render path. Fix direction: set per-file and per-owner budgets based on visible use
+  cases, fail closed with a plugin-visible error, and expose truncation/failure in plugin diagnostics.
+  Add a plugin decoration stress test at cap and cap+1.
+- **Plugin decoration paths use lexical resolution, not the stronger containment helper.** Like
+  `editor.apply_edits`, `decorations.set` resolves `raw_path` with `ResolveRuntimePath`. Decorations
+  do not write files, but publishing decorations for outside-project paths can consume store memory
+  and later follow rename/delete retargeting logic. Fix direction: use `ContainPath` for file-bound
+  plugin contributions or explicitly reject decorations for paths outside the active project. Add a
+  plugin test with `../outside.cpp`.
+- **Plugin decoration whole-line entries can omit columns, but non-whole entries do not validate
+  `start_col <= end_col`.** If a plugin sends `start_col` greater than `end_col`, downstream render or
+  merge code must normalize or it can produce empty/negative-width styling assumptions. Fix direction:
+  reject inverted decoration ranges at interop parsing time. Add a decoration parser test for inverted
+  columns.
+- **Plugin code-action/provider result truncation is silent.** Completion, code action, test, SCM,
+  annotation, and auth harvesters clamp arrays with `std::min(rawlen, cap)`, then return success.
+  Providers that exceed a cap get partial results with no plugin-visible error, making generated code
+  actions/tests appear missing. Fix direction: fail the provider result when raw length exceeds the
+  cap for correctness-critical surfaces, or return a `truncated` flag to the UI. Add provider tests
+  for cap+1 on completions and tests.
+- **Plugin language-provider location paths are not containment-checked.** Definition/reference
+  providers call `resolve_runtime_path` and accept any non-empty resolved path. A plugin can navigate
+  the user outside the project, possibly intentionally, but the product boundary is not specified.
+  Fix direction: decide whether plugin language locations may be external; if yes, mark them as
+  external and open read-only; if no, use `ContainPath`. Add provider tests for absolute outside paths
+  and `../` paths.
+- **Plugin provider string fields have no per-field length limits.** Labels, documentation, detail,
+  code action titles, test names, and SCM labels can be very large while still under Lua memory budget,
+  then move into UI/render view models. Fix direction: clamp or reject plugin-provided display strings
+  at interop boundaries, with separate limits for labels vs documentation. Add tests with multi-MB
+  completion documentation and code-action title.
+- **Plugin callbacks can synchronously call back into host surfaces during lifecycle teardown.**
+  Lifecycle helper code invokes Lua callbacks while host registries are being updated elsewhere in the
+  plugin lifecycle. If a callback publishes decorations/diagnostics or registers commands during
+  teardown, ordering assumptions can break. Fix direction: audit lifecycle callback phases and set an
+  explicit "no registration/no publish" mode during teardown callbacks. Add a plugin teardown test
+  that attempts to publish from `on_project_close`.
+
+##### Project change, file finder, and indexing
+
+- **Project change coalescer can drop per-file reload/diagnostic updates once the cap flips to tree
+  rescan.** Past 1,024 pending file changes it sets `tree_rescan_requested` and ignores later file
+  changes. The rescan updates the index, but open-buffer external-change banners, diagnostics clearing,
+  and other per-file side effects may not run for the dropped tail. Fix direction: when collapsing to
+  a tree rescan, also mark "unknown file changes happened" so downstream open buffers perform a cheap
+  mtime sweep. Add a coalescer/workspace test with cap+1 modified open files.
+- **Project change coalescer delete-then-create semantics lose the new absolute path for Created.**
+  A Deleted followed by Modified becomes Created and updates `absolute_path`; a Deleted followed by
+  Created falls through to `existing->kind = change.kind` and updates the path, which is okay, but a
+  Created followed by Deleted collapses to Deleted and leaves the old absolute path. Any downstream
+  consumer that uses `absolute_path` for delete cleanup may see a stale path after rename-like floods.
+  Fix direction: define per-kind payload validity and clear irrelevant absolute paths on delete. Add
+  unit tests for all two-event combinations.
+- **File finder recent-file de-dup keys are platform-sensitive strings.** Recents are de-duplicated
+  and looked up by `recent.string()` while cached entries also use path strings. On Windows/macOS,
+  case-insensitive paths and separator normalization can show duplicates or fail to match a recent
+  whose casing changed. Fix direction: use the same normalized path key as editor tabs/decorations for
+  recent lookup. Add host-platform-override tests with `Src/Main.cpp` vs `src/main.cpp`.
+- **File finder fuzzy matching is byte/ASCII-based for UTF-8 paths.** Query lowercasing and
+  subsequence scoring use ASCII byte comparisons. Non-ASCII filenames are indexed but not matched in
+  expected case-insensitive ways, and combining characters can rank oddly. Fix direction: either
+  document ASCII matching or add Unicode case-folding/grapheme-aware scoring. Add finder tests for
+  `Résumé.cpp` and query `resume` / `rés`.
+- **File finder keeps the full uncapped matched-index set for narrowing.** This preserves correctness
+  for later typing, but an empty/one-character query over a huge index stores every match index. The
+  index itself is capped elsewhere, yet this can still be a noticeable allocation on the shell thread.
+  Fix direction: keep a compressed bitset/range representation for broad matches or disable narrowing
+  cache until the query length passes a threshold. Add a benchmark with the maximum index size and
+  one-character query.
+- **Full project scan does not propagate traversal-budget truncation to `FileIndex::truncated()`.**
+  `CollectProjectFiles` stops at `kTreeTraversalEntryBudget`, but returns only the collected vector.
+  `FileIndex::Refresh` then clears `truncated_` because it has no scan metadata. A too-large tree can
+  look complete after a full rescan. Fix direction: return `{files, truncated}` from
+  `CollectProjectFiles` and surface it through `FileIndex`. Add a scanner test with a tiny injected
+  budget.
+- **Project scanner hidden filtering checks only the current filename before ignore rules.** In
+  `ExcludeHidden` mode, a hidden directory is skipped before loading its child ignore file, which is
+  good for speed, but a negated rule inside parent `.gitignore` cannot re-include a hidden subtree for
+  file finder/search. Fix direction: decide whether `ExcludeHidden` is a hard UI mode or a
+  gitignore-like filter; if hard, document it; if not, let negated ignore rules override hidden
+  filtering. Add scanner tests for `.hidden/file.cpp` with `!.hidden/`.
+- **Windows native tree watcher cannot watch more than `MAXIMUM_WAIT_OBJECTS - 1` roots and falls back
+  coarsely.** Large root lists from recursive watch preparation can exceed the wait-object limit and
+  force polling. This is acceptable but not surfaced clearly to users, and polling may be expensive on
+  large trees. Fix direction: shard Windows watch handles across worker threads or surface a
+  "polling fallback" state. Add a Windows seam test for 65 watch roots.
+
+##### Terminal, input, and ANSI behavior
+
+- **Terminal UTF-8 encoder accepts invalid Unicode scalar values.** `AppendUtf8` encodes any
+  `char32_t` above `0xFFFF` as a four-byte sequence, including values above `U+10FFFF`. If SDL or a
+  test seam supplies an invalid codepoint, the terminal sends invalid UTF-8 to the child process. Fix
+  direction: reject codepoints above `0x10FFFF` and surrogate range values before encoding. Add
+  `TerminalSessionInputEncoding` tests for `0xD800` and `0x110000`.
+- **Terminal legacy mouse encoding clamps rows/columns beyond 223 to the edge cell.** Without SGR
+  mouse mode, coordinates beyond the legacy range are clamped to 223 rather than dropping the event.
+  Applications running in large terminals can receive clicks at the wrong edge location. Fix
+  direction: for legacy mode, drop events outside encodable range or force SGR-only reporting when the
+  terminal size exceeds 223 columns/rows. Add mouse encoder tests for column 300 without SGR.
+- **Terminal bracketed paste can synchronously write arbitrarily large payloads.** `PasteText`
+  formats the entire paste into one string and calls `SendBytes`. Large clipboard content can allocate
+  and block the UI/backend write path. Fix direction: chunk paste output with a bounded queue and
+  cancellation/stop behavior, especially on Windows where `WriteFile` blocks. Add a paste stress test
+  with a fake backend that blocks after N bytes.
+- **Terminal pending query replies silently truncate at 64 KiB.** The cap prevents a reply flood from
+  freezing the UI, but a program issuing many legitimate color/DA/DSR queries can receive a partial
+  reply stream with no reset marker. Fix direction: when the cap is hit, drop whole replies rather
+  than partial bytes and increment a debug counter. Add tests that fill the buffer exactly to the cap
+  and then issue one more query.
+- **Terminal OSC title updates accept unbounded semantic churn.** The escape buffer caps a single OSC,
+  but a process can still send thousands of short title changes per second, causing repeated launch
+  label changes and view-model churn. Fix direction: coalesce title/cwd OSC updates per frame or only
+  publish when the value changes after debouncing. Add a terminal output test that feeds repeated OSC 0
+  updates and asserts bounded state-change notifications.
+
+##### Rendering, UI, and user feedback
+
+- **Debug pane row hit-testing intentionally maps the top band to row zero, unlike other miss
+  behavior.** Tests pin this for debug pane, while compare/merge top-band behavior is logged as a
+  residue. The inconsistency makes pointer bugs hard to reason about across panes. Fix direction:
+  choose one shared policy for all row lists and migrate tests deliberately. Add a shared row-hit-test
+  helper before changing behavior.
+- **Overlay scroll wheel paths use integer ticks and can skip small high-resolution wheel deltas.**
+  SDL wheel events can carry fractional/precise deltas depending on device. Coordinators that cast to
+  integral ticks can ignore trackpad micro-scrolls or behave differently across platforms. Fix
+  direction: accumulate fractional wheel deltas per surface and consume whole rows. Add coordinator
+  tests with repeated 0.25-row deltas.
+- **Several UI lists clamp selection after content changes but do not preserve item identity.** File
+  finder, code actions, command palette, debug threads, and similar overlays reset/clamp by index.
+  Async refreshes can move the selected item under the cursor/keyboard. Fix direction: preserve
+  selection by stable id/path/command where available, falling back to index only when identity is
+  absent. Add overlay tests where a refresh inserts an item before the selected one.
+- **Status/error messages lack severity and lifetime policy.** Many subsystems need to surface
+  "operation failed", "truncated", or "fallback used"; the status bar currently has ad hoc call sites.
+  Fix direction: define a small status-message service with severity, source, expiry, and replace
+  rules. This is a prerequisite for several silent-failure fixes above.
+
 ### Won't-do — verified non-defects
 
 - **Terminal: combining mark after a double-width glyph.** Dead code —
