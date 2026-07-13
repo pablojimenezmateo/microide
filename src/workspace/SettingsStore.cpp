@@ -45,21 +45,30 @@ void SettingsStore::BindActiveProject(SettingsLayer* project) {
 }
 
 void SettingsStore::Reindex() {
-  ++revision_;
-  resolved_.clear();
-  // User layer first (the cross-project default), then the active project layer
-  // overwrites it: a per-project override wins over the user-level default. This
-  // matches the "set as default" model where the user layer holds defaults that
-  // projects may override (mirrors VS Code's User vs Workspace precedence).
+  // Build the new resolution into a scratch map. User layer first (the
+  // cross-project default), then the active project layer overwrites it: a
+  // per-project override wins over the user-level default. This matches the
+  // "set as default" model where the user layer holds defaults that projects may
+  // override (mirrors VS Code's User vs Workspace precedence).
+  std::unordered_map<std::string, std::string, TransparentHash, std::equal_to<>> next;
   if (user_ != nullptr) {
     for (const auto& [id, value] : *user_) {
-      resolved_[id] = value;
+      next[id] = value;
     }
   }
   if (project_ != nullptr) {
     for (const auto& [id, value] : *project_) {
-      resolved_[id] = value;
+      next[id] = value;
     }
+  }
+  // Only bump the revision when the *effective* resolution actually changed. A
+  // rebind/project switch that resolves to identical settings must not force
+  // downstream live-settings application and render preparation (which key on
+  // Revision()) to re-run. The comparison is O(settings) on this already-cold
+  // mutation/bind path.
+  if (next != resolved_) {
+    resolved_ = std::move(next);
+    ++revision_;
   }
 }
 

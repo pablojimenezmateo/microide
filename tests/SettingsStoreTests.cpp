@@ -127,9 +127,35 @@ void TestRejectsInvalidSettingIds() {
   Expect(ResolveOr(store, "good.id", "?") == "y", "a valid id still applies");
 }
 
+void TestRevisionOnlyBumpsOnEffectiveChange() {
+  SettingsLayer user;
+  SettingsLayer project;
+  SettingsStore store;
+  store.BindUserLayer(&user);
+  store.BindActiveProject(&project);
+  store.SetUser("a", "1");
+  const std::uint64_t r1 = store.Revision();
+  Expect(r1 > 0, "the first effective setting bumps the revision");
+
+  // Rebinding to a layer that resolves identically must not bump the revision —
+  // downstream live-settings/render work keys on Revision() and should not re-run.
+  store.BindActiveProject(&project);
+  Expect(store.Revision() == r1, "rebinding to an identical resolution does not bump the revision");
+
+  // A no-op set (same value) resolves identically → no bump.
+  store.SetUser("a", "1");
+  Expect(store.Revision() == r1, "a no-op set does not bump the revision");
+
+  // A real value change bumps.
+  store.SetUser("a", "2");
+  Expect(store.Revision() > r1, "an effective value change bumps the revision");
+}
+
 }  // namespace
 
 void RegisterSettingsStoreTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "SettingsStore/RevisionOnlyBumpsOnEffectiveChange",
+          TestRevisionOnlyBumpsOnEffectiveChange);
   AddTest(tests, "SettingsStore/RejectsInvalidSettingIds", TestRejectsInvalidSettingIds);
   AddTest(tests, "SettingsStore/UserLayerWinsOverProject", TestUserLayerWinsOverProject);
   AddTest(tests, "SettingsStore/ResetRestoresUnderlyingLayer", TestResetRestoresUnderlyingLayer);
