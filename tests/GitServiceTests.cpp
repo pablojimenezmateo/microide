@@ -307,9 +307,14 @@ void TestGitBranchAndRecentCommitCollection() {
            "branch collection should skip symbolic HEAD refs");
     if (branch.label == "main") {
       saw_main = true;
+      // The ref carries the full, unambiguous refname; the label is the short form.
+      Expect(branch.ref == "refs/heads/main",
+             "a local branch's ref is the full refs/heads/ ref, not the short label");
     }
     if (branch.label == "feature/topic") {
       saw_feature = true;
+      Expect(branch.ref == "refs/heads/feature/topic",
+             "feature branch ref is the full refname");
     }
   }
   Expect(saw_main && saw_feature,

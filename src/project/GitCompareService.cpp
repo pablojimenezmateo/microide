@@ -168,7 +168,12 @@ std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& 
     if (label.empty() || label == "origin/HEAD" || is_symbolic_head) {
       continue;
     }
-    branches.push_back(GitBranchReference{.ref = label, .label = std::move(label)});
+    // Keep the FULL ref (refs/heads/… or refs/remotes/origin/…) as the identity and
+    // the short form only as the display label. Using the short label as the ref
+    // (e.g. "origin/main") could resolve to the wrong target when a local branch
+    // and a remote-tracking name collide; the full ref is unambiguous. This matches
+    // the local/remote GitBranchReference builders above.
+    branches.push_back(GitBranchReference{.ref = std::string(ref), .label = std::move(label)});
   }
   return branches;
 }
