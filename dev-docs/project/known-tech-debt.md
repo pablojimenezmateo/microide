@@ -1965,6 +1965,14 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
 - **Compare `AlignHunkLines` 1×1 pairing ignores similarity.** By design — a
   1-del/1-add hunk always renders as a single Modified row (pinned by
   `TestCompareManyTokenLineBoundsAlignmentDp`).
+- **Compare `AlignHunkLines` oversized-hunk fallback pairs positionally without a
+  similarity gate.** Evaluated a per-pair similarity gate (render low-similarity
+  positional pairs as delete+insert); rejected. It changes the pinned fallback
+  contract (`TestCompareLargeInputsUseBoundedFallback`, `modified == 1500`) and
+  degrades the common systematic-rename case (`left-N` → `right-N`) from a
+  readable side-by-side Modified row into split delete/insert rows — a UX
+  regression, not a correctness fix (lines still round-trip either way). Kept as
+  positional pairing by design; do not re-attempt without a product decision.
 - **Terminal DECSTBM home ignores the scroll-region top under origin mode on the
   primary buffer.** Consistent with this terminal's primary CUP semantics; a
   design-consistent choice, not a live divergence.

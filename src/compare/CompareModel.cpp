@@ -283,6 +283,13 @@ std::vector<HunkAlignmentKind> AlignHunkLines(const std::vector<std::string_view
     if (profile != nullptr) {
       ++profile->fallback_hunk_alignment_calls;
     }
+    // Positional fallback for a hunk too large for the DP: pair the first
+    // min(left,right) rows as Modified. A similarity gate here (rendering
+    // low-token-similarity positional pairs as delete+insert) was evaluated and
+    // rejected — it changes the pinned fallback contract and degrades the common
+    // systematic-rename case (e.g. `left-N` -> `right-N`) from a readable
+    // side-by-side Modified row into split delete/insert rows. Kept as positional
+    // pairing by design; see the won't-do note in known-tech-debt.md.
     const std::size_t paired = std::min(left_count, right_count);
     alignment.reserve(left_count + right_count - paired);
     alignment.insert(alignment.end(), paired, HunkAlignmentKind::Pair);
