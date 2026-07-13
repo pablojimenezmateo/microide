@@ -1830,6 +1830,46 @@ void TestDebugWatchModelBehavior() {
          "ClearResults blanks evaluated values but keeps the placeholder rows");
 }
 
+// Regression: a hostile/broken adapter can return a deeply nested one-child tree.
+// EraseSubtree must not recurse per level (stack overflow); the iterative walk
+// tears the whole chain down without growing the C++ stack.
+void TestDebugValueTreeDeepSubtreeEraseDoesNotOverflow() {
+  DebugValueTree tree;
+  tree.AddRoot("root", "{...}", "T", /*variables_reference=*/1, /*is_scope=*/false);
+  int ref = 1;
+  constexpr int kDepth = 40000;  // far beyond any real debuggee; overflows if recursive
+  for (int d = 0; d < kDepth; ++d) {
+    const int child_ref = ref + 1;
+    tree.ApplyVariables(
+        ref, {codec::DapVariable{.name = "c", .variables_reference = child_ref}}, 0);
+    ref = child_ref;
+  }
+  // Replacing root's first page erases the entire deep child chain via EraseSubtree.
+  // The point is that this completes without overflowing the stack.
+  tree.ApplyVariables(1, {codec::DapVariable{.name = "fresh", .variables_reference = 0}}, 0);
+  tree.Rebuild();
+  // Root is collapsed, so only its own row is flattened; the deep chain is gone.
+  Expect(tree.Rows().size() == 1, "the deep subtree erase completed and left only the collapsed root");
+}
+
+// Watch expressions are re-evaluated on every stop, so the list and each string
+// are capped. A paste/control flood must not grow the list without bound.
+void TestDebugWatchModelCapsExpressions() {
+  DebugWatchModel model;
+  for (int i = 0; i < 1000; ++i) {
+    model.AddExpression("expr" + std::to_string(i));
+  }
+  Expect(model.Expressions().size() == 512, "watch expression count is capped at 512");
+  const std::size_t before = model.Expressions().size();
+  const std::size_t returned = model.AddExpression("one-more");
+  Expect(model.Expressions().size() == before && returned == before,
+         "AddExpression past the cap is a no-op returning the current size");
+  model.SetExpressions(std::vector<std::string>(2000, "x"));
+  Expect(model.Expressions().size() == 512, "SetExpressions also clamps the restored list");
+  model.EditExpression(0, std::string(10000, 'a'));
+  Expect(model.Expressions()[0].size() == 4096, "an over-long expression is truncated");
+}
+
 // Regression: DebugWatchModel::ApplyVariables must RETURN the cascade fetches produced
 // when a freshly-attached child auto-expands (its path was remembered), and the service
 // must issue them. The old service code discarded the return, so a nested watch child
@@ -3151,6 +3191,9 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/GdbAdapterClampsValueFormatting",
           TestGdbAdapterClampsValueFormatting);
   AddTest(tests, "DebugService/WatchModelBehavior", TestDebugWatchModelBehavior);
+  AddTest(tests, "DebugService/ValueTreeDeepSubtreeEraseDoesNotOverflow",
+          TestDebugValueTreeDeepSubtreeEraseDoesNotOverflow);
+  AddTest(tests, "DebugService/WatchModelCapsExpressions", TestDebugWatchModelCapsExpressions);
   AddTest(tests, "DebugService/WatchNestedChildCascadeFetchIsReturned",
           TestDebugWatchNestedChildCascadeFetchIsReturned);
   AddTest(tests, "DebugService/ManagerRejectsUnknownAdapterType",

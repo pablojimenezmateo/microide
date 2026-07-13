@@ -417,25 +417,31 @@ void DebugValueTree::MarkChildrenError(int variables_reference) {
 }
 
 void DebugValueTree::EraseSubtree(std::uint32_t node_id) {
-  const auto it = nodes_.find(node_id);
-  if (it == nodes_.end()) {
-    return;
-  }
-  // Capture what we need before erasing (the erase invalidates `it` but leaves
-  // pointers/references to OTHER nodes valid, so the recursion below is safe).
-  std::vector<std::uint32_t> children = std::move(it->second.children);
-  const int reference = it->second.variables_reference;
-  // Drop the reference mapping only if it still points at this node — first-writer-
-  // wins may have handed our old reference to a sibling we must not strand.
-  if (reference > 0) {
-    const auto ref_it = reference_to_node_.find(reference);
-    if (ref_it != reference_to_node_.end() && ref_it->second == node_id) {
-      reference_to_node_.erase(ref_it);
+  // Iterative post-order-free walk: a hostile adapter can return a deeply nested
+  // one-child tree, so recursing here (once per depth level) could overflow the
+  // C++ stack. An explicit worklist keeps teardown O(nodes) with O(1) stack.
+  std::vector<std::uint32_t> stack;
+  stack.push_back(node_id);
+  while (!stack.empty()) {
+    const std::uint32_t id = stack.back();
+    stack.pop_back();
+    const auto it = nodes_.find(id);
+    if (it == nodes_.end()) {
+      continue;
     }
-  }
-  nodes_.erase(node_id);
-  for (const std::uint32_t child_id : children) {
-    EraseSubtree(child_id);
+    for (const std::uint32_t child_id : it->second.children) {
+      stack.push_back(child_id);
+    }
+    const int reference = it->second.variables_reference;
+    // Drop the reference mapping only if it still points at this node — first-
+    // writer-wins may have handed our old reference to a sibling we must not strand.
+    if (reference > 0) {
+      const auto ref_it = reference_to_node_.find(reference);
+      if (ref_it != reference_to_node_.end() && ref_it->second == id) {
+        reference_to_node_.erase(ref_it);
+      }
+    }
+    nodes_.erase(it);
   }
 }
 
@@ -507,6 +513,14 @@ void DebugValueTree::Rebuild() {
 }
 
 void DebugValueTree::FlattenInto(std::uint32_t node_id, int depth) {
+  // Bound recursion depth: a hostile adapter can nest containers thousands deep,
+  // and (with auto-expanded scopes) FlattenInto would recurse per level and can
+  // overflow the stack. Nothing beyond this depth is usefully visible; stop
+  // emitting rows there. Real debuggees never approach this.
+  constexpr int kMaxFlattenDepth = 256;
+  if (depth > kMaxFlattenDepth) {
+    return;
+  }
   const Node* node = FindNode(node_id);
   if (node == nullptr) {
     return;

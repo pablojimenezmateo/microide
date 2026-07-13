@@ -4,16 +4,40 @@
 
 namespace microide::workspace {
 
+namespace {
+
+// Watch expressions are re-evaluated (one DAP `evaluate` request each) on every
+// stop and frame switch, so an unbounded list makes each stop arbitrarily
+// expensive. A paste or control command could otherwise add thousands. These
+// caps bound the per-stop cost and per-expression memory.
+constexpr std::size_t kMaxWatchExpressions = 512;
+constexpr std::size_t kMaxWatchExpressionLength = 4096;
+
+std::string ClampExpression(std::string expression) {
+  if (expression.size() > kMaxWatchExpressionLength) {
+    expression.resize(kMaxWatchExpressionLength);
+  }
+  return expression;
+}
+
+}  // namespace
+
 void DebugWatchModel::SetExpressions(std::vector<std::string> expressions) {
+  if (expressions.size() > kMaxWatchExpressions) {
+    expressions.resize(kMaxWatchExpressions);
+  }
+  for (std::string& expression : expressions) {
+    expression = ClampExpression(std::move(expression));
+  }
   expressions_ = std::move(expressions);
   BeginEvaluation();
 }
 
 std::size_t DebugWatchModel::AddExpression(std::string expression) {
-  if (expression.empty()) {
+  if (expression.empty() || expressions_.size() >= kMaxWatchExpressions) {
     return expressions_.size();
   }
-  expressions_.push_back(std::move(expression));
+  expressions_.push_back(ClampExpression(std::move(expression)));
   const std::size_t index = expressions_.size() - 1;
   BeginEvaluation();
   return index;
@@ -27,7 +51,7 @@ void DebugWatchModel::EditExpression(std::size_t index, std::string expression) 
     RemoveExpression(index);
     return;
   }
-  expressions_[index] = std::move(expression);
+  expressions_[index] = ClampExpression(std::move(expression));
   BeginEvaluation();
 }
 
