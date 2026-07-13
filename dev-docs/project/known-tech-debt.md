@@ -1512,6 +1512,265 @@ test proves it is unreachable.
   project-safe options into the helper and require opt-out for exceptional commands. Add tests that
   project helpers apply timeout/output defaults.
 
+#### 2026-07-13 deep subsystem audit backlog — sixth tranche
+
+##### Workspace prompts, command surfaces, and sidebar orchestration
+
+- **Dirty prompts store tab indices instead of stable tab identities.** `PromptSurfaceService` records
+  `tab_index`, `target_tabs`, and `dirty_tabs` as positional indices. If tabs are reordered, closed by
+  another action, or moved between groups while the prompt is visible, confirming the prompt can save or
+  close the wrong tab. Fix direction: store stable tab ids or `{path, content_revision, group_id}`
+  tokens and resolve them at confirm time. Add tests for close-tab prompt followed by tab reorder and
+  close-other-tabs prompt followed by a new tab insertion.
+- **Dirty prompt creation does not validate every target index.** `ShowDirtyPromptForTabs` trusts the
+  provided `target_tabs` and `dirty_tabs` vectors after only checking for emptiness. A stale caller can
+  create a prompt with out-of-range indices, leaving the confirm path to clamp, skip, or hit the wrong
+  tab later. Fix direction: validate and normalize all target/dirty indices at prompt creation, or make
+  the confirm action re-resolve stable tab ids. Add unit tests with target `size()` and duplicate
+  indices.
+- **Prompt focus restoration is blind to surface lifetime changes.** Dirty and generic prompts capture
+  `previous_focus` and restore it on dismiss. If the project closes, the editor group disappears, or the
+  previous focus target is disabled while the overlay is open, dismiss can restore focus to an invalid
+  surface. Fix direction: route focus restore through a `FocusService::RestoreIfValid` helper with a
+  fallback priority. Add tests for prompt open, project close, and dismiss.
+- **Generic prompt path payloads are only lexical-normalized.** `OpenPromptSurface` accepts a path and
+  stores `path.lexically_normal()` with no existence, containment, or path-type classification. Prompt
+  actions that delete, rename, or authorize tool access must each remember their own validation. Fix
+  direction: store a typed `PromptPathTarget` with root containment and expected path type. Add prompt
+  tests for missing, outside-project, symlink, and wrong-type paths.
+- **External URL prompts have no scheme or length gate.** `OpenExternalUrlPrompt` accepts any non-empty
+  string and puts it in `detail`. A plugin/sidebar/terminal source can present `file:`, `javascript:`,
+  oversized, or control-character URLs to the user. Fix direction: validate allowed schemes and cap URL
+  length before opening the confirmation prompt. Add tests for `https`, `file`, newline-containing, and
+  cap+1 URLs.
+- **Command completion still contains a stale `vsplit` branch.** `CompleteInput` completes paths for
+  `command == "vsplit"`, but the registered commands are `split-right` and `split-down`. Users typing
+  the real split commands get no path completion, while an unknown legacy command gets completions and
+  then fails on execution. Fix direction: remove the stale branch and add the current split commands to
+  completion routing. Add completion tests for `split-right <path>` and unknown `vsplit`.
+- **Sidebar tree requests can target arbitrary absolute roots.** `ParseSidebarViewRequest` stores
+  `args[1]` directly for the tree root. That may be a useful file-browser feature, but it bypasses the
+  project traversal policy and can expose large or sensitive filesystem roots through the sidebar. Fix
+  direction: decide whether tree roots are project-contained by default and require an explicit
+  external-root mode if not. Add command tests for `tree /`, `sidebar-show tree ../outside`, and
+  project-relative roots.
+- **Plugin sidebar IDs can collide with built-in sidebar IDs.** `RegisterSidebar` validates uniqueness
+  only inside the plugin sidebar map. `FindSidebarView` always checks built-ins first, and
+  `SidebarViewIds` sorts/uniques the combined list, so a plugin registering `tree` or `git` becomes
+  unreachable or ambiguously hidden. Fix direction: reject plugin sidebar IDs that match built-in view
+  ids. Add plugin registration tests for `tree`, `search`, and a valid plugin id.
+- **Sidebar view policy sorting repeatedly scans the policy list.** `OrderedSidebarViews` calls
+  `EffectiveSidebarViewPolicy` inside erase and stable-sort comparisons. With many plugin sidebars and
+  policies, this becomes O(views log views * policies) on every rebuild. Fix direction: pre-index
+  policies by view id for the duration of ordering. Add a perf test with hundreds of plugin sidebars.
+
+##### Status bar, settings overlay, and notifications
+
+- **Repository availability status can stay stale after `git init` or `.git` removal.**
+  `StatusBarModelService` caches `is_git_repo_valid(project_root)` only by project root when no git
+  snapshot is available. A project that becomes a repo, or stops being one, can keep showing the old
+  `no-scm`/repo state until the root changes or another path clears the cache. Fix direction: include
+  repository metadata generation or `.git` mtime in the cache key. Add tests for creating and deleting
+  `.git` under an open project.
+- **Status-bar language cache ignores syntax registry revision.** The language segment is cached by
+  viewport pointer, content revision, and path. A plugin syntax reload or built-in syntax update can
+  change filetype detection without changing any of those keys, leaving the status bar with a stale
+  language label. Fix direction: include `runtime_syntax::RegistryRevision()` in the cache key. Add a
+  test where a runtime syntax definition changes the detected filetype for an open file.
+- **LSP status tone is derived by substring search for `Ready`.** `StatusBarModelService` treats any
+  text containing `Ready` as default tone. Labels such as `Not Ready`, `Readying`, or a server name
+  containing that word are misclassified. Fix direction: have the LSP service return a typed status
+  severity instead of parsing display text. Add tests for ready, starting, errored, and "not ready"
+  labels.
+- **Plugin status items with equal alignment and priority have unstable order.** `ResolveStatusItems`
+  uses `std::sort` and only compares alignment and descending priority. Equal-priority items can
+  reorder between revisions or platforms, causing visual jitter. Fix direction: add stable tie-breakers
+  (`plugin_id`, `id`) or use `stable_sort` over registration order. Add status-item ordering tests with
+  equal priority contributions.
+- **Status item progress accepts NaN as an ordinary value.** `ExtractStatusItemUpdate` clamps numeric
+  progress through `std::clamp(static_cast<float>(value), 0, 1)` but does not check finiteness. NaN can
+  survive and poison progress rendering/layout. Fix direction: reject non-finite progress and treat it
+  as absent or indeterminate. Add plugin status tests for `0/0`, `math.huge`, and negative progress.
+- **Notification expiry can overflow on large `now_ms`.** `Show` stores `expiry_ms = now_ms +
+  DurationMs()` without a saturation check. A mocked or long-running monotonic clock near
+  `UINT64_MAX` wraps and immediately expires or lives unexpectedly. Fix direction: saturate at
+  `UINT64_MAX` or compute delays by subtraction from creation time. Add boundary tests around
+  `UINT64_MAX - DurationMs()`.
+- **Settings font filtering rebuilds the filtered vector repeatedly per interaction.**
+  `FilteredFontFamilies()` allocates/returns a fresh vector and is called by row count, file index,
+  highlight, and scroll methods. Large font lists or rapid typing multiply the same scan. Fix
+  direction: cache the filtered font list by value-editor revision. Add a perf test with a large
+  injected font list.
+- **Settings picker row counts cast `size_t` to `int`.** `PickerRowCount`,
+  `PickerChooseFileIndex`, and picker scrolling convert filtered family counts to `int`. A hostile or
+  broken font provider returning an enormous list can overflow selection math. Fix direction: cap font
+  family count before storing and keep row counts in `std::size_t` internally. Add a test with a lowered
+  cap seam.
+- **Settings overlay pane cycling assumes every mode has three panes.** `CycleFocusedPane` wraps over
+  a fixed count of three even in Help/About mode, which has no filter/value editing panes. Keyboard
+  navigation can focus invisible panes and make input handling mode-dependent in surprising ways. Fix
+  direction: derive pane count from `mode_` and visible controls. Add navigation tests for Settings and
+  Help/About modes.
+- **Settings value edit target can go stale across settings rebuilds.** The service stores
+  `editing_row_id_`, but settings rows can disappear after a query change, plugin reload, or settings
+  registry rebuild. Commit paths must revalidate the row; otherwise an edit can apply to a hidden or
+  removed setting id. Fix direction: cancel value edit when `editing_row_id_` is no longer present
+  after `RebuildSettingsRows`. Add tests for plugin setting removed while editing.
+
+##### Plugin registries, tools, tasks, and AI/auth contributions
+
+- **The per-kind plugin contribution cap is too high for UI-backed registries.**
+  `kMaxPluginContributionsPerKind` is 100,000 for every kind. That protects against infinity but still
+  lets one plugin register enough commands, settings, snippets, models, or providers to make UI rebuilds
+  and memory use impractical. Fix direction: use per-kind caps sized to product needs, e.g. low
+  hundreds for visible UI contributions and separate caps for data-heavy providers. Add registration
+  tests for each cap.
+- **Many vector-backed plugin contributions do not reject duplicate ids.** Tasks, tools, language
+  servers, debug adapters, launch configs, AI providers, external agents, bracket sets, comment markers,
+  indent rules, and snippets are appended to vectors with no duplicate-id check in
+  `contribution_interop`. First-match consumers then get order-dependent behavior. Fix direction:
+  centralize duplicate-id validation for every contributed type. Add plugin setup tests registering the
+  same local id twice for each vector-backed kind.
+- **Plugin language-server registration accepts empty language ids inside `language_ids`.** The parser
+  requires the vector to be non-empty, but it does not validate each string. Empty or whitespace
+  language ids can enter matching tables and confuse server activation. Fix direction: validate every
+  language id with the same identifier rules used by filetype/provider ids. Add parser tests for
+  `{"", "cpp"}` and `" "` ids.
+- **Malformed LSP `initialization_options` and `settings` JSON is silently ignored.** The parser leaves
+  the fields null when JSON parsing fails, but registration still succeeds. Plugin authors get a server
+  launched with missing configuration and no actionable error. Fix direction: reject present-but-invalid
+  JSON like launch config parsing already does. Add plugin registration tests for malformed JSON.
+- **Plugin task registrations lack a runtime/execution contract in the host registry.** Tasks are
+  stored as static contributions, but there is no clear runner, cwd containment, env policy, or result
+  channel at the registry boundary. Later execution code can easily grow ad hoc subprocess behavior.
+  Fix direction: define task execution through `ProjectBackgroundExecutor` plus explicit cwd/env/input
+  fields before exposing run commands broadly. Add spec/tests for task cwd, args, and cancellation.
+- **Plugin tool platform strings are free-form.** `ParseToolRegistration` accepts any `platform`, while
+  `FindTool` later exact-matches host strings such as `linux`, `macos`, or `windows`. Typos silently
+  make tools undiscoverable. Fix direction: validate platform against a known enum and reject unknown
+  values at registration. Add tests for `linux`, `darwin`, `macos`, and empty platform.
+- **Plugin tool SHA-256 comparison is case-sensitive even though registration accepts uppercase hex.**
+  `ParseToolRegistration` accepts any hex case, but `ComputeSha256Blocking` returns lowercase from
+  common tools; an uppercase expected digest fails verification. Fix direction: normalize sha256 to
+  lowercase at registration. Add downloader tests with uppercase and lowercase expected digests.
+- **Tool downloader blocks the caller while hashing.** `Download` posts SHA computation to
+  `background_executor_` and immediately calls `future.get()`. If `Download` runs on the UI thread, a
+  large cached tool still freezes the shell until the digest subprocess finishes. Fix direction: make
+  downloads fully async with progress/completion callbacks, or require callers to dispatch `Download`
+  off-thread. Add a test with a fake slow hash worker.
+- **Tool downloader writes directly to the final cache path.** `copy_file(... overwrite_existing)`
+  publishes the destination before hash verification completes. A crash or process kill can leave a
+  partial executable at the cache path, and another caller can observe it. Fix direction: copy to a
+  unique temp file, verify hash, set permissions, then atomically rename into place. Add fault-injection
+  tests for interrupted copy and failed hash.
+- **Tool downloader only implements local/file sources despite storing `download_url`.** HTTP(S) URLs
+  simply fail `ResolveToolSourcePath`, while the registry field name suggests network download support.
+  Fix direction: either rename the field to `source_path` until network download exists, or implement a
+  bounded HTTPS downloader with TLS and progress. Add tests that HTTP URLs produce an explicit
+  unsupported-source error.
+- **`file://` tool URLs are not URI-decoded or host-validated.** `ResolveToolSourcePath` strips the
+  prefix and treats the rest as a path. Percent-encoded spaces fail, and `file://remote/path` is
+  interpreted as a local path string. Fix direction: parse file URIs, accept only empty/localhost hosts,
+  and percent-decode paths. Add tests for `%20`, localhost, and remote hosts.
+- **Tool cache APIs do not verify hash on `GetCachedTool`.** Once a caller has a tool id, `GetCachedTool`
+  returns any existing cache file without checking the expected digest. A later launch path can use a
+  tampered cache entry if it bypasses `Download`. Fix direction: require expected sha for cache lookup
+  or make cached entries content-addressed by digest. Add tests for tampered cached files.
+- **AI provider model lists and external-agent capabilities can still be enormous.** The parsers cap
+  at 100,000 entries, which is far beyond any usable selector and can dominate memory/UI time. Fix
+  direction: use product-sized caps and truncate with a registration warning or reject. Add parser tests
+  for cap+1 models/capabilities.
+- **Auth provider registration does not require any lifecycle function.** A provider with no login,
+  refresh, or logout callback is accepted as a visible auth provider but cannot do useful work. Fix
+  direction: require at least `login` or explicitly classify metadata-only auth providers. Add parser
+  tests for label-only auth providers.
+
+##### Debug pane, watch expressions, and value trees
+
+- **Debug watch expressions are unbounded.** `DebugWatchModel::AddExpression` appends every non-empty
+  expression and `BeginEvaluation` rebuilds roots for all of them. A paste or control command can add
+  thousands of watch expressions and make every stop expensive. Fix direction: cap watch count and
+  expression length, with visible feedback. Add tests for cap and cap+1 expressions.
+- **Debug watch expressions are not deduplicated or normalized.** The same expression can be added many
+  times and evaluated separately on every stop. That is sometimes intentional, but accidental repeated
+  adds from keyboard/control flows waste DAP requests. Fix direction: decide whether duplicates are
+  allowed; if allowed, show duplicate rows distinctly and cap them. Add tests for repeated `foo`.
+- **Watch evaluation results are applied by positional index with no generation.** `ApplyEvaluate`
+  writes to `expression_root_ids_[index]`. If expressions are edited/removed while evaluate requests
+  are in flight, a late response can update a different expression now occupying that index. Fix
+  direction: attach an evaluation generation and expression id to each request. Add tests for remove
+  expression before response and edit expression before response.
+- **Debug value rows are rebuilt recursively without a visible row cap.** `FlattenInto` recursively
+  emits every expanded child and descendant. A large expanded tree can build thousands of rows on every
+  variable update or selection change. Fix direction: virtualize rows or cap flattened rows with "more"
+  at the view layer. Add a synthetic variables tree perf test.
+- **Debug value tree recursion can overflow the C++ stack on hostile adapter data.** `FlattenInto` and
+  `EraseSubtree` recurse through child chains. A malicious adapter can return a deeply nested one-child
+  tree and trigger stack exhaustion during rebuild or clear. Fix direction: rewrite traversal/erase as
+  iterative stack-based walks with a depth cap. Add tests with a deep synthetic variable tree.
+- **Debug value node ids can wrap.** `next_id_` intentionally never resets, but it is a 32-bit id. Long
+  sessions with repeated stops and large variable trees can eventually wrap and alias stale rows or
+  async responses. Fix direction: use 64-bit ids or detect wrap and clear generations. Add a lowered-id
+  wrap test.
+- **Debug breakpoint rows collapse multiple metadata fields into one secondary string.** Conditions,
+  hit counts, log messages, and verification failures overwrite or concatenate in priority order.
+  Users can miss that a breakpoint has both a condition and log message, or a hit condition plus
+  failure. Fix direction: model secondary fields separately in the row view model and let render choose
+  concise presentation. Add view-model tests for all metadata combinations.
+
+##### Tests, icons, decorations, and terminal remaining edges
+
+- **`TestController::RegisterTestItem` ignores duplicate ids instead of updating.** A rediscovery with
+  the same test id but new label/path/range is dropped, leaving stale navigation and names. Fix
+  direction: upsert by id with provider generation, and preserve expansion/selection separately. Add
+  tests for rediscovery after a test file rename.
+- **Test results are stored without a cap or generation.** `RecordTestResult` appends forever, and
+  results from old discovery sessions remain mixed with current tests. Long-running test sessions can
+  grow memory and display stale failures. Fix direction: cap result history per test and tag results by
+  run/discovery generation. Add tests for repeated runs and provider reload.
+- **`TestResults` returns a reference to mutable scratch storage.** The method fills
+  `filtered_results_` and returns it by const reference; a second call invalidates the previous
+  reference contents. UI code that holds two result references can read the wrong test's results. Fix
+  direction: return a value/span tied to immutable indexed storage or provide an iterator callback. Add
+  a test that queries two test ids back to back.
+- **Test items are not owned by provider id.** The controller stores a flat item list and has only
+  `Clear()`. Plugin reload or one provider failing rediscovery cannot remove just that provider's
+  tests. Fix direction: store items by provider and discovery generation. Add tests with two providers
+  where one reloads.
+- **File icon registry lowercases only ASCII.** `WorkspaceFileIconRegistry::Resolve` uses
+  `ToLowerAsciiInto`, so Unicode case variants in filenames/extensions do not match plugin rules or
+  built-ins consistently across platforms. Fix direction: define icon matching as ASCII-only in the
+  spec or add platform-normalized case folding for filenames. Add tests for non-ASCII uppercase
+  extension characters.
+- **File icon theme rules are last-writer-wins without priority or diagnostics.** `Rebuild` overwrites
+  `by_name_`/`by_extension_` entries as it walks contributed themes. Two plugins matching the same
+  extension silently depend on registration order. Fix direction: add explicit priority or report
+  duplicate icon rules. Add tests with two themes for `.rs`.
+- **Plugin decoration aggregate truncation keeps lowest-line entries, not highest-priority entries.**
+  After merging multi-owner decorations, vectors are resized to `kMaxMergedPerKind`. Gutter marks are
+  sorted by line first, then priority, so high-priority marks on later lines are dropped before
+  low-priority marks near the top. Fix direction: define truncation per visible window or priority
+  bucket instead of whole-file first-N. Add tests with cap+1 marks where the highest priority is late.
+- **Decoration retarget can overwrite an existing destination decoration for the same owner.** During
+  `RetargetPathPrefix`, replacements are assigned with `owner_entries[new_key] = moved`. If the owner
+  already had decorations at the new path, they are replaced rather than merged or conflict-reported.
+  Fix direction: merge same-owner moved and existing decorations or clear/rebuild with a deterministic
+  policy. Add tests for renaming `a` to `b` when `b/file` already has decorations.
+- **Terminal pending reply buffer drops query responses silently after 64 KiB.** The cap prevents memory
+  growth, but once full, DSR/DECRQM/color replies are discarded with no state reset or diagnostic. A
+  query-heavy app can observe missing replies and behave incorrectly. Fix direction: coalesce repeated
+  replies, expose a dropped-reply counter/status, or apply backpressure. Add a terminal test flooding
+  private-mode queries past the cap.
+- **Terminal paste has no size gate before formatting.** `PasteText` formats the entire input into
+  bracketed-paste bytes and sends it. A huge clipboard can allocate a large intermediate string and
+  block on PTY write. Fix direction: cap paste size, stream chunks, or prompt for very large pastes. Add
+  tests for large paste payloads in bracketed and plain modes.
+- **Terminal CPR/DECRQM replies can be generated while the backend is no longer running.**
+  `SendBytesLocked` buffers replies from parser paths without checking backend liveness; the later
+  flush may write stale query responses after process shutdown/restart. Fix direction: tag pending
+  replies with terminal backend generation and drop on stop/restart. Add tests for query immediately
+  followed by terminal stop.
+
 ### Won't-do — verified non-defects
 
 - **Terminal: combining mark after a double-width glyph.** Dead code —
