@@ -5,7 +5,9 @@
 #include "workspace/WorkspaceLspClientInternal.h"
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -15,6 +17,26 @@
 #include "workspace/LspProtocol.h"
 
 namespace microide::workspace {
+
+namespace {
+
+// A JSON-RPC response id only matches one of OUR pending requests if it is an
+// exact integer within int range (our request ids are a small monotonic
+// counter). A value outside int range from a hostile/buggy server cannot match
+// anything we sent, so returning false skips it — a bare `static_cast<int>`
+// would wrap it and could collide with a live pending id, dispatching the wrong
+// callback.
+bool ResponseIdInRange(const util::JsonValue& id_value, int* out) {
+  const std::int64_t raw = id_value.AsInt();
+  if (raw < static_cast<std::int64_t>(std::numeric_limits<int>::min()) ||
+      raw > static_cast<std::int64_t>(std::numeric_limits<int>::max())) {
+    return false;
+  }
+  *out = static_cast<int>(raw);
+  return true;
+}
+
+}  // namespace
 
 // Reply to a server-initiated request. `id` is echoed verbatim (it may be an
 // int or a string per JSON-RPC). Server requests only arrive post-initialize,
@@ -101,8 +123,9 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
   const bool has_method = msg.HasKey("method") && msg["method"].IsString();
   const bool has_id = msg.HasKey("id") && !msg["id"].IsNull();
   if (shutting_down.load(std::memory_order_acquire)) {
-    if (has_id && !has_method && (msg["id"].IsInt() || msg["id"].IsDouble())) {
-      const int id = static_cast<int>(msg["id"].AsInt());
+    int id = 0;
+    if (has_id && !has_method && (msg["id"].IsInt() || msg["id"].IsDouble()) &&
+        ResponseIdInRange(msg["id"], &id)) {
       std::lock_guard lock(mutex);
       if (id == shutdown_request_id) {
         shutdown_response_received = true;
@@ -118,8 +141,9 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
   // Accept the id echoed as a JSON float (e.g. "id": 5.0) as well as an integer:
   // some servers round-trip our integer ids through a float. AsInt() truncates
   // 5.0 -> 5. Mirrors the DAP client's request_seq gate.
-  if (has_id && !has_method && (msg["id"].IsInt() || msg["id"].IsDouble())) {
-    const int id = static_cast<int>(msg["id"].AsInt());
+  int id = 0;
+  if (has_id && !has_method && (msg["id"].IsInt() || msg["id"].IsDouble()) &&
+      ResponseIdInRange(msg["id"], &id)) {
     std::function<void(util::JsonValue)> cb;
     {
       std::lock_guard lock(mutex);

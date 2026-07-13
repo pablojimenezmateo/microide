@@ -2,6 +2,8 @@
 
 #include <utility>
 
+#include "workspace/CommandSummary.h"
+
 namespace microide::workspace {
 
 namespace {
@@ -17,17 +19,6 @@ namespace {
 // ceiling (we shipped 8 GiB) lets a runaway climb for many seconds first. Applied
 // only when the contributed adapter did not already set a tighter limit.
 constexpr long kDefaultAdapterAddressSpaceBytes = 3L * 1024 * 1024 * 1024 / 2;  // 1.5 GiB
-
-std::string JoinCommand(const std::vector<std::string>& command) {
-  std::string joined;
-  for (std::size_t i = 0; i < command.size(); ++i) {
-    if (i > 0) {
-      joined += ' ';
-    }
-    joined += command[i];
-  }
-  return joined;
-}
 
 }  // namespace
 
@@ -128,7 +119,7 @@ int DapManager::StartSession(const LaunchConfig& config,
     if (last_error_.empty()) {
       last_error_ = "debug adapter failed to start";
     }
-    last_error_ += " [command: " + JoinCommand(entry.command) + "]";
+    last_error_ += " [command: " + SummarizeCommandForError(entry.command) + "]";
     // Drop the failed entry and repoint active to the most recent survivor.
     sessions_.pop_back();
     active_session_id_ = sessions_.empty() ? 0 : sessions_.back().id;

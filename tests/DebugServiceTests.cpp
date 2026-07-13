@@ -6,6 +6,7 @@
 #include "workspace/DapProtocol.h"
 #include "workspace/DebugBreakpointsModel.h"
 #include "workspace/DebugService.h"
+#include "workspace/CommandSummary.h"
 #include "workspace/DebugSession.h"
 #include "workspace/DebugVariablesModel.h"
 #include "workspace/DebugViewModel.h"
@@ -2158,6 +2159,22 @@ void TestDebugManagerRejectsUnknownAdapterType() {
   Expect(manager.ActiveSession() == nullptr, "no session should be created for an unknown type");
 }
 
+// LSP/DAP command lines carry private paths and one-shot credentials, so the
+// summary that goes into a spawn-failure error must show only the basename and an
+// argument count — never the full argv (which would leak a --token=… secret).
+void TestSummarizeCommandForErrorRedactsArgs() {
+  using microide::workspace::SummarizeCommandForError;
+  const std::string summary =
+      SummarizeCommandForError({"/opt/adapters/dap-adapter", "--token=SUPERSECRET", "--port=9"});
+  Expect(summary.find("SUPERSECRET") == std::string::npos,
+         "argv secrets must not appear in the redacted summary");
+  Expect(summary == "dap-adapter (2 args)",
+         "the summary is the executable basename plus the argument count");
+  Expect(SummarizeCommandForError({}) == "(no command)", "an empty command is summarized safely");
+  Expect(SummarizeCommandForError({"clangd"}) == "clangd (0 args)",
+         "a bare command reports zero arguments");
+}
+
 void TestDebugManagerRetainAdaptersDropsStaleTypes() {
   DapManager manager;
   manager.RegisterAdapter("a", {"true"});
@@ -3198,6 +3215,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugWatchNestedChildCascadeFetchIsReturned);
   AddTest(tests, "DebugService/ManagerRejectsUnknownAdapterType",
           TestDebugManagerRejectsUnknownAdapterType);
+  AddTest(tests, "DebugService/SummarizeCommandForErrorRedactsArgs",
+          TestSummarizeCommandForErrorRedactsArgs);
   AddTest(tests, "DebugService/ManagerRetainAdaptersDropsStaleTypes",
           TestDebugManagerRetainAdaptersDropsStaleTypes);
   AddTest(tests, "DebugService/ManagerAdapterDetailsCarryCommand",

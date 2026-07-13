@@ -3,23 +3,9 @@
 #include <utility>
 
 #include "util/StartupTrace.h"
+#include "workspace/CommandSummary.h"
 
 namespace microide::workspace {
-
-namespace {
-
-std::string JoinCommand(const std::vector<std::string>& command) {
-  std::string joined;
-  for (std::size_t i = 0; i < command.size(); ++i) {
-    if (i > 0) {
-      joined += ' ';
-    }
-    joined += command[i];
-  }
-  return joined;
-}
-
-}  // namespace
 
 LspManager::LspManager() = default;
 
@@ -149,7 +135,7 @@ LspClient* LspManager::EnsureStarted(ServerEntry& entry) {
       if (entry.last_error.empty()) {
         entry.last_error = "language server failed to start";
       }
-      entry.last_error += " [command: " + JoinCommand(entry.command) + "]";
+      entry.last_error += " [command: " + SummarizeCommandForError(entry.command) + "]";
       entry.client = nullptr;
       return nullptr;
     }
