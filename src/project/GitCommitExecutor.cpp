@@ -16,11 +16,16 @@ CommitOperationResultCategory ClassifyCommitFailure(const int exit_code,
   }
 
   const std::string lowered = util::ToLowerAscii(std::string(output));
+  // Match anchored hook-phase names only. The previous broad `find("hook")` catch
+  // misclassified any failure whose output merely mentioned "hook" (a branch,
+  // path, or commit-message word) as a hook failure, hiding the real cause. A
+  // generic hook failure without a recognizable phase name falls through to
+  // UnknownError, which still surfaces the captured output to the user.
   if (lowered.find("pre-commit") != std::string::npos ||
       lowered.find("commit-msg") != std::string::npos ||
       lowered.find("prepare-commit-msg") != std::string::npos ||
       lowered.find("post-commit") != std::string::npos ||
-      lowered.find("hook") != std::string::npos) {
+      lowered.find("pre-merge-commit") != std::string::npos) {
     return CommitOperationResultCategory::HookFailed;
   }
   if (lowered.find("user.name") != std::string::npos ||

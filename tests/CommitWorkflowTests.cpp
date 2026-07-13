@@ -273,6 +273,14 @@ void TestClassifyHookFailure() {
   Expect(project::ClassifyCommitFailure(1, "Please tell me who you are") ==
              CommitOperationResultCategory::AuthFailed,
          "missing author should classify as auth failure");
+  // Regression: output that merely contains the word "hook" (in a branch name,
+  // path, or message) must NOT be misclassified as a hook failure.
+  Expect(project::ClassifyCommitFailure(1, "error: pathspec 'hooks/setup' did not match") ==
+             CommitOperationResultCategory::UnknownError,
+         "a path containing 'hook' is not a hook failure");
+  Expect(project::ClassifyCommitFailure(1, "fatal: couldn't create commit on branch fix-hook-order") ==
+             CommitOperationResultCategory::UnknownError,
+         "a branch name containing 'hook' is not a hook failure");
 }
 
 void TestExecuteCommitInTempRepo() {
