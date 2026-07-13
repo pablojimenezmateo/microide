@@ -58,6 +58,10 @@ void WorkspaceShell::RenderPromptSurface(
             .active = context_.prompts.surface.selected_button == static_cast<int>(i),
         });
   }
+
+  // Restore the default blend mode so BLEND does not leak into later draws in the
+  // frame, matching RenderDirtyPromptSurface below.
+  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 }
 
 void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,

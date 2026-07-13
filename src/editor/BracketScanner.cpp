@@ -1,5 +1,7 @@
 #include "editor/BracketScanner.h"
 
+#include <algorithm>
+
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextViewport.h"
 
@@ -161,7 +163,11 @@ std::optional<BracketMatchPair> FindBracketMatchInLines(
   std::string_view current = lines[caret_line];
 
   // Try character at the caret first (caret is to the left of position).
-  auto try_at = [&](std::size_t col, bool prefer_opener) -> std::optional<BracketMatchPair> {
+  // `caret_at_opener` follows the matched character, not which probe found it:
+  // the caret is adjacent to the open bracket whenever the resolved character is
+  // an opener (including the left-adjacent `foo(|bar)` case), and adjacent to the
+  // close bracket when it is a closer.
+  auto try_at = [&](std::size_t col) -> std::optional<BracketMatchPair> {
     if (col >= current.size()) return std::nullopt;
     if (IsBracketScanSuppressed(syntax_viewport, caret_line, col)) {
       return std::nullopt;
@@ -171,7 +177,7 @@ std::optional<BracketMatchPair> FindBracketMatchInLines(
     if (IsOpener(c)) {
       if (MatchForwardFromOpener(lines, caret_line, col, max_lines_each_side, syntax_viewport,
                                   &pair)) {
-        pair.caret_at_opener = prefer_opener;
+        pair.caret_at_opener = true;
         return pair;
       }
     } else if (IsCloser(c)) {
@@ -185,10 +191,10 @@ std::optional<BracketMatchPair> FindBracketMatchInLines(
   };
 
   if (caret_column < current.size()) {
-    if (auto p = try_at(caret_column, /*prefer_opener=*/true)) return p;
+    if (auto p = try_at(caret_column)) return p;
   }
   if (caret_column > 0) {
-    if (auto p = try_at(caret_column - 1, /*prefer_opener=*/false)) return p;
+    if (auto p = try_at(caret_column - 1)) return p;
   }
   return std::nullopt;
 }
@@ -198,12 +204,23 @@ std::optional<BracketMatchPair> FindBracketMatch(const TextViewport& viewport,
                                                  std::size_t caret_column,
                                                  std::size_t max_lines_each_side) {
   const auto& lines = viewport.lines();
-  // Reuse thread-local storage so per-frame bracket matching does not hit the
-  // heap when the file is large (typing/scrolling only reallocates on growth).
+  const std::size_t line_count = lines.size();
+  // Only the window [caret_line - max, caret_line + max] is ever scanned: the
+  // forward/backward matchers never look past it and the caret probes its own
+  // line. Materializing a LineView for every line in the buffer each frame was
+  // O(file) work for a bounded scan. Size the thread-local vector to the line
+  // count so absolute line indexing stays valid (the empty-view fill is a cheap
+  // memory write versus a per-line LineView call), then fill only the window.
+  // Out-of-window slots are never dereferenced.
   thread_local std::vector<std::string_view> views;
-  views.resize(lines.size());
-  for (std::size_t i = 0; i < lines.size(); ++i) {
-    views[i] = lines.LineView(i);
+  views.assign(line_count, std::string_view{});
+  if (caret_line < line_count) {
+    const std::size_t lo =
+        caret_line > max_lines_each_side ? caret_line - max_lines_each_side : 0;
+    const std::size_t hi = std::min(line_count, caret_line + max_lines_each_side + 1);
+    for (std::size_t i = lo; i < hi; ++i) {
+      views[i] = lines.LineView(i);
+    }
   }
   return FindBracketMatchInLines(views, caret_line, caret_column, max_lines_each_side, &viewport);
 }

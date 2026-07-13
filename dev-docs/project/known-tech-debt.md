@@ -34,6 +34,63 @@ detail lives in the `Deferred backlog sweep — Batch A…I` commits.
   speed/durability tradeoff: the atomic rename already prevents a torn read; only a
   crash inside the fs flush window can lose the newest session write. Left as-is.
 
+#### 2026-07-13 multi-pass bug-campaign residue (deferred, latent / larger / behavior-risk)
+
+- **`RuntimeSyntaxRegistry::FindFirstRegex` skip-mask full-tail rescan.** For a region
+  carrying a `skip` regex, every cursor step copies the whole remaining tail into
+  `masked_buf` and re-runs `FindAllRegex(skip)` over it — an O(n²)→O(n) opportunity.
+  Deferred: making it incremental reworks the recursive masked-scan contract and risks
+  changing match results at zero-length/UTF-8 boundaries. Only hit by regions that
+  declare a `skip`.
+- **`RuntimeSyntaxRegistry` rules compile without `PCRE2_MULTILINE` yet match over
+  mid-line substrings**, so a `^`-anchored rule can match at a segment boundary rather
+  than true line start (med-confidence correctness). A correct fix needs `PCRE2_NOTBOL`
+  threading plus generated-table verification.
+- **`DiagnosticsRender::DiagnosticUnderlineRect` runs `VisualColumnForTextColumn` twice
+  (start+end) per diagnostic per line per frame** → O(diagnostics × column). Needs a
+  shared per-line visual-column cache; deferred as a non-trivial visual-column-semantics
+  change.
+- **Compare `AlignHunkLines` multiplicative DP cap.** The hunk-alignment cap
+  (`kMaxHunkAlignmentMatrixCells`, 65 536) and per-pair token-LCS cap
+  (`kMaxIntralineLcsMatrixCells`, 65 536) multiply: a pathological ~256×256 modified-line
+  hunk can reach ~4.3e9 token comparisons synchronously on the UI thread. Memoization
+  gives nothing (every cell is required); any tighter cap flips pinned behavior. Bounded
+  perf cliff, not a bug.
+- **`SurfaceTextureCache` transient `SDL_CreateTexture` failure leaves the
+  `in_flight_or_failed_` marker set**, permanently suppressing a valid decoded image
+  until `Clear()` — inconsistent with the sibling `renderer == nullptr` path that erases
+  the marker. Dropping the marker changes retry policy (risk: re-decode-every-frame on a
+  genuinely un-creatable texture), so deferred as a retry-semantics judgment call.
+- **Multi-caret overlapping *selections* are not merged** (`TextViewportMultiCaret`
+  dedups only on equal caret position). The reverse-walk apply would double-edit if two
+  carets held overlapping selections. Not reachable via normal UI (Ctrl+D / box-select
+  produce non-overlapping/empty selections); a defensive overlap-merge carries corruption
+  risk if wrong.
+- **`ShapingActions::ToggleBlockComment` is one-way** — it always wraps in `open`…`close`
+  and never detects/strips an existing block comment, so calling twice nests
+  `/* /* x */ */`. Correct un-toggle needs surrounding-marker detection + partial-selection
+  handling; flagged for a spec'd change, not a blind fix.
+- **`CommitWorkflowService::DispatchCommit` captures `&state` (a `CommitWorkflowState`
+  inside `current_project_state`) across the background executor + mailbox.** A project
+  switch that moves/destroys that state while a commit is in flight dangles the reference;
+  `operation_generation_` guards logical correctness but not lifetime. Pre-existing
+  threading design; a correct fix needs a lifetime redesign beyond a local edit.
+- **`WorkspaceShellSettingsOverlay::StepSetting` uses an ad-hoc truthiness test for
+  plugin-contributed Bool settings** (`== "true"/"1"/"on"`) instead of `SettingFlagEnabled`,
+  so a non-canonical truthy default like `"yes"` no-ops on first toggle. Cosmetic.
+- **Compare/Merge mouse row hit-test selects row 0 for clicks in the ~6px band directly
+  above `rows_y`** (`WorkspaceCompareMouseCoordinator` / `WorkspaceMergeMouseCoordinator`;
+  truncation toward zero yields `0`, not a rejection). Minor, identical in both paths.
+- **Editor wheel scrolls the active viewport regardless of which split pane the pointer is
+  over** (`WorkspaceEditorMouseCoordinator::HandleWheel` uses the whole `editor_surface`).
+  Looks like intended "active viewport" behavior; matching the pane-under-cursor is a
+  feature change.
+- **Latent, currently-unreachable index guards:** `CompareTabReview::CompareTabSelectedModelRowRef`
+  computes `model.rows.size() - 1` with no empty guard (caller guards), and
+  `ComparePresentationModel::CompareInline{Left,Right}Spans` index `model.rows[...]`
+  unchecked (all callers pass in-range indices). Reference-returning contracts make a safe
+  fallback awkward; left as-is.
+
 ### Won't-do — verified non-defects
 
 - **Terminal: combining mark after a double-width glyph.** Dead code —
@@ -93,6 +150,17 @@ latent bug. Kept documented with fix direction for a maintainer on that platform
   corrupting a backslash-escaped literal. Benign on Linux.
 - **macOS FSEvents incremental events bypass the ignore filter** (no directory prune, no
   per-file `filter.Includes`). Mirror the Linux inotify gate.
+- **macOS FSEvents `FileIndexWatcher` `run_loop` publish race + `CFRunLoopStop` timing
+  deadlock.** `run_loop` (plain `CFRunLoopRef`) is written by the worker thread but read
+  unsynchronized by `StopNative()`, and `native_active` is set `true` before the worker
+  runs, so a quick `Watch()`→`Unwatch()` can hit the null-`run_loop` guard, skip
+  `CFRunLoopStop`, and hang `worker.join()` forever inside `CFRunLoopRun()`. Fix: atomic
+  handoff of `run_loop` plus a `CFRunLoopRunInMode`-with-stop-flag loop so a stop issued
+  before the run loop starts is not lost.
+- **Windows `DirectoryTree::RelativeKeysExcludingRoot` `root_key` is not lowercased** while
+  the stored expansion keys are (via `NormalizePathKey`), so the `key == root_key` guard
+  never matches on `_WIN32`. Harmless (the `rel == "."` check still excludes the root);
+  fixing needs the `#ifdef _WIN32` lowercasing replicated and tested on Windows.
 
 ## Guardrails — rejected experiments, do not retry
 

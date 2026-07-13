@@ -264,7 +264,11 @@ bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
 
   const std::size_t wrap_columns = std::max<std::size_t>(1, visible_columns);
   const std::size_t total_rows = wrapped_row_layouts_.size();
-  const std::size_t first_row = wrapped_line_row_offsets_[start_line];
+  // A pure append at end-of-document has start_line == old_line_count, which is
+  // one past the last valid offset entry. Treat it as "starts after the last
+  // row" (mirrors the removed_rows_end guard below) instead of reading OOB.
+  const std::size_t first_row =
+      start_line < old_line_count ? wrapped_line_row_offsets_[start_line] : total_rows;
   const std::size_t removed_end_line = start_line + removed_count;
   const std::size_t removed_rows_end =
       removed_end_line < old_line_count ? wrapped_line_row_offsets_[removed_end_line] : total_rows;

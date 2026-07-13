@@ -68,8 +68,8 @@ std::optional<std::filesystem::path> PathFromFileUri(std::string_view uri) {
     return std::nullopt;
   }
 #ifdef _WIN32
-  if (decoded->size() >= 3 && (*decoded)[0] == '/' && std::isalpha((*decoded)[1]) != 0 &&
-      (*decoded)[2] == ':') {
+  if (decoded->size() >= 3 && (*decoded)[0] == '/' &&
+      std::isalpha(static_cast<unsigned char>((*decoded)[1])) != 0 && (*decoded)[2] == ':') {
     decoded->erase(decoded->begin());
   }
 #endif

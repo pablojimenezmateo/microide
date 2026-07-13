@@ -714,8 +714,13 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         std::vector<std::pair<std::size_t, std::size_t>> matches;
         std::size_t match_offset = lowered_line_scratch.find(lowered_search_query);
         while (match_offset != std::string::npos) {
-          matches.emplace_back(match_offset, match_offset + lowered_search_query.size());
-          match_offset = lowered_line_scratch.find(lowered_search_query, match_offset + 1);
+          const std::size_t match_end = match_offset + lowered_search_query.size();
+          matches.emplace_back(match_offset, match_end);
+          // Advance past this match so highlighting is non-overlapping, matching
+          // find-navigation semantics (query is non-empty, so this always
+          // progresses). Advancing by 1 emitted redundant overlapping fills for
+          // self-overlapping queries (e.g. "aa" in "aaaa").
+          match_offset = lowered_line_scratch.find(lowered_search_query, match_end);
         }
         if (search_match_cache_.size() >= kSearchMatchCacheLimit) {
           search_match_cache_.erase(search_match_cache_order_.front());
@@ -856,7 +861,12 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         const std::string& line_text = lines[line_index];
         const std::size_t tab_size = viewport.tab_size();
         std::size_t visual_col = 0;
-        for (char c : line_text) {
+        // Advance one visual cell per codepoint (tabs expand): stepping per byte
+        // over-counted columns after any multibyte glyph, shifting every later
+        // whitespace marker right of the real grid.
+        for (std::size_t i = 0; i < line_text.size();) {
+          const char c = line_text[i];
+          i += util::Utf8SequenceLength(line_text, i);
           std::size_t cell_width = 1;
           if (c == '\t') {
             const std::size_t step = tab_size == 0 ? 1 : tab_size;

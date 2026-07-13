@@ -1185,8 +1185,15 @@ struct FileIndexWatcher::Impl {
           WaitForMultipleObjects(2, wait_handles, FALSE, INFINITE);
 
       if (wait_result == WAIT_OBJECT_0) {
-        // Stop requested
+        // Stop requested. CancelIo only *requests* cancellation of the pending
+        // ReadDirectoryChangesW; the kernel may still be about to complete it into
+        // `buffer`/`overlapped`, both of which are function-local and destroyed as
+        // this returns. Wait for the operation to actually finish (bWait=TRUE, which
+        // returns once the abort completes) before freeing them, otherwise the async
+        // write lands in freed stack memory (use-after-free).
         CancelIo(dir_handle);
+        DWORD drained_bytes = 0;
+        GetOverlappedResult(dir_handle, &overlapped, &drained_bytes, TRUE);
         CloseHandle(overlapped.hEvent);
         return;
       }

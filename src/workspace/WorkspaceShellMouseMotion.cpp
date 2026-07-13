@@ -404,7 +404,11 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   std::string previous_status_tooltip_label;
   std::string previous_sidebar_search_tooltip_label;
   if (CurrentWindowRect().has_value()) {
-    const auto layout_before_state = CurrentWorkspaceLayout();
+    // The "before" layout is geometrically identical to `layout` (nothing above
+    // mutates a layout input on this fall-through path); the "previous" aspect comes
+    // from the not-yet-updated last_mouse_ position the Hovered* probes read. Reuse
+    // the already-computed layout instead of a second full ComputeLayout pass.
+    const std::optional<WorkspaceLayout> layout_before_state = layout;
     if (layout_before_state.has_value()) {
       previous_project_tab_tooltip_label =
           HoveredProjectTabTooltipLabel(layout_before_state->project_tab_strip);

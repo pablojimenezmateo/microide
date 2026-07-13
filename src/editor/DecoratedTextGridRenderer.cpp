@@ -119,9 +119,14 @@ void AppendVisibleSyntaxTextRuns(DecoratedTextRow& row,
   };
 
   float segment_x = x;
-  for (std::size_t segment_start = 0; segment_start < window.text.size();) {
-    const SDL_Color color = effective_color_at(segment_start);
+  std::size_t segment_start = 0;
+  // Carry the color of the boundary that ends one run into the next run's start,
+  // so the (linear-scan) effective_color_at is evaluated once per byte offset
+  // instead of twice at every color-run boundary.
+  SDL_Color color = effective_color_at(0);
+  while (segment_start < window.text.size()) {
     std::size_t segment_end = segment_start;
+    SDL_Color next_color = color;
     while (segment_end < window.text.size()) {
       const std::size_t next =
           segment_end + util::Utf8SequenceLength(window.text, segment_end);
@@ -129,8 +134,10 @@ void AppendVisibleSyntaxTextRuns(DecoratedTextRow& row,
         segment_end = window.text.size();
         break;
       }
-      if (!SameColor(effective_color_at(next), color)) {
+      const SDL_Color candidate = effective_color_at(next);
+      if (!SameColor(candidate, color)) {
         segment_end = next;
+        next_color = candidate;
         break;
       }
       segment_end = next;
@@ -146,6 +153,7 @@ void AppendVisibleSyntaxTextRuns(DecoratedTextRow& row,
     });
     segment_x += text_renderer.MeasureWidth(segment_text);
     segment_start = segment_end;
+    color = next_color;
   }
 }
 
@@ -181,9 +189,13 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
   const float char_width = text_renderer.CharWidth();
   const bool has_inlay = !inlay.empty();
 
-  for (std::size_t segment_start = 0; segment_start < visible_cells;) {
-    const SDL_Color color = effective_color_at(segment_start);
-
+  std::size_t segment_start = 0;
+  // Carry the color across a run boundary that ended on a color change, so
+  // effective_color_at is evaluated once per cell instead of twice at each
+  // boundary. A boundary forced by `split_limit` (an inlay anchor, not a color
+  // change) leaves `carried` false and the next run recomputes its start color.
+  SDL_Color color = effective_color_at(0);
+  while (segment_start < visible_cells) {
     // A mid-line inlay hint inserts phantom cells before its anchor, so a run must
     // never span an anchor (the cells after it shift further right). Cap the run at
     // the next anchor strictly after segment_start; the next run picks up there
@@ -192,8 +204,13 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
         has_inlay ? inlay.NextAnchorAtOrAfter(segment_start + 1)
                   : std::numeric_limits<std::size_t>::max();
     std::size_t segment_end = segment_start + 1;
+    bool carried = false;
+    SDL_Color next_color = color;
     while (segment_end < visible_cells && segment_end < split_limit) {
-      if (!SameColor(effective_color_at(segment_end), color)) {
+      const SDL_Color candidate = effective_color_at(segment_end);
+      if (!SameColor(candidate, color)) {
+        next_color = candidate;
+        carried = true;
         break;
       }
       ++segment_end;
@@ -214,6 +231,9 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
         .text = segment_text,
     });
     segment_start = segment_end;
+    if (segment_start < visible_cells) {
+      color = carried ? next_color : effective_color_at(segment_start);
+    }
   }
 }
 

@@ -38,6 +38,12 @@ class WakePipe {
     }
     ::fcntl(fds[0], F_SETFL, O_NONBLOCK);
     ::fcntl(fds[1], F_SETFL, O_NONBLOCK);
+    // Close-on-exec: a concurrent fork+exec (terminal shell, git, LSP/DAP adapter)
+    // must not inherit this self-pipe's read/write ends and pin them open, matching
+    // the CLOEXEC hygiene every other fd-opening site in the tree enforces. F_SETFD
+    // is a distinct flag space from the O_NONBLOCK F_SETFL above, so both are needed.
+    ::fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+    ::fcntl(fds[1], F_SETFD, FD_CLOEXEC);
     read_fd_ = fds[0];
     write_fd_ = fds[1];
 #endif

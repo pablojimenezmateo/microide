@@ -81,21 +81,23 @@ void PluginDecorationStore::RebuildPath(std::string_view path_key) {
     return;
   }
 
-  // Gather every owner contributing to this path. Per-owner data is already
-  // sorted at publish time, so the common single-owner case rebuilds with one
-  // copy and no sort; only genuine multi-owner overlap pays the merge + re-sort.
+  // Count the owners contributing to this path. Per-owner data is already sorted
+  // at publish time, so the common single-owner case rebuilds with one copy and
+  // no sort; only genuine multi-owner overlap pays the merge + re-sort. Counting
+  // first keeps the dominant single-owner publish path free of the contributor
+  // vector's heap allocation (the multi-owner branch materializes it lazily).
   const OwnerFileDecorations* sole = nullptr;
-  std::vector<const PluginDecorationData*> contributors;
+  std::size_t contributor_count = 0;
   for (const auto& owner_entry : by_owner_) {
     const auto it = owner_entry.second.find(path_key);
     if (it == owner_entry.second.end()) {
       continue;
     }
-    contributors.push_back(&it->second.data);
+    ++contributor_count;
     sole = &it->second;
   }
 
-  if (contributors.empty()) {
+  if (contributor_count == 0) {
     // Heterogeneous find avoids materializing a std::string key just to erase;
     // unordered_map has no transparent erase(key) overload before C++23.
     if (const auto it = merged_by_path_.find(path_key); it != merged_by_path_.end()) {
@@ -105,13 +107,24 @@ void PluginDecorationStore::RebuildPath(std::string_view path_key) {
   }
 
   FileDecorations merged;
-  if (contributors.size() == 1) {
+  if (contributor_count == 1) {
     merged.path = sole->path;
     merged.text_styles = sole->data.text_styles;
     merged.gutter_marks = sole->data.gutter_marks;
     merged.inline_texts = sole->data.inline_texts;
     merged.code_lenses = sole->data.code_lenses;
   } else {
+    // Rare multi-owner overlap: gather the contributor pointers now. A reused
+    // thread-local scratch keeps even repeated merges allocation-free after warmup.
+    thread_local std::vector<const PluginDecorationData*> contributors;
+    contributors.clear();
+    contributors.reserve(contributor_count);
+    for (const auto& owner_entry : by_owner_) {
+      const auto it = owner_entry.second.find(path_key);
+      if (it != owner_entry.second.end()) {
+        contributors.push_back(&it->second.data);
+      }
+    }
     std::size_t ts = 0, gm = 0, it = 0, cl = 0;
     for (const PluginDecorationData* data : contributors) {
       ts += data->text_styles.size();

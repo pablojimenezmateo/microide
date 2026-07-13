@@ -146,7 +146,10 @@ class PosixTerminalBackend final : public TerminalBackend {
         close(slave_fd);
       }
 
-      if (chdir(request.working_directory.c_str()) != 0) {
+      // Only chdir when a directory was requested; an empty path would make chdir
+      // fail and _exit(127), silently killing the shell (matches Subprocess.cpp).
+      if (!request.working_directory.empty() &&
+          chdir(request.working_directory.c_str()) != 0) {
         _exit(127);
       }
       // Async-signal-safe pointer store instead of setenv(); the array was built in

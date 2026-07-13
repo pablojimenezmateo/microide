@@ -311,17 +311,24 @@ void CompareInteractionCoordinator::JumpCompareReviewFile(int delta) {
   if (!MoveSelectionIndex(compare_tab->review_files.size(), &next_index, delta)) {
     return;
   }
+  // Opening the next comparison rebuilds the active compare tab (and can reallocate
+  // open_tabs), so `compare_tab` may dangle afterward. Copy every value we still need
+  // — for the reveal args and the post-open carry-over — into locals up front.
+  const std::vector<std::filesystem::path> review_files = compare_tab->review_files;
+  const compare::CompareReviewMode review_mode = compare_tab->review_mode;
+  const std::string commit_hash = compare_tab->commit_hash;
+  const std::string left_label = compare_tab->left_label;
+  const std::string right_ref = compare_tab->right_ref;
+  const std::string right_label = compare_tab->right_label;
   const std::filesystem::path next_path =
-      (state_.root / compare_tab->review_files[next_index]).lexically_normal();
-  if (compare_tab->review_mode == compare::CompareReviewMode::Branch) {
-    if (!operations_.open_branch_head_comparison(
-            next_path, compare_tab->commit_hash, compare_tab->left_label, compare_tab->right_ref,
-            compare_tab->right_label)) {
+      (state_.root / review_files[next_index]).lexically_normal();
+  if (review_mode == compare::CompareReviewMode::Branch) {
+    if (!operations_.open_branch_head_comparison(next_path, commit_hash, left_label, right_ref,
+                                                 right_label)) {
       return;
     }
-  } else if (compare_tab->right_ref == "WORKTREE") {
-    if (!operations_.open_working_tree_comparison(next_path, compare_tab->commit_hash,
-                                                  compare_tab->left_label)) {
+  } else if (right_ref == "WORKTREE") {
+    if (!operations_.open_working_tree_comparison(next_path, commit_hash, left_label)) {
       return;
     }
   } else {
@@ -329,8 +336,8 @@ void CompareInteractionCoordinator::JumpCompareReviewFile(int delta) {
   }
   if (CompareTabState* active = operations_.active_compare_tab(); active != nullptr) {
     active->review_file_index = next_index;
-    active->review_files = compare_tab->review_files;
-    active->review_mode = compare_tab->review_mode;
+    active->review_files = review_files;
+    active->review_mode = review_mode;
   }
 }
 

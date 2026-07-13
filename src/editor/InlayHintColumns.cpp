@@ -95,7 +95,10 @@ std::size_t RealVisualColumnForDisplayColumn(
   if (inline_texts.empty() || display_visual_column < row_visual_start) {
     return display_visual_column;
   }
-  std::vector<InlayCellSpan> spans;
+  // Reused per-thread scratch: BuildInlayRowSpans clears it, and the span-based
+  // InlayRowDisplacement below only references it within this call. Avoids a heap
+  // allocation on every column mapping (hover/hit-testing can run this per frame).
+  thread_local std::vector<InlayCellSpan> spans;
   BuildInlayRowSpans(inline_texts, layout, visual_map, row_visual_start, row_visual_end,
                      text_renderer, char_width, spans, nullptr);
   if (spans.empty()) {

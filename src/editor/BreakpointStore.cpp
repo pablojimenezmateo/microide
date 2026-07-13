@@ -113,6 +113,12 @@ Breakpoint* BreakpointStore::MutableBreakpoint(const std::filesystem::path& path
 
 void BreakpointStore::SetCondition(const std::filesystem::path& path, std::size_t line,
                                    std::optional<std::string> condition) {
+  // Clearing a field on a line with no breakpoint is a no-op: don't let
+  // MutableBreakpoint materialize a phantom breakpoint that then trips the
+  // equality guard below and returns without bumping the revision.
+  if (!condition.has_value() && !HasBreakpoint(path, line)) {
+    return;
+  }
   Breakpoint* bp = MutableBreakpoint(path, line);
   if (bp == nullptr || bp->condition == condition) {
     return;
@@ -123,6 +129,9 @@ void BreakpointStore::SetCondition(const std::filesystem::path& path, std::size_
 
 void BreakpointStore::SetHitCondition(const std::filesystem::path& path, std::size_t line,
                                       std::optional<std::string> hit_condition) {
+  if (!hit_condition.has_value() && !HasBreakpoint(path, line)) {
+    return;
+  }
   Breakpoint* bp = MutableBreakpoint(path, line);
   if (bp == nullptr || bp->hit_condition == hit_condition) {
     return;
@@ -133,6 +142,9 @@ void BreakpointStore::SetHitCondition(const std::filesystem::path& path, std::si
 
 void BreakpointStore::SetLogMessage(const std::filesystem::path& path, std::size_t line,
                                     std::optional<std::string> log_message) {
+  if (!log_message.has_value() && !HasBreakpoint(path, line)) {
+    return;
+  }
   Breakpoint* bp = MutableBreakpoint(path, line);
   if (bp == nullptr || bp->log_message == log_message) {
     return;

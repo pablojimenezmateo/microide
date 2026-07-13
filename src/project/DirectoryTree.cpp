@@ -39,10 +39,14 @@ std::string DisplayName(const std::filesystem::path& path) {
 
 bool DirectoryTree::SetRoot(const std::filesystem::path& root) {
   util::StartupTrace::Scope trace_scope("DirectoryTree::SetRoot");
+  // Non-throwing probes throughout: selecting a root that is inaccessible, on a
+  // flaky/unmounted volume, or otherwise un-stattable (ENAMETOOLONG, a parent dir
+  // losing +x) must fail the open cleanly rather than throw out of sidebar setup.
+  // Mirrors FileIndex::SetRoot / CollectProjectFiles.
   std::error_code error;
   const auto absolute_root = std::filesystem::absolute(root, error);
-  if (error || !std::filesystem::exists(absolute_root) ||
-      !std::filesystem::is_directory(absolute_root)) {
+  if (error || !std::filesystem::exists(absolute_root, error) || error ||
+      !std::filesystem::is_directory(absolute_root, error) || error) {
     return false;
   }
 
@@ -468,7 +472,14 @@ namespace {
 std::vector<std::string> RelativeKeysExcludingRoot(
     const std::unordered_set<std::string>& keys,
     const std::filesystem::path& root) {
-  const std::string root_key = std::filesystem::absolute(root).lexically_normal().generic_string();
+  // Non-throwing overload with a lexical fallback, matching NormalizePathKey and
+  // every other absolute() probe in this file: this runs on the persistence-save
+  // path, where the throwing overload could abort the process if current_path()
+  // fails (unmounted CWD, ENOMEM) instead of degrading to a best-effort key.
+  std::error_code root_error;
+  const auto absolute_root = std::filesystem::absolute(root, root_error);
+  const std::string root_key =
+      (root_error ? root.lexically_normal() : absolute_root.lexically_normal()).generic_string();
   std::vector<std::string> relative;
   relative.reserve(keys.size());
   for (const auto& key : keys) {

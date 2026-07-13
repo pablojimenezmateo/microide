@@ -33,6 +33,7 @@ TextViewport::TextViewport(const TextViewport& other)
       cursor_line_(other.cursor_line_),
       cursor_column_(other.cursor_column_),
       preferred_column_(other.preferred_column_),
+      caret_navigation_content_revision_(other.caret_navigation_content_revision_),
       scroll_line_(other.scroll_line_),
       horizontal_scroll_(other.horizontal_scroll_),
       visible_lines_(other.visible_lines_),
@@ -43,6 +44,7 @@ TextViewport::TextViewport(const TextViewport& other)
       soft_wrap_(other.soft_wrap_),
       save_trim_trailing_whitespace_(other.save_trim_trailing_whitespace_),
       save_ensure_final_newline_(other.save_ensure_final_newline_),
+      save_line_ending_override_(other.save_line_ending_override_),
       lc_view_(other.lc_view_),
       secondary_carets_(other.secondary_carets_),
       secondary_caret_positions_cache_(other.secondary_caret_positions_cache_),
@@ -54,6 +56,8 @@ TextViewport::TextViewport(const TextViewport& other)
       line_highlight_states_valid_through_(other.line_highlight_states_valid_through_),
       highlight_checkpoints_(other.highlight_checkpoints_),
       highlight_checkpoints_valid_through_(other.highlight_checkpoints_valid_through_),
+      pending_checkpoint_backfill_target_line_(other.pending_checkpoint_backfill_target_line_),
+      last_highlight_state_exact_(other.last_highlight_state_exact_),
       highlight_state_content_revision_(other.highlight_state_content_revision_),
       highlight_state_syntax_revision_(other.highlight_state_syntax_revision_),
       highlight_queries_(other.highlight_queries_),
@@ -82,6 +86,7 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       cursor_line_(other.cursor_line_),
       cursor_column_(other.cursor_column_),
       preferred_column_(other.preferred_column_),
+      caret_navigation_content_revision_(other.caret_navigation_content_revision_),
       scroll_line_(other.scroll_line_),
       horizontal_scroll_(other.horizontal_scroll_),
       visible_lines_(other.visible_lines_),
@@ -92,6 +97,7 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       soft_wrap_(other.soft_wrap_),
       save_trim_trailing_whitespace_(other.save_trim_trailing_whitespace_),
       save_ensure_final_newline_(other.save_ensure_final_newline_),
+      save_line_ending_override_(other.save_line_ending_override_),
       lc_view_(std::move(other.lc_view_)),
       secondary_carets_(std::move(other.secondary_carets_)),
       secondary_caret_positions_cache_(std::move(other.secondary_caret_positions_cache_)),
@@ -103,6 +109,8 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       line_highlight_states_valid_through_(other.line_highlight_states_valid_through_),
       highlight_checkpoints_(std::move(other.highlight_checkpoints_)),
       highlight_checkpoints_valid_through_(other.highlight_checkpoints_valid_through_),
+      pending_checkpoint_backfill_target_line_(other.pending_checkpoint_backfill_target_line_),
+      last_highlight_state_exact_(other.last_highlight_state_exact_),
       highlight_state_content_revision_(other.highlight_state_content_revision_),
       highlight_state_syntax_revision_(other.highlight_state_syntax_revision_),
       highlight_queries_(other.highlight_queries_),
@@ -128,6 +136,7 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   cursor_line_ = other.cursor_line_;
   cursor_column_ = other.cursor_column_;
   preferred_column_ = other.preferred_column_;
+  caret_navigation_content_revision_ = other.caret_navigation_content_revision_;
   scroll_line_ = other.scroll_line_;
   horizontal_scroll_ = other.horizontal_scroll_;
   visible_lines_ = other.visible_lines_;
@@ -138,6 +147,7 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   soft_wrap_ = other.soft_wrap_;
   save_trim_trailing_whitespace_ = other.save_trim_trailing_whitespace_;
   save_ensure_final_newline_ = other.save_ensure_final_newline_;
+  save_line_ending_override_ = other.save_line_ending_override_;
   lc_view_ = std::move(other.lc_view_);
   secondary_carets_ = std::move(other.secondary_carets_);
   secondary_caret_positions_cache_ = std::move(other.secondary_caret_positions_cache_);
@@ -149,6 +159,8 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   line_highlight_states_valid_through_ = other.line_highlight_states_valid_through_;
   highlight_checkpoints_ = std::move(other.highlight_checkpoints_);
   highlight_checkpoints_valid_through_ = other.highlight_checkpoints_valid_through_;
+  pending_checkpoint_backfill_target_line_ = other.pending_checkpoint_backfill_target_line_;
+  last_highlight_state_exact_ = other.last_highlight_state_exact_;
   highlight_state_content_revision_ = other.highlight_state_content_revision_;
   highlight_state_syntax_revision_ = other.highlight_state_syntax_revision_;
   highlight_queries_ = other.highlight_queries_;

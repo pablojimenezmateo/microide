@@ -307,9 +307,13 @@ std::string JoinSyntaxPatterns(const std::vector<std::string>& patterns) {
   }
 
   std::string result;
-  std::size_t total = 0;
+  // Each pattern emits "(?:" + p + ")" (p.size() + 4), plus one '|' between every
+  // adjacent pair (patterns.size() - 1 separators). The old reserve folded the '|'
+  // into the per-pattern count, leaving it short by one separator per join and
+  // forcing a reallocation on the final append.
+  std::size_t total = patterns.size() - 1;  // '|' separators (patterns non-empty)
   for (const auto& p : patterns) {
-    total += p.size() + 4;  // "(?:" + p + ")" + "|"
+    total += p.size() + 4;  // "(?:" + p + ")"
   }
   result.reserve(total);
   for (std::size_t i = 0; i < patterns.size(); ++i) {
@@ -1107,9 +1111,19 @@ RuntimeSyntaxReloadResult ReloadDefinitions(
     const std::vector<RuntimeSyntaxDefinitionData>& definitions,
     std::vector<std::string>* errors) {
   std::vector<std::string> local_errors;
-  BuildOutput build = BuildRegistry(definitions, &local_errors);
+  std::size_t loaded_runtime_definition_count = 0;
   {
+    // Hold the exclusive lock across the *build*, not just the swap. BuildRegistry
+    // clones BuiltInRegistry element-wise (AppendRegistryWithOffset copies each
+    // Rule, including its lazily-compiled `mutable CompiledRegex` fields and the
+    // per-definition once_flag guards). Those fields are written in place by
+    // EnsureDefinitionCompiled while a background highlight worker holds only a
+    // *shared* lock, so cloning them from the reload thread without exclusion would
+    // race the compile. Taking the unique lock first drains all shared readers and
+    // gives the clone a happens-before edge to any regexes they compiled.
     std::unique_lock<std::shared_mutex> lock(RegistryMutex());
+    BuildOutput build = BuildRegistry(definitions, &local_errors);
+    loaded_runtime_definition_count = build.loaded_runtime_definition_count;
     MutableRegistry() = std::move(build.registry);
     ++MutableRegistryRevision();
   }
@@ -1118,7 +1132,7 @@ RuntimeSyntaxReloadResult ReloadDefinitions(
   }
   return RuntimeSyntaxReloadResult{
       .built_in_definition_count = kGeneratedDefinitionCount,
-      .plugin_definition_count = build.loaded_runtime_definition_count,
+      .plugin_definition_count = loaded_runtime_definition_count,
       .error_count = local_errors.size(),
   };
 }

@@ -35,7 +35,10 @@ template <typename Outer, typename Inner>
 void FillScanlines(SDL_Renderer* renderer, const SDL_FRect& bounds, float cx, float cy, Outer outer,
                    Inner inner) {
   const int rows = static_cast<int>(std::ceil(bounds.h));
-  std::vector<SDL_FRect> spans;
+  // Reuse per-thread scratch: gutter icons are drawn per marked line per frame, so
+  // a fresh vector each call is a hot-path heap allocation. Clearing keeps capacity.
+  thread_local std::vector<SDL_FRect> spans;
+  spans.clear();
   spans.reserve(static_cast<std::size_t>(std::max(1, rows)) * 2);
   for (int i = 0; i < rows; ++i) {
     const float row_y = bounds.y + static_cast<float>(i);
@@ -66,8 +69,11 @@ void DrawCheck(SDL_Renderer* renderer, const SDL_FRect& b, SDL_Color color) {
       SDL_FPoint{b.x + b.w * 0.42f, b.y + b.h * 0.78f},
       SDL_FPoint{b.x + b.w * 0.84f, b.y + b.h * 0.26f},
   };
-  std::vector<SDL_Vertex> verts;
-  std::vector<int> indices;
+  // Reused per-thread scratch: DrawCheck runs per checkmark gutter icon per frame.
+  thread_local std::vector<SDL_Vertex> verts;
+  thread_local std::vector<int> indices;
+  verts.clear();
+  indices.clear();
   const auto add_segment = [&](SDL_FPoint p0, SDL_FPoint p1) {
     float dx = p1.x - p0.x;
     float dy = p1.y - p0.y;

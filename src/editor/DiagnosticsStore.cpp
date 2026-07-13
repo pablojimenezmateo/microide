@@ -198,7 +198,10 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
     if (merged.truncated) {
       ++truncated_file_count_;
     }
-    merged_by_path_[std::string(path_key)] = std::move(merged);
+    // New path (find above returned end): emplace constructs the entry in place,
+    // skipping the default-construct + move-assign of the heavy FileDiagnostics
+    // value that operator[] would do (mirrors PluginDecorationStore::RebuildPath).
+    merged_by_path_.emplace(std::string(path_key), std::move(merged));
     BumpRevision();
     return;
   }
@@ -265,11 +268,14 @@ bool DiagnosticsStore::ReplaceForOwnerFile(std::string_view owner,
   next.summary = SummarizeDiagnostics(next.diagnostics);
 
   const auto existing = owner_entries.find(path_key);
-  if (existing != owner_entries.end() && existing->second == next) {
-    return false;
+  if (existing != owner_entries.end()) {
+    if (existing->second == next) {
+      return false;
+    }
+    existing->second = std::move(next);  // reuse the find's slot, no re-hash
+  } else {
+    owner_entries.emplace(path_key, std::move(next));
   }
-
-  owner_entries[path_key] = std::move(next);
   RebuildPath(path_key);
   return true;
 }

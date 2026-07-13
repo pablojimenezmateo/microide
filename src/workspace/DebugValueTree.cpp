@@ -573,6 +573,13 @@ bool DebugValueTree::BeginEdit(std::size_t row_index) {
   if (row_index >= rows_.size()) {
     return false;
   }
+  // Synthetic placeholder / "show more…" rows carry their parent container's
+  // node_id (see FlattenInto), so editing one would inline-edit the parent node.
+  // Reject them here as ToggleRow does — defense-in-depth against a caller that
+  // reaches BeginEdit without the editable/!has_children gate.
+  if (rows_[row_index].is_placeholder || rows_[row_index].is_show_more) {
+    return false;
+  }
   Node* node = FindNode(rows_[row_index].node_id);
   if (node == nullptr || node->is_scope) {
     return false;
