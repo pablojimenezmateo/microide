@@ -1214,6 +1214,304 @@ test proves it is unreachable.
   a warning/blocking precheck. Add a staged-diff fixture with marker after the capture cap using an
   injected command result.
 
+#### 2026-07-13 deep subsystem audit backlog — fifth tranche
+
+##### Editor text core, folding, and visual navigation
+
+- **The editor has two incompatible empty-buffer representations.** `PieceTree::Reset({})` preserves
+  a zero-line document, while `ResetFromText("")` creates one empty line; merge result helpers also
+  force empty results to `[""]`. Empty new files, deleted merge outputs, and restored buffers can
+  therefore disagree about line count, EOF rendering, save output, and cursor bounds. Fix direction:
+  define one canonical empty document representation at the text-buffer boundary and convert all
+  callers there. Add regression tests for new empty file, empty saved file restore, and a merge that
+  resolves to no lines.
+- **`PieceTree::AppendToAdd` still trusts inserted text length after compaction.** The cumulative add
+  buffer is compacted before overflow, but a single inserted span larger than `uint32_t` can still be
+  appended and cast to a 32-bit piece length. Current file-load caps make this rare, but plugin/control
+  edit paths should not depend on a caller cap to protect the core text structure. Fix direction: make
+  `InsertText` reject or chunk any span above the piece length limit before `AppendToAdd`. Add a
+  direct `PieceTree` test with an injected oversized span seam or a lowered test limit.
+- **`ReplaceLineRange` materializes whole replacement text before checking live-buffer limits.** A
+  formatter or multi-file replace can pass a very large inserted-line vector; the method joins it into
+  one string and only then delegates to `InsertText`. This can allocate far beyond the accepted live
+  document size. Fix direction: pre-compute replacement byte size with overflow checks and fail before
+  materialization, or append chunks through a bounded builder. Add a test using many inserted lines
+  whose total crosses the text-core limit.
+- **Bracket matching allocates a full line-count scratch vector for a bounded scan.** `FindBracketMatch`
+  assigns a thread-local `std::vector<std::string_view>` to `line_count` every query even though only
+  `[caret-max, caret+max]` is populated. On million-line files, moving the caret near a bracket turns a
+  tiny scan into an O(file) memory write. Fix direction: pass a window base plus compact views to
+  `FindBracketMatchInLines`, or make the scanner translate absolute line numbers through a bounded
+  sparse map. Add a perf test with a huge file and a small bracket scan radius.
+- **Bracket matching can synchronously tokenize lines far outside the visible syntax cache.** The
+  suppression path calls `HighlightedLineTokens` for every probed bracket position, unlike folding's
+  non-forcing `HighlightedLineTokensIfCached` approach. A bracket search across a cold window can force
+  highlight work and evict visible-line tokens. Fix direction: hoist a cached-token span per scanned
+  line and use the non-forcing accessor, accepting unsuppressed brackets when tokens are cold. Add a
+  test with brackets inside comments beyond the highlight cache and a perf counter for forced misses.
+- **Fold dedupe keeps only one fold range per opener line.** `SortDedupeRangesByOpener` drops every
+  range after the first opener match, preferring bracket over indent by source order and then the
+  widest closer. Languages with multiple foldable constructs on one physical line, or generated code
+  with `if (...) { ... } else { ... }`, can lose a valid fold target. Fix direction: keep multiple
+  ranges per opener when their closer/source differ and make toggle commands disambiguate by row or
+  innermost range. Add folding fixtures with two bracket ranges sharing an opener line.
+- **Fold collapse remap keys on exact opener/closer pairs, so nearby edits expand stable logical
+  folds.** The remap shifts previous ranges by net line delta, but any edit inside a collapsed block
+  that changes only the closer line, or a syntax/highlight change that changes source classification,
+  loses the collapsed state. Fix direction: persist collapsed folds by opener identity plus a fuzzy
+  range match, or explicitly mark edits inside collapsed ranges as preserving that collapsed opener.
+  Add tests for inserting and deleting lines inside a collapsed fold.
+- **Indent detection ignores mixed leading tabs after spaces.** `DetectIndent` only counts a line as
+  tab-indented when the first byte is `'\t'`; lines beginning with spaces then tabs count as soft-tabs
+  with a space width. Mixed-indentation files can be detected as spaces even when the effective
+  indentation unit is tabs. Fix direction: scan leading whitespace and classify tabs anywhere before
+  the first non-space. Add fixtures for space-tab, tab-space, and mixed Python/Makefile snippets.
+- **Indent guide generation can create unbounded per-row guide runs for pathological leading
+  whitespace.** `ComputeIndentGuides` emits one guide for every `indent_width` up to the visible
+  line's leading indent. A single line with hundreds of thousands of spaces can allocate and sort a
+  huge scratch vector during render preparation. Fix direction: cap guides by visible columns or editor
+  horizontal extent. Add a viewport fixture with an overlong indented line.
+- **Single-line visual helpers still operate on byte columns for bracket suppression and guide
+  anchoring.** Several editor helpers pass byte offsets directly into token and line-layout data. That
+  is fine for ASCII brackets, but adjacent multibyte text can make UI affordances appear offset when
+  byte, codepoint, and cell columns diverge. Fix direction: centralize byte-to-cell mapping for all
+  cursor-adjacent decorations and use it consistently. Add Unicode layout tests with brackets beside
+  combining marks and wide glyphs.
+
+##### Runtime syntax and highlighting
+
+- **Lua syntax definition evaluation has no instruction deadline.** `LoadDefinitionFile` creates a Lua
+  state and `lua_pcall`s the file without an instruction hook. A plugin syntax file containing
+  `while true do end` can hang plugin reload or startup even though no libraries are opened. Fix
+  direction: install a count hook with a tight instruction budget for syntax-definition loading, and
+  treat timeout as a load error. Add a syntax loader test with an infinite loop fixture.
+- **Runtime syntax definition arrays have no count caps.** The loader trusts `lua_rawlen` for returned
+  definition arrays, string arrays, and child-rule arrays, reserves that count, and then walks every
+  entry. A malicious or accidental sparse table with a huge array length can allocate or stall during
+  plugin reload. Fix direction: cap definitions per file, patterns per definition, child rules per
+  rule, and total runtime rules. Add loader tests for cap and cap+1.
+- **Runtime syntax regex source length is uncapped before PCRE compilation.** Plugin definitions can
+  provide very large filename/header/signature/rule patterns; `JoinSyntaxPatterns` and
+  `CompileSyntaxRegex` materialize and compile them on the main reload path. Fix direction: enforce a
+  per-pattern and joined-pattern byte cap before compilation. Add tests with oversized pattern strings.
+- **Runtime syntax matching has no per-line match count budget.** `FindAllRegex` collects every match
+  for every pattern rule on lines up to 100 KiB. A rule matching single bytes can push 100k matches,
+  and a definition with many such rules multiplies the work. Fix direction: stop after a per-rule and
+  per-line match budget and mark the line as partially highlighted. Add a pathological syntax rule perf
+  test.
+- **Syntax region detection runs every sibling start regex at each cursor position.** `FindEarliestRegionStart`
+  tries all region rules for the current parent, then the highlighter advances to the next delimiter
+  and repeats. Definitions with many sibling regions can turn one line into O(region_count * matches)
+  regex work. Fix direction: merge sibling start regexes where possible or add an ordered budget with
+  instrumentation. Add a synthetic definition with many region starts and a long line.
+- **Definition source fingerprinting reads all syntax files every reload check.** `DefinitionSourceFingerprint`
+  discovers `.lua` files and hashes full contents. A plugin directory with many large syntax files can
+  make reload polling expensive even if no definitions are loaded. Fix direction: hash metadata first
+  and read content only when size/mtime changes, while preserving collision safety with a content pass
+  on change. Add a perf fixture with many syntax files.
+- **Duplicate syntax directories load the same definition file multiple times.** `DiscoverDefinitionFiles`
+  iterates the directory list in order and appends files without deduplicating normalized paths. If a
+  plugin contributes the same syntax directory through two routes, definitions and regexes are loaded
+  twice and precedence becomes order-dependent. Fix direction: normalize and unique file paths before
+  loading. Add a loader test with duplicate directories.
+- **Plugin syntax definitions can shadow built-in filetypes without an explicit override contract.**
+  Runtime definitions are appended before built-ins and detection returns the first matching
+  definition. A broad plugin filename regex can take over common filetypes accidentally. Fix direction:
+  require explicit `overrides = true` metadata for a runtime definition that uses an existing
+  filetype, or show a reload warning. Add detection tests for a broad `.*` plugin definition.
+- **Lazy built-in regex compilation can still happen on a visible-line cache miss.** The first
+  highlight for a filetype compiles the full definition's rule regexes in `EnsureDefinitionCompiled`.
+  Opening a rarely used filetype can pay that cost on the render/highlight path. Fix direction:
+  prewarm the detected filetype in the background after tab activation, or compile during
+  `DetectState` when a file is opened off the UI path. Add a startup/open-file perf scenario for a
+  cold filetype.
+- **Highlight prefetch requests dedupe by viewport pointer rather than document identity.** Two splits
+  over the same document submit separate background requests, while a destroyed viewport address can be
+  reused later and collide with an old unstarted key. Revision checks drop stale results, but worker
+  time is wasted and pointer reuse makes dedupe reasoning fragile. Fix direction: key by stable
+  document id plus viewport generation. Add tests for split panes and closing/reopening a viewport
+  while a prefetch is queued.
+- **Highlight prefetch callbacks capture `this` without an explicit lifetime token.** Posted lambdas
+  call `results_`, `checkpoint_results_`, and `wake_` through the service pointer. If a future owner
+  destroys the service without a complete executor drain, this becomes a use-after-free. Fix direction:
+  capture a shared cancellation state and make `Shutdown`/destructor invalidate it before draining.
+  Add a lifecycle test that destroys the service with queued requests.
+- **Deep-jump approximate tokens can be visible longer than the checkpoint backfill cadence.** When
+  `HighlightStateBeforeLine` returns an approximate state, the token cache still stores the resulting
+  line colors; it is only cleared when checkpoint install advances. If the executor is saturated, users
+  can see stale lexical state for distant lines. Fix direction: tag approximate token-cache entries and
+  prefer recomputation or visible "highlighting pending" state once the exact checkpoint arrives. Add a
+  test with a multi-line comment beginning before a deep jump.
+
+##### Compare and merge models
+
+- **Large hunk alignment fallback pairs unrelated lines by position.** When the hunk matrix exceeds
+  `kMaxHunkAlignmentMatrixCells`, `AlignHunkLines` pairs the first `min(deleted, inserted)` rows as
+  modified without similarity checks. The exact path would often emit delete/insert rows instead. Fix
+  direction: run a cheap similarity gate on fallback pairs or prefer delete+insert over low-confidence
+  positional pairs. Add a large-hunk fixture with unrelated reordered blocks.
+- **Compare line tokenization over-reserves one token per byte.** `TokenizeLine` calls
+  `tokens.reserve(text.size())`, so a 64 KiB multibyte line reserves far more tokens than it can use;
+  exact hunk alignment tokenizes every line in budgeted hunks. Fix direction: reserve a smaller
+  heuristic such as `min(text.size(), text.size()/2 + 8)` or avoid reserving for long lines. Add a
+  memory-oriented compare test with CJK-heavy long lines.
+- **Compare model row and line fields are `int` even though inputs are `size_t`.** Very large generated
+  diffs can overflow row indices, hunk row ranges, or line numbers when casting from vector sizes. Fix
+  direction: keep model indices as `std::size_t` internally and clamp only at rendering boundaries.
+  Add an injected model-builder test around `INT_MAX` using synthetic ops.
+- **Intraline diff silently degrades to whole-line spans without exposing why.** Oversized lines and
+  DP-budget fallback both mark broad spans, but the UI/profile only tracks some codepoint/token call
+  counts. Users cannot tell whether a line is fully changed or just too expensive to refine. Fix
+  direction: record a per-row `intraline_truncated` flag and show a subtle status/tooltip. Add tests
+  for long-line and DP-budget fallback rows.
+- **Merge results cannot represent an actually empty file.** `BootstrapMergeResultLines` and
+  `MergeResultLines` push one empty line when the computed result vector is empty. If both sides delete
+  all content, saving the merge result produces an empty line rather than a zero-byte file. Fix
+  direction: represent empty-file result separately from one empty line and teach serializers to honor
+  it. Add merge tests for base one-line deleted by both sides and all three inputs empty.
+- **Auto-resolved deletion hunks can produce degenerate display hunk ranges.** A hunk whose selected
+  incoming/current/base lines are all empty has `row_count == 0`, then `BuildMergeDisplayModel` records
+  `end_row = display.rows.size() - 1`. Navigation and minimap code can see a hunk with no display rows
+  and an end before start. Fix direction: either render a placeholder deletion row or omit non-conflict
+  zero-row hunks from display navigation. Add a merge-display test for both-sides deletion.
+- **`BuildMergeDisplayModel` materializes the full merge result even when rows are non-empty.** The
+  method computes `result_lines = MergeResultLines(model)` and only uses it for the empty-display
+  fallback. Large merges therefore allocate the complete output on every display rebuild unnecessarily.
+  Fix direction: lazily compute the fallback only after `display.rows.empty()` is known. Add a perf
+  counter/test around display rebuild for a large clean merge.
+- **`Both` merge choices concatenate sides without provenance or separator rows.** For real conflicts,
+  `BothIncomingFirst` and `BothCurrentFirst` append one side's lines directly after the other. Adjacent
+  edits can become ambiguous or syntactically fused when saved. Fix direction: decide whether "both"
+  should insert conflict-style separators, blank separators, or remain raw but show an explicit warning.
+  Add tests for no-newline-at-boundary and adjacent one-line edits.
+- **Merge grouping treats touching delete/insert ranges differently from equal-column insertions.**
+  Groups join when `base_start < group_max_end`, with a special case only for insertions at the same
+  base column. A delete ending exactly where another side inserts can split into separate hunks even
+  though users may need to resolve the interaction together. Fix direction: review whether touching
+  ranges should join when at least one side changes content at the boundary. Add merge fixtures for
+  delete-at-line-N plus insert-at-line-N.
+
+##### Persistence and cross-platform state
+
+- **Persisted paths record a platform tag but do not use it for host-specific decoding.** `ReadPath`
+  validates the tag and then constructs a native `std::filesystem::path` from the stored string. A
+  Windows path restored on POSIX becomes a relative-looking `C:/...`, and a POSIX path restored on
+  Windows can lose intended root semantics. Fix direction: decode into a typed persisted path first and
+  decide per field whether cross-platform restore is supported. Add fixtures for Windows-on-Linux and
+  POSIX-on-Windows path records.
+- **Persisted strings are length-checked but not UTF-8-validated.** Settings ids, tab titles, paths,
+  and prompt strings can be decoded from a corrupted record with invalid byte sequences and then flow
+  into render/search/plugin surfaces. Fix direction: validate UTF-8 at typed-record boundaries or
+  replace invalid sequences with U+FFFD before UI use. Add persistence fuzz cases with invalid string
+  payloads.
+- **Persisted capability flags are parsed but not enforced by the generic reader.** The header exposes
+  `capability_flags`, but `PersistedRecordReader::DecodeRecordFile` only checks version and CRC.
+  Callers can accidentally ignore "requires feature X" bits and partially load records they do not
+  understand. Fix direction: pass supported capability masks into typed readers and fail unknown
+  required bits. Add a fixture with a future required flag.
+- **Persisted record CRC is unkeyed and only detects corruption, not wrong-file substitution.** Any
+  valid record body with a matching CRC can be copied into another persisted slot if the typed reader
+  does not include its own root tag. Fix direction: include a record-kind tag in the body and verify it
+  at every typed reader entry. Add tests that try to read project config bytes as session bytes.
+- **`ReadAllBytes` trusts `tellg` size until the final read check.** Files that shrink between
+  `tellg` and `read` fail cleanly, but files that grow are read only to the old size and then parsed as
+  a complete record if the prefix is valid. Fix direction: reopen or stat after read, or reject when
+  EOF is not reached immediately after the expected byte count. Add a race-injected reader test.
+- **Backup fallback can mask repeated primary corruption indefinitely.** A corrupt primary plus valid
+  backup returns `used_backup`, but no automatic quarantine/repair policy is attached at the generic
+  layer. Callers that ignore `used_backup` can keep loading stale backup state every launch. Fix
+  direction: centralize backup-recovery reporting and repair/quarantine decisions in
+  `PersistenceService`. Add an integration test that corrupts primary and verifies visible recovery
+  status.
+
+##### Rendering, plugin display lists, and image assets
+
+- **Display-list hashing includes raw struct padding.** `ComputeDisplayListHash` hashes `SDL_FRect`,
+  `SDL_Color`, `data_offset`, and `data_count` memory directly. Padding bytes can be uninitialized or
+  ABI-dependent, making identical plugin display lists hash differently across builds or runs. Fix
+  direction: hash fields explicitly in a stable byte order. Add a deterministic hash test that
+  constructs ops through different initialization paths.
+- **Display-list validation accepts huge finite rectangles that are later clamped silently.** Replay
+  clamps to +/-1,000,000 before int conversion, but validation does not report geometry far outside
+  content bounds. A plugin can create impossible hit/paint extents and get clipped in surprising ways.
+  Fix direction: validate against content size plus a small overscan margin during interop parsing.
+  Add display-list tests for 1e20 coordinates and negative dimensions.
+- **Display-list content dimensions are not finiteness-checked.** Validation checks op rects and point
+  arenas, but `content_width`/`content_height` are hashed and may be consumed by layout surfaces. NaN or
+  infinities there can poison scroll extents even if every op is valid. Fix direction: require finite
+  non-negative content dimensions in `ValidateDisplayList`. Add tests for NaN/Inf content size.
+- **Texture-cache decode failures are permanent by content hash.** `in_flight_or_failed_` keeps failed
+  hashes forever until `Clear()`. That is correct for immutable bytes, but if a plugin reuses a hash
+  incorrectly for corrected bytes, the image never retries and no diagnostic identifies the bad cache
+  key. Fix direction: include declared byte size/format in the request key or reject plugin-supplied
+  hash reuse with mismatched metadata. Add a test that requests same hash with bad then good bytes.
+- **Texture upload failure leaves a decoded image in permanent pending/failed limbo.** If
+  `SDL_CreateTexture` fails, `Upload` continues without erasing the pending marker or recording a
+  retry policy. A transient renderer/resource failure can suppress that image until cache clear. Fix
+  direction: classify upload failure separately from decode failure and retry after renderer/device
+  recovery with a bounded count. Add an SDL texture-creation failure seam test.
+- **Raw RGBA plugin images are copied twice before upload.** `Request` takes `bytes` by value, the
+  worker moves it into `WrapRgba8`, then `WrapRgba8` copies into `out.rgba`, and SDL copies again on
+  upload. Large plugin images pay avoidable memory bandwidth. Fix direction: move the validated RGBA
+  buffer directly into `Decoded::rgba`. Add a microbenchmark for max-size RGBA image request/upload.
+- **Raster decode dimensions can overflow SDL pitch assumptions if caps change.** `SDL_UpdateTexture`
+  receives `decoded.width * 4` as an `int` expression. Current `kMaxDimension` likely keeps this safe,
+  but the invariant is local to the cache and not asserted at the pitch calculation. Fix direction:
+  compute pitch with checked `std::size_t` and reject if it exceeds `INT_MAX`. Add a lowered-cap test
+  around pitch overflow.
+
+##### Platform filesystem, trash, and subprocess helpers
+
+- **Linux trashing writes metadata before the file move and never fsyncs either directory.** A crash
+  after `.trashinfo` write but before or during `MovePath` can leave orphan metadata, and a crash after
+  move can lose directory-entry durability. Fix direction: move to a temporary trash name, fsync the
+  files/info directories where supported, then publish metadata. Add a fault-injection test around move
+  failure and crash-simulation hooks.
+- **Linux trash move can cross filesystems through a generic move helper without preserving trash
+  semantics.** If `XDG_DATA_HOME` is on a different filesystem, `MovePath` may copy/delete or fail
+  depending on helper behavior. Copy/delete to trash changes failure modes and can be very expensive
+  for large directories. Fix direction: detect cross-device moves and use the freedesktop topdir trash
+  for the source mount, or surface a clear "permanent delete required" failure. Add a temp mount seam
+  or mocked `EXDEV` test.
+- **macOS trash name reservation is not atomic.** `UniquePathInDirectory` checks `exists` and returns a
+  path, then `MovePath` uses it later. Two concurrent trash operations for same-named files can race
+  into the same destination. Fix direction: use platform trash APIs or an atomic rename/link
+  reservation strategy. Add a macOS-specific concurrency test.
+- **Windows recycle-bin deletion normalizes to an absolute path but returns the original source path as
+  the result.** `MovePathToTrashWindows` cannot report the recycle-bin item path, so callers may treat
+  the source as still meaningful. Fix direction: make the result explicitly `std::nullopt`/logical on
+  platforms that cannot return a destination, or query the shell item if needed. Add Windows UI tests
+  that the success message does not offer to open the old path.
+- **`ReadPathType` collapses stat errors into `Missing`.** Permission denied, symlink loops, and
+  transient I/O errors all return `PathType::Missing`. Callers such as directory discovery and path
+  validation can silently skip paths they should report as inaccessible. Fix direction: return
+  `{type,error}` or add a distinct `Inaccessible` type for user-facing flows. Add filesystem tests for
+  EACCES/ELOOP with a platform seam.
+- **`ListDirectory` drops iteration errors and partial-read status.** If a directory becomes
+  unreadable or mutates during iteration, the function returns whatever was collected with no
+  truncation/error flag. File pickers and plugin loaders can show incomplete lists as complete. Fix
+  direction: return entries plus status, and have callers surface partial results. Add a directory
+  iterator fault-injection test.
+- **`CaptureTreeSnapshot` does not count root files against `max_entries`.** The traversal budget is
+  incremented only inside recursive directory iteration. A call with many root files can exceed the
+  advertised entry cap before any budget check. Fix direction: count every appended root and child
+  entry against the same budget. Add snapshot tests with many file roots and `max_entries = 1`.
+- **`CaptureTreeSnapshot` skips root directory entries themselves.** Directory roots are traversed but
+  not appended, while file roots are appended. Consumers that compare snapshots cannot tell whether a
+  watched root directory was deleted/recreated versus only its children changing. Fix direction: decide
+  whether snapshots are "contents only" or "roots plus contents" and make all callers explicit. Add
+  watcher tests for root directory replacement.
+- **`CaptureTreeSnapshot` stops entirely after the first over-budget root.** Once any root exhausts
+  the budget, later roots are not scanned at all. Multi-root workspaces can therefore starve smaller
+  roots behind one huge tree. Fix direction: allocate per-root budgets or round-robin roots until a
+  global cap is reached, and return per-root truncation. Add a snapshot fixture with one huge and one
+  tiny root.
+- **The project subprocess helper is a transparent alias with no policy enforcement.** `project::RunSubprocess`
+  simply calls `platform::RunSubprocess`, so project-level command timeouts, output caps, sandbox
+  expectations, and logging have to be remembered by every caller. Fix direction: move default
+  project-safe options into the helper and require opt-out for exceptional commands. Add tests that
+  project helpers apply timeout/output defaults.
+
 ### Won't-do — verified non-defects
 
 - **Terminal: combining mark after a double-width glyph.** Dead code —
