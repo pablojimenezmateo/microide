@@ -543,6 +543,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceDapManager.cpp
   src/workspace/DebugSession.cpp
   src/workspace/DebugSessionBreakpoints.cpp
+  src/workspace/DebugSessionExecution.cpp
   src/workspace/DebugService.cpp
   src/workspace/DebugServiceBreakpoints.cpp
   src/workspace/DebugServiceCallbacks.cpp
