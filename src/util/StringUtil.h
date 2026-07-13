@@ -57,6 +57,28 @@ void ToLowerAsciiInto(std::string_view text, std::string& out);
 // True if `text` contains any ASCII uppercase letter. Used by smart-case search
 // to decide whether a query should match case-sensitively.
 bool QueryHasUppercaseAscii(std::string_view text);
+
+// Simple 1:1 Unicode case fold for a single scalar. Covers ASCII, Latin-1
+// Supplement, Latin Extended-A, Greek, and Cyrillic uppercase letters; every
+// other scalar is returned unchanged. Turkish dotted/dotless I is intentionally
+// left unfolded (locale-sensitive). Not a full Unicode case-folding table — a
+// deterministic best-effort for case-insensitive matching of common scripts.
+char32_t SimpleFoldCodepoint(char32_t cp);
+// Case-fold `text` into `out` using SimpleFoldCodepoint per scalar. The ASCII
+// range takes a no-decode fast path. Malformed byte sequences are copied
+// verbatim so a caller mapping matches back to the source keeps byte alignment.
+// Reuses `out`'s capacity for hot per-line loops.
+void Utf8CaseFoldInto(std::string_view text, std::string& out);
+std::string Utf8CaseFold(std::string_view text);
+// True if `text` has any scalar whose simple fold differs from itself (i.e. an
+// uppercase letter in a covered script). The Unicode-aware analogue of
+// QueryHasUppercaseAscii for smart-case search.
+bool Utf8QueryHasCaseVariation(std::string_view text);
+// True if `cp` is identifier content: ASCII `[A-Za-z0-9_]` plus a permissive
+// superset of non-ASCII letters (excludes common punctuation/symbol ranges).
+// Used by word motion and identifier-range extraction so multi-byte identifiers
+// are not split mid-scalar.
+bool Utf8IsIdentifierCodepoint(char32_t cp);
 // True when `haystack` contains `needle` as a case-insensitive (ASCII) substring.
 // An empty needle matches. Allocation-free.
 bool ContainsCaseInsensitiveAscii(std::string_view haystack, std::string_view needle);

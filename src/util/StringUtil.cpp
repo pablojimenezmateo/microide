@@ -337,6 +337,128 @@ bool QueryHasUppercaseAscii(std::string_view text) {
                      [](unsigned char c) { return c >= 'A' && c <= 'Z'; });
 }
 
+char32_t SimpleFoldCodepoint(char32_t cp) {
+  // ASCII fast path (the overwhelmingly common case for source code / paths).
+  if (cp < 0x80) {
+    return (cp >= 'A' && cp <= 'Z') ? cp + 0x20 : cp;
+  }
+  // Latin-1 Supplement uppercase letters (À..Ö, Ø..Þ). × (0xD7) is not a letter.
+  if ((cp >= 0xC0 && cp <= 0xD6) || (cp >= 0xD8 && cp <= 0xDE)) {
+    return cp + 0x20;
+  }
+  // Latin Extended-A. The block splits into two regular sub-patterns plus a
+  // handful of irregular codepoints. Turkish dotted/dotless I (0x130/0x131) is
+  // intentionally left unfolded — its correct fold is locale-sensitive.
+  if (cp >= 0x100 && cp <= 0x17F) {
+    if (cp == 0x130 || cp == 0x131 || cp == 0x138 || cp == 0x149 || cp == 0x178) {
+      return cp;  // ĸ, ŉ, İ, ı, Ÿ: irregular / handled elsewhere.
+    }
+    // Even-upper sub-blocks: 0x100..0x137, 0x14A..0x177 (Ā/ā style pairs).
+    if ((cp >= 0x100 && cp <= 0x137) || (cp >= 0x14A && cp <= 0x177)) {
+      return (cp % 2 == 0) ? cp + 1 : cp;
+    }
+    // Odd-upper sub-blocks: 0x139..0x148, 0x179..0x17E (Ĺ/ĺ style pairs).
+    if ((cp >= 0x139 && cp <= 0x148) || (cp >= 0x179 && cp <= 0x17E)) {
+      return (cp % 2 == 1) ? cp + 1 : cp;
+    }
+    return cp;
+  }
+  // Greek uppercase Α..Ω (0x391..0x3A9); 0x3A2 is an unassigned hole.
+  if (cp >= 0x391 && cp <= 0x3A9 && cp != 0x3A2) {
+    return cp + 0x20;
+  }
+  // Cyrillic: А..Я (0x410..0x42F) and the preceding accented block Ѐ..Џ
+  // (0x400..0x40F) fold to their lowercase forms.
+  if (cp >= 0x410 && cp <= 0x42F) {
+    return cp + 0x20;
+  }
+  if (cp >= 0x400 && cp <= 0x40F) {
+    return cp + 0x50;
+  }
+  return cp;
+}
+
+void Utf8CaseFoldInto(std::string_view text, std::string& out) {
+  out.clear();
+  // A folded string is never longer than a byte-wise ASCII-lowered one for the
+  // ranges we cover (each folded scalar occupies the same UTF-8 length), so a
+  // size hint avoids reallocations on the common path.
+  out.reserve(text.size());
+  std::size_t offset = 0;
+  while (offset < text.size()) {
+    const unsigned char lead = static_cast<unsigned char>(text[offset]);
+    if (lead < 0x80) {  // ASCII fast path, no decode.
+      out += (lead >= 'A' && lead <= 'Z') ? static_cast<char>(lead + 0x20)
+                                          : static_cast<char>(lead);
+      ++offset;
+      continue;
+    }
+    const std::size_t length = Utf8SequenceLength(text, offset);
+    if (length == 0) {  // Invalid lead — copy the single byte and advance.
+      out += static_cast<char>(lead);
+      ++offset;
+      continue;
+    }
+    const std::string_view scalar = text.substr(offset, length);
+    const char32_t cp = DecodeUtf8Codepoint(scalar);
+    if (cp == 0xFFFD && scalar != kUtf8ReplacementChar) {
+      // Malformed sequence — preserve the original bytes verbatim so byte
+      // offsets stay meaningful for callers that map matches back to the source.
+      out.append(scalar);
+    } else {
+      AppendUtf8(out, SimpleFoldCodepoint(cp));
+    }
+    offset += length;
+  }
+}
+
+std::string Utf8CaseFold(std::string_view text) {
+  std::string out;
+  Utf8CaseFoldInto(text, out);
+  return out;
+}
+
+bool Utf8QueryHasCaseVariation(std::string_view text) {
+  std::size_t offset = 0;
+  while (offset < text.size()) {
+    const unsigned char lead = static_cast<unsigned char>(text[offset]);
+    if (lead < 0x80) {
+      if (lead >= 'A' && lead <= 'Z') {
+        return true;
+      }
+      ++offset;
+      continue;
+    }
+    const std::size_t length = Utf8SequenceLength(text, offset);
+    if (length == 0) {
+      ++offset;
+      continue;
+    }
+    const char32_t cp = DecodeUtf8Codepoint(text.substr(offset, length));
+    if (cp != 0xFFFD && SimpleFoldCodepoint(cp) != cp) {
+      return true;
+    }
+    offset += length;
+  }
+  return false;
+}
+
+bool Utf8IsIdentifierCodepoint(char32_t cp) {
+  if (cp < 0x80) {
+    return (cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') ||
+           (cp >= '0' && cp <= '9') || cp == '_';
+  }
+  // Treat any non-ASCII letter-ish scalar as identifier content. This is a
+  // deliberately permissive superset (it includes marks/joiners) so word motion
+  // and identifier extraction do not split multi-byte identifiers mid-scalar;
+  // punctuation and symbol ranges below stay excluded.
+  if (cp >= 0x2000 && cp <= 0x206F) return false;   // general punctuation
+  if (cp >= 0x2190 && cp <= 0x2BFF) return false;   // arrows / symbols / dingbats
+  if (cp >= 0x3000 && cp <= 0x303F) return false;   // CJK symbols & punctuation
+  if (cp == 0xA0 || cp == 0x3000) return false;     // no-break / ideographic space
+  return true;
+}
+
 bool IsAllAsciiDigits(std::string_view text) {
   return !text.empty() &&
          std::all_of(text.begin(), text.end(),

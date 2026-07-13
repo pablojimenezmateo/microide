@@ -308,9 +308,63 @@ void TestSaturatingMath() {
   Expect(SaturatingAdd<U64>(kMax, kMax) == kMax, "doubling the max clamps to the max");
 }
 
+void TestStringUtilUnicodeCaseFold() {
+  using microide::util::SimpleFoldCodepoint;
+  using microide::util::Utf8CaseFold;
+  using microide::util::Utf8IsIdentifierCodepoint;
+  using microide::util::Utf8QueryHasCaseVariation;
+
+  // ASCII folds toward lowercase; non-letters untouched.
+  Expect(SimpleFoldCodepoint(U'A') == U'a', "ASCII A folds to a");
+  Expect(SimpleFoldCodepoint(U'z') == U'z', "ASCII z unchanged");
+  Expect(SimpleFoldCodepoint(U'5') == U'5', "digit unchanged");
+
+  // Covered scripts fold uppercase to lowercase and are idempotent on lowercase.
+  Expect(SimpleFoldCodepoint(0x00C9) == 0x00E9, "É folds to é");        // Latin-1
+  Expect(SimpleFoldCodepoint(0x00E9) == 0x00E9, "é is stable");
+  Expect(SimpleFoldCodepoint(0x00C4) == 0x00E4, "Ä folds to ä");
+  Expect(SimpleFoldCodepoint(0x0100) == 0x0101, "Ā folds to ā");        // Latin Ext-A even-upper
+  Expect(SimpleFoldCodepoint(0x0139) == 0x013A, "Ĺ folds to ĺ");        // Latin Ext-A odd-upper
+  Expect(SimpleFoldCodepoint(0x0391) == 0x03B1, "Greek Α folds to α");  // Greek
+  Expect(SimpleFoldCodepoint(0x0394) == 0x03B4, "Greek Δ folds to δ");
+  Expect(SimpleFoldCodepoint(0x0410) == 0x0430, "Cyrillic А folds to а");
+  Expect(SimpleFoldCodepoint(0x042F) == 0x044F, "Cyrillic Я folds to я");
+  Expect(SimpleFoldCodepoint(0x0401) == 0x0451, "Cyrillic Ё folds to ё");
+
+  // Turkish dotted/dotless I is deliberately excluded (locale-sensitive).
+  Expect(SimpleFoldCodepoint(0x0130) == 0x0130, "İ intentionally unfolded");
+  Expect(SimpleFoldCodepoint(0x0131) == 0x0131, "ı intentionally unfolded");
+  // The 0x3A2 Greek hole and × (0xD7) are not letters.
+  Expect(SimpleFoldCodepoint(0x00D7) == 0x00D7, "× multiplication sign unchanged");
+
+  // Whole-string folding matches across case for covered scripts.
+  Expect(Utf8CaseFold("CafÉ") == Utf8CaseFold("café"),
+         "mixed-case É matches lowercase é after folding");
+  Expect(Utf8CaseFold("ПРИВЕТ") == Utf8CaseFold("привет"),
+         "Cyrillic case-insensitive match after folding");
+  // Malformed bytes are preserved verbatim (byte alignment for match mapping).
+  Expect(Utf8CaseFold("A\xFF" "B") == std::string("a\xFF" "b"),
+         "invalid byte 0xFF preserved between folded ASCII");
+
+  // Smart-case detection is Unicode-aware.
+  Expect(Utf8QueryHasCaseVariation("café") == false, "lowercase-only query has no case variation");
+  Expect(Utf8QueryHasCaseVariation("cafÉ") == true, "É triggers case-sensitive smart-case");
+  Expect(Utf8QueryHasCaseVariation("привет") == false, "lowercase Cyrillic has no case variation");
+  Expect(Utf8QueryHasCaseVariation("Привет") == true, "uppercase Cyrillic triggers case-sensitivity");
+
+  // Identifier classification spans multi-byte letters, excludes punctuation.
+  Expect(Utf8IsIdentifierCodepoint(U'a'), "ascii letter is identifier content");
+  Expect(Utf8IsIdentifierCodepoint(U'_'), "underscore is identifier content");
+  Expect(Utf8IsIdentifierCodepoint(0x00E9), "é is identifier content");
+  Expect(Utf8IsIdentifierCodepoint(0x53D8), "CJK 变 is identifier content");
+  Expect(!Utf8IsIdentifierCodepoint(U' '), "space is not identifier content");
+  Expect(!Utf8IsIdentifierCodepoint(0x2013), "en-dash is not identifier content");
+}
+
 }  // namespace
 
 void RegisterStringUtilTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "StringUtil/UnicodeCaseFold", TestStringUtilUnicodeCaseFold);
   AddTest(tests, "StringUtil/AppendUtf8EncodesAllSequenceLengths",
           TestStringUtilAppendUtf8EncodesAllSequenceLengths);
   AddTest(tests, "Util/SaturatingMath", TestSaturatingMath);
