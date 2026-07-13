@@ -799,11 +799,6 @@ test proves it is unreachable.
   reply stream with no reset marker. Fix direction: when the cap is hit, drop whole replies rather
   than partial bytes and increment a debug counter. Add tests that fill the buffer exactly to the cap
   and then issue one more query.
-- **Terminal OSC title updates accept unbounded semantic churn.** The escape buffer caps a single OSC,
-  but a process can still send thousands of short title changes per second, causing repeated launch
-  label changes and view-model churn. Fix direction: coalesce title/cwd OSC updates per frame or only
-  publish when the value changes after debouncing. Add a terminal output test that feeds repeated OSC 0
-  updates and asserts bounded state-change notifications.
 
 ##### Rendering, UI, and user feedback
 
