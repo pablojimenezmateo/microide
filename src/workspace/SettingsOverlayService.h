@@ -115,7 +115,7 @@ class SettingsOverlayService {
   // Families matching the current search text (case-insensitive substring, all when
   // empty). Views point into the service-owned family list, valid until the next
   // edit begins.
-  std::vector<std::string_view> FilteredFontFamilies() const;
+  const std::vector<std::string_view>& FilteredFontFamilies() const;
   // Dropdown rows are the filtered families followed by one "Choose file…" entry.
   int PickerRowCount() const;          // filtered families + 1
   int PickerChooseFileIndex() const;   // == filtered family count
@@ -177,6 +177,13 @@ class SettingsOverlayService {
   bool editing_fonts_ = false;
   std::string editing_row_id_;
   std::vector<std::string> font_families_;
+  // Memoizes FilteredFontFamilies() — row-count / highlight / scroll all call it
+  // per interaction, and the family list only changes when the search text or the
+  // installed-family set does. Views point into font_families_ (stable until the
+  // next edit begins). Mutable so const query accessors can fill the cache.
+  mutable std::vector<std::string_view> filtered_font_cache_;
+  mutable std::string filtered_font_cache_query_;
+  mutable bool filtered_font_cache_valid_ = false;
   int picker_highlight_ = -1;
   int picker_scroll_ = 0;
   std::vector<SettingsOverlayRow> settings_rows_;

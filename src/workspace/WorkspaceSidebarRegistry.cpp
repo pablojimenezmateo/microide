@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <string_view>
+#include <unordered_map>
 
 #include "workspace/WorkspaceCommandParsing.h"
 
@@ -131,20 +133,46 @@ std::vector<SidebarViewInfo> OrderedSidebarViews(
     const std::vector<SidebarViewPolicy>& policies) {
   std::vector<SidebarViewInfo> all = SidebarViews(plugin_host);
 
-  // Remove hidden views.
-  all.erase(std::remove_if(all.begin(), all.end(),
-                            [&](const SidebarViewInfo& info) {
-                              return EffectiveSidebarViewPolicy(info.id, policies).hidden;
-                            }),
-            all.end());
+  // Pre-index policies by view id (first entry wins, matching
+  // EffectiveSidebarViewPolicy) so each view resolves its policy once instead of
+  // re-scanning `policies` inside every filter/sort comparison — the previous
+  // shape was O(views log views * policies) per rebuild.
+  std::unordered_map<std::string_view, const SidebarViewPolicy*> policy_by_id;
+  policy_by_id.reserve(policies.size());
+  for (const SidebarViewPolicy& p : policies) {
+    policy_by_id.emplace(std::string_view(p.view_id), &p);
+  }
+  const auto resolve = [&](std::string_view id) -> SidebarViewPolicy {
+    if (auto it = policy_by_id.find(id); it != policy_by_id.end()) {
+      return *it->second;
+    }
+    return SidebarViewPolicy{std::string(id), false, std::numeric_limits<int>::max()};
+  };
 
-  // Stable-sort by policy order (views with no explicit entry get order = INT_MAX).
-  std::stable_sort(all.begin(), all.end(),
-                   [&](const SidebarViewInfo& a, const SidebarViewInfo& b) {
-                     return EffectiveSidebarViewPolicy(a.id, policies).order <
-                            EffectiveSidebarViewPolicy(b.id, policies).order;
-                   });
-  return all;
+  // Resolve each surviving view's effective order once, then stable-sort on the
+  // cached key (views with no explicit policy entry sort at order = INT_MAX).
+  struct Ordered {
+    SidebarViewInfo info;
+    int order;
+  };
+  std::vector<Ordered> ordered;
+  ordered.reserve(all.size());
+  for (SidebarViewInfo& info : all) {
+    const SidebarViewPolicy policy = resolve(info.id);
+    if (policy.hidden) {
+      continue;
+    }
+    ordered.push_back(Ordered{std::move(info), policy.order});
+  }
+  std::stable_sort(ordered.begin(), ordered.end(),
+                   [](const Ordered& a, const Ordered& b) { return a.order < b.order; });
+
+  std::vector<SidebarViewInfo> result;
+  result.reserve(ordered.size());
+  for (Ordered& entry : ordered) {
+    result.push_back(std::move(entry.info));
+  }
+  return result;
 }
 
 SidebarViewPolicy EffectiveSidebarViewPolicy(std::string_view view_id,

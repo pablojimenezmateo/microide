@@ -100,7 +100,11 @@ std::vector<std::size_t> BuildUtf8Offsets(std::string_view text) {
 TokenizedLine TokenizeLine(std::string_view text) {
   TokenizedLine tokenized;
   tokenized.text = text;
-  tokenized.tokens.reserve(text.size());
+  // Tokens are grouped runs (only symbols are per-codepoint), so the count is
+  // well below the byte length. Reserving one token per byte over-allocates
+  // badly on long/multibyte lines; a half-length heuristic fits the common case
+  // without repeated growth on symbol-dense lines.
+  tokenized.tokens.reserve(text.size() / 2 + 8);
   for (std::size_t offset = 0; offset < text.size();) {
     const LineTokenKind kind = ClassifyCodepoint(text, offset);
     const std::size_t start = offset;

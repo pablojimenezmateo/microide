@@ -8,8 +8,13 @@ namespace microide::editor {
 
 TextLayout::LineVisualColumnMap::LineVisualColumnMap(std::string_view line,
                                                      std::size_t tab_size) {
-  boundaries_.reserve(line.size() + 1);
-  visuals_.reserve(line.size() + 1);
+  // One entry per code point, not per byte. Reserving line.size()+1 is exact for
+  // ASCII but over-reserves ~2-3x on long multibyte lines; cap the hint so a
+  // pathological (e.g. hundreds of KiB) line built transiently on a hover path
+  // cannot reserve far beyond what it needs. Growth past the cap is amortized.
+  const std::size_t reserve_hint = std::min<std::size_t>(line.size() + 1, 4096);
+  boundaries_.reserve(reserve_hint);
+  visuals_.reserve(reserve_hint);
   boundaries_.push_back(0);
   visuals_.push_back(0);
   std::size_t visual = 0;

@@ -329,6 +329,15 @@ void TestSettingsOverlayFontPickerFiltersAndSelects() {
   service.ValueEditor().SetText("mono");
   Expect(service.FilteredFontFamilies().size() == 3,
          "'mono' matches the three *Mono families");
+  // The result is memoized by query text: reverting the query returns the full
+  // list again (cache keyed on the query, not stale from the previous filter).
+  service.ValueEditor().SetText("");
+  Expect(service.FilteredFontFamilies().size() == families.size(),
+         "reverting to an empty query re-lists every family");
+  // Re-opening with a different family set invalidates the memoized filter.
+  service.BeginFontValueEdit("editor.font_family", {"Only One Mono"});
+  Expect(service.FilteredFontFamilies().size() == 1,
+         "a new family set replaces the cached filtered list");
 
   // Highlight navigation clamps to [-1, ChooseFile].
   service.SetPickerHighlight(0);

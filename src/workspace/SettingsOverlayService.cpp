@@ -85,6 +85,7 @@ void SettingsOverlayService::CancelValueEdit() {
   editing_row_id_.clear();
   value_editor_.SetText("");
   font_families_.clear();
+  filtered_font_cache_valid_ = false;
   picker_highlight_ = -1;
 }
 
@@ -99,20 +100,33 @@ void SettingsOverlayService::BeginFontValueEdit(std::string row_id,
   // the user types. Highlight starts at -1 so a stray Enter never commits a font.
   value_editor_.SetText("");
   font_families_ = std::move(families);
+  // Cap the family list well below INT_MAX so the picker's size_t->int row-count
+  // math cannot overflow on a hostile/broken font provider. Real installed-font
+  // lists number in the hundreds; 100k is a generous ceiling.
+  constexpr std::size_t kMaxFontFamilies = 100000;
+  if (font_families_.size() > kMaxFontFamilies) {
+    font_families_.resize(kMaxFontFamilies);
+  }
+  filtered_font_cache_valid_ = false;
   picker_highlight_ = -1;
   picker_scroll_ = 0;
 }
 
-std::vector<std::string_view> SettingsOverlayService::FilteredFontFamilies() const {
-  std::vector<std::string_view> out;
-  out.reserve(font_families_.size());
+const std::vector<std::string_view>& SettingsOverlayService::FilteredFontFamilies() const {
   const std::string query = value_editor_.text();
+  if (filtered_font_cache_valid_ && filtered_font_cache_query_ == query) {
+    return filtered_font_cache_;
+  }
+  filtered_font_cache_.clear();
+  filtered_font_cache_.reserve(font_families_.size());
   for (const std::string& family : font_families_) {
     if (query.empty() || util::ContainsCaseInsensitiveAscii(family, query)) {
-      out.emplace_back(family);
+      filtered_font_cache_.emplace_back(family);
     }
   }
-  return out;
+  filtered_font_cache_query_ = query;
+  filtered_font_cache_valid_ = true;
+  return filtered_font_cache_;
 }
 
 int SettingsOverlayService::PickerRowCount() const {
