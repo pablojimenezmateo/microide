@@ -257,7 +257,11 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   }
 
   const ViewState before_state = CaptureViewState();
-  const std::string lowered_needle = util::ToLowerAscii(needle);
+  // Case fold (not just ASCII-lower) so replace matches non-ASCII case variants
+  // (É/é, Δ/δ, …). Every covered fold is UTF-8 length-preserving, so folded byte
+  // offsets stay aligned with the original line — the offset arithmetic below
+  // (which indexes current_line by folded-buffer offsets) remains correct.
+  const std::string lowered_needle = util::Utf8CaseFold(needle);
   // A replacement carrying a line break turns one source line into several
   // physical lines. Splitting it (below) keeps the PieceTree line_count consistent
   // instead of stuffing an embedded '\n' inside a single logical line — which
@@ -278,7 +282,7 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   std::string lowered_line;  // reused across lines to avoid a per-line allocation
   for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
     std::string current_line(document_->lines.LineView(line_index));
-    util::ToLowerAsciiInto(current_line, lowered_line);
+    util::Utf8CaseFoldInto(current_line, lowered_line);
     std::size_t offset = lowered_line.find(lowered_needle);
     if (offset == std::string::npos) {
       continue;

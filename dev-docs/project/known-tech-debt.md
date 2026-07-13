@@ -213,8 +213,8 @@ Detail per batch lives in the sweep commits.
 - **Project search + file finder + single-line word motion + file icons are Unicode-aware.**
   Wired the length-preserving `Utf8CaseFold` into project-search smart-case/insensitive literal
   matching (byte columns stay aligned), file-finder query/cache lowering, and file-icon matcher
-  keys; single-line word movement decodes code points (`Utf8IsIdentifierCodepoint`). (Editor
-  case-insensitive replace + identifier hover ranges remain ASCII — still open below.)
+  keys; single-line word movement decodes code points (`Utf8IsIdentifierCodepoint`). (Editor case-insensitive replace now folds too; identifier hover ranges
+  remain ASCII — still open below.)
 - **`SurfaceTextureCache` retries a transient `SDL_CreateTexture` failure** (bounded to 3, then
   treats it as permanent) instead of leaving the marker set and suppressing a valid decoded image
   until `Clear()` — matching the sibling `renderer == nullptr` path. (`ComputeDisplayListHash`

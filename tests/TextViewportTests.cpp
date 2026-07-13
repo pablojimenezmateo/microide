@@ -1579,6 +1579,18 @@ void TestTextViewportReplaceAllMultiMatchRespectsUnequalLengths() {
   }
 }
 
+void TestTextViewportReplaceAllUnicodeCaseInsensitive() {
+  // Case-insensitive replace matches non-ASCII case variants. "café" (é) folds to
+  // match "CAFÉ" (É) and "Café"; the fold is length-preserving so the offset
+  // arithmetic that indexes the source line by folded-buffer offsets stays correct.
+  TextViewport viewport;
+  viewport.LoadContent("café CAFÉ Café x", "/tmp/replace-unicode.txt");
+  const std::size_t replaced = viewport.ReplaceAll("café", "tea");
+  Expect(replaced == 3, "replace-all matches every case variant of the accented needle");
+  Expect(viewport.lines()[0] == "tea tea tea x",
+         "each accented match is replaced and surrounding bytes are preserved");
+}
+
 void TestTextViewportReplaceAllMultiLineReplacementSplitsLines() {
   // Regression: a replacement containing a newline used to be stuffed into a single
   // logical line via SetLine, leaving the PieceTree's line_count disagreeing with
@@ -3173,6 +3185,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument);
   AddTest(tests, "TextViewport/ReplaceAllMultiMatchRespectsUnequalLengths",
           TestTextViewportReplaceAllMultiMatchRespectsUnequalLengths);
+  AddTest(tests, "TextViewport/ReplaceAllUnicodeCaseInsensitive",
+          TestTextViewportReplaceAllUnicodeCaseInsensitive);
   AddTest(tests, "TextViewport/ReplaceAllMultiLineReplacementSplitsLines",
           TestTextViewportReplaceAllMultiLineReplacementSplitsLines);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeDisambiguatesCppHeader",
