@@ -133,9 +133,11 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     StatusBarSegmentValue language;
     const std::filesystem::path viewport_path = viewport->path().lexically_normal();
     std::string filetype;
+    const std::size_t syntax_revision = editor::runtime_syntax::RegistryRevision();
     if (language_cache_.viewport == viewport &&
         language_cache_.content_revision == viewport->content_revision() &&
-        language_cache_.path == viewport_path) {
+        language_cache_.path == viewport_path &&
+        language_cache_.syntax_revision == syntax_revision) {
       filetype = language_cache_.filetype;
     } else {
       filetype = editor::runtime_syntax::DetectFiletype(viewport_path, viewport->lines());
@@ -143,6 +145,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       language_cache_.content_revision = viewport->content_revision();
       language_cache_.path = viewport_path;
       language_cache_.filetype = filetype;
+      language_cache_.syntax_revision = syntax_revision;
     }
     if (!filetype.empty()) {
       language.text = filetype;

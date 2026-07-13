@@ -32,6 +32,10 @@ class StatusBarModelService {
     std::uint64_t content_revision = 0;
     std::filesystem::path path;
     std::string filetype;
+    // A plugin/built-in syntax reload can change DetectFiletype's answer without
+    // touching the viewport/revision/path, so the registry revision is part of
+    // the cache key or the language label goes stale after a reload.
+    std::size_t syntax_revision = 0;
   };
 
   struct RepoCache {
