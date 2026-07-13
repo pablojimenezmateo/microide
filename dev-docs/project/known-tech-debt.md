@@ -229,6 +229,11 @@ Detail per batch lives in the sweep commits.
 - **`CollectGitBranches` uses the full refname as the branch `.ref`** (short form only as the
   label) so an ambiguous local/remote name can't resolve the wrong target — matching the other
   `GitBranchReference` builders.
+- **`FindAllRegex` caps matches per rule per line (8192)** so a single-character-matching syntax
+  rule on a long line can't push ~100k matches × many rules on the highlight hot path.
+- **`SettingsStore::Reindex` bumps the revision only on an effective change** (scratch-resolve +
+  compare) so a project switch to identical settings no longer re-runs downstream live-settings
+  application and render preparation.
 - **DAP `RefreshThreadList` and `Pause` guard on session state**: a late thread-list response can
   no longer repopulate the Call Stack selector after a `continued` resume, and `Pause` no longer
   sends `pause` to a target that already stopped/terminated. (The broader DAP resume-on-reject
@@ -1023,11 +1028,6 @@ test proves it is unreachable.
   edited config with duplicate keys can show one value in the UI and apply another until reset erases
   all copies. Fix direction: canonicalize duplicates during persistence load or make all operations
   consistently last-wins. Add persistence fixtures with duplicate user and project setting ids.
-- **`SettingsStore::Revision` increments on every bind even when resolved values are unchanged.** That
-  is safe but causes downstream live-settings application and render preparation to re-run on project
-  switches or reloads that do not change effective settings. Fix direction: compute a cheap resolved
-  hash before/after reindex or add a separate `binding_revision` vs `value_revision`. Add a perf test
-  for switching between projects with identical settings.
 
 #### 2026-07-13 deep subsystem audit backlog — fourth tranche
 
