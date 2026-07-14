@@ -949,6 +949,45 @@ void TestWorkspaceShellTabMoveCommandSupportsRelativeForwardOffset() {
          "relative-forward tabmove should keep the moved tab active");
 }
 
+// Regression: a wheel scroll must move the split pane UNDER THE POINTER, not the
+// focused/active viewport. Previously HandleWheel always scrolled the active
+// viewport, so scrolling an inactive split did nothing (or moved the wrong pane).
+void TestWorkspaceShellWheelScrollsPaneUnderPointer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.txt";
+  const std::filesystem::path beta = root / "beta.txt";
+  std::string many_lines;
+  for (int i = 0; i < 400; ++i) many_lines += "content line\n";
+  WriteFile(alpha, many_lines);
+  WriteFile(beta, many_lines);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha), "alpha should open in group 0");
+  // Split beta into a new group; focus moves to group 1, so group 0 is inactive.
+  Expect(RunCommandLine(shell, "split-right beta.txt"), "split-right beta should succeed");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "a second group should exist");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "focus should be on group 1");
+
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).scroll_line() == 0 &&
+             WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).scroll_line() == 0,
+         "both panes should start unscrolled");
+
+  // Wheel down over the INACTIVE pane (group 0). It must scroll, while the active
+  // pane (group 1) stays put.
+  const SDL_FRect inactive = WorkspaceShellTestAccess::InactiveEditorPaneRect(shell);
+  const float wheel_x = inactive.x + inactive.w * 0.5f;
+  const float wheel_y = inactive.y + inactive.h * 0.5f;
+  Expect(SendMouseWheel(shell, wheel_x, wheel_y, -3),
+         "wheel over the inactive pane should be handled");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).scroll_line() > 0,
+         "the pane under the pointer (inactive group 0) should have scrolled");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).scroll_line() == 0,
+         "the active pane (group 1) must NOT have scrolled");
+}
+
 // Regression: with two editor groups already open, `split-right <path>` must OPEN
 // the file as a new tab in the target group — never overwrite that group's active
 // tab in place, which silently discarded its unsaved edits (VS Code "open to the
@@ -3694,6 +3733,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabMoveCommandSupportsRelativeForwardOffset);
   AddTest(tests, "WorkspaceShell/SplitIntoExistingGroupDoesNotClobberDirtyTab",
           TestWorkspaceShellSplitIntoExistingGroupDoesNotClobberDirtyTab);
+  AddTest(tests, "WorkspaceShell/WheelScrollsPaneUnderPointer",
+          TestWorkspaceShellWheelScrollsPaneUnderPointer);
   AddTest(tests, "WorkspaceShell/GotoAndJumpCommandsUseTypedNavigationRequests",
           TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests);
   AddTest(tests, "WorkspaceShell/GlobalCommandsApplyTypedRequests",

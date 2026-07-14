@@ -267,12 +267,29 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       bool changed = false;
       switch (id) {
-        case ActionId::ToggleLineComment:
-          changed = editor::ToggleLineComment(*viewport, "//");
+        case ActionId::ToggleLineComment: {
+          // Comment markers are language-dependent: read them from the buffer's
+          // resolved language contract (populated by ApplyEditorPreferences on
+          // open/language change), falling back to C-style when a language
+          // provides none.
+          const editor::LanguageContractView& lc = viewport->language_contract_view();
+          const std::string_view line_marker =
+              lc.line_comment.empty() ? std::string_view("//")
+                                      : std::string_view(lc.line_comment);
+          changed = editor::ToggleLineComment(*viewport, line_marker);
           break;
-        case ActionId::ToggleBlockComment:
-          changed = editor::ToggleBlockComment(*viewport, "/*", "*/");
+        }
+        case ActionId::ToggleBlockComment: {
+          const editor::LanguageContractView& lc = viewport->language_contract_view();
+          const bool has_block =
+              !lc.block_comment_open.empty() && !lc.block_comment_close.empty();
+          const std::string_view open =
+              has_block ? std::string_view(lc.block_comment_open) : std::string_view("/*");
+          const std::string_view close =
+              has_block ? std::string_view(lc.block_comment_close) : std::string_view("*/");
+          changed = editor::ToggleBlockComment(*viewport, open, close);
           break;
+        }
         case ActionId::MoveLineUp:
           changed = editor::MoveLineUp(*viewport);
           break;

@@ -280,6 +280,34 @@ void TestShapingToggleLineComment() {
          "second toggle should restore the original text");
 }
 
+void TestShapingToggleBlockCommentRoundTrips() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\n", "/tmp/sample.cpp");
+  viewport.MoveCursorTo(0, 0);
+  Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"),
+         "first toggle should wrap the line in a block comment");
+  Expect(viewport.lines()[0] == "/*alpha*/",
+         "line should be wrapped exactly once");
+  // Toggling again must STRIP, not nest to `/* /*alpha*/ */`.
+  viewport.MoveCursorTo(0, 0);
+  Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"),
+         "second toggle should strip the block comment");
+  Expect(viewport.lines()[0] == "alpha",
+         "second toggle should restore the original text (no nesting)");
+}
+
+void TestShapingToggleBlockCommentSelectionStripsWithWhitespace() {
+  TextViewport viewport;
+  viewport.LoadContent("  /* boxed */  \n", "/tmp/sample.cpp");
+  // Select the whole line's text (including surrounding whitespace).
+  viewport.MoveCursorTo(0, 0, false);
+  viewport.MoveCursorTo(0, viewport.lines()[0].size(), true);
+  Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"),
+         "toggle should recognise an existing wrap despite surrounding whitespace");
+  Expect(viewport.lines()[0] == "   boxed   ",
+         "strip should preserve leading/trailing whitespace around the markers");
+}
+
 void TestShapingSortLinesAscending() {
   TextViewport viewport;
   viewport.LoadContent("c\nb\na\n", "/tmp/sample.txt");
@@ -1149,6 +1177,10 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingIndentSelection);
   AddTest(tests, "EditorEssentials/Shaping/ToggleLineComment",
           TestShapingToggleLineComment);
+  AddTest(tests, "EditorEssentials/Shaping/ToggleBlockCommentRoundTrips",
+          TestShapingToggleBlockCommentRoundTrips);
+  AddTest(tests, "EditorEssentials/Shaping/ToggleBlockCommentSelectionStripsWithWhitespace",
+          TestShapingToggleBlockCommentSelectionStripsWithWhitespace);
   AddTest(tests, "EditorEssentials/Shaping/SortLinesAscending",
           TestShapingSortLinesAscending);
   AddTest(tests, "EditorEssentials/Save/TrimTrailingWhitespace",

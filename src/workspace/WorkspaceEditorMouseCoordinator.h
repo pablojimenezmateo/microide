@@ -14,6 +14,11 @@ class EditorMouseCoordinator {
     std::function<std::vector<WorkspaceShell::EditorPaneLayout>(const SDL_FRect&)>
         compute_editor_pane_layouts;
     std::function<editor::TextViewport*()> active_editor_viewport;
+    // Resolves the viewport backing a specific split pane (by group), without
+    // changing which group is focused. Used so a wheel scroll targets the pane
+    // under the pointer rather than only the focused pane.
+    std::function<editor::TextViewport*(const WorkspaceShell::EditorPaneLayout&)>
+        viewport_for_pane;
     std::function<ScrollSurfaceLayout(const SDL_FRect&,
                                       const editor::TextViewport&,
                                       const editor::EditorViewMetrics&)>

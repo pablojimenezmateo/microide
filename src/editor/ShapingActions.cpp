@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "editor/TextViewport.h"
@@ -57,6 +59,36 @@ std::size_t LeadingWhitespaceCount(std::string_view s) {
   std::size_t i = 0;
   while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
   return i;
+}
+
+// If `content` — ignoring leading/trailing horizontal whitespace — is already
+// wrapped in `open`…`close`, returns the un-wrapped text with the surrounding
+// whitespace preserved. Otherwise returns nullopt. This makes ToggleBlockComment
+// a true toggle instead of nesting `/* /* x */ */` on repeat.
+std::optional<std::string> TryStripBlockComment(std::string_view content,
+                                                std::string_view open,
+                                                std::string_view close) {
+  std::size_t begin = 0;
+  while (begin < content.size() && (content[begin] == ' ' || content[begin] == '\t')) {
+    ++begin;
+  }
+  std::size_t end = content.size();
+  while (end > begin && (content[end - 1] == ' ' || content[end - 1] == '\t')) {
+    --end;
+  }
+  const std::string_view core = content.substr(begin, end - begin);
+  // Require non-overlapping markers so a fragment shorter than both cannot be
+  // mistaken for a wrapped block (e.g. `/*` alone must not strip to nothing).
+  if (core.size() < open.size() + close.size()) return std::nullopt;
+  if (!core.starts_with(open) || !core.ends_with(close)) return std::nullopt;
+  const std::string_view inner =
+      core.substr(open.size(), core.size() - open.size() - close.size());
+  std::string result;
+  result.reserve(content.size());
+  result.append(content.substr(0, begin));
+  result.append(inner);
+  result.append(content.substr(end));
+  return result;
 }
 
 }  // namespace
@@ -122,11 +154,14 @@ bool ToggleBlockComment(TextViewport& viewport,
   if (open.empty() || close.empty()) return false;
   auto sel = viewport.selection_range();
   if (!sel) {
-    // Wrap a single line.
+    // Toggle a single line: strip an existing wrap, otherwise wrap.
     std::size_t line_index = viewport.cursor_line();
     if (line_index >= viewport.lines().size()) return false;
     const std::string& line = viewport.lines()[line_index];
     SelectionRange r{{line_index, 0}, {line_index, line.size()}};
+    if (auto stripped = TryStripBlockComment(line, open, close)) {
+      return viewport.ReplaceRange(r, *stripped, /*record_undo=*/true);
+    }
     std::string replacement;
     replacement.reserve(open.size() + line.size() + close.size());
     replacement.append(open);
@@ -140,6 +175,9 @@ bool ToggleBlockComment(TextViewport& viewport,
     std::swap(n.start, n.end);
   }
   std::string content = viewport.SelectedText();
+  if (auto stripped = TryStripBlockComment(content, open, close)) {
+    return viewport.ReplaceRange(n, *stripped, /*record_undo=*/true);
+  }
   std::string wrapped;
   wrapped.reserve(open.size() + content.size() + close.size());
   wrapped.append(open);

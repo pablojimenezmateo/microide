@@ -603,7 +603,24 @@ bool EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
     return false;
   }
 
-  if (editor::TextViewport* viewport = operations_.active_editor_viewport(); viewport != nullptr) {
+  // Scroll the split pane under the pointer, not merely the focused pane, so a
+  // wheel over an inactive split moves that split (matches VS Code and most
+  // editors). Fall back to the active viewport when the pointer is not over any
+  // pane rect (e.g. in a divider gap). Focus is intentionally left unchanged.
+  editor::TextViewport* viewport = nullptr;
+  const auto panes = operations_.compute_editor_pane_layouts(layout.editor_surface);
+  const auto pane_it =
+      std::find_if(panes.begin(), panes.end(),
+                   [&](const WorkspaceShell::EditorPaneLayout& pane) {
+                     return Contains(pane.rect, event.wheel.mouse_x, event.wheel.mouse_y);
+                   });
+  if (pane_it != panes.end() && operations_.viewport_for_pane) {
+    viewport = operations_.viewport_for_pane(*pane_it);
+  }
+  if (viewport == nullptr) {
+    viewport = operations_.active_editor_viewport();
+  }
+  if (viewport != nullptr) {
     viewport->ScrollVertical(-vertical_ticks * 3);
   }
   state_.surface.focus = FocusTarget::Editor;
@@ -619,6 +636,8 @@ EditorMouseCoordinator WorkspaceShell::MakeEditorMouseCoordinator() {
           .compute_editor_pane_layouts =
               [this](const SDL_FRect& rect) { return ComputeEditorPaneLayouts(rect); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
+          .viewport_for_pane =
+              [this](const EditorPaneLayout& pane) { return ViewportForPane(pane); },
           .compute_editor_scroll_layout =
               [this](const SDL_FRect& rect, const editor::TextViewport& viewport,
                      const editor::EditorViewMetrics& metrics) {
