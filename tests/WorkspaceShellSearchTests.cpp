@@ -120,8 +120,14 @@ void TestWorkspaceShellProjectSearchCaseModeCycleReruns() {
 void TestWorkspaceShellProjectSearchRerunClearsTruncation() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
+  // Each file individually holds MORE than kMaxProjectSearchResults (200) matches, so
+  // a single worker scanning one file sequentially is guaranteed to attempt a match
+  // past the cap and flag truncation. A near-boundary fixture (e.g. 250 total across
+  // 10 files) is racy: parallel early-stop can cancel stragglers before any worker
+  // attempts the (cap+1)-th match, leaving `truncated` unset. 250 lines/file removes
+  // that race deterministically.
   std::string repeated_lines;
-  for (int line = 0; line < 25; ++line) {
+  for (int line = 0; line < 250; ++line) {
     repeated_lines += "alpha\n";
   }
   for (int file_index = 0; file_index < 10; ++file_index) {

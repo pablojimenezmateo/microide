@@ -364,8 +364,13 @@ void TestProjectSearchServicePublishesStableResultOrdering() {
 void TestProjectSearchServiceFlagsTruncatedLargeResultSets() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
+  // Each file individually holds MORE than kMaxProjectSearchResults (200) matches, so a
+  // single worker scanning one file sequentially is guaranteed to attempt a match past
+  // the cap and set `truncated` — unlike a near-boundary fixture (250 total), where
+  // parallel early-stop can cancel stragglers before any worker attempts the (cap+1)-th
+  // match, leaving the default (early-stop) run's truncation flag racy.
   std::string repeated_lines;
-  for (int line = 0; line < 25; ++line) {
+  for (int line = 0; line < 250; ++line) {
     repeated_lines += "alpha\n";
   }
   for (int file_index = 0; file_index < 10; ++file_index) {
@@ -416,7 +421,7 @@ void TestProjectSearchServiceFlagsTruncatedLargeResultSets() {
   Expect(counted.truncated, "count-all project search should still flag truncation");
   Expect(counted.results.size() == 200,
          "count-all project search should still cap the stored/displayed results");
-  Expect(counted.total_matches == 250,
+  Expect(counted.total_matches == 2500,
          "count-all project search should report every match across all files");
 }
 
