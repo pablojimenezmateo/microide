@@ -376,27 +376,12 @@ Detail per batch lives in the sweep commits.
   syntax defs are already length/count-bounded at load — and the skip-mask incremental rewrite
   is behavior-risk in a path that can't be visually verified here, so both stay deferred.)
 
-- **Git: sidebar stage/unstage/discard and commit `RefreshDerivedState` still run the git
-  index-write subprocess synchronously on the shell thread.** Re-investigated 2026-07-14
-  (`WorkspaceSidebarCoordinatorActions.cpp` `StageGitEntry`/`UnstageGitEntry`/`DiscardGitEntry`/
-  `Stage`/`DiscardAllGitEntries`): each validates availability, runs the single
-  `project::Git*Path` subprocess (single-digit ms — a local `git add`/`restore`/`clean`), then
-  `invalidate_editor_blame_path` + (for discard) `ReconcileOpenTabsAfterPathDiscard` + a
-  `RefreshProjectFiles()` whose git *status* scan (`RefreshGit`) is ALREADY async. So the
-  synchronous cost is small and the git STATUS read is already off-thread. Moving the writes
-  off-thread was deliberately NOT done: `DiscardGitEntry` is a destructive path (`git clean -fd`
-  / `git restore` / TrashPath) whose post-op editor-tab reconcile reads the file's post-op
-  existence, so a correct async version needs a completion mailbox + `operation_generation`
-  guards + reconcile reordering (reuse `CommitWorkflowService`'s pattern) and its data-loss /
-  tab-reconcile ordering cannot be verified end-to-end without driving the real GUI + real git
-  timing. Correctness-first call: not worth an under-verified data-loss-path rewrite for a
-  marginal, already-mostly-async speed benefit.
 - **`CommitWorkflowService::DispatchCommit` captures `&state` (a `CommitWorkflowState` inside
   `current_project_state`) across the background executor + mailbox.** A project switch that
   moves/destroys that state while a commit is in flight dangles the reference;
   `operation_generation_` guards logical correctness but not lifetime. Pre-existing threading
   design; a correct fix needs a lifetime redesign beyond a local edit. (Same async-lifetime
-  family as the git-sidebar off-thread item above.)
+  family as the git-sidebar off-thread item, now a won't-do — see below.)
 - **Persistence: no parent-directory fsync after the atomic rename.** A deliberate
   speed/durability tradeoff: the atomic rename already prevents a torn read; only a
   crash inside the fs flush window can lose the newest session write. Left as-is.
@@ -2008,6 +1993,34 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   platform-specific reserved-name rules. Add Windows tests for device names and trailing-dot paths.
 
 ### Won't-do — verified non-defects
+
+#### Deliberate tradeoffs (2026-07-14 curated pass)
+
+- **Git: sidebar stage/unstage/discard + commit `RefreshDerivedState` off-thread — WON'T-DO.**
+  Re-investigated 2026-07-14 (`WorkspaceSidebarCoordinatorActions.cpp` `StageGitEntry`/
+  `UnstageGitEntry`/`DiscardGitEntry`/`StageAllGitEntries`/`DiscardAllGitEntries`): each validates
+  availability, runs a single `project::Git*Path` subprocess (single-digit ms — a local
+  `git add`/`restore`/`clean`), then `invalidate_editor_blame_path` + (for discard)
+  `ReconcileOpenTabsAfterPathDiscard` + a `RefreshProjectFiles()` whose git *status* scan
+  (`RefreshGit`) is ALREADY async. So the synchronous cost is small and the slow status read is
+  already off-thread. Moving the writes off-thread is declined: `DiscardGitEntry` is a destructive
+  path (`git clean -fd` / `git restore` / TrashPath) whose post-op editor-tab reconcile reads the
+  file's post-op existence, so a correct async version needs a completion mailbox +
+  `operation_generation` guards + reconcile reordering, and its data-loss / tab-reconcile ordering
+  can't be verified end-to-end without driving the real GUI + real git timing. Correctness-first:
+  not worth an under-verified data-loss-path rewrite for a marginal, already-mostly-async speed
+  benefit. If ever revisited, reuse `CommitWorkflowService`'s completion-mailbox +
+  `operation_generation` pattern.
+- **Debug value node ids widened to 64-bit — TRIED, REVERTED, WON'T-DO.** Widening the id (and the
+  per-row `node_id`) to `uint64_t` measurably regressed the `debug_value_tree_rebuild` /
+  `debug_value_tree_expand_large` hot path in the 2026-07-14 perf comparison vs `origin/main`
+  (~+7% p50 / +17% max on rebuild, identical allocation counts — the wider `Node` /
+  `DebugVariableRowView` add memory traffic in the flatten/rebuild loop the step/render path runs).
+  The 32-bit `next_id_` it guards wraps only after ~4 billion node allocations in a single debug
+  session (practically unreachable), so the regression is not worth it. Reverted; the 32-bit-wrap
+  risk is accepted.
+
+#### Verified non-defects
 
 - **Terminal: combining mark after a double-width glyph.** Dead code —
   `TerminalCell::bytes` is 4 bytes and wide(≥3)+combining(≥2) always exceeds it, so the
