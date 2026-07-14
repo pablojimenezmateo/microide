@@ -51,9 +51,14 @@ struct RegionStartMatch {
 };
 
 using CompiledRegex = util::CompiledRegex;
+// `at_line_start` is false when `text` is a mid-line segment (e.g. the tail after
+// a region on the same line). A `^`-anchored rule must NOT treat such a segment's
+// position 0 as a line start, so PCRE2_NOTBOL is passed. Patterns without `^` are
+// unaffected (NOTBOL only changes the circumflex assertion).
 void FindAllRegex(std::string_view text,
                   const CompiledRegex& pattern,
-                  std::vector<MatchRange>& matches);
+                  std::vector<MatchRange>& matches,
+                  bool at_line_start = true);
 
 util::RegexMatchData& ReusableMatchData(const CompiledRegex& pattern) {
   thread_local std::unordered_map<const CompiledRegex*, util::RegexMatchData> match_data_by_pattern;
@@ -102,7 +107,8 @@ std::size_t AdvanceToNextCodePoint(std::string_view text, std::size_t offset) {
 std::optional<MatchRange> FindFirstRegex(std::string_view text,
                                          const CompiledRegex& pattern,
                                          const CompiledRegex* skip = nullptr,
-                                         bool allow_zero_length = false) {
+                                         bool allow_zero_length = false,
+                                         bool at_line_start = true) {
   if (!pattern.valid()) {
     return std::nullopt;
   }
@@ -110,12 +116,12 @@ std::optional<MatchRange> FindFirstRegex(std::string_view text,
     thread_local std::string masked_buf;
     thread_local std::vector<MatchRange> skip_matches;
     masked_buf.assign(text);
-    FindAllRegex(text, *skip, skip_matches);
+    FindAllRegex(text, *skip, skip_matches, at_line_start);
     for (const MatchRange match : skip_matches) {
       std::fill(masked_buf.begin() + static_cast<std::ptrdiff_t>(match.start),
                 masked_buf.begin() + static_cast<std::ptrdiff_t>(match.end), '\0');
     }
-    return FindFirstRegex(masked_buf, pattern, nullptr, allow_zero_length);
+    return FindFirstRegex(masked_buf, pattern, nullptr, allow_zero_length, at_line_start);
   }
 
   auto& match_data = ReusableMatchData(pattern);
@@ -123,7 +129,8 @@ std::optional<MatchRange> FindFirstRegex(std::string_view text,
     return std::nullopt;
   }
 
-  const int rc = pattern.Match(text, 0, match_data);
+  const std::uint32_t match_options = at_line_start ? 0u : PCRE2_NOTBOL;
+  const int rc = pattern.Match(text, 0, match_data, match_options);
   if (rc < 0) {
     return std::nullopt;
   }
@@ -146,7 +153,8 @@ constexpr std::size_t kMaxMatchesPerRulePerLine = 8192;
 
 void FindAllRegex(std::string_view text,
                   const CompiledRegex& pattern,
-                  std::vector<MatchRange>& matches) {
+                  std::vector<MatchRange>& matches,
+                  bool at_line_start) {
   matches.clear();
   if (!pattern.valid() || text.empty()) {
     return;
@@ -157,9 +165,13 @@ void FindAllRegex(std::string_view text,
     return;
   }
 
+  // NOTBOL only matters for the first attempt (offset 0): a `^` can only assert at
+  // subject start, so at offset>0 it is inert. Pass it whenever the segment does
+  // not begin at a true line start so `^` does not match a mid-line segment head.
+  const std::uint32_t match_options = at_line_start ? 0u : PCRE2_NOTBOL;
   for (std::size_t offset = 0;
        offset <= text.size() && matches.size() < kMaxMatchesPerRulePerLine;) {
-    const int rc = pattern.Match(text, offset, match_data);
+    const int rc = pattern.Match(text, offset, match_data, match_options);
     if (rc < 0) {
       break;
     }
@@ -707,7 +719,7 @@ void ApplyPatternRules(const Registry& registry,
       continue;
     }
 
-    FindAllRegex(segment, rule.pattern, matches);
+    FindAllRegex(segment, rule.pattern, matches, /*at_line_start=*/absolute_offset == 0);
     for (const MatchRange match : matches) {
       MarkRange(tokens, absolute_offset + match.start, absolute_offset + match.end, rule.group);
     }
@@ -718,7 +730,8 @@ std::optional<RegionStartMatch> FindEarliestRegionStart(const Registry& registry
                                                         const Definition& definition,
                                                         std::uint32_t parent_region_id,
                                                         std::string_view segment,
-                                                        std::size_t search_limit) {
+                                                        std::size_t search_limit,
+                                                        bool at_line_start) {
   std::optional<RegionStartMatch> best_match;
   const auto rule_it = definition.region_rule_indices_by_parent.find(parent_region_id);
   if (rule_it == definition.region_rule_indices_by_parent.end()) {
@@ -730,8 +743,9 @@ std::optional<RegionStartMatch> FindEarliestRegionStart(const Registry& registry
       continue;
     }
 
-    const std::optional<MatchRange> match =
-        FindFirstRegex(segment, rule.start, rule.skip.valid() ? &rule.skip : nullptr);
+    const std::optional<MatchRange> match = FindFirstRegex(
+        segment, rule.start, rule.skip.valid() ? &rule.skip : nullptr,
+        /*allow_zero_length=*/false, at_line_start);
     if (!match.has_value() || match->start >= search_limit) {
       continue;
     }
@@ -802,8 +816,8 @@ void HighlightLineScoped(const Registry& registry,
     const std::string_view tail = line.substr(cursor);
     std::optional<MatchRange> end_match;
     if (region != nullptr) {
-      end_match =
-          FindFirstRegex(tail, region->end, region->skip.valid() ? &region->skip : nullptr, true);
+      end_match = FindFirstRegex(tail, region->end, region->skip.valid() ? &region->skip : nullptr,
+                                 /*allow_zero_length=*/true, /*at_line_start=*/cursor == 0);
     }
     const bool closes_immediately = end_match.has_value() && end_match->start == 0;
     const std::size_t search_limit =
@@ -811,7 +825,8 @@ void HighlightLineScoped(const Registry& registry,
     const std::optional<RegionStartMatch> next_region =
         (closes_immediately || definition == nullptr)
             ? std::optional<RegionStartMatch>{}
-            : FindEarliestRegionStart(registry, *definition, region_id, tail, search_limit);
+            : FindEarliestRegionStart(registry, *definition, region_id, tail, search_limit,
+                                      /*at_line_start=*/cursor == 0);
     const std::size_t segment_end =
         next_region.has_value() ? next_region->match.start : search_limit;
 

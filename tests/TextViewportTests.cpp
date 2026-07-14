@@ -1855,6 +1855,50 @@ void TestRuntimeSyntaxMatchBudgetBoundsPathologicalRule() {
          "bytes past the per-line match budget fall back to Plain instead of matching unbounded");
 }
 
+// Regression: a `^`-anchored pattern rule must match only at a TRUE line start,
+// not at the head of a mid-line segment (the tail after a region on the same
+// line). PCRE2_NOTBOL is passed for mid-line segments so `^foo` colours only the
+// leading `foo`, never the `foo` that follows a region on the same line.
+void TestRuntimeSyntaxCaretAnchorHonorsTrueLineStart() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  ScopedRuntimeSyntaxRegistryReset syntax_reset;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path syntax_dir = temp_dir.path() / "syntax";
+  WriteFile(syntax_dir / "caret.lua",
+            R"LUA(return {
+  filetype = "caret",
+  files = { "\\.caret$" },
+  rules = {
+    { pattern = "^foo", group = "keyword" },
+    { start = "\\(", ["end"] = "\\)", group = "string" }
+  }
+}
+)LUA");
+  std::vector<std::string> loader_errors;
+  const auto definitions =
+      microide::editor::runtime_syntax::LoadDefinitionsFromDirectories({syntax_dir}, &loader_errors);
+  Expect(loader_errors.empty(), "the caret syntax definition should load");
+  std::vector<std::string> reload_errors;
+  microide::editor::runtime_syntax::ReloadDefinitions(definitions, &reload_errors);
+  Expect(reload_errors.empty(), "the caret syntax definition should reload cleanly");
+
+  // Layout: foo ( x ) foo  -> a region splits the line into two `foo` segments.
+  TextViewport viewport;
+  viewport.LoadContent("foo(x)foo\n", "/tmp/sample.caret");
+  const auto& tokens = viewport.HighlightedLineTokens(0);
+  Expect(tokens.size() == 9, "one token per byte");
+  // The leading foo (bytes 0..2) is at a true line start -> Keyword.
+  Expect(tokens[0] == SyntaxTokenKind::Keyword && tokens[1] == SyntaxTokenKind::Keyword &&
+             tokens[2] == SyntaxTokenKind::Keyword,
+         "^foo matches the leading foo at the true line start");
+  // The trailing foo (bytes 6..8) follows a region mid-line -> NOT Keyword.
+  Expect(tokens[6] != SyntaxTokenKind::Keyword && tokens[7] != SyntaxTokenKind::Keyword &&
+             tokens[8] != SyntaxTokenKind::Keyword,
+         "^foo must NOT match the foo after a mid-line region (PCRE2_NOTBOL)");
+}
+
 // A pathologically long line (a minified bundle with no newline) must not be
 // tokenized synchronously on the UI thread: highlighting scans the whole line
 // with the syntax rules, O(line) work on every token-cache miss. Over the length
@@ -3245,6 +3289,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestRuntimeSyntaxLoaderBoundsInfiniteLoop);
   AddTest(tests, "TextViewport/RuntimeSyntaxMatchBudgetBoundsPathologicalRule",
           TestRuntimeSyntaxMatchBudgetBoundsPathologicalRule);
+  AddTest(tests, "TextViewport/RuntimeSyntaxCaretAnchorHonorsTrueLineStart",
+          TestRuntimeSyntaxCaretAnchorHonorsTrueLineStart);
   AddTest(tests, "TextViewport/SyntaxHighlightNestedRegionResumesParentScope",
           TestSyntaxHighlightNestedRegionResumesParentScope);
   AddTest(tests, "TextViewport/SyntaxHighlightSkipsOverlongLine",
