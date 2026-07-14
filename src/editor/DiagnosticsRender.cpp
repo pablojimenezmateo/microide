@@ -103,16 +103,41 @@ void DrawDiagnosticGutterMarker(SDL_Renderer* renderer,
   SDL_RenderFillRect(renderer, &rect);
 }
 
-std::optional<SDL_FRect> DiagnosticUnderlineRect(const render::TextRenderer& text_renderer,
-                                                 float text_x,
-                                                 float y,
-                                                 float line_height,
-                                                 const std::string& text,
-                                                 std::size_t line_index,
-                                                 std::size_t horizontal_scroll,
-                                                 std::size_t visible_columns,
-                                                 std::size_t tab_size,
-                                                 const PublishedDiagnostic& diagnostic) {
+namespace {
+
+// Snap a byte column up to the next code-point boundary (skip UTF-8 continuation
+// bytes). `LineVisualColumnMap::VisualColumnFor` rounds a mid-codepoint query DOWN
+// to the code-point start, whereas `VisualColumnForTextColumn` counts the code
+// point containing the column; snapping up makes the cached lookup byte-identical
+// to the uncached walk for every input.
+std::size_t SnapUpToCodePointBoundary(const std::string& text, std::size_t column) {
+  while (column < text.size() &&
+         (static_cast<unsigned char>(text[column]) & 0xC0u) == 0x80u) {
+    ++column;
+  }
+  return column;
+}
+
+// Visual column for `clamped_column`, via the precomputed per-line map when
+// present (O(log N)), else the direct O(column) tab-stop walk.
+std::size_t VisualColumnFor(const std::string& text, std::size_t clamped_column,
+                            std::size_t tab_size,
+                            const TextLayout::LineVisualColumnMap* visual_map) {
+  if (visual_map != nullptr) {
+    return visual_map->VisualColumnFor(SnapUpToCodePointBoundary(text, clamped_column));
+  }
+  return TextLayout::VisualColumnForTextColumn(text, clamped_column, tab_size);
+}
+
+// Core underline-rect computation. `visual_map`, when non-null, replaces the two
+// per-diagnostic O(column) visual-column walks with O(log N) lookups against a
+// map built once for the line — turning O(diagnostics * column) into
+// O(column + diagnostics * log column) for a line with many diagnostics.
+std::optional<SDL_FRect> DiagnosticUnderlineRectWithMap(
+    const render::TextRenderer& text_renderer, float text_x, float y, float line_height,
+    const std::string& text, std::size_t line_index, std::size_t horizontal_scroll,
+    std::size_t visible_columns, std::size_t tab_size, const PublishedDiagnostic& diagnostic,
+    const TextLayout::LineVisualColumnMap* visual_map) {
   if (line_height <= 0.0f || visible_columns == 0 ||
       !DiagnosticCoversLine(diagnostic, line_index)) {
     return std::nullopt;
@@ -125,10 +150,8 @@ std::optional<SDL_FRect> DiagnosticUnderlineRect(const render::TextRenderer& tex
   const std::size_t clamped_start = std::min(raw_start_column, text.size());
   const std::size_t clamped_end = std::min(raw_end_column, text.size());
 
-  std::size_t start_visual =
-      TextLayout::VisualColumnForTextColumn(text, clamped_start, tab_size);
-  std::size_t end_visual =
-      TextLayout::VisualColumnForTextColumn(text, clamped_end, tab_size);
+  std::size_t start_visual = VisualColumnFor(text, clamped_start, tab_size, visual_map);
+  std::size_t end_visual = VisualColumnFor(text, clamped_end, tab_size, visual_map);
   if (end_visual <= start_visual) {
     end_visual = start_visual + 1;
   }
@@ -153,6 +176,23 @@ std::optional<SDL_FRect> DiagnosticUnderlineRect(const render::TextRenderer& tex
   };
 }
 
+}  // namespace
+
+std::optional<SDL_FRect> DiagnosticUnderlineRect(const render::TextRenderer& text_renderer,
+                                                 float text_x,
+                                                 float y,
+                                                 float line_height,
+                                                 const std::string& text,
+                                                 std::size_t line_index,
+                                                 std::size_t horizontal_scroll,
+                                                 std::size_t visible_columns,
+                                                 std::size_t tab_size,
+                                                 const PublishedDiagnostic& diagnostic) {
+  return DiagnosticUnderlineRectWithMap(text_renderer, text_x, y, line_height, text, line_index,
+                                        horizontal_scroll, visible_columns, tab_size, diagnostic,
+                                        /*visual_map=*/nullptr);
+}
+
 void AppendDiagnosticUnderlines(DecoratedTextRow& row,
                                 const render::TextRenderer& text_renderer,
                                 const render::Theme& theme,
@@ -169,10 +209,13 @@ void AppendDiagnosticUnderlines(DecoratedTextRow& row,
     return;
   }
 
+  // Build the per-line visual-column map ONCE and reuse it for every diagnostic on
+  // this line, instead of two O(column) tab-stop walks per diagnostic.
+  const TextLayout::LineVisualColumnMap visual_map(text, tab_size);
   for (const PublishedDiagnostic& diagnostic : diagnostics) {
-    const auto rect = DiagnosticUnderlineRect(text_renderer, text_x, y, line_height, text,
-                                              line_index, horizontal_scroll, visible_columns,
-                                              tab_size, diagnostic);
+    const auto rect = DiagnosticUnderlineRectWithMap(text_renderer, text_x, y, line_height, text,
+                                                     line_index, horizontal_scroll, visible_columns,
+                                                     tab_size, diagnostic, &visual_map);
     if (!rect.has_value()) {
       continue;
     }

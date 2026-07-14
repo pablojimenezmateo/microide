@@ -505,9 +505,58 @@ void TestInlayHintsShiftRunsAndDrawGlyph() {
          "an underline right of the hint follows the shifted glyphs");
 }
 
+// Regression: AppendDiagnosticUnderlines builds a per-line visual-column map ONCE
+// and reuses it for every diagnostic. Its rects must stay byte-identical to the
+// per-diagnostic DiagnosticUnderlineRect (which does the uncached tab-stop walk),
+// including on a line with tabs and a multibyte char where visual != byte column.
+void TestDiagnosticUnderlineCacheMatchesUncachedPath() {
+  oracle::EnsureDummyVideo();
+  oracle::OracleCanvas init_canvas(kCanvasWidth, kCanvasHeight);
+  render::TextRenderer text_renderer;
+  text_renderer.EnsureInitialized(init_canvas.renderer());
+
+  // Tabs make visual columns diverge from byte columns; the trailing "é" (2 bytes)
+  // exercises the code-point-boundary snap in the cached lookup.
+  const std::string line_text = "\tab\tcde\tfghïj";
+  const std::size_t len = line_text.size();
+  constexpr std::size_t kScroll = 0;
+  constexpr std::size_t kVisibleColumns = 200;
+  const std::vector<PublishedDiagnostic> diagnostics = {
+      MakeDiagnostic(0, 3),  MakeDiagnostic(4, 7),  MakeDiagnostic(1, len),
+      MakeDiagnostic(7, len), MakeDiagnostic(3, 4),
+  };
+
+  const render::Theme& theme = OracleTheme();
+  DecoratedTextRow row;
+  editor::AppendDiagnosticUnderlines(row, text_renderer, theme, kTextX, kRowY, kLineHeight,
+                                     line_text, 0, kScroll, kVisibleColumns, kTabSize,
+                                     std::span<const PublishedDiagnostic>(diagnostics));
+
+  std::vector<SDL_FRect> expected;
+  for (const PublishedDiagnostic& diagnostic : diagnostics) {
+    if (const auto rect = editor::DiagnosticUnderlineRect(text_renderer, kTextX, kRowY, kLineHeight,
+                                                          line_text, 0, kScroll, kVisibleColumns,
+                                                          kTabSize, diagnostic);
+        rect.has_value()) {
+      expected.push_back(*rect);
+    }
+  }
+
+  Expect(row.underlines.size() == expected.size(),
+         "cached AppendDiagnosticUnderlines must emit the same number of underlines");
+  for (std::size_t i = 0; i < expected.size(); ++i) {
+    const SDL_FRect& a = row.underlines[i].rect;
+    const SDL_FRect& b = expected[i];
+    Expect(a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h,
+           "cached underline rect must byte-match the uncached DiagnosticUnderlineRect");
+  }
+}
+
 }  // namespace
 
 void RegisterRowDecorationBuilderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RowDecorationBuilder diagnostic underline cache matches uncached path",
+          TestDiagnosticUnderlineCacheMatchesUncachedPath);
   AddTest(tests, "RowDecorationBuilder inlay hints shift runs and draw the glyph",
           TestInlayHintsShiftRunsAndDrawGlyph);
   AddTest(tests, "RowDecorationBuilder text-style underlines use the grid under a layout",
