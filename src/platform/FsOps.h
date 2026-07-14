@@ -23,4 +23,13 @@ bool RemovePath(const std::filesystem::path& path);
 // crosses a filesystem boundary. Returns false on error.
 bool MovePath(const std::filesystem::path& source, const std::filesystem::path& destination);
 
+// Move `source` to `destination` but NEVER overwrite an existing destination.
+// Returns false if the destination already exists (or the move fails). On Linux
+// same-filesystem moves this is atomic and race-free via renameat2(RENAME_NOREPLACE);
+// a cross-device move (or a filesystem/platform without the flag) falls back to an
+// exists()-check + copy/remove, which leaves a small TOCTOU window but still refuses
+// a destination that is present at check time.
+bool MovePathNoOverwrite(const std::filesystem::path& source,
+                         const std::filesystem::path& destination);
+
 }  // namespace microide::platform

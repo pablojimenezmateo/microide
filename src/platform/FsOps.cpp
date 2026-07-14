@@ -2,6 +2,18 @@
 
 #include <system_error>
 
+#if defined(__linux__)
+#include <fcntl.h>        // AT_FDCWD
+#include <sys/syscall.h>  // SYS_renameat2
+#include <unistd.h>       // syscall
+
+#include <cerrno>
+
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE (1 << 0)
+#endif
+#endif
+
 namespace microide::platform {
 
 std::filesystem::path NormalizeAbsolutePath(const std::filesystem::path& path) {
@@ -67,6 +79,42 @@ bool MovePath(const std::filesystem::path& source, const std::filesystem::path& 
     // turns a failed move into a silent duplicate — for a trash move that hides
     // "deleted" content at the new path; for a rename it poisons retries with an
     // already-existing target. Roll the copy back so a failed move is a no-op.
+    RemovePath(destination);
+    return false;
+  }
+  return true;
+}
+
+bool MovePathNoOverwrite(const std::filesystem::path& source,
+                         const std::filesystem::path& destination) {
+#if defined(__linux__)
+  // Atomic no-clobber rename on the same filesystem: the kernel fails with EEXIST
+  // rather than overwriting, closing the exists()-then-rename TOCTOU window.
+  if (::syscall(SYS_renameat2, AT_FDCWD, source.c_str(), AT_FDCWD, destination.c_str(),
+                RENAME_NOREPLACE) == 0) {
+    return true;
+  }
+  const int err = errno;
+  if (err == EEXIST || err == ENOTEMPTY) {
+    return false;  // destination present: refuse to overwrite.
+  }
+  // EXDEV (cross-device) or EINVAL/ENOSYS (flag unsupported by the fs / kernel):
+  // fall through to the portable path. Any other errno is a genuine failure.
+  if (err != EXDEV && err != EINVAL && err != ENOSYS) {
+    return false;
+  }
+#endif
+  // Portable / cross-device fallback: guard against overwrite with an exists()
+  // check (a small residual TOCTOU window — the atomic path above covers the
+  // common same-filesystem case) then copy + remove with rollback.
+  std::error_code error;
+  if (std::filesystem::exists(destination, error)) {
+    return false;
+  }
+  if (!CopyPath(source, destination)) {
+    return false;
+  }
+  if (!RemovePath(source)) {
     RemovePath(destination);
     return false;
   }

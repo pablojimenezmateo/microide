@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "platform/FsOps.h"
 #include "project/FileOperationService.h"
 
 #include <filesystem>
@@ -124,8 +125,56 @@ void TestTrashReservationDoesNotOverwriteExistingMetadata() {
 
 }  // namespace
 
+// Regression: renaming onto an existing destination must fail WITHOUT clobbering
+// it — the move is no-overwrite (renameat2 RENAME_NOREPLACE) so it cannot destroy
+// unrelated content that occupies the target.
+void TestRenamePathRefusesToOverwriteExistingDestination() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::filesystem::create_directories(root);
+  const auto source = root / "src.txt";
+  const auto dest = root / "dst.txt";
+  WriteFile(source, "SOURCE");
+  WriteFile(dest, "DESTINATION");
+
+  const auto result = FileOperationService::RenamePath(source, dest);
+  Expect(!result.ok, "rename onto an existing destination must fail");
+  Expect(result.error_message == "The destination path already exists",
+         "the failure is classified as an existing-destination clash");
+  Expect(ReadFile(dest) == "DESTINATION", "the existing destination must NOT be overwritten");
+  Expect(ReadFile(source) == "SOURCE", "the source must be left intact when the move is refused");
+}
+
+// The platform primitive itself must refuse an existing destination (this is the
+// race-free guarantee RenamePath relies on, independent of any exists() pre-check).
+void TestMovePathNoOverwriteRefusesExistingDestination() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::filesystem::create_directories(root);
+  const auto source = root / "a.txt";
+  const auto dest = root / "b.txt";
+  WriteFile(source, "A");
+  WriteFile(dest, "B");
+
+  Expect(!microide::platform::MovePathNoOverwrite(source, dest),
+         "MovePathNoOverwrite must refuse to clobber an existing destination");
+  Expect(ReadFile(dest) == "B", "the destination content must be preserved");
+  Expect(ReadFile(source) == "A", "the source must remain when the move is refused");
+
+  // A fresh destination still moves successfully.
+  const auto fresh = root / "c.txt";
+  Expect(microide::platform::MovePathNoOverwrite(source, fresh),
+         "MovePathNoOverwrite must succeed onto a non-existent destination");
+  Expect(!std::filesystem::exists(source), "source is gone after a successful move");
+  Expect(ReadFile(fresh) == "A", "the content is at the new path");
+}
+
 void RegisterFileOperationServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Project/FileOperationService", TestFileOperationService);
+  AddTest(tests, "Project/RenamePathRefusesToOverwriteExistingDestination",
+          TestRenamePathRefusesToOverwriteExistingDestination);
+  AddTest(tests, "Project/MovePathNoOverwriteRefusesExistingDestination",
+          TestMovePathNoOverwriteRefusesExistingDestination);
   AddTest(tests, "Project/CreateDirectoryClassifiesExistingTargets",
           TestCreateDirectoryClassifiesExistingTargets);
 #if defined(__linux__)

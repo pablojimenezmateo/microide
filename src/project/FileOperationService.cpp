@@ -62,6 +62,7 @@ FileOperationResult Success(const std::filesystem::path& path) {
 }
 
 using platform::MovePath;
+using platform::MovePathNoOverwrite;
 using platform::NormalizeAbsolutePath;
 
 bool IsReservedPathComponent(const std::filesystem::path& path) {
@@ -157,6 +158,9 @@ FileOperationResult FileOperationService::RenamePath(const std::filesystem::path
   if (!std::filesystem::exists(normalized_source, error)) {
     return Failure("The source path does not exist");
   }
+  // A pre-check is kept only for a clear early error message; the actual move is
+  // no-overwrite and atomic (renameat2 RENAME_NOREPLACE) on the same filesystem,
+  // so a destination racing into existence after this check still cannot clobber.
   if (std::filesystem::exists(normalized_destination, error)) {
     return Failure("The destination path already exists");
   }
@@ -170,7 +174,12 @@ FileOperationResult FileOperationService::RenamePath(const std::filesystem::path
     return Failure("Failed to prepare the destination directory");
   }
 
-  if (!MovePath(normalized_source, normalized_destination)) {
+  if (!MovePathNoOverwrite(normalized_source, normalized_destination)) {
+    // Distinguish a lost race (destination now exists) from a generic failure.
+    std::error_code dest_error;
+    if (std::filesystem::exists(normalized_destination, dest_error)) {
+      return Failure("The destination path already exists");
+    }
     return Failure("Failed to rename the path");
   }
   return Success(normalized_destination);
