@@ -47,11 +47,27 @@ std::optional<std::filesystem::path> ResolveToolSourcePath(const std::string& ur
     return std::filesystem::path(util::PercentDecode(path_part)).lexically_normal();
   }
 
+  // No networking, by design: any remote scheme (`http://`, `https://`, `ftp://`,
+  // …) is rejected outright rather than treated as a filesystem path. Only a
+  // local `file://` URI (handled above) or a bare local path is a valid source.
+  if (url.find("://") != std::string::npos) {
+    return std::nullopt;
+  }
+
   const std::filesystem::path candidate(url);
   if (candidate.is_absolute() || std::filesystem::exists(candidate)) {
     return candidate.lexically_normal();
   }
   return std::nullopt;
+}
+
+// Lowercase a hex digest so expected/computed comparisons are case-insensitive
+// (`ComputeSha256Blocking` already returns lowercase; manifests may be uppercase).
+std::string LowercaseDigest(std::string digest) {
+  for (char& c : digest) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return digest;
 }
 
 std::optional<std::string> ComputeSha256Blocking(const std::filesystem::path& path) {
@@ -187,9 +203,9 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
     // An empty expected hash gives NO integrity guarantee, so a cached copy is not
     // returned blindly — it could be stale or tampered. Fall through: the only way to
     // proceed is to re-copy from an explicitly-trusted local source (resolved below).
-    // If no local source resolves (e.g. an http(s) URL the downloader can't fetch),
-    // ResolveToolSourcePath fails and the request is rejected rather than served
-    // unverified. (See bug inventory J22.)
+    // If no local source resolves (e.g. a remote URL, which is unsupported — there is
+    // no networking), ResolveToolSourcePath fails and the request is rejected rather
+    // than served unverified. (See bug inventory J22.)
   }
 
   const auto source_path = ResolveToolSourcePath(url);
@@ -266,15 +282,24 @@ bool ToolDownloader::IsCached(const std::string& tool_id) const {
 }
 
 std::optional<std::filesystem::path> ToolDownloader::GetCachedTool(
-    const std::string& tool_id) const {
+    const std::string& tool_id, const std::string& expected_sha256) const {
   if (!IsSafeToolId(tool_id)) {
     return std::nullopt;
   }
   const auto cached = cache_dir_ / tool_id;
-  if (std::filesystem::exists(cached)) {
-    return cached;
+  if (!std::filesystem::exists(cached)) {
+    return std::nullopt;
   }
-  return std::nullopt;
+  if (!expected_sha256.empty()) {
+    // Verify before handing the path to a launcher so a stale or tampered cache
+    // entry is never executed. A one-shot synchronous hash at lookup time is
+    // acceptable; the digest is compared case-insensitively.
+    const auto digest = ComputeSha256Blocking(cached);
+    if (!digest.has_value() || *digest != LowercaseDigest(expected_sha256)) {
+      return std::nullopt;
+    }
+  }
+  return cached;
 }
 
 void ToolDownloader::ClearCache() {

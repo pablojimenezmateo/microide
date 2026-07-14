@@ -186,9 +186,67 @@ void TestToolDownloaderHashMismatchLeavesNoPartialFile() {
 #endif
 }
 
+// Regression: GetCachedTool must verify the cached file's digest before handing
+// it to a launcher when an expected sha is supplied — a mismatch (stale/tampered
+// cache) returns nothing; an empty expected digest returns the path unverified.
+void TestToolDownloaderGetCachedToolVerifiesHash() {
+#if defined(_WIN32)
+  return;
+#else
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path bin_dir = temp_dir.path() / "bin";
+  const std::filesystem::path cache_dir = temp_dir.path() / "cache";
+  std::filesystem::create_directories(bin_dir);
+  std::filesystem::create_directories(cache_dir);
+  WriteFile(cache_dir / "tool", "cached-bytes\n");
+
+  const std::filesystem::path shasum_path = bin_dir / "shasum";
+  WriteFile(shasum_path,
+            "#!/bin/sh\n"
+            "echo \"d4e4877bac978b7952f0d544fc52ebff5411d351d129f1f056fa43f11da9af2b  $3\"\n");
+  std::filesystem::permissions(shasum_path, std::filesystem::perms::owner_exec |
+                                                std::filesystem::perms::owner_read |
+                                                std::filesystem::perms::owner_write,
+                               std::filesystem::perm_options::add);
+  ScopedEnvVar path_env("PATH", bin_dir.string());
+
+  ToolDownloader downloader;
+  downloader.SetCacheDir(cache_dir);
+
+  Expect(downloader
+             .GetCachedTool("tool",
+                            "d4e4877bac978b7952f0d544fc52ebff5411d351d129f1f056fa43f11da9af2b")
+             .has_value(),
+         "GetCachedTool returns the path when the expected digest matches");
+  Expect(!downloader.GetCachedTool("tool", std::string(64, 'f')).has_value(),
+         "GetCachedTool rejects a cached file whose digest does not match");
+  Expect(downloader.GetCachedTool("tool").has_value(),
+         "GetCachedTool returns the path unverified when no expected digest is given");
+#endif
+}
+
+// Regression: there is NO networking. Any remote scheme is rejected regardless of
+// the expected hash — the downloader only resolves local file:// URIs and paths.
+void TestToolDownloaderRejectsRemoteSchemesNoNetworking() {
+  TemporaryDirectory temp_dir;
+  ToolDownloader downloader;
+  downloader.SetCacheDir(temp_dir.path() / "cache");
+  Expect(!downloader.Download("tool", "https://example.invalid/tool.tgz", std::string(64, 'a'))
+              .has_value(),
+         "an https URL is rejected: there is no networking");
+  Expect(!downloader.Download("tool", "http://example.invalid/tool", "").has_value(),
+         "an http URL is rejected: there is no networking");
+  Expect(!downloader.Download("tool", "ftp://example.invalid/tool", "").has_value(),
+         "an ftp URL is rejected: there is no networking");
+}
+
 }  // namespace
 
 void RegisterWorkspaceToolDownloaderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceToolDownloader/GetCachedToolVerifiesHash",
+          TestToolDownloaderGetCachedToolVerifiesHash);
+  AddTest(tests, "WorkspaceToolDownloader/RejectsRemoteSchemesNoNetworking",
+          TestToolDownloaderRejectsRemoteSchemesNoNetworking);
   AddTest(tests, "WorkspaceToolDownloader/FileUriPercentDecodesLocalHost",
           TestToolDownloaderFileUriPercentDecodesLocalHost);
   AddTest(tests, "WorkspaceToolDownloader/RejectsRemoteFileUri",

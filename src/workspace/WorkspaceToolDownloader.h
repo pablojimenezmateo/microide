@@ -27,9 +27,11 @@ class ToolDownloader {
   // Set cache directory (defaults to ~/.cache/microide/tools).
   void SetCacheDir(const std::filesystem::path& dir);
 
-  // Download tool; verify SHA256 hash; cache it.
-  // Returns path to cached tool, or nullopt on failure.
-  // Reuses existing cache if available.
+  // Resolve a tool from a LOCAL source and cache it, verifying its SHA256.
+  // `url` must be a local `file://` URI or a local filesystem path — there is NO
+  // networking: remote schemes (http/https/ftp/…) are rejected by design.
+  // Returns the path to the cached tool, or nullopt on failure. Reuses an
+  // existing verified cache entry when present.
   std::optional<std::filesystem::path> Download(
       const std::string& tool_id,
       const std::string& url,
@@ -38,8 +40,12 @@ class ToolDownloader {
   // Check if tool is already cached.
   bool IsCached(const std::string& tool_id) const;
 
-  // Get cached tool path; returns nullopt if not cached.
-  std::optional<std::filesystem::path> GetCachedTool(const std::string& tool_id) const;
+  // Get the cached tool path, or nullopt if not cached. When `expected_sha256`
+  // is non-empty the cached file's digest is verified (case-insensitively)
+  // before it is returned, so a stale/tampered cache entry is never handed to a
+  // launcher; an empty expected digest returns the path without verification.
+  std::optional<std::filesystem::path> GetCachedTool(const std::string& tool_id,
+                                                     const std::string& expected_sha256 = {}) const;
 
   // Set progress callback.
   using OnProgress = std::function<void(const DownloadProgress&)>;
