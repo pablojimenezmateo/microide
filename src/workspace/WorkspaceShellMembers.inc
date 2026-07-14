@@ -1420,8 +1420,7 @@
   // Stop every live debug session and close the debug pane (Phase 10).
   void StopAllDebugSessions();
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
-  void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip,
-                              StatusBarSegmentTone& tone);
+  void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip, StatusBarSegmentTone& tone);
   void BeginTrackedLspRequest();
   void FinishTrackedLspRequest();
   LspClient* LspClientForViewport(const editor::TextViewport& viewport,
