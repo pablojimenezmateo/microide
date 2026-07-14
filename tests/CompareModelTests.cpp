@@ -962,9 +962,51 @@ void TestCompareManyTokenLineBoundsAlignmentDp() {
          "the bounded build must preserve both sides verbatim");
 }
 
+// Regression: the oversized-hunk positional fallback pairs an unbounded number of
+// rows as Modified; each long line would otherwise cost a full intra-line DP. The
+// per-hunk cumulative intra-line budget bounds total work — early rows keep
+// character-level spans, later rows fall back to whole-line-changed once spent.
+void TestCompareIntralineBudgetBoundsLargeModifiedHunk() {
+  const std::string common_prefix(160, 'p');
+  const std::string common_suffix(160, 's');
+  constexpr int kLineCount = 400;  // > budget/per-pair-cap so the tail must fall back
+  std::string left;
+  std::string right;
+  for (int i = 0; i < kLineCount; ++i) {
+    const std::string idx = std::to_string(i);
+    // Unique on both sides so the line diff finds no equal lines -> one big hunk;
+    // shared prefix/suffix so a refined row yields a PARTIAL (not whole-line) span.
+    left += common_prefix + "L" + idx + "L" + common_suffix + "\n";
+    right += common_prefix + "R" + idx + "R" + common_suffix + "\n";
+  }
+
+  const auto model = BuildCompareModel(left, right);
+
+  std::size_t refined = 0;
+  std::size_t whole_line = 0;
+  for (const auto& row : model.rows) {
+    if (row.kind != CompareRowKind::Modified) {
+      continue;
+    }
+    const bool is_whole_line = row.left_changed_spans.size() == 1 &&
+                               row.left_changed_spans[0].start == 0 &&
+                               row.left_changed_spans[0].end == row.left_text.size();
+    if (is_whole_line) {
+      ++whole_line;
+    } else {
+      ++refined;
+    }
+  }
+  Expect(refined > 0, "early modified rows must keep character-level intra-line spans");
+  Expect(whole_line > 0,
+         "once the per-hunk intra-line budget is spent, later rows fall back to whole-line-changed");
+}
+
 }  // namespace
 
 void RegisterCompareModelTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Compare/IntralineBudgetBoundsLargeModifiedHunk",
+          TestCompareIntralineBudgetBoundsLargeModifiedHunk);
   AddTest(tests, "Compare/ManyTokenLineBoundsAlignmentDp",
           TestCompareManyTokenLineBoundsAlignmentDp);
   AddTest(tests, "Compare/LongLineSkipsIntralineRefinement",

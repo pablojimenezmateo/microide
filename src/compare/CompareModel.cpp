@@ -23,6 +23,17 @@ constexpr std::size_t kMaxLineLcsMatrixCells = 250'000;
 constexpr std::size_t kMaxHunkAlignmentMatrixCells = 65'536;
 constexpr std::size_t kMaxIntralineLcsMatrixCells = 65'536;
 
+// Cumulative cap on intra-line DP cells spent refining the Modified rows of a
+// SINGLE hunk. The oversized-hunk positional fallback (see AlignHunkLines) emits
+// min(left,right) Modified pairs with NO bound on that count, and each pair can
+// otherwise cost up to kMaxIntralineLcsMatrixCells — so a huge hunk of long
+// modified lines multiplies out to billions of comparisons on the UI thread. Once
+// this per-hunk budget is spent, the remaining Modified rows fall back to
+// whole-line-changed (no character-level refinement). Sized so every realistic
+// hunk keeps full refinement (~128 worst-case-long modified pairs) while a
+// pathological hunk stays bounded.
+constexpr std::size_t kMaxHunkIntralineTotalCells = 8'388'608;
+
 // Above this per-side byte length we skip intra-line span refinement for a
 // modified row and mark the whole line changed. The intra-line helpers allocate
 // O(n) codepoint-offset and token vectors per line; on a single very long line (a
@@ -704,7 +715,8 @@ void PopulateCodepointChangedSpans(CompareRow& row) {
   row.right_changed_spans = BuildSpansFromChangedCodepoints(right_offsets, right_changed);
 }
 
-void PopulateChangedSpans(CompareRow& row, CompareBuildProfile* profile) {
+void PopulateChangedSpans(CompareRow& row, CompareBuildProfile* profile,
+                          std::size_t* intraline_cells_budget) {
   row.left_changed_spans.clear();
   row.right_changed_spans.clear();
 
@@ -738,6 +750,31 @@ void PopulateChangedSpans(CompareRow& row, CompareBuildProfile* profile) {
       row.right_changed_spans.push_back(CompareTextSpan{0, row.right_text.size()});
     }
     return;
+  }
+
+  // Cumulative per-hunk intra-line budget: once spent, stop character-level
+  // refinement and mark the whole (modified) line changed on both sides, bounding
+  // total DP work for a pathological many-Modified-row hunk.
+  if (intraline_cells_budget != nullptr) {
+    if (*intraline_cells_budget == 0) {
+      if (!row.left_text.empty()) {
+        row.left_changed_spans.push_back(CompareTextSpan{0, row.left_text.size()});
+      }
+      if (!row.right_text.empty()) {
+        row.right_changed_spans.push_back(CompareTextSpan{0, row.right_text.size()});
+      }
+      return;
+    }
+    // Charge this pair its worst-case DP size (capped at the per-pair limit). The
+    // line-byte guard above bounds the operands, so the product cannot overflow.
+    const std::size_t left_dim = row.left_text.size() + 1;
+    const std::size_t right_dim = row.right_text.size() + 1;
+    const std::size_t pair_cost =
+        ProductExceeds(left_dim, right_dim, kMaxIntralineLcsMatrixCells)
+            ? kMaxIntralineLcsMatrixCells
+            : left_dim * right_dim;
+    *intraline_cells_budget =
+        *intraline_cells_budget > pair_cost ? *intraline_cells_budget - pair_cost : 0;
   }
 
   if (!PopulateTokenChangedSpans(row)) {
@@ -1255,6 +1292,7 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
 
     std::size_t deleted_index = 0;
     std::size_t inserted_index = 0;
+    std::size_t intraline_cells_remaining = kMaxHunkIntralineTotalCells;
     for (const HunkAlignmentKind alignment_kind : alignment) {
       CompareRow compare_row;
       compare_row.hunk = hunk_index;
@@ -1275,7 +1313,7 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
         compare_row.kind = CompareRowKind::Added;
       }
       const Clock::time_point intraline_start = Clock::now();
-      PopulateChangedSpans(compare_row, &profile);
+      PopulateChangedSpans(compare_row, &profile, &intraline_cells_remaining);
       profile.intraline_ns += DurationNs(intraline_start, Clock::now());
       model.rows.push_back(std::move(compare_row));
     }

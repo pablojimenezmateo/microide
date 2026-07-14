@@ -203,6 +203,13 @@ std::size_t CompareTabSelectedModelRow(const CompareTabState& compare_tab) {
 }
 
 const compare::CompareRow& CompareTabSelectedModelRowRef(const CompareTabState& compare_tab) {
+  // Defensive empty-guard: `rows.size() - 1` underflows to SIZE_MAX on an empty
+  // model, so indexing would be UB. Callers currently guard, but return a stable
+  // empty row rather than trust that forever.
+  static const compare::CompareRow kEmptyRow{};
+  if (compare_tab.model.rows.empty()) {
+    return kEmptyRow;
+  }
   const std::size_t model_row = CompareTabSelectedModelRow(compare_tab);
   return compare_tab.model.rows[std::min(model_row, compare_tab.model.rows.size() - 1)];
 }

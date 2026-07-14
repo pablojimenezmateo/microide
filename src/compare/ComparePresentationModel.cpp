@@ -319,6 +319,12 @@ const std::vector<CompareTextSpan>& CompareInlineLeftSpans(
     const ComparePresentationModel& presentation,
     const CompareModel& model,
     std::size_t model_row_index) {
+  // Defensive bound: callers pass in-range indices today, but the model.rows
+  // fallback below would be UB for an out-of-range index; return no spans instead.
+  static const std::vector<CompareTextSpan> kEmptySpans;
+  if (model_row_index >= model.rows.size()) {
+    return kEmptySpans;
+  }
   if (presentation.inline_cache.model_generation != 0 &&
       model_row_index < presentation.inline_cache.left_spans_by_row.size() &&
       !presentation.inline_cache.left_spans_by_row[model_row_index].empty()) {
@@ -331,6 +337,10 @@ const std::vector<CompareTextSpan>& CompareInlineRightSpans(
     const ComparePresentationModel& presentation,
     const CompareModel& model,
     std::size_t model_row_index) {
+  static const std::vector<CompareTextSpan> kEmptySpans;
+  if (model_row_index >= model.rows.size()) {
+    return kEmptySpans;
+  }
   if (presentation.inline_cache.model_generation != 0 &&
       model_row_index < presentation.inline_cache.right_spans_by_row.size() &&
       !presentation.inline_cache.right_spans_by_row[model_row_index].empty()) {
