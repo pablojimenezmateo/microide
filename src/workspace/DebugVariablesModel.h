@@ -59,7 +59,7 @@ class DebugVariablesModel {
 
   void MarkChildrenError(int variables_reference) { tree_.MarkChildrenError(variables_reference); }
 
-  void ApplySetVariable(std::uint32_t node_id, const dap_protocol::DapSetVariableResult& result) {
+  void ApplySetVariable(DebugValueNodeId node_id, const dap_protocol::DapSetVariableResult& result) {
     tree_.ApplySetVariable(node_id, result);
   }
 
@@ -73,7 +73,7 @@ class DebugVariablesModel {
   bool BeginEdit(std::size_t row_index) { return tree_.BeginEdit(row_index); }
   void CancelEdit() { tree_.CancelEdit(); }
   bool IsEditing() const { return tree_.IsEditing(); }
-  std::optional<std::uint32_t> EditingNodeId() const { return tree_.EditingNodeId(); }
+  std::optional<DebugValueNodeId> EditingNodeId() const { return tree_.EditingNodeId(); }
   std::optional<EditTarget> EditTargetForCommit() const { return tree_.EditTargetForCommit(); }
   editor::SingleLineEditor& EditBuffer() { return tree_.EditBuffer(); }
   const editor::SingleLineEditor& EditBuffer() const { return tree_.EditBuffer(); }
