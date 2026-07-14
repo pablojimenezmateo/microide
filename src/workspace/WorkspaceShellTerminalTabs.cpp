@@ -167,6 +167,14 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
       continue;
     }
     terminal_tab->session.ConsumeWakeEvent();
+    if (terminal_tab->session.ConsumeOversizedOsc52Dropped()) {
+      // An OSC 52 clipboard write that overran the escape-sequence buffer was
+      // dropped. Surface it rather than fail silently so the user knows their
+      // (too-large) clipboard write did not land.
+      Notify(NotificationService::Tone::Info,
+             "A terminal program tried to set the clipboard (OSC 52), but the payload "
+             "was too large and was ignored.");
+    }
     const std::optional<std::string> clipboard_text =
         terminal_tab->session.ConsumePendingClipboardText();
     if (clipboard_text.has_value()) {

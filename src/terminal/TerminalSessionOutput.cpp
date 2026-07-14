@@ -15,6 +15,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
@@ -290,6 +291,12 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         continue;
       }
       if (escape_sequence_buffer_.size() > kMaxEscapeSequenceLength) {
+        // A too-large OSC that is an OSC 52 clipboard write is otherwise dropped
+        // silently; flag it so the host can tell the user their clipboard write was
+        // rejected for being too large (distinct from a policy denial).
+        if (std::string_view(escape_sequence_buffer_).starts_with("]52;")) {
+          oversized_osc52_dropped_ = true;
+        }
         AbandonEscapeSequenceLocked();
         continue;
       }

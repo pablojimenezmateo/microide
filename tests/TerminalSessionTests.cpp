@@ -536,6 +536,27 @@ void TestTerminalSessionOsc52ClipboardStQueuesClipboardText() {
          "OSC 52 sequences terminated by ST should queue decoded clipboard text");
 }
 
+// Regression: an OSC 52 clipboard write that overruns the escape-sequence buffer
+// is dropped, but the drop must be observable (ConsumeOversizedOsc52Dropped) so the
+// host can tell the user instead of failing silently.
+void TestTerminalSessionOsc52OversizedPayloadIsFlagged() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  // A base64 body far beyond the 8 KiB escape-sequence cap, never terminated by
+  // BEL/ST — the parser abandons it at the cap.
+  std::string huge = "\x1b]52;c;";
+  huge.append(20000, 'A');
+  TerminalSessionTestAccess::AppendOutput(session, huge);
+
+  Expect(!session.ConsumePendingClipboardText().has_value(),
+         "an oversized OSC 52 payload must not queue clipboard text");
+  Expect(session.ConsumeOversizedOsc52Dropped(),
+         "an oversized OSC 52 drop must be flagged for the host to surface");
+  Expect(!session.ConsumeOversizedOsc52Dropped(),
+         "the oversized-drop flag is consumed only once");
+}
+
 void TestTerminalSessionOsc52RejectsInvalidClipboardPayloads() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -2280,6 +2301,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionOsc52ClipboardStQueuesClipboardText);
   AddTest(tests, "TerminalSession/Osc52RejectsInvalidClipboardPayloads",
           TestTerminalSessionOsc52RejectsInvalidClipboardPayloads);
+  AddTest(tests, "TerminalSession/Osc52OversizedPayloadIsFlagged",
+          TestTerminalSessionOsc52OversizedPayloadIsFlagged);
   AddTest(tests, "TerminalSession/TracksCellForegroundAndBackgroundStyles",
           TestTerminalSessionTracksCellForegroundAndBackgroundStyles);
   AddTest(tests, "TerminalSession/GroupsUtf8GlyphsIntoSingleCells",

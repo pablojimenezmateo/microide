@@ -165,6 +165,10 @@ class TerminalSession {
   bool WantsMouseMotionCapture(bool buttons_down) const;
   bool WantsFocusEvents() const;
   std::optional<std::string> ConsumePendingClipboardText();
+  // True once (then reset) when an OSC 52 clipboard sequence was dropped because it
+  // overran the escape-sequence buffer cap. Lets the host surface a status instead
+  // of silently swallowing a too-large clipboard write.
+  bool ConsumeOversizedOsc52Dropped();
   void PasteText(std::string_view text);
   void SendFocusEvent(bool focused);
   bool SendMouseButton(MouseButton button,
@@ -297,6 +301,9 @@ class TerminalSession {
   mutable bool wake_event_pending_ = false;
   EscapeMode escape_mode_ = EscapeMode::None;
   bool osc_escape_pending_ = false;
+  // Set when an oversized OSC 52 clipboard sequence is abandoned at the escape
+  // buffer cap; drained by ConsumeOversizedOsc52Dropped so the host can notify.
+  bool oversized_osc52_dropped_ = false;
   bool use_alternate_screen_ = false;
   bool mouse_tracking_normal_ = false;
   bool mouse_tracking_drag_ = false;

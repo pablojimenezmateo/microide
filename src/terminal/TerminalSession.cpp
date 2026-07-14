@@ -602,6 +602,13 @@ std::optional<std::string> TerminalSession::ConsumePendingClipboardText() {
   return pending;
 }
 
+bool TerminalSession::ConsumeOversizedOsc52Dropped() {
+  std::scoped_lock lock(mutex_);
+  const bool dropped = oversized_osc52_dropped_;
+  oversized_osc52_dropped_ = false;
+  return dropped;
+}
+
 void TerminalSession::SendFocusEvent(bool focused) {
   {
     std::scoped_lock lock(mutex_);
