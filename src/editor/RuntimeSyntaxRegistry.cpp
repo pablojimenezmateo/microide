@@ -113,10 +113,22 @@ std::optional<MatchRange> FindFirstRegex(std::string_view text,
     return std::nullopt;
   }
   if (skip != nullptr && skip->valid()) {
-    thread_local std::string masked_buf;
     thread_local std::vector<MatchRange> skip_matches;
-    masked_buf.assign(text);
     FindAllRegex(text, *skip, skip_matches, at_line_start);
+    if (skip_matches.empty()) {
+      // No skip regions on this segment → masking would be the identity
+      // (masked_buf == text). Search the raw text directly, skipping the O(n)
+      // buffer copy and the second pattern pass. This is the common case on the
+      // highlight hot path: the region's tail is re-searched at every cursor step
+      // (each nested-region open/close), but most steps span text with no escape
+      // to mask. Provably identical to the masked path below when there is nothing
+      // to mask. (This does not change the O(n²) worst case a region with many
+      // nested children still re-scans the shrinking tail but it removes the copy
+      // and halves the pattern scans on the dominant escape-free segments.)
+      return FindFirstRegex(text, pattern, nullptr, allow_zero_length, at_line_start);
+    }
+    thread_local std::string masked_buf;
+    masked_buf.assign(text);
     for (const MatchRange match : skip_matches) {
       std::fill(masked_buf.begin() + static_cast<std::ptrdiff_t>(match.start),
                 masked_buf.begin() + static_cast<std::ptrdiff_t>(match.end), '\0');

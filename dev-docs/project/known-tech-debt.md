@@ -421,21 +421,24 @@ toggle, diagnostics visual-column cache, AlignHunkLines cumulative budget, multi
 refusal, `^`-anchor correctness, latent compare index guards — see the "Curated open-items pass"
 section above). The still-deferred residue:
 
-- **`RuntimeSyntaxRegistry::FindFirstRegex` skip-mask full-tail rescan.** For a region
-  carrying a `skip` regex, every cursor step copies the whole remaining tail into
-  `masked_buf` and re-runs `FindAllRegex(skip)` over it — an O(n²)→O(n) opportunity.
-  Deferred: making it incremental reworks the recursive masked-scan contract and risks
-  changing match results at zero-length/UTF-8 boundaries (an unverifiable highlight-output
-  change here). Only hit by regions that declare a `skip`. (Re-examined 2026-07-14 session 3:
-  a per-line skip-match cache would have to reproduce byte-identical output across **two**
-  call sites — the end search at `RuntimeSyntaxRegistry.cpp:819` AND the region-start search
-  in `FindEarliestRegionStart` at `:746` — each with a *different* skip regex, a shrinking
-  segment, and a per-segment `at_line_start`/NOTBOL that feeds the skip's `^` anchor. The
-  gate for shipping is a characterization test snapshotting `HighlightLineScoped`'s token
-  vector before/after and asserting identical output on a crafted multi-region line with a
-  `skip` (incl. an `^`-anchored skip and a zero-length-adjacent case). Not landed because
-  proving that equivalence across both sites and line boundaries is the bulk of the work and
-  the marginal benefit is narrow — do it only in a session that can build the golden test first.)
+- **[PARTIALLY RESOLVED 2026-07-14] `RuntimeSyntaxRegistry::FindFirstRegex` skip-mask full-tail rescan.**
+  For a region carrying a `skip` regex, every cursor step re-runs `FindAllRegex(skip)` over the
+  remaining tail. **Landed:** (1) the characterization gate the prior note demanded now exists —
+  `tests/RuntimeSyntaxSkipTests.cpp` snapshots per-byte token output across both call sites (end
+  search at `RuntimeSyntaxRegistry.cpp:819`, region-start search in `FindEarliestRegionStart` at
+  `:746`) for escape masking, escaped-backslash, escaped-quote-at-EOL, nested-region re-entry into a
+  skip region, `^`-anchored skip under NOTBOL, UTF-8-next-to-escape, and a 1500-interpolation stress
+  line; (2) a provably-identical fast path in `FindFirstRegex` — when the segment has **no** skip
+  matches, the `masked_buf` copy and the second pattern pass are skipped and the raw text is searched
+  directly (masking nothing is the identity). That removes the per-step buffer copy and halves the
+  pattern scans on the dominant escape-free segments (the common case: most cursor steps span text with
+  no escape). **Residual (still O(n²) worst case):** a region with many nested children still re-scans
+  the shrinking tail k times. A true O(n) rewrite needs a full-line skip precompute reused across cursor
+  steps; that is only byte-identical for *context-free* skips (no lookbehind / `\b` / `^`), so it must be
+  gated on skip shape (the real-world grammars are almost entirely the context-free `\\.` escape, with
+  the one C++ `\b`-number skip as the exception that would fall back). Deferred as narrow-benefit +
+  hot-path highlight-semantics risk, but now unblocked: the golden gate above is the equivalence oracle a
+  future session can extend with adversarial boundary cases before enabling the precompute.
 - **`RuntimeSyntaxRegistry` rules still compile without `PCRE2_MULTILINE`.** The `^`-at-segment-
   boundary correctness bug is fixed (NOTBOL on mid-line segments, 2026-07-14), but `$` semantics
   across a segmented line were not revisited; a full MULTILINE pass would need generated-table

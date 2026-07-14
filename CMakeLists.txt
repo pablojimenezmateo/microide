@@ -837,6 +837,7 @@ add_executable(microide_tests
   tests/DebugPaneTests.cpp
   tests/EditorGroupStateTests.cpp
   tests/RowDecorationBuilderTests.cpp
+  tests/RuntimeSyntaxSkipTests.cpp
   tests/StringUtilTests.cpp
   tests/SubprocessTests.cpp
   tests/TextRendererTests.cpp
