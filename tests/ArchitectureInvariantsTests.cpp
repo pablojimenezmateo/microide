@@ -164,8 +164,10 @@ void TestArchitectureInvariants() {
              // 1690: +18 for the async compare/ref picker: mailbox + monotonic generation +
              // three injectable git providers, plus Request*/Apply*/ComparePickerRequestCurrent
              // so the blocking git history/branch queries run off the render thread.
+             // 1691: +1 for interactive_background_executor_, a dedicated lane so the
+             // compare/ref picker git queries never queue behind an in-flight sidebar git status.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1690);
+                                                     1691);
            });
 
   bool hard_failure = false;

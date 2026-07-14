@@ -1945,6 +1945,14 @@
   // free functions; tests inject fakes to exercise the loading/stale paths.
   util::MainThreadMailbox compare_picker_mailbox_;
   std::uint64_t compare_picker_generation_ = 0;
+  // Dedicated lane for latency-sensitive interactive queries (the compare/ref
+  // picker git history/branch/commit lookups). Kept OFF project_background_executor_
+  // so a picker open never queues behind an in-flight sidebar `git status` refresh
+  // (the single serial worker would otherwise serialize them, adding that refresh's
+  // full latency before the picker can populate). Shut down explicitly in the
+  // WorkspaceShell dtor before this member is destroyed so any in-flight job finishes
+  // posting into compare_picker_mailbox_ while it is still alive.
+  project::ProjectBackgroundExecutor interactive_background_executor_;
   std::function<project::GitFileHistoryResult(const std::filesystem::path& root,
                                               const std::filesystem::path& path)>
       compare_picker_file_history_provider_;

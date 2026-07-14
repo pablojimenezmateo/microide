@@ -41,6 +41,17 @@ class GitRepositoryService {
                                          OutgoingBaseChoice outgoing_base_choice,
                                          bool tree_git_badges_materialized);
 
+  // Test seam: replaces the `git status` subprocess that BuildRepositoryState
+  // would spawn on the refresh worker with an injected state producer. Lets tests
+  // block the git query (and assert the sidebar is refreshing before it returns)
+  // without running real git — the fake-git seam mirror of the async compare
+  // picker's provider seam. Default (empty) runs the real subprocess. Set on the
+  // main thread before dispatching refreshes; read on the worker with the queue's
+  // enqueue/dequeue mutex as the happens-before edge.
+  using RepositoryStateProviderForTesting = std::function<project::GitRepositoryState(
+      const std::filesystem::path& project_root, std::uint64_t generation)>;
+  void SetRepositoryStateProviderForTesting(RepositoryStateProviderForTesting provider);
+
   static bool IsGitRepoValid(const std::filesystem::path& project_root);
 
  private:
@@ -75,6 +86,7 @@ class GitRepositoryService {
   bool follow_up_refresh_pending_ = false;
   std::optional<RefreshRequest> deferred_refresh_;
   std::filesystem::path active_project_root_;
+  RepositoryStateProviderForTesting repository_state_provider_for_testing_;
 };
 
 }  // namespace microide::workspace

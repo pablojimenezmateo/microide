@@ -263,6 +263,88 @@ void TestConcurrentRefreshBurstStaysLiveAndBalanced() {
   executor.Shutdown();
 }
 
+// Fake-git seam: a refresh must open the sidebar in a refreshing state and
+// dispatch the status query to the background executor WITHOUT blocking the
+// caller. Injecting a provider that stalls on a gate lets the test assert the
+// service is refreshing (and has published nothing) while git is "still running",
+// then completes once released — all without spawning real git. This mirrors the
+// async compare-picker provider seam and closes the "no cheap fake git/executor
+// seam" gap for the sidebar refresh path.
+void TestBlockingRepositoryStateProviderIsAsync() {
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService service(executor);
+
+  std::atomic<bool> release{false};
+  std::atomic<int> provider_calls{0};
+  service.SetRepositoryStateProviderForTesting(
+      [&](const std::filesystem::path& /*root*/,
+          std::uint64_t generation) -> microide::project::GitRepositoryState {
+        provider_calls.fetch_add(1);
+        while (!release.load()) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        microide::project::GitRepositoryState state;
+        state.repo_available = true;
+        state.generation = generation;
+        microide::project::GitRepositoryEntry entry;
+        entry.kind = microide::project::GitRepositoryEntryKind::Ordinary;
+        entry.status = microide::project::GitFileStatus::Modified;
+        entry.path = microide::project::MakeGitRepositoryPathIdentity("tracked.txt");
+        state.entries.push_back(std::move(entry));
+        return state;
+      });
+
+  std::atomic<bool> woke{false};
+  service.SetWakeCallbacks({.push_refresh_ready_event = [&]() {
+    woke.store(true);
+    return true;
+  }});
+
+  // SpecificRef keeps ResolveGitOutgoingBase git-free; StatusOnly scope skips the
+  // outgoing-files diff — so the entire refresh path runs without real git once the
+  // status producer is injected.
+  OutgoingBaseChoice choice;
+  choice.kind = OutgoingBaseChoice::Kind::SpecificRef;
+  choice.custom_ref = "HEAD~1";
+  service.RequestRefresh("/fake/repo", GitSidebarRefreshScope::StatusOnly, choice, false);
+
+  // The caller returned immediately; wait until the worker is actually parked
+  // inside the injected provider so the assertions below prove async behavior
+  // rather than a not-yet-started task.
+  for (int i = 0; i < 2000 && provider_calls.load() == 0; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  Expect(provider_calls.load() == 1, "refresh must dispatch the status query to the worker");
+  Expect(service.IsRefreshing(), "the sidebar must be refreshing while git is still running");
+  GitSidebarState::RefreshSnapshot early;
+  Expect(!service.ConsumePendingSidebarSnapshot(&early),
+         "no snapshot may publish before the git query returns");
+
+  release.store(true);
+
+  bool published = false;
+  GitSidebarState::RefreshSnapshot snapshot;
+  for (int i = 0; i < 2000 && !published; ++i) {
+    if (service.ConsumePendingSidebarSnapshot(&snapshot)) {
+      published = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  Expect(published, "the refresh must publish a snapshot once the git query returns");
+  Expect(woke.load(), "publishing a snapshot must fire the refresh-ready wake");
+  bool saw_entry = false;
+  for (const auto& entry : snapshot.entries) {
+    if (entry.relative_path == std::filesystem::path("tracked.txt")) {
+      saw_entry = true;
+      break;
+    }
+  }
+  Expect(saw_entry, "the published snapshot must carry the injected status entry");
+
+  executor.Shutdown();
+}
+
 }  // namespace
 
 void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
@@ -278,6 +360,8 @@ void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
           TestSyncRefreshLeavesGlobalCounterUntouched);
   AddTest(tests, "GitRepositoryService/ConcurrentRefreshBurstStaysLiveAndBalanced",
           TestConcurrentRefreshBurstStaysLiveAndBalanced);
+  AddTest(tests, "GitRepositoryService/BlockingRepositoryStateProviderIsAsync",
+          TestBlockingRepositoryStateProviderIsAsync);
 }
 
 }  // namespace microide::tests

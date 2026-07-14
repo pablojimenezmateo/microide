@@ -48,8 +48,11 @@ void WorkspaceShell::SetStartupOptions(WorkspaceStartupOptions options) {
 
 WorkspaceShell::~WorkspaceShell() {
   // Drain project background work before member teardown to avoid races on
-  // git sidebar refresh state during shell destruction.
+  // git sidebar refresh state during shell destruction. Shut the interactive
+  // picker lane down here too so an in-flight compare/ref query finishes posting
+  // into compare_picker_mailbox_ while every member it touches is still alive.
   project_background_executor_.Shutdown();
+  interactive_background_executor_.Shutdown();
   // Shut down the plugin runtime while every shell member it still calls back
   // into (e.g. the pending redraw invalidation) is alive. Reverse-order member
   // destruction would otherwise tear down `pending_render_invalidation_`

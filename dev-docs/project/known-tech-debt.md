@@ -575,10 +575,15 @@ behavioral contract before changing code.
   shell (`compare_picker_*_provider_`, default = the real free functions) lets tests block git and assert
   the loading→populate→drop-stale sequence
   (`TestWorkspaceShellComparePickerOpensAsyncAndDropsStaleResult`). This also closed the "no cheap fake
-  git/executor seam" tooling gap below for compare interactions. Follow-ups: the outgoing-base flow still
-  issues two serial git invocations on the worker (branches + recent commits) that could be collapsed; and
-  the single-thread `ProjectBackgroundExecutor` serializes the picker job behind an in-flight `git status`
-  refresh (bounded latency, not a freeze) — a dedicated lane is a possible future item.
+  git/executor seam" tooling gap below for compare interactions. Follow-ups [RESOLVED 2026-07-14]: the
+  picker git queries now run on a dedicated `WorkspaceShell::interactive_background_executor_` lane so a
+  picker open never queues behind an in-flight sidebar `git status` refresh (the shared single-thread
+  executor previously serialized them); and `CollectGitRecentCommits` dropped its redundant
+  `rev-parse --verify HEAD` pre-check (`git log HEAD` already resolves to empty on an unborn branch, so the
+  extra spawn was pure latency — covered by `Git/RecentCommitsOnUnbornBranchIsEmpty`). Residual: the
+  outgoing-base flow still issues two git invocations (branches via `for-each-ref`, recent commits via
+  `git log`) because they are genuinely distinct queries with no single-process collapse; they now run on
+  the dedicated lane, so the cost no longer contends with the sidebar refresh.
 - **Merge result generation may normalize final newline / line-ending intent across conflict choices.**
   The merge model works in split lines and later rejoins text. If current, incoming, and base differ
   in trailing newline or line-ending convention, choosing one side may not preserve that side's exact
@@ -681,14 +686,15 @@ behavioral contract before changing code.
   Windows timeout handling, Windows ignore matching, and macOS FSEvents races/filter bypasses. Fix
   direction: extract pure builders/state machines from platform TUs so Linux tests can cover command
   quoting, state transitions, and ignore decisions; keep OS API calls behind tiny adapters.
-- **[PARTIALLY RESOLVED 2026-07-14] No cheap fake git/executor seam for UI-thread blocking regressions.**
-  Compare interactions now have an injectable provider seam
+- **[RESOLVED 2026-07-14] No cheap fake git/executor seam for UI-thread blocking regressions.**
+  Compare interactions have an injectable provider seam
   (`WorkspaceShell::compare_picker_{file_history,branches,recent_commits}_provider_`, set in tests via
   `WorkspaceShellTestAccess::SetComparePicker*Provider`), so a test can block the git query and assert
-  the overlay is visible + loading before git returns. Remaining gap: the git **sidebar** refresh path
-  (`GitRepositoryService`) still has no equivalent fake — it runs real git in tests. Fix direction: give
-  `GitRepositoryService` a comparable injectable status/branch provider so sidebar "overlay appears before
-  git returns" behavior is testable without sleeping real git.
+  the overlay is visible + loading before git returns. The git **sidebar** refresh path
+  (`GitRepositoryService`) now has the matching seam: `SetRepositoryStateProviderForTesting` injects the
+  `git status` producer so `Git/…BlockingRepositoryStateProviderIsAsync` blocks git on a gate and asserts
+  the sidebar is refreshing (nothing published) before it returns, then publishes on release — no real git
+  spawned. Both blocking-UI regression surfaces are now testable without sleeping on real git.
 - **No single fuzz target covers plugin/workspace edit range normalization.** Persistence, regex, and
   blame have fuzz-oriented guidance, but LSP/plugin edit appliers accept untrusted-ish ranges and text
   from language servers and plugins. Fix direction: add a fuzz target that generates edit lists,

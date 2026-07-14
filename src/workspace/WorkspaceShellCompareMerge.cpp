@@ -286,7 +286,7 @@ void WorkspaceShell::RequestComparePickerFileHistory(const std::filesystem::path
                       : std::function<project::GitFileHistoryResult(
                             const std::filesystem::path&, const std::filesystem::path&)>(
                             &project::CollectGitFileHistory);
-  project_background_executor_.PostLatest(
+  interactive_background_executor_.PostLatest(
       "compare-picker",
       [this, root, path, generation, provider = std::move(provider)]() {
         project::GitFileHistoryResult history = provider(root, path);
@@ -314,7 +314,7 @@ void WorkspaceShell::RequestComparePickerOutgoingBase() {
           : std::function<std::vector<project::GitCommitEntry>(const std::filesystem::path&,
                                                                std::size_t)>(
                 &project::CollectGitRecentCommits);
-  project_background_executor_.PostLatest(
+  interactive_background_executor_.PostLatest(
       "compare-picker",
       [this, root, generation, branches_provider = std::move(branches_provider),
        commits_provider = std::move(commits_provider)]() {

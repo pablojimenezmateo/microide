@@ -84,8 +84,29 @@ bool GitRepositoryService::IsGitRepoValid(const std::filesystem::path& project_r
   return project::GitRepository(project_root).IsValid();
 }
 
+void GitRepositoryService::SetRepositoryStateProviderForTesting(
+    RepositoryStateProviderForTesting provider) {
+  repository_state_provider_for_testing_ = std::move(provider);
+}
+
 project::GitRepositoryState GitRepositoryService::BuildRepositoryState(
     const RefreshRequest& request) const {
+  // Test seam: substitute the injected producer for the `git status` subprocess.
+  // The provider is set-once on the main thread before any refresh is dispatched;
+  // this read runs on the worker (or the synchronous test path) with the executor
+  // queue's mutex providing the happens-before edge. Stamp the request generation
+  // so downstream staleness checks stay authoritative regardless of what the fake
+  // returns.
+  if (repository_state_provider_for_testing_) {
+    project::GitRepositoryState state =
+        repository_state_provider_for_testing_(request.project_root, request.generation);
+    state.repository_root = request.project_root;
+    state.generation = request.generation;
+    state.refreshed_at_ms = SDL_GetTicks();
+    state.refreshing = false;
+    return state;
+  }
+
   project::GitRepositoryState state{
       .repository_root = request.project_root,
       .branch = {},

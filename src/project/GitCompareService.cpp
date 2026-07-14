@@ -127,10 +127,14 @@ GitFileHistoryResult CollectGitFileHistory(const std::filesystem::path& root,
 std::vector<GitCommitEntry> CollectGitRecentCommits(const std::filesystem::path& root,
                                                     std::size_t limit) {
   const GitRepository repo(root);
-  if (limit == 0 || !repo.IsValid() || !repo.HasHeadCommit()) {
+  if (limit == 0 || !repo.IsValid()) {
     return {};
   }
   const std::size_t effective_limit = std::min(limit, kMaxRecentCommits);
+  // No separate `rev-parse --verify HEAD` pre-check: on an unborn branch `git log
+  // HEAD` exits non-zero and we already fall through to the empty return below, so
+  // the extra spawn was pure latency on every recent-commit query (Execute
+  // silences stderr by default, so the unborn-branch fatal never leaks).
   const auto result = repo.Execute(std::vector<std::string>{
       "log", "--no-color", "-n", std::to_string(effective_limit),
       "--pretty=format:%H%x1f%h%x1f%an%x1f%ar%x1f%s", "HEAD"});

@@ -342,6 +342,19 @@ void TestGitBranchAndRecentCommitCollection() {
          "over-cap request should still return every available commit on HEAD");
 }
 
+// Regression guard for the removed `rev-parse --verify HEAD` pre-check in
+// CollectGitRecentCommits: on an unborn branch (git init, no commit) the direct
+// `git log HEAD` must still resolve to an empty result rather than surfacing a
+// fatal or garbage row. Locks the behavior the dropped spawn used to provide.
+void TestRecentCommitsOnUnbornBranchIsEmpty() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);  // No commit yet: HEAD is unborn.
+
+  const auto recent = CollectGitRecentCommits(repo_path, 10);
+  Expect(recent.empty(), "recent-commit collection on an unborn branch must be empty");
+}
+
 void TestGitResolvePrBaseReferenceFromGhMergeBase() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -910,6 +923,7 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/OutgoingBranchFiles", TestGitOutgoingBranchFiles);
   AddTest(tests, "Git/OutgoingBaseChoiceResolution", TestGitOutgoingBaseChoiceResolution);
   AddTest(tests, "Git/BranchAndRecentCommitCollection", TestGitBranchAndRecentCommitCollection);
+  AddTest(tests, "Git/RecentCommitsOnUnbornBranchIsEmpty", TestRecentCommitsOnUnbornBranchIsEmpty);
   AddTest(tests, "Git/ResolvePrBaseReferenceFromGhMergeBase",
           TestGitResolvePrBaseReferenceFromGhMergeBase);
   AddTest(tests, "Git/BulkStageAndDiscard", TestGitBulkStageAndDiscard);
