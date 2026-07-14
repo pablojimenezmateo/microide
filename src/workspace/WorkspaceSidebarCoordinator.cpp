@@ -491,8 +491,10 @@ void WorkspaceShell::RefreshGitSidebar() {
 }
 
 void WorkspaceShell::ConsumeGitSidebarRefresh() {
-  // Publish any completed background commit on the main thread first (its wake
-  // reuses this event), then rebuild the sidebar to reflect the new state.
+  // Drain any completed async compare/ref picker query first (its wake reuses
+  // this event), then publish any completed background commit, then rebuild the
+  // sidebar to reflect the new state.
+  compare_picker_mailbox_.Drain();
   commit_workflow_service_.DrainCompletions();
   MakeSidebarService().RefreshGit();
 }

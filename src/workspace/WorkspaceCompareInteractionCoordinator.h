@@ -54,6 +54,13 @@ class CompareInteractionCoordinator {
     std::function<bool()> save_active_merge_tab;
     std::function<bool(const std::filesystem::path&)> stage_merge_result_path;
     std::function<void()> refresh_git_sidebar;
+    // Dispatch the (blocking) git file-history / branch+recent-commit queries on
+    // the shell's background executor. The shell marshals the result back to the
+    // main thread and repopulates the picker via ApplyFileHistoryResult /
+    // ApplyOutgoingBaseResult. Kept as host operations so the stack-temporary
+    // coordinator never owns the background job.
+    std::function<void(const std::filesystem::path&)> request_compare_file_history;
+    std::function<void()> request_outgoing_base_refs;
   };
 
   CompareInteractionCoordinator(ProjectWorkspaceState& state, Operations operations);
@@ -62,6 +69,12 @@ class CompareInteractionCoordinator {
   bool OpenPickerForPath(const std::filesystem::path& path,
                          std::string_view commit_spec = {});
   void OpenOutgoingBasePicker();
+  // Populate the picker from an async git result marshaled back to the main
+  // thread. Clears `loading`, rebuilds items, and refreshes matches. The shell's
+  // completion handler has already verified the request is still current.
+  void ApplyFileHistoryResult(const project::GitFileHistoryResult& history);
+  void ApplyOutgoingBaseResult(const std::vector<project::GitBranchReference>& branches,
+                               const std::vector<project::GitCommitEntry>& commits);
   void RefreshPicker();
   void MovePickerSelection(int delta);
   void OpenSelectedCommit();

@@ -107,7 +107,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
       [&](TextInputSurface surface, std::string_view title, std::string_view context_label,
           const editor::SingleLineEditor& query, std::string_view summary_line,
           const std::vector<std::pair<std::string_view, std::string_view>>& rows,
-          std::size_t selected_index, const std::string& empty_label) {
+          std::size_t selected_index, std::string_view empty_label) {
         const auto draw_picker_row = [&](int row_index, int sel_index, std::string_view primary,
                                          std::string_view secondary) {
           const bool selected = row_index == sel_index;
@@ -250,7 +250,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
         TextInputSurface::CommitPicker,
         picker.title.empty() ? std::string_view("Compare against") : picker.title,
         picker.context_label, picker.query, picker.summary_line, rows, picker.selected_index,
-        FormatEmptyState("matching refs"));
+        picker.loading ? std::string_view("Loading history…") : FormatEmptyState("matching refs"));
   } else if (overlay_vm.mode == OverlayMode::LaunchConfigPicker) {
     const LaunchConfigPickerState& picker = overlay_state.workflow.launch_config_picker;
     std::vector<std::pair<std::string_view, std::string_view>> rows;

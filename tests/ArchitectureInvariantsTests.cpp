@@ -161,8 +161,11 @@ void TestArchitectureInvariants() {
              // 1672: +1 for RebaseActiveTerminalForScrollbackTrim (rebases the terminal's
              // absolute-row mirrors when scrollback is trimmed, so a scrolled-up view / held
              // selection tracks the same content instead of jumping forward by the trim batch).
+             // 1690: +18 for the async compare/ref picker: mailbox + monotonic generation +
+             // three injectable git providers, plus Request*/Apply*/ComparePickerRequestCurrent
+             // so the blocking git history/branch queries run off the render thread.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1672);
+                                                     1690);
            });
 
   bool hard_failure = false;

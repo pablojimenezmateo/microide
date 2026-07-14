@@ -78,6 +78,37 @@ void CompareInteractionCoordinator::OpenPicker() {
   OpenPickerForPath(entry.path);
 }
 
+void CompareInteractionCoordinator::ApplyFileHistoryResult(
+    const project::GitFileHistoryResult& history) {
+  auto& picker = state_.overlay.workflow.compare_picker;
+  picker.items.clear();
+  picker.items.reserve(history.commits.size());
+  for (const auto& commit : history.commits) {
+    picker.items.push_back(MakeCommitPickerItem(commit));
+  }
+  // Signal that older commits exist beyond the display cap rather than hiding the
+  // truncation silently.
+  picker.title = history.truncated ? "Compare against (latest 5000)" : "Compare against";
+  picker.loading = false;
+  RefreshPicker();
+}
+
+void CompareInteractionCoordinator::ApplyOutgoingBaseResult(
+    const std::vector<project::GitBranchReference>& branches,
+    const std::vector<project::GitCommitEntry>& commits) {
+  auto& picker = state_.overlay.workflow.compare_picker;
+  picker.items.clear();
+  picker.items.reserve(branches.size() + commits.size());
+  for (const auto& branch_ref : branches) {
+    picker.items.push_back(MakeBranchPickerItem(branch_ref));
+  }
+  for (const auto& commit : commits) {
+    picker.items.push_back(MakeCommitPickerItem(commit));
+  }
+  picker.loading = false;
+  RefreshPicker();
+}
+
 bool CompareInteractionCoordinator::OpenPickerForPath(
     const std::filesystem::path& path,
     std::string_view commit_spec) {
@@ -92,20 +123,20 @@ bool CompareInteractionCoordinator::OpenPickerForPath(
   picker.context_label = picker.path.filename().string();
   picker.query.SetText("");
   picker.items.clear();
-  const project::GitFileHistoryResult history =
-      project::CollectGitFileHistory(state_.root, picker.path);
-  for (const auto& commit : history.commits) {
-    picker.items.push_back(MakeCommitPickerItem(commit));
-  }
-  // Signal that older commits exist beyond the display cap rather than hiding the
-  // truncation silently.
-  picker.title = history.truncated ? "Compare against (latest 5000)" : "Compare against";
-  RefreshPicker();
-  if (picker.matches.empty()) {
-    return false;
-  }
+  picker.matches.clear();
+  picker.selected_index = 0;
 
   if (!commit_spec.empty()) {
+    // Synchronous path (control channel / headless): the caller needs the bool
+    // return and there is no UI to freeze. Run the git query inline.
+    picker.loading = false;
+    const project::GitFileHistoryResult history =
+        project::CollectGitFileHistory(state_.root, picker.path);
+    ApplyFileHistoryResult(history);
+    if (picker.matches.empty()) {
+      return false;
+    }
+
     const std::string lowered_commit_spec = ToLower(commit_spec);
     std::vector<std::size_t> matching_indices;
     for (std::size_t i = 0; i < picker.matches.size(); ++i) {
@@ -130,6 +161,14 @@ bool CompareInteractionCoordinator::OpenPickerForPath(
     return true;
   }
 
+  // Interactive path: open the overlay immediately in a loading state and let the
+  // shell run CollectGitFileHistory on the background executor. The result lands
+  // via ApplyFileHistoryResult on a later frame.
+  picker.loading = true;
+  RefreshPicker();
+  if (operations_.request_compare_file_history) {
+    operations_.request_compare_file_history(picker.path);
+  }
   operations_.show_compare_picker_overlay();
   return true;
 }
@@ -148,13 +187,16 @@ void CompareInteractionCoordinator::OpenOutgoingBasePicker() {
       branch.empty() ? std::string("Compare outgoing changes against…") : branch;
   picker.query.SetText("");
   picker.items.clear();
-  for (const auto& branch_ref : project::CollectGitBranches(state_.root)) {
-    picker.items.push_back(MakeBranchPickerItem(branch_ref));
-  }
-  for (const auto& commit : project::CollectGitRecentCommits(state_.root, 50)) {
-    picker.items.push_back(MakeCommitPickerItem(commit));
-  }
+  picker.matches.clear();
+  picker.selected_index = 0;
+
+  // Interactive-only: the branch + recent-commit queries run on the background
+  // executor and populate via ApplyOutgoingBaseResult.
+  picker.loading = true;
   RefreshPicker();
+  if (operations_.request_outgoing_base_refs) {
+    operations_.request_outgoing_base_refs();
+  }
   operations_.show_compare_picker_overlay();
 }
 

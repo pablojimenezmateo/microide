@@ -332,6 +332,36 @@
                                        const std::filesystem::path& path) {
     return shell.OpenComparePickerForPath(path, {});
   }
+  static void OpenOutgoingBaseRefPicker(WorkspaceShell& shell) {
+    shell.OpenOutgoingBaseRefPicker();
+  }
+  // Async compare-picker seam: inject fake git providers so a test can block the
+  // background query (assert the loading overlay) and control when results land.
+  static void SetComparePickerFileHistoryProvider(
+      WorkspaceShell& shell,
+      std::function<project::GitFileHistoryResult(const std::filesystem::path&,
+                                                  const std::filesystem::path&)>
+          provider) {
+    shell.compare_picker_file_history_provider_ = std::move(provider);
+  }
+  static void SetComparePickerBranchesProvider(
+      WorkspaceShell& shell,
+      std::function<std::vector<project::GitBranchReference>(const std::filesystem::path&)>
+          provider) {
+    shell.compare_picker_branches_provider_ = std::move(provider);
+  }
+  static void SetComparePickerRecentCommitsProvider(
+      WorkspaceShell& shell,
+      std::function<std::vector<project::GitCommitEntry>(const std::filesystem::path&, std::size_t)>
+          provider) {
+    shell.compare_picker_recent_commits_provider_ = std::move(provider);
+  }
+  static bool ComparePickerLoading(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.compare_picker.loading;
+  }
+  static std::size_t ComparePickerItemCount(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.compare_picker.items.size();
+  }
   static void StageCompareHunk(WorkspaceShell& shell) { shell.StageCompareHunk(); }
   static void StageCompareSelectedLines(WorkspaceShell& shell) {
     shell.StageCompareSelectedLines();

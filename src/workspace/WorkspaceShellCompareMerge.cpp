@@ -203,6 +203,11 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
                 return project::GitStagePath(context_.current_project_state.root, path);
               },
           .refresh_git_sidebar = [this]() { RefreshGitSidebar(); },
+          .request_compare_file_history =
+              [this](const std::filesystem::path& path) {
+                RequestComparePickerFileHistory(path);
+              },
+          .request_outgoing_base_refs = [this]() { RequestComparePickerOutgoingBase(); },
       });
 }
 
@@ -265,6 +270,84 @@ bool WorkspaceShell::OpenComparePickerForPath(const std::filesystem::path& path,
 
 void WorkspaceShell::OpenOutgoingBaseRefPicker() {
   MakeCompareMergeService().OpenOutgoingBasePicker();
+}
+
+void WorkspaceShell::RequestComparePickerFileHistory(const std::filesystem::path& path) {
+  auto& picker = context_.current_project_state.overlay.workflow.compare_picker;
+  const std::uint64_t generation = ++compare_picker_generation_;
+  picker.active_request_generation = generation;
+
+  const std::filesystem::path root = context_.current_project_state.root;
+  // Copy the provider (fall back to the real free function) so the worker never
+  // touches shell state. The captured closure produces raw commits; the mailbox
+  // marshals a completion back to the render thread (see ApplyComparePickerFileHistory).
+  auto provider = compare_picker_file_history_provider_
+                      ? compare_picker_file_history_provider_
+                      : std::function<project::GitFileHistoryResult(
+                            const std::filesystem::path&, const std::filesystem::path&)>(
+                            &project::CollectGitFileHistory);
+  project_background_executor_.PostLatest(
+      "compare-picker",
+      [this, root, path, generation, provider = std::move(provider)]() {
+        project::GitFileHistoryResult history = provider(root, path);
+        compare_picker_mailbox_.Post(
+            [this, generation, history = std::move(history)]() mutable {
+              ApplyComparePickerFileHistory(generation, history);
+            });
+      });
+}
+
+void WorkspaceShell::RequestComparePickerOutgoingBase() {
+  auto& picker = context_.current_project_state.overlay.workflow.compare_picker;
+  const std::uint64_t generation = ++compare_picker_generation_;
+  picker.active_request_generation = generation;
+
+  const std::filesystem::path root = context_.current_project_state.root;
+  auto branches_provider =
+      compare_picker_branches_provider_
+          ? compare_picker_branches_provider_
+          : std::function<std::vector<project::GitBranchReference>(const std::filesystem::path&)>(
+                &project::CollectGitBranches);
+  auto commits_provider =
+      compare_picker_recent_commits_provider_
+          ? compare_picker_recent_commits_provider_
+          : std::function<std::vector<project::GitCommitEntry>(const std::filesystem::path&,
+                                                               std::size_t)>(
+                &project::CollectGitRecentCommits);
+  project_background_executor_.PostLatest(
+      "compare-picker",
+      [this, root, generation, branches_provider = std::move(branches_provider),
+       commits_provider = std::move(commits_provider)]() {
+        std::vector<project::GitBranchReference> branches = branches_provider(root);
+        std::vector<project::GitCommitEntry> commits = commits_provider(root, 50);
+        compare_picker_mailbox_.Post([this, generation, branches = std::move(branches),
+                                      commits = std::move(commits)]() mutable {
+          ApplyComparePickerOutgoingBase(generation, branches, commits);
+        });
+      });
+}
+
+bool WorkspaceShell::ComparePickerRequestCurrent(std::uint64_t generation) const {
+  const auto& overlay = context_.current_project_state.overlay;
+  return overlay.visible && overlay.mode == OverlayMode::CommitPicker &&
+         overlay.workflow.compare_picker.active_request_generation == generation;
+}
+
+void WorkspaceShell::ApplyComparePickerFileHistory(
+    std::uint64_t generation, const project::GitFileHistoryResult& history) {
+  if (!ComparePickerRequestCurrent(generation)) {
+    return;  // Overlay closed, project switched, or a newer picker superseded this.
+  }
+  MakeCompareMergeService().ApplyFileHistoryResult(history);
+}
+
+void WorkspaceShell::ApplyComparePickerOutgoingBase(
+    std::uint64_t generation, const std::vector<project::GitBranchReference>& branches,
+    const std::vector<project::GitCommitEntry>& commits) {
+  if (!ComparePickerRequestCurrent(generation)) {
+    return;
+  }
+  MakeCompareMergeService().ApplyOutgoingBaseResult(branches, commits);
 }
 
 void WorkspaceShell::RefreshComparePicker() {

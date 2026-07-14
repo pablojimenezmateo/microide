@@ -151,6 +151,9 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   // marshaled back to the main thread and drained in ConsumeGitSidebarRefresh
   // (a successful commit refreshes the sidebar anyway).
   commit_workflow_service_.SetCompletionWakeEvent(git_sidebar_event_type_);
+  // The async compare/ref picker marshals its git result back through the same
+  // wake (drained alongside the sidebar refresh in ConsumeGitSidebarRefresh).
+  compare_picker_mailbox_.SetWakeEventType(git_sidebar_event_type_);
   InitializeCommitWorkflowService();
   patch_apply_service_.SetCallbacks(PatchApplyService::Callbacks{
       .current_repository_state = [this]() {

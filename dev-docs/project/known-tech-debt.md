@@ -561,34 +561,24 @@ behavioral contract before changing code.
 
 ##### Git, compare, merge, and review state
 
-- **Compare picker history and outgoing-base pickers run expensive git queries on the UI thread.**
-  (NEXT — highest-value remaining speed item; deferred 2026-07-14 session 3 only because it is
-  threading-sensitive and its UI interaction can't be visually verified headless, so it deserves a
-  focused session with TSAN + a real seam rather than a rushed edit.)
-  `CompareInteractionCoordinator::OpenPickerForPath` (`WorkspaceCompareInteractionCoordinator.cpp:81`)
-  calls `CollectGitFileHistory`, and `OpenOutgoingBasePicker` (`:137`) calls `CollectGitBranches` plus
-  `CollectGitRecentCommits`, synchronously while opening overlays. Large repos or slow storage freeze
-  the shell before the picker appears.
-  **Concrete sketch (reuse the git-sidebar async pattern):**
-  1. Orchestrate at the shell (`WorkspaceShellCompareMerge.cpp`), which owns
-     `project_background_executor_` — NOT in the stack-temporary coordinator, and the bg job must NOT
-     capture `&state_` (that's the `CommitWorkflowService::DispatchCommit` lifetime hazard below).
-  2. Add a `loading` flag + a `std::uint64_t generation` to `ComparePickerState`; on open, set loading,
-     show the overlay immediately, capture `root`/`path`/`purpose` by value + bump generation.
-  3. `project_background_executor_.PostLatest("compare-picker", …)` runs the `Collect*` calls, stores the
-     raw `commits`/`branches` under a mutex-guarded shell member keyed by generation, then fires the
-     existing `git_sidebar_event_type_` wake event (mirror `GitRepositoryService::PublishSnapshot` +
-     `push_refresh_ready_event`, `GitRepositoryService.cpp:229-317`).
-  4. In the same event drain that consumes the sidebar snapshot, drain the pending picker results: if
-     `generation` still current, rebuild items via a fresh `MakeCompareMergeService()` and `RefreshPicker`;
-     drop stale completions (overlay closed / project switched / newer request).
-  5. Keep the synchronous path for the `commit_spec != ""` case (control channel / headless — no UI to
-     freeze and the caller needs the bool return).
-  **Test seam:** the `Collect*` are free functions with no injection point today — add a narrow git
-  history/branch provider interface (or an injectable function on the shell for tests) so a fake can
-  block until released; assert the picker renders a loading state before git returns, populates after,
-  and drops a stale (generation-bumped) completion. This also closes the audit's "no cheap fake
-  git/executor seam" tooling gap below.
+- **[RESOLVED 2026-07-14] Compare picker history and outgoing-base pickers ran expensive git queries
+  on the UI thread.** `OpenPickerForPath` / `OpenOutgoingBasePicker` now open the overlay immediately in
+  a `loading` state and dispatch `CollectGitFileHistory` / `CollectGitBranches` + `CollectGitRecentCommits`
+  on `project_background_executor_` via `WorkspaceShell::RequestComparePicker*`
+  (`WorkspaceShellCompareMerge.cpp`). Results marshal back through a `util::MainThreadMailbox`
+  (`compare_picker_mailbox_`, wake reuses `git_sidebar_event_type_`, drained in `ConsumeGitSidebarRefresh`)
+  and repopulate via `ApplyComparePicker*` only if a process-monotonic
+  `ComparePickerState::active_request_generation` still matches and the CommitPicker overlay is still
+  visible — stale completions (overlay closed / project switched / newer open) are dropped. The bg job
+  captures `root`/`path`/`generation` by value and never `&state_`. The synchronous path is kept for the
+  `commit_spec != ""` case (control channel / headless). A three-function injectable provider seam on the
+  shell (`compare_picker_*_provider_`, default = the real free functions) lets tests block git and assert
+  the loading→populate→drop-stale sequence
+  (`TestWorkspaceShellComparePickerOpensAsyncAndDropsStaleResult`). This also closed the "no cheap fake
+  git/executor seam" tooling gap below for compare interactions. Follow-ups: the outgoing-base flow still
+  issues two serial git invocations on the worker (branches + recent commits) that could be collapsed; and
+  the single-thread `ProjectBackgroundExecutor` serializes the picker job behind an in-flight `git status`
+  refresh (bounded latency, not a freeze) — a dedicated lane is a possible future item.
 - **Merge result generation may normalize final newline / line-ending intent across conflict choices.**
   The merge model works in split lines and later rejoins text. If current, incoming, and base differ
   in trailing newline or line-ending convention, choosing one side may not preserve that side's exact
@@ -691,10 +681,14 @@ behavioral contract before changing code.
   Windows timeout handling, Windows ignore matching, and macOS FSEvents races/filter bypasses. Fix
   direction: extract pure builders/state machines from platform TUs so Linux tests can cover command
   quoting, state transitions, and ignore decisions; keep OS API calls behind tiny adapters.
-- **No cheap fake git/executor seam for UI-thread blocking regressions.** Compare picker and sidebar
-  git operations are hard to test for "overlay appears before git returns" without sleeping real git.
-  Fix direction: define a narrow git-history/branch provider interface or injectable executor for
-  compare interactions. Tests can then block the provider and assert render state remains responsive.
+- **[PARTIALLY RESOLVED 2026-07-14] No cheap fake git/executor seam for UI-thread blocking regressions.**
+  Compare interactions now have an injectable provider seam
+  (`WorkspaceShell::compare_picker_{file_history,branches,recent_commits}_provider_`, set in tests via
+  `WorkspaceShellTestAccess::SetComparePicker*Provider`), so a test can block the git query and assert
+  the overlay is visible + loading before git returns. Remaining gap: the git **sidebar** refresh path
+  (`GitRepositoryService`) still has no equivalent fake — it runs real git in tests. Fix direction: give
+  `GitRepositoryService` a comparable injectable status/branch provider so sidebar "overlay appears before
+  git returns" behavior is testable without sleeping real git.
 - **No single fuzz target covers plugin/workspace edit range normalization.** Persistence, regex, and
   blame have fuzz-oriented guidance, but LSP/plugin edit appliers accept untrusted-ish ranges and text
   from language servers and plugins. Fix direction: add a fuzz target that generates edit lists,

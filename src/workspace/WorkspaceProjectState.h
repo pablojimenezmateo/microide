@@ -182,6 +182,15 @@ struct ComparePickerState {
   std::vector<GitPickerItem> items;
   std::vector<GitPickerItem> matches;
   std::size_t selected_index = 0;
+  // True while the git history/branch query for this picker runs on the
+  // background executor. The overlay opens immediately in this loading state and
+  // the item list stays empty until the async result lands.
+  bool loading = false;
+  // Process-monotonic id of the in-flight async request, stamped by the shell on
+  // open and compared on completion so stale results (overlay closed, project
+  // switched, a newer picker opened) are dropped instead of populating the wrong
+  // list. Main-thread-only.
+  std::uint64_t active_request_generation = 0;
 };
 
 // One selectable row in the launch-config picker (Phase 9). `config_index` points

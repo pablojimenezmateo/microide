@@ -5,6 +5,7 @@
 #include "render/Theme.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -65,6 +66,22 @@ bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
 bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
   return std::any_of(rects.begin(), rects.end(),
                      [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
+}
+
+// The compare/ref picker now runs its git query on the background executor and
+// populates on a later frame via the git-sidebar wake event. Drive the mailbox
+// drain until the picker leaves its loading state (or a 2s deadline elapses).
+bool SettleComparePicker(WorkspaceShell& shell) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    if (!WorkspaceShellTestAccess::ComparePickerLoading(shell)) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  return !WorkspaceShellTestAccess::ComparePickerLoading(shell);
 }
 
 float MaxRectHeight(const std::vector<SDL_FRect>& rects) {
@@ -1219,6 +1236,10 @@ void TestWorkspaceShellCommitPickerDismissesAfterOpeningCompare() {
              WorkspaceShell::OverlayMode::CommitPicker,
          "the open overlay should be the commit picker");
 
+  // The overlay opens immediately in a loading state; wait for the async git
+  // history query to populate the picker before selecting a commit.
+  Expect(SettleComparePicker(shell), "the async commit picker query should settle");
+
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "pressing Enter in the commit picker should be handled");
 
@@ -1226,6 +1247,82 @@ void TestWorkspaceShellCommitPickerDismissesAfterOpeningCompare() {
          "selecting a commit should dismiss the picker instead of leaving it over the comparison");
   Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell),
          "selecting a commit should open and focus the comparison tab");
+}
+
+microide::project::GitCommitEntry MakeFakeCommit(int index) {
+  microide::project::GitCommitEntry commit;
+  const std::string suffix = std::to_string(index);
+  commit.hash = "deadbeef" + suffix;
+  commit.short_hash = "dead" + suffix;
+  commit.subject = "fake commit " + suffix;
+  commit.author = "tester";
+  commit.relative_date = "just now";
+  return commit;
+}
+
+void TestWorkspaceShellComparePickerOpensAsyncAndDropsStaleResult() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source_a = root / "src" / "a.cpp";
+  const std::filesystem::path source_b = root / "src" / "b.cpp";
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  // Injected provider: blocks on `release` until the test lets it return, and
+  // returns `call_count` commits so each completion is distinguishable by size.
+  std::atomic<bool> release{false};
+  std::atomic<int> call_count{0};
+  WorkspaceShellTestAccess::SetComparePickerFileHistoryProvider(
+      shell,
+      [&release, &call_count](const std::filesystem::path&, const std::filesystem::path&) {
+        const int this_call = ++call_count;
+        while (!release.load(std::memory_order_acquire)) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        microide::project::GitFileHistoryResult result;
+        for (int i = 0; i < this_call; ++i) {
+          result.commits.push_back(MakeFakeCommit(i));
+        }
+        return result;
+      });
+
+  // First open: the overlay must appear immediately in a loading state, BEFORE
+  // the (blocked) git query returns. This is the core win of the async change.
+  Expect(WorkspaceShellTestAccess::OpenComparePickerForPath(shell, source_a),
+         "opening the async commit picker should succeed immediately");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell) &&
+             WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
+                 WorkspaceShell::OverlayMode::CommitPicker,
+         "the commit picker overlay should be visible while the query is in flight");
+  Expect(WorkspaceShellTestAccess::ComparePickerLoading(shell),
+         "the picker should report loading before git returns");
+  Expect(WorkspaceShellTestAccess::ComparePickerItemCount(shell) == 0,
+         "the picker item list should be empty while loading");
+
+  // Wait until the worker has actually entered the (blocked) first provider call
+  // so the second open queues behind an in-flight job.
+  const auto call_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (call_count.load() < 1 && std::chrono::steady_clock::now() < call_deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  Expect(call_count.load() >= 1, "the first async history query should have started");
+
+  // Second open supersedes the first (bumps the request generation). When both
+  // complete, the stale first completion must be dropped and only the second
+  // (two commits) applied.
+  Expect(WorkspaceShellTestAccess::OpenComparePickerForPath(shell, source_b),
+         "opening a second async commit picker should succeed");
+  Expect(WorkspaceShellTestAccess::ComparePickerLoading(shell),
+         "the superseding picker should also start in a loading state");
+
+  release.store(true, std::memory_order_release);
+  Expect(SettleComparePicker(shell), "both async queries should settle");
+  Expect(!WorkspaceShellTestAccess::ComparePickerLoading(shell),
+         "the picker should leave the loading state once the current query lands");
+  Expect(WorkspaceShellTestAccess::ComparePickerItemCount(shell) == 2,
+         "only the superseding (second) result should populate the picker, not the stale first");
 }
 
 void TestWorkspaceShellCompareRecomputeGate() {
@@ -1451,6 +1548,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/CompareRecomputeGate", TestWorkspaceShellCompareRecomputeGate);
   AddTest(tests, "WorkspaceShell/CommitPickerDismissesAfterOpeningCompare",
           TestWorkspaceShellCommitPickerDismissesAfterOpeningCompare);
+  AddTest(tests, "WorkspaceShell/ComparePickerOpensAsyncAndDropsStaleResult",
+          TestWorkspaceShellComparePickerOpensAsyncAndDropsStaleResult);
 }
 
 }  // namespace microide::tests

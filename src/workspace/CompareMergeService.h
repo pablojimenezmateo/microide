@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "compare/MergeModel.h"
 #include "workspace/WorkspaceCompareInteractionCoordinator.h"
@@ -39,6 +40,9 @@ class CompareMergeService {
   void OpenPicker();
   bool OpenPickerForPath(const std::filesystem::path& path, std::string_view commit_spec = {});
   void OpenOutgoingBasePicker();
+  void ApplyFileHistoryResult(const project::GitFileHistoryResult& history);
+  void ApplyOutgoingBaseResult(const std::vector<project::GitBranchReference>& branches,
+                               const std::vector<project::GitCommitEntry>& commits);
   void RefreshPicker();
   void MovePickerSelection(int delta);
   void OpenSelectedCommit();

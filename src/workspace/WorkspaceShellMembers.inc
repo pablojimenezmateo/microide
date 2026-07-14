@@ -856,6 +856,20 @@
   bool OpenComparePickerForPath(const std::filesystem::path& path,
                                 std::string_view commit_spec = {});
   void OpenOutgoingBaseRefPicker();
+  // Async picker orchestration (host-owned; the stack-temporary coordinator asks
+  // for these via its Operations). Request* dispatch the git query on the
+  // background executor keyed by a fresh generation; Apply* run on the main thread
+  // and drop stale/closed completions before repopulating the picker.
+  void RequestComparePickerFileHistory(const std::filesystem::path& path);
+  void RequestComparePickerOutgoingBase();
+  void ApplyComparePickerFileHistory(std::uint64_t generation,
+                                     const project::GitFileHistoryResult& history);
+  void ApplyComparePickerOutgoingBase(std::uint64_t generation,
+                                      const std::vector<project::GitBranchReference>& branches,
+                                      const std::vector<project::GitCommitEntry>& commits);
+  // True only if the async request `generation` still owns the visible commit
+  // picker (not closed, not superseded by a newer open or a project switch).
+  bool ComparePickerRequestCurrent(std::uint64_t generation) const;
   SidebarMode SidebarModeForViewId(std::string_view view_id) const;
   SidebarMode ActiveSidebarMode() const;
   std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path,
@@ -1922,6 +1936,23 @@
   GitRepositoryService git_repository_service_{project_background_executor_};
   PatchApplyService patch_apply_service_{project_background_executor_, git_repository_service_};
   CommitWorkflowService commit_workflow_service_{project_background_executor_, git_repository_service_};
+  // Async compare/ref picker: the blocking git history/branch queries run on the
+  // background executor and marshal results back through this mailbox (wake reuses
+  // git_sidebar_event_type_, drained in ConsumeGitSidebarRefresh). The generation
+  // is process-monotonic; each open stamps it into the picker state so a stale
+  // completion (overlay closed, project switched, newer open) is dropped instead
+  // of populating the wrong list. Main-thread-only. Providers default to the real
+  // free functions; tests inject fakes to exercise the loading/stale paths.
+  util::MainThreadMailbox compare_picker_mailbox_;
+  std::uint64_t compare_picker_generation_ = 0;
+  std::function<project::GitFileHistoryResult(const std::filesystem::path& root,
+                                              const std::filesystem::path& path)>
+      compare_picker_file_history_provider_;
+  std::function<std::vector<project::GitBranchReference>(const std::filesystem::path& root)>
+      compare_picker_branches_provider_;
+  std::function<std::vector<project::GitCommitEntry>(const std::filesystem::path& root,
+                                                    std::size_t limit)>
+      compare_picker_recent_commits_provider_;
   // Host-owned cache of plugin-published raster surfaces (Phase E). Declared after
   // the executor so it tears down first, while the executor is still alive.
   render::SurfaceTextureCache surface_texture_cache_{project_background_executor_};

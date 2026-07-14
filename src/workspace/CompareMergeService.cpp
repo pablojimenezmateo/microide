@@ -60,6 +60,16 @@ void CompareMergeService::OpenOutgoingBasePicker() {
   interactions_.OpenOutgoingBasePicker();
 }
 
+void CompareMergeService::ApplyFileHistoryResult(const project::GitFileHistoryResult& history) {
+  interactions_.ApplyFileHistoryResult(history);
+}
+
+void CompareMergeService::ApplyOutgoingBaseResult(
+    const std::vector<project::GitBranchReference>& branches,
+    const std::vector<project::GitCommitEntry>& commits) {
+  interactions_.ApplyOutgoingBaseResult(branches, commits);
+}
+
 void CompareMergeService::RefreshPicker() {
   interactions_.RefreshPicker();
 }

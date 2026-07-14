@@ -56,6 +56,21 @@ bool WaitForGitSidebarEntryCount(WorkspaceShell& shell, std::size_t expected_cou
   return WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == expected_count;
 }
 
+// The outgoing-base ref picker now runs its branch/commit git queries on the
+// background executor; drive the mailbox drain until it leaves the loading state.
+bool SettleComparePicker(WorkspaceShell& shell) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    if (!WorkspaceShellTestAccess::ComparePickerLoading(shell)) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  return !WorkspaceShellTestAccess::ComparePickerLoading(shell);
+}
+
 void TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -419,6 +434,8 @@ void TestWorkspaceShellGitOutgoingBaseButtonOpensMenuAndPrompt() {
       WorkspaceShellTestAccess::CurrentProjectState(shell).overlay.workflow.compare_picker;
   Expect(picker.purpose == microide::workspace::ComparePickerPurpose::OutgoingBaseRef,
          "outgoing base picker should run in the outgoing-base purpose");
+  // The branch/commit list is populated asynchronously; wait for the query to land.
+  Expect(SettleComparePicker(shell), "the async outgoing-base query should settle");
   Expect(!picker.items.empty(),
          "outgoing base picker should list at least the current branch / recent commit");
 }
