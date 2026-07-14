@@ -180,6 +180,7 @@ class DebugValueTree {
     std::string value;
     std::string type;
     std::uint32_t parent_id = 0;       // owning node id (0 = root); used to build the path key
+    std::uint32_t sibling_ordinal = 0;  // this node's index among its siblings (roots_ or parent->children); part of the stable path key
     int variables_reference = 0;       // this node's own container ref (children)
     int container_reference = 0;       // the ref of the container holding this node (for setVariable)
     bool is_scope = false;

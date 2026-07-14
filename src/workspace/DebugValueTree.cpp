@@ -136,26 +136,17 @@ std::string DebugValueTree::PathKey(const Node& node) const {
   // two siblings that share a name — common in array pages and maps with
   // repeated labels — get distinct keys and expand/collapse independently.
   struct Segment {
-    std::size_t ordinal;
+    std::uint32_t ordinal;
     std::string_view name;
   };
   std::vector<Segment> parts;
   const Node* cur = &node;
   while (cur != nullptr) {
-    const Node* parent = cur->parent_id == 0 ? nullptr : FindNode(cur->parent_id);
-    // Position among siblings: index in the parent's children vector, or among
-    // the roots for a top-level node. Falls back to 0 if not found (unreachable
-    // in practice, but keeps the key well-defined).
-    std::size_t ordinal = 0;
-    const std::vector<std::uint32_t>& siblings = parent != nullptr ? parent->children : roots_;
-    for (std::size_t i = 0; i < siblings.size(); ++i) {
-      if (siblings[i] == cur->id) {
-        ordinal = i;
-        break;
-      }
-    }
-    parts.push_back(Segment{ordinal, cur->name});
-    cur = parent;
+    // The sibling position is cached on the node at insertion (index in roots_ or
+    // the parent's children vector), so this walk stays O(depth) rather than
+    // rescanning the whole sibling vector per level.
+    parts.push_back(Segment{cur->sibling_ordinal, cur->name});
+    cur = cur->parent_id == 0 ? nullptr : FindNode(cur->parent_id);
   }
   std::string key;
   for (auto it = parts.rbegin(); it != parts.rend(); ++it) {
@@ -247,6 +238,9 @@ std::uint32_t DebugValueTree::AddRoot(std::string name, std::string value, std::
   node.is_scope = is_scope;
   node.total_count = total_count;
   node.total_known = total_known;
+  // Ordinal = index this node will occupy in roots_ (stable across rebuilds since
+  // roots are appended in adapter order), so PathKey reads it in O(1).
+  node.sibling_ordinal = static_cast<std::uint32_t>(roots_.size());
   const std::uint32_t id = AddNode(std::move(node));
   roots_.push_back(id);
   return id;
@@ -368,6 +362,10 @@ std::vector<DebugValueTree::ChildFetch> DebugValueTree::ApplyVariables(
     node.total_count = static_cast<int>(
         std::min<long long>(child_total, std::numeric_limits<int>::max()));
     node.total_known = variable.count_reported;
+    // Ordinal = index this child will occupy in parent->children (children are
+    // appended in page order and refilled wholesale on reload), so PathKey reads
+    // it in O(1) instead of rescanning the sibling vector per node.
+    node.sibling_ordinal = static_cast<std::uint32_t>(parent->children.size());
     const std::uint32_t child_id = AddNode(std::move(node));
     new_child_ids.push_back(child_id);
     // `parent` stays valid across AddNode: unordered_map rehash on insert
@@ -513,14 +511,6 @@ void DebugValueTree::Rebuild() {
 }
 
 void DebugValueTree::FlattenInto(std::uint32_t node_id, int depth) {
-  // Bound recursion depth: a hostile adapter can nest containers thousands deep,
-  // and (with auto-expanded scopes) FlattenInto would recurse per level and can
-  // overflow the stack. Nothing beyond this depth is usefully visible; stop
-  // emitting rows there. Real debuggees never approach this.
-  constexpr int kMaxFlattenDepth = 256;
-  if (depth > kMaxFlattenDepth) {
-    return;
-  }
   const Node* node = FindNode(node_id);
   if (node == nullptr) {
     return;
@@ -563,8 +553,17 @@ void DebugValueTree::FlattenInto(std::uint32_t node_id, int depth) {
     rows_.push_back(std::move(error_row));
     return;
   }
-  for (const std::uint32_t child : node->children) {
-    FlattenInto(child, depth + 1);
+  // Bound recursion depth: a hostile adapter can nest containers thousands deep,
+  // and (with auto-expanded scopes) FlattenInto would recurse per level and could
+  // overflow the C++ stack. Nothing beyond this depth is usefully visible, so stop
+  // descending there — real debuggees never approach it. The guard sits at the
+  // recursion site (not the function entry) so the common leaf call, which has no
+  // children and never enters this loop, pays nothing for it.
+  constexpr int kMaxFlattenDepth = 256;
+  if (depth < kMaxFlattenDepth) {
+    for (const std::uint32_t child : node->children) {
+      FlattenInto(child, depth + 1);
+    }
   }
   // More children remain beyond the loaded page: a loading row while the next page
   // is in flight, otherwise a clickable "show more…" affordance.

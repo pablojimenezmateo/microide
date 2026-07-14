@@ -2645,6 +2645,64 @@ void TestDebugValueTreeDeepNestingRestoreAcrossStops() {
          "nested expansion cascades to the renumbered struct ref by path tracking");
 }
 
+// Regression: two siblings that share a display name (array pages, maps with
+// repeated labels) must expand/collapse independently and restore independently
+// across a stop. The path key qualifies each segment with the sibling ordinal so
+// the two never collide; this also guards the O(1) cached-ordinal path (a wrong
+// cached ordinal would swap or merge the two siblings' expansion state).
+void TestDebugValueTreeSameNamedSiblingsExpandIndependently() {
+  DebugValueTree tree;
+  tree.AddRoot("Locals", /*value=*/{}, /*type=*/{}, /*variables_reference=*/1000,
+               /*is_scope=*/true, /*total_count=*/2, /*total_known=*/true);
+  tree.Rebuild();
+  Expect(tree.ToggleRow(0).reference == 1000, "expanding Locals fetches its scope ref");
+
+  // Two children that share the name "item", each an expandable container.
+  codec::DapVariable a;
+  a.name = "item";
+  a.value = "A";
+  a.variables_reference = 1001;
+  a.named_variables = 1;
+  a.count_reported = true;
+  codec::DapVariable b;
+  b.name = "item";
+  b.value = "B";
+  b.variables_reference = 1002;
+  b.named_variables = 1;
+  b.count_reported = true;
+  tree.ApplyVariables(1000, {a, b}, 0);
+  Expect(tree.Rows().size() == 3, "two same-named siblings both flatten under Locals");
+  Expect(tree.Rows()[1].display_name == "item" && tree.Rows()[2].display_name == "item",
+         "both siblings share the display name");
+
+  // Expand ONLY the first "item". A colliding key would also expand the second.
+  Expect(tree.ToggleRow(1).reference == 1001, "expanding the first item fetches its own ref");
+  codec::DapVariable leaf;
+  leaf.name = "leaf";
+  leaf.value = "1";
+  tree.ApplyVariables(1001, {leaf}, 0);
+  Expect(tree.Rows().size() == 4, "only the first sibling's child is revealed");
+  Expect(tree.Rows()[1].expanded && !tree.Rows()[3].expanded,
+         "expanding one same-named sibling must not expand the other");
+  Expect(tree.Rows()[2].display_name == "leaf" && tree.Rows()[2].depth == 2,
+         "the first sibling's child interleaves before the second sibling");
+
+  // Across a stop (refs renumbered), only the FIRST sibling re-expands — the
+  // ordinal in the path key keeps the two apart.
+  tree.ClearRoots();
+  tree.AddRoot("Locals", {}, {}, /*variables_reference=*/2000, /*is_scope=*/true,
+               /*total_count=*/2, /*total_known=*/true);
+  tree.RestoreExpandedRoots();
+  tree.Rebuild();
+  codec::DapVariable a2 = a;
+  a2.variables_reference = 2001;
+  codec::DapVariable b2 = b;
+  b2.variables_reference = 2002;
+  const std::vector<DebugValueTree::ChildFetch> cascade = tree.ApplyVariables(2000, {a2, b2}, 0);
+  Expect(cascade.size() == 1 && cascade[0].reference == 2001,
+         "only the first same-named sibling re-expands by its ordinal-qualified path");
+}
+
 // Phase C / Finding 1: an adapter that reaches Running and then exits WITHOUT a
 // DAP terminated/exited event must be reconciled to a terminal state and pruned,
 // not left as a zombie session forever.
@@ -3136,6 +3194,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/ValueTreePagingBoundaries", TestDebugValueTreePagingBoundaries);
   AddTest(tests, "DebugService/ValueTreeDeepNestingRestoreAcrossStops",
           TestDebugValueTreeDeepNestingRestoreAcrossStops);
+  AddTest(tests, "DebugService/ValueTreeSameNamedSiblingsExpandIndependently",
+          TestDebugValueTreeSameNamedSiblingsExpandIndependently);
   AddTest(tests, "DebugService/SessionReconciledWhenAdapterDiesSilently",
           TestDebugSessionReconciledWhenAdapterDiesSilently);
   AddTest(tests, "DebugService/SessionDrivesLaunchLifecycleWithConfigurationDone",
