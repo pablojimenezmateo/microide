@@ -40,6 +40,13 @@ class GitRepository {
   CommandResult Execute(const std::vector<std::string>& arguments,
                         bool silence_stderr = true,
                         int timeout_ms = internal::kGitReadTimeoutMs) const;
+  // Runs git with `stdin_text` fed to the child's stdin. Used for commands that
+  // take content on stdin (e.g. `commit -F -`), avoiding argv exposure and argv
+  // length limits for large payloads.
+  CommandResult ExecuteWithStdin(const std::vector<std::string>& arguments,
+                                 std::string stdin_text,
+                                 bool silence_stderr = true,
+                                 int timeout_ms = internal::kGitReadTimeoutMs) const;
   bool ExecuteSucceeds(std::initializer_list<std::string_view> arguments,
                        bool silence_stderr = true) const;
   bool ExecuteSucceeds(const std::vector<std::string>& arguments,

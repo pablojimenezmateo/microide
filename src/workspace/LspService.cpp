@@ -352,17 +352,36 @@ std::string LspService::ActiveLspStatusTooltip(bool ensure_started) {
 }
 
 void LspService::ActiveLspStatusStrings(bool ensure_started, std::string& text,
-                                        std::string& tooltip) {
+                                        std::string& tooltip, LspStatusSeverity* severity) {
+  const auto set_severity = [severity](LspStatusSeverity value) {
+    if (severity != nullptr) *severity = value;
+  };
   if (operations_.get_setting_value && !LspMasterEnabled(operations_.get_setting_value)) {
     text = "LSP: Off";
     tooltip = "Language Server Protocol disabled in settings";
+    set_severity(LspStatusSeverity::Idle);
     return;
   }
   const LspClient::ReadinessSnapshot snapshot = ActiveLspReadinessSnapshot(ensure_started);
   if (CurrentProjectState().lsp.request_in_flight_count > 0) {
     text = "LSP: working...";
     tooltip = "Language server request in progress";
+    set_severity(LspStatusSeverity::Busy);
     return;
+  }
+  using State = LspClient::ReadinessSnapshot::State;
+  switch (snapshot.state) {
+    case State::Failed:
+      set_severity(LspStatusSeverity::Error);
+      break;
+    case State::Starting:
+    case State::Indexing:
+      set_severity(LspStatusSeverity::Busy);
+      break;
+    case State::Idle:
+    case State::Ready:
+      set_severity(LspStatusSeverity::Idle);
+      break;
   }
   const std::string readiness = LspReadinessMessage(snapshot);
   text = "LSP: " + readiness;

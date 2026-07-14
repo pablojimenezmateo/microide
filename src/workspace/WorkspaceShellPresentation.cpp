@@ -186,8 +186,9 @@ void WorkspaceShell::RefreshStatusBar() {
                 return GitRepositoryService::IsGitRepoValid(project_root);
               },
           .active_lsp_status_strings =
-              [this](bool ensure_started, std::string& text, std::string& tooltip) {
-                ActiveLspStatusStrings(ensure_started, text, tooltip);
+              [this](bool ensure_started, std::string& text, std::string& tooltip,
+                     StatusBarSegmentTone& tone) {
+                ActiveLspStatusStrings(ensure_started, text, tooltip, tone);
               },
           .startup_mode_text = startup_mode_text,
           .startup_mode_tooltip = startup_mode_tooltip,

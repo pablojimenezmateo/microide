@@ -9,6 +9,7 @@
 #include "util/GitConflictMarkers.h"
 #include "project/GitCommitExecutor.h"
 #include "project/GitPorcelainV2Parser.h"
+#include "project/GitRepository.h"
 #include "project/GitRepositoryState.h"
 #include "project/ProjectBackgroundExecutor.h"
 #include "workspace/CommitWorkflowService.h"
@@ -294,6 +295,35 @@ void TestExecuteCommitInTempRepo() {
   Expect(result.category == CommitOperationResultCategory::Success, "commit should succeed");
 }
 
+// Regression: the commit message is fed on stdin via `commit -F -`, not `-m`, so
+// a body with shell-significant bytes and one far larger than argv limits is
+// recorded verbatim rather than mangled or rejected.
+void TestExecuteCommitPreservesShellSignificantAndLargeBody() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path& root = temp_dir.path();
+  InitializeGitRepo(root);
+  WriteFile(root / "file.txt", "hello\n");
+  RequireGitCommandSuccess(root, {"add", "file.txt"}, "stage file for large-body commit test");
+
+  const std::string subject = "Fix $HOME `backtick` \"quotes\" and 'apostrophes'";
+  const std::string long_tail(300000, 'x');
+  const std::string body = "Body with $(dangerous) substitution and a long tail:\n" + long_tail;
+  const auto result =
+      project::ExecuteGitCommit(root, subject, body, CommitOperationKind::Create);
+  Expect(result.category == CommitOperationResultCategory::Success,
+         "a huge shell-significant body must commit via -F - stdin");
+
+  // %B is the raw commit message (subject + blank line + body). It must contain
+  // the subject and the long tail verbatim.
+  microide::project::GitRepository repo(root);
+  const auto logged = repo.Execute({"log", "-1", "--format=%B"});
+  Expect(logged.success(), "git log should read back the message");
+  Expect(logged.output.find(subject) != std::string::npos,
+         "the subject must be recorded verbatim");
+  Expect(logged.output.find(long_tail) != std::string::npos,
+         "the long body must be recorded verbatim (argv limits bypassed)");
+}
+
 // Regression: the background commit result must be published to the shared
 // CommitWorkflowState on the MAIN thread, never mutated on the worker thread
 // (which would race the render thread reading subject/body/status_message).
@@ -432,6 +462,8 @@ void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CommitWorkflow/PrecomputedSummaryMatchesRecompute",
           TestRunCommitPreChecksPrecomputedSummaryMatchesRecompute);
   AddTest(tests, "CommitWorkflow/ExecuteCommitInTempRepo", TestExecuteCommitInTempRepo);
+  AddTest(tests, "CommitWorkflow/ExecuteCommitPreservesShellSignificantAndLargeBody",
+          TestExecuteCommitPreservesShellSignificantAndLargeBody);
 }
 
 }  // namespace microide::tests

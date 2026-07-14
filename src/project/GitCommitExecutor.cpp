@@ -73,17 +73,24 @@ CommitOperationResult ExecuteGitCommit(const std::filesystem::path& repository_r
   if (operation == CommitOperationKind::NoVerify) {
     arguments.emplace_back("--no-verify");
   }
-  arguments.emplace_back("-m");
-  arguments.emplace_back(std::string(subject));
+  // Feed the message on stdin via `-F -` instead of `-m`: this keeps the body
+  // (which can be arbitrarily long and contain arbitrary bytes) off the argv,
+  // avoiding argv-length limits and process-listing exposure. `-F` uses the
+  // `whitespace` cleanup mode by default, matching the prior `-m` semantics.
+  arguments.emplace_back("-F");
+  arguments.emplace_back("-");
+  std::string message(subject);
   if (!body.empty()) {
-    arguments.emplace_back("-m");
-    arguments.emplace_back(std::string(body));
+    // `-m subject -m body` joins the two paragraphs with a blank line; mirror
+    // that layout on stdin so single-vs-multi-paragraph commits are unchanged.
+    message.append("\n\n");
+    message.append(body);
   }
 
   // A commit can legitimately run a slow pre-commit hook, so use the generous
   // write timeout rather than the short read cap.
   const GitRepository::CommandResult command =
-      repo.Execute(arguments, false, internal::kGitWriteTimeoutMs);
+      repo.ExecuteWithStdin(arguments, std::move(message), false, internal::kGitWriteTimeoutMs);
   result.hook_output = command.output;
   util::TrimTrailingLineEndings(&result.hook_output);
   if (command.timed_out) {

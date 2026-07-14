@@ -78,9 +78,17 @@ class LspService {
   LspManager& EnsureProjectLspManager(ProjectWorkspaceState& state);
   void ConsumeLspCallbacks();
 
+  // Semantic tone of the active server's status, derived from typed readiness
+  // state rather than substring-matching the label. `Idle` = calm/ready/off,
+  // `Busy` = starting/indexing/request-in-flight, `Error` = failed to start.
+  enum class LspStatusSeverity : std::uint8_t { Idle, Busy, Error };
+
   // Status-bar readiness for the active server.
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
-  void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip);
+  // When `severity` is non-null it receives the typed tone for the produced
+  // status text, so callers never re-derive tone from the label text.
+  void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip,
+                              LspStatusSeverity* severity = nullptr);
   std::string ActiveLspStatusText(bool ensure_started = true);
   std::string ActiveLspStatusTooltip(bool ensure_started = true);
 

@@ -65,6 +65,22 @@ GitRepository::CommandResult GitRepository::Execute(
   };
 }
 
+GitRepository::CommandResult GitRepository::ExecuteWithStdin(
+    const std::vector<std::string>& arguments,
+    std::string stdin_text,
+    bool silence_stderr,
+    int timeout_ms) const {
+  const auto result = gitutil::ReadGitCommandOutputWithStdin(
+      root_, std::vector<std::string>(arguments), std::move(stdin_text), silence_stderr,
+      timeout_ms);
+  return CommandResult{
+      .exit_code = result.exit_code,
+      .output = result.output,
+      .timed_out = result.timed_out,
+      .truncated = result.truncated,
+  };
+}
+
 bool GitRepository::ExecuteSucceeds(std::initializer_list<std::string_view> arguments,
                                     bool silence_stderr) const {
   return Execute(arguments, silence_stderr).success();

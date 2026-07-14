@@ -68,8 +68,20 @@ LspClient::ReadinessSnapshot WorkspaceShell::ActiveLspReadinessSnapshot(bool ens
 }
 
 void WorkspaceShell::ActiveLspStatusStrings(bool ensure_started, std::string& text,
-                                            std::string& tooltip) {
-  lsp_service_.ActiveLspStatusStrings(ensure_started, text, tooltip);
+                                            std::string& tooltip, StatusBarSegmentTone& tone) {
+  LspService::LspStatusSeverity severity = LspService::LspStatusSeverity::Idle;
+  lsp_service_.ActiveLspStatusStrings(ensure_started, text, tooltip, &severity);
+  switch (severity) {
+    case LspService::LspStatusSeverity::Idle:
+      tone = StatusBarSegmentTone::Default;
+      break;
+    case LspService::LspStatusSeverity::Busy:
+      tone = StatusBarSegmentTone::Info;
+      break;
+    case LspService::LspStatusSeverity::Error:
+      tone = StatusBarSegmentTone::Error;
+      break;
+  }
 }
 
 void WorkspaceShell::BeginTrackedLspRequest() { lsp_service_.BeginTrackedLspRequest(); }

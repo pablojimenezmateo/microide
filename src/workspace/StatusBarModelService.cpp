@@ -208,14 +208,13 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
   if (active_viewport != nullptr) {
     std::string lsp_text;
     std::string lsp_tooltip;
-    operations.active_lsp_status_strings(false, lsp_text, lsp_tooltip);
+    StatusBarSegmentTone lsp_tone = StatusBarSegmentTone::Default;
+    operations.active_lsp_status_strings(false, lsp_text, lsp_tooltip, lsp_tone);
     if (!lsp_text.empty()) {
-      // "Ready" is the calm/idle sentinel; any other state (indexing,
-      // restarting, errored) is surfaced with an info tone. Derive it here so
-      // the render path colors from semantic state instead of re-scanning the
-      // label text.
-      lsp.tone = lsp_text.find("Ready") != std::string::npos ? StatusBarSegmentTone::Default
-                                                             : StatusBarSegmentTone::Info;
+      // The tone comes from typed LSP readiness state (idle/busy/failed), so a
+      // server named "Ready…" or a "Not Ready" message no longer mis-colors the
+      // segment, and a failed server is flagged Error rather than mere Info.
+      lsp.tone = lsp_tone;
       lsp.text = std::move(lsp_text);
       lsp.tooltip = std::move(lsp_tooltip);
       lsp.visible = true;

@@ -1,6 +1,8 @@
 #include "TestSupport.h"
 
+#include "editor/TextViewport.h"
 #include "workspace/RenderViewModelBuilder.h"
+#include "workspace/StatusBarModelService.h"
 #include "workspace/StatusBarService.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLayout.h"
@@ -146,9 +148,38 @@ void TestStatusBarPropagatesSemanticTone() {
          "builder must propagate the semantic tone so the render path never re-parses text");
 }
 
+void TestStatusBarLspToneFromTypedSeverityNotLabelText() {
+  // Regression: the Lsp segment tone must come from the operation's typed
+  // severity, never from substring-scanning the label. A server whose label
+  // literally contains "Ready" but is in a failed state must render Error.
+  WorkspaceContext context;
+  StatusBarService service;
+  editor::TextViewport viewport;  // non-null active viewport gates the Lsp segment
+
+  microide::workspace::StatusBarModelService model;
+  microide::workspace::StatusBarModelService::Operations ops;
+  ops.is_git_repo_valid = [](const std::filesystem::path&) { return false; };
+  ops.active_lsp_status_strings = [](bool, std::string& text, std::string& tooltip,
+                                     StatusBarSegmentTone& tone) {
+    text = "LSP: clangd Not Ready";  // contains "Ready" as a substring
+    tooltip = "language server failed to start";
+    tone = StatusBarSegmentTone::Error;
+  };
+
+  model.Refresh(service, ops, context.current_project_state, &viewport);
+
+  const auto& lsp = service.Segment(StatusBarSegmentId::Lsp);
+  Expect(lsp.visible, "the Lsp segment should be visible with a non-empty status");
+  Expect(lsp.text == "LSP: clangd Not Ready", "the label text should pass through verbatim");
+  Expect(lsp.tone == StatusBarSegmentTone::Error,
+         "tone must follow the typed severity (Error), not a 'Ready' substring match");
+}
+
 }  // namespace
 
 void RegisterWorkspaceStatusBarTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceStatusBar/LspToneFromTypedSeverityNotLabelText",
+          TestStatusBarLspToneFromTypedSeverityNotLabelText);
   AddTest(tests, "WorkspaceStatusBar/BuildsVisibleSegments",
           TestStatusBarBuildsVisibleSegments);
   AddTest(tests, "WorkspaceStatusBar/NoOpsWhenNotReserved",
