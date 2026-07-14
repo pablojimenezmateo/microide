@@ -43,6 +43,86 @@ Closed this pass; the corresponding open/backlog entries below were removed.
   — which renders as checked via `SettingFlagEnabled` — computed `on == false` and no-oped
   the first toggle. Now routes through `SettingFlagEnabled`, matching the render predicate.
 
+#### Curated open-items pass (2026-07-14, session 2)
+
+A follow-on pass working the curated **"Still open (deferred)"** + **"multi-pass
+residue"** clusters. Each item shipped regression coverage. The matching deferred/
+residue entries were removed below.
+
+- **Editor wheel scrolls the pane under the pointer, not just the focused viewport**
+  (`WorkspaceEditorMouseCoordinator::HandleWheel` resolves the split under the cursor via
+  a new `viewport_for_pane` op → `WorkspaceShell::ViewportForPane`; falls back to the active
+  viewport only in divider gaps; focus unchanged). Regression:
+  `WorkspaceShell/WheelScrollsPaneUnderPointer`.
+- **Toggle Block Comment is a real toggle** — `ShapingActions::ToggleBlockComment` strips an
+  existing surrounding block comment (whitespace-aware) instead of nesting `/* /* x */ */`.
+  Plus: both `ToggleLineComment`/`ToggleBlockComment` were hardcoded to C-style markers
+  regardless of language; they now read the buffer's resolved `LanguageContractView`
+  (`line_comment`/`block_comment_*`, e.g. `--[[ ]]` for Lua) with a C-style fallback.
+  Regressions: `EditorEssentials/Shaping/ToggleBlockComment{RoundTrips,SelectionStripsWithWhitespace}`.
+- **Status-bar LSP tone comes from typed readiness state, not a `find("Ready")` substring.**
+  `LspService::LspStatusSeverity` (Idle/Busy/Error) threads through `ActiveLspStatusStrings`
+  and the status-bar operation as a `StatusBarSegmentTone`; a `Failed` server is now Error,
+  and `Not Ready`/server names no longer mis-tone. Regression:
+  `WorkspaceStatusBar/LspToneFromTypedSeverityNotLabelText`.
+- **Git commit feeds the message on stdin via `commit -F -`** (new
+  `GitRepository::ExecuteWithStdin`), removing argv exposure and the argv-length limit for
+  huge/shell-significant bodies; `-F` keeps the same `whitespace` cleanup as `-m`. Regression:
+  `CommitWorkflow/ExecuteCommitPreservesShellSignificantAndLargeBody`.
+- **Persistence recover-and-protect for a corrupt primary.** `PersistenceService` guards a
+  state file recovered from `.bak` because the primary was present-but-corrupt: it records
+  the recovered state's re-encoded baseline and suppresses a Save whose body matches (no user
+  mutation), so the still-recoverable corrupt primary is not clobbered with stale backup
+  state; a real mutation writes through and clears the guard. Regression:
+  `PersistedStateRecord/PersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite`.
+- **Header-first bounded persisted read.** `PersistedRecordReader` validates the fixed
+  16-byte header (magic + version) before allocating the body, so a corrupt/hostile large
+  file is rejected after ~16 bytes instead of a full 256 MiB read. Regressions:
+  `PersistedRecordIo/ReaderRejectsLarge{BadMagic,UnsupportedVersion}OnHeader`.
+- **Tool downloader verifies cached-tool hash + all networking removed.**
+  `GetCachedTool` takes an optional `expected_sha256` and verifies before returning;
+  `ResolveToolSourcePath` hard-rejects any remote scheme (`http`/`https`/`ftp`/… — anything
+  with `://` that is not `file://`). No networking by design. Regressions:
+  `WorkspaceToolDownloader/{GetCachedToolVerifiesHash,RejectsRemoteSchemesNoNetworking}`.
+- **`^`-anchored syntax rules honor a true line start** — `FindAllRegex`/`FindFirstRegex`
+  thread `at_line_start` and pass `PCRE2_NOTBOL` for mid-line segments (the tail after a
+  region), so `^foo` no longer matches a `foo` following a region on the same line. Narrow
+  blast radius (NOTBOL only affects the circumflex assertion). Regression:
+  `TextViewport/RuntimeSyntaxCaretAnchorHonorsTrueLineStart`. (The two perf sub-items —
+  per-pattern compile byte cap and the `FindFirstRegex` skip-mask O(n²)→O(n) — stay deferred;
+  see below.)
+- **Diagnostics underline reuses a per-line visual-column map.** `AppendDiagnosticUnderlines`
+  builds a `TextLayout::LineVisualColumnMap` once per line instead of two O(column) tab-stop
+  walks per diagnostic (O(diagnostics·column) → O(column + diagnostics·log column)); kept
+  byte-identical to the uncached walk by snapping mid-codepoint queries to the code-point
+  boundary. Regression: `RowDecorationBuilder diagnostic underline cache matches uncached path`.
+- **Compare per-hunk cumulative intra-line budget.** The oversized-hunk positional fallback
+  emits an unbounded number of Modified pairs, each up to a full intra-line LCS;
+  `PopulateChangedSpans` now consumes a per-hunk cell budget (`kMaxHunkIntralineTotalCells`,
+  8M) — early rows keep character-level refinement, later rows fall back to whole-line-changed.
+  Regression: `Compare/IntralineBudgetBoundsLargeModifiedHunk`.
+- **Latent compare index guards hardened.** `CompareTabSelectedModelRowRef` returns a stable
+  empty row on an empty model (was `rows[size()-1]` underflow); `ComparePresentationModel::
+  CompareInline{Left,Right}Spans` return an empty span vector for an out-of-range index.
+- **Multi-caret overlapping selections are refused in BOTH apply paths.**
+  `TextViewport::MultiCaretSelectionsOverlap()` flags any two carets whose affected ranges
+  intersect; the general `ApplyMultiCaretEdit` AND the single-char `TryMultiCaretPairInsert`
+  fast path bail, so an injected overlap (test-access/plugins/future multi-cursor) cannot
+  double-edit shared content. Regressions:
+  `EditorMultiCaret/{RefusesOverlappingSelections,DisjointSelectionsStillApply}`.
+- **OSC 52 oversized-payload status.** The allow/deny setting already gated normal writes; an
+  OSC 52 sequence dropped for overrunning the 8 KiB escape buffer is now flagged
+  (`TerminalSession::ConsumeOversizedOsc52Dropped`) and surfaced as a toast instead of failing
+  silently. Regression: `TerminalSession/Osc52OversizedPayloadIsFlagged`.
+- **No-overwrite `RenamePath`.** `platform::MovePathNoOverwrite` uses
+  `renameat2(RENAME_NOREPLACE)` (atomic, race-free on the same filesystem) with a
+  cross-device/exists-check fallback; `FileOperationService::RenamePath` routes through it,
+  closing the `exists()`-then-move TOCTOU. Regressions:
+  `Project/{RenamePathRefusesToOverwriteExistingDestination,MovePathNoOverwriteRefusesExistingDestination}`.
+- **Debug value node ids widened to 64-bit** (`DebugValueNodeId = std::uint64_t`) so the
+  monotonic counter cannot wrap over a long session with huge/rapidly-rebuilt trees. Covered
+  by the existing debug suite.
+
 ### Fixed in the 2026-07-13 actionable sweep
 
 Closed this pass (each with regression coverage unless noted); the corresponding open
@@ -281,93 +361,59 @@ Detail per batch lives in the sweep commits.
 
 ### Still open (deferred, lower value / larger / latent)
 
-- **Persistence: `LoadStructuredRecord` ignores `used_backup`**, so `PersistenceService` does not
-  suppress auto-overwriting a present-but-corrupt primary with stale backup state (the reader
-  already surfaces `used_backup`/`primary_error`; `UnsupportedVersion` already blocks fallback).
-  Needs the bit plumbed through every `Load*` plus a per-path `loaded_from_backup` gate on save —
-  a broad save-policy change, hard to test without injected read failures.
-- **Persistence: `ReadAllBytes` reads the whole file (≤256 MiB) before header validation.** A
-  header-first bounded read is low-threat (state files live in the user's own config dir).
-- **Git: commit message passed as `-m` args** (argv exposure / length for huge bodies) — wants
-  `git commit -F -`, which needs stdin plumbing through `GitRepository::Execute`.
-- **Debug value node ids are 32-bit (`next_id_`) and can wrap** over a very long session with
-  huge trees. Widening to `uint64_t` ripples through `DebugVariablesModel`/service/view-models.
-- **Status bar: LSP tone via `find("Ready")` substring** misclassifies `Not Ready`/`Readying`/
-  server names — wants a typed LSP status severity from `active_lsp_status_strings`.
 - **Status bar: repo availability cached by `project_root` only** — transient staleness after
   `git init` / `.git` removal until a real git refresh supersedes it (a per-frame `.git` stat
   would defeat the cache).
-- **Tool downloader: `GetCachedTool` does not verify the hash** (no expected-sha param) and
-  HTTP(S) download is unimplemented (fails cleanly today); async hashing blocks the caller.
-- **RuntimeSyntaxRegistry regex/match budgets** (separate file from the loader): per-pattern &
-  joined-pattern byte cap before PCRE compile, region-start budget, fingerprint-metadata-first, dedup definition dirs, explicit `overrides`
-  for filetype shadowing, prewarm cold filetype, prefetch key by document-id, `FindFirstRegex`
-  skip-mask incremental.
-- **`FileOperationService::RenamePath` destination `exists()`-then-move race** — needs a
-  no-overwrite `MovePath` primitive (renameat2 `RENAME_NOREPLACE` / link+unlink with cross-device
-  fallback); coordinator + service both pre-check, so the window is small.
+- **RuntimeSyntaxRegistry regex/match perf budgets** (separate file from the loader): per-pattern
+  & joined-pattern byte cap before PCRE compile, region-start budget, fingerprint-metadata-first,
+  dedup definition dirs, explicit `overrides` for filetype shadowing, prewarm cold filetype,
+  prefetch key by document-id, `FindFirstRegex` skip-mask incremental. (The `^`-anchor
+  correctness fix landed 2026-07-14; the per-pattern byte cap was assessed low marginal value —
+  syntax defs are already length/count-bounded at load — and the skip-mask incremental rewrite
+  is behavior-risk in a path that can't be visually verified here, so both stay deferred.)
 
-- **Git: sidebar stage/unstage/discard and commit `RefreshDerivedState` still run git
-  synchronously on the shell thread.** Only the contained wins landed (rename-probe
-  gate, summary cache). Investigated 2026-07-13: no hard invariant is violated (the
-  code uses `project::Git*Path` free functions, so the workspace-subprocess/direct-
-  `GitRepository` lints do not fire), and the remaining sites are fast one-shot,
-  user-initiated local-index writes (single-digit ms on normal repos) off the hot
-  render/typing paths. The full off-thread dispatch needs per-op in-flight guards,
-  a completion mailbox, generation guards against stale completions landing on
-  async-reordered entries, and reconcile/refresh reordering across 4–5 call sites —
-  high regression surface (discard data-loss, editor-tab reconcile ordering) for
-  marginal speed benefit. Kept deferred; if pursued, reuse `CommitWorkflowService`'s
-  completion-mailbox + `operation_generation` pattern.
+- **Git: sidebar stage/unstage/discard and commit `RefreshDerivedState` still run the git
+  index-write subprocess synchronously on the shell thread.** Re-investigated 2026-07-14
+  (`WorkspaceSidebarCoordinatorActions.cpp` `StageGitEntry`/`UnstageGitEntry`/`DiscardGitEntry`/
+  `Stage`/`DiscardAllGitEntries`): each validates availability, runs the single
+  `project::Git*Path` subprocess (single-digit ms — a local `git add`/`restore`/`clean`), then
+  `invalidate_editor_blame_path` + (for discard) `ReconcileOpenTabsAfterPathDiscard` + a
+  `RefreshProjectFiles()` whose git *status* scan (`RefreshGit`) is ALREADY async. So the
+  synchronous cost is small and the git STATUS read is already off-thread. Moving the writes
+  off-thread was deliberately NOT done: `DiscardGitEntry` is a destructive path (`git clean -fd`
+  / `git restore` / TrashPath) whose post-op editor-tab reconcile reads the file's post-op
+  existence, so a correct async version needs a completion mailbox + `operation_generation`
+  guards + reconcile reordering (reuse `CommitWorkflowService`'s pattern) and its data-loss /
+  tab-reconcile ordering cannot be verified end-to-end without driving the real GUI + real git
+  timing. Correctness-first call: not worth an under-verified data-loss-path rewrite for a
+  marginal, already-mostly-async speed benefit.
+- **`CommitWorkflowService::DispatchCommit` captures `&state` (a `CommitWorkflowState` inside
+  `current_project_state`) across the background executor + mailbox.** A project switch that
+  moves/destroys that state while a commit is in flight dangles the reference;
+  `operation_generation_` guards logical correctness but not lifetime. Pre-existing threading
+  design; a correct fix needs a lifetime redesign beyond a local edit. (Same async-lifetime
+  family as the git-sidebar off-thread item above.)
 - **Persistence: no parent-directory fsync after the atomic rename.** A deliberate
   speed/durability tradeoff: the atomic rename already prevents a torn read; only a
   crash inside the fs flush window can lose the newest session write. Left as-is.
 
 #### 2026-07-13 multi-pass bug-campaign residue (deferred, latent / larger / behavior-risk)
 
+Most of this cluster was closed in the 2026-07-14 curated pass (editor wheel, block-comment
+toggle, diagnostics visual-column cache, AlignHunkLines cumulative budget, multi-caret overlap
+refusal, `^`-anchor correctness, latent compare index guards — see the "Curated open-items pass"
+section above). The still-deferred residue:
+
 - **`RuntimeSyntaxRegistry::FindFirstRegex` skip-mask full-tail rescan.** For a region
   carrying a `skip` regex, every cursor step copies the whole remaining tail into
   `masked_buf` and re-runs `FindAllRegex(skip)` over it — an O(n²)→O(n) opportunity.
   Deferred: making it incremental reworks the recursive masked-scan contract and risks
-  changing match results at zero-length/UTF-8 boundaries. Only hit by regions that
-  declare a `skip`.
-- **`RuntimeSyntaxRegistry` rules compile without `PCRE2_MULTILINE` yet match over
-  mid-line substrings**, so a `^`-anchored rule can match at a segment boundary rather
-  than true line start (med-confidence correctness). A correct fix needs `PCRE2_NOTBOL`
-  threading plus generated-table verification.
-- **`DiagnosticsRender::DiagnosticUnderlineRect` runs `VisualColumnForTextColumn` twice
-  (start+end) per diagnostic per line per frame** → O(diagnostics × column). Needs a
-  shared per-line visual-column cache; deferred as a non-trivial visual-column-semantics
-  change.
-- **Compare `AlignHunkLines` multiplicative DP cap.** The hunk-alignment cap
-  (`kMaxHunkAlignmentMatrixCells`, 65 536) and per-pair token-LCS cap
-  (`kMaxIntralineLcsMatrixCells`, 65 536) multiply: a pathological ~256×256 modified-line
-  hunk can reach ~4.3e9 token comparisons synchronously on the UI thread. Memoization
-  gives nothing (every cell is required); any tighter cap flips pinned behavior. Bounded
-  perf cliff, not a bug.
-- **Multi-caret overlapping *selections* are not merged** (`TextViewportMultiCaret`
-  dedups only on equal caret position). The reverse-walk apply would double-edit if two
-  carets held overlapping selections. Not reachable via normal UI (Ctrl+D / box-select
-  produce non-overlapping/empty selections); a defensive overlap-merge carries corruption
-  risk if wrong.
-- **`ShapingActions::ToggleBlockComment` is one-way** — it always wraps in `open`…`close`
-  and never detects/strips an existing block comment, so calling twice nests
-  `/* /* x */ */`. Correct un-toggle needs surrounding-marker detection + partial-selection
-  handling; flagged for a spec'd change, not a blind fix.
-- **`CommitWorkflowService::DispatchCommit` captures `&state` (a `CommitWorkflowState`
-  inside `current_project_state`) across the background executor + mailbox.** A project
-  switch that moves/destroys that state while a commit is in flight dangles the reference;
-  `operation_generation_` guards logical correctness but not lifetime. Pre-existing
-  threading design; a correct fix needs a lifetime redesign beyond a local edit.
-- **Editor wheel scrolls the active viewport regardless of which split pane the pointer is
-  over** (`WorkspaceEditorMouseCoordinator::HandleWheel` uses the whole `editor_surface`).
-  Looks like intended "active viewport" behavior; matching the pane-under-cursor is a
-  feature change.
-- **Latent, currently-unreachable index guards:** `CompareTabReview::CompareTabSelectedModelRowRef`
-  computes `model.rows.size() - 1` with no empty guard (caller guards), and
-  `ComparePresentationModel::CompareInline{Left,Right}Spans` index `model.rows[...]`
-  unchecked (all callers pass in-range indices). Reference-returning contracts make a safe
-  fallback awkward; left as-is.
+  changing match results at zero-length/UTF-8 boundaries (an unverifiable highlight-output
+  change here). Only hit by regions that declare a `skip`.
+- **`RuntimeSyntaxRegistry` rules still compile without `PCRE2_MULTILINE`.** The `^`-at-segment-
+  boundary correctness bug is fixed (NOTBOL on mid-line segments, 2026-07-14), but `$` semantics
+  across a segmented line were not revisited; a full MULTILINE pass would need generated-table
+  verification. Low priority — the highlighter works per single line.
 
 #### 2026-07-13 deep subsystem audit backlog (intake for later bug-fix agents)
 
