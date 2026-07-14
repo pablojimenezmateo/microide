@@ -120,12 +120,12 @@ void DebugValueTree::ClearRoots() {
   editing_node_.reset();
 }
 
-DebugValueTree::Node* DebugValueTree::FindNode(DebugValueNodeId id) {
+DebugValueTree::Node* DebugValueTree::FindNode(std::uint32_t id) {
   const auto it = nodes_.find(id);
   return it == nodes_.end() ? nullptr : &it->second;
 }
 
-const DebugValueTree::Node* DebugValueTree::FindNode(DebugValueNodeId id) const {
+const DebugValueTree::Node* DebugValueTree::FindNode(std::uint32_t id) const {
   const auto it = nodes_.find(id);
   return it == nodes_.end() ? nullptr : &it->second;
 }
@@ -136,7 +136,7 @@ std::string DebugValueTree::PathKey(const Node& node) const {
   // two siblings that share a name — common in array pages and maps with
   // repeated labels — get distinct keys and expand/collapse independently.
   struct Segment {
-    DebugValueNodeId ordinal;
+    std::uint32_t ordinal;
     std::string_view name;
   };
   std::vector<Segment> parts;
@@ -161,9 +161,9 @@ std::string DebugValueTree::PathKey(const Node& node) const {
 }
 
 std::vector<DebugValueTree::ChildFetch> DebugValueTree::CollectAutoExpand(
-    const std::vector<DebugValueNodeId>& node_ids) {
+    const std::vector<std::uint32_t>& node_ids) {
   std::vector<ChildFetch> fetches;
-  for (const DebugValueNodeId id : node_ids) {
+  for (const std::uint32_t id : node_ids) {
     Node* node = FindNode(id);
     if (node == nullptr || node->variables_reference <= 0 || node->expanded ||
         node->children_loaded || node->fetching) {
@@ -192,7 +192,7 @@ std::vector<DebugValueTree::ChildFetch> DebugValueTree::RestoreExpandedRoots() {
   if (pending_default_expansion_) {
     pending_default_expansion_ = false;
     if (!default_expanded_scope_.empty()) {
-      for (const DebugValueNodeId id : roots_) {
+      for (const std::uint32_t id : roots_) {
         const Node* node = FindNode(id);
         if (node != nullptr && node->name == default_expanded_scope_) {
           expanded_paths_.insert(PathKey(*node));
@@ -211,8 +211,8 @@ DebugValueTree::Node* DebugValueTree::FindNodeByReference(int variables_referenc
   return it == reference_to_node_.end() ? nullptr : FindNode(it->second);
 }
 
-DebugValueNodeId DebugValueTree::AddNode(Node node) {
-  const DebugValueNodeId id = next_id_++;
+std::uint32_t DebugValueTree::AddNode(Node node) {
+  const std::uint32_t id = next_id_++;
   node.id = id;
   if (node.variables_reference > 0) {
     // First-writer-wins: a conformant adapter keeps variablesReference unique while a
@@ -226,7 +226,7 @@ DebugValueNodeId DebugValueTree::AddNode(Node node) {
   return id;
 }
 
-DebugValueNodeId DebugValueTree::AddRoot(std::string name, std::string value, std::string type,
+std::uint32_t DebugValueTree::AddRoot(std::string name, std::string value, std::string type,
                                       int variables_reference, bool is_scope, int total_count,
                                       bool total_known) {
   Node node;
@@ -240,8 +240,8 @@ DebugValueNodeId DebugValueTree::AddRoot(std::string name, std::string value, st
   node.total_known = total_known;
   // Ordinal = index this node will occupy in roots_ (stable across rebuilds since
   // roots are appended in adapter order), so PathKey reads it in O(1).
-  node.sibling_ordinal = static_cast<DebugValueNodeId>(roots_.size());
-  const DebugValueNodeId id = AddNode(std::move(node));
+  node.sibling_ordinal = static_cast<std::uint32_t>(roots_.size());
+  const std::uint32_t id = AddNode(std::move(node));
   roots_.push_back(id);
   return id;
 }
@@ -332,15 +332,15 @@ std::vector<DebugValueTree::ChildFetch> DebugValueTree::ApplyVariables(
     // A fresh first page replaces the child list; erase the previous children's
     // subtrees so their Node objects and reference mappings are not orphaned in
     // nodes_/reference_to_node_. `parent` stays valid (only OTHER nodes are erased).
-    for (const DebugValueNodeId child_id : parent->children) {
+    for (const std::uint32_t child_id : parent->children) {
       EraseSubtree(child_id);
     }
     parent->children.clear();
     parent->loaded_count = 0;
   }
-  const DebugValueNodeId parent_id = parent->id;
+  const std::uint32_t parent_id = parent->id;
   const int parent_total = parent->total_count;
-  std::vector<DebugValueNodeId> new_child_ids;
+  std::vector<std::uint32_t> new_child_ids;
   new_child_ids.reserve(variables.size());
   for (const dap_protocol::DapVariable& variable : variables) {
     Node node;
@@ -365,8 +365,8 @@ std::vector<DebugValueTree::ChildFetch> DebugValueTree::ApplyVariables(
     // Ordinal = index this child will occupy in parent->children (children are
     // appended in page order and refilled wholesale on reload), so PathKey reads
     // it in O(1) instead of rescanning the sibling vector per node.
-    node.sibling_ordinal = static_cast<DebugValueNodeId>(parent->children.size());
-    const DebugValueNodeId child_id = AddNode(std::move(node));
+    node.sibling_ordinal = static_cast<std::uint32_t>(parent->children.size());
+    const std::uint32_t child_id = AddNode(std::move(node));
     new_child_ids.push_back(child_id);
     // `parent` stays valid across AddNode: unordered_map rehash on insert
     // invalidates iterators but never pointers/references to existing elements,
@@ -414,20 +414,20 @@ void DebugValueTree::MarkChildrenError(int variables_reference) {
   Rebuild();
 }
 
-void DebugValueTree::EraseSubtree(DebugValueNodeId node_id) {
+void DebugValueTree::EraseSubtree(std::uint32_t node_id) {
   // Iterative post-order-free walk: a hostile adapter can return a deeply nested
   // one-child tree, so recursing here (once per depth level) could overflow the
   // C++ stack. An explicit worklist keeps teardown O(nodes) with O(1) stack.
-  std::vector<DebugValueNodeId> stack;
+  std::vector<std::uint32_t> stack;
   stack.push_back(node_id);
   while (!stack.empty()) {
-    const DebugValueNodeId id = stack.back();
+    const std::uint32_t id = stack.back();
     stack.pop_back();
     const auto it = nodes_.find(id);
     if (it == nodes_.end()) {
       continue;
     }
-    for (const DebugValueNodeId child_id : it->second.children) {
+    for (const std::uint32_t child_id : it->second.children) {
       stack.push_back(child_id);
     }
     const int reference = it->second.variables_reference;
@@ -462,7 +462,7 @@ bool DebugValueTree::RebindReference(Node& node, int new_reference) {
   node.variables_reference = new_reference;
   // Erase the stale children's subtrees so they are not orphaned in the node maps
   // (node itself stays valid — only its descendants are removed).
-  for (const DebugValueNodeId child_id : node.children) {
+  for (const std::uint32_t child_id : node.children) {
     EraseSubtree(child_id);
   }
   node.children.clear();
@@ -474,7 +474,7 @@ bool DebugValueTree::RebindReference(Node& node, int new_reference) {
   return true;
 }
 
-void DebugValueTree::ApplySetVariable(DebugValueNodeId node_id,
+void DebugValueTree::ApplySetVariable(std::uint32_t node_id,
                                       const dap_protocol::DapSetVariableResult& result) {
   Node* node = FindNode(node_id);
   if (node == nullptr) {
@@ -488,7 +488,7 @@ void DebugValueTree::ApplySetVariable(DebugValueNodeId node_id,
   Rebuild();
 }
 
-void DebugValueTree::SetNodeValue(DebugValueNodeId node_id, std::string value, std::string type,
+void DebugValueTree::SetNodeValue(std::uint32_t node_id, std::string value, std::string type,
                                   int variables_reference) {
   Node* node = FindNode(node_id);
   if (node == nullptr) {
@@ -502,7 +502,7 @@ void DebugValueTree::SetNodeValue(DebugValueNodeId node_id, std::string value, s
 
 void DebugValueTree::Rebuild() {
   rows_.clear();
-  for (const DebugValueNodeId root : roots_) {
+  for (const std::uint32_t root : roots_) {
     FlattenInto(root, 0);
   }
   if (selected_row_ >= rows_.size()) {
@@ -510,7 +510,7 @@ void DebugValueTree::Rebuild() {
   }
 }
 
-void DebugValueTree::FlattenInto(DebugValueNodeId node_id, int depth) {
+void DebugValueTree::FlattenInto(std::uint32_t node_id, int depth) {
   const Node* node = FindNode(node_id);
   if (node == nullptr) {
     return;
@@ -561,7 +561,7 @@ void DebugValueTree::FlattenInto(DebugValueNodeId node_id, int depth) {
   // children and never enters this loop, pays nothing for it.
   constexpr int kMaxFlattenDepth = 256;
   if (depth < kMaxFlattenDepth) {
-    for (const DebugValueNodeId child : node->children) {
+    for (const std::uint32_t child : node->children) {
       FlattenInto(child, depth + 1);
     }
   }

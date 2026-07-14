@@ -119,9 +119,13 @@ residue entries were removed below.
   cross-device/exists-check fallback; `FileOperationService::RenamePath` routes through it,
   closing the `exists()`-then-move TOCTOU. Regressions:
   `Project/{RenamePathRefusesToOverwriteExistingDestination,MovePathNoOverwriteRefusesExistingDestination}`.
-- **Debug value node ids widened to 64-bit** (`DebugValueNodeId = std::uint64_t`) so the
-  monotonic counter cannot wrap over a long session with huge/rapidly-rebuilt trees. Covered
-  by the existing debug suite.
+- **Debug value node ids: 64-bit widening TRIED and REVERTED.** Widening the id (and the
+  per-row `node_id`) to 64-bit measurably regressed the `debug_value_tree_rebuild`/`_expand_large`
+  hot path in the perf comparison vs `origin/main` (~+7% p50 / +17% max rebuild, identical
+  allocations — the wider `Node`/`DebugVariableRowView` add memory traffic in the flatten/rebuild
+  loop the step/render path runs). The 32-bit `next_id_` wrap it guards needs ~4 billion node
+  allocations in a single session (practically unreachable), so the regression is not worth it.
+  Reverted; the 32-bit-wrap risk stays a documented won't-do (see below).
 
 ### Fixed in the 2026-07-13 actionable sweep
 

@@ -13,11 +13,6 @@
 
 namespace microide::workspace {
 
-// Stable identity of a node in a DebugValueTree. 64-bit so the monotonic
-// counter cannot wrap over a very long session with huge / rapidly-rebuilt
-// trees (a 32-bit id would eventually alias a live node).
-using DebugValueNodeId = std::uint64_t;
-
 // Coarse classification of a value's display, computed in the model (off the
 // render hot path) so the render TU maps kind → color with no string inspection.
 // Drives both value coloring and the synthetic "loading…" placeholder row.
@@ -49,7 +44,7 @@ struct DebugVariableRowView {
   bool editable = false;  // a real variable (not a scope) → can enter setVariable edit
   bool is_placeholder = false;  // synthetic "loading…"/error row: not selectable/clickable
   bool is_show_more = false;    // synthetic "show more…" row: click loads the next page
-  DebugValueNodeId node_id = 0;
+  std::uint32_t node_id = 0;
 };
 
 // The reusable lazy value tree shared by the Variables and Watch panels. Source
@@ -67,7 +62,7 @@ class DebugValueTree {
   // The variable currently being edited inline: the container reference + name
   // that setVariable needs, plus the node id to apply the result back onto.
   struct EditTarget {
-    DebugValueNodeId node_id = 0;
+    std::uint32_t node_id = 0;
     int container_reference = 0;
     std::string name;
   };
@@ -112,7 +107,7 @@ class DebugValueTree {
   // without a value. `total_count` is the adapter-reported child count (0 when
   // unknown); it bounds the lazy fetch so we never request more children than
   // exist (gdb's DAP errors on count > available).
-  DebugValueNodeId AddRoot(std::string name, std::string value, std::string type,
+  std::uint32_t AddRoot(std::string name, std::string value, std::string type,
                         int variables_reference, bool is_scope, int total_count = 0,
                         bool total_known = false);
 
@@ -152,12 +147,12 @@ class DebugValueTree {
 
   // Reflect a setVariable response onto the edited node (value/type, and a
   // possibly-new structure reference).
-  void ApplySetVariable(DebugValueNodeId node_id, const dap_protocol::DapSetVariableResult& result);
+  void ApplySetVariable(std::uint32_t node_id, const dap_protocol::DapSetVariableResult& result);
 
   // Fold an async `evaluate` result onto an existing node (e.g. a pre-created
   // watch-expression root): update value/type and re-bind the child container
   // reference. No-op for an unknown id. Rebuilds the flat list.
-  void SetNodeValue(DebugValueNodeId node_id, std::string value, std::string type,
+  void SetNodeValue(std::uint32_t node_id, std::string value, std::string type,
                     int variables_reference);
 
   const std::vector<DebugVariableRowView>& Rows() const { return rows_; }
@@ -173,19 +168,19 @@ class DebugValueTree {
   bool BeginEdit(std::size_t row_index);
   void CancelEdit();
   bool IsEditing() const { return editing_node_.has_value(); }
-  std::optional<DebugValueNodeId> EditingNodeId() const { return editing_node_; }
+  std::optional<std::uint32_t> EditingNodeId() const { return editing_node_; }
   std::optional<EditTarget> EditTargetForCommit() const;
   editor::SingleLineEditor& EditBuffer() { return edit_buffer_; }
   const editor::SingleLineEditor& EditBuffer() const { return edit_buffer_; }
 
  private:
   struct Node {
-    DebugValueNodeId id = 0;
+    std::uint32_t id = 0;
     std::string name;
     std::string value;
     std::string type;
-    DebugValueNodeId parent_id = 0;       // owning node id (0 = root); used to build the path key
-    DebugValueNodeId sibling_ordinal = 0;  // this node's index among its siblings (roots_ or parent->children); part of the stable path key
+    std::uint32_t parent_id = 0;       // owning node id (0 = root); used to build the path key
+    std::uint32_t sibling_ordinal = 0;  // this node's index among its siblings (roots_ or parent->children); part of the stable path key
     int variables_reference = 0;       // this node's own container ref (children)
     int container_reference = 0;       // the ref of the container holding this node (for setVariable)
     bool is_scope = false;
@@ -197,33 +192,33 @@ class DebugValueTree {
     int loaded_count = 0;          // children fetched so far
     int total_count = 0;           // total children when total_known (0 = empty)
     bool total_known = false;      // the adapter reported this node's child count
-    std::vector<DebugValueNodeId> children;
+    std::vector<std::uint32_t> children;
   };
 
-  Node* FindNode(DebugValueNodeId id);
-  const Node* FindNode(DebugValueNodeId id) const;
+  Node* FindNode(std::uint32_t id);
+  const Node* FindNode(std::uint32_t id) const;
   Node* FindNodeByReference(int variables_reference);
-  DebugValueNodeId AddNode(Node node);
+  std::uint32_t AddNode(Node node);
   // Recursively remove a node and all its descendants from nodes_ and
   // reference_to_node_. Used when a container's child list is replaced (a fresh
   // start<=0 page or a RebindReference) so the old child Node objects and their
   // reference mappings are not orphaned/leaked in the maps.
-  void EraseSubtree(DebugValueNodeId node_id);
+  void EraseSubtree(std::uint32_t node_id);
   // Path key (root→node name chain) used to track expansion across rebuilds, since
   // variables references are not stable between stops.
   std::string PathKey(const Node& node) const;
   // For each id, if the node is an unfetched container the user had expanded
   // (its path is in expanded_paths_), mark it expanded + fetching and emit its
   // bounded ChildFetch. Empty/known-empty containers are marked loaded, no fetch.
-  std::vector<ChildFetch> CollectAutoExpand(const std::vector<DebugValueNodeId>& node_ids);
+  std::vector<ChildFetch> CollectAutoExpand(const std::vector<std::uint32_t>& node_ids);
   // Re-point a node's child container reference, keeping reference_to_node_ and
   // the (now stale) loaded children consistent. Returns true when it changed.
   bool RebindReference(Node& node, int new_reference);
-  void FlattenInto(DebugValueNodeId node_id, int depth);
+  void FlattenInto(std::uint32_t node_id, int depth);
 
-  std::unordered_map<DebugValueNodeId, Node> nodes_;
-  std::unordered_map<int, DebugValueNodeId> reference_to_node_;  // variables_reference → node id
-  std::vector<DebugValueNodeId> roots_;                          // root node ids, in order
+  std::unordered_map<std::uint32_t, Node> nodes_;
+  std::unordered_map<int, std::uint32_t> reference_to_node_;  // variables_reference → node id
+  std::vector<std::uint32_t> roots_;                          // root node ids, in order
   // Path keys (root→node name chains) of containers the user has expanded. Tracked
   // across ClearRoots/Clear so expansion survives a stop; pruned on collapse.
   std::unordered_set<std::string> expanded_paths_;
@@ -236,9 +231,9 @@ class DebugValueTree {
   std::string default_expanded_scope_;
   bool pending_default_expansion_ = true;
   std::vector<DebugVariableRowView> rows_;
-  DebugValueNodeId next_id_ = 1;
+  std::uint32_t next_id_ = 1;
   std::size_t selected_row_ = 0;
-  std::optional<DebugValueNodeId> editing_node_;
+  std::optional<std::uint32_t> editing_node_;
   editor::SingleLineEditor edit_buffer_;
 };
 
