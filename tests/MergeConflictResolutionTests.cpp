@@ -4,6 +4,7 @@
 #include "compare/MergeConflictKind.h"
 #include "compare/MergeModel.h"
 #include "workspace/MergeResultValidation.h"
+#include "workspace/WorkspaceCompareInteractionCoordinator.h"
 
 #include <filesystem>
 #include <system_error>
@@ -24,6 +25,74 @@ using microide::workspace::MergeValidationIssue;
 using microide::workspace::MergeValidationRequest;
 using microide::workspace::MergeValidationResult;
 using microide::workspace::ValidateMergeResult;
+using microide::workspace::CompareInteractionCoordinator;
+using microide::workspace::ProjectWorkspaceState;
+
+// Builds a delete-resolution merge tab (existence-choice conflict emptied to signal
+// deletion) whose working file exists on disk, plus the minimal Operations wiring the
+// delete branch of MarkMergeResolved touches. `stage_ok` decides whether the injected
+// git stage succeeds.
+struct DeleteResolutionHarness {
+  ProjectWorkspaceState state;
+  MergeTabState merge_tab;
+
+  CompareInteractionCoordinator::Operations MakeOperations(bool stage_ok) {
+    CompareInteractionCoordinator::Operations ops;
+    ops.active_merge_tab = [this]() { return &merge_tab; };
+    ops.request_editor_surface_redraw = []() {};
+    ops.request_tab_strip_redraw = []() {};
+    ops.stage_merge_result_path = [stage_ok](const std::filesystem::path&) { return stage_ok; };
+    return ops;
+  }
+};
+
+// A delete-conflict resolution whose git staging fails must NOT lose the working file:
+// the removal is rolled back with the original bytes and the tab stays unresolved.
+void TestDeleteConflictStageFailureRestoresFile() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path result_path = temp_dir.path() / "conflicted.txt";
+  const std::string original = "original conflicted content\nsecond line\n";
+  WriteFile(result_path, original);
+
+  DeleteResolutionHarness harness;
+  harness.merge_tab.file_conflict.requires_existence_choice = true;
+  harness.merge_tab.file_conflict.text_hunks_available = true;
+  harness.merge_tab.result_viewport.LoadContent("", {}, harness.merge_tab.result_line_ending);
+  harness.merge_tab.output_path = result_path;
+
+  CompareInteractionCoordinator coordinator(harness.state,
+                                            harness.MakeOperations(/*stage_ok=*/false));
+  coordinator.MarkMergeResolved();
+
+  Expect(std::filesystem::exists(result_path),
+         "a failed stage must roll back the file removal, not lose the working file");
+  Expect(ReadFile(result_path) == original,
+         "the rolled-back file must hold the original bytes verbatim");
+  Expect(!harness.merge_tab.marked_resolved,
+         "a failed stage must leave the delete conflict unresolved");
+}
+
+// The success path still deletes and stages the file and marks the tab resolved.
+void TestDeleteConflictStageSuccessRemovesFile() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path result_path = temp_dir.path() / "conflicted.txt";
+  WriteFile(result_path, "original conflicted content\n");
+
+  DeleteResolutionHarness harness;
+  harness.merge_tab.file_conflict.requires_existence_choice = true;
+  harness.merge_tab.file_conflict.text_hunks_available = true;
+  harness.merge_tab.result_viewport.LoadContent("", {}, harness.merge_tab.result_line_ending);
+  harness.merge_tab.output_path = result_path;
+
+  CompareInteractionCoordinator coordinator(harness.state,
+                                            harness.MakeOperations(/*stage_ok=*/true));
+  coordinator.MarkMergeResolved();
+
+  Expect(!std::filesystem::exists(result_path),
+         "a successful delete resolution removes the working file");
+  Expect(harness.merge_tab.marked_resolved,
+         "a successful delete resolution marks the conflict resolved");
+}
 
 void TestBothModifiedClassification() {
   const auto metadata = ClassifyMergeFileConflict(MergeConflictClassificationInput{
@@ -317,6 +386,10 @@ void TestExternalStaleClearedAfterSelfSave() {
 void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MergeConflict/DeleteConflictResolvesByDeletion",
           TestDeleteConflictResolvesByDeletion);
+  AddTest(tests, "MergeConflict/DeleteConflictStageFailureRestoresFile",
+          TestDeleteConflictStageFailureRestoresFile);
+  AddTest(tests, "MergeConflict/DeleteConflictStageSuccessRemovesFile",
+          TestDeleteConflictStageSuccessRemovesFile);
   AddTest(tests, "MergeConflict/ExternalStaleClearedAfterSelfSave",
           TestExternalStaleClearedAfterSelfSave);
   AddTest(tests, "MergeConflict/MarkResolvedRefreshesDiskTick",

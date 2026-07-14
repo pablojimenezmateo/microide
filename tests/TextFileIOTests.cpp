@@ -82,6 +82,26 @@ void TestReadFileForTextSearchGuards() {
   Expect(!ReadFileForTextSearch(huge_path, out), "an oversize file must be skipped");
 }
 
+// The explicit max_bytes parameter caps the read at the boundary, and the search
+// default (kMaxSearchFileBytes) is tighter than the whole-file cap so N search
+// workers cannot together hold multiple gigabytes. Uses a tiny cap so the test is
+// deterministic and cheap (no gigabyte allocations).
+void TestReadFileForTextSearchRespectsMaxBytes() {
+  static_assert(microide::util::kMaxSearchFileBytes < kMaxTextFileBytes,
+                "search cap must be tighter than the whole-file cap");
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "capped.txt";
+  const std::string content(64, 'x');  // 64 bytes
+  WriteFile(path, content);
+
+  std::string out;
+  Expect(ReadFileForTextSearch(path, out, 64), "a file exactly at the cap is read");
+  Expect(out == content, "the at-cap read returns the exact bytes");
+  Expect(ReadFileForTextSearch(path, out, 128), "a file under the cap is read");
+  Expect(!ReadFileForTextSearch(path, out, 63), "a file one byte over the cap is skipped");
+}
+
 // H11/J41: the classifying reader distinguishes absent, unreadable, binary, and
 // oversized files so callers (e.g. compare's working-tree side) map only true
 // absence to empty content instead of masking a real error as a deleted file.
@@ -151,6 +171,8 @@ void RegisterTextFileIOTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextFileIO/ReadTextFileAcceptsBinaryBytes", TestReadTextFileAcceptsBinaryBytes);
   AddTest(tests, "TextFileIO/ReadTextFileRejectsOversize", TestReadTextFileRejectsOversize);
   AddTest(tests, "TextFileIO/ReadFileForTextSearchGuards", TestReadFileForTextSearchGuards);
+  AddTest(tests, "TextFileIO/ReadFileForTextSearchRespectsMaxBytes",
+          TestReadFileForTextSearchRespectsMaxBytes);
   AddTest(tests, "TextFileIO/ReadTextFileClassifiedDistinguishesCases",
           TestReadTextFileClassifiedDistinguishesCases);
 }

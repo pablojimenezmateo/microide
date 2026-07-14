@@ -385,6 +385,9 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
     const std::filesystem::path normalized_absolute = absolute_path.lexically_normal();
 
     std::string updated_content;
+    // Uses the same search cap as the finder (default kMaxSearchFileBytes): a file
+    // too large to search shows no matches, so replace-all must not silently rewrite
+    // it either. Keeping both on one cap keeps replace scope aligned with results.
     if (!util::ReadFileForTextSearch(absolute_path, updated_content)) {
       continue;
     }

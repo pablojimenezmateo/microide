@@ -43,6 +43,34 @@ Closed this pass; the corresponding open/backlog entries below were removed.
   — which renders as checked via `SettingFlagEnabled` — computed `on == false` and no-oped
   the first toggle. Now routes through `SettingFlagEnabled`, matching the render predicate.
 
+#### Curated open-items pass (2026-07-14, session 3)
+
+A focused pass over two curated items; the rest of the batch (async compare pickers,
+FindFirstRegex skip incremental) was assessed too large / behavior-risky to verify
+headless and stays deferred with concrete sketches below.
+
+- **Merge delete-conflict staging is now transactional.**
+  `CompareInteractionCoordinator::MarkMergeResolved` previously `remove()`d the working
+  file and marked the buffer clean *before* validation and `stage_merge_result_path`
+  could fail, so a stage failure (stale index, git error, permissions) left the user's
+  in-progress merge file gone and unrecoverable. The delete branch now snapshots the
+  on-disk bytes (`util::ReadTextFile`) and the tab's dirty/tick/stale state before the
+  removal and rolls them back (`util::WriteTextFileAtomically`) on any validation or
+  staging failure; only full success leaves the file deleted + staged + resolved.
+  Regressions: `MergeConflict/DeleteConflictStage{FailureRestoresFile,SuccessRemovesFile}`.
+- **Project search reads are capped at 32 MiB per file.** `ReadFileForTextSearch` took
+  the shared 512 MiB whole-file cap, so N search workers each buffering a whole file
+  could reach N × 512 MiB transient, and line-scanning a 512 MiB generated/minified blob
+  is pure latency. Added `kMaxSearchFileBytes` (32 MiB) plus a defaulted `max_bytes`
+  parameter; the search worker and the "Replace All in Files" path both use it (aligning
+  replace scope with what the finder can match), while whole-file callers keep the 512
+  MiB cap. Regression: `TextFileIO/ReadFileForTextSearchRespectsMaxBytes`. The paired
+  **search-cancellation** sub-item ("finishes a full current-file scan before stopping")
+  is verified already addressed — the worker polls `cancel_requested_` per line
+  (`ProjectSearchService.cpp`) and the regex path polls internally
+  (`kRegexCancelPollInterval`), so cancellation is already threaded through line/regex
+  iteration; no change needed.
+
 #### Curated open-items pass (2026-07-14, session 2)
 
 A follow-on pass working the curated **"Still open (deferred)"** + **"multi-pass
@@ -398,7 +426,16 @@ section above). The still-deferred residue:
   `masked_buf` and re-runs `FindAllRegex(skip)` over it — an O(n²)→O(n) opportunity.
   Deferred: making it incremental reworks the recursive masked-scan contract and risks
   changing match results at zero-length/UTF-8 boundaries (an unverifiable highlight-output
-  change here). Only hit by regions that declare a `skip`.
+  change here). Only hit by regions that declare a `skip`. (Re-examined 2026-07-14 session 3:
+  a per-line skip-match cache would have to reproduce byte-identical output across **two**
+  call sites — the end search at `RuntimeSyntaxRegistry.cpp:819` AND the region-start search
+  in `FindEarliestRegionStart` at `:746` — each with a *different* skip regex, a shrinking
+  segment, and a per-segment `at_line_start`/NOTBOL that feeds the skip's `^` anchor. The
+  gate for shipping is a characterization test snapshotting `HighlightLineScoped`'s token
+  vector before/after and asserting identical output on a crafted multi-region line with a
+  `skip` (incl. an `^`-anchored skip and a zero-length-adjacent case). Not landed because
+  proving that equivalence across both sites and line boundaries is the bulk of the work and
+  the marginal benefit is narrow — do it only in a session that can build the golden test first.)
 - **`RuntimeSyntaxRegistry` rules still compile without `PCRE2_MULTILINE`.** The `^`-at-segment-
   boundary correctness bug is fixed (NOTBOL on mid-line segments, 2026-07-14), but `$` semantics
   across a segmented line were not revisited; a full MULTILINE pass would need generated-table
@@ -525,19 +562,33 @@ behavioral contract before changing code.
 ##### Git, compare, merge, and review state
 
 - **Compare picker history and outgoing-base pickers run expensive git queries on the UI thread.**
-  `CompareInteractionCoordinator::OpenPickerForPath` calls `CollectGitFileHistory`, and
-  `OpenOutgoingBasePicker` calls `CollectGitBranches` plus `CollectGitRecentCommits`, synchronously
-  while opening overlays. Large repos or slow storage can freeze the shell before the picker appears.
-  Fix direction: dispatch through `ProjectBackgroundExecutor` with generation guards, show a loading
-  picker state, and drop stale completions when the overlay closes or the project changes. Add a fake
-  git service test that blocks until the overlay has rendered.
-- **Merge "mark resolved" for delete conflicts removes the working file before the full operation is
-  proven.** In the delete branch, the file is removed and the buffer is marked clean before later git
-  validation/staging can fail. A stale index, permission problem, or git error can leave the user's
-  merge file gone even though the resolution did not complete. Fix direction: validate all preconditions
-  before deletion, stage as a transaction, and restore the buffer/file or keep it dirty if staging
-  fails. Add a merge fixture that injects stage failure after deletion and asserts the file content is
-  preserved or recovered.
+  (NEXT — highest-value remaining speed item; deferred 2026-07-14 session 3 only because it is
+  threading-sensitive and its UI interaction can't be visually verified headless, so it deserves a
+  focused session with TSAN + a real seam rather than a rushed edit.)
+  `CompareInteractionCoordinator::OpenPickerForPath` (`WorkspaceCompareInteractionCoordinator.cpp:81`)
+  calls `CollectGitFileHistory`, and `OpenOutgoingBasePicker` (`:137`) calls `CollectGitBranches` plus
+  `CollectGitRecentCommits`, synchronously while opening overlays. Large repos or slow storage freeze
+  the shell before the picker appears.
+  **Concrete sketch (reuse the git-sidebar async pattern):**
+  1. Orchestrate at the shell (`WorkspaceShellCompareMerge.cpp`), which owns
+     `project_background_executor_` — NOT in the stack-temporary coordinator, and the bg job must NOT
+     capture `&state_` (that's the `CommitWorkflowService::DispatchCommit` lifetime hazard below).
+  2. Add a `loading` flag + a `std::uint64_t generation` to `ComparePickerState`; on open, set loading,
+     show the overlay immediately, capture `root`/`path`/`purpose` by value + bump generation.
+  3. `project_background_executor_.PostLatest("compare-picker", …)` runs the `Collect*` calls, stores the
+     raw `commits`/`branches` under a mutex-guarded shell member keyed by generation, then fires the
+     existing `git_sidebar_event_type_` wake event (mirror `GitRepositoryService::PublishSnapshot` +
+     `push_refresh_ready_event`, `GitRepositoryService.cpp:229-317`).
+  4. In the same event drain that consumes the sidebar snapshot, drain the pending picker results: if
+     `generation` still current, rebuild items via a fresh `MakeCompareMergeService()` and `RefreshPicker`;
+     drop stale completions (overlay closed / project switched / newer request).
+  5. Keep the synchronous path for the `commit_spec != ""` case (control channel / headless — no UI to
+     freeze and the caller needs the bool return).
+  **Test seam:** the `Collect*` are free functions with no injection point today — add a narrow git
+  history/branch provider interface (or an injectable function on the shell for tests) so a fake can
+  block until released; assert the picker renders a loading state before git returns, populates after,
+  and drops a stale (generation-bumped) completion. This also closes the audit's "no cheap fake
+  git/executor seam" tooling gap below.
 - **Merge result generation may normalize final newline / line-ending intent across conflict choices.**
   The merge model works in split lines and later rejoins text. If current, incoming, and base differ
   in trailing newline or line-ending convention, choosing one side may not preserve that side's exact

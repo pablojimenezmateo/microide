@@ -613,6 +613,24 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
   // removal instead of writing (and staging) an empty file. This is the only way
   // such a conflict can naturally resolve to "deleted".
   if (!result_should_exist) {
+    // Transactional deletion: removing the working file is irreversible, so capture
+    // the on-disk bytes first and roll them back if validation or staging fails.
+    // Otherwise a stage failure (stale index, git error, permissions) would leave the
+    // user's in-progress merge file gone with no way to recover it.
+    const std::optional<std::string> backup = util::ReadTextFile(merge_tab->output_path);
+    const bool prior_dirty = merge_tab->result_viewport.dirty();
+    const std::optional<std::uint64_t> prior_disk_tick = merge_tab->disk_result_tick;
+    const bool prior_external_stale = merge_tab->external_result_stale;
+
+    const auto restore_working_file = [&]() {
+      if (backup.has_value()) {
+        util::WriteTextFileAtomically(merge_tab->output_path, *backup);
+      }
+      merge_tab->result_viewport.SetDirty(prior_dirty);
+      merge_tab->disk_result_tick = prior_disk_tick;
+      merge_tab->external_result_stale = prior_external_stale;
+    };
+
     std::error_code remove_error;
     std::filesystem::remove(merge_tab->output_path, remove_error);
     // The file is gone; the buffer is no longer the source of truth. Mark it clean
@@ -629,16 +647,16 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
         .result_should_exist = false,
     });
     if (!delete_validation.ok) {
+      restore_working_file();
       merge_tab->status_message = delete_validation.message;
       merge_tab->index_stale =
           delete_validation.issue == MergeValidationIssue::StaleIndexGeneration;
-      merge_tab->external_result_stale =
-          delete_validation.issue == MergeValidationIssue::ExternalModification;
       operations_.request_editor_surface_redraw();
       return;
     }
     if (!operations_.stage_merge_result_path ||
         !operations_.stage_merge_result_path(merge_tab->output_path)) {
+      restore_working_file();
       merge_tab->status_message = "Git could not mark the file resolved.";
       operations_.request_editor_surface_redraw();
       return;

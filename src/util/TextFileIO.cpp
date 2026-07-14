@@ -92,7 +92,8 @@ TextFileReadResult ReadTextFileClassified(const std::filesystem::path& path) {
   return result;
 }
 
-bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out) {
+bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out,
+                           std::uintmax_t max_bytes) {
   std::ifstream file(path, std::ios::binary);
   if (!file) {
     return false;
@@ -103,8 +104,10 @@ bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out) 
     return false;
   }
   // Skip files too large to buffer (same OOM guard as ReadTextFile); an oversized
-  // file is simply not searched rather than crashing the search worker.
-  if (static_cast<std::uintmax_t>(size) > kMaxTextFileBytes) {
+  // file is simply not searched rather than crashing the search worker. The default
+  // cap (kMaxSearchFileBytes) is well below the whole-file cap so N search workers
+  // cannot together hold multiple gigabytes.
+  if (static_cast<std::uintmax_t>(size) > max_bytes) {
     return false;
   }
   file.seekg(0, std::ios::beg);

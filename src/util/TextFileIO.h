@@ -16,6 +16,14 @@ namespace microide::util {
 // above any realistic source file while still bounding the allocation.
 inline constexpr std::uintmax_t kMaxTextFileBytes = 512ull * 1024 * 1024;
 
+// Tighter cap for project text search. Search runs N worker threads, each buffering
+// a whole candidate file at once, so the 512 MiB whole-file cap lets worst-case
+// transient use reach N x 512 MiB. Line-scanning a file that large (a generated /
+// minified blob) is also pure latency with no useful result. 32 MiB bounds both the
+// aggregate memory and the per-file scan cost while covering every realistic source
+// file; files above it are simply skipped by the searcher.
+inline constexpr std::uintmax_t kMaxSearchFileBytes = 32ull * 1024 * 1024;
+
 std::optional<std::string> ReadTextFile(const std::filesystem::path& path);
 bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text);
 
@@ -78,8 +86,11 @@ FileSignature StatFileSignature(const std::filesystem::path& path);
 
 // Reads the whole file at `path` into `out`, reusing `out`'s capacity so callers
 // in hot loops (project search, replace-all) avoid per-file allocation. Returns
-// false if the file cannot be opened/read or if it contains a NUL byte (treated
-// as binary). On a false return `out`'s contents are unspecified.
-bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out);
+// false if the file cannot be opened/read, if it contains a NUL byte (treated as
+// binary), or if it exceeds `max_bytes` (skipped before allocation). On a false
+// return `out`'s contents are unspecified. `max_bytes` defaults to the search cap;
+// pass `kMaxTextFileBytes` for whole-file callers that must slurp large files.
+bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out,
+                           std::uintmax_t max_bytes = kMaxSearchFileBytes);
 
 }  // namespace microide::util
