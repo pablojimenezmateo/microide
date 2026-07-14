@@ -353,9 +353,53 @@ void TestPersistedRecordReaderSurfacesBackupUsageOnParseFailure() {
   Expect(TextFromBytes(recovered->body) == "known-good", "recovery should return the backup body");
 }
 
+// Regression (header-first bounded read): a large file with a bad magic must be
+// rejected on the fixed 16-byte prefix, before the body is read into memory. We
+// can't probe the allocation directly here, but we lock the behavioral contract
+// that a large non-record file is rejected as ParseFailed.
+void TestPersistedRecordReaderRejectsLargeBadMagicOnHeader() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "state" / "session.workspace.bin";
+  // 4 MiB of a byte that is NOT the 'M' of the magic → header check fails fast.
+  WriteFile(path, std::string(4u * 1024 * 1024, 'Z'));
+
+  PersistedRecordReaderError error = PersistedRecordReaderError::None;
+  const auto result = PersistedRecordReader::ReadFile(path, &error);
+  Expect(!result.has_value(), "a large bad-magic file must be rejected");
+  Expect(error == PersistedRecordReaderError::ParseFailed,
+         "a bad magic must be reported as a parse failure via the header path");
+}
+
+// Regression: a large file with a VALID magic but unsupported version is rejected
+// as UnsupportedVersion from the header prefix (so no backup fallback), without
+// reading the whole body.
+void TestPersistedRecordReaderRejectsLargeUnsupportedVersionOnHeader() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "state" / "session.workspace.bin";
+
+  std::string content;
+  content.append("MIDE");                    // valid magic
+  content.push_back(static_cast<char>(99));  // version = 99 (LE), unsupported
+  content.append(3, '\0');
+  content.append(4, '\0');                    // capability flags
+  content.append(4, '\0');                    // crc32c placeholder
+  content.append(2u * 1024 * 1024, 'x');      // oversized body
+  WriteFile(path, content);
+
+  PersistedRecordReaderError error = PersistedRecordReaderError::None;
+  const auto result = PersistedRecordReader::ReadFile(path, &error);
+  Expect(!result.has_value(), "an unsupported-version file must be rejected");
+  Expect(error == PersistedRecordReaderError::UnsupportedVersion,
+         "an unsupported version must be reported from the header, blocking backup fallback");
+}
+
 }  // namespace
 
 void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PersistedRecordIo/ReaderRejectsLargeBadMagicOnHeader",
+          TestPersistedRecordReaderRejectsLargeBadMagicOnHeader);
+  AddTest(tests, "PersistedRecordIo/ReaderRejectsLargeUnsupportedVersionOnHeader",
+          TestPersistedRecordReaderRejectsLargeUnsupportedVersionOnHeader);
   AddTest(tests, "PersistedRecordIo/ReaderRefusesBackupForUnsupportedVersion",
           TestPersistedRecordReaderRefusesBackupForUnsupportedVersion);
   AddTest(tests, "PersistedRecordIo/ReaderSurfacesBackupUsageOnParseFailure",

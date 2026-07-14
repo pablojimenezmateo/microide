@@ -1,6 +1,9 @@
 #include "TestSupport.h"
 
 #include "persistence/PersistedRecord.h"
+#include "persistence/PersistedRecordReader.h"
+#include "persistence/PersistedRecordWriter.h"
+#include "workspace/PersistenceService.h"
 #include "workspace/RecentsService.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceProjectState.h"
@@ -841,7 +844,61 @@ void TestPersistedStateProjectConfigMigratesLegacyEditorPrefTags() {
          "a modern editor.tab_size setting should win over the legacy tag");
 }
 
+// Regression: when the primary state file is present but corrupt, a recovery
+// from the `.bak` must NOT auto-overwrite the still-recoverable primary with
+// stale backup state — only a genuine user mutation may heal it.
+void TestPersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite() {
+  using microide::persistence::PersistedRecordReader;
+  using microide::persistence::PersistedRecordWriter;
+  using microide::workspace::PersistenceService;
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "user.config";
+  PersistenceService service;
+
+  // Save v1 then v2: the second save rotates v1 into the `.bak` sibling.
+  PersistedUserConfigState v1{.ui_scale = 1.0f, .settings = {{"theme", "backup-good"}}};
+  Expect(service.SaveUserConfig(path, v1), "first save should succeed");
+  PersistedUserConfigState v2{.ui_scale = 1.0f, .settings = {{"theme", "current"}}};
+  Expect(service.SaveUserConfig(path, v2), "second save should rotate v1 into the backup");
+  Expect(std::filesystem::exists(PersistedRecordWriter::BackupPathFor(path)),
+         "a backup of the prior primary should exist");
+
+  // Corrupt the primary in place; the valid backup remains.
+  WriteFile(path, "corrupt-not-a-valid-record-header");
+
+  // Load recovers the backup (v1) and arms the overwrite guard for this path.
+  PersistedUserConfigState loaded;
+  Expect(service.LoadUserConfig(path, &loaded), "load should recover from the backup");
+  Expect(loaded.settings.size() == 1 && loaded.settings[0].second == "backup-good",
+         "the recovered state should be the backup contents (v1)");
+
+  // An immediate save of the unchanged recovered state must be suppressed so the
+  // still-recoverable corrupt primary is preserved for manual recovery.
+  Expect(service.SaveUserConfig(path, loaded), "no-op save should report success");
+  {
+    const auto reread = PersistedRecordReader::ReadFile(path);
+    Expect(reread.has_value() && reread->used_backup,
+           "the primary must still be corrupt (the stale overwrite was suppressed)");
+  }
+
+  // A genuine mutation lifts the guard: the save now heals the primary on disk.
+  loaded.settings[0].second = "user-edited";
+  Expect(service.SaveUserConfig(path, loaded), "a mutated save should write through");
+  {
+    const auto reread = PersistedRecordReader::ReadFile(path);
+    Expect(reread.has_value() && !reread->used_backup,
+           "the primary should be valid again after a mutated save");
+    PersistedUserConfigState healed;
+    Expect(DecodeUserConfigRecord(reread->body, &healed), "the healed primary should decode");
+    Expect(healed.settings.size() == 1 && healed.settings[0].second == "user-edited",
+           "the healed primary should hold the mutated state, not the stale backup");
+  }
+}
+
 void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PersistedStateRecord/PersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite",
+          TestPersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite);
   AddTest(tests, "PersistedStateRecord/ProjectConfigMigratesLegacyEditorPrefTags",
           TestPersistedStateProjectConfigMigratesLegacyEditorPrefTags);
   AddTest(tests, "PersistedStateRecord/MruRoundTrip", TestPersistedStateMruRecordRoundTrip);

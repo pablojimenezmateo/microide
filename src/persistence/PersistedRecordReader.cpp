@@ -2,6 +2,7 @@
 
 #include "persistence/PersistedRecordWriter.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -51,6 +52,39 @@ bool ReadAllBytes(const std::filesystem::path& path,
     return false;
   }
   file.seekg(0, std::ios::beg);
+
+  // Header-first validation: read the fixed prefix (magic + version + flags +
+  // crc) and reject a bad magic or unsupported version BEFORE allocating the
+  // body — so a corrupt/hostile large file (up to the 256 MiB cap) costs ~16
+  // bytes instead of the full allocation. A valid prefix falls through to the
+  // full read; the CRC over the body is still verified downstream. (The body
+  // length is implicit — the rest of the file — so there is no declared length
+  // to validate here.)
+  constexpr std::size_t kHeaderBytes = kPersistedRecordMagic.size() + sizeof(std::uint32_t) * 3;
+  if (static_cast<std::uintmax_t>(size) >= kHeaderBytes) {
+    std::array<std::byte, kHeaderBytes> head{};
+    file.read(reinterpret_cast<char*>(head.data()), static_cast<std::streamsize>(kHeaderBytes));
+    if (!file) {
+      SetError(error, PersistedRecordReaderError::ReadFailed);
+      return false;
+    }
+    for (std::size_t i = 0; i < kPersistedRecordMagic.size(); ++i) {
+      if (std::to_integer<char>(head[i]) != kPersistedRecordMagic[i]) {
+        SetError(error, PersistedRecordReaderError::ParseFailed);
+        return false;
+      }
+    }
+    const std::size_t v = kPersistedRecordMagic.size();
+    const std::uint32_t version = static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(head[v])) |
+                                  (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(head[v + 1])) << 8) |
+                                  (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(head[v + 2])) << 16) |
+                                  (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(head[v + 3])) << 24);
+    if (version != kPersistedRecordFormatVersion) {
+      SetError(error, PersistedRecordReaderError::UnsupportedVersion);
+      return false;
+    }
+    file.seekg(0, std::ios::beg);
+  }
 
   bytes->assign(static_cast<std::size_t>(size), std::byte{0});
   if (!bytes->empty()) {

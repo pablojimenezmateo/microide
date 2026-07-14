@@ -1,6 +1,10 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 #include "workspace/WorkspacePersistenceFormat.h"
 
@@ -44,6 +48,16 @@ class PersistenceService {
   // falls back to the backup when the primary is missing, so a lone primary
   // remove would let stale state resurrect on the next restore.
   void DeleteState(const std::filesystem::path& target_path) const;
+
+ private:
+  // Paths whose in-memory state was recovered from a `.bak` because the primary
+  // was present but unreadable/corrupt (not merely absent). Maps the normalized
+  // path to the record body re-encoded from the recovered state. While a path is
+  // guarded, a Save whose encoded body equals this baseline — i.e. no user
+  // mutation since recovery — is suppressed, so the still-recoverable corrupt
+  // primary is not clobbered with stale backup-derived state. A differing body
+  // (a real mutation) writes normally and clears the guard.
+  mutable std::unordered_map<std::string, std::vector<std::byte>> backup_recovery_baseline_;
 };
 
 }  // namespace microide::workspace
