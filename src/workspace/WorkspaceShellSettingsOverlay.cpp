@@ -691,7 +691,11 @@ void WorkspaceShell::StepSetting(std::string_view id, bool forward) {
   const std::string current =
       GetSettingValue(id).value_or(SerializeSettingValue(info->default_value));
   if (info->type == SettingType::Bool) {
-    const bool on = current == "true" || current == "1" || current == "on";
+    // Use the shared truthiness predicate (SettingFlagEnabled), not an ad-hoc token
+    // list: a plugin Bool whose default is a non-canonical truthy token like "yes"
+    // renders as checked, so an ad-hoc test that only accepts "true"/"1"/"on" would
+    // compute `on == false` and no-op the first toggle (checked → checked).
+    const bool on = SettingFlagEnabled(std::optional<std::string>(current));
     SetSettingValue(id, on ? "false" : "true");
     return;
   }

@@ -127,6 +127,31 @@ void TestAtomicWriteThroughSymlinkPreservesLink() {
   Expect(NoStagingTempLeftBehind(link), "no staging temp should be left beside the link");
 }
 
+// A2b: saving through a symlink whose target does not yet exist must create the target
+// and keep the link — weakly_canonical() would stop at the missing target and return the
+// link node, so a naive resolve replaces the link with a regular file.
+void TestAtomicWriteThroughSymlinkWithMissingTargetPreservesLink() {
+  TemporaryDirectory temp_dir;
+  std::error_code error;
+  std::filesystem::create_directory(temp_dir.path() / "sub", error);
+  Expect(!error, "creating the subdirectory should succeed");
+
+  const std::filesystem::path link = temp_dir.path() / "link.txt";
+  // Relative target that does not exist yet (resolved against the link's parent).
+  std::filesystem::create_symlink("sub/missing.txt", link, error);
+  Expect(!error, "creating the dangling symlink should succeed");
+
+  Expect(WriteTextFileAtomically(link, "created\n"),
+         "saving through a dangling symlink should succeed");
+  Expect(std::filesystem::is_symlink(std::filesystem::symlink_status(link)),
+         "the symlink must survive the save, not be replaced by a regular file");
+  const std::filesystem::path target = temp_dir.path() / "sub" / "missing.txt";
+  Expect(std::filesystem::is_regular_file(target),
+         "the link's target must be created as a regular file");
+  Expect(ReadFile(target) == "created\n", "the link's target must receive the new content");
+  Expect(NoStagingTempLeftBehind(link), "no staging temp should be left beside the link");
+}
+
 // C1: a failed save must not lose data — the buffer stays dirty, the on-disk file is
 // left intact (not truncated), no staging temp lingers, and the undo baseline is NOT
 // re-based (MarkSaved must not run), so undoing back to the loaded text reads clean.
@@ -433,6 +458,8 @@ void RegisterSaveDataIntegrityTests(std::vector<TestCase>& tests) {
           TestAtomicWritePreservesFileMode);
   AddTest(tests, "SaveDataIntegrity/AtomicWriteThroughSymlinkPreservesLink",
           TestAtomicWriteThroughSymlinkPreservesLink);
+  AddTest(tests, "SaveDataIntegrity/AtomicWriteThroughSymlinkWithMissingTargetPreservesLink",
+          TestAtomicWriteThroughSymlinkWithMissingTargetPreservesLink);
   AddTest(tests, "SaveDataIntegrity/SaveWriteFailureKeepsDirtyAndFileIntact",
           TestSaveWriteFailureKeepsDirtyAndFileIntact);
 #endif

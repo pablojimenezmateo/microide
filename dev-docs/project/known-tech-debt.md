@@ -19,6 +19,30 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
+### Fixed in the 2026-07-14 actionable sweep
+
+Closed this pass; the corresponding open/backlog entries below were removed.
+
+- **Atomic save through a symlink whose target does not yet exist replaced the link
+  with a regular file.** `ResolveSymlinkTarget` (util/TextFileIO.cpp) used
+  `weakly_canonical`, which stops at the last existing prefix (the link's parent) and
+  returns the link node itself for a dangling relative link (`link -> sub/missing.txt`);
+  the atomic rename then destroyed the link. Now follows the link chain manually via
+  `read_symlink`, resolving relative targets against the link's parent, so the save
+  creates/overwrites the intended target and preserves the link. Bounded to 40 hops for
+  cycle safety. Regression: `SaveDataIntegrity/AtomicWriteThroughSymlinkWithMissingTargetPreservesLink`.
+- **Compare & merge mouse row hit-test selected row 0 for clicks in the band directly
+  above the first row.** `(y - rows_y) / line_height` truncates a small negative toward
+  zero to `0`, and the `clicked_row < 0` guard therefore missed it, so a click just above
+  row 0 was treated as a hit on row 0. Both `WorkspaceCompareMouseCoordinator` and
+  `WorkspaceMergeMouseCoordinator` now reject a negative row offset before the division.
+  Regression: `WorkspaceShell/CompareClickAboveFirstRowIsNotHandled` (merge path is the
+  symmetric mirror).
+- **Settings overlay `StepSetting` used an ad-hoc truthiness test for plugin-contributed
+  Bool settings** (`== "true"/"1"/"on"`), so a non-canonical truthy default like `"yes"`
+  — which renders as checked via `SettingFlagEnabled` — computed `on == false` and no-oped
+  the first toggle. Now routes through `SettingFlagEnabled`, matching the render predicate.
+
 ### Fixed in the 2026-07-13 actionable sweep
 
 Closed this pass (each with regression coverage unless noted); the corresponding open
@@ -335,12 +359,6 @@ Detail per batch lives in the sweep commits.
   switch that moves/destroys that state while a commit is in flight dangles the reference;
   `operation_generation_` guards logical correctness but not lifetime. Pre-existing
   threading design; a correct fix needs a lifetime redesign beyond a local edit.
-- **`WorkspaceShellSettingsOverlay::StepSetting` uses an ad-hoc truthiness test for
-  plugin-contributed Bool settings** (`== "true"/"1"/"on"`) instead of `SettingFlagEnabled`,
-  so a non-canonical truthy default like `"yes"` no-ops on first toggle. Cosmetic.
-- **Compare/Merge mouse row hit-test selects row 0 for clicks in the ~6px band directly
-  above `rows_y`** (`WorkspaceCompareMouseCoordinator` / `WorkspaceMergeMouseCoordinator`;
-  truncation toward zero yields `0`, not a rejection). Minor, identical in both paths.
 - **Editor wheel scrolls the active viewport regardless of which split pane the pointer is
   over** (`WorkspaceEditorMouseCoordinator::HandleWheel` uses the whole `editor_surface`).
   Looks like intended "active viewport" behavior; matching the pane-under-cursor is a
@@ -376,15 +394,6 @@ behavioral contract before changing code.
   race-free. Validate on Windows with repeated open/close and child-exits-immediately scenarios.
 ##### Persistence and durable file I/O
 
-- **Atomic save through a relative symlink whose target is missing can replace the symlink instead of
-  writing the intended target.** `WriteTextFileAtomically` resolves symlinks through
-  `weakly_canonical`; when a symlink exists but its relative target does not, canonicalization can
-  fail and the fallback path is the symlink itself. That turns the symlink into a regular file on
-  save rather than creating the target. Existing save integrity tests cover a symlink with an
-  existing target, not a missing target. Fix direction: when `read_symlink` succeeds, resolve a
-  relative link against the link's parent lexically even if the target does not exist; only fall back
-  to the link path when the path is not a symlink or the symlink read fails. Add a
-  `SaveDataIntegrity` case for `link -> subdir/missing.txt`.
 - **Persistence backup fallback can resurrect stale state after a primary read failure.**
   `PersistedRecordReader::ReadFile` blocks backup fallback for unsupported versions, but ordinary
   `ReadFailed` errors still fall through to the backup read. A transient permission error, short

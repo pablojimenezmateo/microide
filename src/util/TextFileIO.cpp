@@ -165,16 +165,38 @@ namespace {
 // never touches the intended target; resolving here means the rename lands on the target
 // so the link is preserved and its content is updated. Falls back to `path` for a
 // non-symlink, an unresolvable chain (loop), or any resolution error.
+//
+// The chain is followed manually rather than via weakly_canonical(): for a link whose
+// target does not yet exist (e.g. `link -> subdir/missing.txt`), weakly_canonical stops
+// at the last *existing* prefix — the link's parent — and appends the link's own name
+// lexically, so it returns the link node itself. Saving there would then destroy the
+// link. read_symlink + lexical resolution against the link's parent yields the intended
+// target whether or not it exists.
 std::filesystem::path ResolveSymlinkTarget(const std::filesystem::path& path) {
   std::error_code error;
-  if (!std::filesystem::is_symlink(std::filesystem::symlink_status(path, error)) || error) {
-    return path;
+  std::filesystem::path current = path;
+  // Bound the walk so a cyclic link (`a -> b -> a`) cannot spin forever; 40 hops is far
+  // beyond any legitimate link chain and matches typical kernel SYMLOOP_MAX.
+  for (int hops = 0; hops < 40; ++hops) {
+    // Key on is_symlink, not the error code: symlink_status on a not-yet-existing
+    // target reports a not_found status (is_symlink == false) but may also set `error`
+    // (ENOENT). Such a target is a correct write destination — a missing file, or the
+    // final resolved target of a dangling link — so terminate the walk and return it.
+    if (!std::filesystem::is_symlink(std::filesystem::symlink_status(current, error))) {
+      return current;
+    }
+    error.clear();
+    const std::filesystem::path link_target = std::filesystem::read_symlink(current, error);
+    if (error || link_target.empty()) {
+      // Unreadable link: fall back to the originally requested path (at worst this
+      // overwrites the top-level link, the pre-existing behavior).
+      return path;
+    }
+    current = (link_target.is_absolute() ? link_target
+                                         : current.parent_path() / link_target)
+                  .lexically_normal();
   }
-  const std::filesystem::path resolved = std::filesystem::weakly_canonical(path, error);
-  if (error || resolved.empty()) {
-    return path;
-  }
-  return resolved;
+  return path;  // loop guard tripped: keep the link node rather than chase a cycle
 }
 
 }  // namespace

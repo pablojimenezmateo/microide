@@ -172,6 +172,41 @@ void TestWorkspaceShellCompareClickTogglesEditablePaneFocus() {
          "clicking the compare right pane should reactivate the editable pane");
 }
 
+void TestWorkspaceShellCompareClickAboveFirstRowIsNotHandled() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare band fixture", "compare band fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare band fixture should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  const float left_x = surface.left_x + 24.0f;
+
+  // Select a non-zero presentation row so a spurious "row 0" hit would be observable.
+  const float row2_y = surface.rows_y + surface.line_height * 2.5f;
+  Expect(SendMouseDown(shell, left_x, row2_y, SDL_BUTTON_LEFT),
+         "clicking a real compare row should be handled");
+  const std::size_t selected_after_real_click = compare.selected_row;
+
+  // A click in the band directly above the first row (negative row offset) must be
+  // rejected, not truncated to a phantom hit on row 0.
+  const float above_y = surface.rows_y - 2.0f;
+  Expect(!SendMouseDown(shell, left_x, above_y, SDL_BUTTON_LEFT),
+         "clicking just above the first compare row must not be handled as a row hit");
+  Expect(compare.selected_row == selected_after_real_click,
+         "a click above the first row must not move the compare selection to row 0");
+}
+
 void TestWorkspaceShellCompareCollapsedContextButtonsExpandHiddenRows() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1367,6 +1402,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable);
   AddTest(tests, "WorkspaceShell/CompareClickTogglesEditablePaneFocus",
           TestWorkspaceShellCompareClickTogglesEditablePaneFocus);
+  AddTest(tests, "WorkspaceShell/CompareClickAboveFirstRowIsNotHandled",
+          TestWorkspaceShellCompareClickAboveFirstRowIsNotHandled);
   AddTest(tests, "WorkspaceShell/CompareCollapsedContextButtonsExpandHiddenRows",
           TestWorkspaceShellCompareCollapsedContextButtonsExpandHiddenRows);
   AddTest(tests, "WorkspaceShell/CompareCollapsedContextButtonsHoverAsInteractive",

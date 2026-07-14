@@ -249,8 +249,15 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return true;
   }
 
-  const int clicked_row = static_cast<int>((event.button.y - surface_layout.rows_y) /
-                                           std::max(1.0f, surface_layout.line_height));
+  // A small negative (y - rows_y) truncates toward zero to 0, so `clicked_row < 0`
+  // alone would misclassify a click in the band just above row 0 as a hit on row 0.
+  // Reject the above-first-row band explicitly before the division.
+  const float row_offset_px = static_cast<float>(event.button.y) - surface_layout.rows_y;
+  if (row_offset_px < 0.0f) {
+    return false;
+  }
+  const int clicked_row =
+      static_cast<int>(row_offset_px / std::max(1.0f, surface_layout.line_height));
   if (clicked_row < 0) {
     return false;
   }

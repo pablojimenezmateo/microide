@@ -113,8 +113,16 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return true;
   }
 
-  const int clicked_row =
-      static_cast<int>((event.button.y - surface_layout.rows_y) / surface_layout.line_height);
+  // Reject clicks in the band *above* the first row explicitly: a small negative
+  // (y - rows_y) divided by line_height truncates toward zero to 0, so the
+  // `clicked_row < 0` guard alone would misclassify a click just above row 0 as a
+  // hit on row 0.
+  const float row_offset_px = static_cast<float>(event.button.y) - surface_layout.rows_y;
+  if (row_offset_px < 0.0f) {
+    compare_tab->right_view_active = false;
+    return false;
+  }
+  const int clicked_row = static_cast<int>(row_offset_px / surface_layout.line_height);
   const int presentation_row = compare_tab->scroll_row + clicked_row;
   if (clicked_row < 0 || presentation_row < 0 ||
       static_cast<std::size_t>(presentation_row) >= CompareTabPresentationRowCount(*compare_tab)) {
