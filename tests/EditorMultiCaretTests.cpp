@@ -603,7 +603,50 @@ void TestMultiCaretOutdentPreservesCarets() {
          "the secondary caret survives and shifts left with its line");
 }
 
+// Regression: two carets whose selections OVERLAP must not double-edit shared
+// content. ApplyMultiCaretInsert refuses the edit (leaving the buffer untouched)
+// rather than corrupt it through the reverse-walk apply.
+void TestMultiCaretRefusesOverlappingSelections() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnop\nsecondline\n", "/tmp/overlap.txt");
+  // Primary is an empty caret on line 1 (disjoint). Two OVERLAPPING secondary
+  // selections on line 0 — [0,0)-[0,6) and [0,3)-[0,9), overlapping at [3,6) — are
+  // injected via the ranges API, which dedups only by position, not overlap.
+  viewport.MoveCursorTo(1, 0, false);
+  viewport.SetSecondaryCaretsWithRanges({
+      microide::editor::SelectionRange{{0, 0}, {0, 6}},
+      microide::editor::SelectionRange{{0, 3}, {0, 9}},
+  });
+  const std::string before0 = viewport.lines()[0];
+  const std::string before1 = viewport.lines()[1];
+  viewport.InsertText("X");
+  Expect(viewport.lines()[0] == before0 && viewport.lines()[1] == before1,
+         "a refused overlapping multi-caret edit must not mutate the buffer at all");
+}
+
+// Positive control: DISJOINT selections still apply, proving the overlap guard does
+// not reject legitimate multi-caret edits.
+void TestMultiCaretDisjointSelectionsStillApply() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnop\nsecondline\n", "/tmp/disjoint.txt");
+  viewport.MoveCursorTo(1, 0, false);
+  viewport.SetSecondaryCaretsWithRanges({
+      microide::editor::SelectionRange{{0, 0}, {0, 3}},  // "abc"
+      microide::editor::SelectionRange{{0, 6}, {0, 9}},  // "ghi"
+  });
+  viewport.InsertText("X");
+  const std::string& line = viewport.lines()[0];
+  Expect(line != "abcdefghijklmnop", "the disjoint replacement should change line 0");
+  Expect(line.find("abc") == std::string::npos && line.find("ghi") == std::string::npos,
+         "both disjoint selections should be replaced");
+  Expect(line.find("def") != std::string::npos, "content between the selections is preserved");
+}
+
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorMultiCaret/RefusesOverlappingSelections",
+          TestMultiCaretRefusesOverlappingSelections);
+  AddTest(tests, "EditorMultiCaret/DisjointSelectionsStillApply",
+          TestMultiCaretDisjointSelectionsStillApply);
   AddTest(tests, "EditorMultiCaret/MultiCaretSoftTabAlignsEachCaretToItsOwnStop",
           TestMultiCaretSoftTabAlignsEachCaretToItsOwnStop);
   AddTest(tests, "EditorMultiCaret/MultiCaretOutdentPreservesCarets",

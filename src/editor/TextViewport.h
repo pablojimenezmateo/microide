@@ -461,6 +461,10 @@ class TextViewport {
                            bool record_undo,
                            const std::vector<std::string>* per_caret_insert = nullptr);
   bool ApplyMultiCaretInsert(std::string_view text, bool record_undo);
+  // True when any two carets' affected ranges (selection, or empty point) overlap,
+  // so no multi-caret apply path can run without double-editing shared content.
+  // Both ApplyMultiCaretEdit and TryMultiCaretPairInsert bail when this is true.
+  bool MultiCaretSelectionsOverlap() const;
   // Soft-tab insert across all carets, sizing each caret's padding to ITS OWN next
   // tab stop (a caret at a ragged column aligns to its own stop, not the primary's).
   bool ApplyMultiCaretSoftTab(bool record_undo);

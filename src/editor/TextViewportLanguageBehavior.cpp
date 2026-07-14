@@ -401,6 +401,13 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   if (!has_multiple_carets()) {
     return false;
   }
+  // Refuse if any two carets' selections overlap: this fast path (like the general
+  // ApplyMultiCaretEdit) applies edits per caret and would double-edit shared
+  // content. Returning false leaves the buffer untouched; the caller's fallback
+  // (ApplyMultiCaretInsert) re-checks and also refuses, so nothing is mutated.
+  if (MultiCaretSelectionsOverlap()) {
+    return false;
+  }
   last_applied_edit_.reset();
   EnsureDocument();
   if (document_->lines.empty()) {

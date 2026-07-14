@@ -108,6 +108,41 @@ std::optional<SelectionRange> NormalizedSelection(const TextPosition& caret,
 
 }  // namespace
 
+bool TextViewport::MultiCaretSelectionsOverlap() const {
+  // Collect every caret's affected range (its selection, or an empty point at its
+  // position), sorted by start. Any two ranges that intersect — or two carets
+  // sharing a start position with different anchors — cannot be applied by either
+  // multi-caret path without double-editing shared content, so the caller must
+  // refuse the edit. Touching endpoints (adjacent edits) are allowed. This is
+  // unreachable through normal UI, but SetSecondaryCaretsWithRanges / plugins /
+  // future multi-cursor commands can construct it.
+  std::vector<SelectionRange> ranges;
+  ranges.reserve(secondary_carets_.size() + 1);
+  const TextPosition primary{cursor_line_, cursor_column_};
+  ranges.push_back(selection_range().value_or(SelectionRange{primary, primary}));
+  for (const SecondaryCaret& secondary : secondary_carets_) {
+    const std::optional<SelectionRange> selection =
+        detail::SelectionRangeForSecondaryCaret(secondary.position, secondary.selection_anchor);
+    ranges.push_back(selection.value_or(SelectionRange{secondary.position, secondary.position}));
+  }
+  std::sort(ranges.begin(), ranges.end(), [](const SelectionRange& lhs, const SelectionRange& rhs) {
+    if (detail::PositionLess(lhs.start, rhs.start)) {
+      return true;
+    }
+    if (detail::PositionLess(rhs.start, lhs.start)) {
+      return false;
+    }
+    return detail::PositionLess(lhs.end, rhs.end);
+  });
+  for (std::size_t i = 1; i < ranges.size(); ++i) {
+    if (ranges[i].start == ranges[i - 1].start ||
+        detail::PositionLess(ranges[i].start, ranges[i - 1].end)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo) {
   return ApplyMultiCaretEdit(MultiCaretEditKind::Insert, text, record_undo);
 }
@@ -140,12 +175,32 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   std::sort(carets.begin(), carets.end(), [](const MultiCaretSite& lhs, const MultiCaretSite& rhs) {
     return detail::PositionLess(lhs.position, rhs.position);
   });
+  // Collapse fully-identical sites (same caret AND same selection). Distinct sites
+  // that merely share a caret position — two carets with different anchors — are
+  // intentionally kept so the overlap check below can reject them rather than
+  // silently discarding one replacement.
   carets.erase(std::unique(carets.begin(), carets.end(),
                            [](const MultiCaretSite& lhs, const MultiCaretSite& rhs) {
-                             return lhs.position == rhs.position;
+                             if (!(lhs.position == rhs.position)) {
+                               return false;
+                             }
+                             if (lhs.selection.has_value() != rhs.selection.has_value()) {
+                               return false;
+                             }
+                             return !lhs.selection.has_value() ||
+                                    (lhs.selection->start == rhs.selection->start &&
+                                     lhs.selection->end == rhs.selection->end);
                            }),
                carets.end());
   if (carets.empty()) {
+    return false;
+  }
+
+  // Refuse overlapping / ambiguous sites before mutating anything (shared with the
+  // TryMultiCaretPairInsert fast path). The reverse-walk apply assumes each caret
+  // edits a DISJOINT region; overlapping selections would double-edit shared content
+  // and corrupt the buffer.
+  if (MultiCaretSelectionsOverlap()) {
     return false;
   }
 
