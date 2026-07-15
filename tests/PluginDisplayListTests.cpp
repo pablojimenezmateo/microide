@@ -157,7 +157,25 @@ void TestNonFinitePolylinePointRejected() {
   Expect(!error.empty(), "rejection should report a reason");
 }
 
+// Content dimensions feed the host's scroll extents / intrinsic layout size, so a
+// NaN/inf/negative dimension must be rejected even when every op is valid.
+void TestNonFiniteContentDimensionRejected() {
+  PluginDisplayList list;
+  list.content_width = std::numeric_limits<float>::quiet_NaN();
+  list.content_height = 10.0f;
+  std::string error;
+  Expect(!ValidateDisplayList(list, &error), "a NaN content dimension must be rejected");
+  Expect(!error.empty(), "rejection should report a reason");
+
+  PluginDisplayList negative;
+  negative.content_width = 10.0f;
+  negative.content_height = -1.0f;
+  Expect(!ValidateDisplayList(negative, &error), "a negative content dimension must be rejected");
+}
+
 void RegisterPluginDisplayListTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PluginDisplayList/NonFiniteContentDimensionRejected",
+          TestNonFiniteContentDimensionRejected);
   AddTest(tests, "PluginDisplayList/NonFiniteRectRejected", TestNonFiniteRectRejected);
   AddTest(tests, "PluginDisplayList/NonFinitePolylinePointRejected",
           TestNonFinitePolylinePointRejected);

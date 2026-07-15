@@ -1381,56 +1381,48 @@ test proves it is unreachable.
   Windows can lose intended root semantics. Fix direction: decode into a typed persisted path first and
   decide per field whether cross-platform restore is supported. Add fixtures for Windows-on-Linux and
   POSIX-on-Windows path records.
-- **Persisted strings are length-checked but not UTF-8-validated.** Settings ids, tab titles, paths,
-  and prompt strings can be decoded from a corrupted record with invalid byte sequences and then flow
-  into render/search/plugin surfaces. Fix direction: validate UTF-8 at typed-record boundaries or
-  replace invalid sequences with U+FFFD before UI use. Add persistence fuzz cases with invalid string
-  payloads.
-- **Persisted capability flags are parsed but not enforced by the generic reader.** The header exposes
-  `capability_flags`, but `PersistedRecordReader::DecodeRecordFile` only checks version and CRC.
-  Callers can accidentally ignore "requires feature X" bits and partially load records they do not
-  understand. Fix direction: pass supported capability masks into typed readers and fail unknown
-  required bits. Add a fixture with a future required flag.
-- **Persisted record CRC is unkeyed and only detects corruption, not wrong-file substitution.** Any
-  valid record body with a matching CRC can be copied into another persisted slot if the typed reader
-  does not include its own root tag. Fix direction: include a record-kind tag in the body and verify it
-  at every typed reader entry. Add tests that try to read project config bytes as session bytes.
-- **`ReadAllBytes` trusts `tellg` size until the final read check.** Files that shrink between
-  `tellg` and `read` fail cleanly, but files that grow are read only to the old size and then parsed as
-  a complete record if the prefix is valid. Fix direction: reopen or stat after read, or reject when
-  EOF is not reached immediately after the expected byte count. Add a race-injected reader test.
-- **Backup fallback can mask repeated primary corruption indefinitely.** A corrupt primary plus valid
-  backup returns `used_backup`, but no automatic quarantine/repair policy is attached at the generic
-  layer. Callers that ignore `used_backup` can keep loading stale backup state every launch. Fix
-  direction: centralize backup-recovery reporting and repair/quarantine decisions in
-  `PersistenceService`. Add an integration test that corrupts primary and verifies visible recovery
-  status.
+- **[WON'T-DO — corrupt-record edge; render tolerates invalid UTF-8] Persisted strings are
+  length-checked but not UTF-8-validated.** A corrupt persisted state file producing invalid byte
+  sequences is an edge (the user's own CRC-checked state), and the glyph/render path tolerates invalid
+  UTF-8 (falls back per-byte); string emission already folds invalid scalars to U+FFFD (2026-07-13
+  `AppendUtf8`). Validating on decode is defense-in-depth over a CRC-guarded file.
+- **[WON'T-DO — no future required flags; forward-compat feature] Persisted capability flags are parsed
+  but not enforced.** There are no required-capability bits defined today, so nothing is silently
+  ignored; enforcing a supported mask is forward-compatibility plumbing for a format extension that does
+  not yet exist.
+- **[WON'T-DO — distinct file paths; substitution is user error] Persisted record CRC is unkeyed.**
+  Reading project-config bytes as session bytes requires someone to manually copy one state file over
+  another (distinct, named paths); a record-kind body tag defends against a manual file swap, not a
+  reachable program path.
+- **[WON'T-DO — race on user's own state file; prefix parse bounded] `ReadAllBytes` trusts `tellg` size
+  until the final read check.** A file growing between `tellg` and `read` is a race on the user's own
+  CRC-guarded state file; the prefix parse is bounded by the read cap and a valid-prefix record is a
+  valid record. Re-stat-after-read guards a self-inflicted concurrent write.
+- **[WON'T-DO — harmful overwrite already guarded] Backup fallback can mask repeated primary corruption
+  indefinitely.** The material harm (overwriting a recoverable primary with stale backup) is prevented
+  by the 2026-07-14 corrupt-primary guard; a repeated-corruption quarantine/repair policy + recovery
+  banner is the recovery-UX nicety triaged earlier.
 
 ##### Rendering, plugin display lists, and image assets
 
-- **Display-list validation accepts huge finite rectangles that are later clamped silently.** Replay
-  clamps to +/-1,000,000 before int conversion, but validation does not report geometry far outside
-  content bounds. A plugin can create impossible hit/paint extents and get clipped in surprising ways.
-  Fix direction: validate against content size plus a small overscan margin during interop parsing.
-  Add display-list tests for 1e20 coordinates and negative dimensions.
-- **Display-list content dimensions are not finiteness-checked.** Validation checks op rects and point
-  arenas, but `content_width`/`content_height` are hashed and may be consumed by layout surfaces. NaN or
-  infinities there can poison scroll extents even if every op is valid. Fix direction: require finite
-  non-negative content dimensions in `ValidateDisplayList`. Add tests for NaN/Inf content size.
-- **Texture-cache decode failures are permanent by content hash.** `in_flight_or_failed_` keeps failed
-  hashes forever until `Clear()`. That is correct for immutable bytes, but if a plugin reuses a hash
-  incorrectly for corrected bytes, the image never retries and no diagnostic identifies the bad cache
-  key. Fix direction: include declared byte size/format in the request key or reject plugin-supplied
-  hash reuse with mismatched metadata. Add a test that requests same hash with bad then good bytes.
-- **Raw RGBA plugin images are copied twice before upload.** `Request` takes `bytes` by value, the
-  worker moves it into `WrapRgba8`, then `WrapRgba8` copies into `out.rgba`, and SDL copies again on
-  upload. Large plugin images pay avoidable memory bandwidth. Fix direction: move the validated RGBA
-  buffer directly into `Decoded::rgba`. Add a microbenchmark for max-size RGBA image request/upload.
-- **Raster decode dimensions can overflow SDL pitch assumptions if caps change.** `SDL_UpdateTexture`
-  receives `decoded.width * 4` as an `int` expression. Current `kMaxDimension` likely keeps this safe,
-  but the invariant is local to the cache and not asserted at the pitch calculation. Fix direction:
-  compute pitch with checked `std::size_t` and reject if it exceeds `INT_MAX`. Add a lowered-cap test
-  around pitch overflow.
+- **[WON'T-DO — clamped safely at replay] Display-list validation accepts huge finite rectangles that
+  are later clamped silently.** Replay clamps to ±1,000,000 before the int cast, so a 1e20 coordinate
+  cannot cause UB — it just clips; validating against content bounds is a surprise-reduction nicety over
+  already-safe behavior.
+- **[RESOLVED 2026-07-15] Display-list content dimensions are not finiteness-checked.**
+  `ValidateDisplayList` now rejects a NaN/±inf or negative `content_width`/`content_height` (which feed
+  the host's scroll extents / intrinsic layout size), alongside the existing op-rect/point finiteness
+  checks. Regression: `PluginDisplayList/NonFiniteContentDimensionRejected`.
+- **[WON'T-DO — correct for immutable bytes; plugin bug] Texture-cache decode failures are permanent by
+  content hash.** Caching a decode failure by content hash is correct (immutable bytes never decode
+  differently); a plugin reusing a hash for different bytes is a plugin bug, and the transient-failure
+  retry was already fixed 2026-07-13. Byte-size/format in the key is defense over plugin misuse.
+- **[WON'T-DO — micro-optimization; bounded images] Raw RGBA plugin images are copied twice before
+  upload.** Plugin raster images are bounded by `kMaxDimension`, so the extra copy is bounded memory
+  bandwidth on an infrequent path; moving the buffer directly is a micro-optimization, not a defect.
+- **[WON'T-DO — kMaxDimension keeps pitch in range] Raster decode dimensions can overflow SDL pitch
+  assumptions if caps change.** `kMaxDimension` keeps `width * 4` well within `int`; a checked-`size_t`
+  pitch is an assertion to add *if* the cap ever grows, not a live overflow.
 
 ##### Platform filesystem, trash, and subprocess helpers
 

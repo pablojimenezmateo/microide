@@ -54,6 +54,14 @@ bool ValidateDisplayList(const PluginDisplayList& list, std::string* error) {
     }
   }
 
+  // Content dimensions feed the host's scroll extents / intrinsic layout size, so
+  // a NaN/±inf or negative value poisons layout math even when every op is valid.
+  // Validation is the sole gate the host trusts, so reject it here.
+  if (!std::isfinite(list.content_width) || !std::isfinite(list.content_height) ||
+      list.content_width < 0.0f || list.content_height < 0.0f) {
+    return fail("display list has a non-finite or negative content dimension");
+  }
+
   int clip_depth = 0;
   for (const DisplayOp& op : list.ops) {
     if (!RectIsFinite(op.rect)) {
