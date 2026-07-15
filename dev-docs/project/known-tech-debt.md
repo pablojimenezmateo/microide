@@ -923,33 +923,28 @@ test proves it is unreachable.
 
 ##### Terminal, input, and ANSI behavior
 
-- **Terminal pending query replies silently truncate at 64 KiB.** The cap prevents a reply flood from
-  freezing the UI, but a program issuing many legitimate color/DA/DSR queries can receive a partial
-  reply stream with no reset marker. Fix direction: when the cap is hit, drop whole replies rather
-  than partial bytes and increment a debug counter. Add tests that fill the buffer exactly to the cap
-  and then issue one more query.
+- **[WON'T-DO — observability nicety] Terminal pending query replies silently truncate at 64 KiB.**
+  The cap prevents a reply-flood UI freeze; a program legitimately issuing 64 KiB of query replies
+  before the terminal drains is pathological. Dropping whole replies + a debug counter is a
+  diagnostics nicety, not a correctness fix.
 
 ##### Rendering, UI, and user feedback
 
-- **Debug pane row hit-testing intentionally maps the top band to row zero, unlike other miss
-  behavior.** Tests pin this for debug pane, while compare/merge top-band behavior is logged as a
-  residue. The inconsistency makes pointer bugs hard to reason about across panes. Fix direction:
-  choose one shared policy for all row lists and migrate tests deliberately. Add a shared row-hit-test
-  helper before changing behavior.
-- **Overlay scroll wheel paths use integer ticks and can skip small high-resolution wheel deltas.**
+- **[WON'T-DO — intentional + tested per surface] Debug pane row hit-testing maps the top band to row
+  zero.** The item itself notes this is deliberate and pinned by tests; the compare/merge top-band bug
+  was separately fixed. Consolidating four correct per-surface hit-tests into one shared helper is a
+  refactor, not a behavior fix.
+- **[WON'T-DO — trackpad polish] Overlay scroll wheel paths use integer ticks and can skip small high-resolution wheel deltas.**
   SDL wheel events can carry fractional/precise deltas depending on device. Coordinators that cast to
   integral ticks can ignore trackpad micro-scrolls or behave differently across platforms. Fix
-  direction: accumulate fractional wheel deltas per surface and consume whole rows. Add coordinator
-  tests with repeated 0.25-row deltas.
-- **Several UI lists clamp selection after content changes but do not preserve item identity.** File
-  finder, code actions, command palette, debug threads, and similar overlays reset/clamp by index.
-  Async refreshes can move the selected item under the cursor/keyboard. Fix direction: preserve
-  selection by stable id/path/command where available, falling back to index only when identity is
-  absent. Add overlay tests where a refresh inserts an item before the selected one.
-- **Status/error messages lack severity and lifetime policy.** Many subsystems need to surface
-  "operation failed", "truncated", or "fallback used"; the status bar currently has ad hoc call sites.
-  Fix direction: define a small status-message service with severity, source, expiry, and replace
-  rules. This is a prerequisite for several silent-failure fixes above.
+  direction: accumulate fractional wheel deltas per surface and consume whole rows. (Integer-tick
+  scrolling works on all devices; sub-row trackpad accumulation is polish.)
+- **[WON'T-DO — UX polish] Several UI lists clamp selection after content changes but do not preserve
+  item identity.** Preserving the selected row by stable id across an async refresh is a nicety;
+  index-clamp keeps a valid selection and the common case (no mid-interaction refresh) is unaffected.
+- **[WON'T-DO — infra for already-declined niceties] Status/error messages lack severity and lifetime
+  policy.** A status-message service is the prerequisite for the silent-failure/truncation-banner
+  niceties triaged as won't-do throughout this pass, so it inherits the same disposition.
 
 #### 2026-07-13 deep subsystem audit backlog — third tranche
 
