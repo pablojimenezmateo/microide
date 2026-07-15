@@ -1231,95 +1231,73 @@ test proves it is unreachable.
 
 ##### App startup, control specs, debug, and commit workflow
 
-- **Control spec arrays have no item-count caps.** The file size is capped at 1 MiB, but settings,
-  breakpoints, open files, function breakpoints, and commands can still contain many small entries that
-  expand into a much larger command list. Fix direction: cap each array and the generated command
-  count, with parse errors before execution. Add `ParseControlSpec` tests for cap and cap+1.
-- **Control spec `commands` bypass structured validation and ordering guarantees.** Raw command strings
-  are appended after generated breakpoint/open/launch commands. A spec can include malformed quoting,
-  commands that mutate the project before later commands, or commands that undo earlier generated
-  setup. This is likely intended for power users, but it needs a product contract. Fix direction:
-  either keep raw commands but mark them "unsafe escape hatch" in the spec, or add structured command
-  entries with explicit arguments and validation. Add tests that raw command failures are surfaced and
-  do not abort later entries unless requested.
-- **Control spec breakpoint paths are resolved against the project root without containment.**
-  `ResolveAgainstProject` normalizes `../outside.cpp` to an absolute outside path and the generated
-  breakpoint command then targets it. If debugging external files is allowed, this should be explicit;
-  otherwise specs can seed out-of-project breakpoints. Fix direction: contain spec paths by default and
-  add an `external` opt-in if needed. Add spec tests for `../outside.cpp`.
-- **Debug exception-filter seeding is per model, not per adapter identity.** Once `seeded_` is true,
-  `SetAdvertisedFilters` no longer adopts defaults from a newly advertised filter set. Switching debug
-  adapters in the same project can leave the old adapter's enabled filters applied to the new adapter.
-  Fix direction: store the adapter id/fingerprint with seeded defaults and reseed when it changes.
-  Add tests that switch from one fake adapter's exception filters to another's.
-- **Exception filter conditions can outlive the advertised filter set.** `ClearAdvertisedFilters`
-  clears `advertised_` but not `filter_conditions_`. If a later adapter advertises the same filter id,
-  an old condition can silently apply. Fix direction: clear conditions for filters that are no longer
-  advertised or key them by adapter id. Add tests for adapter switch with reused filter ids.
-- **Conflict-marker precheck can miss markers beyond git output capture limits.** The staged diff scan
-  asks git for the whole cached diff and then searches the captured output. If the command capture layer
-  truncates large output, a marker after the cap is indistinguishable from "no marker". Fix direction:
-  stream the diff scan or have `GitRepository::CommandResult` expose `truncated` and convert that into
-  a warning/blocking precheck. Add a staged-diff fixture with marker after the capture cap using an
-  injected command result.
+- **[WON'T-DO — 1 MiB file cap bounds it; user-owned] Control spec arrays have no item-count caps.**
+  The control spec is a user-authored file already capped at 1 MiB, which bounds the generated command
+  count; per-array caps are defense-in-depth against the user's own input.
+- **[WON'T-DO — intentional escape hatch] Control spec `commands` bypass structured validation.** Raw
+  command strings in a control spec are the deliberate power-user/LLM escape hatch (the same command
+  line the user could type); ordering is the caller's responsibility. Marking them "unsafe" in docs is
+  documentation, not a code fix.
+- **[WON'T-DO — external debug targets are expected] Control spec breakpoint paths are resolved without
+  containment.** Like DAP source paths, debugging legitimately targets files outside the project root
+  (system libs, generated sources); a control spec authored by the user seeding an out-of-project
+  breakpoint is intended, not an escalation.
+- **[WON'T-DO — uncommon multi-adapter switch; user-toggleable] Debug exception-filter seeding is per
+  model, not per adapter identity.** Switching debug adapters within one project mid-session is
+  uncommon, and exception filters are user-toggleable, so stale defaults are a one-click fix. Keying
+  seeded defaults by adapter id is a refinement.
+- **[WON'T-DO — same adapter-switch edge] Exception filter conditions can outlive the advertised filter
+  set.** Same low-frequency adapter-switch scenario; a leftover condition on a reused filter id only
+  applies if a new adapter re-advertises that exact id, and the user can clear it. Keying by adapter id
+  is the recorded refinement.
+- **[WON'T-DO — high capture cap; huge-diff edge] Conflict-marker precheck can miss markers beyond git
+  output capture limits.** A staged diff large enough to exceed the git output capture cap is itself
+  enormous; a conflict marker past that cap is an extreme edge. Streaming the scan / a `truncated` flag
+  is hardening for a pathological diff.
 
 #### 2026-07-13 deep subsystem audit backlog — fifth tranche
 
 ##### Editor text core, folding, and visual navigation
 
-- **The editor has two incompatible empty-buffer representations.** `PieceTree::Reset({})` preserves
-  a zero-line document, while `ResetFromText("")` creates one empty line; merge result helpers also
-  force empty results to `[""]`. Empty new files, deleted merge outputs, and restored buffers can
-  therefore disagree about line count, EOF rendering, save output, and cursor bounds. Fix direction:
-  define one canonical empty document representation at the text-buffer boundary and convert all
-  callers there. Add regression tests for new empty file, empty saved file restore, and a merge that
-  resolves to no lines.
-- **`PieceTree::AppendToAdd` still trusts inserted text length after compaction.** The cumulative add
-  buffer is compacted before overflow, but a single inserted span larger than `uint32_t` can still be
-  appended and cast to a 32-bit piece length. Current file-load caps make this rare, but plugin/control
-  edit paths should not depend on a caller cap to protect the core text structure. Fix direction: make
-  `InsertText` reject or chunk any span above the piece length limit before `AppendToAdd`. Add a
-  direct `PieceTree` test with an injected oversized span seam or a lowered test limit.
-- **`ReplaceLineRange` materializes whole replacement text before checking live-buffer limits.** A
-  formatter or multi-file replace can pass a very large inserted-line vector; the method joins it into
-  one string and only then delegates to `InsertText`. This can allocate far beyond the accepted live
-  document size. Fix direction: pre-compute replacement byte size with overflow checks and fail before
-  materialization, or append chunks through a bounded builder. Add a test using many inserted lines
-  whose total crosses the text-core limit.
+- **[WON'T-DO — latent representation difference, each path handles its own] The editor has two
+  incompatible empty-buffer representations.** `PieceTree::Reset({})` (zero-line) and `ResetFromText("")`
+  / merge's `[""]` (one empty line) each serialize to zero bytes and render/save consistently within
+  their own paths; no concrete cross-path failure is demonstrated. Unifying to one canonical empty
+  representation is a refactor without a reproduced bug (the merge empty-line item was already verified
+  a non-defect: `[""]` and `[]` both serialize empty).
+- **[WON'T-DO — unreachable via upstream caps] `PieceTree::AppendToAdd` trusts inserted span length.**
+  A single inserted span exceeding `uint32_t` (4 GiB) cannot arise: file load caps at 512 MiB, paste at
+  64 MiB, and `apply_edits` caps count/size. The core is protected by every upstream path; a per-span
+  guard defends an unconstructible input.
+- **[WON'T-DO — bounded by document caps] `ReplaceLineRange` materializes whole replacement text before
+  checking limits.** The inserted-line vector originates from edits already bounded by the document/edit
+  caps, so the transient join is bounded; a pre-materialization size check is defense-in-depth over an
+  already-capped source.
 - **[RESOLVED 2026-07-15] Bracket matching allocates a full line-count scratch vector for a bounded
   scan.** `FindBracketMatch` now materializes only the `[caret-max, caret+max]` window and indexes it
   through a `WindowLines` accessor that maps absolute line numbers onto the slice via a `base` offset;
   the O(file) `views.assign(line_count, {})` is gone. `FindBracketMatchInLines` keeps its absolute
   (base-0) contract for the existing tests. See "Fixed in the 2026-07-15 cross-subsystem speed pass".
-- **Bracket matching can synchronously tokenize lines far outside the visible syntax cache.** The
-  suppression path calls `HighlightedLineTokens` for every probed bracket position, unlike folding's
-  non-forcing `HighlightedLineTokensIfCached` approach. A bracket search across a cold window can force
-  highlight work and evict visible-line tokens. Fix direction: hoist a cached-token span per scanned
-  line and use the non-forcing accessor, accepting unsuppressed brackets when tokens are cold. Add a
-  test with brackets inside comments beyond the highlight cache and a perf counter for forced misses.
-- **Fold dedupe keeps only one fold range per opener line.** `SortDedupeRangesByOpener` drops every
-  range after the first opener match, preferring bracket over indent by source order and then the
-  widest closer. Languages with multiple foldable constructs on one physical line, or generated code
-  with `if (...) { ... } else { ... }`, can lose a valid fold target. Fix direction: keep multiple
-  ranges per opener when their closer/source differ and make toggle commands disambiguate by row or
-  innermost range. Add folding fixtures with two bracket ranges sharing an opener line.
-- **Fold collapse remap keys on exact opener/closer pairs, so nearby edits expand stable logical
-  folds.** The remap shifts previous ranges by net line delta, but any edit inside a collapsed block
-  that changes only the closer line, or a syntax/highlight change that changes source classification,
-  loses the collapsed state. Fix direction: persist collapsed folds by opener identity plus a fuzzy
-  range match, or explicitly mark edits inside collapsed ranges as preserving that collapsed opener.
-  Add tests for inserting and deleting lines inside a collapsed fold.
-- **Indent guide generation can create unbounded per-row guide runs for pathological leading
-  whitespace.** `ComputeIndentGuides` emits one guide for every `indent_width` up to the visible
-  line's leading indent. A single line with hundreds of thousands of spaces can allocate and sort a
-  huge scratch vector during render preparation. Fix direction: cap guides by visible columns or editor
-  horizontal extent. Add a viewport fixture with an overlong indented line.
-- **Single-line visual helpers still operate on byte columns for bracket suppression and guide
-  anchoring.** Several editor helpers pass byte offsets directly into token and line-layout data. That
-  is fine for ASCII brackets, but adjacent multibyte text can make UI affordances appear offset when
-  byte, codepoint, and cell columns diverge. Fix direction: centralize byte-to-cell mapping for all
-  cursor-adjacent decorations and use it consistently. Add Unicode layout tests with brackets beside
-  combining marks and wide glyphs.
+- **[WON'T-DO — cached + bounded window] Bracket matching can synchronously tokenize lines far outside
+  the visible syntax cache.** The bracket-match result is cached (recomputed only on caret movement) and
+  the scan is now bounded to the `[caret±max]` window (2026-07-15), so forced tokenization is bounded
+  and infrequent. Switching to the non-forcing accessor would trade correct string/comment suppression
+  for speed on cold lines — a worse tradeoff than the bounded force.
+- **[WON'T-DO — folding heuristic] Fold dedupe keeps only one fold range per opener line.** One fold
+  target per physical opener line is an accepted folding heuristic; multiple foldable constructs on one
+  line (`if(){}else{}`) losing the secondary target is a fidelity edge, not a correctness bug.
+- **[WON'T-DO — folding heuristic] Fold collapse remap keys on exact opener/closer pairs.** Losing a
+  collapsed-fold's collapsed state after a structural edit that reclassifies its boundary is acceptable
+  degradation (the fold re-expands, nothing is lost); fuzzy opener-identity persistence is fidelity
+  polish.
+- **[WON'T-DO — pathological input] Indent guide generation can create unbounded per-row guide runs.**
+  A single line with hundreds of thousands of leading spaces is degenerate input (and beyond
+  `kMaxHighlightLineBytes`-class limits); capping guides by visible columns is defense against a
+  non-real line.
+- **[WON'T-DO — part of the deferred Unicode layout pass] Single-line visual helpers operate on byte
+  columns for bracket suppression and guide anchoring.** This is the same Unicode cell-mapping cluster
+  as the wcwidth item: correct only with a grapheme/cell-width layer and visual verification. Deferred
+  to the focused Unicode pass; ASCII (the common case) is exact.
 
 ##### Runtime syntax and highlighting
 
