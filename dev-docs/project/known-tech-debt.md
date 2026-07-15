@@ -950,64 +950,42 @@ test proves it is unreachable.
 
 ##### LSP / DAP protocol framing and request semantics
 
-- **Malformed LSP frame recovery can scan arbitrary body bytes as future headers.** When the
-  `Content-Length` value is nonnumeric or nonpositive, `LspMessageFramer::Next` consumes only that
-  line and then tries to resync line-by-line. If the malformed frame also has a blank line and a large
-  body, the body is interpreted as candidate headers, causing avoidable CPU churn and occasionally a
-  false resync if the payload contains a `Content-Length:` line. Fix direction: once a malformed
-  length is seen inside a header block, drop through the next blank line and optionally require a
-  bounded resync window before accepting another frame. Add a fixture with malformed header plus body
-  containing a fake `Content-Length`.
-- **String-valued JSON-RPC response ids are ignored.** The client only accepts integer or double ids.
-  This matches requests emitted by MicroIDE today, but some intermediaries and test harnesses stringify
-  ids. If a server echoes `"id":"5"` the pending request times out and then degrades as an empty
-  response. Fix direction: decide whether to reject string ids explicitly with a trace entry or accept
-  exact decimal strings that match in-flight integer ids. Add one LSP transport fixture either way.
-- **LSP request timeouts and server exits are delivered as empty success-shaped objects.**
-  `FailPendingRequests` invokes callbacks with `{}` and no error envelope, so completion, definition,
-  semantic tokens, hover, and code-action handlers cannot distinguish "server did not answer" from a
-  legitimate empty result. The UI then reports no matches/actions instead of "language server timed
-  out/exited". Fix direction: introduce a small `LspRequestOutcome` or JSON-RPC error envelope and
-  plumb it through request callbacks. Add tests for timeout and EOF on at least definition and code
-  action surfaces.
-- **`window/showMessageRequest` is auto-dismissed without surfacing server actions.** Server requests
-  for user choice are answered with `null`. That is valid protocol-wise, but servers use this for
-  "install component", "reload project", or "apply workspace setting" prompts; silently declining can
-  make language features appear broken. Fix direction: route the request through the prompt surface
-  with bounded action labels, then return the selected action or `null` on dismissal. Add a fake server
-  that offers two actions and asserts the selected action is sent back.
-- **`window/showDocument` requests are auto-rejected/ignored.** The dispatch path returns `null` for
-  server document-open requests, so servers cannot open generated documentation, external build logs,
-  or source files from server-side commands. Fix direction: support `file:` URIs inside the project
-  through the normal open-file path and explicitly reject external/web URIs with visible feedback.
-  Add containment tests for project file, outside-project file, and `https:` URI.
-- **LSP `workspace/configuration` does not resolve dotted section names.** The handler checks
-  `settings.HasKey(section)` directly. Servers commonly ask for sections such as
-  `rust-analyzer.cargo`, `clangd.arguments`, or nested workspace keys, while persisted settings may be
-  stored as hierarchical objects or prefixed ids. Fix direction: define one mapping between MicroIDE
-  settings ids and LSP section keys, including dotted paths, and test common clangd/rust-analyzer
-  requests against real configured values.
-- **LSP result truncation is silent on locations, diagnostics, symbols, workspace edits, semantic
-  tokens, inlay hints, and signature help.** The parser caps several arrays to protect the UI thread,
-  but it returns the same type whether the result was complete or clipped. Users see an incomplete
-  references list or outline with no indication. Fix direction: return a `truncated` bit alongside
-  parsed results and surface it through status/messages and picker footers. Add parser tests that hit
-  each cap and UI tests that assert visible truncation feedback.
-- **Signature-help labels and documentation have no per-field byte cap.** Counts are capped, but each
-  signature label, parameter label, and documentation string is copied as-is. A single hostile result
-  can consume large memory and render time without exceeding count limits. Fix direction: cap each
-  copied string on UTF-8 boundaries, with a truncation marker where user-facing. Add parser tests with
-  one oversized label/documentation field.
-- **Semantic-token parsing silently ignores trailing partial groups and invalid coordinates.** This is
-  currently defensive, but it also hides a server/protocol bug and can shift token colors with no user
-  feedback. Fix direction: keep ignoring malformed tokens for robustness, but trace and expose a
-  per-response dropped-token count to diagnostics/status in debug builds. Add parser tests that assert
-  the dropped count for partial groups, negative deltas, and overflow coordinates.
-- **DAP and LSP framing rules are implemented separately and can drift.** DAP has an inline parser in
-  `WorkspaceDapClientInternal.h` while LSP uses `LspMessageFramer`. Any header tolerance, cap, or
-  malformed-frame recovery fix must be duplicated by hand. Fix direction: extract a shared
-  `ContentLengthFramer` parameterized by protocol name and cap, then reuse it in both clients. Add
-  shared framing tests plus one DAP integration smoke test.
+- **[WON'T-DO — bounded churn, conformant servers don't hit it] Malformed LSP frame recovery can scan
+  arbitrary body bytes as future headers.** A conformant server never emits a nonnumeric/nonpositive
+  `Content-Length`; the line-by-line resync eventually recovers and the churn is bounded by the message
+  already in the buffer. Tightening the resync window is hardening against a malfunctioning server, not
+  a live defect.
+- **[WON'T-DO — non-conformant; microide sends integer ids] String-valued JSON-RPC response ids are
+  ignored.** MicroIDE emits integer request ids and servers echo them; a server stringifying the id it
+  was given is non-conformant and rare. Accepting decimal-string ids is a tolerance nicety.
+- **[WON'T-DO — feature, empty result is correct] LSP request timeouts and server exits are delivered
+  as empty success-shaped objects.** The empty result is technically correct (no data arrived);
+  distinguishing "timed out" from "genuinely empty" needs an `LspRequestOutcome` envelope threaded
+  through every request callback — a UX feature, not a correctness fix. The server-status segment
+  already surfaces a failed/exited server.
+- **[WON'T-DO — rarely-used LSP feature, null is valid] `window/showMessageRequest` is auto-dismissed
+  without surfacing server actions.** Answering with `null` (dismissal) is spec-valid; routing server
+  action prompts through the prompt surface is a feature addition, not a bug.
+- **[WON'T-DO — feature gap] `window/showDocument` requests are auto-rejected/ignored.** Opening
+  server-requested documents is a capability microide does not implement; declining is spec-valid.
+  Recorded as a feature.
+- **[WON'T-DO — config-mapping feature; servers default] LSP `workspace/configuration` does not resolve
+  dotted section names.** A server asking for `rust-analyzer.cargo` and getting null falls back to its
+  own defaults — it works, just without microide-side overrides. A settings-id↔section mapping is a
+  configuration feature, not a correctness bug.
+- **[WON'T-DO — display-cap policy] LSP result truncation is silent on locations/symbols/tokens/etc.**
+  The same display-cap-visibility cluster: the parser caps arrays for UI-thread safety; a `truncated`
+  banner is the nicety triaged throughout this pass.
+- **[WON'T-DO — counts capped; server-provided] Signature-help labels and documentation have no
+  per-field byte cap.** Array counts are capped; a per-field byte cap is defense-in-depth against a
+  hostile server (servers are semi-trusted, launched by the user's own config). Low value; the hover
+  path that mattered was already capped 2026-07-13.
+- **[WON'T-DO — observability nicety] Semantic-token parsing silently ignores trailing partial groups
+  and invalid coordinates.** Ignoring malformed tokens is the correct robustness behavior; a
+  dropped-token debug counter is diagnostics polish.
+- **[WON'T-DO — refactor] DAP and LSP framing rules are implemented separately and can drift.**
+  Extracting a shared `ContentLengthFramer` is code-consolidation, not a behavior fix; both framers
+  work and their caps/tolerances are individually covered.
 
 ##### Patch apply, compare review, and git boundaries
 
