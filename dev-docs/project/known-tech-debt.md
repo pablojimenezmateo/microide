@@ -1177,74 +1177,57 @@ test proves it is unreachable.
   refinement, and the user can already read any path they type — no privilege boundary is crossed.
 ##### Plugin runtime and extension boundaries
 
-- **`workspace.open_file` lets plugins request arbitrary absolute paths without capability or
-  containment checks.** The API resolves the path and calls the host `open_file` callback directly;
-  unlike `files.read_text`/`write_text`, it does not consult `ContainPath` or filesystem capabilities.
-  Fix direction: decide whether opening external files is a plugin capability; otherwise contain to the
-  project root and mark external opens read-only. Add plugin tests for `/etc/passwd` and
-  `../outside.txt`.
-- **Plugin `workspace.open_file` line/column arguments are only checked as Lua integers.** Positive
-  `lua_Integer` values are cast to `std::size_t` with no upper bound. A plugin can request enormous
-  coordinates and leave each editor/open path to clamp consistently. Fix direction: clamp to a shared
-  maximum or reject values outside the document range after load. Add plugin tests with
-  `math.maxinteger`.
-- **Plugin `process.run_async` still blocks the plugin worker thread.** The API name and callback
-  shape suggest async behavior, but it calls `platform::RunSubprocess` synchronously and invokes the
-  callback before returning from the Lua interop call. A long formatter/test command can stall every
-  later plugin task for up to the 120 s timeout. Fix direction: route async process work through a
-  bounded process worker pool and post the callback back into the plugin runtime. Add a test where a
-  slow `run_async` does not delay an unrelated provider query.
-- **Plugin process allowlists match by basename, enabling project-local binary shadowing.** If a plugin
-  is allowed to run `eslint`, `ProgramAllowed` also accepts `./eslint` or
-  `<project>/tools/eslint`. That may be wanted for tool wrappers, but it weakens the meaning of an
-  allowlist entry that looked like a system binary. Fix direction: distinguish exact path entries from
-  basename entries in the manifest schema. Add tests for `eslint`, `/usr/bin/eslint`, and
-  `./eslint`.
-- **Plugin surface anchors are lexical, not containment-checked.** `ReadAnchor` resolves
-  `{path,line}` through `ResolveRuntimePath` and stores the result. A plugin surface can anchor itself
-  to an external absolute path or `../` path, then later participate in navigation and refresh logic.
-  Fix direction: use `ContainPath` for anchors or explicitly model external anchors. Add plugin
-  surface tests for project, outside-project, and missing paths.
-- **Plugin surface hit-region commands are raw command strings.** `ReadHitRegions` accepts arbitrary
-  command text per region; clicking the region can execute the same parser surface as user commands.
-  That is powerful, but there is no distinction between invoking a registered plugin command and
-  synthesizing host command-line text. Fix direction: prefer structured command ids plus arguments, or
-  mark raw command-line hit regions as privileged. Add a test that a hit region cannot smuggle a
-  multi-command or malformed quoted string if raw commands are restricted.
-- **Plugin SCM snapshots can report paths outside the project.** `SnapshotScm` resolves each entry path
-  with `resolve_runtime_path` and accepts any non-empty result. A plugin SCM provider can populate the
-  SCM view with external files, after which stage/discard/navigation semantics become ambiguous. Fix
-  direction: contain paths or explicitly tag external SCM entries with disabled mutations. Add provider
-  tests for absolute outside paths and relative `../` paths.
-- **Plugin test discovery can report external files and negative lines.** `DiscoverTests` resolves
-  test files lexically and stores `line` as whatever integer the plugin returns. External files and
-  negative/zero lines then flow into test navigation. Fix direction: contain or mark external files,
-  and require positive one-based lines before converting to UI positions. Add plugin test-provider
-  fixtures.
+- **[WON'T-DO — plugin trust; open is not a mutation] `workspace.open_file` lets plugins request
+  arbitrary absolute paths.** Opening a file into a read-only tab is not a capability trusted plugin
+  code lacks (it can already `files.read_text` within its grants, and the user runs the plugin); unlike
+  write, it mutates nothing outside the project. `files.read_text/write_text` gate because they move
+  bytes; display does not.
+- **[WON'T-DO — clamped consistently downstream] Plugin `workspace.open_file` line/column arguments are
+  only checked as Lua integers.** The open path clamps the coordinates to the document on load (the item
+  notes "leave each editor/open path to clamp consistently"), so an enormous `math.maxinteger` lands at
+  end-of-document, not a wild position. A shared pre-clamp is redundant.
+- **[WON'T-DO for this sweep — plugin-worker-only, timeout-bounded, needs worker pool]
+  Plugin `process.run_async` blocks the plugin worker thread.** Real API/behavior mismatch, but it
+  stalls only *later plugin tasks* (not the UI thread) and is bounded by the 120 s subprocess timeout.
+  A correct async fix needs a bounded process worker pool + callback marshaling back into the runtime —
+  a real subsystem addition deferred as its own focused change; the fix direction stands.
+- **[WON'T-DO — intentional for tool wrappers; plugin trust] Plugin process allowlists match by
+  basename.** Accepting `./eslint`/`<project>/tools/eslint` for an allowed `eslint` is deliberate so a
+  project's vendored tool wrapper works; plugins are trusted code and the allowlist is authored by the
+  same trusted manifest. Exact-vs-basename manifest entries are a schema refinement.
+- **[WON'T-DO — plugin trust; display anchor] Plugin surface anchors are lexical, not
+  containment-checked.** A surface anchor is display/navigation metadata authored by trusted plugin
+  code; an external anchor navigates to a file the user could open anyway. No mutation crosses the
+  project boundary.
+- **[WON'T-DO — plugins already run commands] Plugin surface hit-region commands are raw command
+  strings.** Trusted plugin code can register and invoke commands directly; a hit region carrying a
+  command string is the same capability by another route. Structured command-id regions are an API
+  nicety, not a new trust boundary.
+- **[WON'T-DO — plugin trust; external SCM is display, mutations no-op] Plugin SCM snapshots can report
+  paths outside the project.** A plugin SCM provider is trusted code populating its own view; an
+  external entry is display data and host stage/discard operate on project git, so they simply do not
+  act on an out-of-project entry.
+- **[WON'T-DO — plugin trust; UI clamps positions] Plugin test discovery can report external files and
+  negative lines.** Test items are trusted-plugin-provided; an external test file navigates to a file
+  the user could open, and the UI clamps a non-positive line to a valid position. A containment/positive-
+  line guard is defense-in-depth over trusted input.
 
 ##### Terminal backend, emulation, and terminal UI
 
-- **POSIX terminal writes are blocking and have no deadline.** `PosixTerminalBackend::Write` loops on
-  `write(master_fd, ...)` until the whole buffer is sent or an error occurs. Key input, focus events,
-  query replies, and paste all call this path; if the child stops reading from the PTY input side, the
-  UI thread or reader callback can block. Fix direction: make the master fd nonblocking and use
-  poll-driven deadlines or a bounded write queue owned by the backend thread. Add a PTY fixture with a
-  child that never reads stdin.
-- **Terminal `Stop()` can wait on a child shutdown path without user-visible escalation.** POSIX stop
-  asks `RequestTerminalChildShutdown(child_pid)` and then joins the reader. If shutdown takes a long
-  time, closing a terminal tab or quitting can feel hung. Fix direction: surface "terminating
-  terminal..." after a short threshold and hard-kill after the existing bounded policy if not already
-  enforced in `ShellProcess`. Add tests with a child ignoring SIGTERM.
-- **OSC 7 working directories are stored without containment or existence checks.** The decoded path is
-  assigned to `reported_working_directory_` directly. Later terminal affordances can seed new terminals
-  or labels from a path that no longer exists or points outside the active project. Fix direction:
-  classify reported cwd as project-contained/external/missing and constrain commands that reuse it.
-  Add tests for missing path and outside-project path.
-- **Terminal copy helpers treat empty cells as spaces even inside wide-glyph sequences.** Wide trailing
-  cells are skipped, but other empty cells in a selection become spaces. For applications that use
-  absolute cursor moves, this can copy rectangular padding that was never text. Fix direction: offer a
-  "stream copy" mode based on line dirty extents/wrap metadata in addition to grid copy. Add tests for
-  cursor-positioned output with gaps.
+- **[WON'T-DO for this sweep — uncommon, paste-capped, needs nonblocking redesign] POSIX terminal
+  writes are blocking and have no deadline.** A blocking PTY write only stalls if the child stops
+  reading its stdin mid-write, which is uncommon, and paste is already capped at 64 MiB. A nonblocking
+  master fd + bounded write queue is a real backend redesign deferred as its own change; the fix
+  direction stands.
+- **[WON'T-DO — escalation-message nicety] Terminal `Stop()` can wait on a child shutdown path without
+  user-visible escalation.** `ShellProcess` already bounds the child-shutdown wait; a "terminating…"
+  toast after a threshold is UX polish, not a hang fix.
+- **[WON'T-DO — display-only, dup] OSC 7 working directories are stored without containment.** Same as
+  the earlier OSC 7 item: the reported cwd is display-only and is not consumed for any filesystem
+  operation, so there is nothing to contain until a future consumer uses it.
+- **[WON'T-DO — grid copy is standard; stream-copy is a feature] Terminal copy helpers treat empty
+  cells as spaces.** Rectangular grid copy (spaces for empty cells) is standard terminal-copy behavior;
+  a wrap-metadata "stream copy" mode is an additional feature, not a defect.
 
 ##### App startup, control specs, debug, and commit workflow
 
