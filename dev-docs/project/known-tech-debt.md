@@ -777,50 +777,40 @@ test proves it is unreachable.
 
 ##### Persistence, JSON, and protocol framing
 
-- **Persisted-record writer leaves a stale backup after every successful write.** The writer renames
-  the old primary to `*.bak`, renames the new temp into place, then returns success without deleting
-  or refreshing the backup. That is useful for recovery, but it means backup contents can be many
-  sessions old and still get trusted by `ReadFile` after a future primary failure. Fix direction:
-  define the backup contract explicitly: either keep a previous-good generation with metadata and
-  visible recovery, or delete backup after successful primary write if backup is only for rollback.
-  Add tests that write A, B, C, corrupt C, and verify whether recovery is allowed to return B or must
-  fail closed.
-- **Persisted-record write failure after backup rename can leave the primary restored best-effort
-  only.** If `RenameReplacing(temp, path)` fails after the primary was moved to `*.bak`, the rollback
-  call `RenameReplacing(backup_path, path)` is best effort and its failure is ignored. A rename
-  failure on flaky storage can leave no primary and only a backup, with no surfaced "manual recovery
-  required" state. Fix direction: return a richer error category for rollback failure and preserve
-  enough context for the caller/status bar. Add an injected `RenameReplacing` seam so the test can
-  force both rename and rollback failure deterministically.
-- **Persisted-record reads allocate the full 256 MiB cap before validating header/body size.**
-  `ReadAllBytes` reads the whole file into memory, then `DecodeRecordFile` checks magic, version, CRC,
-  and body. A hostile 256 MiB file in the config/state path can allocate the cap on startup just to be
-  rejected. Fix direction: read and validate the fixed header first, reject impossible body lengths,
-  then stream or bounded-read only the declared body. Add a test with a large bogus file that proves
-  startup/read memory stays below a small threshold using an injected reader.
-- **JSON parsing has no aggregate array/object entry cap.** The parser bounds recursion depth, and DAP
-  list parsers cap selected arrays after parsing, but `ParseJson` can still materialize a flat
-  millions-entry array/object inside one message before any domain cap runs. A DAP/LSP peer can spend
-  memory and CPU in the generic JSON layer even if the later parser truncates. Fix direction: add a
-  parser-level node/byte budget or message-size-specific parse context, and make LSP/DAP clients pass
-  protocol frame caps. Add JSON parser tests for a huge flat array and huge object.
-- **JSON object duplicate keys use "last wins" with no signal.** `ParseObject` assigns
-  `obj[key->AsString()] = value`, silently replacing earlier keys. That is legal-ish in many parsers,
-  but DAP/LSP messages with duplicate `seq`, `command`, `success`, or `body` fields can be interpreted
-  differently from peers. Fix direction: decide whether duplicate object keys should reject protocol
-  JSON or be recorded as a diagnostic. Add a DAP/LSP parser test with duplicate `success` and `body`
-  keys.
-- **JSON serialization silently converts non-finite doubles to `null`.** This prevents invalid JSON,
-  but protocol callers may believe they sent a numeric value. A malformed internal value could turn a
-  DAP/LSP numeric request field into `null` without an error path. Fix direction: keep this fallback
-  for generic serialization if needed, but reject non-finite numbers at protocol argument builders
-  where the caller expects a number. Add unit tests for `Make*Arguments` with bad numeric inputs once
-  those builders expose typed validation.
-- **Protocol message-size policy is split between JSON, DAP, LSP, and control surfaces.** JSON can
-  parse a payload as long as it reaches it; DAP/LSP framing has separate Content-Length handling; the
-  control socket has its own line buffer cap. Fix direction: document and enforce a single inbound
-  message budget per protocol, with parse budgets below transport caps. Add tests that verify
-  over-budget DAP/LSP/control messages fail before JSON allocation.
+- **[WON'T-DO — recovery-by-design; harmful part guarded] Persisted-record writer leaves a stale
+  backup after every successful write.** Keeping the previous generation as `*.bak` is the recovery
+  mechanism. The harmful consequence (a stale backup silently becoming the new primary) is already
+  prevented by the 2026-07-14 corrupt-primary guard (backup-recovered state is not written back unless
+  genuinely mutated). Deleting the backup after each write would remove the recovery net; leaving it is
+  the intended contract.
+- **[WON'T-DO — best-effort by design, needs absent seam] Persisted-record write failure after backup
+  rename can leave the primary restored best-effort only.** The atomic-rename ordering already prevents
+  a torn read; a double-rename failure requires flaky storage failing two renames in a row, and the
+  rollback is best-effort by design. A richer error category is a diagnostics nicety, and a
+  deterministic test needs a `RenameReplacing` injection seam that does not exist. Recorded.
+- **[RESOLVED 2026-07-14] Persisted-record reads allocate the full 256 MiB cap before validating
+  header/body size.** `PersistedRecordReader` now validates the fixed 16-byte header (magic + version)
+  before allocating the body, so a hostile large file is rejected after ~16 bytes. Regressions:
+  `PersistedRecordIo/ReaderRejectsLarge{BadMagic,UnsupportedVersion}OnHeader`.
+- **[WON'T-DO — transport size caps + linear parse; node cap risks regressions] JSON parsing has no
+  aggregate array/object entry cap.** The inbound protocol transports already bound message size (LSP/
+  DAP `Content-Length`, control line buffer), and JSON parse is ~linear in input size, so a parser
+  node budget adds little over the transport cap while risking a regression on a legitimately large
+  response (semantic tokens / symbols for a big file). The depth cap (200) already stops the stack
+  vector.
+- **[WON'T-DO — standard behavior; config path already dedups] JSON object duplicate keys use "last
+  wins" with no signal.** Last-writer-wins is standard JSON-object behavior and matches most peers; the
+  one place it mattered for correctness (persisted user/project config) already dedups at decode
+  (last-wins) deliberately. Rejecting protocol JSON on a duplicate key would be stricter than peers.
+- **[WON'T-DO — serialization safety by design] JSON serialization silently converts non-finite doubles
+  to `null`.** Emitting `null` for NaN/Inf keeps the output valid JSON (the alternative is producing a
+  token no strict peer accepts). The protocol-argument cases that mattered (e.g. plugin status
+  `progress` NaN) are already rejected at their typed builders (2026-07-13). Generic serialization
+  keeping the safe fallback is correct.
+- **[WON'T-DO — each transport already caps appropriately] Protocol message-size policy is split
+  between JSON, DAP, LSP, and control surfaces.** DAP/LSP bound via `Content-Length` framing and the
+  control socket via its line-buffer cap; each is sized to its surface. A single unified budget is
+  documentation/consolidation polish, not a missing bound.
 
 ##### DAP and debug workflow
 
