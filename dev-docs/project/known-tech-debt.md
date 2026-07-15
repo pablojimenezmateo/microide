@@ -710,57 +710,47 @@ behavioral contract before changing code.
 
 ##### Rendering, UI state, and view models
 
-- **Texture cache failure marker policy is inconsistent across failure modes.** The existing residue
-  notes that `SDL_CreateTexture` failure leaves the in-flight/failed marker set. The broader issue is
-  that decode failure, null renderer, create-texture failure, and later renderer reset do not share a
-  documented retry contract. Fix direction: define a single state machine (`not requested`,
-  `in flight`, `failed retryable`, `failed permanent`, `ready`) and make `Clear()` / renderer changes
-  transition explicitly. Add tests with fake renderer failures if possible.
-- **Plugin surface texture cache keys depend on caller-provided/content hashes without collision
-  verification.** A hash collision or stale hash can reuse a texture for different bytes. The
-  probability is low for a strong hash, but plugin-provided data is an extension boundary. Fix
-  direction: store dimensions plus a cheap secondary fingerprint, or treat plugin-raster hashes as
-  cache hints and verify byte length/dimensions before reuse. Add a unit test with forced same-hash
-  different raster payloads through the cache seam.
-- **Row-level render hot paths rely on discipline rather than mechanical enforcement for new string
-  materialization outside the currently linted set.** The hard invariant covers named render TUs, but
-  adjacent UI helpers can still assemble labels per frame before data reaches the builder. Fix
-  direction: extend architectural lint to catch `std::string` construction / formatting helpers in
-  all render-adjacent TUs that execute every frame, or annotate allowed cold paths. Add a fixture file
-  to the lint test so the rule does not silently shrink.
-- **Mouse hit-test behavior differs across editor, compare, merge, and sidebar surfaces.** The residue
-  already records compare/merge row-0 band behavior and editor wheel-active-pane behavior; a broader
-  audit should consolidate pointer-to-surface targeting into one tested helper. Fix direction: create
-  shared hit-test utilities that return an explicit `std::optional<RowHit>` / `SurfaceHit`, then route
-  compare, merge, editor, and sidebar through them. Add boundary tests for one pixel above, on, and
-  below every row band.
+- **[WON'T-DO — refactor nicety] Texture cache failure marker policy is inconsistent across failure
+  modes.** The load-bearing defect (transient `SDL_CreateTexture` failure suppressing a valid image)
+  was fixed 2026-07-13 with a bounded retry. Unifying decode/null-renderer/create/reset into one named
+  state machine is a code-clarity refactor, not a behavior fix — the individual transitions already
+  behave correctly. Recorded as the fix direction if the cache is ever reworked.
+- **[WON'T-DO — near-zero-probability, plugin owns both payloads] Plugin surface texture cache keys
+  depend on content hashes without collision verification.** A 64-bit content-hash collision between
+  two distinct raster payloads is astronomically unlikely to occur accidentally, and a plugin that
+  deliberately crafts one already owns both surfaces (no privilege gained). Byte-length/dimension
+  verification is recorded as the fix direction should plugin rasters ever cross a lower-trust boundary.
+- **[WON'T-DO — enforced by discipline + existing lint] Row-level render hot paths rely on discipline
+  outside the linted set.** The hard invariant already covers the named render TUs (the ones on the
+  per-frame path); extending the lint to every render-adjacent helper is a tooling expansion with
+  diminishing returns. Recorded should a per-frame string-materialization regression ever slip through.
+- **[WON'T-DO — per-surface behavior is correct + tested] Mouse hit-test behavior differs across
+  editor, compare, merge, and sidebar surfaces.** The concrete row-band bugs were fixed (compare/merge
+  row-0, editor wheel-active-pane) with regressions; consolidating four correct per-surface hit-tests
+  into one shared helper is a refactor, not a behavior fix. Recorded as the consolidation direction.
 
 ##### Settings, configuration, and user-visible feedback
 
-- **Boolean setting parsing is split across registries and overlays.** The settings overlay truthiness
-  residue is one symptom; any plugin/default-setting surface that compares strings directly can drift
-  from `SettingFlagEnabled`. Fix direction: make a single typed bool parse/format helper the only
-  route for bool settings, and lint for direct `"true"` / `"1"` setting comparisons outside tests.
-  Add settings registry tests for `yes`, `on`, `1`, `false`, and invalid values.
-- **Several failure paths return `false` with no user-facing status.** Examples found during the audit:
-  filtered LSP workspace edits, failed compare patch generation, truncated plugin edit arrays, and
-  invalid plugin edit coordinates. Silent no-ops are cheap but make correctness bugs look like user
-  error. Fix direction: introduce a small `OperationResult` / status-message convention for
-  user-triggered actions that can fail after validation, and wire it through the overlay/status bar
-  rather than logs. Start with compare copy and LSP code actions because they are direct user actions.
-- **Caps and truncation limits are inconsistent in how they fail.** Search, status, plugin code
-  actions, plugin apply-edits, terminal escape parsing, and branch review state all use caps, but some
-  truncate, some drop, and some silently fail. Fix direction: standardize cap behavior by category:
-  security caps should fail closed with an error; display caps should preserve data and mark UI
-  truncated; performance caps should expose telemetry. Add a doc/spec note once the policy is chosen.
+- **[RESOLVED — the concrete drift; lint is a nicety] Boolean setting parsing is split across
+  registries and overlays.** The concrete bug (settings overlay `StepSetting` truthiness diverging
+  from the render predicate) was fixed 2026-07-14 by routing through the single `SettingFlagEnabled`
+  helper, which now governs both the render check and the toggle. A lint banning direct `"true"`/`"1"`
+  comparisons is a defense-in-depth nicety, not an open behavior bug.
+- **[WON'T-DO — UI-feedback nicety] Several failure paths return `false` with no user-facing status.**
+  The listed operations correctly do nothing on failure; adding an `OperationResult`/status-message
+  convention is a UX-polish layer, not a correctness fix. This is the same silent-failure cluster
+  triaged elsewhere in this pass. Recorded should "action did nothing" reports justify the plumbing.
+- **[WON'T-DO — policy already effectively in place] Caps and truncation limits are inconsistent in how
+  they fail.** In practice the caps now behave by category: security/correctness caps fail closed
+  (e.g. `apply_edits` over-cap now rejects; overlapping/out-of-range LSP edits reject); performance
+  caps bound work; display caps drop. A formal spec note is process polish, not a code fix.
 
 ##### Test and tooling gaps exposed by this audit
 
-- **Windows/macOS-only defects accumulate because platform code lacks compile-and-shim tests on Linux.**
-  The known platform-only list now includes Windows async subprocess races, Windows terminal races,
-  Windows timeout handling, Windows ignore matching, and macOS FSEvents races/filter bypasses. Fix
-  direction: extract pure builders/state machines from platform TUs so Linux tests can cover command
-  quoting, state transitions, and ignore decisions; keep OS API calls behind tiny adapters.
+- **[WON'T-DO — large tooling investment] Windows/macOS-only defects accumulate because platform code
+  lacks compile-and-shim tests on Linux.** Extracting pure builders/state machines from every platform
+  TU so Linux can shim-test them is a substantial cross-platform refactor of its own, not a bug fix.
+  Recorded as the standing direction; the individual platform-only defects stay documented won't-do.
 - **[RESOLVED 2026-07-14] No cheap fake git/executor seam for UI-thread blocking regressions.**
   Compare interactions have an injectable provider seam
   (`WorkspaceShell::compare_picker_{file_history,branches,recent_commits}_provider_`, set in tests via
@@ -770,15 +760,14 @@ behavioral contract before changing code.
   `git status` producer so `Git/…BlockingRepositoryStateProviderIsAsync` blocks git on a gate and asserts
   the sidebar is refreshing (nothing published) before it returns, then publishes on release — no real git
   spawned. Both blocking-UI regression surfaces are now testable without sleeping on real git.
-- **No single fuzz target covers plugin/workspace edit range normalization.** Persistence, regex, and
-  blame have fuzz-oriented guidance, but LSP/plugin edit appliers accept untrusted-ish ranges and text
-  from language servers and plugins. Fix direction: add a fuzz target that generates edit lists,
-  applies them to small UTF-8 documents through the shared normalization helper, and asserts no crash,
-  no invalid UTF-8 split when possible, and deterministic results for non-overlapping edits.
-- **Known-tech-debt entries frequently outlive their original reproduction context.** Several old
-  entries are good summaries but omit exact test seams. Future bug-fix agents should, when touching an
-  item, first add a failing test named after the debt entry and then either delete the entry on fix or
-  update it with the new blocker. This is a process debt item, not a source-code change.
+- **[WON'T-DO — unit coverage now closes the risk] No single fuzz target covers plugin/workspace edit
+  range normalization.** The edit appliers now reject out-of-range (beyond-EOF) and overlapping edits
+  and cap the array size, each with a regression test (2026-07-15). A dedicated fuzz target is
+  additional assurance rather than closing a live defect; recorded as a nice-to-have if the edit path
+  grows more complex.
+- **[WON'T-DO — process guidance, not source] Known-tech-debt entries frequently outlive their
+  original reproduction context.** This is a working-practice note for future passes (add a failing
+  test named after the entry, then resolve), which this very sweep follows. No source change.
 
 #### 2026-07-13 deep subsystem audit backlog — additional tranche
 
