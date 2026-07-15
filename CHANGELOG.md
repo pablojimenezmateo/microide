@@ -6,6 +6,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.7.0] - 2026-07-15
+
+A **correctness-hardening and tech-debt closeout** cycle on top of 2.6.8. Roughly
+two dozen real defects were fixed across the editor, persistence, terminal,
+git/diff/merge, LSP, DAP, and plugin subsystems — each with regression coverage —
+while the full suite plus ASAN/UBSAN/TSAN stay green. The multi-batch deferred
+tech-debt backlog is now fully triaged and closed, and several hot paths (syntax
+highlight, git picker, compare, diagnostics) are measurably faster on the
+reference runner. No public API or persisted-format changes — a recommended
+upgrade for all users.
+
+### Added
+
+- **Terminal clipboard status.** When an oversized OSC 52 clipboard write is
+  dropped, the terminal now surfaces a status instead of silently discarding it.
+
+### Fixed
+
+- **Workspace edits.** Both LSP appliers and `editor.apply_edits` now reject
+  overlapping, beyond-EOF, and over-cap edits (including in closed files) rather
+  than truncating or applying them partially; multi-caret apply paths refuse
+  overlapping selections.
+- **Editor & input.** Multi-line paste into single-line fields collapses to
+  spaces; the mouse wheel scrolls the pane under the cursor; block-comment toggle
+  is language-aware; a snippet linked-edit session drops on a multi-line insert
+  and discards stale secondary carets.
+- **Syntax highlighting.** `^`-anchored rules honor the true line start
+  (`PCRE2_NOTBOL` on mid-line segments) so anchored patterns no longer match
+  inside a line.
+- **Persistence.** A corrupt primary state file is recovered-and-protected with a
+  header-first bounded read instead of being trusted or clobbered.
+- **Filesystem safety.** No-overwrite `RenamePath` closes the exists()-then-move
+  race; symlinked save targets no longer risk data loss.
+- **Git / diff / merge.** Merge delete-resolve is transactional; per-file search
+  reads are capped; the status bar reflects in-session `git init` / `.git`
+  removal; compare picker/ref git queries run off the UI thread.
+- **DAP.** Function-breakpoint verification is bounded to the requested count;
+  the stopped view is restored when the adapter rejects a resume; late
+  thread-list / pause callbacks are state-guarded.
+- **Status bar.** Plugin status items are stably ordered (`stable_sort`).
+- **Rendering.** The renderer rejects non-finite or negative display-list content
+  dimensions; the highlight prefetch worker is drained in the destructor.
+
+### Performance
+
+- Cross-subsystem speed sweep across syntax, LSP, editor, finder, and git.
+- Syntax highlighting fast-paths empty skip masking.
+- A dedicated git picker lane plus off-UI-thread compare/ref picker queries.
+- O(1) debug sibling ordinal and a reused per-line visual-column map for
+  diagnostic underline rects.
+
+### Tech debt
+
+- The multi-batch deferred tech-debt backlog (sweep batches A–W plus the residual
+  triage tranches) is fully closed. Rationale for the won't-do items is recorded
+  in `dev-docs/project/known-tech-debt.md`.
+
 ## [2.6.8] - 2026-07-10
 
 A **correctness-hardening and polish** cycle on top of 2.6.7. Five further
