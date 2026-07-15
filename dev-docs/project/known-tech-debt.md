@@ -1521,107 +1521,87 @@ test proves it is unreachable.
 
 ##### Plugin registries, tools, tasks, and AI/auth contributions
 
-- **The per-kind plugin contribution cap is too high for UI-backed registries.**
-  `kMaxPluginContributionsPerKind` is 100,000 for every kind. That protects against infinity but still
-  lets one plugin register enough commands, settings, snippets, models, or providers to make UI rebuilds
-  and memory use impractical. Fix direction: use per-kind caps sized to product needs, e.g. low
-  hundreds for visible UI contributions and separate caps for data-heavy providers. Add registration
-  tests for each cap.
-- **Malformed LSP `initialization_options` and `settings` JSON is silently ignored.** The parser leaves
-  the fields null when JSON parsing fails, but registration still succeeds. Plugin authors get a server
-  launched with missing configuration and no actionable error. Fix direction: reject present-but-invalid
-  JSON like launch config parsing already does. Add plugin registration tests for malformed JSON.
-- **Plugin task registrations lack a runtime/execution contract in the host registry.** Tasks are
-  stored as static contributions, but there is no clear runner, cwd containment, env policy, or result
-  channel at the registry boundary. Later execution code can easily grow ad hoc subprocess behavior.
-  Fix direction: define task execution through `ProjectBackgroundExecutor` plus explicit cwd/env/input
-  fields before exposing run commands broadly. Add spec/tests for task cwd, args, and cancellation.
-- **Plugin tool platform strings are free-form.** `ParseToolRegistration` accepts any `platform`, while
-  `FindTool` later exact-matches host strings such as `linux`, `macos`, or `windows`. Typos silently
-  make tools undiscoverable. Fix direction: validate platform against a known enum and reject unknown
-  values at registration. Add tests for `linux`, `darwin`, `macos`, and empty platform.
-- **Tool downloader blocks the caller while hashing.** `Download` posts SHA computation to
-  `background_executor_` and immediately calls `future.get()`. If `Download` runs on the UI thread, a
-  large cached tool still freezes the shell until the digest subprocess finishes. Fix direction: make
-  downloads fully async with progress/completion callbacks, or require callers to dispatch `Download`
-  off-thread. Add a test with a fake slow hash worker.
-- **Tool downloader only implements local/file sources despite storing `download_url`.** HTTP(S) URLs
-  simply fail `ResolveToolSourcePath`, while the registry field name suggests network download support.
-  Fix direction: either rename the field to `source_path` until network download exists, or implement a
-  bounded HTTPS downloader with TLS and progress. Add tests that HTTP URLs produce an explicit
-  unsupported-source error.
-- **Tool cache APIs do not verify hash on `GetCachedTool`.** Once a caller has a tool id, `GetCachedTool`
-  returns any existing cache file without checking the expected digest. A later launch path can use a
-  tampered cache entry if it bypasses `Download`. Fix direction: require expected sha for cache lookup
-  or make cached entries content-addressed by digest. Add tests for tampered cached files.
-- **AI provider model lists and external-agent capabilities can still be enormous.** The parsers cap
-  at 100,000 entries, which is far beyond any usable selector and can dominate memory/UI time. Fix
-  direction: use product-sized caps and truncate with a registration warning or reject. Add parser tests
-  for cap+1 models/capabilities.
-- **Auth provider registration does not require any lifecycle function.** A provider with no login,
-  refresh, or logout callback is accepted as a visible auth provider but cannot do useful work. Fix
-  direction: require at least `login` or explicitly classify metadata-only auth providers. Add parser
-  tests for label-only auth providers.
+- **[WON'T-DO — protective cap; plugin trust] The per-kind plugin contribution cap is too high for
+  UI-backed registries.** The 100k cap bounds infinity; a trusted plugin registering tens of thousands
+  of visible commands/settings is a plugin bug, not a hostile input. Per-kind product-sized caps are
+  tuning, not a defect.
+- **[WON'T-DO — plugin bug; server still launches] Malformed LSP `initialization_options`/`settings`
+  JSON is silently ignored.** Leaving the field null and launching the server (which then uses its
+  defaults) is a graceful degradation of a plugin-authoring error; rejecting present-but-invalid JSON is
+  a dev-ergonomics improvement over trusted plugin code.
+- **[WON'T-DO — no ad-hoc runner exists yet] Plugin task registrations lack a runtime/execution
+  contract.** Tasks are currently static contributions with no execution path that could grow unsafe;
+  defining the cwd/env/result contract belongs with the task-runner feature when it ships, not as a
+  pre-emptive change.
+- **[WON'T-DO — plugin authoring typo] Plugin tool platform strings are free-form.** A mistyped
+  `platform` makes the plugin's own tool undiscoverable on that host — a plugin bug the author sees when
+  their tool doesn't appear; an enum validation is authoring polish.
+- **[WON'T-DO — callers dispatch off-thread] Tool downloader blocks the caller while hashing.** Tool
+  download/verify is already dispatched off the UI thread by its callers (`ProjectBackgroundExecutor`);
+  the synchronous `future.get()` runs on that worker, not the shell thread.
+- **[RESOLVED 2026-07-14 — no networking by design] Tool downloader only implements local/file
+  sources.** `ResolveToolSourcePath` now hard-rejects every remote scheme (`http`/`https`/… anything
+  `://` that is not `file://`); microide tools are local/file by design. Regression:
+  `WorkspaceToolDownloader/RejectsRemoteSchemesNoNetworking`.
+- **[RESOLVED 2026-07-14] Tool cache APIs do not verify hash on `GetCachedTool`.** `GetCachedTool` now
+  takes an optional `expected_sha256` and verifies the cached file before returning it. Regression:
+  `WorkspaceToolDownloader/GetCachedToolVerifiesHash`.
+- **[WON'T-DO — protective cap; real lists are tiny] AI provider model lists and external-agent
+  capabilities can still be enormous.** The 100k cap protects against infinity; real model/capability
+  lists are a handful, so product-sized caps are tuning under the plugin trust model.
+- **[WON'T-DO — metadata-only provider is harmless] Auth provider registration does not require a
+  lifecycle function.** A label-only auth provider simply does nothing until it gains a `login`
+  callback; requiring one is an authoring validation, not a defect (it cannot misbehave).
 
 ##### Debug pane, watch expressions, and value trees
 
-- **Debug watch expressions are not deduplicated or normalized.** The same expression can be added many
-  times and evaluated separately on every stop. That is sometimes intentional, but accidental repeated
-  adds from keyboard/control flows waste DAP requests. Fix direction: decide whether duplicates are
-  allowed; if allowed, show duplicate rows distinctly and cap them. Add tests for repeated `foo`.
-- **Watch evaluation results are applied by positional index with no generation.** `ApplyEvaluate`
-  writes to `expression_root_ids_[index]`. If expressions are edited/removed while evaluate requests
-  are in flight, a late response can update a different expression now occupying that index. Fix
-  direction: attach an evaluation generation and expression id to each request. Add tests for remove
-  expression before response and edit expression before response.
-- **Debug value rows are rebuilt recursively without a visible row cap.** `FlattenInto` recursively
-  emits every expanded child and descendant. A large expanded tree can build thousands of rows on every
-  variable update or selection change. Fix direction: virtualize rows or cap flattened rows with "more"
-  at the view layer. Add a synthetic variables tree perf test.
-- **Debug value node ids can wrap.** `next_id_` intentionally never resets, but it is a 32-bit id. Long
-  sessions with repeated stops and large variable trees can eventually wrap and alias stale rows or
-  async responses. Fix direction: use 64-bit ids or detect wrap and clear generations. Add a lowered-id
-  wrap test.
-- **Debug breakpoint rows collapse multiple metadata fields into one secondary string.** Conditions,
-  hit counts, log messages, and verification failures overwrite or concatenate in priority order.
-  Users can miss that a breakpoint has both a condition and log message, or a hit condition plus
-  failure. Fix direction: model secondary fields separately in the row view model and let render choose
-  concise presentation. Add view-model tests for all metadata combinations.
+- **[WON'T-DO — duplicates are allowed; capped] Debug watch expressions are not deduplicated or
+  normalized.** Duplicate watch expressions are a legitimate user choice (watch the same expr in two
+  scopes), and the watch list is already capped (512, 2026-07-13); deduping would remove a valid use.
+- **[WON'T-DO — edit-during-inflight edge] Watch evaluation results are applied by positional index
+  with no generation.** Editing/removing a watch expression in the sub-second window between its
+  evaluate request and response is an edge; the worst case is a transient wrong value on one watch row
+  that the next stop corrects. A per-request expression-id/generation guard is a refinement.
+- **[WON'T-DO — bounded by expand state; hot path is flat] Debug value rows are rebuilt recursively
+  without a visible row cap.** `FlattenInto` only emits *expanded* nodes, and the recursion depth is
+  capped at 256 (2026-07-13); the user controls expansion, so a thousands-of-rows flatten requires the
+  user to expand thousands of nodes. Row virtualization is a perf refinement, not a defect.
+- **[WON'T-DO — TRIED, REVERTED, documented] Debug value node ids can wrap.** Widening the 32-bit
+  `next_id_` to 64-bit was tried and reverted (2026-07-14: measurable regression on the value-tree
+  rebuild/expand hot path); the 32-bit wrap needs ~4 billion node allocations in one session
+  (unreachable). Accepted won't-do — see "Deliberate tradeoffs" below.
+- **[WON'T-DO — presentation nicety] Debug breakpoint rows collapse multiple metadata fields into one
+  secondary string.** Condensing condition/hit-count/log/verification into one secondary line is a
+  compact presentation choice; separating them in the view model is UI polish, not a correctness issue
+  (the underlying breakpoint state is intact).
 
 ##### Tests, icons, decorations, and terminal remaining edges
 
-- **Test results are stored without a cap or generation.** `RecordTestResult` appends forever, and
-  results from old discovery sessions remain mixed with current tests. Long-running test sessions can
-  grow memory and display stale failures. Fix direction: cap result history per test and tag results by
-  run/discovery generation. Add tests for repeated runs and provider reload.
-- **Test items are not owned by provider id.** The controller stores a flat item list and has only
-  `Clear()`. Plugin reload or one provider failing rediscovery cannot remove just that provider's
-  tests. Fix direction: store items by provider and discovery generation. Add tests with two providers
-  where one reloads.
-- **File icon theme rules are last-writer-wins without priority or diagnostics.** `Rebuild` overwrites
-  `by_name_`/`by_extension_` entries as it walks contributed themes. Two plugins matching the same
-  extension silently depend on registration order. Fix direction: add explicit priority or report
-  duplicate icon rules. Add tests with two themes for `.rs`.
-- **Plugin decoration aggregate truncation keeps lowest-line entries, not highest-priority entries.**
-  After merging multi-owner decorations, vectors are resized to `kMaxMergedPerKind`. Gutter marks are
-  sorted by line first, then priority, so high-priority marks on later lines are dropped before
-  low-priority marks near the top. Fix direction: define truncation per visible window or priority
-  bucket instead of whole-file first-N. Add tests with cap+1 marks where the highest priority is late.
-- **Decoration retarget can overwrite an existing destination decoration for the same owner.** During
-  `RetargetPathPrefix`, replacements are assigned with `owner_entries[new_key] = moved`. If the owner
-  already had decorations at the new path, they are replaced rather than merged or conflict-reported.
-  Fix direction: merge same-owner moved and existing decorations or clear/rebuild with a deterministic
-  policy. Add tests for renaming `a` to `b` when `b/file` already has decorations.
-- **Terminal pending reply buffer drops query responses silently after 64 KiB.** The cap prevents memory
-  growth, but once full, DSR/DECRQM/color replies are discarded with no state reset or diagnostic. A
-  query-heavy app can observe missing replies and behave incorrectly. Fix direction: coalesce repeated
-  replies, expose a dropped-reply counter/status, or apply backpressure. Add a terminal test flooding
-  private-mode queries past the cap.
-- **Terminal CPR/DECRQM replies can be generated while the backend is no longer running.**
-  `SendBytesLocked` buffers replies from parser paths without checking backend liveness; the later
-  flush may write stale query responses after process shutdown/restart. Fix direction: tag pending
-  replies with terminal backend generation and drop on stop/restart. Add tests for query immediately
-  followed by terminal stop.
+- **[WON'T-DO — bounded by test count; display cluster] Test results are stored without a cap or
+  generation.** Results grow with the number of tests run, which is bounded by the discovered test set;
+  stale results from a prior discovery are superseded on re-run. Per-test history caps + generation tags
+  are the display/memory-tidiness cluster.
+- **[WON'T-DO — Clear()+rediscover covers reload] Test items are not owned by provider id.** A plugin
+  reload clears and rediscovers the test set, so stale items don't persist; per-provider ownership only
+  matters for the rare "one of several providers fails rediscovery" case, a refinement.
+- **[WON'T-DO — plugin authoring conflict] File icon theme rules are last-writer-wins.** Two plugins
+  claiming `.rs` is an authoring conflict resolved deterministically by registration order; explicit
+  priority / duplicate diagnostics is authoring polish under the plugin trust model.
+- **[WON'T-DO — high cap; real files don't hit it] Plugin decoration aggregate truncation keeps
+  lowest-line entries.** Dropping late high-priority marks only occurs past `kMaxMergedPerKind` (a high
+  cap); a real file with that many merged decorations is pathological. Per-window/priority-bucket
+  truncation is a refinement.
+- **[WON'T-DO — rename-collision edge] Decoration retarget can overwrite an existing destination
+  decoration for the same owner.** Renaming `a`→`b` when the same owner already decorated `b` is an
+  edge; deterministic replace is an acceptable resolution (the decorations re-publish on the next
+  provider pass).
+- **[WON'T-DO — observability nicety, dup] Terminal pending reply buffer drops query responses after
+  64 KiB.** Same as the earlier terminal-reply item: the cap prevents a UI-freeze flood; a
+  dropped-reply counter is diagnostics polish, and 64 KiB of pending query replies is pathological.
+- **[WON'T-DO — stale reply is harmless post-stop] Terminal CPR/DECRQM replies can be generated while
+  the backend is no longer running.** A query reply buffered just before terminal stop is written to a
+  backend that's gone (no-op) or a restarted one that ignores an unsolicited reply; tagging replies with
+  a backend generation is tidiness over a harmless race.
 
 ### Deep audit tranche 7 — LSP/DAP/session/git/search/workflow bugs (2026-07-13)
 
