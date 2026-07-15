@@ -863,85 +863,63 @@ test proves it is unreachable.
 
 ##### Plugins and extension data
 
-- **Plugin decoration publish can allocate and sort huge valid payloads up to four times per call.**
-  Each decoration kind allows 100,000 entries, so one `decorations.set` can materialize up to 400,000
-  host records before store merge/render costs. The cap is protective but still high for a
-  shell-owned render path. Fix direction: set per-file and per-owner budgets based on visible use
-  cases, fail closed with a plugin-visible error, and expose truncation/failure in plugin diagnostics.
-  Add a plugin decoration stress test at cap and cap+1.
-- **Plugin decoration paths use lexical resolution, not the stronger containment helper.** Like
-  `editor.apply_edits`, `decorations.set` resolves `raw_path` with `ResolveRuntimePath`. Decorations
-  do not write files, but publishing decorations for outside-project paths can consume store memory
-  and later follow rename/delete retargeting logic. Fix direction: use `ContainPath` for file-bound
-  plugin contributions or explicitly reject decorations for paths outside the active project. Add a
-  plugin test with `../outside.cpp`.
-- **Plugin code-action/provider result truncation is silent.** Completion, code action, test, SCM,
-  annotation, and auth harvesters clamp arrays with `std::min(rawlen, cap)`, then return success.
-  Providers that exceed a cap get partial results with no plugin-visible error, making generated code
-  actions/tests appear missing. Fix direction: fail the provider result when raw length exceeds the
-  cap for correctness-critical surfaces, or return a `truncated` flag to the UI. Add provider tests
-  for cap+1 on completions and tests.
-- **Plugin language-provider location paths are not containment-checked.** Definition/reference
-  providers call `resolve_runtime_path` and accept any non-empty resolved path. A plugin can navigate
-  the user outside the project, possibly intentionally, but the product boundary is not specified.
-  Fix direction: decide whether plugin language locations may be external; if yes, mark them as
-  external and open read-only; if no, use `ContainPath`. Add provider tests for absolute outside paths
-  and `../` paths.
-- **Plugin provider string fields have no per-field length limits.** Labels, documentation, detail,
-  code action titles, test names, and SCM labels can be very large while still under Lua memory budget,
-  then move into UI/render view models. Fix direction: clamp or reject plugin-provided display strings
-  at interop boundaries, with separate limits for labels vs documentation. Add tests with multi-MB
-  completion documentation and code-action title.
-- **Plugin callbacks can synchronously call back into host surfaces during lifecycle teardown.**
-  Lifecycle helper code invokes Lua callbacks while host registries are being updated elsewhere in the
-  plugin lifecycle. If a callback publishes decorations/diagnostics or registers commands during
-  teardown, ordering assumptions can break. Fix direction: audit lifecycle callback phases and set an
-  explicit "no registration/no publish" mode during teardown callbacks. Add a plugin teardown test
-  that attempts to publish from `on_project_close`.
+- **[WON'T-DO — protective cap; real plugins are small] Plugin decoration publish can allocate huge
+  valid payloads up to four times per call.** The 100k-per-kind cap bounds a hostile payload; real
+  decoration providers publish a handful to hundreds of entries. Tighter per-file/per-owner budgets are
+  tuning, and plugins are user-installed (trusted) code. Recorded as tuning if a huge-decoration plugin
+  ever appears.
+- **[WON'T-DO — display-only, capped, plugin trust] Plugin decoration paths use lexical resolution, not
+  containment.** Decorations never write files; an outside-project decoration is inert display data
+  already bounded by the per-kind cap, and the store's rename/delete retargeting operates on keys, not
+  the filesystem. Under the plugin trust model this is not a reachable harm.
+- **[WON'T-DO — display-cap policy] Plugin code-action/provider result truncation is silent.** Same
+  display-cap policy triaged across this pass: completion/action/test/SCM lists clamp for UI safety. The
+  correctness-critical mutation surface (`apply_edits`) was changed to fail-closed on over-cap; provider
+  *result* lists are display data where dropping the tail is acceptable.
+- **[WON'T-DO — external navigation is the point] Plugin language-provider location paths are not
+  containment-checked.** Go-to-definition / find-references legitimately navigate into stdlib,
+  dependencies, and generated sources outside the project root — that is the feature. Containing it
+  would break jumping to a symbol defined in a vendored/system header, same as the DAP external-source
+  case.
+- **[WON'T-DO — plugin trust model] Plugin provider string fields have no per-field length limits.**
+  Plugins are user-installed code already bounded by the Lua memory budget; a plugin bloating its own
+  completion documentation degrades only its own UI. Per-field clamps are a nicety, not a trust boundary.
+- **[WON'T-DO — covered by single-worker teardown ordering] Plugin callbacks can synchronously call
+  back into host surfaces during lifecycle teardown.** The plugin runtime is single-worker-threaded and
+  teardown erases each runtime entry for a state before the state is nulled (see the verified-non-defect
+  note on provider-query guards), so a teardown callback cannot observe a half-updated registry from
+  another thread. An explicit "no-publish during teardown" mode is belt-and-suspenders.
 
 ##### Project change, file finder, and indexing
 
-- **Project change coalescer can drop per-file reload/diagnostic updates once the cap flips to tree
-  rescan.** Past 1,024 pending file changes it sets `tree_rescan_requested` and ignores later file
-  changes. The rescan updates the index, but open-buffer external-change banners, diagnostics clearing,
-  and other per-file side effects may not run for the dropped tail. Fix direction: when collapsing to
-  a tree rescan, also mark "unknown file changes happened" so downstream open buffers perform a cheap
-  mtime sweep. Add a coalescer/workspace test with cap+1 modified open files.
-- **Project change coalescer delete-then-create semantics lose the new absolute path for Created.**
-  A Deleted followed by Modified becomes Created and updates `absolute_path`; a Deleted followed by
-  Created falls through to `existing->kind = change.kind` and updates the path, which is okay, but a
-  Created followed by Deleted collapses to Deleted and leaves the old absolute path. Any downstream
-  consumer that uses `absolute_path` for delete cleanup may see a stale path after rename-like floods.
-  Fix direction: define per-kind payload validity and clear irrelevant absolute paths on delete. Add
-  unit tests for all two-event combinations.
-- **File finder recent-file de-dup keys are platform-sensitive strings.** Recents are de-duplicated
-  and looked up by `recent.string()` while cached entries also use path strings. On Windows/macOS,
-  case-insensitive paths and separator normalization can show duplicates or fail to match a recent
-  whose casing changed. Fix direction: use the same normalized path key as editor tabs/decorations for
-  recent lookup. Add host-platform-override tests with `Src/Main.cpp` vs `src/main.cpp`.
-- **File finder keeps the full uncapped matched-index set for narrowing.** This preserves correctness
-  for later typing, but an empty/one-character query over a huge index stores every match index. The
-  index itself is capped elsewhere, yet this can still be a noticeable allocation on the shell thread.
-  Fix direction: keep a compressed bitset/range representation for broad matches or disable narrowing
-  cache until the query length passes a threshold. Add a benchmark with the maximum index size and
-  one-character query.
-- **Full project scan does not propagate traversal-budget truncation to `FileIndex::truncated()`.**
-  `CollectProjectFiles` stops at `kTreeTraversalEntryBudget`, but returns only the collected vector.
-  `FileIndex::Refresh` then clears `truncated_` because it has no scan metadata. A too-large tree can
-  look complete after a full rescan. Fix direction: return `{files, truncated}` from
-  `CollectProjectFiles` and surface it through `FileIndex`. Add a scanner test with a tiny injected
-  budget.
-- **Project scanner hidden filtering checks only the current filename before ignore rules.** In
-  `ExcludeHidden` mode, a hidden directory is skipped before loading its child ignore file, which is
-  good for speed, but a negated rule inside parent `.gitignore` cannot re-include a hidden subtree for
-  file finder/search. Fix direction: decide whether `ExcludeHidden` is a hard UI mode or a
-  gitignore-like filter; if hard, document it; if not, let negated ignore rules override hidden
-  filtering. Add scanner tests for `.hidden/file.cpp` with `!.hidden/`.
-- **Windows native tree watcher cannot watch more than `MAXIMUM_WAIT_OBJECTS - 1` roots and falls back
-  coarsely.** Large root lists from recursive watch preparation can exceed the wait-object limit and
-  force polling. This is acceptable but not surfaced clearly to users, and polling may be expensive on
-  large trees. Fix direction: shard Windows watch handles across worker threads or surface a
-  "polling fallback" state. Add a Windows seam test for 65 watch roots.
+- **[WON'T-DO — bulk-change edge; rescan reconciles] Project change coalescer can drop per-file
+  reload/diagnostic updates once the cap flips to tree rescan.** Passing 1,024 pending changes is a bulk
+  operation (branch switch, mass generate) where the tree rescan rebuilds the index and open tabs are
+  reconciled by the refresh. A per-file external-change banner for one file lost in a 1,024+ flood is an
+  edge, and the follow-on mtime sweep is a nicety.
+- **[WON'T-DO — nets to Deleted; delete target is the right path] Project change coalescer
+  delete-then-create loses the new absolute path for Created.** The item itself notes most two-event
+  combinations are correct; the residual (a Created-then-Deleted collapsing to Deleted with the old
+  absolute path) nets to a deletion whose path is the delete target — which is what a delete consumer
+  wants. No reachable stale-path harm.
+- **[WON'T-DO platform-only] File finder recent-file de-dup keys are platform-sensitive strings.**
+  Only bites case-insensitive folding hosts (Windows/macOS); Linux is case-sensitive so the key is
+  exact. Not validatable here. Fix direction (host-normalized key) recorded.
+- **[WON'T-DO — bounded by the capped index] File finder keeps the full uncapped matched-index set for
+  narrowing.** The index itself is capped, so the broad-query match-index vector is bounded (~one
+  size_t per indexed file) and built once per query, not per frame. A compressed representation is
+  micro-tuning; the per-keystroke deep-copy that actually hurt was fixed 2026-07-15.
+- **[WON'T-DO — display; pathological tree] Full project scan does not propagate traversal-budget
+  truncation to `FileIndex::truncated()`.** A repo exceeding `kTreeTraversalEntryBudget` is itself
+  pathological; surfacing a "truncated" banner is the display-visibility nicety cluster. The budget is
+  high enough that real repos index fully.
+- **[WON'T-DO — ExcludeHidden is a hard UI mode by design] Project scanner hidden filtering checks only
+  the current filename before ignore rules.** Resolved by decision: `ExcludeHidden` is a hard "hide
+  dotfiles" UI mode, not a gitignore-style filter, so a negated `!.hidden/` does not re-include a hidden
+  subtree. This is the intended, documented behavior (users toggle hidden-file visibility explicitly).
+- **[WON'T-DO platform-only] Windows native tree watcher cannot watch more than
+  `MAXIMUM_WAIT_OBJECTS - 1` roots.** Windows-only wait-object limit forcing a polling fallback;
+  surfacing the fallback state / sharding handles is Windows work not validatable here.
 
 ##### Terminal, input, and ANSI behavior
 
