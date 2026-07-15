@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "editor/RuntimeSyntaxRegistry.h"
@@ -12,7 +13,26 @@ namespace microide::editor::runtime_syntax {
 std::vector<RuntimeSyntaxDefinitionData> LoadDefinitionsFromDirectories(
     const std::vector<std::filesystem::path>& directories,
     std::vector<std::string>* errors = nullptr);
-std::uint64_t DefinitionSourceFingerprint(
-    const std::vector<std::filesystem::path>& directories);
+
+// Content-based fingerprint of the syntax `.lua` sources under a set of
+// directories, used to decide whether a reload can be skipped. The fingerprint
+// is a pure function of the discovered files' paths and byte contents, so any
+// content edit changes it. Unchanged files (matching cached mtime+size) reuse
+// their previously computed content hash instead of being re-read, so a poll
+// that finds nothing changed no longer re-reads every source file. Not
+// thread-safe; call from a single reload path.
+class SyntaxSourceFingerprint {
+ public:
+  std::uint64_t Compute(const std::vector<std::filesystem::path>& directories);
+  void Clear() { cache_.clear(); }
+
+ private:
+  struct Entry {
+    std::filesystem::file_time_type mtime{};
+    std::uintmax_t size = 0;
+    std::uint64_t content_hash = 0;
+  };
+  std::unordered_map<std::string, Entry> cache_;  // key = path.generic_string()
+};
 
 }  // namespace microide::editor::runtime_syntax

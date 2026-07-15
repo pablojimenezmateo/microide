@@ -345,6 +345,52 @@ void TestBlockingRepositoryStateProviderIsAsync() {
   executor.Shutdown();
 }
 
+// The outgoing-base resolution (several git subprocesses on the Auto path) is
+// memoized across refreshes: a plain status refresh after a file edit leaves the
+// branch/HEAD/upstream unchanged and must be served from cache, while a HEAD
+// movement re-resolves.
+void TestOutgoingBaseResolutionIsMemoizedByRepositoryIdentity() {
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService service(executor);
+
+  std::string head_oid = "aaaaaaa";
+  service.SetRepositoryStateProviderForTesting(
+      [&](const std::filesystem::path& /*root*/,
+          std::uint64_t generation) -> microide::project::GitRepositoryState {
+        microide::project::GitRepositoryState state;
+        state.repo_available = true;
+        state.generation = generation;
+        state.branch.branch_name = "feature";
+        state.branch.head_oid = head_oid;
+        return state;
+      });
+
+  // SpecificRef keeps ResolveGitOutgoingBase git-free; StatusOnly skips the
+  // outgoing-files diff. The cache key/hit/miss logic is identical for every kind.
+  OutgoingBaseChoice choice;
+  choice.kind = OutgoingBaseChoice::Kind::SpecificRef;
+  choice.custom_ref = "origin/main";
+
+  service.RunRefreshSynchronouslyForTesting("/fake/repo", GitSidebarRefreshScope::StatusOnly,
+                                            choice, false);
+  Expect(service.OutgoingBaseResolveCountForTesting() == 1, "first refresh resolves the base once");
+
+  // Same branch + HEAD + choice: served from cache, no re-resolution.
+  service.RunRefreshSynchronouslyForTesting("/fake/repo", GitSidebarRefreshScope::StatusOnly,
+                                            choice, false);
+  Expect(service.OutgoingBaseResolveCountForTesting() == 1,
+         "an unchanged repository identity must hit the outgoing-base cache");
+
+  // HEAD moved (commit/checkout/reset): the memo must invalidate and re-resolve.
+  head_oid = "bbbbbbb";
+  service.RunRefreshSynchronouslyForTesting("/fake/repo", GitSidebarRefreshScope::StatusOnly,
+                                            choice, false);
+  Expect(service.OutgoingBaseResolveCountForTesting() == 2,
+         "a HEAD change must invalidate the cache and re-resolve");
+
+  executor.Shutdown();
+}
+
 }  // namespace
 
 void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
@@ -362,6 +408,8 @@ void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
           TestConcurrentRefreshBurstStaysLiveAndBalanced);
   AddTest(tests, "GitRepositoryService/BlockingRepositoryStateProviderIsAsync",
           TestBlockingRepositoryStateProviderIsAsync);
+  AddTest(tests, "GitRepositoryService/OutgoingBaseResolutionIsMemoizedByRepositoryIdentity",
+          TestOutgoingBaseResolutionIsMemoizedByRepositoryIdentity);
 }
 
 }  // namespace microide::tests

@@ -1211,6 +1211,12 @@ std::string DetectFiletype(const std::filesystem::path& path) {
   return definition == nullptr ? std::string{} : definition->filetype;
 }
 
+void CompileDefinition(std::uint32_t definition_id) {
+  // Idempotent (std::call_once) and bounds-checked inside EnsureDefinitionCompiled;
+  // a no-op for id 0, an out-of-range id, or an eager/already-compiled definition.
+  EnsureDefinitionCompiled(GetRegistry(), definition_id);
+}
+
 // Above this byte length a line is not tokenized: running the syntax rules over
 // the whole line is O(line) work on the UI thread on every token-cache miss, so a
 // single enormous line (a minified bundle with no newline) would stall the shell.

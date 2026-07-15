@@ -47,6 +47,7 @@ void RegisterFileOperationServiceTests(std::vector<TestCase>& tests);
 void RegisterGitBlameServiceTests(std::vector<TestCase>& tests);
 void RegisterGitServiceTests(std::vector<TestCase>& tests);
 void RegisterRuntimeSyntaxSkipTests(std::vector<TestCase>& tests);
+void RegisterSyntaxDefinitionLoaderTests(std::vector<TestCase>& tests);
 void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests);
 void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests);
 void RegisterCommitWorkflowTests(std::vector<TestCase>& tests);
@@ -456,6 +457,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterWorkspaceShellTerminalTests(tests);
   microide::tests::RegisterGitServiceTests(tests);
   microide::tests::RegisterRuntimeSyntaxSkipTests(tests);
+  microide::tests::RegisterSyntaxDefinitionLoaderTests(tests);
   microide::tests::RegisterGitRepositoryStateTests(tests);
   microide::tests::RegisterGitRepositoryServiceTests(tests);
   microide::tests::RegisterCommitWorkflowTests(tests);

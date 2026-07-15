@@ -19,6 +19,84 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
+### Fixed in the 2026-07-15 cross-subsystem speed pass (session 2)
+
+Four contained speed wins across LSP registration, the editor bracket scanner,
+the file finder, and the git sidebar. Each shipped regression coverage.
+
+- **LSP `RegisterServer` no longer serializes JSON to compare configs.**
+  `JsonValue` gained a defaulted structural `operator==`
+  (`src/util/JsonValue.h`); `LspManager::RegisterServer`
+  (`WorkspaceLspManager.cpp`) compares `initialization_options`/`settings`
+  structurally instead of materializing four `SerializeJson` strings on every
+  registration / project-activation / plugin-refresh. Also fixes a latent bug:
+  object comparison is now key-order-independent (the string compare was
+  hash-iteration-order-sensitive). Regression:
+  `JsonValue/StructuralEqualityIsOrderIndependentAndDeep`.
+- **Bracket matching is O(window), not O(file).** `FindBracketMatch`
+  (`src/editor/BracketScanner.cpp`) previously wrote an empty `std::string_view`
+  for every line in the whole buffer (`views.assign(line_count, {})`) each time
+  the caret sat next to a bracket — a multi-MB memset per frame on large files.
+  It now materializes only the `[caret-max, caret+max]` slice and indexes it
+  through a `WindowLines` accessor (absolute line numbers, `base` offset). The
+  public `FindBracketMatchInLines` keeps identical behavior (base 0). Regression:
+  `EditorEssentials/BracketScanner/WindowedDeepCaret` (plus the existing bracket
+  suite pins the base-0 path).
+- **File finder no longer deep-copies the whole index per keystroke.**
+  `FileFinder::EnsureCacheBuilt` (`src/project/FileFinder.cpp`) called
+  `SnapshotWithVersion()` — an O(index) copy of every `ProjectFile` under the
+  index lock — on every Refresh just to read the version, then discarded it when
+  the cache was warm. It now checks the cheap scalar `index_->version()` first
+  and only fetches the snapshot when the index actually changed. Regression:
+  `FileFinder/WarmRefreshDoesNotRebuildPerKeystroke`. (The one-time rebuild on a
+  version change is still on the UI thread — see the deferred follow-up below.)
+- **Git sidebar outgoing-base resolution is memoized.**
+  `GitRepositoryService::BuildSidebarSnapshot` ran `ResolveGitOutgoingBase`
+  (several git subprocesses on the Auto path: `symbolic-ref`, `config`,
+  `show-ref`, `rev-parse`) inside every full refresh. A new
+  `ResolveOutgoingBaseCached` memoizes the result keyed by
+  `(root, choice, head_oid, branch_name, upstream, repo_available)`, so a status
+  refresh after a file edit (HEAD/branch unchanged) spawns no git process; any
+  HEAD movement or branch/upstream/choice change re-resolves. Regression:
+  `GitRepositoryService/OutgoingBaseResolutionIsMemoizedByRepositoryIdentity`.
+
+### Fixed in the 2026-07-15 syntax-reload speed pass
+
+Three low-risk latency wins from the "RuntimeSyntaxRegistry regex/match perf
+budgets" cluster (the behavior-risky region/match-budget sub-items stay deferred
+below). Each shipped regression coverage in
+`tests/SyntaxDefinitionLoaderTests.cpp`.
+
+- **Syntax-source fingerprint no longer re-reads every `.lua` file on each reload
+  check.** `DefinitionSourceFingerprint` (a free function) is replaced by
+  `SyntaxSourceFingerprint` (`src/editor/SyntaxDefinitionLoader.{h,cpp}`), a
+  cache object keyed `path → {mtime, size, content_hash}`. `Compute` stats each
+  discovered file and reuses the cached content hash when mtime+size are
+  unchanged, only re-reading (and rehashing) files that actually changed. The
+  fingerprint stays a pure function of paths+contents, so change-detection is
+  byte-for-byte equivalent to the old full-read version — a poll that finds
+  nothing changed no longer reads any source bytes. Owned/cleared by
+  `WorkspacePluginRuntime` (`syntax_fingerprint_cache_`).
+- **`DiscoverDefinitionFiles` dedups files across directories.** A syntax
+  directory contributed via two routes (or two entries normalizing to the same
+  path) previously loaded/hashed/compiled every file twice with order-dependent
+  precedence. It now dedups both the directory list and the normalized file keys
+  (first directory wins → deterministic precedence), which also shrinks the
+  fingerprint's stat/hash work.
+- **Cold filetype rule-regex compile is prewarmed off the UI thread.** The first
+  visible-line highlight of a cold filetype compiled the definition's rule
+  regexes in `EnsureDefinitionCompiled` on the render path (the visible-band
+  prefetch runs only *after* a frame settles). New public
+  `runtime_syntax::CompileDefinition(id)` +
+  `HighlightPrefetchService::PrewarmForViewport(token, resolve)` dispatch that
+  compile to the existing highlight worker on tab switch (gated on the viewport
+  identity inside the service, so detection runs once per switch, not per frame).
+  Best-effort: `PostLatest` keeps one prewarm pending, and any superseded
+  filetype is still compiled by its own normal prefetch. Behavior is unchanged
+  (idempotent `std::call_once`); only compile timing moves off the render path,
+  so the win is timing-only and not unit-asserted (the test covers safety /
+  idempotency).
+
 ### Fixed in the 2026-07-14 actionable sweep
 
 Closed this pass; the corresponding open/backlog entries below were removed.
@@ -397,12 +475,13 @@ Detail per batch lives in the sweep commits.
   `git init` / `.git` removal until a real git refresh supersedes it (a per-frame `.git` stat
   would defeat the cache).
 - **RuntimeSyntaxRegistry regex/match perf budgets** (separate file from the loader): per-pattern
-  & joined-pattern byte cap before PCRE compile, region-start budget, fingerprint-metadata-first,
-  dedup definition dirs, explicit `overrides` for filetype shadowing, prewarm cold filetype,
-  prefetch key by document-id, `FindFirstRegex` skip-mask incremental. (The `^`-anchor
-  correctness fix landed 2026-07-14; the per-pattern byte cap was assessed low marginal value —
-  syntax defs are already length/count-bounded at load — and the skip-mask incremental rewrite
-  is behavior-risk in a path that can't be visually verified here, so both stay deferred.)
+  & joined-pattern byte cap before PCRE compile, region-start budget, explicit `overrides` for
+  filetype shadowing, prefetch key by document-id, `FindFirstRegex` skip-mask incremental. (The
+  `^`-anchor correctness fix landed 2026-07-14; the loader-side speed wins — cached content-hash
+  fingerprint, dedup definition dirs, prewarm cold filetype — landed 2026-07-15, see "Fixed in the
+  2026-07-15 syntax-reload speed pass" above; the per-pattern byte cap was assessed low marginal
+  value — syntax defs are already length/count-bounded at load — and the skip-mask incremental
+  rewrite is behavior-risk in a path that can't be visually verified here, so both stay deferred.)
 
 - **`CommitWorkflowService::DispatchCommit` captures `&state` (a `CommitWorkflowState` inside
   `current_project_state`) across the background executor + mailbox.** A project switch that
@@ -1200,11 +1279,20 @@ test proves it is unreachable.
   count-all search, progress can advance by files while the visible match count remains stuck at the
   display cap. Fix direction: periodically fold local over-cap counts or expose "counting..." distinct
   from exact total. Add a common-literal count-all test that observes progress before completion.
-- **File finder cache rebuild lowercases and stores the entire file index on the UI thread.**
-  `EnsureCacheBuilt` deep-copies every path plus lowercase path and filename whenever the index version
-  changes. Large repos can stutter the finder even if the query only needs a small prefix. Fix
-  direction: build the cache incrementally off the UI thread or keep lowercase keys in `FileIndex`.
-  Add a perf scenario for opening the finder after a 100k-file index update.
+- **[PARTIALLY RESOLVED 2026-07-15] File finder cache rebuild lowercases and stores the entire file
+  index on the UI thread.** The dominant interactive cost — `EnsureCacheBuilt` calling
+  `SnapshotWithVersion()` (an O(index) deep copy of every `ProjectFile` under the index lock) on
+  **every keystroke** just to read the version — is fixed: it now checks the cheap `index_->version()`
+  first and only snapshots on an actual version change (`FileFinder/WarmRefreshDoesNotRebuildPerKeystroke`).
+  **Still deferred:** the one-time rebuild on a version change (finder-open after an index update) still
+  runs the per-file case-fold + `CachedFileEntry` build on the UI thread. Moving it fully off-thread
+  needs the finder to own a background executor + a wake→re-refresh hook wired through the shell (SDL
+  event, like `HighlightPrefetchService`), plus a stale/rebuilding state while the finder is
+  interactive; that async wiring is hard to verify headless, so it is left as a follow-up. Concrete
+  design: finder-owned `ProjectBackgroundExecutor` builds the cache off the version-change path, posts a
+  wake event, and swaps the new cache in on the UI drain; rank against the previous (or empty) cache
+  meanwhile. Alternative: keep case-folded keys in `FileIndex` (built during the already-off-thread
+  scan) so the finder never folds.
 - **File finder recent-path matching uses raw `path.string()` identity.** Recents are compared to
   cached index paths without platform normalization beyond the stored string. Case-only renames on
   Windows/macOS, slash spelling differences, or Unicode normalization can make a recent file disappear
@@ -1343,12 +1431,11 @@ test proves it is unreachable.
   document size. Fix direction: pre-compute replacement byte size with overflow checks and fail before
   materialization, or append chunks through a bounded builder. Add a test using many inserted lines
   whose total crosses the text-core limit.
-- **Bracket matching allocates a full line-count scratch vector for a bounded scan.** `FindBracketMatch`
-  assigns a thread-local `std::vector<std::string_view>` to `line_count` every query even though only
-  `[caret-max, caret+max]` is populated. On million-line files, moving the caret near a bracket turns a
-  tiny scan into an O(file) memory write. Fix direction: pass a window base plus compact views to
-  `FindBracketMatchInLines`, or make the scanner translate absolute line numbers through a bounded
-  sparse map. Add a perf test with a huge file and a small bracket scan radius.
+- **[RESOLVED 2026-07-15] Bracket matching allocates a full line-count scratch vector for a bounded
+  scan.** `FindBracketMatch` now materializes only the `[caret-max, caret+max]` window and indexes it
+  through a `WindowLines` accessor that maps absolute line numbers onto the slice via a `base` offset;
+  the O(file) `views.assign(line_count, {})` is gone. `FindBracketMatchInLines` keeps its absolute
+  (base-0) contract for the existing tests. See "Fixed in the 2026-07-15 cross-subsystem speed pass".
 - **Bracket matching can synchronously tokenize lines far outside the visible syntax cache.** The
   suppression path calls `HighlightedLineTokens` for every probed bracket position, unlike folding's
   non-forcing `HighlightedLineTokensIfCached` approach. A bracket search across a cold window can force
@@ -1395,27 +1482,26 @@ test proves it is unreachable.
   and repeats. Definitions with many sibling regions can turn one line into O(region_count * matches)
   regex work. Fix direction: merge sibling start regexes where possible or add an ordered budget with
   instrumentation. Add a synthetic definition with many region starts and a long line.
-- **Definition source fingerprinting reads all syntax files every reload check.** `DefinitionSourceFingerprint`
-  discovers `.lua` files and hashes full contents. A plugin directory with many large syntax files can
-  make reload polling expensive even if no definitions are loaded. Fix direction: hash metadata first
-  and read content only when size/mtime changes, while preserving collision safety with a content pass
-  on change. Add a perf fixture with many syntax files.
-- **Duplicate syntax directories load the same definition file multiple times.** `DiscoverDefinitionFiles`
-  iterates the directory list in order and appends files without deduplicating normalized paths. If a
-  plugin contributes the same syntax directory through two routes, definitions and regexes are loaded
-  twice and precedence becomes order-dependent. Fix direction: normalize and unique file paths before
-  loading. Add a loader test with duplicate directories.
+- **[RESOLVED 2026-07-15] Definition source fingerprinting reads all syntax files every reload check.**
+  Replaced `DefinitionSourceFingerprint` with the `SyntaxSourceFingerprint` cache object
+  (`path → {mtime,size,content_hash}`): unchanged files reuse the cached hash instead of being
+  re-read, so a poll that finds nothing changed reads no source bytes, while the fingerprint stays a
+  pure function of paths+contents (byte-for-byte-equivalent change detection). See "Fixed in the
+  2026-07-15 syntax-reload speed pass".
+- **[RESOLVED 2026-07-15] Duplicate syntax directories load the same definition file multiple times.**
+  `DiscoverDefinitionFiles` now dedups both the directory list and normalized file keys (first
+  directory wins → deterministic precedence). See "Fixed in the 2026-07-15 syntax-reload speed pass".
 - **Plugin syntax definitions can shadow built-in filetypes without an explicit override contract.**
   Runtime definitions are appended before built-ins and detection returns the first matching
   definition. A broad plugin filename regex can take over common filetypes accidentally. Fix direction:
   require explicit `overrides = true` metadata for a runtime definition that uses an existing
   filetype, or show a reload warning. Add detection tests for a broad `.*` plugin definition.
-- **Lazy built-in regex compilation can still happen on a visible-line cache miss.** The first
-  highlight for a filetype compiles the full definition's rule regexes in `EnsureDefinitionCompiled`.
-  Opening a rarely used filetype can pay that cost on the render/highlight path. Fix direction:
-  prewarm the detected filetype in the background after tab activation, or compile during
-  `DetectState` when a file is opened off the UI path. Add a startup/open-file perf scenario for a
-  cold filetype.
+- **[RESOLVED 2026-07-15] Lazy built-in regex compilation can still happen on a visible-line cache
+  miss.** Cold-filetype compile is now prewarmed off the UI thread on tab switch via
+  `runtime_syntax::CompileDefinition` + `HighlightPrefetchService::PrewarmForViewport` (gated on the
+  viewport identity inside the service, so detection runs once per switch). Behavior unchanged
+  (idempotent `std::call_once`); only compile timing moves off the render path. See "Fixed in the
+  2026-07-15 syntax-reload speed pass".
 - **Highlight prefetch requests dedupe by viewport pointer rather than document identity.** Two splits
   over the same document submit separate background requests, while a destroyed viewport address can be
   reused later and collide with an old unstarted key. Revision checks drop stale results, but worker
@@ -1799,12 +1885,10 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   accumulate transport/protocol failure information in the client itself while status UI still reports
   an empty manager error. Fix direction: merge `entry.last_error` with `entry.client->LastError()` and
   define precedence. Add a test where a running fake client sets a late protocol error.
-- **Serializing full JSON settings on every LSP registration is avoidable reload-path work.**
-  `RegisterServer` compares initialization options and settings by `SerializeJson` for each
-  registration. Large plugin-provided settings trees can turn project activation or plugin refresh
-  into repeated full-string materialization. Fix direction: precompute/store a stable JSON hash or
-  compare `JsonValue` structurally without allocating. Add a perf fixture registering a server with a
-  large settings object.
+- **[RESOLVED 2026-07-15] Serializing full JSON settings on every LSP registration is avoidable
+  reload-path work.** `RegisterServer` now compares `initialization_options`/`settings` via a defaulted
+  structural `JsonValue::operator==` (no allocation) instead of four `SerializeJson` calls — which also
+  fixes a latent object-key-order sensitivity. See "Fixed in the 2026-07-15 cross-subsystem speed pass".
 
 #### DAP manager/session/debug callback edges
 
@@ -1925,11 +2009,14 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   other project services if reset runs during project switching. Fix direction: give git refresh a
   cancellable task namespace instead of cancelling the whole executor, or use per-service executors.
   Add an integration test with an in-flight commit/patch job followed by git reset/project switch.
-- **Git sidebar outgoing base resolution can run extra subprocesses inside every full refresh.**
-  `BuildSidebarSnapshot` calls `ResolveGitOutgoingBase`, which can run several git commands after the
-  status parse. A repo with slow config/ref storage can make a "status" refresh do multiple serial git
-  reads. Fix direction: cache resolved base by HEAD/upstream/config generation, or fold needed refs
-  into one git command. Add perf tests on a repo with many refs and slow packed-refs access.
+- **[RESOLVED 2026-07-15] Git sidebar outgoing base resolution can run extra subprocesses inside every
+  full refresh.** `BuildSidebarSnapshot` now routes through `ResolveOutgoingBaseCached`, which memoizes
+  the resolution keyed by `(root, choice, head_oid, branch_name, upstream, repo_available)`. A status
+  refresh with unchanged HEAD/branch/upstream serves the base from cache and spawns no git subprocess;
+  any HEAD movement or branch/upstream/choice change re-resolves. See "Fixed in the 2026-07-15
+  cross-subsystem speed pass". (The config `gh-merge-base` edge — config changed without HEAD moving —
+  is accepted staleness until the next HEAD/branch change; folding the refs into one git command is a
+  possible further optimization.)
 - **Base-reference config values are not constrained before `show-ref`.** `ResolveNamedBranchReference`
   builds ref strings from `branch.<name>.gh-merge-base` and remote config. Weird values containing
   `..`, spaces, or ref metacharacters are passed to git commands. `--verify` protects option parsing,

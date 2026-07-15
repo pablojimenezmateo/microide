@@ -265,9 +265,29 @@ void TestNumberGrammarStrictness() {
          "valid over-range integer must still fall back to double");
 }
 
+// Structural equality is the correctness basis for the LSP registration fast
+// path (comparing init-options/settings without serializing). Objects must
+// compare key-order-independently; nested structures compare deeply.
+void TestStructuralEqualityIsOrderIndependentAndDeep() {
+  const auto a = ParseJson(R"({"a":1,"b":{"x":[1,2,3],"y":"t"}})");
+  const auto b = ParseJson(R"({"b":{"y":"t","x":[1,2,3]},"a":1})");  // reordered keys
+  const auto c = ParseJson(R"({"a":1,"b":{"x":[1,2,3],"y":"u"}})");  // one leaf differs
+  Expect(a.has_value() && b.has_value() && c.has_value(), "fixtures must parse");
+  Expect(*a == *b, "objects equal regardless of key order (unordered_map ==)");
+  Expect(!(*a == *c), "a differing nested leaf must compare unequal");
+
+  // Scalars and type mismatches.
+  Expect(JsonValue(std::int64_t{5}) == JsonValue(std::int64_t{5}), "equal ints compare equal");
+  Expect(!(JsonValue(std::int64_t{5}) == JsonValue(std::string("5"))), "int != string");
+  Expect(JsonValue() == JsonValue(), "null == null");
+  Expect(!(JsonValue(true) == JsonValue(false)), "true != false");
+}
+
 }  // namespace
 
 void RegisterJsonValueTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "JsonValue/StructuralEqualityIsOrderIndependentAndDeep",
+          TestStructuralEqualityIsOrderIndependentAndDeep);
   AddTest(tests, "JsonValue/RawControlCharsInStringRejected",
           TestRawControlCharsInStringRejected);
   AddTest(tests, "JsonValue/NumberGrammarStrictness", TestNumberGrammarStrictness);

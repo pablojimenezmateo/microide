@@ -5,6 +5,8 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <unordered_set>
 #include <vector>
 
 #include "platform/Filesystem.h"
@@ -418,7 +420,16 @@ bool LoadDefinitionFile(const std::filesystem::path& source_path,
 std::vector<std::filesystem::path> DiscoverDefinitionFiles(
     const std::vector<std::filesystem::path>& directories) {
   std::vector<std::filesystem::path> files;
+  // Dedup files across directories: a syntax directory contributed via two
+  // routes (or two directory entries that normalize to the same path) must load,
+  // hash, and compile each definition exactly once, with deterministic
+  // first-directory-wins precedence.
+  std::unordered_set<std::string> seen_directories;
+  std::unordered_set<std::string> seen_files;
   for (const auto& directory : directories) {
+    if (!seen_directories.insert(directory.lexically_normal().generic_string()).second) {
+      continue;
+    }
     if (platform::ReadPathType(directory) != platform::PathType::Directory) {
       continue;
     }
@@ -429,7 +440,7 @@ std::vector<std::filesystem::path> DiscoverDefinitionFiles(
         continue;
       }
       const std::filesystem::path path = entry.path.lexically_normal();
-      if (path.extension() == ".lua") {
+      if (path.extension() == ".lua" && seen_files.insert(path.generic_string()).second) {
         directory_files.push_back(path);
       }
     }
@@ -479,7 +490,7 @@ std::vector<RuntimeSyntaxDefinitionData> LoadDefinitionsFromDirectories(
   return definitions;
 }
 
-std::uint64_t DefinitionSourceFingerprint(
+std::uint64_t SyntaxSourceFingerprint::Compute(
     const std::vector<std::filesystem::path>& directories) {
 #if !MICROIDE_HAS_LUA_PLUGINS
   (void)directories;
@@ -489,12 +500,34 @@ std::uint64_t DefinitionSourceFingerprint(
   for (const auto& path : DiscoverDefinitionFiles(directories)) {
     fingerprint = Fnv1aAppend(fingerprint, path.generic_string());
     fingerprint = Fnv1aAppend(fingerprint, "\n");
-    const std::optional<std::string> content = util::ReadTextFile(path);
-    if (content.has_value()) {
-      fingerprint = Fnv1aAppend(fingerprint, *content);
+
+    std::error_code mtime_ec;
+    std::error_code size_ec;
+    const std::filesystem::file_time_type mtime =
+        std::filesystem::last_write_time(path, mtime_ec);
+    const std::uintmax_t size = std::filesystem::file_size(path, size_ec);
+    const std::string key = path.generic_string();
+
+    std::uint64_t content_hash = 0;
+    const auto cached = cache_.find(key);
+    if (!mtime_ec && !size_ec && cached != cache_.end() &&
+        cached->second.mtime == mtime && cached->second.size == size) {
+      // Unchanged since the last compute: reuse the content hash, no re-read.
+      content_hash = cached->second.content_hash;
     } else {
-      fingerprint = Fnv1aAppend(fingerprint, "<unreadable>");
+      const std::optional<std::string> content = util::ReadTextFile(path);
+      content_hash = content.has_value() ? Fnv1aAppend(0, *content)
+                                         : Fnv1aAppend(0, "<unreadable>");
+      if (!mtime_ec && !size_ec) {
+        cache_[key] = Entry{mtime, size, content_hash};
+      } else {
+        // Couldn't stat the file: don't cache, so the next compute re-reads it.
+        cache_.erase(key);
+      }
     }
+    fingerprint = Fnv1aAppend(
+        fingerprint,
+        std::string_view(reinterpret_cast<const char*>(&content_hash), sizeof(content_hash)));
     fingerprint = Fnv1aAppend(fingerprint, "\n");
   }
   return fingerprint;

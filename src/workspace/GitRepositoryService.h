@@ -52,6 +52,13 @@ class GitRepositoryService {
       const std::filesystem::path& project_root, std::uint64_t generation)>;
   void SetRepositoryStateProviderForTesting(RepositoryStateProviderForTesting provider);
 
+  // Count of actual (cache-miss) outgoing-base resolutions performed. A refresh
+  // whose repository identity is unchanged serves the base from cache and does
+  // not increment this. Test-only observability for the outgoing-base memo.
+  std::uint64_t OutgoingBaseResolveCountForTesting() const {
+    return outgoing_base_resolve_count_;
+  }
+
   static bool IsGitRepoValid(const std::filesystem::path& project_root);
 
  private:
@@ -67,6 +74,13 @@ class GitRepositoryService {
   GitSidebarState::RefreshSnapshot BuildSidebarSnapshot(
       const project::GitRepositoryState& repository_state,
       const RefreshRequest& request) const;
+  // Resolves the outgoing-base ref, memoizing the result across refreshes. The
+  // Auto resolution runs several git subprocesses (symbolic-ref, config, show-ref,
+  // rev-parse); a plain status refresh after a file edit leaves the identity below
+  // unchanged, so it is served from the cache and spawns no git process. Called
+  // only from BuildSidebarSnapshot, which the executor serializes.
+  ResolvedGitOutgoingBase ResolveOutgoingBaseCached(
+      const project::GitRepositoryState& repository_state, const RefreshRequest& request) const;
   void PublishSnapshot(GitSidebarState::RefreshSnapshot snapshot, std::uint64_t generation);
   void ScheduleRefresh(RefreshRequest request);
   // Shared exit for a refresh task whose generation was superseded before it
@@ -87,6 +101,26 @@ class GitRepositoryService {
   std::optional<RefreshRequest> deferred_refresh_;
   std::filesystem::path active_project_root_;
   RepositoryStateProviderForTesting repository_state_provider_for_testing_;
+
+  // Outgoing-base memo (see ResolveOutgoingBaseCached). Confined to the refresh
+  // thread via BuildSidebarSnapshot, so it needs no separate lock. The key
+  // includes head_oid, so any HEAD movement (commit/checkout/reset/merge) or
+  // branch/upstream/root/choice change re-resolves; a file-edit status refresh
+  // hits the cache.
+  struct OutgoingBaseCacheKey {
+    std::filesystem::path root;
+    OutgoingBaseChoice::Kind choice_kind = OutgoingBaseChoice::Kind::Auto;
+    std::string custom_ref;
+    std::string head_oid;
+    std::string branch_name;
+    std::string upstream;
+    bool repo_available = false;
+    bool operator==(const OutgoingBaseCacheKey&) const = default;
+  };
+  mutable bool outgoing_base_cache_valid_ = false;
+  mutable OutgoingBaseCacheKey outgoing_base_cache_key_;
+  mutable ResolvedGitOutgoingBase outgoing_base_cache_value_;
+  mutable std::uint64_t outgoing_base_resolve_count_ = 0;
 };
 
 }  // namespace microide::workspace

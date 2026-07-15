@@ -97,6 +97,29 @@ void TestBracketScannerNoMatchWhenAnchorInsideString() {
   Expect(!match.has_value(), "bracket inside string should not participate in matching");
 }
 
+// Exercises the windowed scan (base > 0): with a caret several lines down and a
+// small per-side window, FindBracketMatch materializes only [caret-max, caret+max]
+// and indexes it through WindowLines. The returned pair must still be in absolute
+// coordinates.
+void TestBracketScannerWindowedDeepCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("a\nb\nc\nd\n{\n  x;\n}\ne\n", "/tmp/bracket-window.cpp");
+  // Opener at line 4 col 0, closer at line 6 col 0. Caret just past the opener,
+  // a per-side window of 3 -> window base is line 1 (absolute), not 0.
+  auto forward = microide::editor::FindBracketMatch(viewport, 4, 1, 3);
+  Expect(forward.has_value(), "windowed forward scan should find the pair");
+  Expect(forward->open_line == 4 && forward->open_column == 0, "absolute opener at line 4 col 0");
+  Expect(forward->close_line == 6 && forward->close_column == 0, "absolute closer at line 6 col 0");
+
+  // Backward from the closer, window base line 3 (absolute).
+  auto backward = microide::editor::FindBracketMatch(viewport, 6, 1, 3);
+  Expect(backward.has_value(), "windowed backward scan should find the pair");
+  Expect(backward->open_line == 4 && backward->open_column == 0,
+         "backward absolute opener at line 4 col 0");
+  Expect(backward->close_line == 6 && backward->close_column == 0,
+         "backward absolute closer at line 6 col 0");
+}
+
 void TestShapingMoveLineDown() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\n", "/tmp/sample.txt");
@@ -1153,6 +1176,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestBracketScannerSkipsCommentBraces);
   AddTest(tests, "EditorEssentials/BracketScanner/NoMatchWhenAnchorInsideString",
           TestBracketScannerNoMatchWhenAnchorInsideString);
+  AddTest(tests, "EditorEssentials/BracketScanner/WindowedDeepCaret",
+          TestBracketScannerWindowedDeepCaret);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDown",
           TestShapingMoveLineDown);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDownKeepsWholeLineSelection",

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -53,6 +54,13 @@ SyntaxState DetectState(const std::filesystem::path& path, LineSpan lines);
 std::string DetectFiletype(const std::filesystem::path& path, LineSpan lines);
 // Path-only detection for callers with no content available.
 std::string DetectFiletype(const std::filesystem::path& path);
+
+// Eagerly compile a definition's lazily-built rule regexes. Safe to call from a
+// background worker: it is idempotent (std::call_once) and a no-op for an
+// unknown id or an already-compiled/eager definition. Used to prewarm a
+// cold filetype off the UI thread so the first visible-line highlight does not
+// pay the regex-compile cost on the render path.
+void CompileDefinition(std::uint32_t definition_id);
 
 HighlightedLine HighlightLine(std::string_view line,
                               const std::filesystem::path& path,

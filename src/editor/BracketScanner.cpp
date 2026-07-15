@@ -9,6 +9,23 @@ namespace microide::editor {
 
 namespace {
 
+// Absolute-line view over a windowed slice of the buffer. The bracket matchers
+// reason in absolute line numbers (for syntax suppression and the returned
+// pair), but only the bounded window [base, base + slice.size()) is ever
+// dereferenced, so FindBracketMatch materializes just that slice instead of a
+// LineView per line in the whole file. `operator[]` maps an absolute index into
+// the slice; `size()` returns the absolute end index. base == 0 (the public
+// FindBracketMatchInLines path) is the identity, so behavior is unchanged there.
+struct WindowLines {
+  const std::vector<std::string_view>* slice = nullptr;
+  std::size_t base = 0;
+
+  std::string_view operator[](std::size_t absolute_line) const {
+    return (*slice)[absolute_line - base];
+  }
+  std::size_t size() const { return base + slice->size(); }
+};
+
 bool IsBracketScanSuppressed(const TextViewport* viewport,
                              std::size_t line_index,
                              std::size_t column) {
@@ -43,7 +60,7 @@ constexpr char Opposite(char c) {
   return 0;
 }
 
-bool MatchForwardFromOpener(const std::vector<std::string_view>& lines,
+bool MatchForwardFromOpener(const WindowLines& lines,
                             std::size_t open_line,
                             std::size_t open_col,
                             std::size_t max_lines_each_side,
@@ -85,7 +102,7 @@ bool MatchForwardFromOpener(const std::vector<std::string_view>& lines,
   return false;
 }
 
-bool MatchBackwardFromCloser(const std::vector<std::string_view>& lines,
+bool MatchBackwardFromCloser(const WindowLines& lines,
                              std::size_t close_line,
                              std::size_t close_col,
                              std::size_t max_lines_each_side,
@@ -151,10 +168,8 @@ bool MatchBackwardFromCloser(const std::vector<std::string_view>& lines,
   return false;
 }
 
-}  // namespace
-
-std::optional<BracketMatchPair> FindBracketMatchInLines(
-    const std::vector<std::string_view>& lines,
+std::optional<BracketMatchPair> FindBracketMatchInWindow(
+    const WindowLines& lines,
     std::size_t caret_line,
     std::size_t caret_column,
     std::size_t max_lines_each_side,
@@ -199,30 +214,44 @@ std::optional<BracketMatchPair> FindBracketMatchInLines(
   return std::nullopt;
 }
 
+}  // namespace
+
+std::optional<BracketMatchPair> FindBracketMatchInLines(
+    const std::vector<std::string_view>& lines,
+    std::size_t caret_line,
+    std::size_t caret_column,
+    std::size_t max_lines_each_side,
+    const TextViewport* syntax_viewport) {
+  // base == 0: absolute indexing over the whole vector (test entry point).
+  return FindBracketMatchInWindow(WindowLines{&lines, 0}, caret_line, caret_column,
+                                  max_lines_each_side, syntax_viewport);
+}
+
 std::optional<BracketMatchPair> FindBracketMatch(const TextViewport& viewport,
                                                  std::size_t caret_line,
                                                  std::size_t caret_column,
                                                  std::size_t max_lines_each_side) {
   const auto& lines = viewport.lines();
   const std::size_t line_count = lines.size();
+  if (caret_line >= line_count) {
+    return std::nullopt;
+  }
   // Only the window [caret_line - max, caret_line + max] is ever scanned: the
   // forward/backward matchers never look past it and the caret probes its own
-  // line. Materializing a LineView for every line in the buffer each frame was
-  // O(file) work for a bounded scan. Size the thread-local vector to the line
-  // count so absolute line indexing stays valid (the empty-view fill is a cheap
-  // memory write versus a per-line LineView call), then fill only the window.
-  // Out-of-window slots are never dereferenced.
-  thread_local std::vector<std::string_view> views;
-  views.assign(line_count, std::string_view{});
-  if (caret_line < line_count) {
-    const std::size_t lo =
-        caret_line > max_lines_each_side ? caret_line - max_lines_each_side : 0;
-    const std::size_t hi = std::min(line_count, caret_line + max_lines_each_side + 1);
-    for (std::size_t i = lo; i < hi; ++i) {
-      views[i] = lines.LineView(i);
-    }
+  // line. Materialize a LineView for just that window (O(window)) into a
+  // thread-local slice indexed absolutely via WindowLines(base = lo) -- the old
+  // code wrote an empty view for every line in the whole buffer (O(file)) each
+  // frame the caret sat next to a bracket, a multi-MB memset on large files.
+  const std::size_t lo = caret_line > max_lines_each_side ? caret_line - max_lines_each_side : 0;
+  const std::size_t hi = std::min(line_count, caret_line + max_lines_each_side + 1);
+  thread_local std::vector<std::string_view> window;
+  window.clear();
+  window.reserve(hi - lo);
+  for (std::size_t i = lo; i < hi; ++i) {
+    window.push_back(lines.LineView(i));
   }
-  return FindBracketMatchInLines(views, caret_line, caret_column, max_lines_each_side, &viewport);
+  return FindBracketMatchInWindow(WindowLines{&window, lo}, caret_line, caret_column,
+                                  max_lines_each_side, &viewport);
 }
 
 }  // namespace microide::editor

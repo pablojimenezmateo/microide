@@ -97,8 +97,7 @@ bool WorkspacePluginRuntime::ApplySyntaxReload(const std::filesystem::path& proj
   std::vector<std::string> syntax_loader_errors;
   std::vector<editor::runtime_syntax::RuntimeSyntaxDefinitionData> syntax_definitions;
   const std::vector<std::filesystem::path> syntax_directories = plugin_host_.DataDirectories("syntax");
-  const std::uint64_t fingerprint =
-      editor::runtime_syntax::DefinitionSourceFingerprint(syntax_directories);
+  const std::uint64_t fingerprint = syntax_fingerprint_cache_.Compute(syntax_directories);
   if (syntax_fingerprint_initialized_ && syntax_source_fingerprint_ == fingerprint) {
     asset_monitor_.SetProjectRoot(project_root);
     return clean_reload && runtime_syntax_errors_.empty();
@@ -189,6 +188,7 @@ void WorkspacePluginRuntime::Shutdown() {
   changed_syntax_language_views_.clear();
   syntax_fingerprint_initialized_ = false;
   syntax_source_fingerprint_ = 0;
+  syntax_fingerprint_cache_.Clear();
 }
 
 }  // namespace microide::workspace

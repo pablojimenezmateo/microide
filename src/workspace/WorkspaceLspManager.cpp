@@ -44,11 +44,14 @@ void LspManager::RegisterServer(const std::vector<std::string>& language_ids,
   auto it = servers_.find(key);
   if (it != servers_.end()) {
     ServerEntry& existing = it->second;
+    // Structural JSON comparison (no serialization/allocation): re-registering a
+    // server with an unchanged config is the common project-activation / plugin-
+    // refresh case, and large init-options/settings trees should not materialize
+    // four JSON strings just to detect "nothing changed".
     if (existing.language_ids == language_ids && existing.command == command &&
         existing.root_uri == root_uri && existing.cwd == cwd &&
-        util::SerializeJson(existing.initialization_options) ==
-            util::SerializeJson(initialization_options) &&
-        util::SerializeJson(existing.settings) == util::SerializeJson(settings)) {
+        existing.initialization_options == initialization_options &&
+        existing.settings == settings) {
       if (eager_start) {
         (void)EnsureStarted(existing);
       }

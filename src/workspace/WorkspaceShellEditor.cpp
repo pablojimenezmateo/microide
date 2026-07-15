@@ -215,6 +215,14 @@ void WorkspaceShell::RequestActiveHighlightPrefetch() {
   if (line_count == 0) {
     return;
   }
+  // On a tab switch, prewarm the newly active filetype's rule-regex compile on
+  // the highlight worker so the first visible-line render does not pay it on the
+  // UI thread. The service gates on the viewport identity, so detection (cheap:
+  // bounded head scan, eager regexes) and the prewarm run once per switch, not
+  // every settled frame.
+  highlight_prefetch_service_.PrewarmForViewport(viewport, [viewport]() {
+    return editor::runtime_syntax::DetectState(viewport->path(), viewport->lines()).definition_id;
+  });
   // Off-thread checkpoint backfill for a deep cold paint: when the synchronous
   // highlight-state replay was capped short (e.g. session restore scrolled deep
   // into a large file), this hands the worker a bounded chain segment so the

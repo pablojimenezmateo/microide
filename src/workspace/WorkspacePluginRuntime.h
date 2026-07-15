@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/SyntaxDefinitionLoader.h"
 #include "plugin/PluginHost.h"
 #include "plugin/PluginThread.h"
 #include "workspace/WorkspaceOutputChannels.h"
@@ -75,6 +76,7 @@ class WorkspacePluginRuntime {
   std::vector<std::string_view> changed_syntax_language_views_;
   bool syntax_fingerprint_initialized_ = false;
   std::uint64_t syntax_source_fingerprint_ = 0;
+  editor::runtime_syntax::SyntaxSourceFingerprint syntax_fingerprint_cache_;
 };
 
 }  // namespace microide::workspace

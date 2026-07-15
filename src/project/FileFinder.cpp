@@ -251,6 +251,15 @@ void FileFinder::EnsureCacheBuilt() {
     return;
   }
 
+  // Cheap scalar version check before touching the snapshot: the finder Refreshes
+  // on every keystroke, and SnapshotWithVersion() deep-copies the entire file
+  // list under the index lock. Paying that O(index) copy per character typed was
+  // the finder's dominant interactive cost on large repos. Only fetch (and copy)
+  // the snapshot when the index version actually moved.
+  if (cache_ready_ && cached_index_version_ == index_->version()) {
+    return;
+  }
+
   const auto snapshot = index_->SnapshotWithVersion();
   if (cache_ready_ && cached_index_version_ == snapshot.version) {
     return;

@@ -188,8 +188,7 @@ GitSidebarState::RefreshSnapshot GitRepositoryService::BuildSidebarSnapshot(
   }
 
   const ResolvedGitOutgoingBase resolved_base =
-      ResolveGitOutgoingBase(request.project_root, request.outgoing_base_choice,
-                             repository_state.repo_available);
+      ResolveOutgoingBaseCached(repository_state, request);
   snapshot.repo_available = resolved_base.repo_available;
   snapshot.branch_label = BranchLabelFromState(repository_state);
   snapshot.upstream_label = repository_state.branch.upstream;
@@ -336,6 +335,29 @@ void GitRepositoryService::ScheduleRefresh(RefreshRequest request) {
             BuildSidebarSnapshot(repository_state, request);
         PublishSnapshot(std::move(snapshot), request.generation);
       });
+}
+
+ResolvedGitOutgoingBase GitRepositoryService::ResolveOutgoingBaseCached(
+    const project::GitRepositoryState& repository_state, const RefreshRequest& request) const {
+  OutgoingBaseCacheKey key{
+      .root = request.project_root,
+      .choice_kind = request.outgoing_base_choice.kind,
+      .custom_ref = request.outgoing_base_choice.custom_ref,
+      .head_oid = repository_state.branch.head_oid,
+      .branch_name = repository_state.branch.branch_name,
+      .upstream = repository_state.branch.upstream,
+      .repo_available = repository_state.repo_available,
+  };
+  if (outgoing_base_cache_valid_ && outgoing_base_cache_key_ == key) {
+    return outgoing_base_cache_value_;
+  }
+  ++outgoing_base_resolve_count_;
+  ResolvedGitOutgoingBase resolved = ResolveGitOutgoingBase(
+      request.project_root, request.outgoing_base_choice, repository_state.repo_available);
+  outgoing_base_cache_key_ = std::move(key);
+  outgoing_base_cache_value_ = resolved;
+  outgoing_base_cache_valid_ = true;
+  return resolved;
 }
 
 void GitRepositoryService::RequestRefresh(const std::filesystem::path& project_root,

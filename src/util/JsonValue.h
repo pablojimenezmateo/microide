@@ -106,6 +106,12 @@ struct JsonValue {
   }
   JsonArray* MutableArray() { return std::get_if<JsonArray>(&v); }
   std::string* MutableString() { return std::get_if<std::string>(&v); }
+
+  // Structural equality: recurses through the variant, so objects compare
+  // key-order-independently (unordered_map ==) and arrays compare element-wise.
+  // This is both allocation-free and more correct than comparing SerializeJson
+  // strings, whose object key order depends on hash-map iteration order.
+  bool operator==(const JsonValue&) const = default;
 };
 
 // Parse JSON text; returns nullopt on parse error.

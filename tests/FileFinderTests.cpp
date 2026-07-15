@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "project/FileFinder.h"
+#include "util/PerformanceCounters.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -114,6 +115,40 @@ void TestFileFinderIncludesHiddenIndexedPaths() {
              finder.results().front().relative_path ==
                  std::filesystem::path(".hidden/config.json"),
          "file finder hidden-path behavior should remain compatible with indexed hidden entries");
+}
+
+// Typing in the finder Refreshes on every keystroke. With the index version
+// unchanged, the cheap version check must short-circuit before the O(index)
+// snapshot copy/rebuild: the cache is built exactly once across many queries,
+// and results stay correct.
+void TestFileFinderWarmRefreshDoesNotRebuildPerKeystroke() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred),
+         "warm-refresh fixture should initialize deferred file index root");
+  Expect(index.ApplyBatch(MakeInitialBatch({"src/alpha.cpp", "src/beta.cpp", "src/gamma.cpp"})),
+         "warm-refresh fixture should apply initial index batch");
+
+  FileFinder finder;
+  finder.SetIndex(&index);
+
+  const std::uint64_t before =
+      util::ReadPerformanceCounter(util::PerfCounterId::FileFinderCacheBuildCalls);
+  finder.SetQuery("a");
+  finder.SetQuery("al");
+  finder.SetQuery("alp");
+  finder.SetQuery("alph");
+  const std::uint64_t after =
+      util::ReadPerformanceCounter(util::PerfCounterId::FileFinderCacheBuildCalls);
+
+  Expect(after - before == 1,
+         "the finder cache must build once across repeated same-version queries");
+  Expect(finder.results().size() == 1 &&
+             finder.results().front().relative_path == std::filesystem::path("src/alpha.cpp"),
+         "warm narrowing must still return correct results");
 }
 
 }  // namespace
@@ -291,6 +326,8 @@ void RegisterFileFinderTests(std::vector<TestCase>& tests) {
           TestFileFinderRebuildsCacheWhenFileIndexVersionChanges);
   AddTest(tests, "FileFinder/PreservesQueryAcrossIndexChanges",
           TestFileFinderPreservesQueryAcrossIndexChanges);
+  AddTest(tests, "FileFinder/WarmRefreshDoesNotRebuildPerKeystroke",
+          TestFileFinderWarmRefreshDoesNotRebuildPerKeystroke);
   AddTest(tests, "FileFinder/IncludesHiddenIndexedPaths",
           TestFileFinderIncludesHiddenIndexedPaths);
 }

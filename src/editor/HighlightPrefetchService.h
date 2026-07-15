@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <vector>
@@ -29,6 +30,21 @@ class HighlightPrefetchService {
   // Deduplicated per originating viewport like Request.
   void RequestCheckpoints(HighlightCheckpointRequest request);
 
+  // Compiles a cold filetype's rule regexes on the worker so the first visible-
+  // line highlight does not pay that cost on the render path. Best-effort: at
+  // most one prewarm is pending (PostLatest with a single key), and any
+  // superseded filetype is still compiled by its own normal prefetch. Produces
+  // no result to drain; the compile is published into the shared registry.
+  void PrewarmDefinition(std::uint32_t definition_id);
+
+  // Gated prewarm for the active editor viewport. `viewport_token` is an identity
+  // token only (never dereferenced). Filetype detection (`resolve_definition_id`)
+  // and the prewarm run only when the token changes — i.e. once per tab switch,
+  // not every settled frame — so the per-frame caller pays nothing while the
+  // active tab is unchanged. Owns the last-viewport gate so callers need no state.
+  void PrewarmForViewport(const void* viewport_token,
+                          const std::function<std::uint32_t()>& resolve_definition_id);
+
   // Main thread: removes and returns all completed results.
   std::vector<HighlightPrefetchResult> DrainResults();
 
@@ -45,6 +61,10 @@ class HighlightPrefetchService {
   std::vector<HighlightPrefetchResult> results_;
   std::mutex checkpoint_results_mutex_;
   std::vector<HighlightCheckpointResult> checkpoint_results_;
+  // Identity token of the viewport last prewarmed; see PrewarmForViewport. Main
+  // thread only (set and read from the settled-frame prefetch request). Never
+  // dereferenced.
+  const void* last_prewarm_viewport_ = nullptr;
 };
 
 }  // namespace microide::editor
