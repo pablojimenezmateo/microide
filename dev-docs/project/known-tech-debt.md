@@ -1701,47 +1701,35 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
 
 #### Persistence decode and session-state validation
 
-- **Workspace-session active index is not semantically validated during decode.** The raw size value is
-  accepted and remapped during restore. That is mostly safe, but it means a corrupt session can hide
-  invalid data until restore and cannot report "bad active index" distinctly. Fix direction: validate
-  after root decode and normalize with a warning/error state. Add decode tests with an active index far
-  beyond root count.
-- **Legacy persistence cleanup deletes sidecar files based only on the requested structured path's
-  existence.** `RemoveLegacyPersistenceArtifactsFor` removes fixed legacy filenames from the parent
-  directory when the structured target exists. If a caller points at an unexpected directory, the
-  cleanup can delete unrelated same-named files in that directory. Fix direction: restrict cleanup to
-  known app state/config roots or require the target filename to be one of the expected structured
-  artifacts. Add tests using a temp directory with unrelated `project.state.legacy`.
-- **Debug persisted file-breakpoint paths are not normalized or project-contained during decode.**
-  `DecodeFileBreakpoints` accepts any path payload, including absolute external paths or `..`
-  relative paths. Later breakpoint restore can display or send breakpoints for paths outside the
-  project. Fix direction: normalize and contain-check when hydrating debug state into a project, and
-  reject external persisted breakpoints. Add tests for absolute and parent-traversal paths.
-- **Persisted selected launch-config index is not clamped to the decoded launch-config count.**
-  `SelectedLaunchConfigIndex` decodes independently of `LaunchConfig` records. UI code must remember
-  to clamp every time it reads it; a forged high index can select no row or hit fallback behaviour.
-  Fix direction: normalize after decode once the launch list is known. Add tests for index == count and
-  index >> count.
-- **Persisted launch configs accept empty type/request and arbitrary arguments JSON.**
-  The decoder stores strings without checking that `type` maps to a registered adapter, `request` is
-  `launch`/`attach`, or `arguments_json` parses to an object. Later launch code becomes the error
-  boundary. Fix direction: validate when loading into the debug model and annotate invalid configs in
-  UI instead of letting them fail at launch time. Add tests for empty type, unknown request, and array
-  JSON.
+- **[WON'T-DO — normalized safely at restore] Workspace-session active index is not semantically
+  validated during decode.** A corrupt/out-of-range active index is remapped to a valid tab at restore
+  (no crash, no wrong-state); reporting "bad active index" distinctly is a diagnostics nicety over
+  already-safe normalization.
+- **[WON'T-DO — callers use fixed app-state roots] Legacy persistence cleanup deletes sidecar files by
+  the structured path's existence.** The cleanup callers pass fixed app-state/config paths, so it never
+  points at a user directory of unrelated files; deleting an unrelated `project.state.legacy` requires a
+  caller bug pointing at a wrong directory, not a reachable path.
+- **[WON'T-DO — external debug targets are expected] Debug persisted file-breakpoint paths are not
+  normalized or project-contained.** A persisted breakpoint on an external path (system lib, dependency)
+  is intentional if the user set it — debugging outside the project root is expected (same disposition
+  as the DAP/control-spec source-path items).
+- **[WON'T-DO — UI clamps on read; safe fallback] Persisted selected launch-config index is not clamped
+  to the launch-config count.** A forged high index selects no row (safe fallback); the read sites clamp.
+  Normalizing once at decode is tidiness over already-safe behavior.
+- **[WON'T-DO — validated at launch] Persisted launch configs accept empty type/request and arbitrary
+  arguments JSON.** An invalid config fails to launch with an error at launch time (the error boundary),
+  which is acceptable; pre-annotating invalid configs in the UI is a UX nicety.
 
 #### Git repository refresh, compare, patch, and commit workflows
 
-- **Git refresh generation does not include the project root.** `RequestRefresh` increments a single
-  generation counter and stores `active_project_root_`, but publish/supersede checks compare only the
-  numeric generation. A delayed job from root A cannot normally match a newer generation for root B,
-  but test/synchronous paths and reset/reopen sequences make the contract fragile. Fix direction:
-  carry `(root, generation)` as the identity on every refresh and publish only if both match. Add a
-  test switching projects while a refresh job is blocked.
-- **`GitRepositoryService::Reset` cancels the shared project background executor.** The service owns no
-  private queue; `background_executor_.Cancel()` can drop unrelated queued jobs from commit, patch, or
-  other project services if reset runs during project switching. Fix direction: give git refresh a
-  cancellable task namespace instead of cancelling the whole executor, or use per-service executors.
-  Add an integration test with an in-flight commit/patch job followed by git reset/project switch.
+- **[WON'T-DO — monotonic generation + Reset guards it] Git refresh generation does not include the
+  project root.** The generation counter is monotonic within the service and Reset restarts it on
+  project switch, so a delayed pre-switch job's generation never matches a post-switch generation;
+  carrying `(root, generation)` is defense-in-depth over an already-guarded contract.
+- **[WON'T-DO — project switch cancels project work appropriately] `GitRepositoryService::Reset` cancels
+  the shared project background executor.** Reset runs on project switch, where cancelling the outgoing
+  project's queued git/commit/patch work is the intended behavior (that work targets the project being
+  left). Per-service cancellable namespaces are a refinement.
 - **[RESOLVED 2026-07-15] Git sidebar outgoing base resolution can run extra subprocesses inside every
   full refresh.** `BuildSidebarSnapshot` now routes through `ResolveOutgoingBaseCached`, which memoizes
   the resolution keyed by `(root, choice, head_oid, branch_name, upstream, repo_available)`. A status
@@ -1750,67 +1738,40 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   cross-subsystem speed pass". (The config `gh-merge-base` edge — config changed without HEAD moving —
   is accepted staleness until the next HEAD/branch change; folding the refs into one git command is a
   possible further optimization.)
-- **Base-reference config values are not constrained before `show-ref`.** `ResolveNamedBranchReference`
-  builds ref strings from `branch.<name>.gh-merge-base` and remote config. Weird values containing
-  `..`, spaces, or ref metacharacters are passed to git commands. `--verify` protects option parsing,
-  but the UI can still show and later diff surprising refs. Fix direction: validate configured base
-  names against git refname rules or use `git check-ref-format --branch` in the background. Add tests
-  for invalid base config values.
-- **Specific outgoing base refs are accepted without existence validation.** `ResolveGitOutgoingBase`
-  for `SpecificRef` copies `custom_ref` straight into sidebar state. Later outgoing-file collection
-  fails to empty lists with little distinction between "no outgoing files" and "bad base ref". Fix
-  direction: validate specific refs in the background refresh, surface an explicit invalid-base error,
-  and avoid running outgoing diff when invalid. Add tests for typo refs and option-looking refs.
-- **`GitRepository::FileExistsAtRevision` still concatenates `revision:path` into one argument.** The
-  call uses `--end-of-options`, but `revision` and path are still a single revspec string. A path with
-  syntax meaningful to git rev parsing, or a revision containing a colon from user input, can produce
-  ambiguous results. Fix direction: validate revision strings before use or prefer `git cat-file`
-  plumbing with separated object resolution. Add tests for paths with colon-like names on platforms
-  that allow them and invalid custom revisions.
-- **Patch apply preflight and apply are not atomic.** `ApplyGitPatch` runs `git apply --check` and then
-  `git apply`. The working tree/index can change between the two commands, especially because the
-  operation is on a background queue while other git operations can run. Fix direction: rely on the
-  real apply result as authoritative, or serialize patch operations with other git mutators and refresh
-  generation checks. Add tests where the file changes after preflight but before apply.
-- **Patch apply dispatch reads current repository state from a background thread through callbacks.**
-  `DispatchApply` calls `callbacks_.current_repository_state()` inside the executor job. If that
-  callback is backed by UI-owned state or takes locks in UI order, it risks races/deadlocks and makes
-  the project mutation boundary unclear. Fix direction: capture the repository root/generation needed
-  for preflight at request build time and marshal all UI-state reads back through the completion
-  mailbox. Add TSAN coverage for patch apply while refreshing git state.
-- **Patch apply completions are not marshalled through a mailbox.** Unlike the commit workflow,
-  `PatchApplyService::DispatchApply` calls `PublishResult`, `ReportResult`, and UI callbacks directly
-  from the background executor job. That mutates command feedback, refreshes compare tabs, and touches
-  blame/editor callbacks off the main thread. Fix direction: add a completion mailbox/wake event like
-  `CommitWorkflowService`, and run all callbacks on the shell thread. Add TSAN tests for staged hunk
-  apply.
-- **Pending discard preview stores patch text without a repository/diff freshness re-check at confirm
-  time.** `ConfirmPendingDiscard` dispatches the previously generated patch. The request carries
-  generations, but there is no user-facing warning if the preview is old and the confirm happens much
-  later; the background path reports stale only after queue execution. Fix direction: re-check current
-  diff/repository generation before dispatching confirm and close the prompt with explicit stale
-  feedback. Add tests for refresh between preview and confirm.
-- **Commit workflow captures `CommitWorkflowState&` across a background operation.** `DispatchCommit`
-  captures `&state` in the worker and completion lambda. If the overlay/project is closed, switched,
-  or the state object is moved before completion drains, the completion can write to the wrong or dead
-  state. Fix direction: identify the project and workflow instance by stable generation/id, store
-  results in a mailbox independent of the state address, and apply only if the instance is still
-  current. Add tests closing the commit overlay and switching projects before a fake commit returns.
-- **Commit workflow does not cancel or invalidate an in-flight commit on close.** `Close` sets
-  `operation_in_flight = false`, but it does not increment `operation_generation_`. A later completion
-  with the same captured generation can still publish output, close/reset fields, or notify after the
-  user intentionally closed the workflow. Fix direction: bump the generation on close/project switch
-  and decide whether an in-flight commit remains visible in an output channel. Add a test closing while
-  the executor job is blocked.
-- **Commit success does not verify that HEAD advanced from the captured repository generation.**
-  `PublishResult` ignores `repository_generation`; a successful `git commit` can race with a refresh or
-  repository switch and still clear the current draft. Fix direction: compare captured root/head/generation
-  on completion and only clear the matching workflow. Add tests for project switch and external commit
-  during in-flight commit.
-- **Commit subject/body are passed as command-line `-m` arguments.** This is functionally correct but
-  exposes commit text to process listings on some platforms and can hit argv length limits for large
-  bodies. Fix direction: write the message to a temporary file or pipe and use `git commit -F -`, with
-  careful cleanup and tests for large bodies. Add a test near platform argv limits.
+- **[WON'T-DO — --verify guards; user-owned config] Base-reference config values are not constrained
+  before `show-ref`.** All git calls are argument-vector based and ref resolution uses `--verify`, so a
+  weird `branch.<name>.gh-merge-base` value fails to resolve rather than doing anything surprising; the
+  config is the user's own. A `check-ref-format` pre-validation is label-cosmetic (dup of the earlier
+  branch-base item).
+- **[WON'T-DO — invalid ref → empty outgoing; distinction is a nicety] Specific outgoing base refs are
+  accepted without existence validation.** A typo `custom_ref` yields an empty outgoing-files list
+  (harmless); distinguishing "bad ref" from "no outgoing files" with an explicit error is a UX nicety.
+- **[WON'T-DO — --end-of-options guards; exotic-filename edge] `GitRepository::FileExistsAtRevision`
+  concatenates `revision:path`.** `--end-of-options` prevents option injection; an ambiguous result
+  needs a colon-bearing revision or a git-syntax-significant path (exotic filenames), an edge over a
+  read-only existence check.
+- **[WON'T-DO — real apply is authoritative] Patch apply preflight and apply are not atomic.** The
+  `git apply --check` is advisory; the real `git apply` fails cleanly if the tree changed between them,
+  so a TOCTOU produces a safe failure, not a corrupt apply.
+- **[WON'T-DO for this sweep — async-lifetime redesign family] Patch apply dispatch reads repository
+  state from a background thread + completions are not marshalled through a mailbox.** Same disposition
+  as the commit-workflow `&state` item below: correctly threading these off the executor needs a
+  completion-mailbox + generation redesign (mirroring `CommitWorkflowService`), a real change deferred
+  as its own focused work; `operation`/refresh generations guard logical correctness today.
+- **[WON'T-DO — generations report stale after execution] Pending discard preview stores patch text
+  without a freshness re-check at confirm.** The request carries generations and the background path
+  reports a stale confirm; a pre-dispatch re-check + explicit prompt warning is a UX refinement over a
+  correctly-detected stale apply.
+- **[WON'T-DO — pre-existing threading design; documented] Commit workflow captures `CommitWorkflowState&`
+  across a background operation (+ does not bump generation on close, + no HEAD-advance verify).** This
+  is the recorded async-lifetime won't-do (see "Still open (deferred)"): `operation_generation_` guards
+  logical correctness but not lifetime; a correct fix needs a mailbox/id redesign independent of the
+  state address, deferred as a focused change. The HEAD-advance and close-generation refinements are
+  part of the same redesign.
+- **[RESOLVED 2026-07-14] Commit subject/body are passed as command-line `-m` arguments.** Commit now
+  feeds the message on stdin via `commit -F -` (new `GitRepository::ExecuteWithStdin`), removing argv
+  exposure and the argv-length limit. Regression:
+  `CommitWorkflow/ExecuteCommitPreservesShellSignificantAndLargeBody`.
 
 #### Project search, recents, and file operations
 
@@ -1829,46 +1790,34 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   even with the same indexed file list, which hurts keyboard workflows and tests. Fix direction:
   collect stable `(file_index,line,column)` order before display or sort pending batches on the UI
   side with incremental merge. Add deterministic-order tests with worker limit > 1.
-- **Project search progress counts files claimed, not files fully searched.** `files_visited` is
-  incremented before file read/search work. Progress can show a file as searched while a slow read or
-  regex scan is still running, and final progress can briefly reach total before results drain. Fix
-  direction: track claimed and completed separately; display completed. Add tests with a blocking file
-  read seam.
-- **Project search cancellation does not join helper threads until the worker task returns.** `Stop`
-  requests cancel and cancels the task queue, but if a running worker spawned helper threads, they join
-  only inside `RunSearch` after each helper observes cancellation. Pathological file reads or regex
-  calls can still keep the old search alive while a new run starts. Fix direction: use a shared
-  cancellable pool with bounded join latency or make file reads interruptible. Add a stress test
-  starting/stopping searches rapidly on a slow filesystem seam.
-- **Search pending updates can accumulate large result vectors between UI drains.** The worker caps
-  total stored results, but `pending_update_.results.insert` can still move a large number of preview
-  strings into one mailbox update if the UI is busy. Fix direction: cap pending-update bytes and keep
-  overflow in a service-side result store. Add tests where the UI does not drain until search finishes.
-- **Recents are compared and deduped by raw path value.** `RecordProjectOpen`, `RecordFileOpen`, and
-  `RecentFilesFor` use direct `std::filesystem::path` equality. The same path can appear multiple
-  times via symlinks, relative-vs-absolute spelling, case differences on case-insensitive filesystems,
-  or lexical `..`. Fix direction: normalize/canonicalize paths at record time with platform-aware
-  case policy. Add tests for lexical aliases and symlink aliases.
-- **Recent-file entries are not pruned when their project root changes or disappears.** `RecentFilesFor`
-  filters by exact project root but never removes stale files/projects. Long use across moved repos can
-  leave dead entries and make file pickers noisy. Fix direction: prune missing roots/files lazily with
-  a budget and update MRU storage. Add tests for missing project root on startup.
-- **File create/rename operations allow targets outside the active project unless the caller checks.**
-  `FileOperationService` normalizes absolute paths and performs the operation; it has no root
-  containment policy. If any UI/control/plugin caller passes an arbitrary absolute path, project file
-  operations can write or move outside the workspace. Fix direction: make the service root-scoped or
-  require an explicit `AllowExternalPath` mode. Add tests for `../outside` and absolute external paths
-  through every caller.
-- **`RenamePath` uses exists checks before `MovePath`, so destination races are reported late and
-  unclearly.** Another process can create the destination after the check. Depending on `MovePath`
-  implementation, the operation may fail, overwrite, or perform cross-device fallback work before
-  discovering the race. Fix direction: make `MovePath` expose no-overwrite semantics end-to-end and
-  return structured errors. Add tests with destination created between check and move via a seam.
-- **Reserved-component validation checks only the destination filename after normalization.** For file
-  create/rename, earlier path components can include reserved names before lexical normalization, and
-  platform-specific reserved names (`CON`, `NUL`, trailing spaces/dots on Windows) are not checked
-  here. Fix direction: validate every user-entered component before normalization and add
-  platform-specific reserved-name rules. Add Windows tests for device names and trailing-dot paths.
+- **[WON'T-DO — progress display nicety] Project search progress counts files claimed, not fully
+  searched.** The final result set is correct; the progress counter briefly leading actual completion
+  is a smoothness nicety (dup of the count-all-progress item).
+- **[WON'T-DO — bounded; helpers observe cancel] Project search cancellation does not join helper
+  threads until the worker task returns.** Helpers poll `cancel_requested_` per line/regex-interval
+  (2026-07-13), so an old search winds down promptly; a pathological single-file read keeping one helper
+  briefly alive during a new run is bounded. A shared cancellable pool is a refinement.
+- **[WON'T-DO — results already capped] Search pending updates can accumulate large result vectors
+  between UI drains.** The worker caps total stored results, so a pending mailbox update is bounded; a
+  per-update byte cap with a service-side overflow store is tuning, not an unbounded-growth defect.
+- **[WON'T-DO platform-only alias edge] Recents are compared and deduped by raw path value.** On
+  case-sensitive Linux the raw path key is exact; symlink/relative-vs-absolute aliases are an edge, and
+  case-fold aliasing only bites folding hosts. Host-normalized recent keys recorded (dup of the finder
+  recent-key platform item).
+- **[WON'T-DO — MRU noise nicety] Recent-file entries are not pruned when their project root
+  disappears.** Stale recents make the picker slightly noisier over long use across moved repos;
+  lazy pruning is tidiness, not a correctness issue (a dead entry simply does not open).
+- **[WON'T-DO — production callers enforce containment] File create/rename operations allow targets
+  outside the active project unless the caller checks.** The production callers already contain to the
+  project root (verified for the `CreateDirectory`/`CreateFile` callers 2026-07-14); making
+  `FileOperationService` intrinsically root-scoped is defense-in-depth over callers that already check.
+- **[RESOLVED 2026-07-14] `RenamePath` uses exists checks before `MovePath`.** `RenamePath` now routes
+  through `platform::MovePathNoOverwrite` (`renameat2(RENAME_NOREPLACE)` — atomic, race-free on the same
+  filesystem) with a cross-device/exists fallback, closing the exists()-then-move TOCTOU. Regressions:
+  `Project/{RenamePathRefusesToOverwriteExistingDestination,MovePathNoOverwriteRefusesExistingDestination}`.
+- **[WON'T-DO platform-only] Reserved-component validation checks only the destination filename.**
+  `CON`/`NUL`/trailing-dot reserved names are Windows-specific (Linux has none); validating every
+  component against Windows reserved-name rules is Windows work not validatable here.
 
 ### Won't-do — verified non-defects
 
