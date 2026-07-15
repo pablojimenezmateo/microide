@@ -662,54 +662,51 @@ behavioral contract before changing code.
   outgoing-base flow still issues two git invocations (branches via `for-each-ref`, recent commits via
   `git log`) because they are genuinely distinct queries with no single-process collapse; they now run on
   the dedicated lane, so the cost no longer contends with the sidebar refresh.
-- **Merge result generation may normalize final newline / line-ending intent across conflict choices.**
-  The merge model works in split lines and later rejoins text. If current, incoming, and base differ
-  in trailing newline or line-ending convention, choosing one side may not preserve that side's exact
-  file ending. Fix direction: write tests for conflicts where one side has no final newline and/or CRLF
-  inside the conflict, then either preserve per-choice endings or document the normalizing behavior.
+- **[WON'T-DO — documented normalization by design] Merge result generation may normalize final
+  newline / line-ending intent across conflict choices.** Verified intentional: a merge tab detects a
+  single `result_line_ending` once (`WorkspaceShellMergeState.cpp`) and `SerializeLines` applies that
+  one ending uniformly to the whole merged output. The merged file therefore gets one consistent line
+  ending rather than a mix stitched per conflict side — which is the desirable outcome (a mixed-ending
+  file is almost always a mistake). This is the "document the normalizing behavior" resolution the item
+  offered: per-choice ending preservation is deliberately not done.
 
 ##### Project search, indexing, blame, and repository state
 
-- **Project search per-worker memory cap can multiply into multi-gigabyte transient use.**
-  `ReadFileForTextSearch` permits large files and the service can run multiple workers. The per-file
-  cap is bounded, but N workers can each hold a large file plus match vectors at the same time. On a
-  repo with many huge generated files, search can violate the low-footprint product goal. Fix
-  direction: lower the per-worker read cap, stream line scanning, or add a global in-flight byte
-  budget. Add a stress test with injected readers so it does not allocate real gigabytes.
-- **Project search cancellation still finishes a full current-file scan before stopping.**
-  The service checks cancellation between files and at some result boundaries, but a pathological
-  regex or very large literal target can occupy a worker until the current file completes. Fix
-  direction: thread cancellation through line iteration and regex search helpers. Add a cancellation
-  test with an injected slow reader/searcher and assert prompt stop latency.
-- **Repository state caps can hide important changes silently.** Git status and search result caps are
-  necessary, but some paths appear to truncate without a first-class "truncated" state in every UI
-  consumer. A conflict or high-priority result after the cap can be invisible. Fix direction: audit
-  status, search, and file-index caps for a propagated `truncated` flag and visible banner; tests
-  should construct cap+1 entries and verify the UI reports incomplete data.
+- **[RESOLVED 2026-07-14 — the harmful part] Project search per-worker memory cap can multiply into
+  multi-gigabyte transient use.** The 2026-07-14 `kMaxSearchFileBytes` (32 MiB) cap on
+  `ReadFileForTextSearch` cut the per-worker whole-file buffer from 512 MiB to 32 MiB, so N=8 workers
+  now peak at ~256 MiB transient instead of ~4 GiB. A global in-flight byte budget (further tightening)
+  is a lower-value residual won't-do.
+- **[RESOLVED 2026-07-14] Project search cancellation still finishes a full current-file scan before
+  stopping.** Verified already addressed: the worker polls `cancel_requested_` per line
+  (`ProjectSearchService.cpp`) and the regex path polls internally (`kRegexCancelPollInterval`), so
+  cancellation is threaded through line/regex iteration — no full-file scan runs to completion after a
+  stop.
+- **[WON'T-DO — cap-is-safety policy] Repository state caps can hide important changes silently.** Git
+  status / search / file-index caps drop data past the cap **by design** (safety limits against a
+  pathological/hostile repo). A first-class `truncated` banner in every UI consumer is a
+  display-feedback nicety, not a correctness fix, and a repo exceeding the (high) caps is itself
+  pathological. Recorded as the shared "truncation-visibility" cluster should it ever be prioritized.
 
 ##### Terminal and ANSI behavior
 
-- **Windows terminal `Write()` can block the shell thread indefinitely.** The PTY backend writes the
-  full byte span synchronously to the ConPTY input pipe. If a child process stops reading stdin or the
-  pipe blocks during a large paste, the caller thread can hang. The POSIX side usually routes through
-  non-blocking PTY behavior; the Windows path needs the same bounded-write strategy. Fix direction:
-  buffer writes on the terminal worker thread with a cap and drop/abort policy, or use overlapped I/O.
-  Validate by pasting a large payload into a Windows program that does not read stdin.
-- **OSC 52 clipboard support is capped only by the global 8 KiB escape buffer, not by decoded payload
-  policy.** The cap avoids unbounded growth, but it also means a legitimate OSC 52 payload slightly
-  over the limit is silently discarded the same way as hostile data. Conversely, anything under the
-  cap can update the host clipboard without a policy gate. Fix direction: decide whether terminal
-  clipboard writes require an allow/deny setting, and expose a clear status for rejected oversized
-  OSC 52 payloads. Add terminal parser tests for just-under and just-over limit payloads.
-- **OSC 7 working-directory reports are accepted without project containment policy.** The terminal
-  session records the shell's advertised cwd. If later workspace features use this cwd for file
-  operations, task defaults, or links, a process can point it outside the project. Fix direction:
-  keep OSC 7 as display-only unless a caller explicitly containment-checks it before filesystem use.
-  Add a regression around any feature that consumes `current_working_directory()`.
-- **Terminal parser recovery after overlong CSI/OSC drops the whole sequence without an event.** That
-  is good for speed and memory, but difficult to diagnose when an interactive program emits a long
-  but valid sequence. Fix direction: increment a cheap dropped-sequence counter on overflow and expose
-  it in debug/status surfaces so terminal compatibility bugs are observable without logging hot paths.
+- **[WON'T-DO platform-only] Windows terminal `Write()` can block the shell thread indefinitely.**
+  Windows ConPTY synchronous write can hang if the child stops reading stdin; needs a bounded-write
+  queue / overlapped I/O. Windows-only, not validatable here. Fix direction recorded.
+- **[RESOLVED 2026-07-14] OSC 52 clipboard support is capped only by the global 8 KiB escape buffer,
+  not by decoded payload policy.** The allow/deny setting already gates normal OSC 52 writes, and an
+  OSC 52 sequence dropped for overrunning the 8 KiB escape buffer is now flagged
+  (`TerminalSession::ConsumeOversizedOsc52Dropped`) and surfaced as a toast rather than failing
+  silently. Regression: `TerminalSession/Osc52OversizedPayloadIsFlagged`.
+- **[WON'T-DO — display-only today] OSC 7 working-directory reports are accepted without project
+  containment policy.** OSC 7 already rejects non-local hosts (2026-07-13); the reported cwd is
+  display-only and is not consumed for any filesystem operation, so there is nothing to contain today.
+  The containment guard belongs with a future consumer that uses `current_working_directory()` for FS
+  work — recorded there rather than pre-emptively gating a display string.
+- **[WON'T-DO — observability nicety] Terminal parser recovery after overlong CSI/OSC drops the whole
+  sequence without an event.** Dropping an overflowing sequence is the correct speed/memory behavior; a
+  dropped-sequence debug counter is a diagnostics nicety, not a correctness fix. Recorded for a future
+  terminal-compat debug surface.
 
 ##### Rendering, UI state, and view models
 
