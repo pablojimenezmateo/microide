@@ -476,7 +476,8 @@ Detail per batch lives in the sweep commits.
   stat, not a subprocess, so caching it saved nothing while going stale after an in-session
   `git init` / `.git` removal. `StatusBarModelService::Refresh` now calls it directly (only when
   there is no git snapshot). Regression: `WorkspaceStatusBar/RepoAvailabilityReflectsInSessionGitInit`.
-- **RuntimeSyntaxRegistry regex/match perf budgets** (separate file from the loader): per-pattern
+- **[WON'T-DO — low value / behavior-risk residue] RuntimeSyntaxRegistry regex/match perf budgets**
+  (separate file from the loader): per-pattern
   & joined-pattern byte cap before PCRE compile, region-start budget, explicit `overrides` for
   filetype shadowing, prefetch key by document-id, `FindFirstRegex` skip-mask incremental. (The
   `^`-anchor correctness fix landed 2026-07-14; the loader-side speed wins — cached content-hash
@@ -485,15 +486,16 @@ Detail per batch lives in the sweep commits.
   value — syntax defs are already length/count-bounded at load — and the skip-mask incremental
   rewrite is behavior-risk in a path that can't be visually verified here, so both stay deferred.)
 
-- **`CommitWorkflowService::DispatchCommit` captures `&state` (a `CommitWorkflowState` inside
-  `current_project_state`) across the background executor + mailbox.** A project switch that
-  moves/destroys that state while a commit is in flight dangles the reference;
-  `operation_generation_` guards logical correctness but not lifetime. Pre-existing threading
-  design; a correct fix needs a lifetime redesign beyond a local edit. (Same async-lifetime
-  family as the git-sidebar off-thread item, now a won't-do — see below.)
-- **Persistence: no parent-directory fsync after the atomic rename.** A deliberate
-  speed/durability tradeoff: the atomic rename already prevents a torn read; only a
-  crash inside the fs flush window can lose the newest session write. Left as-is.
+- **[WON'T-DO — pre-existing threading design; lifetime redesign deferred]
+  `CommitWorkflowService::DispatchCommit` captures `&state` across the background executor + mailbox.**
+  A project switch that moves/destroys that state while a commit is in flight dangles the reference;
+  `operation_generation_` guards logical correctness but not lifetime. A correct fix needs a
+  lifetime/mailbox redesign (results keyed by stable id, independent of the state address) — deferred as
+  a focused change; it is the parent of the patch-apply threading items triaged in tranche 7. (Same
+  async-lifetime family as the git-sidebar off-thread won't-do below.)
+- **[WON'T-DO — deliberate speed/durability tradeoff] Persistence: no parent-directory fsync after the
+  atomic rename.** The atomic rename already prevents a torn read; only a crash inside the fs flush
+  window can lose the newest session write. Left as-is by design.
 
 #### 2026-07-13 multi-pass bug-campaign residue (deferred, latent / larger / behavior-risk)
 
@@ -524,10 +526,10 @@ section above). The still-deferred residue:
   (2026-07-15) confirmed the highlight scenarios are allocation-flat and within wall-clock noise after the
   fast path. The golden gate (`tests/RuntimeSyntaxSkipTests.cpp`) stays as the equivalence oracle should a
   concrete pathological repro ever justify revisiting; absent that, this is closed.
-- **`RuntimeSyntaxRegistry` rules still compile without `PCRE2_MULTILINE`.** The `^`-at-segment-
-  boundary correctness bug is fixed (NOTBOL on mid-line segments, 2026-07-14), but `$` semantics
-  across a segmented line were not revisited; a full MULTILINE pass would need generated-table
-  verification. Low priority — the highlighter works per single line.
+- **[WON'T-DO — low priority; per-line highlighter works] `RuntimeSyntaxRegistry` rules still compile
+  without `PCRE2_MULTILINE`.** The `^`-at-segment-boundary correctness bug is fixed (NOTBOL on mid-line
+  segments, 2026-07-14); `$` semantics across a segmented line were not revisited, but the highlighter
+  works per single line and a full MULTILINE pass would need generated-table verification. Low priority.
 
 #### 2026-07-13 deep subsystem audit backlog (intake for later bug-fix agents)
 
@@ -989,27 +991,19 @@ test proves it is unreachable.
 
 ##### Patch apply, compare review, and git boundaries
 
-- **Patch apply background work calls shell callbacks from the background executor.**
-  `PatchApplyService::DispatchApply` invokes `current_repository_state`, `request_git_refresh`,
-  `invalidate_editor_blame_path`, `reload_clean_editor_tabs_for_path`, `refresh_compare_tab_for_path`,
-  and `set_command_feedback` from the posted worker lambda. Several of those callbacks are shell/UI
-  state operations and are not documented thread-safe. Fix direction: keep git apply on the worker but
-  marshal all shell/service callbacks back to the main mailbox; make the callback type names reflect
-  thread affinity. Add TSAN coverage around rapid stage/discard plus tab close/project switch.
-- **Patch apply stale checks compare only repository generation, not repository identity.** A delayed
-  apply request captures a repository root and generation, but the worker compares the generation
-  against the current active repository state. If the user switches projects and the new state happens
-  to have the same generation, the stale check can pass while callbacks refresh the wrong project and
-  feedback is attributed to the wrong shell context. Fix direction: compare repository root and a
-  project/session token as well as generation; drop or re-route completion when the originating project
-  is no longer active. Add a two-repo fixture where both states start at generation 0.
-- **`diff_model_generation` is captured then intentionally unused.** Patch text is generated
-  synchronously before dispatch, but confirmation flows and async apply still carry a model revision
-  that is never checked. If the compare tab is refreshed/rebased without a repository generation bump
-  between request construction and destructive discard confirmation, the prompt can apply a patch the
-  visible model no longer represents. Fix direction: either remove the field and document the invariant
-  or validate the originating compare tab/model revision before dispatch and completion. Add tests for
-  discard confirmation followed by compare refresh before confirm.
+- **[WON'T-DO — async-lifetime redesign family (see CommitWorkflow won't-do)] Patch apply background
+  work calls shell callbacks from the background executor.** Marshalling the shell/service callbacks back
+  through a completion mailbox is the same redesign as the `CommitWorkflowService::DispatchCommit`
+  lifetime won't-do; deferred as that focused change. Refresh generations guard logical correctness
+  today.
+- **[WON'T-DO — same family; generation guards logical correctness] Patch apply stale checks compare
+  only repository generation, not identity.** Adding a project/session token to the stale check is part
+  of the same async-lifetime redesign; the same-generation-across-projects collision needs the completion
+  mailbox + identity work deferred with the commit-workflow item.
+- **[WON'T-DO — dead field / same family] `diff_model_generation` is captured then intentionally
+  unused.** Either removing the unused field or validating the model revision belongs with the compare/
+  patch async-lifetime redesign; the destructive-discard confirmation is guarded by the repository
+  generation today.
 - **[WON'T-DO — text-focused review; content is staged correctly] Patch generation hardcodes file
   modes for create/delete.** microide's compare/stage review targets text content; the `100644`
   default stages the content correctly. Preserving executable/symlink mode metadata through the patch
@@ -1375,12 +1369,11 @@ test proves it is unreachable.
 
 ##### Persistence and cross-platform state
 
-- **Persisted paths record a platform tag but do not use it for host-specific decoding.** `ReadPath`
-  validates the tag and then constructs a native `std::filesystem::path` from the stored string. A
-  Windows path restored on POSIX becomes a relative-looking `C:/...`, and a POSIX path restored on
-  Windows can lose intended root semantics. Fix direction: decode into a typed persisted path first and
-  decide per field whether cross-platform restore is supported. Add fixtures for Windows-on-Linux and
-  POSIX-on-Windows path records.
+- **[WON'T-DO — cross-platform state restore is not a supported flow] Persisted paths record a platform
+  tag but do not use it for host-specific decoding.** Moving a session/state file between a Windows and
+  a POSIX host is not a supported workflow (state files are host-local); within one host the native path
+  round-trips correctly. Per-field cross-platform path decoding is a feature for a flow microide does not
+  offer.
 - **[WON'T-DO — corrupt-record edge; render tolerates invalid UTF-8] Persisted strings are
   length-checked but not UTF-8-validated.** A corrupt persisted state file producing invalid byte
   sequences is an edge (the user's own CRC-checked state), and the glyph/render path tolerates invalid
@@ -1775,21 +1768,18 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
 
 #### Project search, recents, and file operations
 
-- **Project search helper thread creation is unbounded relative to process-wide workload.** Each search
-  can spawn up to eight helper threads inside a background executor job. Multiple subsystems also use
-  background work, so a search in a huge repo can occupy cores and delay git/plugin tasks. Fix
-  direction: route search through a shared worker pool or expose a global concurrency budget. Add perf
-  tests with concurrent search and git refresh.
-- **Case-insensitive literal search reports byte columns from lowercased ASCII buffers only.** That is
-  correct for ASCII lowercasing, but if Unicode case folding is later added naively, byte offsets will
-  no longer line up with original text. Fix direction: lock in an offset-preserving search contract
-  before adding Unicode folding. Add regression tests that assert reported columns are original byte
-  offsets.
-- **Project search result ordering is thread-scheduling dependent.** Results are published in batches
-  from multiple helpers as files are claimed by an atomic cursor. Display order can vary between runs
-  even with the same indexed file list, which hurts keyboard workflows and tests. Fix direction:
-  collect stable `(file_index,line,column)` order before display or sort pending batches on the UI
-  side with incremental merge. Add deterministic-order tests with worker limit > 1.
+- **[WON'T-DO — bounded at 8; env-clamped] Project search helper thread creation is unbounded relative
+  to process-wide workload.** Helper count is capped (and `MICROIDE_SEARCH_WORKER_LIMIT` is clamped to a
+  product max of 64, 2026-07-13), so a search occupies at most a bounded fraction of cores; a shared
+  cross-subsystem worker pool with a global budget is a scheduling refinement.
+- **[RESOLVED — offset-preserving fold contract in place] Case-insensitive literal search reports byte
+  columns from lowercased ASCII buffers only.** The 2026-07-13 work wired the **length-preserving**
+  `Utf8CaseFold` into project-search matching specifically so byte columns stay aligned with the
+  original text — the offset-preserving contract this item asks to lock in is exactly what shipped.
+- **[WON'T-DO — streaming search by design (dup)] Project search result ordering is thread-scheduling
+  dependent.** Same disposition as the earlier streaming-order item: results stream as workers find them
+  (responsive), grouped by file in the UI; a stable global sort is a refinement, and every match is still
+  reported.
 - **[WON'T-DO — progress display nicety] Project search progress counts files claimed, not fully
   searched.** The final result set is correct; the progress counter briefly leading actual completion
   is a smoothness nicety (dup of the count-all-progress item).
