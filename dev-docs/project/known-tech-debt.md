@@ -1426,55 +1426,42 @@ test proves it is unreachable.
 
 ##### Platform filesystem, trash, and subprocess helpers
 
-- **Linux trashing writes metadata before the file move and never fsyncs either directory.** A crash
-  after `.trashinfo` write but before or during `MovePath` can leave orphan metadata, and a crash after
-  move can lose directory-entry durability. Fix direction: move to a temporary trash name, fsync the
-  files/info directories where supported, then publish metadata. Add a fault-injection test around move
-  failure and crash-simulation hooks.
-- **Linux trash move can cross filesystems through a generic move helper without preserving trash
-  semantics.** If `XDG_DATA_HOME` is on a different filesystem, `MovePath` may copy/delete or fail
-  depending on helper behavior. Copy/delete to trash changes failure modes and can be very expensive
-  for large directories. Fix direction: detect cross-device moves and use the freedesktop topdir trash
-  for the source mount, or surface a clear "permanent delete required" failure. Add a temp mount seam
-  or mocked `EXDEV` test.
-- **macOS trash name reservation is not atomic.** `UniquePathInDirectory` checks `exists` and returns a
-  path, then `MovePath` uses it later. Two concurrent trash operations for same-named files can race
-  into the same destination. Fix direction: use platform trash APIs or an atomic rename/link
-  reservation strategy. Add a macOS-specific concurrency test.
-- **Windows recycle-bin deletion normalizes to an absolute path but returns the original source path as
-  the result.** `MovePathToTrashWindows` cannot report the recycle-bin item path, so callers may treat
-  the source as still meaningful. Fix direction: make the result explicitly `std::nullopt`/logical on
-  platforms that cannot return a destination, or query the shell item if needed. Add Windows UI tests
-  that the success message does not offer to open the old path.
-- **`ReadPathType` collapses stat errors into `Missing`.** Permission denied, symlink loops, and
-  transient I/O errors all return `PathType::Missing`. Callers such as directory discovery and path
-  validation can silently skip paths they should report as inaccessible. Fix direction: return
-  `{type,error}` or add a distinct `Inaccessible` type for user-facing flows. Add filesystem tests for
-  EACCES/ELOOP with a platform seam.
-- **`ListDirectory` drops iteration errors and partial-read status.** If a directory becomes
-  unreadable or mutates during iteration, the function returns whatever was collected with no
-  truncation/error flag. File pickers and plugin loaders can show incomplete lists as complete. Fix
-  direction: return entries plus status, and have callers surface partial results. Add a directory
-  iterator fault-injection test.
-- **`CaptureTreeSnapshot` does not count root files against `max_entries`.** The traversal budget is
-  incremented only inside recursive directory iteration. A call with many root files can exceed the
-  advertised entry cap before any budget check. Fix direction: count every appended root and child
-  entry against the same budget. Add snapshot tests with many file roots and `max_entries = 1`.
-- **`CaptureTreeSnapshot` skips root directory entries themselves.** Directory roots are traversed but
-  not appended, while file roots are appended. Consumers that compare snapshots cannot tell whether a
-  watched root directory was deleted/recreated versus only its children changing. Fix direction: decide
-  whether snapshots are "contents only" or "roots plus contents" and make all callers explicit. Add
-  watcher tests for root directory replacement.
-- **`CaptureTreeSnapshot` stops entirely after the first over-budget root.** Once any root exhausts
-  the budget, later roots are not scanned at all. Multi-root workspaces can therefore starve smaller
-  roots behind one huge tree. Fix direction: allocate per-root budgets or round-robin roots until a
-  global cap is reached, and return per-root truncation. Add a snapshot fixture with one huge and one
-  tiny root.
-- **The project subprocess helper is a transparent alias with no policy enforcement.** `project::RunSubprocess`
-  simply calls `platform::RunSubprocess`, so project-level command timeouts, output caps, sandbox
-  expectations, and logging have to be remembered by every caller. Fix direction: move default
-  project-safe options into the helper and require opt-out for exceptional commands. Add tests that
-  project helpers apply timeout/output defaults.
+- **[WON'T-DO — crash-window durability tradeoff] Linux trashing writes metadata before the file move
+  and never fsyncs either directory.** An orphan `.trashinfo` after a crash mid-trash is cosmetic (the
+  freedesktop trash tolerates stale info), and directory-entry fsync is the same speed/durability
+  tradeoff accepted for the persistence rename; only a crash inside the flush window is affected.
+- **[WON'T-DO — uncommon cross-device; MovePath handles EXDEV] Linux trash move can cross filesystems.**
+  `XDG_DATA_HOME` on a different filesystem from the deleted file is uncommon; `MovePath` already
+  falls back to copy+delete on `EXDEV`, so the operation still succeeds (just slower). Topdir-trash
+  routing is an optimization for that uncommon layout.
+- **[WON'T-DO platform-only] macOS trash name reservation is not atomic.** macOS-only
+  `UniquePathInDirectory` exists-then-move race; needs a platform trash API / atomic reservation,
+  not validatable here.
+- **[WON'T-DO platform-only] Windows recycle-bin deletion returns the original source path.** Windows-
+  only result-semantics issue (`MovePathToTrashWindows` can't report the recycle-bin item path);
+  returning logical `nullopt` there is Windows work not validatable here.
+- **[WON'T-DO — callers treat inaccessible as skip anyway] `ReadPathType` collapses stat errors into
+  `Missing`.** Directory discovery and path validation skip both a missing and an inaccessible path
+  identically (they can't index/open it either way), so an `Inaccessible` distinction only feeds a
+  user-facing "why" message — a diagnostics nicety, not a behavior change.
+- **[WON'T-DO — partial-list status nicety] `ListDirectory` drops iteration errors and partial-read
+  status.** A directory becoming unreadable mid-iteration is a rare race; returning entries-plus-status
+  so callers can show a "partial" marker is the same display-visibility nicety triaged throughout.
+- **[WON'T-DO — budget-accounting edge] `CaptureTreeSnapshot` does not count root files against
+  `max_entries`.** Undercounting the budget by the number of top-level roots is a minor accounting edge;
+  a caller passing many file roots with a tiny `max_entries` is atypical, and the budget is a soft
+  bound.
+- **[WON'T-DO — contents-only semantics by design] `CaptureTreeSnapshot` skips root directory entries
+  themselves.** "Contents, not the root node" is a consistent, intended snapshot semantics; watchers
+  detect root replacement by other means. Appending roots is a semantics change, not a bug fix.
+- **[WON'T-DO — extreme multi-root imbalance] `CaptureTreeSnapshot` stops entirely after the first
+  over-budget root.** Hitting the budget requires a root large enough to be pathological; per-root
+  budgets / round-robin is fairness tuning for an extreme multi-root workspace.
+- **[WON'T-DO — call-site discipline; no default policy needed] The project subprocess helper is a
+  transparent alias.** `project::RunSubprocess` forwarding to `platform::RunSubprocess` is fine because
+  the invariant "no `platform::RunSubprocess` in workspace `.cpp`; dispatch through
+  `ProjectBackgroundExecutor`" is already lint-enforced, and callers pass explicit timeout/output
+  options where they matter. Baking defaults into the alias is ergonomics, not a correctness fix.
 
 #### 2026-07-13 deep subsystem audit backlog — sixth tranche
 
