@@ -11,8 +11,10 @@ namespace {
 
 using microide::editor::SelectionRange;
 using microide::editor::SnippetSessionState;
+using microide::editor::CommitSnippetSession;
 using microide::editor::SnippetOnCaretMoved;
 using microide::editor::SnippetNavigateTab;
+using microide::editor::TextPosition;
 using microide::editor::SnippetTryInsertText;
 using microide::editor::SnippetTryBackspace;
 using microide::editor::SnippetTryDeleteForward;
@@ -279,14 +281,38 @@ void TestSnippetMultiLineInsertDeclinesFastPath() {
   Expect(viewport.lines()[0] == "i n", "placeholders expand to 'i n'");
   Expect(session.ranges_by_tab[2][0].start.column == 2u, "tab 2 starts at column 2");
 
-  // A payload with a newline must be rejected by the snippet fast path, unchanged
-  // buffer, unchanged recorded ranges — no double insert, no stale tab stops.
+  // A payload with a newline must be declined by the snippet fast path (no double
+  // insert — the host performs the real insert), and the linked-edit session must
+  // be ended so it cannot retain ranges computed for the pre-newline document and
+  // later navigate/mirror against stale line/column positions.
   Expect(!SnippetTryInsertText(viewport, session, "x\ny"),
          "multi-line insert must decline the mirror fast path");
   Expect(viewport.lines().size() == 1 && viewport.lines()[0] == "i n",
          "declined insert leaves the buffer untouched (host does the real insert)");
-  Expect(session.ranges_by_tab[2][0].start.column == 2u,
-         "tab 2's recorded range is not corrupted by the rejected multi-line insert");
+  Expect(!session.active,
+         "the snippet session must be dropped on a multi-line insert, not left with stale ranges");
+}
+
+// Pre-expansion secondary carets are consumed by the snippet, not restored at
+// stale offsets on commit. Restoring the saved pre-snippet positions after the
+// replacement (and field edits) shifted the buffer would leave carets at wrong
+// locations; the sanctioned behavior is to discard them.
+void TestSnippetDiscardsPreExpansionSecondaryCarets() {
+  TextViewport viewport;
+  viewport.LoadContent("word\nsecond", "/tmp/snippet.cpp");
+  viewport.MoveCursorTo(0, 0);
+  viewport.SetSecondaryCarets({{1, 0}});
+  Expect(viewport.secondary_carets().size() == 1, "precondition: one secondary caret");
+
+  SnippetSessionState session;
+  viewport.BeginUndoGroup();
+  SelectionRange trigger{{0, 0}, {0, 4}};  // replace "word"
+  Expect(ExpandSnippetAtSelection(viewport, session, trigger, "${1:x}$0"),
+         "snippet expands over the trigger");
+  CommitSnippetSession(viewport, session);
+
+  Expect(viewport.secondary_carets().empty(),
+         "pre-expansion secondary carets are discarded on commit, not restored at stale offsets");
 }
 
 // A snippet body with an enormous tab-stop id must not signed-overflow the id
@@ -386,6 +412,8 @@ void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
           TestSnippetUtf8DeleteForwardDeletesWholeCodepoint);
   AddTest(tests, "EditorSnippet/MultiLineInsertDeclinesFastPath",
           TestSnippetMultiLineInsertDeclinesFastPath);
+  AddTest(tests, "EditorSnippet/DiscardsPreExpansionSecondaryCarets",
+          TestSnippetDiscardsPreExpansionSecondaryCarets);
   AddTest(tests, "EditorSnippet/ParseRejectsHugeTabId", TestSnippetParseRejectsHugeTabId);
   AddTest(tests, "EditorSnippet/ParseRejectsTooManyPlaceholders",
           TestSnippetParseRejectsTooManyPlaceholders);

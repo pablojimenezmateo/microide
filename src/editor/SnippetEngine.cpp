@@ -339,6 +339,8 @@ bool ExpandSnippetAtSelection(TextViewport& viewport,
   viewport.ClearSecondaryCarets();
 
   if (!viewport.ReplaceRange(trigger, parsed.expanded, true)) {
+    // Expansion failed: the buffer is unchanged, so the saved carets are still at
+    // valid positions and are restored.
     if (!session.saved_secondary_carets.empty()) {
       viewport.SetSecondaryCarets(session.saved_secondary_carets);
     }
@@ -348,6 +350,13 @@ bool ExpandSnippetAtSelection(TextViewport& viewport,
     }
     return false;
   }
+
+  // Expansion succeeded: the snippet consumes the pre-expansion multi-cursor
+  // state. Discard the saved secondary carets rather than restoring them on
+  // commit — the initial replacement (and every later field edit) shifts the
+  // buffer, so the saved pre-snippet offsets would land at stale positions.
+  // Clearing here makes CommitSnippetSession's restore a no-op.
+  session.saved_secondary_carets.clear();
 
   if (parsed.occurrences.empty()) {
     session.navigate_order.clear();
@@ -502,6 +511,11 @@ bool SnippetTryInsertText(TextViewport& viewport, SnippetSessionState& session, 
   // performs the single normal insert itself.
   if (text.find('\n') != std::string_view::npos ||
       text.find('\r') != std::string_view::npos) {
+    // Drop the linked-edit session before the caller inserts the line break.
+    // Leaving it active would retain ranges computed for the pre-newline document,
+    // so later tab navigation / mirror edits would operate on stale line/column
+    // positions. (VSCode likewise ends the session on a multi-line insert.)
+    CommitSnippetSession(viewport, session);
     return false;
   }
   if (session.navigate_index >= session.navigate_order.size()) {

@@ -538,65 +538,56 @@ behavioral contract before changing code.
 
 ##### Startup, app plumbing, and file operations
 
-- **Windows terminal launch does not quote or pass `lpApplicationName` for custom shells.**
-  In `src/platform/TerminalBackend.cpp`, the Windows PTY backend builds `command_line = shell` and
-  passes it to `CreateProcessW(nullptr, mutable_command.data(), ...)`. A custom shell under a path
-  with spaces such as `C:\Program Files\PowerShell\7\pwsh.exe` can be parsed as `C:\Program.exe` or
-  fail to launch. Fix direction: pass `lpApplicationName` as the shell path and keep the command line
-  mutable, or share a Windows quoting helper with the subprocess implementation. Needs a Windows-only
-  terminal backend test seam or a narrowly isolated command-line builder test.
-- **Windows terminal backend has unsynchronized reader/stop state.** The same Windows-only class uses
-  plain `bool running_`, plain `bool stop_requested_`, and `process_info_.hProcess` from both
-  `Stop()` and `ReaderMain()`. Closing a terminal while the child exits can race the reader's
-  `WaitForSingleObject(process_info_.hProcess, INFINITE)` against `CleanupProcessHandles()`, and
-  `running()` can read a data-raced bool. Fix direction: mirror the POSIX branch's synchronization
-  discipline with atomics or a mutex-protected handle snapshot; join before close; make `running()`
-  race-free. Validate on Windows with repeated open/close and child-exits-immediately scenarios.
+- **[WON'T-DO platform-only] Windows terminal launch does not quote or pass `lpApplicationName` for
+  custom shells.** Real defect (`C:\Program Files\...` mis-parsed by `CreateProcessW(nullptr, ...)`),
+  but Windows-only and not compile/validate-able on this Linux host; per the platform-only policy,
+  writing untested Windows code risks a worse regression. Fix direction recorded (pass
+  `lpApplicationName`, keep the command line mutable). See "Won't-do — platform-only".
+- **[WON'T-DO platform-only] Windows terminal backend has unsynchronized reader/stop state.**
+  Windows-only data race (`running_`/`stop_requested_`/`process_info_.hProcess` unsynchronized between
+  `Stop()` and `ReaderMain()`); same platform-only policy. Fix direction: mirror the POSIX branch's
+  atomics/mutex discipline and join before close.
 ##### Persistence and durable file I/O
 
-- **Persistence backup fallback can resurrect stale state after a primary read failure.**
-  `PersistedRecordReader::ReadFile` blocks backup fallback for unsupported versions, but ordinary
-  `ReadFailed` errors still fall through to the backup read. A transient permission error, short
-  read, or storage fault on the primary can make the app load an older backup and later overwrite
-  the primary with stale state. Fix direction: classify primary read failures into "primary absent,
-  backup allowed" vs "primary present but unreadable/corrupt, backup must not be saved over without
-  user-visible recovery". Add tests for present primary with denied read or injected read failure and
-  valid stale backup.
-- **Atomic-save metadata application failure appears non-fatal.** The save path preserves mode/owner
-  metadata before the final rename, but callers do not appear to surface a partial permission-copy
-  failure. On privileged/unprivileged boundary cases a save can succeed with changed permissions or
-  ownership, which matters for executable scripts, shared config, and files in group-writable repos.
-  Fix direction: audit `DurableFile` metadata helpers and decide which failures are fatal; at minimum
-  report a warning when the content write succeeded but metadata preservation failed. Add an injected
-  metadata-failure test if direct `chown`/`chmod` reproduction is platform-fragile.
-- **Session/config recovery has no "do not overwrite recovered-from-backup" marker.** Even when
-  backup fallback is intentionally allowed, the loaded record is indistinguishable from a clean
-  primary load for later persistence. A stale but syntactically valid backup can become the new
-  primary without a recovery banner. Fix direction: have `PersistenceService` carry a
-  `loaded_from_backup` bit and suppress automatic save or write a new primary only after a fresh
-  state mutation that is not derived from the stale backup. This pairs with the previous item.
+- **[RESOLVED 2026-07-14 — the harmful part] Persistence backup fallback can resurrect stale state
+  after a primary read failure.** The concrete harm — overwriting a still-recoverable primary with
+  stale backup state — is prevented by the 2026-07-14 "recover-and-protect for a corrupt primary"
+  guard: `PersistenceService` records the recovered state's re-encoded baseline and suppresses a Save
+  whose body matches (no user mutation), so a present-but-corrupt/unreadable primary is not clobbered;
+  a real mutation writes through. Regression:
+  `PersistedStateRecord/PersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite`. The residual —
+  a user-visible recovery banner — is a UI nicety, not a data-safety issue (see next item).
+- **[WON'T-DO — best-effort by design] Atomic-save metadata application failure appears non-fatal.**
+  Mode/owner preservation across the atomic rename is best-effort; surfacing a warning when the
+  content write succeeded but a `chmod`/`chown` copy failed is a UI-feedback nicety, not a
+  correctness/data-loss issue (the content is written correctly either way). Not worth the
+  status-plumbing under speed/correctness-first. Kept documented should a concrete
+  executable-bit-loss report ever justify it.
+- **[RESOLVED 2026-07-14] Session/config recovery has no "do not overwrite recovered-from-backup"
+  marker.** Directly addressed by the same corrupt-primary guard: a backup-recovered record is not
+  written back to the primary unless a genuine mutation occurs (the re-encoded baseline is recorded
+  and matching Saves are suppressed). A user-visible recovery banner remains a deliberate omission
+  (UI nicety, above).
 
 ##### Editor, text model, snippets, and search semantics
 
-- **Multi-caret deduplication ignores selection ranges.** `ApplyMultiCaretEdit` deduplicates sites by
-  caret position, not by normalized selection range. Two carets at the same caret position with
-  different anchors can discard one replacement nondeterministically, and primary-caret recovery can
-  point at the wrong surviving site. Normal UI paths usually avoid this, but test-access, plugins,
-  and future multi-cursor commands can construct it. Fix direction: normalize and merge by full
-  selection range, preserve the primary deterministically, and reject overlapping non-identical
-  selections before edit application. Extend `EditorMultiCaretTests`.
-- **Snippet commit restores pre-snippet secondary carets at stale positions.** Snippet expansion saves
-  secondary carets, clears them during snippet editing, and restores them on commit. If the snippet
-  replacement changed the buffer before those saved carets, the restored carets point at old offsets.
-  Repro: create secondary carets, expand a snippet in the primary selection, tab through fields, and
-  commit; old secondaries reappear without remapping. Fix direction: either discard secondary carets
-  for snippet sessions or remap them through the initial replacement and every snippet field edit.
-  Add a snippet test with pre-existing secondaries before the expansion point.
-- **Newline insertion while a snippet is active can leave stale snippet ranges.** `SnippetTryInsertText`
-  returns false for `\n`/`\r` so the normal editor path can handle newline insertion, but it does not
-  explicitly commit or cancel the active snippet first. If the fallback edit succeeds, the snippet
-  session can retain ranges computed for the pre-newline document. Fix direction: commit or cancel
-  the snippet before returning false for multi-line input; test Enter inside an active placeholder.
+- **[RESOLVED 2026-07-14] Multi-caret deduplication ignores selection ranges.** The 2026-07-14
+  `TextViewport::MultiCaretSelectionsOverlap()` refusal (both `ApplyMultiCaretEdit` and the single-char
+  fast path bail) explicitly flags "two carets sharing a start position with different anchors"
+  (`TextViewportMultiCaret.cpp:138`) as overlapping, so the nondeterministic-discard scenario now
+  refuses the whole edit rather than dropping one replacement. Regressions:
+  `EditorMultiCaret/{RefusesOverlappingSelections,DisjointSelectionsStillApply}`.
+- **[RESOLVED 2026-07-15] Snippet commit restores pre-snippet secondary carets at stale positions.**
+  Took the "discard" option: `ExpandSnippetAtSelection` clears `saved_secondary_carets` on a
+  successful expansion (keeping them only for the failure-rollback path, where the buffer is
+  unchanged), so `CommitSnippetSession` no longer restores pre-snippet offsets that the replacement /
+  field edits made stale — the snippet consumes the multi-cursor state. Regression:
+  `EditorSnippet/DiscardsPreExpansionSecondaryCarets`.
+- **[RESOLVED 2026-07-15] Newline insertion while a snippet is active can leave stale snippet ranges.**
+  `SnippetTryInsertText` now calls `CommitSnippetSession` before declining a `\n`/`\r` payload, so the
+  linked-edit session is ended rather than retaining pre-newline ranges (matches VSCode dropping the
+  session on a multi-line insert; the host still performs the real insert). Regression:
+  `EditorSnippet/…MultiLineInsertDeclinesFastPath` (extended to assert the session is dropped).
 - **Closed-file LSP workspace edits silently clamp out-of-range positions and then save.**
   `ApplyLspEditsToClosedFilesOnDisk` maps LSP positions by clamping lines and columns to the scratch
   viewport. A server bug that sends a range beyond EOF mutates the last line instead of rejecting the
