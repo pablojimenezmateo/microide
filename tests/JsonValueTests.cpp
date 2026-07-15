@@ -305,6 +305,8 @@ void RegisterJsonValueTests(std::vector<TestCase>& tests) {
   AddTest(tests, "JsonValue/StringEscapeRunsRoundTrip", TestStringEscapeRunsRoundTrip);
   AddTest(tests, "JsonValue/NonFiniteDoubleSerializesAsNull",
           TestNonFiniteDoubleSerializesAsNull);
+  AddTest(tests, "JsonValue/OverRangeFloatDoesNotAbortParse",
+          TestOverRangeFloatDoesNotAbortParse);
 }
 
 }  // namespace microide::tests

@@ -1050,6 +1050,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenamePromptSavesDirtyTabs);
   AddTest(tests, "WorkspaceShell/GoToLinePromptNavigatesActiveEditor",
           TestWorkspaceShellGoToLinePromptNavigatesActiveEditor);
+  AddTest(tests, "WorkspaceShell/PromptCancelButtonDoesNotExecuteAction",
+          TestWorkspaceShellPromptCancelButtonDoesNotExecuteAction);
   AddTest(tests, "WorkspaceShell/RenamePromptMouseClickPositionsCaret",
           TestWorkspaceShellRenamePromptMouseClickPositionsCaret);
   AddTest(tests, "WorkspaceShell/RenamePromptRetargetsDiagnostics",

@@ -45,12 +45,6 @@ bool CommandLooksLikeGdb(const std::vector<std::string>& command,
   return false;
 }
 
-util::JsonValue ThreadIdArgs(int thread_id) {
-  util::JsonObject args;
-  args["threadId"] = util::JsonValue(static_cast<std::int64_t>(thread_id));
-  return util::JsonValue(std::move(args));
-}
-
 bool IsTerminalState(DebugSession::State state) {
   return state == DebugSession::State::Terminated || state == DebugSession::State::Failed;
 }

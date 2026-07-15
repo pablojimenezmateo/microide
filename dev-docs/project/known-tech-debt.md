@@ -19,6 +19,42 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
+### Fixed in the 2026-07-15 dead-coverage / dead-code pass (session 3)
+
+Compiler-warning-driven sweep (`-Wunused-function` across the full test build)
+surfaced three genuinely dead entities — two of them regression tests that were
+written but never wired into their `Register*Tests` table, so the behaviors they
+guard had **no** active coverage and a refactor could have silently reintroduced
+the original bugs.
+
+- **`TestOverRangeFloatDoesNotAbortParse` now runs.** The test
+  (`tests/JsonValueTests.cpp`) verifies that a syntactically valid but
+  magnitude-overflowing float literal (`1e400`) in an LSP/DAP message decodes to a
+  non-finite double instead of aborting the enclosing object parse (which would
+  silently drop the whole message). It was defined but absent from
+  `RegisterJsonValueTests`; now registered as
+  `JsonValue/OverRangeFloatDoesNotAbortParse` (passes).
+- **`TestWorkspaceShellPromptCancelButtonDoesNotExecuteAction` now runs.** This
+  guards a destructive-action bug: the modal's Cancel button (selected_button==1)
+  must decline a special-cased prompt action (Go to Line stands in for commit
+  amend / rename symbol), not execute it. `ConfirmPromptSurface` once ignored the
+  selected button. The test (`tests/WorkspaceShellPromptTests.cpp`) was unwired;
+  now registered as `WorkspaceShell/PromptCancelButtonDoesNotExecuteAction`
+  (passes — the product behavior is already correct, so this locks it in).
+- **Dead duplicate `ThreadIdArgs` removed.** `DebugSession.cpp` carried an
+  anonymous-namespace `ThreadIdArgs(int)` left behind when execution-control was
+  split into `DebugSessionExecution.cpp` (which owns the live copy). Removed the
+  dead definition.
+
+Full test suite green after the changes (`tools/run-checks.sh tests`, 3/3).
+
+Auditor's note: the broader tree is exceptionally clean under this pass — terminal
+(base64/OSC/CSI/SGR/screen/mouse), editor (multi-caret/undo/snippet/bracket/
+highlight), compare (patience-LIS + anchored fallback), git parsers (porcelain-v2/
+blame), and util (parse/pathmatch/durable-file/json) were read closely and no
+correctness or perf defects were found; each carries dense rationale comments and
+prior-fix regression pins. No new deferred items.
+
 ### Fixed in the 2026-07-15 cross-subsystem speed pass (session 2)
 
 Four contained speed wins across LSP registration, the editor bracket scanner,
