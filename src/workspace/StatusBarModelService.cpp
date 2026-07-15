@@ -33,13 +33,11 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     const bool has_worktree_changes = snapshot_has_worktree_changes || tree_has_worktree_changes;
     bool repo_available = git_state.repo_available;
     if (!repo_available) {
-      if (!repo_cache_.has_value() || repo_cache_->project_root != project_root) {
-        repo_cache_ = RepoCache{
-            .project_root = project_root,
-            .valid = operations.is_git_repo_valid(project_root),
-        };
-      }
-      repo_available = repo_cache_->valid;
+      // is_git_repo_valid is a single cheap `.git` stat (not a subprocess), so it
+      // runs directly rather than being cached by project_root — caching saved one
+      // stat but went stale after an in-session `git init` / `.git` removal until a
+      // real git refresh superseded it. Only reached when there is no git snapshot.
+      repo_available = operations.is_git_repo_valid(project_root);
     }
     const std::string_view cleanliness =
         repo_available ? (has_worktree_changes ? "dirty" : "clean") : "no-scm";
@@ -83,7 +81,6 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     branch_segment = {};
   }
   if (project_state.root.empty()) {
-    repo_cache_.reset();
     project_segment_cache_ = {};
   }
   status_bar_service.SetSegment(StatusBarSegmentId::Project, std::move(project_segment));

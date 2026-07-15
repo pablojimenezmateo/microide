@@ -41,11 +41,6 @@ class StatusBarModelService {
     std::size_t syntax_revision = 0;
   };
 
-  struct RepoCache {
-    std::filesystem::path project_root;
-    bool valid = false;
-  };
-
   struct ProjectSegmentCache {
     std::string branch_label;
     std::string cleanliness;
@@ -68,7 +63,6 @@ class StatusBarModelService {
   };
 
   LanguageCache language_cache_;
-  std::optional<RepoCache> repo_cache_;
   ProjectSegmentCache project_segment_cache_;
   EditorSegmentsCache editor_segments_cache_;
 };

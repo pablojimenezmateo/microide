@@ -471,9 +471,11 @@ Detail per batch lives in the sweep commits.
 
 ### Still open (deferred, lower value / larger / latent)
 
-- **Status bar: repo availability cached by `project_root` only** — transient staleness after
-  `git init` / `.git` removal until a real git refresh supersedes it (a per-frame `.git` stat
-  would defeat the cache).
+- **[RESOLVED 2026-07-15] Status bar: repo availability cached by `project_root` only.** The
+  `repo_cache_` (keyed on project_root) is removed: `is_git_repo_valid` is a single cheap `.git`
+  stat, not a subprocess, so caching it saved nothing while going stale after an in-session
+  `git init` / `.git` removal. `StatusBarModelService::Refresh` now calls it directly (only when
+  there is no git snapshot). Regression: `WorkspaceStatusBar/RepoAvailabilityReflectsInSessionGitInit`.
 - **RuntimeSyntaxRegistry regex/match perf budgets** (separate file from the loader): per-pattern
   & joined-pattern byte cap before PCRE compile, region-start budget, explicit `overrides` for
   filetype shadowing, prefetch key by document-id, `FindFirstRegex` skip-mask incremental. (The
@@ -1704,12 +1706,10 @@ test proves it is unreachable.
 
 ##### Status bar, settings overlay, and notifications
 
-- **Repository availability status can stay stale after `git init` or `.git` removal.**
-  `StatusBarModelService` caches `is_git_repo_valid(project_root)` only by project root when no git
-  snapshot is available. A project that becomes a repo, or stops being one, can keep showing the old
-  `no-scm`/repo state until the root changes or another path clears the cache. Fix direction: include
-  repository metadata generation or `.git` mtime in the cache key. Add tests for creating and deleting
-  `.git` under an open project.
+- **[RESOLVED 2026-07-15] Repository availability status can stay stale after `git init` or `.git`
+  removal.** Removed the `project_root`-keyed cache entirely — `is_git_repo_valid` is one cheap `.git`
+  stat, so it now runs directly per refresh (only when no git snapshot exists). Regression:
+  `WorkspaceStatusBar/RepoAvailabilityReflectsInSessionGitInit`.
 - **LSP status tone is derived by substring search for `Ready`.** `StatusBarModelService` treats any
   text containing `Ready` as default tone. Labels such as `Not Ready`, `Readying`, or a server name
   containing that word are misclassified. Fix direction: have the LSP service return a typed status

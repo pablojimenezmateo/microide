@@ -175,9 +175,36 @@ void TestStatusBarLspToneFromTypedSeverityNotLabelText() {
          "tone must follow the typed severity (Error), not a 'Ready' substring match");
 }
 
+void TestStatusBarRepoAvailabilityReflectsInSessionGitInit() {
+  // The repo-availability probe must not be cached by project_root alone: an
+  // in-session `git init` (or `.git` removal) must be reflected on the next
+  // refresh, not stay stale until the project root changes.
+  WorkspaceContext context;
+  context.current_project_state.root = "/tmp/statusbar-git-init-probe";
+  StatusBarService service;
+
+  microide::workspace::StatusBarModelService model;
+  microide::workspace::StatusBarModelService::Operations ops;
+  bool repo_valid = false;
+  ops.is_git_repo_valid = [&](const std::filesystem::path&) { return repo_valid; };
+  ops.active_lsp_status_strings = [](bool, std::string&, std::string&, StatusBarSegmentTone&) {};
+
+  model.Refresh(service, ops, context.current_project_state, nullptr);
+  Expect(service.Segment(StatusBarSegmentId::Project).text == "no-scm",
+         "a non-repo project must show no-scm");
+
+  // Simulate `git init`: the same project root now reports a valid repo.
+  repo_valid = true;
+  model.Refresh(service, ops, context.current_project_state, nullptr);
+  Expect(service.Segment(StatusBarSegmentId::Project).text.find("[clean]") != std::string::npos,
+         "an in-session git init must be reflected without a stale project_root cache");
+}
+
 }  // namespace
 
 void RegisterWorkspaceStatusBarTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceStatusBar/RepoAvailabilityReflectsInSessionGitInit",
+          TestStatusBarRepoAvailabilityReflectsInSessionGitInit);
   AddTest(tests, "WorkspaceStatusBar/LspToneFromTypedSeverityNotLabelText",
           TestStatusBarLspToneFromTypedSeverityNotLabelText);
   AddTest(tests, "WorkspaceStatusBar/BuildsVisibleSegments",
