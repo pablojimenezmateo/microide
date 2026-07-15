@@ -1075,40 +1075,33 @@ test proves it is unreachable.
 
 ##### Theme, rendering, and UI output
 
-- **Theme include cycles are silently accepted.** If an included theme is already in `include_stack`,
-  `LoadThemeStyles` returns true and continues. That avoids infinite recursion but leaves users with a
-  partially applied theme and no explanation. Fix direction: return a structured cycle error or at
-  least trace/status it. Add a cycle fixture that asserts the error text.
-- **`TruncateToWidthView` returns a thread-local scratch view that is easy to invalidate.** The
-  lifetime is documented in a member comment, but render code can accidentally store a returned view
-  or call the truncator again before drawing the previous value, causing wrong labels. Fix direction:
-  use a small explicit scratch object passed by the caller or return an owning string in paths that
-  need more than immediate draw. Add a render unit test that exercises two truncations before drawing.
-- **Output-panel context snippet highlighting assumes token count is at least visible byte length.**
-  The render path falls back to plain text when `highlighted->tokens.size() < visible_code.size()`,
-  but it does not distinguish "highlight missing" from "tokenization stale/truncated". Fix direction:
-  carry a highlighted-range generation and a truncation reason so stale syntax data does not quietly
-  disappear. Add tests for output snippet refresh after file edit.
-- **Output-panel reference path context is sticky until an empty line or new reference changes it.**
-  A context snippet updates `current_reference_path`; unrelated following lines inherit that path for
-  click/reference handling until an empty line resets it. Build tools often emit dense logs without
-  blank lines, so clicks can open the previous file for unrelated text. Fix direction: attach the
-  resolved reference path to each parsed output entry instead of maintaining render-time mutable
-  context. Add output-channel tests with reference, snippet, unrelated line, and click.
-- **Compare/merge truncation still happens inside render translation units.** The current lint allows
-  `TruncateLabelView` hot-path calls, but every call can measure multiple prefixes and touch the width
-  cache during drawing. This keeps product logic out of render but still leaves variable CPU in the
-  render pass. Fix direction: move stable truncated labels into view models where dimensions are known
-  or cache truncation per label+width revision. Add perf counters for compare/merge truncation calls.
+- **[WON'T-DO — cycle handled safely; error text is a nicety] Theme include cycles are silently
+  accepted.** The 2026-07-13 include bounding (max depth 16 / count 128, skip-and-continue on a cycle)
+  keeps self-including themes loadable and prevents unbounded recursion. Surfacing a structured cycle
+  error is a diagnostics nicety over already-safe behavior.
+- **[WON'T-DO — documented lifetime, render follows it] `TruncateToWidthView` returns a thread-local
+  scratch view that is easy to invalidate.** The immediate-draw lifetime is documented and the render
+  path draws each truncated label before the next call. An explicit scratch object is defensive
+  refactoring; no live wrong-label bug exists.
+- **[WON'T-DO — display fallback nicety] Output-panel context snippet highlighting assumes token count
+  ≥ visible byte length.** Falling back to plain text when tokenization is short is a safe render
+  fallback; distinguishing "missing" from "stale" for a status hint is polish.
+- **[WON'T-DO — heuristic serves the common error+context case] Output-panel reference path context is
+  sticky until an empty line or new reference changes it.** Inheriting the last reference path for the
+  context lines that follow a `file:line: error` is usually correct (clicking the error's context opens
+  the error file). Per-entry path attribution would refine the rare unrelated-line-between-references
+  case at the cost of the common one; kept as the heuristic.
+- **[WON'T-DO — allocation-free fits-case; caching is micro-tuning] Compare/merge truncation still
+  happens inside render translation units.** `TruncateLabelView` is allocation-free on the fits case
+  and the lint already keeps product logic out of render; caching truncation per label+width revision
+  is CPU micro-tuning, not a correctness or allocation issue.
 
 ##### Settings and persistence edge cases
 
-- **Duplicate persisted setting keys resolve differently before and after mutation.** Reindexing
-  iterates the raw vector and lets later duplicates win, while `settings_layer::Upsert` updates the
-  first duplicate and `Find` returns the first duplicate for overlay labels. A corrupted or manually
-  edited config with duplicate keys can show one value in the UI and apply another until reset erases
-  all copies. Fix direction: canonicalize duplicates during persistence load or make all operations
-  consistently last-wins. Add persistence fixtures with duplicate user and project setting ids.
+- **[RESOLVED 2026-07-13] Duplicate persisted setting keys resolve differently before and after
+  mutation.** Persisted user/project config now dedups duplicate setting ids at decode (last-writer-
+  wins), so no duplicate keys survive into the in-memory layer — the Reindex-vs-Upsert-vs-Find
+  divergence the item describes cannot manifest because there is at most one entry per id after load.
 
 #### 2026-07-13 deep subsystem audit backlog — fourth tranche
 
