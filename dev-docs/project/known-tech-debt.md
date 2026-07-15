@@ -1623,36 +1623,26 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
 
 #### LSP registry, document lifecycle, and server errors
 
-- **LSP overlapping registrations can create unreachable duplicate server entries.** The canonical
-  key is `language_ids.front()`. Registering one plugin as `["cpp", "c"]` and another as
-  `["c", "cpp"]` creates two `servers_` entries, then aliases both ids to whichever registration ran
-  last. The older entry can remain in `servers_` with a live or retiring client but no alias path to
-  reach it. Fix direction: canonicalize language-id sets, or reject/retire any existing entry whose
-  alias set intersects the new registration. Add tests for swapped-order language ids and partial
-  overlaps.
-- **LSP sandbox changes are ignored by the registration equality check.** `RegisterServer` reuses an
-  existing client when language ids, command, root URI, cwd, initialization options, and settings
-  match; the `SubprocessSandbox` is not part of the comparison. A plugin or settings reload that
-  tightens process limits or permissions can leave the old less-restricted server running. Fix
-  direction: include a stable sandbox fingerprint in the equality check and force retirement when it
-  changes. Add a test that changes only sandbox limits.
-- **Retired LSP clients can accumulate until an unrelated drain path runs.** A changed registration
-  calls `BeginShutdown()` and pushes the old client into `retiring_clients_`, but plain
-  `RegisterServer` does not call `CollectRetiredClients`. If reloads happen without a subsequent
-  `DrainCallbacks` or shutdown pass, joined clients stay resident longer than needed. Fix direction:
-  collect after each retirement or enqueue a bounded cleanup pass. Add a test that repeatedly
-  re-registers a server and asserts the retired list drains.
-- **`DidClose` drops local document-version state before the close notification is known to be
-  queued.** The local version entry is erased before the send path confirms it accepted the
-  notification. If the client is shutting down or the queue rejects the send, the server can still
-  think the document is open while the host has lost the version gate that would classify later
-  diagnostics. Fix direction: erase only after queue acceptance, or store a `close_pending` state
-  until shutdown/close completion. Add a test with a stopped transport that rejects `didClose`.
-- **Live LSP protocol errors are not surfaced through `LastServerError`.** `LastServerError` returns
-  the manager entry's cached `last_error`, which is mainly start/exited state. A running client can
-  accumulate transport/protocol failure information in the client itself while status UI still reports
-  an empty manager error. Fix direction: merge `entry.last_error` with `entry.client->LastError()` and
-  define precedence. Add a test where a running fake client sets a late protocol error.
+- **[WON'T-DO — multi-plugin same-language conflict; retires on drain] LSP overlapping registrations
+  can create unreachable duplicate server entries.** Two plugins registering the same language set in
+  different orders is an authoring conflict; the older entry retires on the next drain (its client is
+  shut down), so it is a transient resource, not a persistent wrong-server. The 2026-07-13
+  alias-clearing fix already prevents a stale alias resolving to the wrong server.
+- **[WON'T-DO — uncommon mid-session sandbox tightening] LSP sandbox changes are ignored by the
+  registration equality check.** A settings/plugin reload that only tightens the subprocess sandbox
+  while everything else matches is uncommon; the tighter sandbox applies on the next fresh start, and
+  the user can restart the server. A sandbox fingerprint in the equality check is a refinement.
+- **[WON'T-DO — bounded transient resource] Retired LSP clients can accumulate until a drain path
+  runs.** Retired clients are collected on the shutdown/callback drain that runs regularly; between
+  reloads they are a small bounded set (one per re-registration), not an unbounded leak.
+- **[WON'T-DO — close-during-shutdown edge] `DidClose` drops local document-version state before the
+  close notification is known to be queued.** A `didClose` rejected because the client is
+  shutting down is an edge where the server is going away anyway; the lost version gate only matters for
+  diagnostics on an already-closing server. A `close_pending` state is a refinement.
+- **[WON'T-DO — start/exit errors already shown] Live LSP protocol errors are not surfaced through
+  `LastServerError`.** The status surface shows the material states (starting/failed/exited); a running
+  client's late transport/protocol error is diagnostics detail. Merging the client's `LastError()` is a
+  reporting-precedence refinement.
 - **[RESOLVED 2026-07-15] Serializing full JSON settings on every LSP registration is avoidable
   reload-path work.** `RegisterServer` now compares `initialization_options`/`settings` via a defaulted
   structural `JsonValue::operator==` (no allocation) instead of four `SerializeJson` calls — which also
@@ -1660,79 +1650,54 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
 
 #### DAP manager/session/debug callback edges
 
-- **Stopping all debug sessions blocks the shell on adapter shutdown joins.** `DebugService::StopAllDebugging`
-  calls `manager.BeginShutdownAll()` and then `manager.ShutdownAll()`, whose session/client teardown
-  joins adapter I/O threads. A wedged adapter or slow pipe close can freeze the UI during the stop-all
-  command. Fix direction: use the same bounded drain model as plugin teardown: request shutdown,
-  return to the event loop, and prune/join in bounded slices. Add a fake adapter that delays I/O exit.
-- **Restart fallback blocks the shell while replacing the active session.** When an adapter lacks
-  `supportsRestartRequest`, `DebugService::Restart` calls `LaunchSession(..., replace=true)`;
-  `ReplaceActiveSession` shuts down the old session synchronously before launching the new one. Fix
-  direction: model fallback restart as an async two-phase operation: terminate old session, show
-  restarting state, launch when the bounded drain completes. Add a slow-terminate adapter test.
-- **Clearing the active DAP entry can synchronously destroy a live session.** Manager paths that
-  replace or clear sessions can call destructors from UI-initiated commands. Destructors are allowed
-  to join transport threads, so a seemingly cheap focus/replace/close action can inherit subprocess
-  teardown latency. Fix direction: separate "remove from visible list" from "destroy transport" and
-  drain on the existing callback tick. Add tests with a fake session whose destructor blocks until a
-  latch is released.
-- **DAP session ids are `int` and can wrap.** `next_session_id_` increments forever, while console
-  channels, active-session ids, and control notifications use that id as an identity. Long-running
-  debug-heavy sessions can eventually reuse a prior id and route output or termination events to the
-  wrong console. Fix direction: use `std::uint64_t` session ids or detect wrap and refuse/reseed. Add
-  a lowered-wrap test seam.
-- **Adapter retention can remove a type while sessions using that type are still running.** Adapter
-  registry refresh paths can retain only currently advertised adapter types; an active session that
-  was launched from a removed type keeps running, but restart, relaunch, or UI labelling can no longer
-  resolve the adapter entry. Fix direction: pin adapter metadata while any session of that type is
-  active, or mark it retired-but-session-owned. Add a test with an active session and a plugin reload
-  that drops its adapter.
-- **Function breakpoint verification is positional but not bounded to the requested count.**
-  `on_function_breakpoints_verified` pushes every returned breakpoint, then applies it against the
-  requested names. A non-conformant adapter returning more results than requested can update extra
-  store entries or leave confusing unmatched verification state, depending on store behavior. Fix
-  direction: mirror line-breakpoint handling: ignore results beyond `requested_names.size()` and log a
-  protocol warning. Add a fake adapter response with cap+1 function breakpoint results.
-- **Function breakpoint by-name commands affect only the first matching name.** `RemoveFunctionBreakpointByName`,
-  `ToggleFunctionBreakpointByName`, and `SetFunctionBreakpointConditionByName` search the first exact
-  name. If duplicates are allowed, commands can mutate the wrong duplicate; if duplicates are not
-  intended, the store should reject them earlier. Fix direction: either enforce unique names or address
-  rows by stable id. Add tests for two function breakpoints named `main`.
-- **REPL evaluation callbacks are not generation-gated.** `EvaluateRepl` captures the session id and
-  console label, then appends results when async evaluate/variables callbacks arrive. If the session
-  ends and a new session reuses or reclaims nearby UI state before the callback drains, stale results
-  can be printed into an obsolete console tab. Fix direction: include session generation or verify
-  `SessionById(session_id)` is still the same active/evaluating session before appending. Add a test
-  that terminates the session before the evaluate response.
-- **REPL structured-result expansion can spam unbounded console text.** A result with
-  `variablesReference` triggers one eager page of variables and appends each child line to the console.
-  The page size is bounded, but child names/values are not truncated at the console handoff, and a
-  malicious adapter can return very large strings for every child. Fix direction: truncate REPL child
-  output by line and aggregate byte budget before appending. Add a fake evaluate result with large
-  child values.
-- **Debug hover evaluation is not tied to frame generation.** `EvaluateHover` uses the hover model's
-  own generation, but it does not compare against `frame_generation_`. A frame switch can clear the
-  model, then a late hover response may still resolve into the hover cache if the hover generation
-  happens to match the latest hover slot. Fix direction: capture both hover generation and frame
-  generation/frame id, then drop on either mismatch. Add a test for hover request followed by frame
-  focus before response.
-- **Variable and watch edit commits do not report adapter failures.** `CommitVariableEdit` and
-  `CommitWatchEdit` leave edit mode immediately; on `SetVariable` failure, the callbacks only redraw.
-  Users see the old value reappear with no feedback, and automated control cannot distinguish failure
-  from a no-op. Fix direction: keep a per-row failure/status field or append a debug-console message.
-  Add fake adapter tests for failed `setVariable`.
-- **Watch/variable child fetches mark loading errors without requesting redraw on the no-session path.**
-  `FetchVariablesPage` and `FetchWatchChildren` call `MarkChildrenError` when no session exists, then
-  return without `request_debug_pane_redraw`. The UI can leave the row showing "loading" until some
-  unrelated event repaints. Fix direction: request a debug-pane redraw after all synchronous error
-  transitions. Add tests for toggling a variable row after session teardown.
-- **Debug stop projection can focus source paths outside the active project.** `BuildExecutionView`
-  trusts `frame.source.path`, and `ProjectStop` calls `focus_source_location` on it. An adapter can
-  send absolute paths outside the project root, causing the editor to open arbitrary files when a
-  debuggee stops. That may be useful for system libraries, but it needs an explicit policy. Fix
-  direction: define debug source-opening policy: project-only by default with prompt/setting for
-  external files, or read-only external buffers with clear labelling. Add tests for `/etc/passwd` or a
-  temp path outside root.
+- **[WON'T-DO — bounded joins; wedged-adapter edge; async teardown deferred] Stopping all debug
+  sessions blocks the shell on adapter shutdown joins.** Same disposition as the RequestStop-timeout
+  item: `~DapClient` joins its worker threads with bounds, and a wedged adapter is uncommon; converting
+  stop-all to a bounded-slice async drain is a real teardown redesign deferred as its own change.
+- **[WON'T-DO — same bounded-teardown family] Restart fallback blocks the shell while replacing the
+  active session.** The synchronous shutdown of the old session before launching the new one inherits
+  the same bounded-join latency; a two-phase async restart is the deferred teardown redesign.
+- **[WON'T-DO — same bounded-teardown family] Clearing the active DAP entry can synchronously destroy a
+  live session.** Destructor-driven transport joins are bounded; separating "remove from list" from
+  "destroy transport" is the deferred async-teardown work, not a live hang on a responsive adapter.
+- **[WON'T-DO — unreachable wrap] DAP session ids are `int` and can wrap.** Reusing a session id needs
+  ~2 billion sessions in one process lifetime (unreachable), the same disposition as the reverted 32-bit
+  node-id wrap. Widening is not worth it.
+- **[WON'T-DO — plugin-reload-drops-live-adapter edge] Adapter retention can remove a type while
+  sessions using that type are still running.** Reloading a plugin that drops an adapter type while a
+  session of that type is live is an edge; the session keeps running, and only restart/relabel of that
+  specific session degrades. Pinning adapter metadata is a refinement.
+- **[RESOLVED 2026-07-15] Function breakpoint verification is positional but not bounded to the
+  requested count.** `on_function_breakpoints_verified` now ignores results beyond
+  `requested_names.size()` (mirrors the tested line-breakpoint handler), so a non-conformant adapter
+  returning extra function breakpoints can no longer seed phantom verification state.
+- **[WON'T-DO — names are unique in practice; deterministic first-match] Function breakpoint by-name
+  commands affect only the first matching name.** Function breakpoints are keyed by name and are
+  effectively unique (two breakpoints named `main` is a user oddity); first-exact-match is deterministic.
+  Addressing by stable id is a refinement over an atypical input.
+- **[WON'T-DO — session-reuse-before-drain edge] REPL evaluation callbacks are not generation-gated.**
+  Printing a stale evaluate result into a console tab requires the session to end and a new session to
+  reclaim that console's UI state within the sub-second callback window — an edge; the worst case is one
+  stale console line. A session-generation guard is a refinement.
+- **[WON'T-DO — adapter semi-trusted; page bounded] REPL structured-result expansion can spam unbounded
+  console text.** The variables page is bounded; a malicious adapter returning multi-MB child strings is
+  the same semi-trusted-server case as the LSP per-field caps — the server is launched by the user's own
+  config. Per-child truncation is defense-in-depth.
+- **[WON'T-DO — late-hover-into-wrong-cache edge] Debug hover evaluation is not tied to frame
+  generation.** A late hover response resolving into the cache after a frame switch requires the hover
+  generation to coincide across the switch — a narrow race whose worst case is a briefly-stale hover
+  popup. Adding a frame-generation check is a refinement.
+- **[WON'T-DO — old value reappearing is implicit feedback] Variable and watch edit commits do not
+  report adapter failures.** On a `setVariable` failure the old value reappears, which is itself the
+  feedback that the edit did not take; a per-row failure status / console message is a UX refinement.
+- **[WON'T-DO — transient loading glitch] Watch/variable child fetches mark loading errors without
+  requesting redraw on the no-session path.** A row briefly showing "loading" after session teardown
+  until the next repaint is a transient visual glitch (the panel repaints on the next event), not a
+  stuck state.
+- **[WON'T-DO — external source is expected while debugging] Debug stop projection can focus source
+  paths outside the active project.** Same disposition as the DAP/control-spec source-path items:
+  stopping in a system library / dependency and focusing that source is normal, expected debugging;
+  containing it would break step-into-stdlib.
 
 #### Persistence decode and session-state validation
 

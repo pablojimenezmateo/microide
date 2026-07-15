@@ -316,13 +316,17 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
   callbacks.on_function_breakpoints_verified =
       [this](const std::vector<std::string>& requested_names,
              const std::vector<dap_protocol::DapBreakpoint>& breakpoints) {
+        // The setFunctionBreakpoints response is positional to the request. Ignore
+        // any results a non-conformant adapter returns beyond the requested count
+        // (mirrors the line-breakpoint handler) so extras cannot seed phantom
+        // verification state.
         std::vector<editor::VerifiedFunctionBreakpoint> results;
-        results.reserve(breakpoints.size());
-        for (const dap_protocol::DapBreakpoint& breakpoint : breakpoints) {
+        results.reserve(std::min(breakpoints.size(), requested_names.size()));
+        for (std::size_t i = 0; i < breakpoints.size() && i < requested_names.size(); ++i) {
           results.push_back(editor::VerifiedFunctionBreakpoint{
-              .id = breakpoint.id,
-              .verified = breakpoint.verified,
-              .message = breakpoint.message,
+              .id = breakpoints[i].id,
+              .verified = breakpoints[i].verified,
+              .message = breakpoints[i].message,
           });
         }
         CurrentProjectState().function_breakpoint_store.ApplyVerification(requested_names, results);
