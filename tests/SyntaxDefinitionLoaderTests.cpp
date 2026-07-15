@@ -85,6 +85,23 @@ void TestCompileAndPrewarmDefinitionAreSafe() {
   Expect(true, "CompileDefinition/PrewarmDefinition complete without crashing");
 }
 
+// The service's destructor must drain/join the worker before its result queues /
+// wake callback are destroyed, so a queued job that reaches into `this` cannot
+// outlive them even when an owner never calls Shutdown() (ASAN would flag a UAF).
+void TestHighlightPrefetchServiceDestructorDrainsWithoutShutdown() {
+  runtime_syntax::EnsureInitialized();
+  const std::vector<std::string> lines = {"int main() { return 0; }"};
+  const std::uint32_t definition_id =
+      runtime_syntax::DetectState(std::filesystem::path("dtor.cpp"), lines).definition_id;
+  {
+    editor::HighlightPrefetchService service;
+    service.PrewarmDefinition(definition_id);
+    // Intentionally NO Shutdown(): the destructor at scope exit must join the
+    // worker cleanly.
+  }
+  Expect(true, "destroying the service with queued work must not crash or leak the worker");
+}
+
 }  // namespace
 
 void RegisterSyntaxDefinitionLoaderTests(std::vector<TestCase>& tests) {
@@ -94,6 +111,8 @@ void RegisterSyntaxDefinitionLoaderTests(std::vector<TestCase>& tests) {
           TestFingerprintTracksContentChanges);
   AddTest(tests, "SyntaxDefinitionLoader/CompileAndPrewarmDefinitionAreSafe",
           TestCompileAndPrewarmDefinitionAreSafe);
+  AddTest(tests, "SyntaxDefinitionLoader/HighlightPrefetchServiceDestructorDrainsWithoutShutdown",
+          TestHighlightPrefetchServiceDestructorDrainsWithoutShutdown);
 }
 
 }  // namespace microide::tests

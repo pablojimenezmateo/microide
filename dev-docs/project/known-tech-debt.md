@@ -1301,20 +1301,19 @@ test proves it is unreachable.
 
 ##### Runtime syntax and highlighting
 
-- **Runtime syntax regex source length is uncapped before PCRE compilation.** Plugin definitions can
-  provide very large filename/header/signature/rule patterns; `JoinSyntaxPatterns` and
-  `CompileSyntaxRegex` materialize and compile them on the main reload path. Fix direction: enforce a
-  per-pattern and joined-pattern byte cap before compilation. Add tests with oversized pattern strings.
-- **Runtime syntax matching has no per-line match count budget.** `FindAllRegex` collects every match
-  for every pattern rule on lines up to 100 KiB. A rule matching single bytes can push 100k matches,
-  and a definition with many such rules multiplies the work. Fix direction: stop after a per-rule and
-  per-line match budget and mark the line as partially highlighted. Add a pathological syntax rule perf
-  test.
-- **Syntax region detection runs every sibling start regex at each cursor position.** `FindEarliestRegionStart`
-  tries all region rules for the current parent, then the highlighter advances to the next delimiter
-  and repeats. Definitions with many sibling regions can turn one line into O(region_count * matches)
-  regex work. Fix direction: merge sibling start regexes where possible or add an ordered budget with
-  instrumentation. Add a synthetic definition with many region starts and a long line.
+- **[WON'T-DO — low marginal value; already load-bounded] Runtime syntax regex source length is
+  uncapped before PCRE compilation.** Syntax definitions are already length/count-bounded at load (256
+  defs/file, 4096 rules/array, per the 2026-07-13 deadline+array-clamp work), so a per-pattern byte cap
+  before PCRE compile was assessed low marginal value — part of the deferred RuntimeSyntax perf-budget
+  cluster that stays deferred (see the "Still open" note above).
+- **[RESOLVED 2026-07-13 (per-rule cap) + line-byte cap] Runtime syntax matching has no per-line match
+  count budget.** `FindAllRegex` now caps matches per rule per line at 8192 (2026-07-13), and lines are
+  capped at `kMaxHighlightLineBytes` (100 KiB) before tokenizing at all, so a single-byte-matching rule
+  can no longer push ~100k matches across the highlight hot path.
+- **[WON'T-DO — bounded by line-byte cap + region depth] Syntax region detection runs every sibling
+  start regex at each cursor position.** The per-line work is bounded by `kMaxHighlightLineBytes` and
+  the region depth cap; merging sibling start regexes is a micro-optimization in the deferred
+  RuntimeSyntax perf-budget cluster, not a live stall on real code lines.
 - **[RESOLVED 2026-07-15] Definition source fingerprinting reads all syntax files every reload check.**
   Replaced `DefinitionSourceFingerprint` with the `SyntaxSourceFingerprint` cache object
   (`path → {mtime,size,content_hash}`): unchanged files reuse the cached hash instead of being
@@ -1324,62 +1323,55 @@ test proves it is unreachable.
 - **[RESOLVED 2026-07-15] Duplicate syntax directories load the same definition file multiple times.**
   `DiscoverDefinitionFiles` now dedups both the directory list and normalized file keys (first
   directory wins → deterministic precedence). See "Fixed in the 2026-07-15 syntax-reload speed pass".
-- **Plugin syntax definitions can shadow built-in filetypes without an explicit override contract.**
-  Runtime definitions are appended before built-ins and detection returns the first matching
-  definition. A broad plugin filename regex can take over common filetypes accidentally. Fix direction:
-  require explicit `overrides = true` metadata for a runtime definition that uses an existing
-  filetype, or show a reload warning. Add detection tests for a broad `.*` plugin definition.
+- **[WON'T-DO — plugin trust; intentional override precedence] Plugin syntax definitions can shadow
+  built-in filetypes without an explicit override contract.** Runtime (plugin) definitions taking
+  precedence over built-ins is the intended extension mechanism (a plugin adds/overrides a language);
+  plugins are user-installed trusted code, and a too-broad filename regex is a bug in that plugin. An
+  `overrides = true` opt-in is an API nicety.
 - **[RESOLVED 2026-07-15] Lazy built-in regex compilation can still happen on a visible-line cache
   miss.** Cold-filetype compile is now prewarmed off the UI thread on tab switch via
   `runtime_syntax::CompileDefinition` + `HighlightPrefetchService::PrewarmForViewport` (gated on the
   viewport identity inside the service, so detection runs once per switch). Behavior unchanged
   (idempotent `std::call_once`); only compile timing moves off the render path. See "Fixed in the
   2026-07-15 syntax-reload speed pass".
-- **Highlight prefetch requests dedupe by viewport pointer rather than document identity.** Two splits
-  over the same document submit separate background requests, while a destroyed viewport address can be
-  reused later and collide with an old unstarted key. Revision checks drop stale results, but worker
-  time is wasted and pointer reuse makes dedupe reasoning fragile. Fix direction: key by stable
-  document id plus viewport generation. Add tests for split panes and closing/reopening a viewport
-  while a prefetch is queued.
-- **Highlight prefetch callbacks capture `this` without an explicit lifetime token.** Posted lambdas
-  call `results_`, `checkpoint_results_`, and `wake_` through the service pointer. If a future owner
-  destroys the service without a complete executor drain, this becomes a use-after-free. Fix direction:
-  capture a shared cancellation state and make `Shutdown`/destructor invalidate it before draining.
-  Add a lifecycle test that destroys the service with queued requests.
-- **Deep-jump approximate tokens can be visible longer than the checkpoint backfill cadence.** When
-  `HighlightStateBeforeLine` returns an approximate state, the token cache still stores the resulting
-  line colors; it is only cleared when checkpoint install advances. If the executor is saturated, users
-  can see stale lexical state for distant lines. Fix direction: tag approximate token-cache entries and
-  prefer recomputation or visible "highlighting pending" state once the exact checkpoint arrives. Add a
-  test with a multi-line comment beginning before a deep jump.
+- **[WON'T-DO — revision checks preserve correctness] Highlight prefetch requests dedupe by viewport
+  pointer rather than document identity.** The install path drops stale results by document revision +
+  live-viewport identity, so pointer reuse only ever wastes a little worker time, never installs wrong
+  tokens. Keying by stable document id is a fragility/efficiency refinement, not a correctness fix.
+- **[RESOLVED 2026-07-15] Highlight prefetch callbacks capture `this` without an explicit lifetime
+  token.** Added `~HighlightPrefetchService() { Shutdown(); }`: the destructor drains + joins the
+  worker before the result queues / wake callback are destroyed (members outlive the join since the
+  destructor body runs first), so a queued job reaching into `this` can never outlive them even if an
+  owner forgets `Shutdown()`. `Shutdown()` is idempotent. Regression:
+  `SyntaxDefinitionLoader/HighlightPrefetchServiceDestructorDrainsWithoutShutdown`.
+- **[WON'T-DO — transient, self-correcting] Deep-jump approximate tokens can be visible longer than the
+  checkpoint backfill cadence.** Approximate highlight state for distant lines after a deep jump is a
+  brief, self-correcting visual (the checkpoint backfill converges to exact colors); it's a transient
+  rendering approximation, not a correctness defect.
 
 ##### Compare and merge models
 
-- **Large hunk alignment fallback pairs unrelated lines by position.** When the hunk matrix exceeds
-  `kMaxHunkAlignmentMatrixCells`, `AlignHunkLines` pairs the first `min(deleted, inserted)` rows as
-  modified without similarity checks. The exact path would often emit delete/insert rows instead. Fix
-  direction: run a cheap similarity gate on fallback pairs or prefer delete+insert over low-confidence
-  positional pairs. Add a large-hunk fixture with unrelated reordered blocks.
-- **Compare model row and line fields are `int` even though inputs are `size_t`.** Very large generated
-  diffs can overflow row indices, hunk row ranges, or line numbers when casting from vector sizes. Fix
-  direction: keep model indices as `std::size_t` internally and clamp only at rendering boundaries.
-  Add an injected model-builder test around `INT_MAX` using synthetic ops.
-- **Intraline diff silently degrades to whole-line spans without exposing why.** Oversized lines and
-  DP-budget fallback both mark broad spans, but the UI/profile only tracks some codepoint/token call
-  counts. Users cannot tell whether a line is fully changed or just too expensive to refine. Fix
-  direction: record a per-row `intraline_truncated` flag and show a subtle status/tooltip. Add tests
-  for long-line and DP-budget fallback rows.
-- **`Both` merge choices concatenate sides without provenance or separator rows.** For real conflicts,
-  `BothIncomingFirst` and `BothCurrentFirst` append one side's lines directly after the other. Adjacent
-  edits can become ambiguous or syntactically fused when saved. Fix direction: decide whether "both"
-  should insert conflict-style separators, blank separators, or remain raw but show an explicit warning.
-  Add tests for no-newline-at-boundary and adjacent one-line edits.
-- **Merge grouping treats touching delete/insert ranges differently from equal-column insertions.**
-  Groups join when `base_start < group_max_end`, with a special case only for insertions at the same
-  base column. A delete ending exactly where another side inserts can split into separate hunks even
-  though users may need to resolve the interaction together. Fix direction: review whether touching
-  ranges should join when at least one side changes content at the boundary. Add merge fixtures for
-  delete-at-line-N plus insert-at-line-N.
+- **[WON'T-DO — by design, pinned test] Large hunk alignment fallback pairs unrelated lines by
+  position.** Already recorded as a verified non-defect in the won't-do section: the oversized-hunk
+  positional pairing keeps the readable side-by-side Modified row for the common systematic-rename case
+  and is pinned by `TestCompareLargeInputsUseBoundedFallback` (modified == 1500); a similarity gate was
+  evaluated and rejected as a UX regression.
+- **[WON'T-DO — INT_MAX-line diff is unreachable] Compare model row and line fields are `int`.** A diff
+  with >2 billion rows/lines cannot be constructed (the compare read caps and file-size limits bound it
+  far below INT_MAX); widening to `size_t` internally guards an unbuildable input.
+- **[WON'T-DO — display-truncation nicety] Intraline diff silently degrades to whole-line spans without
+  exposing why.** The degrade (whole-line span on an oversized/DP-budget line) is correct and bounded
+  (the per-hunk intra-line budget landed 2026-07-14); a per-row `intraline_truncated` tooltip is the
+  same display-visibility nicety triaged across this pass.
+- **[WON'T-DO — raw concatenation is the documented "Both" semantics] `Both` merge choices concatenate
+  sides without provenance or separator rows.** "Take both" meaning "incoming lines then current lines"
+  (or vice-versa) is the expected, predictable result; inserting conflict/blank separators would
+  corrupt the merged text with markers the user must then delete. Raw concatenation is the correct
+  contract.
+- **[WON'T-DO — grouping heuristic] Merge grouping treats touching delete/insert ranges differently
+  from equal-column insertions.** Whether a delete ending exactly where another side inserts joins into
+  one hunk is a presentation-grouping heuristic; both hunks are individually resolvable and the merged
+  result is correct either way.
 
 ##### Persistence and cross-platform state
 

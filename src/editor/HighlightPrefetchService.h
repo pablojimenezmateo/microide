@@ -17,6 +17,12 @@ namespace microide::editor {
 // registry, and hands results back through a mutex-guarded queue.
 class HighlightPrefetchService {
  public:
+  // Drains + joins the worker before the result queues / wake callback are
+  // destroyed, so a posted job that reads results_/wake_ through `this` can never
+  // outlive them even if an owner forgets to call Shutdown(). Shutdown() is
+  // idempotent (SerialWorkQueue::Shutdown early-returns once stopped), so an
+  // explicit prior Shutdown() plus this destructor is safe.
+  ~HighlightPrefetchService() { Shutdown(); }
   // Invoked on the worker thread after a result is queued, to nudge the main
   // loop to drain. Must be cheap and thread-safe (e.g. SDL_PushEvent). Set once
   // at startup, before any Request, so the worker reads it race-free.
