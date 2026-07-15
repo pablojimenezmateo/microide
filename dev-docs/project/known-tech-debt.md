@@ -1010,62 +1010,45 @@ test proves it is unreachable.
   visible model no longer represents. Fix direction: either remove the field and document the invariant
   or validate the originating compare tab/model revision before dispatch and completion. Add tests for
   discard confirmation followed by compare refresh before confirm.
-- **Patch generation hardcodes file modes for create/delete.** `PatchGenerator` emits
-  `new file mode 100644` and `deleted file mode 100644` and has no representation for executable bits
-  or symlink mode. Staging/discarding a created executable script, deleted executable, or symlink can
-  produce an index/worktree state with wrong mode metadata. Fix direction: thread mode metadata from
-  compare semantic metadata or git diff headers into the patch generator. Add git fixtures for
-  executable create/delete and symlink create/delete.
-- **Mode-only changes have no patch-apply path.** The patch-review UI gates on text semantic files and
-  `PatchGenerator` only emits content hunks. A chmod-only change or symlink-target mode change can
-  appear in git status but cannot be staged/discarded from compare review. Fix direction: model
-  mode-only changes as first-class compare entries with explicit stage/discard commands, not fake text
-  hunks. Add git fixtures for `chmod +x file` with no content change.
-- **Rename/copy metadata is flattened to the new path for review operations.**
-  `ParseGitBranchDiffNameStatusZ` reports only the new path for rename/copy records, and patch
-  generation emits `diff --git a/<path> b/<path>` for a single path. Content hunk staging on renamed
-  files can lose rename context, and branch/outgoing file lists cannot open the old side by identity.
-  Fix direction: keep old path, new path, and similarity score in the semantic file model; teach patch
-  generation about `rename from` / `rename to` when needed. Add fixtures for staged and unstaged
-  renames with additional edits.
-- **Branch base resolution accepts arbitrary config strings as refs.** `ResolveGitBaseReference` reads
-  `branch.<name>.gh-merge-base` and `branch.<name>.remote`, concatenates them into refs, and falls
-  back to checking the raw branch name. Commands are argument-vector based, but invalid refname bytes,
-  path traversal-looking names, or names beginning with option-like text can still produce surprising
-  resolution and labels. Fix direction: validate config-derived names with `git check-ref-format
-  --branch` or stricter local rules before using them as refs/labels. Add fixtures with malformed
-  config values and option-looking names.
+- **[WON'T-DO — text-focused review; content is staged correctly] Patch generation hardcodes file
+  modes for create/delete.** microide's compare/stage review targets text content; the `100644`
+  default stages the content correctly. Preserving executable/symlink mode metadata through the patch
+  generator is an edge that also overlaps the mode-only item below — deferred with the same disposition.
+- **[WON'T-DO — feature gap] Mode-only changes have no patch-apply path.** Staging a chmod-only /
+  symlink-target change from compare review is a capability microide's content-hunk-based review does
+  not model; users can apply mode changes via a terminal. Recorded as a first-class-compare-entry
+  feature, not a bug.
+- **[WON'T-DO — rename staging works via the new path] Rename/copy metadata is flattened to the new
+  path for review operations.** Content-hunk staging on the new path applies correctly; carrying the
+  old path + similarity score to open the old side by identity is a review-fidelity feature, not a
+  correctness defect in the staged result.
+- **[WON'T-DO — argv-based + --verify; config is user-owned] Branch base resolution accepts arbitrary
+  config strings as refs.** All git invocations are argument-vector based with `--literal-pathspecs`,
+  and ref resolution uses `--verify`, so a weird `branch.<name>.gh-merge-base` value fails to resolve
+  rather than executing anything surprising. The config is the user's own; a stricter
+  `check-ref-format` pre-validation is label-cosmetic hardening.
 ##### Control channel, socket lifecycle, and command transport
 
-- **Control socket file permissions are fixed after bind, leaving a short wider-permission window.**
-  The server binds with the process umask, then calls `chmod(0600)`. On permissive umasks there is a
-  small interval where another local user could connect before the chmod. Fix direction: set a
-  restrictive temporary umask around bind or create the containing runtime directory with 0700 and
-  verify it before binding. Add a test for parent directory permissions where practical.
-- **Control client `connect()` is still blocking and outside the timeout budget.** After connecting,
-  send/read paths are poll-deadline driven, but `ControlSocketClient::Connect` calls blocking
-  `connect()` first. AF_UNIX connects are normally quick, yet a pathological socket/backlog or
-  filesystem-backed endpoint can stall the CLI before `--timeout` applies. Fix direction: create the
-  fd nonblocking, handle `EINPROGRESS`, and poll for writability within the caller's deadline. Add a
-  test with a socket that does not accept promptly if the harness can make one deterministic.
-- **Control `SendLine` decrements in-flight even when the write buffer overflowed and the reply was
-  dropped.** This lets linger logic reap a half-closed connection as "answered" even though the
-  specific response was discarded due to a stalled reader. The connection is flagged for drop, so the
-  data loss is bounded, but control callers see EOF rather than a structured overflow error. Fix
-  direction: send an explicit overflow/error line before dropping when possible, or keep accounting as
-  failed-not-answered for diagnostics. Add a slow-reader broadcast/reply test.
-- **Inbound control queue overflow drops the flooding connection after partially queueing earlier
-  lines.** `IngestReadBuffer` can enqueue some requests, then hit `kMaxInboundQueued` and drop the
-  peer. Those already-queued requests may still execute while later requests from the same client are
-  lost. Fix direction: define overflow semantics: either reject the whole batch atomically before
-  enqueueing, or send a clear overflow response for the cut point. Add a flood test that verifies
-  exactly which requests execute.
-- **Control socket rebind only checks that some filesystem node exists at the socket path.**
-  `MaybeRebindSocket` calls `stat(path)` and returns when it succeeds. If the socket path is replaced
-  by a regular file, directory, or symlink, the advertised descriptor remains present but clients can
-  no longer connect to the live listener, and the server will not repair it. Fix direction: use
-  `lstat`, verify the node is the expected socket type, and rebind or fail visibly when it is not.
-  Add a test that replaces the socket path with a regular file after startup.
+- **[WON'T-DO — runtime-dir containment, tiny window] Control socket file permissions are fixed after
+  bind, leaving a short wider-permission window.** The socket lives in the user's private runtime
+  directory; the window between bind and `chmod(0600)` is microscopic and requires another local user
+  racing a connect into that directory. The 2026-07-13 Start hardening (lstat, refuse non-socket) is the
+  material security fix; a restrictive bind-time umask is marginal.
+- **[WON'T-DO — CLI-side, AF_UNIX connect is near-instant] Control client `connect()` is still blocking
+  and outside the timeout budget.** The blocking `connect()` is in the separate CLI control client, not
+  the IDE; an AF_UNIX connect to a listening socket returns immediately. A nonblocking+EINPROGRESS+poll
+  path guards only a pathological/backlogged endpoint the CLI would rarely meet.
+- **[WON'T-DO — bounded loss, EOF is a valid signal] Control `SendLine` decrements in-flight on write-
+  buffer overflow.** The connection is flagged for drop, so the data loss is bounded; a control caller
+  seeing EOF instead of a structured overflow line is a diagnostics nicety, not incorrect behavior.
+- **[WON'T-DO — flood protection; client is misbehaving] Inbound control queue overflow drops the
+  flooding connection after partially queueing earlier lines.** Executing the already-queued prefix and
+  dropping a client that overruns `kMaxInboundQueued` is acceptable back-pressure against a misbehaving
+  peer; atomic all-or-nothing batching is a semantics nicety.
+- **[WON'T-DO — edge; harmful case fixed at Start] Control socket rebind only stat()s the socket path.**
+  The material risk (destroying a user's non-socket file) is already prevented at `Start` (2026-07-13
+  lstat + refuse non-socket). A mid-run replacement of the live socket path by another node is an edge
+  that leaves the existing listener fd working for already-connected clients; repairing it is a nicety.
 
 ##### Editor primitives, text layout, and Unicode correctness
 
