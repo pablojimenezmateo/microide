@@ -72,7 +72,9 @@ void TestSingleLineEditorStripsLineBreaksOnInsert() {
 
   editor.SetText("");
   Expect(editor.Insert("a\r\nb\nc\rd"), "inserting multi-line text should insert");
-  ExpectEditorState(editor, "abcd", 4, std::nullopt, "multi-line insert collapses breaks");
+  // Line-break runs collapse to single spaces (foo\nbar -> foo bar), not
+  // concatenation (foobar), so pasted multi-line content keeps word boundaries.
+  ExpectEditorState(editor, "a b c d", 7, std::nullopt, "multi-line insert collapses breaks to spaces");
 
   // Pasting only line breaks inserts nothing (sanitized to empty).
   editor.SetText("keep");
@@ -147,11 +149,11 @@ void TestSingleLineEditorSupportsSnapshotAndAppend() {
   ExpectEditorState(editor, "alpha-omega", 11, std::nullopt,
                     "append should extend text and collapse selection");
 
-  // Append shares Insert's single-line sanitization: CR/LF are stripped so the
-  // field never stores line breaks even via this public helper.
+  // Append shares Insert's single-line sanitization: CR/LF runs collapse to single
+  // spaces so the field never stores line breaks even via this public helper.
   editor::SingleLineEditor sanitized("x");
   sanitized.Append("a\r\nb\nc");
-  ExpectEditorState(sanitized, "xabc", 4, std::nullopt, "append strips CR/LF");
+  ExpectEditorState(sanitized, "xa b c", 6, std::nullopt, "append collapses CR/LF to spaces");
 }
 
 void TestSingleLineEditorCaretSnapsToUtf8Boundary() {

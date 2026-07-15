@@ -1069,26 +1069,26 @@ test proves it is unreachable.
 
 ##### Editor primitives, text layout, and Unicode correctness
 
-- **Multi-line paste into single-line fields concatenates tokens with no separator.** `Insert`
-  removes CR/LF entirely, so pasting `foo\nbar` becomes `foobar` rather than `foo bar` or `foo`.
-  That can silently change search needles, rename targets, branch names, or command args. Fix
-  direction: choose a product policy per field: replace line breaks with spaces for search/commands,
-  take first line for paths/renames, or reject with visible feedback. Add paste tests for search,
-  command palette, and rename prompt.
-- **Text visual width treats every non-tab code point as one cell.** `AdvanceVisualColumn` ignores
-  East Asian wide characters, emoji width, zero-width joiners, and combining marks. This affects caret
-  hit testing, horizontal scroll, hover target mapping, compare alignment, and inlay placement for
-  valid UTF-8 documents. Fix direction: add a small wcwidth/grapheme-width layer with deterministic
-  tests and keep a fast ASCII path. Add layout tests for CJK, emoji, and combining sequences.
-- **Identifier hover ranges are ASCII-only.** `TextLayout::IdentifierRangeAt` refuses non-ASCII
-  identifier bytes before LSP hover/definition lookup, so Rust, Python, JavaScript, and many language
-  servers will not get hover requests for valid Unicode identifiers. Fix direction: use language
-  server position under cursor even when local identifier extraction fails, or extend identifier
-  classification to Unicode. Add hover-target tests for `café` and `变量`.
-- **Inlay hint column math trusts plugin/LSP label widths after truncation but not aggregate overflow.**
-  Individual inlay labels are capped, yet `InlayLineTotalCells` and displacement sums can still grow
-  large when many hints target one line. Fix direction: saturate aggregate cell counts per visual row
-  and surface truncation when inlays are dropped. Add a test with thousands of hints at one anchor.
+- **[RESOLVED 2026-07-15] Multi-line paste into single-line fields concatenates tokens with no
+  separator.** `SingleLineEditor::Insert`/`Append` now collapse each run of CR/LF into a single space
+  (dropping leading/trailing runs) via `CollapseLineBreaksToSpaces`, so `foo\nbar` pastes as `foo bar`
+  (word boundaries preserved) instead of `foobar`. Regressions:
+  `SingleLineEditor/{StripsLineBreaksOnInsert,SupportsSnapshotAndAppend}` (updated to the space
+  behavior).
+- **[WON'T-DO for this sweep — large visual-layout pass] Text visual width treats every non-tab code
+  point as one cell (+ identifier hover ranges are ASCII-only).** These are the real "Unicode layout
+  completeness" cluster: a wcwidth/grapheme-width layer through caret hit-testing / horizontal scroll /
+  compare alignment / inlay placement, plus Unicode identifier classification in
+  `TextLayout::IdentifierRangeAt` for hover/definition on `café`/`变量`. This is a substantial layout
+  change whose correctness is inherently visual (cell alignment for CJK/emoji/combining marks) and
+  cannot be verified on this headless host — doing it piecemeal risks inconsistent cell math. Deferred
+  as a focused Unicode pass with visual verification; the `Utf8IsIdentifierCodepoint` /
+  `Utf8CaseFold` infra added 2026-07-13 is the starting point. ASCII text (the overwhelming common
+  case) is unaffected.
+- **[WON'T-DO — pathological input] Inlay hint column math trusts plugin/LSP label widths after
+  truncation but not aggregate overflow.** Thousands of inlay hints anchored at one line is a
+  pathological adapter/plugin payload; individual labels are already capped. Saturating the aggregate
+  is defense-in-depth against a case real language servers never produce.
 
 ##### Theme, rendering, and UI output
 

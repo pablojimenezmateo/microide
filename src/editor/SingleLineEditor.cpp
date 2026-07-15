@@ -10,6 +10,31 @@ namespace microide::editor {
 
 namespace {
 
+// A single-line surface must never hold CR/LF. Rather than concatenating the
+// lines (`foo\nbar` -> `foobar`, which silently corrupts a search needle / rename
+// target), collapse each run of line breaks into a single space and drop leading/
+// trailing runs, so `foo\nbar` -> `foo bar` and a whole-line-copy's trailing '\n'
+// leaves no stray space. Returns empty when the input was only line breaks.
+std::string CollapseLineBreaksToSpaces(std::string_view input) {
+  std::string out;
+  out.reserve(input.size());
+  bool pending_break = false;
+  bool wrote_any = false;
+  for (const char ch : input) {
+    if (ch == '\r' || ch == '\n') {
+      pending_break = true;
+      continue;
+    }
+    if (pending_break && wrote_any) {
+      out.push_back(' ');
+    }
+    pending_break = false;
+    out.push_back(ch);
+    wrote_any = true;
+  }
+  return out;
+}
+
 std::size_t ClampCaret(std::string_view text, std::size_t offset) {
   offset = std::min(offset, text.size());
   // Snap to a UTF-8 boundary: mouse hit-testing, tests, or plugin-driven surfaces
@@ -95,17 +120,10 @@ void SingleLineEditor::Append(std::string text) {
     return;
   }
   // Share Insert's single-line sanitization: a single-line field must never store
-  // CR/LF, even via this public helper. Strip line breaks (collapsing CRLF) so a
-  // future caller cannot smuggle control bytes past the field's invariant.
+  // CR/LF, even via this public helper. Collapse line-break runs to single spaces
+  // so a future caller cannot smuggle control bytes past the field's invariant.
   if (text.find_first_of("\r\n") != std::string::npos) {
-    std::string sanitized;
-    sanitized.reserve(text.size());
-    for (const char ch : text) {
-      if (ch != '\r' && ch != '\n') {
-        sanitized.push_back(ch);
-      }
-    }
-    text = std::move(sanitized);
+    text = CollapseLineBreaksToSpaces(text);
     if (text.empty()) {
       return;
     }
@@ -157,16 +175,14 @@ bool SingleLineEditor::Insert(std::string_view input) {
   // can carry CR/LF: a whole-line copy includes a trailing '\n', and multi-line
   // clipboard content brings more. Inserting them raw stores control bytes that
   // render as garbage cells and corrupt the field's parsed value (search needle,
-  // goto-line target, rename text, ...). Strip CR/LF (collapsing CRLF) before
-  // inserting; typed single characters never contain them, so normal input is
-  // unaffected. Recurse once with the sanitized, newline-free text.
+  // goto-line target, rename text, ...). Collapse line-break runs to single spaces
+  // (so `foo\nbar` pastes as `foo bar`, not `foobar`) before inserting; typed
+  // single characters never contain them, so normal input is unaffected. Recurse
+  // once with the sanitized, newline-free text.
   if (input.find_first_of("\r\n") != std::string_view::npos) {
-    std::string sanitized;
-    sanitized.reserve(input.size());
-    for (const char ch : input) {
-      if (ch != '\r' && ch != '\n') {
-        sanitized.push_back(ch);
-      }
+    const std::string sanitized = CollapseLineBreaksToSpaces(input);
+    if (sanitized.empty()) {
+      return false;
     }
     return Insert(sanitized);
   }
