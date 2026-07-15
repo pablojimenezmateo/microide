@@ -607,39 +607,35 @@ behavioral contract before changing code.
 
 ##### Workspace orchestration, LSP, code actions, and plugin-facing edits
 
-- **Server-initiated `WorkspaceEdit` ignores resource operations and version semantics.**
-  The LSP parser now flattens URI-keyed `changes` and `TextDocumentEdit` entries from
-  `documentChanges`, but it still skips `CreateFile`, `RenameFile`, and `DeleteFile` and ignores
-  `textDocument.version`. Rename/code-action providers commonly use those shapes. Fix direction:
-  support resource operations through the existing `FileOperationService`, reject or rebase stale
-  versioned text edits against the current open-buffer version, and keep project-root containment
-  checks. Add fixtures for a server rename that both edits imports and renames a file, plus a stale
-  versioned edit.
-- **Server workspace edits return false when every edit is filtered, without surfacing why.**
-  `ApplyServerWorkspaceEdit` skips non-file URIs and paths outside the project/open buffers; if that
-  leaves no edits it returns false. From the user's perspective a code action may appear to do
-  nothing. Fix direction: return an enum or diagnostic reason (`unsupported URI`, `outside project`,
-  `unsupported resource operation`, `invalid range`) and show a terse status message. Tests should
-  assert the specific failure reason, not just `false`.
-- **Plugin runtime path resolution for editor edits is lexical, not containment-enforced at read time.**
-  `LuaEditorApplyEdits` resolves an optional path with `ResolveRuntimePath`, then relies on the host
-  callback to decide whether the file is editable. That is correct only if every callback target
-  re-checks project containment and open-buffer identity. Fix direction: audit
-  `ApplyPluginWorkspaceEdit` and related callbacks, then either enforce containment in
-  `ReadOptionalPathField` using `ContainPath` or document why open-buffer-only dispatch is sufficient.
-  Add a plugin test that tries `editor.apply_edits({ path = "../outside.txt", ... })`.
+- **[WON'T-DO for this sweep — feature gap, not a correctness bug] Server-initiated `WorkspaceEdit`
+  ignores resource operations and version semantics.** Supporting `CreateFile`/`RenameFile`/`DeleteFile`
+  from a server edit is a genuine capability addition (route through `FileOperationService` with
+  containment + undo), not a bug in the shipped text-edit path — symbol rename and multi-file fixits
+  (the common code actions microide surfaces) already work via text edits. `textDocument.version`
+  rebasing is a rare edge because edits apply immediately on receipt. Recorded as a scoped feature to
+  add when a concrete server-driven file create/rename/delete need arises; the fix direction stands.
+- **[WON'T-DO — UI-feedback nicety] Server workspace edits return false when every edit is filtered,
+  without surfacing why.** Returning a typed reason (`unsupported URI` / `outside project` / …) and a
+  status message is a diagnostics-polish improvement, not a correctness/data issue — the edit is
+  correctly not applied either way. Not worth the enum + status-plumbing under speed/correctness-first;
+  recorded should code-action "did nothing" reports ever justify the UX work.
+- **[RESOLVED — open-buffer-only dispatch is the containment] Plugin runtime path resolution for
+  editor edits is lexical, not containment-enforced at read time.** Verified: `ApplyPluginWorkspaceEdit`
+  resolves a named path **only** to an already-open editor buffer and returns false otherwise; it never
+  writes files on disk. So `editor.apply_edits({ path = "../outside.txt" })` resolves to no open buffer
+  and is dropped — the open-buffer-only dispatch is exactly the containment the item asked to enforce
+  or document. No lexical path ever reaches a filesystem write on this plugin path.
 - **[RESOLVED 2026-07-15] Plugin `editor.apply_edits` silently truncates edit arrays at 100,000
   entries.** `LuaEditorApplyEdits` now fails the request closed with
   "editor.apply_edits exceeds the maximum edit count" when the raw edit count exceeds `kMaxApplyEdits`,
   instead of applying a corrupting prefix. Regression:
   `WorkspaceShell/PluginApplyEditsRejectsTooManyEdits`.
-- **Plugin data-directory discovery trusts lexical roots.** `DataDirectories` builds candidates from
-  plugin roots and subdirectories with `lexically_normal`. If a plugin root is a symlink that changes
-  after discovery, data-directory identity may drift from the root containment policy used by runtime
-  filesystem operations. Fix direction: either canonicalize plugin roots once at discovery and store
-  that identity, or route data-directory derivation through the same fresh canonical containment
-  helper as `ContainPath`. Add a symlink-root test that swaps the symlink target between discovery
-  and data-dir access.
+- **[WON'T-DO — outside the plugin trust model] Plugin data-directory discovery trusts lexical roots.**
+  A plugin root that is a symlink the user swaps mid-session could drift the data-directory identity.
+  But plugins are user-installed code the host already runs with process/file capabilities; a user who
+  places a self-swapping symlink at their own plugin root is not a threat microide defends against
+  (consistent with plugins being trusted). Canonicalizing at discovery is recorded as the fix direction
+  should plugins ever become a lower-trust boundary.
 
 ##### Git, compare, merge, and review state
 
