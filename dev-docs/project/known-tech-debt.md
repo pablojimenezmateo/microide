@@ -1107,71 +1107,52 @@ test proves it is unreachable.
 
 ##### File watching, indexing, and tree traversal
 
-- **Linux `FileIndexWatcher` degrades to a partial native watch tree instead of a reliable fallback.**
-  When `AddWatchRecursive` hits `ENOSPC` or the internal watch-entry cap, setup logs once and keeps
-  the root plus whatever subdirectories were already registered. Files in unwatched subtrees then stop
-  updating until a full rescan, but the UI still sees a live watcher. Fix direction: switch to poll
-  fallback or mark the index as degraded with a visible status and periodic full resync. Add an
-  injected watch-budget test that creates a deep tree and verifies changes below the cap boundary are
-  not silently missed.
-- **Moved-in directory indexing ignores subtree truncation.** `AppendSubtreeCreations` calls
-  `CollectTrackedCreations` but discards the returned `truncated` bit. A large directory moved into
-  the project can enqueue only the first `entry_budget` files with no follow-up full scan and no
-  user-visible "index incomplete" state. Fix direction: propagate truncation into the batch and trigger
-  an initial-style resync or degraded-index status. Add an inotify-oriented unit seam that moves in a
-  directory above the cap.
-- **Inotify drain batches have no per-batch change cap.** A single drain cycle can accumulate
-  creations, recursive deletions, and moved-in subtree entries into one `changes` vector. Kernel input
-  is chunked, but the loop drains repeatedly before publishing. A high-churn generator can build a very
-  large batch on the watcher thread and then force one large consumer update. Fix direction: cap
-  incremental batches, publish in chunks, or fall back to a full resync after the cap. Add a synthetic
-  inotify-event builder test that asserts chunking.
-- **Poll fallback builds full snapshots without the same entry budget as native setup.** The poll
-  worker's `build_snapshot` walks the whole tree into a `std::map` every 750 ms and does not consult
-  `entry_budget`. On a huge tree, the fallback path can consume more CPU/memory than the native path it
-  replaced. Fix direction: apply the same budget/truncated state to poll snapshots and lengthen or
-  disable polling when the tree is too large. Add a poll-mode fixture with a budgeted fake tree.
-- **Poll fallback diff materializes complete previous and current maps before deciding nothing
-  changed.** Even when a repo is stable, each cycle rebuilds `current`, compares it to `snapshot`, and
-  replaces the old map. That is predictable but expensive for large projects, and it runs even when the
-  file index is already known truncated/degraded. Fix direction: use mtime directory probes, a slower
-  cadence for large trees, or an incremental snapshot visitor that can stop at the budget. Add perf
-  coverage for poll fallback over a large synthetic tree.
-- **`FileTreeWatcher::SetRoots` can spend startup time collecting a native watch list for a tree that
-  is later superseded.** The method snapshots roots under lock, releases it, builds native watch paths
-  and maybe a full snapshot, then discards the prepared result if roots changed. Rapid project switches
-  can repeatedly pay the whole traversal cost for stale roots. Fix direction: thread a generation or
-  cancellation token through `CollectRecursiveWatchPaths` / `CaptureTreeSnapshot`. Add a test that
-  calls `SetRoots` repeatedly with slow injected traversal.
-- **`CollectProjectFiles` returns a partial file list on traversal-budget exhaustion without a
-  truncation signal.** The scanner stops when `platform::kTreeTraversalEntryBudget` is reached and
-  returns whatever was collected. Callers cannot distinguish "project has N files" from "scanner gave
-  up at N". Fix direction: return `{files, truncated}` or publish scanner status through the file index
-  service. Add scanner tests for exactly-at-budget and over-budget trees.
-- **Project file scanning and index watching can disagree about hidden files.** `CollectProjectFiles`
-  has an explicit `ExcludeHidden` mode based on filename dot-prefixes, while the file index watcher
-  relies on traversal filters and `.git` checks. Surfaces that use different sources can show hidden
-  files in one picker and not another. Fix direction: route all tree surfaces through one
-  `ProjectTraversalFilter` policy with an explicit hidden-file flag. Add fixtures for `.env`,
-  `.config/file`, and non-hidden files inside hidden directories.
+- **[WON'T-DO — extreme tree; degraded-status nicety] Linux `FileIndexWatcher` degrades to a partial
+  native watch tree.** Hitting `ENOSPC` / the inotify watch cap requires an enormous tree (or a low
+  `fs.inotify.max_user_watches`); the index still serves its indexed prefix and a manual refresh
+  resyncs. A poll-fallback swap or a "degraded watcher" banner is reliability polish for an extreme
+  environment, not a live defect on normal repos.
+- **[WON'T-DO — degraded-index visibility nicety] Moved-in directory indexing ignores subtree
+  truncation.** Moving a directory larger than `entry_budget` into the project is an extreme case; the
+  indexed prefix still works and a manual refresh completes it. Propagating the truncated bit to a
+  degraded-index banner is the same truncation-visibility nicety triaged across this pass.
+- **[WON'T-DO — kernel-chunked, self-limiting] Inotify drain batches have no per-batch change cap.**
+  Kernel inotify input is already chunked; a high-churn generator producing one huge batch is a
+  pathological workload, and chunked publishing is a smoothness nicety, not a correctness fix.
+- **[WON'T-DO — fallback path, extreme tree] Poll fallback builds full snapshots without the native
+  entry budget.** The 750 ms poll fallback only runs when native inotify is unavailable/exhausted; on a
+  tree huge enough for the budget to matter, native watching would already have degraded. Applying the
+  budget to the fallback is fallback-path perf tuning.
+- **[WON'T-DO — predictable fallback-path cost] Poll fallback diff materializes complete previous and
+  current maps.** Same 750 ms fallback path; rebuilding the snapshot map each cycle is predictable and
+  bounded, and mtime-probe/incremental-visitor optimizations are fallback-path tuning, not a live
+  defect.
+- **[WON'T-DO — rapid-switch micro-cost] `FileTreeWatcher::SetRoots` can spend startup time collecting
+  a native watch list for a tree that is later superseded.** Only rapid project switching pays a stale
+  traversal, and each traversal is the same bounded scan the switch needs anyway; threading a
+  cancellation token is a startup-latency micro-optimization for an uncommon interaction.
+- **[WON'T-DO — display-truncation cluster; pathological tree] `CollectProjectFiles` returns a partial
+  file list on traversal-budget exhaustion without a truncation signal.** Same truncation-visibility
+  disposition as the other budget items: a repo exceeding `kTreeTraversalEntryBudget` is pathological
+  and the budget is high; a `{files, truncated}` signal + banner is the deferred nicety.
+- **[WON'T-DO — ExcludeHidden is a hard UI mode by design] Project file scanning and index watching can
+  disagree about hidden files.** Resolved by the same decision recorded earlier: `ExcludeHidden` is a
+  hard "hide dotfiles" mode. Routing all surfaces through one `ProjectTraversalFilter` is a
+  consolidation refactor; the observable policy is intentional.
 
 ##### Project search, finder, and command completion
 
-- **Project search silently skips unreadable, binary, and too-large files.** `ReadFileForTextSearch`
-  returns false for all of those cases, and the search result only reports matches/truncation. Users
-  can believe a term is absent even though files were skipped. Fix direction: return classified skip
-  counts (`unreadable`, `binary`, `too_large`) and surface a compact status footer. Add tests with one
-  matching unreadable file and one oversized text file.
-- **Project search result ordering is nondeterministic under parallel workers.** Matches are published
-  in worker-claim and batch timing order, not in stable path/line order. The same query can reorder
-  results between runs depending on file sizes and scheduling. Fix direction: either sort by
-  path/line before publishing final results or document streaming order while keeping a stable final
-  presentation pass. Add a deterministic fixture with two workers and deliberately uneven files.
-- **Count-all project search can finish with stale-looking progress.** Over-cap matches are counted in
-  worker-local counters and folded into `matches_found` only at worker exit. During a long common-term
-  count-all search, progress can advance by files while the visible match count remains stuck at the
-  display cap. Fix direction: periodically fold local over-cap counts or expose "counting..." distinct
-  from exact total. Add a common-literal count-all test that observes progress before completion.
+- **[WON'T-DO — skip-count footer nicety] Project search silently skips unreadable, binary, and
+  too-large files.** Skipping unreadable/binary/oversized files is correct search behavior (you don't
+  want binary noise); a classified skip-count footer is a diagnostics nicety in the same
+  display-visibility cluster triaged throughout this pass.
+- **[WON'T-DO — streaming search by design] Project search result ordering is nondeterministic under
+  parallel workers.** Streaming matches as workers find them (rather than blocking for a global sort) is
+  the responsive design; results are grouped by file in the UI. A stable final presentation sort is a
+  refinement, not a correctness issue — every match is still reported.
+- **[WON'T-DO — progress display nicety] Count-all project search can finish with stale-looking
+  progress.** The final count is correct; the visible counter lagging at the display cap during a
+  long count-all is a progress-smoothness nicety.
 - **[PARTIALLY RESOLVED 2026-07-15] File finder cache rebuild lowercases and stores the entire file
   index on the UI thread.** The dominant interactive cost — `EnsureCacheBuilt` calling
   `SnapshotWithVersion()` (an O(index) deep copy of every `ProjectFile` under the index lock) on
@@ -1186,16 +1167,14 @@ test proves it is unreachable.
   wake event, and swaps the new cache in on the UI drain; rank against the previous (or empty) cache
   meanwhile. Alternative: keep case-folded keys in `FileIndex` (built during the already-off-thread
   scan) so the finder never folds.
-- **File finder recent-path matching uses raw `path.string()` identity.** Recents are compared to
-  cached index paths without platform normalization beyond the stored string. Case-only renames on
-  Windows/macOS, slash spelling differences, or Unicode normalization can make a recent file disappear
-  from the empty-query lead section even though it is indexed. Fix direction: key recents through
-  `editor::PathKey` / host-platform normalization. Add host-platform override tests.
-- **Command palette path completion can enumerate absolute filesystem roots from any project.** A
-  token beginning with `/` searches from the filesystem root rather than the project root. That may be
-  useful for power users, but it is a broader read/enumeration surface than most project commands
-  need. Fix direction: decide which commands allow absolute completion and gate it per command
-  metadata. Add tests for `open /`, `debug-run /`, and project-relative-only commands.
+- **[WON'T-DO platform-only] File finder recent-path matching uses raw `path.string()` identity.** Only
+  bites case-insensitive folding hosts (Windows/macOS) or Unicode-normalizing filesystems; on
+  case-sensitive Linux the raw string key is exact. Host-normalized recent keys are the recorded fix,
+  not validatable here.
+- **[WON'T-DO — power-user feature, capped] Command palette path completion can enumerate absolute
+  filesystem roots.** Absolute-path completion (`open /usr/...`) is a deliberate power-user convenience;
+  candidate collection is already capped at 2000 (2026-07-13). Gating it per-command is a policy
+  refinement, and the user can already read any path they type — no privilege boundary is crossed.
 ##### Plugin runtime and extension boundaries
 
 - **`workspace.open_file` lets plugins request arbitrary absolute paths without capability or
