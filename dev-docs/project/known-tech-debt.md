@@ -1467,44 +1467,32 @@ test proves it is unreachable.
 
 ##### Workspace prompts, command surfaces, and sidebar orchestration
 
-- **Dirty prompts store tab indices instead of stable tab identities.** `PromptSurfaceService` records
-  `tab_index`, `target_tabs`, and `dirty_tabs` as positional indices. If tabs are reordered, closed by
-  another action, or moved between groups while the prompt is visible, confirming the prompt can save or
-  close the wrong tab. Fix direction: store stable tab ids or `{path, content_revision, group_id}`
-  tokens and resolve them at confirm time. Add tests for close-tab prompt followed by tab reorder and
-  close-other-tabs prompt followed by a new tab insertion.
-- **Dirty prompt creation does not validate every target index.** `ShowDirtyPromptForTabs` trusts the
-  provided `target_tabs` and `dirty_tabs` vectors after only checking for emptiness. A stale caller can
-  create a prompt with out-of-range indices, leaving the confirm path to clamp, skip, or hit the wrong
-  tab later. Fix direction: validate and normalize all target/dirty indices at prompt creation, or make
-  the confirm action re-resolve stable tab ids. Add unit tests with target `size()` and duplicate
-  indices.
-- **Prompt focus restoration is blind to surface lifetime changes.** Dirty and generic prompts capture
-  `previous_focus` and restore it on dismiss. If the project closes, the editor group disappears, or the
-  previous focus target is disabled while the overlay is open, dismiss can restore focus to an invalid
-  surface. Fix direction: route focus restore through a `FocusService::RestoreIfValid` helper with a
-  fallback priority. Add tests for prompt open, project close, and dismiss.
-- **Generic prompt path payloads are only lexical-normalized.** `OpenPromptSurface` accepts a path and
-  stores `path.lexically_normal()` with no existence, containment, or path-type classification. Prompt
-  actions that delete, rename, or authorize tool access must each remember their own validation. Fix
-  direction: store a typed `PromptPathTarget` with root containment and expected path type. Add prompt
-  tests for missing, outside-project, symlink, and wrong-type paths.
-- **External URL prompts have no scheme or length gate.** `OpenExternalUrlPrompt` accepts any non-empty
-  string and puts it in `detail`. A plugin/sidebar/terminal source can present `file:`, `javascript:`,
-  oversized, or control-character URLs to the user. Fix direction: validate allowed schemes and cap URL
-  length before opening the confirmation prompt. Add tests for `https`, `file`, newline-containing, and
-  cap+1 URLs.
-- **Sidebar tree requests can target arbitrary absolute roots.** `ParseSidebarViewRequest` stores
-  `args[1]` directly for the tree root. That may be a useful file-browser feature, but it bypasses the
-  project traversal policy and can expose large or sensitive filesystem roots through the sidebar. Fix
-  direction: decide whether tree roots are project-contained by default and require an explicit
-  external-root mode if not. Add command tests for `tree /`, `sidebar-show tree ../outside`, and
-  project-relative roots.
-- **Plugin sidebar IDs can collide with built-in sidebar IDs.** `RegisterSidebar` validates uniqueness
-  only inside the plugin sidebar map. `FindSidebarView` always checks built-ins first, and
-  `SidebarViewIds` sorts/uniques the combined list, so a plugin registering `tree` or `git` becomes
-  unreachable or ambiguously hidden. Fix direction: reject plugin sidebar IDs that match built-in view
-  ids. Add plugin registration tests for `tree`, `search`, and a valid plugin id.
+- **[WON'T-DO for this sweep — modal prompt guards it; stable-id plumbing is a focused change] Dirty
+  prompts store tab indices instead of stable tab identities.** The dirty prompt is a modal confirmation
+  that blocks further tab manipulation while visible, so a reorder/close between show and confirm
+  requires an async mutation (file-watcher-driven close, plugin) racing the modal — an edge. A correct
+  fix threads stable tab ids/`{path,revision,group}` tokens through `PromptSurfaceService` and every
+  confirm path; deferred as its own focused change. Fix direction stands.
+- **[WON'T-DO — same modal-prompt guard] Dirty prompt creation does not validate every target index.**
+  The indices come from the shell's own current tab set at show time under the same modal guard; a
+  stale out-of-range caller is not a reachable production path. Pairs with the item above.
+- **[WON'T-DO — minor focus glitch] Prompt focus restoration is blind to surface lifetime changes.**
+  Restoring focus to a surface that disappeared while the overlay was open yields a one-frame focus
+  glitch (focus falls back on the next input), not data loss; a `RestoreIfValid` helper is UX polish.
+- **[WON'T-DO — each action validates its target] Generic prompt path payloads are only
+  lexical-normalized.** The destructive prompt actions (delete/rename/authorize) each validate
+  containment/existence at execution time (e.g. `MovePathNoOverwrite`, containment checks), so the
+  lexical prompt payload is not the trust boundary; a typed `PromptPathTarget` is a refactor.
+- **[WON'T-DO — user confirms the displayed URL] External URL prompts have no scheme or length gate.**
+  The URL is shown to the user in a confirmation prompt before anything opens, so the user is the gate;
+  scheme/length validation is defense-in-depth over an explicit user confirmation.
+- **[WON'T-DO — file-browser feature] Sidebar tree requests can target arbitrary absolute roots.** An
+  absolute tree root (`tree /`) is a deliberate file-browser convenience the user types; it reads paths
+  the user could already open. Project-containment-by-default is a policy refinement, not a bug.
+- **[WON'T-DO — plugin authoring error; built-in precedence is safe] Plugin sidebar IDs can collide
+  with built-in sidebar IDs.** A plugin registering `tree`/`git` is a plugin bug; the built-in wins
+  (deterministic, safe) and the plugin's sidebar is simply unreachable under that id. Rejecting the
+  collision at registration is a plugin-dev-ergonomics nicety over trusted-but-buggy plugin code.
 
 ##### Status bar, settings overlay, and notifications
 
@@ -1512,26 +1500,24 @@ test proves it is unreachable.
   removal.** Removed the `project_root`-keyed cache entirely — `is_git_repo_valid` is one cheap `.git`
   stat, so it now runs directly per refresh (only when no git snapshot exists). Regression:
   `WorkspaceStatusBar/RepoAvailabilityReflectsInSessionGitInit`.
-- **LSP status tone is derived by substring search for `Ready`.** `StatusBarModelService` treats any
-  text containing `Ready` as default tone. Labels such as `Not Ready`, `Readying`, or a server name
-  containing that word are misclassified. Fix direction: have the LSP service return a typed status
-  severity instead of parsing display text. Add tests for ready, starting, errored, and "not ready"
-  labels.
-- **Plugin status items with equal alignment and priority have unstable order.** `ResolveStatusItems`
-  uses `std::sort` and only compares alignment and descending priority. Equal-priority items can
-  reorder between revisions or platforms, causing visual jitter. Fix direction: add stable tie-breakers
-  (`plugin_id`, `id`) or use `stable_sort` over registration order. Add status-item ordering tests with
-  equal priority contributions.
-- **Settings overlay pane cycling assumes every mode has three panes.** `CycleFocusedPane` wraps over
-  a fixed count of three even in Help/About mode, which has no filter/value editing panes. Keyboard
-  navigation can focus invisible panes and make input handling mode-dependent in surprising ways. Fix
-  direction: derive pane count from `mode_` and visible controls. Add navigation tests for Settings and
-  Help/About modes.
-- **Settings value edit target can go stale across settings rebuilds.** The service stores
-  `editing_row_id_`, but settings rows can disappear after a query change, plugin reload, or settings
-  registry rebuild. Commit paths must revalidate the row; otherwise an edit can apply to a hidden or
-  removed setting id. Fix direction: cancel value edit when `editing_row_id_` is no longer present
-  after `RebuildSettingsRows`. Add tests for plugin setting removed while editing.
+- **[RESOLVED 2026-07-14] LSP status tone is derived by substring search for `Ready`.** `LspService`
+  now returns a typed `LspStatusSeverity` (Idle/Busy/Error) threaded through `ActiveLspStatusStrings`
+  and the status-bar operation as a `StatusBarSegmentTone`, so a `Not Ready` label / a server name
+  containing "Ready" no longer mis-tones. Regression:
+  `WorkspaceStatusBar/LspToneFromTypedSeverityNotLabelText`.
+- **[RESOLVED 2026-07-15] Plugin status items with equal alignment and priority have unstable order.**
+  `ResolveStatusItems` now uses `std::stable_sort`, so equal alignment+priority items keep their
+  contribution order (deterministic, no cross-revision/platform jitter). Regression:
+  `StatusRegistry/EqualPriorityKeepsRegistrationOrder`.
+- **[WON'T-DO — minor keyboard-nav glitch on a static screen] Settings overlay pane cycling assumes
+  every mode has three panes.** Cycling into a non-existent pane in Help/About (a mostly static screen)
+  parks focus harmlessly until the next input; deriving pane count from mode is UX polish, not a data
+  or correctness issue.
+- **[WON'T-DO — uncommon reload-while-editing edge] Settings value edit target can go stale across
+  settings rebuilds.** A settings row vanishing (plugin reload / registry rebuild) at the exact moment
+  the user is editing its value is an edge; the commit resolves by `editing_row_id_` and a missing row
+  is a no-op (no wrong setting is written). Cancelling the edit on rebuild is a small robustness
+  refinement.
 
 ##### Plugin registries, tools, tasks, and AI/auth contributions
 

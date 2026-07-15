@@ -46,12 +46,16 @@ std::vector<StatusItemView> ResolveStatusItems(const plugin::PluginHost& plugin_
         .plugin_id = contrib.plugin_id,
     });
   }
-  std::sort(items.begin(), items.end(), [](const StatusItemView& a, const StatusItemView& b) {
-    if (a.alignment != b.alignment) {
-      return a.alignment < b.alignment;
-    }
-    return a.priority > b.priority;
-  });
+  // stable_sort so items with equal alignment+priority keep their registration
+  // (contribution) order instead of reordering nondeterministically between
+  // revisions/platforms — plain std::sort has no tie-break and would jitter.
+  std::stable_sort(items.begin(), items.end(),
+                   [](const StatusItemView& a, const StatusItemView& b) {
+                     if (a.alignment != b.alignment) {
+                       return a.alignment < b.alignment;
+                     }
+                     return a.priority > b.priority;
+                   });
   return items;
 }
 

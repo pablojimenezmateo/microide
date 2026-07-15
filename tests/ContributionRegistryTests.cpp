@@ -517,6 +517,39 @@ return ide.plugin({
   Expect(views.front().text == "ready", "resolved status item text should match");
 }
 
+// Two status items with equal alignment+priority must keep their registration
+// order (stable_sort), not reorder nondeterministically between revisions.
+void TestPluginStatusItemsEqualPriorityKeepRegistrationOrder() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  WriteFile(plugins_dir / "contrib-order" / "init.lua", R"(
+local ide = require("microide")
+return ide.plugin({
+  id = "contrib.order",
+  setup = function(ctx)
+    ctx.status.add({ id = "first",  text = "first",  alignment = "right", priority = 10 })
+    ctx.status.add({ id = "second", text = "second", alignment = "right", priority = 10 })
+  end,
+})
+)");
+
+  PluginHost host;
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+
+  const auto& contribs = host.ContributedStatusItems();
+  Expect(contribs.size() == 2, "both equal-priority status items should be contributed");
+  const auto views = ResolveStatusItems(host);
+  Expect(views.size() == 2, "both equal-priority status items should resolve");
+  // stable_sort: equal alignment+priority items preserve the contribution order
+  // (deterministic, no jitter) rather than reordering under an unstable sort.
+  Expect(views[0].id == contribs[0].id && views[1].id == contribs[1].id,
+         "equal alignment+priority items must keep contribution order (stable_sort, no jitter)");
+}
+
 void TestPluginStatusItemUpdate() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1125,6 +1158,8 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "KeybindingRegistry/ResolveSkipsSecondPluginSameChord",
           TestResolveKeybindingsSkipsSecondPluginSameChord);
   AddTest(tests, "StatusRegistry/PluginContributions", TestPluginContributedStatusItems);
+  AddTest(tests, "StatusRegistry/EqualPriorityKeepsRegistrationOrder",
+          TestPluginStatusItemsEqualPriorityKeepRegistrationOrder);
   AddTest(tests, "StatusRegistry/Update", TestPluginStatusItemUpdate);
   AddTest(tests, "StatusRegistry/CacheInvalidatesOnRevisionBump",
           TestStatusItemCacheInvalidatesOnRevisionBump);
