@@ -4371,6 +4371,37 @@ void TestWorkspaceShellMultiBufferWorkspaceEditIndependentBaselines() {
   Expect(ReadFile(b_path) == "bbb\n", "buffer B was never written to disk");
 }
 
+// Regression: a WorkspaceEdit with two overlapping ranges for one buffer must be
+// rejected wholesale, not applied highest-first (which double-edits the shared
+// bytes order-dependently). The buffer is left untouched.
+void TestWorkspaceShellWorkspaceEditRejectsOverlappingEdits() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path a_path = root / "a.txt";
+  WriteFile(a_path, "hello world\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, a_path);
+
+  const auto range = [](std::size_t l0, std::size_t c0, std::size_t l1, std::size_t c1) {
+    return editor::SelectionRange{editor::TextPosition{l0, c0}, editor::TextPosition{l1, c1}};
+  };
+  // Ranges [0,0)-[0,5) and [0,3)-[0,8) intersect on columns 3..5.
+  const std::vector<microide::workspace::CodeActionEdit> edits = {
+      {a_path, range(0, 0, 0, 5), "AAAAA"},
+      {a_path, range(0, 3, 0, 8), "BBBBB"},
+  };
+  Expect(!WorkspaceShellTestAccess::ApplyLspWorkspaceEdit(shell, edits),
+         "an overlapping-edit group applies to nothing");
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "hello world",
+         "overlapping edits must be rejected, leaving the buffer unchanged");
+}
+
 // Regression: an LSP WorkspaceEdit (code action / rename / Format Document / plugin
 // edit) that mutates a buffer must mark the fold model dirty. Without it, a same-line-
 // count edit that moves a fold boundary leaves EnsureActiveFoldingModelFresh early-
@@ -4467,6 +4498,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWorkspaceEditRefreshesFolds);
   AddTest(tests, "WorkspaceShell/MultiBufferWorkspaceEditIndependentBaselines",
           TestWorkspaceShellMultiBufferWorkspaceEditIndependentBaselines);
+  AddTest(tests, "WorkspaceShell/WorkspaceEditRejectsOverlappingEdits",
+          TestWorkspaceShellWorkspaceEditRejectsOverlappingEdits);
   AddTest(tests, "WorkspaceShell/PluginSnippetTabTriggerExpands",
           TestWorkspaceShellPluginSnippetTabTriggerExpands);
   AddTest(tests, "WorkspaceShell/PluginEditorEventTrackerCoalescesChanges",

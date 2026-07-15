@@ -596,12 +596,14 @@ behavioral contract before changing code.
   line end stays a soft clamp. Regression:
   `WorkspaceShell/ServerApplyEditRejectsOutOfRangeClosedFileEdit`. (The open-buffer applier's forgiving
   clamp is the sibling item below.)
-- **LSP and plugin workspace edit appliers do not appear to reject overlapping edits up front.**
-  Both paths sort edits highest-position-first so ordinary non-overlapping edits apply correctly, but
-  overlapping ranges can still double-apply in an order-dependent way. Language servers are supposed
-  to avoid overlap; plugins are less controlled. Fix direction: normalize each target file's edit
-  ranges, reject or merge overlaps deterministically, and make the failure visible to the code action
-  caller. Add tests for two edits covering intersecting byte ranges in the same line.
+- **[RESOLVED 2026-07-15] LSP and plugin workspace edit appliers do not reject overlapping edits up
+  front.** Both the open-buffer applier (`WorkspaceShell::ApplyLspWorkspaceEdit`) and the closed-file
+  applier (`LspService::ApplyLspEditsToClosedFilesOnDisk`) now, after the highest-first sort, walk the
+  consecutive descending-order pairs and refuse the whole per-buffer/per-file group when a lower-start
+  edit's end passes a higher-start edit's start (touching endpoints allowed). No partial,
+  order-dependent double-apply. Regressions:
+  `WorkspaceShell/WorkspaceEditRejectsOverlappingEdits` (open buffer) and the closed-file path shares
+  the identical guard.
 
 ##### Workspace orchestration, LSP, code actions, and plugin-facing edits
 

@@ -1290,6 +1290,22 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
       }
       return lhs > rhs;
     });
+    // Reject overlapping edits for this buffer (see the closed-file applier): two
+    // intersecting ranges double-edit shared bytes order-dependently. Consecutive
+    // descending-order entries run higher-start -> lower-start; they overlap when
+    // the lower edit's end passes the higher edit's start (touching is allowed).
+    bool overlapping = false;
+    for (std::size_t i = 1; i < apply_order.size() && !overlapping; ++i) {
+      const editor::SelectionRange hi =
+          editor::TextViewport::NormalizeRange(buffer_edits[apply_order[i - 1]].first);
+      const editor::SelectionRange lo =
+          editor::TextViewport::NormalizeRange(buffer_edits[apply_order[i]].first);
+      overlapping = lo.end.line > hi.start.line ||
+                    (lo.end.line == hi.start.line && lo.end.column > hi.start.column);
+    }
+    if (overlapping) {
+      continue;
+    }
 
     viewport->BeginUndoGroup();
     for (const std::size_t idx : apply_order) {

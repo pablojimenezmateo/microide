@@ -1124,6 +1124,24 @@ LspService::DiskEditResult LspService::ApplyLspEditsToClosedFilesOnDisk(
       }
       return lhs > rhs;
     });
+    // Reject overlapping edits: applying two intersecting ranges (even
+    // highest-first) double-edits shared bytes in an order-dependent way. In this
+    // descending order consecutive entries run higher-start -> lower-start; the
+    // lower-start edit overlaps the higher one when its end passes the higher
+    // edit's start. Touching endpoints (adjacent edits) are allowed.
+    bool overlapping = false;
+    for (std::size_t i = 1; i < apply_order.size() && !overlapping; ++i) {
+      const editor::SelectionRange hi =
+          editor::TextViewport::NormalizeRange(file_edits[apply_order[i - 1]].first);
+      const editor::SelectionRange lo =
+          editor::TextViewport::NormalizeRange(file_edits[apply_order[i]].first);
+      overlapping = lo.end.line > hi.start.line ||
+                    (lo.end.line == hi.start.line && lo.end.column > hi.start.column);
+    }
+    if (overlapping) {
+      result.any_failed = true;
+      continue;
+    }
     for (const std::size_t idx : apply_order) {
       scratch.ReplaceRange(file_edits[idx].first, file_edits[idx].second, /*record_undo=*/false);
     }
