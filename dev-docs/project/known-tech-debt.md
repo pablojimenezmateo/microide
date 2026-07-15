@@ -1183,20 +1183,25 @@ test proves it is unreachable.
 - **[WON'T-DO — progress display nicety] Count-all project search can finish with stale-looking
   progress.** The final count is correct; the visible counter lagging at the display cap during a
   long count-all is a progress-smoothness nicety.
-- **[PARTIALLY RESOLVED 2026-07-15] File finder cache rebuild lowercases and stores the entire file
-  index on the UI thread.** The dominant interactive cost — `EnsureCacheBuilt` calling
-  `SnapshotWithVersion()` (an O(index) deep copy of every `ProjectFile` under the index lock) on
-  **every keystroke** just to read the version — is fixed: it now checks the cheap `index_->version()`
-  first and only snapshots on an actual version change (`FileFinder/WarmRefreshDoesNotRebuildPerKeystroke`).
-  **Still deferred:** the one-time rebuild on a version change (finder-open after an index update) still
-  runs the per-file case-fold + `CachedFileEntry` build on the UI thread. Moving it fully off-thread
-  needs the finder to own a background executor + a wake→re-refresh hook wired through the shell (SDL
-  event, like `HighlightPrefetchService`), plus a stale/rebuilding state while the finder is
-  interactive; that async wiring is hard to verify headless, so it is left as a follow-up. Concrete
-  design: finder-owned `ProjectBackgroundExecutor` builds the cache off the version-change path, posts a
-  wake event, and swaps the new cache in on the UI drain; rank against the previous (or empty) cache
-  meanwhile. Alternative: keep case-folded keys in `FileIndex` (built during the already-off-thread
-  scan) so the finder never folds.
+- **[RESOLVED (dominant path) 2026-07-15 / remainder WON'T-DO 2026-07-15 (session 3)] File finder cache
+  rebuild lowercases and stores the entire file index on the UI thread.** The dominant interactive cost —
+  `EnsureCacheBuilt` calling `SnapshotWithVersion()` (an O(index) deep copy of every `ProjectFile` under
+  the index lock) on **every keystroke** just to read the version — is fixed: it now checks the cheap
+  `index_->version()` first and only snapshots on an actual version change
+  (`FileFinder/WarmRefreshDoesNotRebuildPerKeystroke`). **Remainder — WON'T-DO:** the one-time rebuild on
+  a version change (finder-open after an index update) still runs the per-file case-fold +
+  `CachedFileEntry` build on the UI thread. Re-examined in session 3: `FileIndex::ApplyBatch` (where
+  `ToProjectFile` runs) fires on the **watcher's background thread** (per the FileIndexWatcher threading
+  contract), so precomputing `lower_path`/`lower_filename` on `ProjectFile` during the scan *would*
+  genuinely move the fold off the UI thread — the earlier "needs async wiring" note was wrong about that.
+  But it is declined anyway: it adds three derived strings to every `ProjectFile` permanently, inflating
+  the hot `files_` vector and every `SnapshotWithVersion()` deep copy (≈2–3× the per-entry string bytes,
+  tens of MB on a 100k-file repo), and it also widens the defaulted `ProjectFile::operator==` used by the
+  upsert dedup. That permanent memory cost on the core index structure buys only an **infrequent one-time**
+  win (the per-keystroke path — the part that actually hurt — is already off the hot loop), so the trade
+  is net-negative. The fully-async alternative (finder-owned `ProjectBackgroundExecutor` + wake→re-refresh
+  hook, like `HighlightPrefetchService`) remains disproportionate for a once-per-index-change cost and is
+  also declined. Closed.
 - **[WON'T-DO platform-only] File finder recent-path matching uses raw `path.string()` identity.** Only
   bites case-insensitive folding hosts (Windows/macOS) or Unicode-normalizing filesystems; on
   case-sensitive Linux the raw string key is exact. Host-normalized recent keys are the recorded fix,
