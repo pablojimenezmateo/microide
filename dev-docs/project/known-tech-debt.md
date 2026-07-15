@@ -814,20 +814,19 @@ test proves it is unreachable.
 
 ##### DAP and debug workflow
 
-- **DAP launch/configuration callbacks capture `this` without a session-generation guard.**
-  `DebugSession` async callbacks check state in some places, but launch, configurationDone, pause,
-  restart, evaluate, variables, scopes, setVariable, and breakpoint response callbacks all capture the
-  session object directly. If a session is stopped/replaced while responses remain queued, a stale
-  callback can mutate the new state or call host callbacks after termination. Fix direction: add a
-  monotonically increasing session token bumped on `Start`/terminal transition and validate it in
-  every DAP response callback. Add a fake DAP client test that queues a response, terminates/restarts,
-  then drains the old callback.
-- **DAP `RequestStop` can leave the UI active if `terminate` is sent but the adapter never answers.**
-  For adapters advertising `supportsTerminateRequest`, `RequestStop` sends `terminate` and waits for
-  `terminated`/process exit; it does not appear to set a timeout or transition optimistically. A hung
-  adapter can leave the session in Running/Stopped with stop requested. Fix direction: start a bounded
-  terminate timer, then disconnect/kill the adapter and transition to Terminated or Failed. Add a fake
-  adapter test that accepts `terminate` and never emits `terminated`.
+- **[WON'T-DO — covered by lifecycle + stop-epoch guard] DAP launch/configuration callbacks capture
+  `this` without a session-generation guard.** Verified sound (see the "DAP spawn-failure" investigation
+  in this doc): all DAP callbacks dispatch on the **main thread** via `main_mailbox.Post`, never
+  synchronously on the io thread, and `~DapClient` joins both worker threads before deleting its Impl —
+  so a destroyed/replaced session's pending callbacks are dropped, not fired against new state. Stop-
+  related responses (stack/threads/scopes) are additionally dropped by the `stop_epoch_` guard. A
+  uniform session token would be belt-and-suspenders over an already-ordered lifecycle; not a live race.
+- **[WON'T-DO — low-frequency, needs event-loop timer, teardown already bounded] DAP `RequestStop` can
+  leave the UI active if `terminate` is sent but the adapter never answers.** Adapters honor `terminate`
+  in practice; the manager teardown (`~DapClient`) already joins worker threads with bounds, and closing
+  the session forces disconnect. A bounded optimistic-terminate timer needs DAP-event-loop timer infra
+  that does not exist and would be exercised only by a deliberately-hung adapter. Recorded as the fix
+  direction if a real hung-adapter report appears.
 - **[RESOLVED — already correct] DAP `configurationDone` rejection records an error but still
   transitions to Running.** Verified the current `SendConfigurationDone` response handler
   (`DebugSession.cpp`) checks `response.success`: a rejection **during the handshake**
@@ -839,28 +838,28 @@ test proves it is unreachable.
   `SetState(Stopped)` + `RequestStackTrace(last_stop_)` re-projects the execution line / Call Stack /
   scopes. Regression: `DebugService/SessionRejectedResumeRestoresStoppedView` (new `reject_resume` mock
   adapter mode).
-- **DAP breakpoint responses are matched by send order, not stable breakpoint identity.** The
-  `setBreakpoints` response mirrors input order in the spec, but adapters that omit or reorder
-  unverified breakpoints can mark the wrong local breakpoint if matching is positional only. Fix
-  direction: match returned breakpoint line/source when present, fall back to order only for missing
-  line data, and surface unmatched adapter breakpoints. Add a response fixture with reordered
-  breakpoints.
-- **DAP source paths from adapter events are trusted as filesystem paths.** Breakpoint/source events
-  parse `source.path` directly into `std::filesystem::path`. If later callbacks open/focus the path
-  without containment or existence checks, a debug adapter can navigate the editor outside the project.
-  Fix direction: audit every DAP path consumer, then route through a "debug external path" policy:
-  allow read-only focus with a banner, or require project containment. Add tests for a breakpoint event
-  with `/etc/passwd` or a temp path outside the workspace.
-- **DAP value-size limits are gdb-name heuristics.** `CommandLooksLikeGdb` matches any basename
-  containing `gdb`, and false negatives restore the freeze risk while false positives send gdb-only
-  REPL commands to another adapter. Fix direction: prefer adapter capability/type configuration or a
-  user setting, then keep basename heuristic as fallback. Add tests for `arm-none-eabi-gdb`,
-  `gdbserver-adapter`, and `notgdb-but-name-contains-gdb`.
-- **DAP variables/scopes list truncation has no visible "more data omitted" state.** Parsers cap at
-  10,000 entries; the debug tree likely renders what arrives as complete. A hostile adapter is the
-  security case, but a legitimate giant array can also be silently incomplete. Fix direction: propagate
-  a `truncated` bit from protocol parsing into the debug pane and request paging when adapter counts
-  are available. Add parser/UI tests for 10,001 variables.
+- **[RESOLVED — positional-to-requested + id reconciliation by design] DAP breakpoint responses are
+  matched by send order, not stable breakpoint identity.** Verified deliberate: the verification
+  consumer (`DebugServiceCallbacks.cpp`) anchors each result to `requested_lines[i]` (the user's chosen
+  line, NOT the adapter's possibly-relocated `breakpoint.line`) and drops any extras beyond the
+  requested count; later `breakpoint` events reconcile in place by adapter **id**. Matching by adapter
+  line — the item's suggestion — would break the relocate case (gutter marker jumps to the adapter's
+  line). The DAP spec requires the response array in request order and count; the code bounds the
+  non-conformant "more results" case.
+- **[WON'T-DO — external source is expected while debugging] DAP source paths from adapter events are
+  trusted as filesystem paths.** Stepping into system libraries / dependencies (`/usr/lib/...`, vendored
+  sources outside the project) is a normal, expected debugging action, so a debug source path that
+  leaves the project root is not an attack — it is the point of a debugger. The debuggee's own sources
+  can legitimately live anywhere. Containment here would break step-into-stdlib.
+- **[WON'T-DO — heuristic covers real adapters] DAP value-size limits are gdb-name heuristics.**
+  `CommandLooksLikeGdb` correctly classifies the real gdb variants (`gdb`, `arm-none-eabi-gdb`,
+  `gdbserver`); the freeze-risk guard it drives is a defensive value-paging limit whose only downside on
+  a false positive is slightly more conservative paging. A capability/type/setting override is a nicety,
+  not a correctness fix.
+- **[WON'T-DO — display-cap policy] DAP variables/scopes list truncation has no visible "more data
+  omitted" state.** The 10k parser cap is a safety limit against a hostile/huge adapter payload;
+  surfacing a `truncated` banner + paging is the same display-feedback nicety triaged across this pass
+  (a legitimate 10k+ single scope is itself pathological).
 
 ##### Plugins and extension data
 
