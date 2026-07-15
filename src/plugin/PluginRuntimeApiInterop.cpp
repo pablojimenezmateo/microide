@@ -230,8 +230,16 @@ int LuaEditorApplyEdits(lua_State* state,
       // harvest clamps).
       constexpr lua_Integer kMaxApplyEdits = 100000;
       const lua_Integer raw_count = static_cast<lua_Integer>(lua_rawlen(state, -1));
-      const lua_Integer count = raw_count < kMaxApplyEdits ? raw_count : kMaxApplyEdits;
-      for (lua_Integer i = 1; i <= count; ++i) {
+      if (raw_count > kMaxApplyEdits) {
+        // Fail closed rather than silently truncating to the cap: applying only a
+        // prefix of a formatter/refactor's edit set would corrupt the buffer worse
+        // than rejecting the whole request. `request` (with its edit vector)
+        // destructs on this normal return; PushEditResult only pushes Lua values.
+        lua_pop(state, 1);  // edits table
+        return PushEditResult(state, false,
+                              "editor.apply_edits exceeds the maximum edit count");
+      }
+      for (lua_Integer i = 1; i <= raw_count; ++i) {
         lua_rawgeti(state, -1, i);
         if (lua_type(state, -1) == LUA_TTABLE) {
           const int edit_index = lua_gettop(state);

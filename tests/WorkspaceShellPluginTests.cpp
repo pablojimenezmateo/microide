@@ -3623,6 +3623,15 @@ return ide.plugin({
       })
       ctx.log(ok and "applied" or "rejected")
     end)
+    ctx.commands.add("editops.too_many_edits", function()
+      -- One past the host cap: the request must fail wholesale, not truncate.
+      local edits = {}
+      for i = 1, 100001 do
+        edits[i] = { start_line = 1, start_col = 1, end_line = 1, end_col = 1, text = "x" }
+      end
+      local ok = ctx.editor.apply_edits({ edits = edits })
+      ctx.log(ok and "applied" or "rejected")
+    end)
     ctx.commands.add("editops.infinite_coords", function()
       -- math.huge must not be cast to size_t (undefined behavior); the interop
       -- layer maps it to an invalid (0) index so no wild edit lands.
@@ -3764,6 +3773,31 @@ void TestWorkspaceShellPluginApplyEditsRejectsNonFiniteCoords() {
          "math.huge coordinates must reject the edit, not apply it at a clamped position");
   Expect(editor.lines()[0] == "hello" && editor.lines()[1] == "world",
          "math.huge coordinates must leave the buffer completely untouched");
+}
+
+void TestWorkspaceShellPluginApplyEditsRejectsTooManyEdits() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  RunEditPluginSetup(shell, plugins_root, project_root, source, "hello\nworld\n");
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+
+  WorkspaceShellTestAccess::ClearPluginMessages(shell);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "editops.too_many_edits"),
+         "too-many-edits command should dispatch without crashing");
+  const auto& messages = WorkspaceShellTestAccess::PluginMessages(shell);
+  Expect(!messages.empty() && messages.back() == "editops: rejected",
+         "an edit array beyond the cap must be rejected wholesale, not truncated and applied");
+  Expect(editor.lines()[0] == "hello" && editor.lines()[1] == "world",
+         "an over-cap apply must leave the buffer completely untouched");
 }
 
 // Seeds an "lsp:semantic" recolor overlay for `path` (as an async clangd
@@ -4522,6 +4556,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginApplyEditsRejectsUnopenedPath);
   AddTest(tests, "WorkspaceShell/PluginApplyEditsRejectsNonFiniteCoords",
           TestWorkspaceShellPluginApplyEditsRejectsNonFiniteCoords);
+  AddTest(tests, "WorkspaceShell/PluginApplyEditsRejectsTooManyEdits",
+          TestWorkspaceShellPluginApplyEditsRejectsTooManyEdits);
   AddTest(tests, "WorkspaceShell/PluginApplyEditsClampsOutOfBounds",
           TestWorkspaceShellPluginApplyEditsClampsOutOfBounds);
   AddTest(tests, "WorkspaceShell/LspSemanticOverlayClearedOnEditAndUndo",

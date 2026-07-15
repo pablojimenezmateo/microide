@@ -628,11 +628,11 @@ behavioral contract before changing code.
   `ApplyPluginWorkspaceEdit` and related callbacks, then either enforce containment in
   `ReadOptionalPathField` using `ContainPath` or document why open-buffer-only dispatch is sufficient.
   Add a plugin test that tries `editor.apply_edits({ path = "../outside.txt", ... })`.
-- **Plugin `editor.apply_edits` silently truncates edit arrays at 100,000 entries.** The cap protects
-  memory, but a plugin applying 100,001 edits receives a normal host result for the truncated edit
-  set. That can corrupt generated edits, formatters, or refactors. Fix direction: if raw length
-  exceeds the cap, fail the request with an explicit error instead of truncating. Add a Lua plugin
-  regression that passes `kMaxApplyEdits + 1` and expects failure/no partial edit.
+- **[RESOLVED 2026-07-15] Plugin `editor.apply_edits` silently truncates edit arrays at 100,000
+  entries.** `LuaEditorApplyEdits` now fails the request closed with
+  "editor.apply_edits exceeds the maximum edit count" when the raw edit count exceeds `kMaxApplyEdits`,
+  instead of applying a corrupting prefix. Regression:
+  `WorkspaceShell/PluginApplyEditsRejectsTooManyEdits`.
 - **Plugin data-directory discovery trusts lexical roots.** `DataDirectories` builds candidates from
   plugin roots and subdirectories with `lexically_normal`. If a plugin root is a symlink that changes
   after discovery, data-directory identity may drift from the root containment policy used by runtime
