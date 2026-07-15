@@ -588,13 +588,14 @@ behavioral contract before changing code.
   linked-edit session is ended rather than retaining pre-newline ranges (matches VSCode dropping the
   session on a multi-line insert; the host still performs the real insert). Regression:
   `EditorSnippet/…MultiLineInsertDeclinesFastPath` (extended to assert the session is dropped).
-- **Closed-file LSP workspace edits silently clamp out-of-range positions and then save.**
-  `ApplyLspEditsToClosedFilesOnDisk` maps LSP positions by clamping lines and columns to the scratch
-  viewport. A server bug that sends a range beyond EOF mutates the last line instead of rejecting the
-  edit. Open-buffer edits likely share similar forgiving behavior. Fix direction: validate LSP ranges
-  before applying them; reject the whole file's edit group, or at least the bad edit, with telemetry
-  or a status message. Add an LSP workspace-edit test where the server sends line 999 for a one-line
-  closed file and assert no save occurs.
+- **[RESOLVED 2026-07-15] Closed-file LSP workspace edits silently clamp out-of-range positions and
+  then save.** `ApplyLspEditsToClosedFilesOnDisk` now validates each edit's line against the scratch
+  document: a line beyond EOF is a hard reject that drops the whole file's edit group (leaving the file
+  untouched) rather than clamping onto the last line, while the LSP end-of-document sentinel
+  (`{line == line_count, character == 0}`) maps to the end of the last line and a `character` past the
+  line end stays a soft clamp. Regression:
+  `WorkspaceShell/ServerApplyEditRejectsOutOfRangeClosedFileEdit`. (The open-buffer applier's forgiving
+  clamp is the sibling item below.)
 - **LSP and plugin workspace edit appliers do not appear to reject overlapping edits up front.**
   Both paths sort edits highest-position-first so ordinary non-overlapping edits apply correctly, but
   overlapping ranges can still double-apply in an order-dependent way. Language servers are supposed

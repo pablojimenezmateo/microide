@@ -1064,23 +1064,47 @@ LspService::DiskEditResult LspService::ApplyLspEditsToClosedFilesOnDisk(
     const lsp_encoding::PositionEncoding encoding =
         client != nullptr ? LspEncodingForClient(*client) : lsp_encoding::PositionEncoding::Utf8;
 
-    // Map 0-based LSP coordinates to editor byte columns, clamped to the live
-    // document (mirrors ApplyLspWorkspaceEdit's per-buffer mapping).
-    const auto clamp = [&](editor::TextPosition pos) -> editor::TextPosition {
+    // Map 0-based LSP coordinates to editor byte columns. A line beyond EOF is a
+    // hard reject (a buggy/hostile server must not silently mutate the last line
+    // instead of the line it named), except the LSP end-of-document sentinel
+    // `{line == line_count, character == 0}`, which maps to the end of the last
+    // line. A `character` past the line end stays a soft clamp (LSP servers
+    // routinely address one past the last column). `*ok` is set false on reject.
+    const auto map_position = [&](editor::TextPosition pos, bool* ok) -> editor::TextPosition {
+      *ok = true;
       const std::size_t line_count = scratch.line_count();
       if (line_count == 0) {
+        *ok = false;
         return editor::TextPosition{0, 0};
       }
+      if (pos.line == line_count && pos.column == 0) {
+        const std::size_t last = line_count - 1;
+        return editor::TextPosition{last, scratch.lines()[last].size()};
+      }
       if (pos.line >= line_count) {
-        pos.line = line_count - 1;
+        *ok = false;
+        return pos;
       }
       pos.column = lsp_encoding::LspCharacterToByteColumn(
           std::string_view(scratch.lines()[pos.line]), pos.column, encoding);
       return pos;
     };
+    bool file_out_of_range = false;
     for (auto& [range, text] : file_edits) {
-      range.start = clamp(range.start);
-      range.end = clamp(range.end);
+      bool start_ok = true;
+      bool end_ok = true;
+      range.start = map_position(range.start, &start_ok);
+      range.end = map_position(range.end, &end_ok);
+      if (!start_ok || !end_ok) {
+        file_out_of_range = true;
+        break;
+      }
+    }
+    if (file_out_of_range) {
+      // Reject the whole file's edit group rather than applying a partial,
+      // position-corrupted set; leave the file on disk untouched.
+      result.any_failed = true;
+      continue;
     }
     // Apply highest-position-first (later array entry first on ties) so earlier
     // ranges stay valid as later ones apply — identical ordering to the open-buffer

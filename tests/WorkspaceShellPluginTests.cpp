@@ -2159,6 +2159,69 @@ return ide.plugin({
          "the server-pushed edit must not open a tab for the closed file");
 }
 
+// Regression: a server-pushed WorkspaceEdit whose range names a line beyond the
+// closed file's EOF must be rejected, not silently clamped onto the last line —
+// the file on disk stays untouched.
+void TestWorkspaceShellServerApplyEditRejectsOutOfRangeClosedFileEdit() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path open_md = project / "open.md";
+  const std::filesystem::path closed_md = project / "closed.md";  // one line, never opened
+  WriteFile(open_md, "aaa\n");
+  WriteFile(closed_md, "aaa\n");
+
+  WritePluginInit(
+      plugins_root, "mdlsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "mdlsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "md-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "fixture should open the project");
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
+         "fixture should attach a stub markdown client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, open_md);
+  WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(stub_raw->HasApplyEditHandler(), "the apply-edit handler should be bound");
+
+  // The server pushes an edit targeting line 999 of the one-line closed file.
+  const std::string edit_json = std::string("{\"edit\":{\"changes\":{\"") +
+                                workspace::FileUriForPath(closed_md) +
+                                "\":[{\"range\":{\"start\":{\"line\":999,\"character\":0},"
+                                "\"end\":{\"line\":999,\"character\":0}},\"newText\":\"Z\"}]}}}";
+  std::optional<util::JsonValue> params = util::ParseJson(edit_json);
+  Expect(params.has_value(), "the applyEdit params fixture should parse");
+  stub_raw->SimulateServerRequestForTesting("workspace/applyEdit", std::move(*params),
+                                            util::JsonValue(static_cast<std::int64_t>(1)));
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+
+  Expect(ReadFile(closed_md) == "aaa\n",
+         "an out-of-range (beyond-EOF) edit must not be clamped onto the last line and written");
+}
+
 void TestWorkspaceShellOutlineSidebarFromDocumentSymbols() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4503,6 +4566,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPrepareRenameRefinesPrompt);
   AddTest(tests, "WorkspaceShell/ServerApplyEditEditsOpenAndClosedFiles",
           TestWorkspaceShellServerApplyEditEditsOpenAndClosedFiles);
+  AddTest(tests, "WorkspaceShell/ServerApplyEditRejectsOutOfRangeClosedFileEdit",
+          TestWorkspaceShellServerApplyEditRejectsOutOfRangeClosedFileEdit);
   AddTest(tests, "WorkspaceShell/PluginsReloadFallsBackFromMissingActivePluginSidebar",
           TestWorkspaceShellPluginsReloadFallsBackFromMissingActivePluginSidebar);
   AddTest(tests, "WorkspaceShell/SidebarModeMenuListsPluginSidebars",
