@@ -828,18 +828,17 @@ test proves it is unreachable.
   adapter can leave the session in Running/Stopped with stop requested. Fix direction: start a bounded
   terminate timer, then disconnect/kill the adapter and transition to Terminated or Failed. Add a fake
   adapter test that accepts `terminate` and never emits `terminated`.
-- **DAP `configurationDone` rejection records an error but still transitions to Running.** The
-  callback sets `last_error_` when the response fails, then moves `Configuring`/`Initializing` to
-  `Running` regardless. Some adapters reject configurationDone because launch/configuration is invalid;
-  the UI can show a running session that will not run. Fix direction: classify configurationDone
-  failure as terminal unless a known adapter requires tolerance. Add a DAP client test with a failed
-  configurationDone response.
-- **DAP resume commands optimistically clear stopped UI without checking request success.** `Continue`,
-  step commands, reverse commands, and the deferred no-thread resume path send a request and set state
-  to Running immediately. If the adapter rejects `continue`/`next`/`stepIn`, the execution highlight
-  and variable state are cleared while the target remains stopped. Fix direction: either wait for
-  response success before clearing, or restore stopped state on failure. Add fake adapter tests for
-  rejected continue and rejected step.
+- **[RESOLVED — already correct] DAP `configurationDone` rejection records an error but still
+  transitions to Running.** Verified the current `SendConfigurationDone` response handler
+  (`DebugSession.cpp`) checks `response.success`: a rejection **during the handshake**
+  (`Configuring`/`Initializing`) transitions to `Failed` and shuts the client down; only a successful
+  response moves to `Running`. The behavior the item describes is not present.
+- **[RESOLVED 2026-07-15] DAP resume commands optimistically clear stopped UI without checking request
+  success.** `SendResumeRequest` keeps the synchronous optimistic Running flip (load-bearing for the
+  stale-stack-drop guard) but now passes a response callback that, on rejection, undoes it —
+  `SetState(Stopped)` + `RequestStackTrace(last_stop_)` re-projects the execution line / Call Stack /
+  scopes. Regression: `DebugService/SessionRejectedResumeRestoresStoppedView` (new `reject_resume` mock
+  adapter mode).
 - **DAP breakpoint responses are matched by send order, not stable breakpoint identity.** The
   `setBreakpoints` response mirrors input order in the spec, but adapters that omit or reorder
   unverified breakpoints can mark the wrong local breakpoint if matching is positional only. Fix

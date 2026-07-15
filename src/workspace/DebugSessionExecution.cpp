@@ -26,20 +26,32 @@ void DebugSession::SendResumeRequest(const char* command) {
   if (state_ != State::Stopped) {
     return;
   }
+  // If the adapter REJECTS the resume (invalid state / unsupported step), undo the
+  // optimistic clear below and restore the stopped view — otherwise the UI shows
+  // Running while the target is still stopped. The `state_ == Running` guard means
+  // a real `stopped`/`continued` event that already moved us on is not clobbered.
+  auto on_response = [this](const dap_protocol::DapResponse& response) {
+    if (response.success || state_ != State::Running) {
+      return;
+    }
+    SetState(State::Stopped);
+    RequestStackTrace(last_stop_);  // re-project execution line + Call Stack + scopes
+  };
   if (stopped_thread_id_.has_value()) {
-    client_->SendRequestAsync(command, ThreadIdArgs(*stopped_thread_id_), {});
+    client_->SendRequestAsync(command, ThreadIdArgs(*stopped_thread_id_), on_response);
   } else {
     // A `stopped` with no threadId whose threads query has not landed yet: resolve
     // a thread and resume it rather than sending threadId:0 (which DAP rejects /
     // misroutes). `command` is a string literal, safe to capture by value.
-    RequestThreads([this, command](std::vector<dap_protocol::DapThread> threads) {
+    RequestThreads([this, command, on_response](std::vector<dap_protocol::DapThread> threads) {
       if (!threads.empty()) {
-        client_->SendRequestAsync(command, ThreadIdArgs(threads.front().id), {});
+        client_->SendRequestAsync(command, ThreadIdArgs(threads.front().id), on_response);
       }
     });
   }
-  // Optimistically resume so the UI clears immediately; the next `stopped`
-  // (breakpoint/step end) repopulates the execution state.
+  // Optimistically resume so the UI clears immediately. This synchronous Running
+  // flip is load-bearing: the stale-stack-drop guard relies on it. A rejected
+  // resume is undone by `on_response` above.
   if (callbacks_.on_resumed) {
     callbacks_.on_resumed();
   }

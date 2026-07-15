@@ -54,7 +54,10 @@ mode = sys.argv[1] if len(sys.argv) > 1 else ""
 supports_config_done = mode in ("config_done", "stop", "pause", "variables", "evaluate",
                                 "restart", "threads", "exception", "die", "thread_event",
                                 "function", "reverse", "reverse_late", "stale_stack",
-                                "relocate", "partial_continue", "stop_no_thread")
+                                "relocate", "partial_continue", "stop_no_thread", "reject_resume")
+# `reject_resume`: after the stop, reject the resume request (continue/next/...) so
+# the host must undo its optimistic Running flip and restore the stopped view.
+reject_resume = (mode == "reject_resume")
 supports_set_variable = (mode == "variables")
 supports_evaluate = (mode == "evaluate")
 supports_restart = (mode == "restart")
@@ -82,7 +85,7 @@ thread_started = False
 reverse_late = (mode == "reverse_late")
 stop_on_config = mode in ("stop", "variables", "evaluate", "restart", "threads", "exception",
                           "thread_event", "function", "reverse", "reverse_late", "stale_stack",
-                          "partial_continue", "stop_no_thread")
+                          "partial_continue", "stop_no_thread", "reject_resume")
 # `stale_stack`: hold the first stackTrace response until a resume arrives, then
 # flush it late so the host must drop the stale stopped view (session Running).
 stale_stack = (mode == "stale_stack")
@@ -258,6 +261,11 @@ while True:
         event("initialized")
     elif command in ("continue", "next", "stepIn", "stepOut", "reverseContinue", "stepBack"):
         event("output", {"category": "stdout", "output": "cmd:" + command + "\n"})
+        if reject_resume:
+            # Reject the resume: the target stays stopped. The host must restore the
+            # stopped view (re-request stackTrace) rather than showing Running.
+            respond(msg, success=False, message="cannot resume")
+            continue
         if stop_no_thread:
             # Surface the threadId the resume targeted (J9: must be the resolved
             # thread, never 0).
@@ -711,6 +719,47 @@ void TestDebugSessionDropsStaleStackResolvedAfterResume() {
   Expect(manager.ActiveSession() == nullptr ||
              manager.ActiveSession()->CurrentState() != DebugSession::State::Stopped,
          "the session must not be dragged back to Stopped by the stale stack");
+  manager.ShutdownAll();
+}
+
+// Regression: when the adapter REJECTS a resume (continue/next/...), the host must
+// undo its optimistic Running flip and restore the stopped view rather than leaving
+// the UI showing Running while the target is still stopped.
+void TestDebugSessionRejectedResumeRestoresStoppedView() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "reject_resume"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
+         "the session should reach the initial stop");
+  DebugSession* session = manager.ActiveSession();
+  Expect(session != nullptr && session->CurrentState() == DebugSession::State::Stopped,
+         "the session should be stopped before the resume");
+  const int stops_before = captured.stop_count;
+
+  // Continue: the host flips to Running optimistically, the adapter rejects, and
+  // the host restores Stopped + re-projects the stop (a fresh on_stopped fires).
+  session->Continue();
+  Expect(PollUntil(manager,
+                   [&]() {
+                     const auto* s = manager.ActiveSession();
+                     return s != nullptr &&
+                            s->CurrentState() == DebugSession::State::Stopped &&
+                            captured.stop_count > stops_before;
+                   }),
+         "a rejected resume must restore the Stopped state and re-project the stop");
   manager.ShutdownAll();
 }
 
@@ -3208,6 +3257,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugSessionResolvesStackOnStopAndStepsResume);
   AddTest(tests, "DebugService/SessionDropsStaleStackResolvedAfterResume",
           TestDebugSessionDropsStaleStackResolvedAfterResume);
+  AddTest(tests, "DebugService/SessionRejectedResumeRestoresStoppedView",
+          TestDebugSessionRejectedResumeRestoresStoppedView);
   AddTest(tests, "DebugService/SessionPauseFromRunning", TestDebugSessionPauseFromRunning);
   AddTest(tests, "DebugService/SessionReverseStepAndContinue",
           TestDebugSessionReverseStepAndContinue);
