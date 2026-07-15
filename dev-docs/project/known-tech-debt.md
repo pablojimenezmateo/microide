@@ -421,7 +421,7 @@ toggle, diagnostics visual-column cache, AlignHunkLines cumulative budget, multi
 refusal, `^`-anchor correctness, latent compare index guards — see the "Curated open-items pass"
 section above). The still-deferred residue:
 
-- **[PARTIALLY RESOLVED 2026-07-14] `RuntimeSyntaxRegistry::FindFirstRegex` skip-mask full-tail rescan.**
+- **[RESOLVED (fast path + gate) 2026-07-14 / full O(n) rewrite WON'T DO 2026-07-15] `RuntimeSyntaxRegistry::FindFirstRegex` skip-mask full-tail rescan.**
   For a region carrying a `skip` regex, every cursor step re-runs `FindAllRegex(skip)` over the
   remaining tail. **Landed:** (1) the characterization gate the prior note demanded now exists —
   `tests/RuntimeSyntaxSkipTests.cpp` snapshots per-byte token output across both call sites (end
@@ -432,13 +432,17 @@ section above). The still-deferred residue:
   matches, the `masked_buf` copy and the second pattern pass are skipped and the raw text is searched
   directly (masking nothing is the identity). That removes the per-step buffer copy and halves the
   pattern scans on the dominant escape-free segments (the common case: most cursor steps span text with
-  no escape). **Residual (still O(n²) worst case):** a region with many nested children still re-scans
-  the shrinking tail k times. A true O(n) rewrite needs a full-line skip precompute reused across cursor
-  steps; that is only byte-identical for *context-free* skips (no lookbehind / `\b` / `^`), so it must be
-  gated on skip shape (the real-world grammars are almost entirely the context-free `\\.` escape, with
-  the one C++ `\b`-number skip as the exception that would fall back). Deferred as narrow-benefit +
-  hot-path highlight-semantics risk, but now unblocked: the golden gate above is the equivalence oracle a
-  future session can extend with adversarial boundary cases before enabling the precompute.
+  no escape). **Residual full O(n) rewrite — WON'T DO (2026-07-15):** the worst case (a region with many
+  nested children re-scanning the shrinking tail k times) remains, but eliminating it needs a full-line
+  skip precompute reused across cursor steps, which is only byte-identical for *context-free* skips (no
+  lookbehind / `\b` / `^`) and so must be gated on skip shape plus an adversarial-boundary equivalence
+  proof. The benefit is narrow — it only bites regions that declare a `skip` AND contain many nested
+  children on one ≤100 KB line (`kMaxHighlightLineBytes` already caps the blast radius); real code lines
+  are short and the landed fast path covers the common case. Set against a hot-path highlight-semantics
+  change that risks altering colors on adversarial input, the trade is not worth it. Perf A/B vs `main`
+  (2026-07-15) confirmed the highlight scenarios are allocation-flat and within wall-clock noise after the
+  fast path. The golden gate (`tests/RuntimeSyntaxSkipTests.cpp`) stays as the equivalence oracle should a
+  concrete pathological repro ever justify revisiting; absent that, this is closed.
 - **`RuntimeSyntaxRegistry` rules still compile without `PCRE2_MULTILINE`.** The `^`-at-segment-
   boundary correctness bug is fixed (NOTBOL on mid-line segments, 2026-07-14), but `$` semantics
   across a segmented line were not revisited; a full MULTILINE pass would need generated-table
