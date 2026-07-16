@@ -167,7 +167,11 @@ std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
         return CsiU(127, mod);
       }
       if (press.ctrl) {
-        return std::string(1, '\x08');
+        // Meta+Ctrl+Backspace: prefix the Ctrl-Backspace byte (0x08) with ESC so
+        // apps binding M-C-Backspace (Emacs, readline) see both modifiers, mirroring
+        // the Char + Escape cases. Dropping the ESC here made M-C-Backspace
+        // indistinguishable from plain Ctrl+Backspace.
+        return press.alt ? std::string("\x1b\x08", 2) : std::string(1, '\x08');
       }
       return press.alt ? std::string("\x1b\x7f") : std::string("\x7f");
     case Key::Escape:

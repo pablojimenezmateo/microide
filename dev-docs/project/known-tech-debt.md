@@ -19,6 +19,27 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
+### Fixed in the 2026-07-16 cross-subsystem bug-hunt pass
+
+A broad correctness sweep across every major subsystem — util, terminal, compare,
+merge, project (patch/ignore/blame/search), platform (subprocess), editor
+(PieceTree, inlay), workspace/lsp, persistence, render (color/theme/ansi/display-
+list), and plugin (Lua runtime). The audited surface was already exceptionally
+hardened by the prior pass 5–24 / pentest history; every edge case probed carried
+a defensive fix with a rationale comment. One genuine correctness defect surfaced
+and was fixed:
+
+- **`Ctrl+Alt+Backspace` no longer drops the Meta (ESC) prefix.** The `Char`
+  encoding path already prefixed `Ctrl+Alt+<key>` with `ESC` (Meta) so `M-C-`
+  chords reach TUI apps (regression-tested), but the `Backspace` path in
+  `src/terminal/TerminalSessionInputEncoding.cpp` emitted a bare `0x08` for
+  `Ctrl+Alt+Backspace` — indistinguishable from plain `Ctrl+Backspace`. Now emits
+  `ESC 0x08` when Alt is held, mirroring the `Char`/`Escape` cases. Added a
+  regression (`TerminalSession` key-encoding test) covering both
+  `Ctrl+Backspace` → `0x08` and `Ctrl+Alt+Backspace` → `ESC 0x08`. Full suite
+  green (`tools/run-checks.sh tests`, 3/3). No deferred items resulted — the
+  defect was fixed, not deferred; this entry is the audit-trail record.
+
 ### Fixed in the 2026-07-15 dead-coverage / dead-code pass (session 3)
 
 Compiler-warning-driven sweep (`-Wunused-function` across the full test build)

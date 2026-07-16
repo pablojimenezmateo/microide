@@ -746,6 +746,20 @@ void TestTerminalSessionEncodesModifiedAndFunctionKeys() {
   ctrl_alt_a.alt = true;
   Expect(sent_after(ctrl_alt_a) == std::string("\x1b\x01", 2),
          "Ctrl+Alt+A should send ESC + C0 control byte (Meta+Ctrl) in legacy mode");
+
+  KeyPress ctrl_backspace;
+  ctrl_backspace.key = KeyPress::Key::Backspace;
+  ctrl_backspace.ctrl = true;
+  Expect(sent_after(ctrl_backspace) == std::string(1, '\x08'),
+         "Ctrl+Backspace should send BS (0x08) in legacy mode");
+
+  // Regression: Meta+Ctrl+Backspace must prefix the Ctrl-Backspace byte with ESC,
+  // mirroring the Meta+Ctrl+Char case, so M-C-Backspace chords reach TUI apps
+  // instead of being indistinguishable from plain Ctrl+Backspace.
+  KeyPress ctrl_alt_backspace = ctrl_backspace;
+  ctrl_alt_backspace.alt = true;
+  Expect(sent_after(ctrl_alt_backspace) == std::string("\x1b\x08", 2),
+         "Ctrl+Alt+Backspace should send ESC + BS (Meta+Ctrl) in legacy mode");
 }
 
 void TestTerminalSessionAppliesKittyKeyboardProtocol() {
