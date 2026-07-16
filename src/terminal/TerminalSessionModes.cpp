@@ -28,14 +28,21 @@ void TerminalSession::HandleKittyKeyboardLocked(char prefix,
       return;
     }
     case '<': {  // Pop flags.
-      int count = std::max(1, param(0, 1));
-      while (count-- > 0) {
-        if (kitty_keyboard_stack_.empty()) {
-          kitty_keyboard_flags_ = 0;
-        } else {
-          kitty_keyboard_flags_ = kitty_keyboard_stack_.back();
-          kitty_keyboard_stack_.pop_back();
-        }
+      // CSI params clamp to 65535, but the stack holds at most kMaxKittyStackDepth
+      // entries, so a pop count larger than the stack can only end in "empty stack,
+      // flags = 0". Bound the loop to the stack size so a hostile `ESC[<65535u` (or a
+      // flood of them) cannot burn terminal-reader CPU proportional to the parameter
+      // rather than the byte volume. Once the stack is empty the result is fixed.
+      const std::size_t requested = static_cast<std::size_t>(std::max(1, param(0, 1)));
+      const std::size_t pops = std::min(requested, kitty_keyboard_stack_.size());
+      for (std::size_t i = 0; i < pops; ++i) {
+        kitty_keyboard_flags_ = kitty_keyboard_stack_.back();
+        kitty_keyboard_stack_.pop_back();
+      }
+      if (pops < requested) {
+        // More pops requested than entries: the extra pops drain to the empty-stack
+        // default of flags = 0, in O(1) rather than iterating the full count.
+        kitty_keyboard_flags_ = 0;
       }
       return;
     }

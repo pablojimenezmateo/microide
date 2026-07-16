@@ -822,6 +822,30 @@ void TestWorkspaceShellQuitPromptCountIncludesNonFocusedGroupDirtyTab() {
          "the quit-prompt count must include the non-focused split group's dirty tab");
 }
 
+// TD-2026-07-16-59: deleting a path whose only dirty buffer lives in a NON-FOCUSED
+// split must raise the dirty prompt (preflight), not silently proceed as if there were
+// no unsaved work. Before the fix the dirty scan only walked the focused group.
+void TestWorkspaceShellDeletePromptsForNonFocusedGroupDirtyTab() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  WriteFile(file_a, "aaa\n");
+  WriteFile(file_b, "bbb\n");
+
+  WorkspaceShell shell;
+  OpenFileDirtiedOnlyInNonFocusedGroup(shell, root, file_a, file_b);
+
+  // Delete file_b (dirty only in the non-focused group 1). Confirming the delete
+  // prompt must surface the dirty prompt instead of trashing unsaved work.
+  WorkspaceShellTestAccess::PrepareDeletePrompt(shell, file_b);
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "deleting a path with a dirty buffer in a non-focused split must prompt first");
+  Expect(std::filesystem::exists(file_b),
+         "the file must not be deleted while the non-focused dirty buffer is unresolved");
+}
+
 void TestWorkspaceShellEditorBreadcrumbUsesRelativePathForLargeFixtures() {
   WorkspaceShell shell;
   const std::filesystem::path project_root = FixturePath("large");
@@ -1074,6 +1098,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellQuitWithSaveFlushesNonFocusedGroupDirtyTab);
   AddTest(tests, "WorkspaceShell/QuitPromptCountIncludesNonFocusedGroupDirtyTab",
           TestWorkspaceShellQuitPromptCountIncludesNonFocusedGroupDirtyTab);
+  AddTest(tests, "WorkspaceShell/DeletePromptsForNonFocusedGroupDirtyTab",
+          TestWorkspaceShellDeletePromptsForNonFocusedGroupDirtyTab);
   AddTest(tests, "WorkspaceShell/EditorBreadcrumbUsesRelativePathForLargeFixtures",
           TestWorkspaceShellEditorBreadcrumbUsesRelativePathForLargeFixtures);
 #if defined(__linux__) || defined(__APPLE__)

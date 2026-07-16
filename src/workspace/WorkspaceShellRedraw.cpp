@@ -13,6 +13,7 @@
 #include "app/BackgroundTaskCounter.h"
 #include "compare/ComparePresentationModel.h"
 #include "util/PerformanceTrace.h"
+#include "util/SdlWake.h"
 #include "workspace/TabStripAnimation.h"
 #include "workspace/WorkspaceShellBootstrapper.h"
 
@@ -897,6 +898,25 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
   if (DebugEnabled() && debug_service_.HasInFlightDapWork()) {
     constexpr Uint32 kDapPollMs = 64;
     wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kDapPollMs) : kDapPollMs;
+  }
+  // Fallback backstop for one-shot wake producers (git blame, control channel, native
+  // dialogs, highlight prefetch, background-task wakes): if any of their SDL_PushEvent
+  // wakes was rejected while its result sat ready in shared state, PushSdlWake latched
+  // a shared "wake owed" bit. Consume it here to shorten this idle wait so the loop
+  // re-checks and drains the ready state instead of blocking until unrelated input.
+  // (TD-2026-07-16-54.)
+  if (util::ConsumeOwedSdlWake()) {
+    constexpr Uint32 kWakeOwedPollMs = 32;
+    wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kWakeOwedPollMs) : kWakeOwedPollMs;
+  }
+  // Startup wake-registration degraded mode: at least one subsystem's custom SDL event
+  // could not be allocated, so its ready state has no event to drain it. Poll on a
+  // steady interval so LSP/DAP/dialog/terminal/etc. results are still consumed rather
+  // than stranded until unrelated input. Rare (SDL event-type exhaustion at startup),
+  // so the steady poll is acceptable. (TD-2026-07-16-56.)
+  if (util::SdlWakeRegistrationDegraded()) {
+    constexpr Uint32 kDegradedPollMs = 64;
+    wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kDegradedPollMs) : kDegradedPollMs;
   }
   if (wait_ms.has_value()) {
     return IdleWaitState{

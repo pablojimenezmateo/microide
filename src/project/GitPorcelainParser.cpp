@@ -29,7 +29,12 @@ bool StatusUsesTargetPath(std::string_view code) {
 std::vector<ParsedStatusV1Entry> ParseStatusV1Entries(std::string_view output) {
   std::vector<ParsedStatusV1Entry> entries;
 
-  const std::vector<std::string_view> records = util::SplitNulDelimited(output);
+  // A rename/copy status record is followed by its origin path in the next NUL field,
+  // so a retained entry consumes up to 2 records. Bound token materialization at 2x the
+  // entry cap (+ slack) so hostile NUL-heavy status output cannot build millions of
+  // record views before the entry cap stops parsing. (TD-2026-07-16-30.)
+  const std::vector<std::string_view> records =
+      util::SplitNulDelimited(output, kMaxGitStatusEntries * 2 + 2);
   for (std::size_t i = 0; i < records.size() && entries.size() < kMaxGitStatusEntries; ++i) {
     const std::string_view entry = records[i];
     if (entry.size() < 4) {

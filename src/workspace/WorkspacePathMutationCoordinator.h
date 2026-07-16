@@ -66,6 +66,7 @@ class PathMutationCoordinator {
     };
 
     Kind kind = Kind::EditorView;
+    std::size_t group_index = 0;
     std::size_t tab_index = 0;
   };
 

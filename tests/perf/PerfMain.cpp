@@ -65,7 +65,7 @@ bool g_require_fixtures = false;
 // is not set. Throws when --require-fixtures is set — converts a quiet skip into
 // a CI failure so a missing fixture cannot mask a regression.
 bool EnsureFixtureOrSkip(const std::filesystem::path& fixture, const char* scenario_label) {
-  if (std::filesystem::is_directory(fixture)) {
+  if (DirectoryExistsNoThrow(fixture)) {
     return true;
   }
   if (g_require_fixtures) {
@@ -115,9 +115,13 @@ ProcessSample ReadProcessSample() {
     if (tokens.size() < 15) {
       throw std::runtime_error("insufficient /proc/self/stat fields");
     }
-    const std::uint64_t utime = std::stoull(tokens[11]);
-    const std::uint64_t stime = std::stoull(tokens[12]);
-    sample.cpu_ticks = utime + stime;
+    // Non-throwing parse: a malformed /proc/self/stat shape yields a controlled
+    // missing-sample (zero ticks) rather than an exception from a numeric parser.
+    const std::optional<std::int64_t> utime = util::ParseInt64(tokens[11]);
+    const std::optional<std::int64_t> stime = util::ParseInt64(tokens[12]);
+    if (utime.has_value() && stime.has_value() && *utime >= 0 && *stime >= 0) {
+      sample.cpu_ticks = static_cast<std::uint64_t>(*utime) + static_cast<std::uint64_t>(*stime);
+    }
   }
   return sample;
 #else
@@ -344,7 +348,7 @@ constexpr char kEditorEssentials50kCppPath[] =
 
 void OpenEditorEssentials50kCppOrThrow(ScenarioContext& context) {
   const std::filesystem::path path{kEditorEssentials50kCppPath};
-  if (!std::filesystem::exists(path)) {
+  if (!PathExistsNoThrow(path)) {
     throw std::runtime_error(std::string("missing fixture: ") + kEditorEssentials50kCppPath);
   }
   if (!context.Open(path.parent_path())) {

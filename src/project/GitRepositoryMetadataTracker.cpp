@@ -60,6 +60,51 @@ std::optional<std::filesystem::path> ResolveGitDir(const std::filesystem::path& 
   return resolved.lexically_normal();
 }
 
+// For a linked worktree, branch refs live in the COMMON git directory, named by
+// `<gitdir>/commondir`. Absent that file (an ordinary checkout), the gitdir IS the
+// common dir. Returns the resolved common directory. (TD-2026-07-16-63.)
+std::filesystem::path ResolveCommonDir(const std::filesystem::path& git_dir) {
+  std::ifstream stream(git_dir / "commondir");
+  if (!stream) {
+    return git_dir;
+  }
+  std::string line;
+  std::getline(stream, line);
+  const std::string trimmed = util::TrimAsciiWhitespace(line);
+  if (trimmed.empty()) {
+    return git_dir;
+  }
+  std::filesystem::path resolved(trimmed);
+  if (resolved.is_relative()) {
+    resolved = git_dir / resolved;
+  }
+  return resolved.lexically_normal();
+}
+
+// If HEAD is symbolic (`ref: refs/heads/<branch>`), return the ref path relative to the
+// common gitdir (e.g. `refs/heads/main`). Returns nullopt for a detached HEAD (raw oid),
+// where the HEAD file tick itself already tracks movement.
+std::optional<std::string> ReadSymbolicHeadRef(const std::filesystem::path& head_path) {
+  std::ifstream stream(head_path);
+  if (!stream) {
+    return std::nullopt;
+  }
+  std::string line;
+  std::getline(stream, line);
+  const std::string trimmed = util::TrimAsciiWhitespace(line);
+  constexpr std::string_view kPrefix = "ref:";
+  if (std::string_view(trimmed).substr(0, kPrefix.size()) != kPrefix) {
+    return std::nullopt;  // detached HEAD (raw object id)
+  }
+  std::string ref = util::TrimAsciiWhitespace(std::string_view(trimmed).substr(kPrefix.size()));
+  // Refuse a traversal-y ref (defense against a malformed HEAD): a real ref is a
+  // slash-separated name with no "..".
+  if (ref.empty() || ref.find("..") != std::string::npos) {
+    return std::nullopt;
+  }
+  return ref;
+}
+
 }  // namespace
 
 void GitRepositoryMetadataTracker::Reset() {
@@ -80,7 +125,11 @@ std::vector<RepositoryChange> GitRepositoryMetadataTracker::SampleChanges() {
   }
 
   std::vector<RepositoryChange> changes;
-  if (current->head != baseline_->head) {
+  // HEAD movement is any of: the HEAD file text/tick (branch switch, detached move),
+  // the resolved branch ref advancing (ordinary same-branch commit), or packed-refs
+  // changing (packed branch refs). (TD-2026-07-16-63.)
+  if (current->head != baseline_->head || current->branch_ref != baseline_->branch_ref ||
+      current->packed_refs != baseline_->packed_refs) {
     changes.push_back(RepositoryChange{.kind = RepositoryChangeKind::HeadChanged});
   }
   if (current->index != baseline_->index) {
@@ -108,6 +157,22 @@ GitRepositoryMetadataTracker::ReadCurrentTicks() const {
   }
   if (const auto index_tick = FileModificationTick(git_dir / "index"); index_tick.has_value()) {
     tick.index = *index_tick;
+  }
+
+  // Resolve the branch ref HEAD points at so an ordinary same-branch commit (which
+  // leaves `.git/HEAD` text unchanged but advances `refs/heads/<branch>`) is detected.
+  // The ref lives under the COMMON gitdir for linked worktrees, so resolve `commondir`.
+  const std::filesystem::path common_dir = ResolveCommonDir(git_dir);
+  if (const std::optional<std::string> ref = ReadSymbolicHeadRef(git_dir / "HEAD");
+      ref.has_value()) {
+    if (const auto ref_tick = FileModificationTick(common_dir / *ref); ref_tick.has_value()) {
+      tick.branch_ref = *ref_tick;
+    }
+  }
+  // packed-refs fallback: a branch ref stored packed (no loose file) still bumps this.
+  if (const auto packed_tick = FileModificationTick(common_dir / "packed-refs");
+      packed_tick.has_value()) {
+    tick.packed_refs = *packed_tick;
   }
   return tick;
 }

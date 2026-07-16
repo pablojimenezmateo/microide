@@ -448,9 +448,68 @@ void TestGitDiscardAllRestoresEveryFile() {
   Expect(ReadFile(root / "b.txt") == b_committed, "discard-all must restore b.txt exactly");
 }
 
+// TD-2026-07-16-01: an atomic write targeting an existing directory must fail without
+// removing/replacing that directory. RenameReplacing must never delete a non-regular
+// destination as a side effect of a first-rename failure.
+void TestAtomicWriteRefusesDirectoryDestination() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path target = temp_dir.path() / "target";
+  std::error_code ec;
+  std::filesystem::create_directory(target, ec);
+  Expect(!ec, "fixture directory should be created");
+  // Put a sentinel child inside so we can prove the directory (and its contents) survive.
+  const std::filesystem::path sentinel = target / "keep.txt";
+  WriteFile(sentinel, "sentinel\n");
+
+  Expect(!WriteTextFileAtomically(target, "bytes\n"),
+         "atomic write over a directory destination must fail");
+  Expect(std::filesystem::is_directory(target, ec) && !ec,
+         "the directory destination must still be a directory");
+  Expect(std::filesystem::exists(sentinel, ec) && !ec,
+         "the directory's contents must be untouched");
+}
+
+// TD-2026-07-16-01, lower-level: RenameReplacing must refuse to clobber a directory
+// destination and leave the source temp in place for the caller to clean up.
+void TestRenameReplacingRefusesDirectoryDestination() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path source = temp_dir.path() / "src.tmp";
+  const std::filesystem::path dest_dir = temp_dir.path() / "dst";
+  WriteFile(source, "payload\n");
+  std::error_code ec;
+  std::filesystem::create_directory(dest_dir, ec);
+  Expect(!ec, "fixture directory should be created");
+
+  Expect(!microide::util::RenameReplacing(source, dest_dir),
+         "RenameReplacing must fail rather than replace a directory");
+  Expect(std::filesystem::is_directory(dest_dir, ec) && !ec,
+         "the directory destination must survive a refused rename");
+}
+
+// TD-2026-07-16-02: a bare relative filename has an empty parent_path; the atomic
+// writer must not fail create_directories("") but write into the current directory.
+void TestAtomicWriteSupportsRelativeFilenameInCurrentDirectory() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path prev = std::filesystem::current_path();
+  std::error_code ec;
+  std::filesystem::current_path(temp_dir.path(), ec);
+  Expect(!ec, "should be able to enter the temp dir");
+  const bool ok = WriteTextFileAtomically(std::filesystem::path("relative.txt"), "hi\n");
+  const std::string readback = ok ? ReadFile(temp_dir.path() / "relative.txt") : std::string();
+  std::filesystem::current_path(prev, ec);  // restore before asserting
+  Expect(ok, "atomic write of a bare relative filename should succeed");
+  Expect(readback == "hi\n", "relative-path atomic write must land in the current directory");
+}
+
 }  // namespace
 
 void RegisterSaveDataIntegrityTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "SaveDataIntegrity/AtomicWriteRefusesDirectoryDestination",
+          TestAtomicWriteRefusesDirectoryDestination);
+  AddTest(tests, "SaveDataIntegrity/RenameReplacingRefusesDirectoryDestination",
+          TestRenameReplacingRefusesDirectoryDestination);
+  AddTest(tests, "SaveDataIntegrity/AtomicWriteSupportsRelativeFilenameInCurrentDirectory",
+          TestAtomicWriteSupportsRelativeFilenameInCurrentDirectory);
   AddTest(tests, "SaveDataIntegrity/AtomicWriteUsesUniqueTemp",
           TestAtomicWriteUsesUniqueTempAndSpareTmpSurvives);
 #if !defined(_WIN32)

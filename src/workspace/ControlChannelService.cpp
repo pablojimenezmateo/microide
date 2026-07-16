@@ -113,8 +113,15 @@ std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
     return instances;
   }
   std::size_t scanned = 0;
-  for (const std::filesystem::directory_entry& entry :
-       std::filesystem::directory_iterator(dir, ec)) {
+  // Advance with the non-throwing increment(ec): the range-for form uses the throwing
+  // operator++, and this directory lives under a fallback runtime dir treated as
+  // attacker-droppable/stale — an entry removed mid-sweep, a permission flip, or a
+  // transient directory error would otherwise throw straight out of `control-list`.
+  // A mid-sweep error stops enumeration with whatever was collected so far.
+  std::filesystem::directory_iterator it(dir, ec);
+  const std::filesystem::directory_iterator end;
+  for (; !ec && it != end; it.increment(ec)) {
+    const std::filesystem::directory_entry& entry = *it;
     // Bound the sweep by ENTRIES EXAMINED, not instances accepted: a reject path
     // (bad stem, oversized, unparseable, pid-mismatch) never grows `instances`, so a
     // million dropped files must not turn `control-list` into an unbounded loop /

@@ -198,7 +198,13 @@ std::optional<std::filesystem::path> GitRepository::StagedRenameSource(
   if (!result.success()) {
     return std::nullopt;
   }
-  const std::vector<std::string_view> records = util::SplitNulDelimited(result.output);
+  // Bound token materialization: this only needs one matching rename source, and a
+  // rename record spans 3 NUL fields. Split at most 3x a generous file cap so a hostile
+  // staged diff cannot build millions of record views; a legit staged rename set is far
+  // smaller, so the match (if any) is well within the bound. (TD-2026-07-16-30.)
+  constexpr std::size_t kMaxStagedRenameRecords = 50000 * 3 + 2;
+  const std::vector<std::string_view> records =
+      util::SplitNulDelimited(result.output, kMaxStagedRenameRecords);
   for (std::size_t i = 0; i + 1 < records.size();) {
     const std::string_view status = records[i];
     if (status.empty()) {

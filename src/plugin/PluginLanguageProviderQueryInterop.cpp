@@ -3,6 +3,7 @@
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include <algorithm>
+#include <limits>
 
 #include "plugin/PluginLuaInterop.h"
 
@@ -18,15 +19,46 @@ constexpr lua_Integer kMaxParameters = 256;
 constexpr int kMaxSymbolDepth = 32;
 constexpr std::size_t kMaxSymbolNodes = 8192;
 
-std::size_t ReadOneBasedField(lua_State* state, int table_index, const char* field) {
+// Host maximum for a 1-based plugin coordinate. Matches the decoration path's
+// over-uint32 rejection and the editor's uint32 document ceiling: a line/column above
+// this is not a real navigation target. (TD-2026-07-16-70.)
+constexpr std::uint64_t kMaxPluginCoordinate = std::numeric_limits<std::uint32_t>::max();
+
+// Deterministic narrowing of a plugin-supplied Lua integer to int: clamps to
+// [INT_MIN, INT_MAX] (never wraps). A bare static_cast of an out-of-int value is
+// implementation-defined and can land IN range, selecting the wrong signature-help
+// overload/parameter; clamping to INT_MAX instead makes the downstream out-of-range
+// fallback fire. Mirrors LspProtocol's JsonIntInRange. (TD-2026-07-16-67.)
+constexpr int ClampLuaIntegerToInt(lua_Integer raw) {
+  if (raw < static_cast<lua_Integer>(std::numeric_limits<int>::min())) {
+    return std::numeric_limits<int>::min();
+  }
+  if (raw > static_cast<lua_Integer>(std::numeric_limits<int>::max())) {
+    return std::numeric_limits<int>::max();
+  }
+  return static_cast<int>(raw);
+}
+
+// Reads a 1-based coordinate field. Returns false when the field is PRESENT as an
+// integer but out of the valid host range (non-positive or above kMaxPluginCoordinate)
+// so the caller drops the whole result rather than publish a location the editor later
+// clamps to EOF. An absent/nil or non-integer field yields *out = 0 (unspecified) and
+// returns true, preserving the previous leniency for omitted coordinates.
+bool ReadOneBasedField(lua_State* state, int table_index, const char* field, std::size_t* out) {
   lua_interop::GetFieldProtected(state, table_index, field);
+  bool ok = true;
   std::size_t value = 0;
   if (lua_isinteger(state, -1)) {
     const lua_Integer raw = lua_tointeger(state, -1);
-    value = raw > 0 ? static_cast<std::size_t>(raw) : 0;
+    if (raw <= 0 || static_cast<std::uint64_t>(raw) > kMaxPluginCoordinate) {
+      ok = false;  // present but out of the host coordinate range
+    } else {
+      value = static_cast<std::size_t>(raw);
+    }
   }
   lua_pop(state, 1);
-  return value;
+  *out = value;
+  return ok;
 }
 
 // Reads a {path|file, line, column} location off the top of the stack. Returns
@@ -45,8 +77,12 @@ bool ReadLocation(lua_State* state,
     return false;
   }
   out->path = resolve_runtime_path(current_project_root, std::filesystem::path(path));
-  out->line = ReadOneBasedField(state, -1, "line");
-  out->column = ReadOneBasedField(state, -1, "column");
+  // Drop the whole location when a present coordinate is out of the host range, rather
+  // than navigate to a clamped EOF position. (TD-2026-07-16-70.)
+  if (!ReadOneBasedField(state, -1, "line", &out->line) ||
+      !ReadOneBasedField(state, -1, "column", &out->column)) {
+    return false;
+  }
   return !out->path.empty();
 }
 
@@ -87,9 +123,11 @@ void ReadSymbolArray(lua_State* state,
     node.name = lua_interop::ReadStringField(state, -1, "name");
     node.detail = lua_interop::ReadStringField(state, -1, "detail");
     node.kind = lua_interop::ReadStringField(state, -1, "kind");
-    node.line = ReadOneBasedField(state, -1, "line");
-    node.column = ReadOneBasedField(state, -1, "column");
-    if (!node.name.empty()) {
+    const bool coords_valid = ReadOneBasedField(state, -1, "line", &node.line) &&
+                              ReadOneBasedField(state, -1, "column", &node.column);
+    // Drop a symbol whose present coordinate is out of the host range (would navigate
+    // the Outline row to a clamped EOF position). (TD-2026-07-16-70.)
+    if (!node.name.empty() && coords_valid) {
       ++(*total);
       lua_interop::GetFieldProtected(state, -1, "children");
       if (lua_istable(state, -1)) {
@@ -204,7 +242,7 @@ bool QuerySignatureHelp(
     if (lua_istable(state, -1)) {
       lua_interop::GetFieldProtected(state, -1, "active_signature");
       if (lua_isinteger(state, -1)) {
-        result->active_signature = static_cast<int>(lua_tointeger(state, -1));
+        result->active_signature = ClampLuaIntegerToInt(lua_tointeger(state, -1));
       }
       lua_pop(state, 1);
       lua_interop::GetFieldProtected(state, -1, "signatures");
@@ -222,7 +260,7 @@ bool QuerySignatureHelp(
             signature.documentation = lua_interop::ReadStringField(state, -1, "documentation");
             lua_interop::GetFieldProtected(state, -1, "active_parameter");
             if (lua_isinteger(state, -1)) {
-              signature.active_parameter = static_cast<int>(lua_tointeger(state, -1));
+              signature.active_parameter = ClampLuaIntegerToInt(lua_tointeger(state, -1));
             }
             lua_pop(state, 1);
             lua_interop::GetFieldProtected(state, -1, "parameters");

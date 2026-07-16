@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include <cmath>
+#include <limits>
 #include <string_view>
 #include <vector>
 
@@ -96,9 +97,36 @@ void TestPromotionUsesCoalescedClipCount() {
          "wide fragmented redraws should still promote to full redraw");
 }
 
+// TD-2026-07-16-48: non-finite, negative-size, or huge float dirty rects must be
+// rejected/clamped before the float->int cast (which is UB for NaN/inf/out-of-range).
+// A valid rect in the same batch must still produce its clip.
+void TestDirtyRegionsRejectNonFiniteAndHugeInput() {
+  const float inf = std::numeric_limits<float>::infinity();
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const DirtyRegionAnalysis analysis = AnalyzeDirtyRegions(
+      {
+          SDL_FRect{.x = nan, .y = 0.0f, .w = 10.0f, .h = 10.0f},   // NaN origin
+          SDL_FRect{.x = 0.0f, .y = 0.0f, .w = inf, .h = 10.0f},    // infinite width
+          SDL_FRect{.x = 0.0f, .y = 0.0f, .w = -5.0f, .h = 10.0f},  // negative width
+          SDL_FRect{.x = 1e30f, .y = 1e30f, .w = 1e30f, .h = 1e30f},  // huge finite
+          SDL_FRect{.x = 2.0f, .y = 2.0f, .w = 4.0f, .h = 4.0f},    // valid
+      },
+      {}, 40, 40);
+
+  Expect(analysis.clipped_rect_count == 1,
+         "only the single valid dirty rect should survive validation");
+  Expect(analysis.merged_clip_rects.size() == 1, "the valid rect produces one clip");
+  const SDL_Rect& clip = analysis.merged_clip_rects.front();
+  Expect(clip.x >= 0 && clip.y >= 0 && clip.w > 0 && clip.h > 0 && clip.x + clip.w <= 40 &&
+             clip.y + clip.h <= 40,
+         "the surviving clip is within surface bounds with a positive size");
+}
+
 }  // namespace
 
 void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "DirtyRegionPolicy/RejectNonFiniteAndHugeInput",
+          TestDirtyRegionsRejectNonFiniteAndHugeInput);
   AddTest(tests, "DirtyRegionPolicy/MergesOverlappingRects",
           TestDirtyRegionsMergeOverlappingRects);
   AddTest(tests, "DirtyRegionPolicy/MergesTouchingRects",

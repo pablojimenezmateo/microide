@@ -24,8 +24,24 @@ void WorkspaceProjectFileMonitor::SetDeferredArming(bool deferred) {
 }
 
 void WorkspaceProjectFileMonitor::SetExcludeGlobs(std::vector<std::string> globs) {
-  std::scoped_lock lock(state_mutex_);
-  exclude_globs_ = std::move(globs);
+  std::shared_ptr<ProjectTraversalFilter> filter;
+  {
+    std::scoped_lock lock(state_mutex_);
+    exclude_globs_ = std::move(globs);
+    // Rebuild the ACTIVE traversal filter with the new globs so a live exclude-glob
+    // change re-arms the running watcher. Without this, the watcher kept its old filter
+    // and could accept events from a now-excluded subtree (or keep skipping a newly
+    // included one) until project reopen. Deferred/unwatched states re-read exclude_globs_
+    // when they arm, so only rebuild when a root is actively watched. (TD-2026-07-16-40.)
+    if (watched_project_root_.empty()) {
+      return;
+    }
+    filter = std::make_shared<ProjectTraversalFilter>(watched_project_root_, exclude_globs_);
+    traversal_filter_ = filter;
+  }
+  watcher_.SetEntryFilter([filter](const std::filesystem::path& path, platform::PathType type) {
+    return filter == nullptr || filter->Includes(path, type);
+  });
 }
 
 void WorkspaceProjectFileMonitor::SetPollInterval(std::chrono::milliseconds poll_interval) {

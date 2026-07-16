@@ -163,6 +163,19 @@ void TestLspProtocolDecodesSemanticTokens() {
          "an out-of-range accumulated line is dropped without overflowing int");
   Expect(overflow[0].line == 2000000000,
          "the in-range token decodes to its accumulated line");
+
+  // TD-2026-07-16-46: real INT64 overflow. Two groups whose deltaLine is INT64_MAX
+  // each would UB-overflow a plain `line += delta` on the second add (the first token
+  // is already dropped but leaves `line` at INT64_MAX). Saturating arithmetic drops
+  // both and never overflows. Also exercise a same-line huge deltaStart run.
+  const auto line_overflow = codec::ParseSemanticTokensData(
+      Json(R"({"data":[9223372036854775807,0,3,0,0, 9223372036854775807,0,3,0,0]})"));
+  Expect(line_overflow.empty(),
+         "two INT64_MAX line deltas are both dropped without signed-overflow UB");
+  const auto col_overflow = codec::ParseSemanticTokensData(
+      Json(R"({"data":[0,9223372036854775807,3,0,0, 0,9223372036854775807,3,0,0]})"));
+  Expect(col_overflow.empty(),
+         "two INT64_MAX same-line column deltas are both dropped without overflow UB");
 }
 
 // A hostile/buggy language server can pack ~1M minimal entries into one 64 MiB

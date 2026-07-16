@@ -619,6 +619,13 @@
             *error_message = "register_scm_provider(id, label) requires string arguments";
             return false;
           }
+          // Apply the shared per-kind contribution cap the table form enforces: the
+          // shorthand path previously pushed directly into host->scm_providers, so a
+          // plugin could loop it to grow the host vector past the memory backstop.
+          if (microide::plugin::ContributionLimitReached(&host->scm_providers,
+                                                             error_message)) {
+            return false;
+          }
           const char* id = lua_tostring(state, 1);
           const char* label = lua_tostring(state, 2);
           host->scm_providers.push_back(PluginHost::ContributedScmProvider{
@@ -656,6 +663,12 @@
           // longjmp over the live C++ locals in this frame.
           if (!lua_isstring(state, 1) || !lua_isstring(state, 2)) {
             *error_message = "register_auth_provider(id, label) requires string arguments";
+            return false;
+          }
+          // Same shared per-kind cap the table form enforces; the shorthand path
+          // previously bypassed it and could grow host->auth_providers unbounded.
+          if (microide::plugin::ContributionLimitReached(&host->auth_providers,
+                                                             error_message)) {
             return false;
           }
           const char* id = lua_tostring(state, 1);

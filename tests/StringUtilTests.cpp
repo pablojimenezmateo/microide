@@ -228,6 +228,27 @@ void TestStringUtilSplitAsciiWhitespace() {
          "empty input should yield no tokens");
 }
 
+// TD-2026-07-16-30: bounded SplitNulDelimited/SplitLineViews stop materializing token
+// views once the cap is reached, so git parsers can't be forced to allocate millions
+// of slots before their own entry cap.
+void TestStringUtilBoundedSplitStopsAtCap() {
+  // NUL-delimited: 5 records, ask for 2.
+  const std::string nul = std::string("a\0b\0c\0d\0e", 9);
+  const auto records = microide::util::SplitNulDelimited(nul, 2);
+  Expect(records.size() == 2, "bounded NUL split stops at the record cap");
+  Expect(records[0] == "a" && records[1] == "b", "bounded NUL split keeps leading records");
+  Expect(microide::util::SplitNulDelimited(nul, 0).empty(), "a zero cap yields no records");
+  // The unbounded form still returns everything.
+  Expect(microide::util::SplitNulDelimited(nul).size() == 5, "unbounded NUL split is unchanged");
+
+  // Line views: 4 lines, ask for 2.
+  const std::string_view lines = "l1\nl2\nl3\nl4";
+  const auto capped = microide::util::SplitLineViews(lines, 2);
+  Expect(capped.size() == 2, "bounded line split stops at the line cap");
+  Expect(capped[0] == "l1" && capped[1] == "l2", "bounded line split keeps leading lines");
+  Expect(microide::util::SplitLineViews(lines, 0).empty(), "a zero line cap yields no lines");
+}
+
 void TestStringUtilDecodeLinesSinglePassRegression() {
   // Trailing newline keeps a final empty line; line ending detection must agree
   // with the dominant style after the single-pass rewrite.
@@ -370,6 +391,7 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Util/SaturatingMath", TestSaturatingMath);
   AddTest(tests, "StringUtil/IsAllAsciiDigits", TestStringUtilIsAllAsciiDigits);
   AddTest(tests, "StringUtil/SplitAsciiWhitespace", TestStringUtilSplitAsciiWhitespace);
+  AddTest(tests, "StringUtil/BoundedSplitStopsAtCap", TestStringUtilBoundedSplitStopsAtCap);
   AddTest(tests, "StringUtil/DecodeLinesSinglePassRegression",
           TestStringUtilDecodeLinesSinglePassRegression);
   AddTest(tests, "Hex/DigitAndByteParsing", TestHexDigitAndByteParsing);

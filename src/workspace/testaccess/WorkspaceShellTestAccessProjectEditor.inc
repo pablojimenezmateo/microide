@@ -507,8 +507,9 @@
     return shell.OpenFileInNewTab(path);
   }
   static bool ApplyLspWorkspaceEdit(WorkspaceShell& shell,
-                                    const std::vector<microide::workspace::CodeActionEdit>& edits) {
-    return shell.ApplyLspWorkspaceEdit(edits);
+                                    const std::vector<microide::workspace::CodeActionEdit>& edits,
+                                    bool* out_any_rejected = nullptr) {
+    return shell.ApplyLspWorkspaceEdit(edits, out_any_rejected);
   }
   static bool SplitEditorGroup(WorkspaceShell& shell,
                                microide::workspace::EditorSplitOrientation orientation) {

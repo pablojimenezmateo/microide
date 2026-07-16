@@ -76,19 +76,168 @@ RuleResult CheckCoordinatorShellConstructors(const std::filesystem::path& repo_r
 RuleResult CheckThrowingStoParsers(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "try/std::sto parsing";
-  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
+  // The non-throwing parse policy also covers the developer tools and the perf
+  // harness: benchmark CLI parsers and /proc sample parsers are part of the speed
+  // regression workflow, and divergent parsing style tempts future agents to copy the
+  // old try/catch-std::sto pattern back into production code.
+  const std::array<std::filesystem::path, 3> roots = {
+      repo_root / "src", repo_root / "tools", repo_root / "tests/perf"};
+  for (const auto& root : roots) {
+    std::error_code root_ec;
+    if (!std::filesystem::is_directory(root, root_ec) || root_ec) {
+      continue;
+    }
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+      if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+        continue;
+      }
+      const std::string text = ReadText(entry.path());
+      const auto offsets = FindTryCatchStoViolations(text);
+      for (const std::size_t offset : offsets) {
+        result.violations.push_back(Violation{
+            .path = entry.path(),
+            .line = LineNumberAt(text, offset),
+            .message = "replace try/catch std::sto parsing with util::Parse helpers",
+        });
+      }
+    }
+  }
+  return result;
+}
+
+RuleResult CheckDapTransportUsesCheckedResponseSeqNarrowing(
+    const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "DAP transport range-checks inbound request_seq/seq before narrowing";
+  result.hard_fail = true;
+  // The DAP transport must not narrow an adapter-controlled request_seq/seq with a bare
+  // static_cast<int>(...AsInt()): an out-of-int-range value from a hostile/buggy adapter
+  // wraps and can collide with a live pending request or forge an initialize match. All
+  // inbound seq narrowing routes through DapResponseSeqInRange. (TD-2026-07-16-44.)
+  const std::filesystem::path target =
+      repo_root / "src/workspace/WorkspaceDapClientInternal.h";
+  std::error_code exists_ec;
+  if (!std::filesystem::exists(target, exists_ec) || exists_ec) {
+    return result;
+  }
+  const std::string text = ReadText(target);
+  // Any static_cast<int>( ... request_seq ... ) or ( ... ["seq"] ... AsInt()) that is
+  // not the checked helper is a violation. Match the raw narrowing shapes directly.
+  const std::regex raw_narrow(
+      R"(static_cast<int>\s*\(\s*msg\[\"(request_seq|seq)\"\]\.AsInt\(\)\s*\))");
+  AppendViolations(result, target, text, raw_narrow,
+                   "narrow inbound DAP request_seq/seq via DapResponseSeqInRange, "
+                   "not a bare static_cast<int>(AsInt())");
+  return result;
+}
+
+RuleResult CheckPublicScriptsUseRunChecksForCtest(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "public tools/*.sh route ctest through run-checks.sh";
+  result.hard_fail = true;
+  // tools/run-checks.sh is the blessed test entry point: it scopes the build, writes
+  // the deterministic /tmp log, and applies sanitizer options + TSAN suppressions. Any
+  // other tools/*.sh calling ctest directly is a split-brain gate that bypasses those
+  // controls. Only a `ctest` token at the start of a command word counts (a comment or
+  // a substring like "run-checks" does not). (TD-2026-07-16-28.)
+  const std::filesystem::path tools_dir = repo_root / "tools";
+  std::error_code dir_ec;
+  if (!std::filesystem::is_directory(tools_dir, dir_ec) || dir_ec) {
+    return result;
+  }
+  // A ctest invocation: line start or `;`/`|`/`&`/`(`/`do`/`then` boundary, then ctest.
+  const std::regex ctest_invocation(R"((^|[;&|(]|\bdo\b|\bthen\b)\s*ctest\b)");
+  for (const auto& entry : std::filesystem::directory_iterator(tools_dir)) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".sh") {
+      continue;
+    }
+    if (entry.path().filename() == "run-checks.sh") {
+      continue;  // the sanctioned wrapper
+    }
+    const std::string text = ReadText(entry.path());
+    // Scan line by line so we can skip comment lines (leading # after whitespace).
+    std::size_t line_no = 1;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+      const std::size_t nl = text.find('\n', start);
+      const std::string line =
+          text.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+      const std::size_t first = line.find_first_not_of(" \t");
+      const bool is_comment = first != std::string::npos && line[first] == '#';
+      if (!is_comment && std::regex_search(line, ctest_invocation)) {
+        result.violations.push_back(Violation{
+            .path = entry.path(),
+            .line = line_no,
+            .message = "public tools/*.sh must call ctest via tools/run-checks.sh, not directly",
+        });
+      }
+      if (nl == std::string::npos) {
+        break;
+      }
+      start = nl + 1;
+      ++line_no;
+    }
+  }
+  return result;
+}
+
+RuleResult CheckOneShotWakeProducersCheckPushResultOrHaveBackstop(
+    const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "one-shot SDL wake producers route through the checked pusher";
+  result.hard_fail = true;
+  // These producers make a result ready in shared state and then push a neutral SDL
+  // wake. A bare SDL_PushEvent() is fire-and-forget: a rejected push strands the ready
+  // state until unrelated input. They must route through util::PushSdlWake, which
+  // latches the shared "wake owed" bit that CurrentIdleWaitState consumes as a fallback
+  // wait. (TD-2026-07-16-54.) Any bare SDL_PushEvent in these files is a violation.
+  static constexpr std::array<const char*, 5> kProducerFiles = {
+      "src/project/GitBlameService.cpp",
+      "src/platform/ControlSocketServer.cpp",
+      "src/workspace/WorkspaceProjectDialogCoordinator.cpp",
+      "src/app/BackgroundTaskCounter.cpp",
+      "src/workspace/WorkspaceLifecycleCoordinator.cpp",
+  };
+  const std::regex bare_push(R"(\bSDL_PushEvent\s*\()");
+  for (const char* rel : kProducerFiles) {
+    const std::filesystem::path path = repo_root / rel;
+    std::error_code exists_ec;
+    if (!std::filesystem::exists(path, exists_ec) || exists_ec) {
+      continue;
+    }
+    const std::string text = ReadText(path);
+    AppendViolations(result, path, text, bare_push,
+                     "one-shot wake producers must use util::PushSdlWake, not a bare "
+                     "SDL_PushEvent (which drops the wake with no backstop on failure)");
+  }
+  return result;
+}
+
+RuleResult CheckPerfScenariosUseNonThrowingFilesystemProbes(
+    const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "perf scenarios use non-throwing filesystem probes";
+  result.hard_fail = true;
+  // The perf runner is the speed-regression oracle: fixture discovery must degrade to
+  // a labelled "fixture absent" message, never throw a raw std::filesystem_error. A
+  // single-arg (throwing) exists()/is_directory() — no error_code — is the violation;
+  // the two-arg ec overload has a comma and is exempt. Use PathExistsNoThrow /
+  // DirectoryExistsNoThrow instead. (TD-2026-07-16-29.)
+  const std::filesystem::path perf_dir = repo_root / "tests/perf";
+  std::error_code dir_ec;
+  if (!std::filesystem::is_directory(perf_dir, dir_ec) || dir_ec) {
+    return result;
+  }
+  const std::regex throwing_probe(
+      R"(std::filesystem::(exists|is_directory)\s*\([^,()]*\))");
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(perf_dir)) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
       continue;
     }
     const std::string text = ReadText(entry.path());
-    const auto offsets = FindTryCatchStoViolations(text);
-    for (const std::size_t offset : offsets) {
-      result.violations.push_back(Violation{
-          .path = entry.path(),
-          .line = LineNumberAt(text, offset),
-          .message = "replace try/catch std::sto parsing with util::Parse helpers",
-      });
-    }
+    AppendViolations(result, entry.path(), text, throwing_probe,
+                     "perf fixture probes must use PathExistsNoThrow/DirectoryExistsNoThrow, "
+                     "not a throwing single-arg std::filesystem::exists/is_directory");
   }
   return result;
 }

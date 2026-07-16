@@ -58,8 +58,18 @@ void CommandLineCoordinator::CompleteInput(editor::SingleLineEditor& input) {
   const std::size_t replace_start = starts_new_token || parsed.tokens.empty()
                                         ? input.text().size()
                                         : parsed.tokens.back().start;
-  const std::filesystem::path completion_root =
-      state_.root.empty() ? std::filesystem::current_path() : state_.root;
+  // Resolve the fallback root without the throwing current_path() overload: when no
+  // project is active (welcome surface) and the process cwd is gone/inaccessible, the
+  // throwing form would raise std::filesystem_error out of this UI-thread completion
+  // path. An unresolvable cwd degrades to an empty root (no path candidates).
+  std::filesystem::path completion_root = state_.root;
+  if (completion_root.empty()) {
+    std::error_code cwd_ec;
+    completion_root = std::filesystem::current_path(cwd_ec);
+    if (cwd_ec) {
+      completion_root.clear();
+    }
+  }
   std::vector<std::string> command_names = WorkspaceCommandNames();
   const auto plugin_command_names = operations_.plugin_command_names();
   command_names.insert(command_names.end(), plugin_command_names.begin(), plugin_command_names.end());

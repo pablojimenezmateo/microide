@@ -348,10 +348,19 @@ void LspClient::Impl::DoInitializeBlocking() {
               const auto& types = provider["legend"]["tokenTypes"];
               if (types.IsArray()) {
                 const auto& array = types.AsArray();
+                // Cap the harvested legend like the steady-state result parsers: a
+                // buggy/hostile server can advertise a huge tokenTypes array in the
+                // initialize response, which would be duplicated into a long-lived
+                // vector (and copied by value on every SemanticTokenLegend() call) for
+                // a feature that only maps a small set of token-type indices to names.
+                // Token types past the cap are not useful for rendering. (TD-32.)
+                constexpr std::size_t kMaxSemanticTokenLegendEntries = 1024;
+                const std::size_t harvested =
+                    std::min(array.size(), kMaxSemanticTokenLegendEntries);
                 std::vector<std::string> legend;
-                legend.reserve(array.size());
-                for (const auto& entry : array) {
-                  legend.push_back(entry.AsString());
+                legend.reserve(harvested);
+                for (std::size_t i = 0; i < harvested; ++i) {
+                  legend.push_back(array[i].AsString());
                 }
                 std::lock_guard lock(mutex);
                 semantic_token_types = std::move(legend);

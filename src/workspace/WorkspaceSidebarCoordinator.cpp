@@ -518,11 +518,15 @@ bool WorkspaceShell::RefreshTestsSidebarState() {
 
   context_.current_project_state.sidebar.tests.entries.clear();
   context_.current_project_state.sidebar.tests.error.clear();
+  const std::size_t item_count = test_controller_.TestItems().size();
+  context_.current_project_state.sidebar.tests.entries.reserve(item_count);
   for (const TestItem& item : test_controller_.TestItems()) {
     std::string status = "queued";
-    const auto& results = test_controller_.TestResults(item.id);
-    if (!results.empty()) {
-      switch (results.back().state) {
+    // O(1) latest-status lookup instead of allocating + scanning the full result
+    // history per row (a 10k-test discovery previously did that every rebuild).
+    if (const TestResult* latest = test_controller_.LatestTestResult(item.id);
+        latest != nullptr) {
+      switch (latest->state) {
         case TestResultState::Queued:
           status = "queued";
           break;

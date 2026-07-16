@@ -70,6 +70,70 @@ void TestPersistedStateConfigDedupesDuplicateSettingIds() {
   Expect(tab_size_value == "8", "the last value wins for a duplicate setting id");
 }
 
+// TD-2026-07-16-36: config decode fails closed on a malformed setting id (control
+// char / space / empty) rather than smuggling it past the runtime validation choke.
+void TestPersistedStateConfigRejectsMalformedSettingId() {
+  PersistedUserConfigState user{
+      .ui_scale = 1.0f,
+      .settings = {{"bad id with space", "x"}},  // space is invalid per IsValidSettingId
+  };
+  std::vector<std::byte> encoded;
+  Expect(EncodeUserConfigRecord(user, &encoded), "encode of a malformed id should still write bytes");
+  PersistedUserConfigState decoded;
+  Expect(!DecodeUserConfigRecord(encoded, &decoded),
+         "decode must fail closed on a malformed setting id");
+}
+
+// TD-2026-07-16-36: repeated disabled keybinding/plugin ids dedupe by value on decode
+// so stale duplicates cannot inflate downstream resolution.
+void TestPersistedStateConfigDedupesDisabledIds() {
+  PersistedUserConfigState user{
+      .ui_scale = 1.0f,
+      .disabled_keybinding_ids = {"a", "a", "b", "a"},
+      .disabled_plugin_ids = {"p", "p"},
+  };
+  std::vector<std::byte> encoded;
+  Expect(EncodeUserConfigRecord(user, &encoded), "encode should succeed");
+  PersistedUserConfigState decoded;
+  Expect(DecodeUserConfigRecord(encoded, &decoded), "decode should succeed");
+  Expect(decoded.disabled_keybinding_ids.size() == 2,
+         "duplicate disabled keybinding ids dedupe to the unique set");
+  Expect(decoded.disabled_plugin_ids.size() == 1, "duplicate disabled plugin ids dedupe");
+}
+
+// TD-2026-07-16-37: a persisted commit-draft body over the inline-editor budget must
+// fail decode (fail closed) rather than load a huge string into the sidebar editor. A
+// normal-sized draft round-trips.
+void TestPersistedStateCommitDraftBodyBudget() {
+  using microide::workspace::PersistedCommitDraftState;
+
+  // Normal draft round-trips.
+  PersistedProjectConfigState ok_config;
+  ok_config.commit_draft = PersistedCommitDraftState{
+      .head_oid = "abc123", .branch_name = "main", .subject = "fix", .body = "details\n"};
+  std::vector<std::byte> ok_encoded;
+  Expect(EncodeProjectConfigRecord(ok_config, &ok_encoded), "encode normal draft");
+  PersistedProjectConfigState ok_decoded;
+  Expect(DecodeProjectConfigRecord(ok_encoded, &ok_decoded), "decode normal draft");
+  Expect(ok_decoded.commit_draft.has_value() && ok_decoded.commit_draft->subject == "fix",
+         "a normal commit draft round-trips");
+
+  // Oversized body (> 1 MiB) must fail decode closed.
+  PersistedProjectConfigState big_config;
+  big_config.commit_draft = PersistedCommitDraftState{
+      .head_oid = "abc123",
+      .branch_name = "main",
+      .subject = "fix",
+      .body = std::string((1u << 20) + 1, 'x'),
+  };
+  std::vector<std::byte> big_encoded;
+  Expect(EncodeProjectConfigRecord(big_config, &big_encoded),
+         "encode still writes the oversized draft bytes");
+  PersistedProjectConfigState big_decoded;
+  Expect(!DecodeProjectConfigRecord(big_encoded, &big_decoded),
+         "decode must fail closed on an over-budget commit-draft body");
+}
+
 void TestPersistedStateUserAndProjectConfigRecordRoundTrip() {
   PersistedUserConfigState user{
       .ui_scale = 1.5f,
@@ -173,6 +237,28 @@ PersistedProjectSessionState BuildProjectSessionFixture() {
   session.sidebar_scroll_row = 7;
   session.sidebar_view_id = "git";
   return session;
+}
+
+// TD-2026-07-16-20: project-session decode caps repeated nested records. A group with
+// more tabs than the per-group budget must fail closed rather than materialize them.
+void TestPersistedStateProjectSessionDecodeHonorsTabCap() {
+  PersistedProjectSessionState session;
+  PersistedEditorGroupState group;
+  // One past the per-group tab cap (4096). Each tab is minimal.
+  for (std::size_t i = 0; i < 4097; ++i) {
+    PersistedEditorTabState tab;
+    tab.kind = "editor";
+    tab.path = "/tmp/f" + std::to_string(i) + ".txt";
+    group.tabs.push_back(std::move(tab));
+  }
+  session.groups = {std::move(group)};
+
+  std::vector<std::byte> record;
+  Expect(EncodeProjectSessionRecord(session, &record),
+         "encoding an over-cap session should still write bytes");
+  PersistedProjectSessionState decoded;
+  Expect(!DecodeProjectSessionRecord(record, &decoded),
+         "decoding a session with more tabs than the per-group budget must fail closed");
 }
 
 void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
@@ -912,6 +998,14 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
           TestPersistedStateUserAndProjectConfigRecordRoundTrip);
   AddTest(tests, "PersistedState/ConfigDedupesDuplicateSettingIds",
           TestPersistedStateConfigDedupesDuplicateSettingIds);
+  AddTest(tests, "PersistedState/ConfigRejectsMalformedSettingId",
+          TestPersistedStateConfigRejectsMalformedSettingId);
+  AddTest(tests, "PersistedState/ConfigDedupesDisabledIds",
+          TestPersistedStateConfigDedupesDisabledIds);
+  AddTest(tests, "PersistedState/CommitDraftBodyBudget",
+          TestPersistedStateCommitDraftBodyBudget);
+  AddTest(tests, "PersistedStateRecord/ProjectSessionDecodeHonorsTabCap",
+          TestPersistedStateProjectSessionDecodeHonorsTabCap);
   AddTest(tests, "PersistedStateRecord/ProjectSessionRoundTripOmitsChatRegistry",
           TestPersistedStateProjectSessionRoundTripOmitsChatRegistry);
   AddTest(tests, "PersistedStateRecord/ProjectSessionAcceptsLegacyChatRegistryTag",

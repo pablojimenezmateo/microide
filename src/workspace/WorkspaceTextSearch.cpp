@@ -19,7 +19,11 @@ bool EndsWith(std::string_view text, std::string_view suffix) {
 }
 
 std::string ToLower(std::string_view text) {
-  return util::ToLowerAscii(text);
+  // UTF-8 case fold (length-preserving for the covered scripts) so buffer literal
+  // search matches the case-insensitive behavior of project search and ReplaceAll:
+  // café/CAFÉ, Δ/δ, etc. Byte offsets stay valid because the supported folds do not
+  // change byte length. (TD-2026-07-16-58.)
+  return util::Utf8CaseFold(text);
 }
 
 std::vector<std::string> SplitSyntaxLines(std::string_view text) {
@@ -48,7 +52,9 @@ bool QuerySupportsLiteralReplace(std::string_view query) {
 }
 
 bool UsesCaseSensitiveLiteralMatch(std::string_view query) {
-  return util::QueryHasUppercaseAscii(query);
+  // Unicode-aware smart-case: any covered-script uppercase (not just ASCII) makes the
+  // query case-sensitive, matching project search. (TD-2026-07-16-58.)
+  return util::Utf8QueryHasCaseVariation(query);
 }
 
 std::size_t ReplaceLiteralMatchesInText(std::string& content,
@@ -112,8 +118,8 @@ std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
   // previous O(haystack * needle) per-position re-lowering nested loop.
   thread_local std::string lowered_haystack;
   thread_local std::string lowered_needle;
-  util::ToLowerAsciiInto(haystack, lowered_haystack);
-  util::ToLowerAsciiInto(needle, lowered_needle);
+  util::Utf8CaseFoldInto(haystack, lowered_haystack);
+  util::Utf8CaseFoldInto(needle, lowered_needle);
   const std::size_t position = lowered_haystack.find(lowered_needle, start_from);
   return position != std::string::npos ? std::optional{position} : std::nullopt;
 }
@@ -212,10 +218,6 @@ std::optional<editor::TextPosition> FindNextLiteralMatchAfterSeedWrapOnce(
 
 namespace {
 
-constexpr char AsciiLower(char c) {
-  return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + ('a' - 'A')) : c;
-}
-
 // Shared all-occurrences case-insensitive scan. `line_at(i)` yields line `i` as a
 // string_view; the same body serves both the vector<string> and TextBuffer
 // overloads so the two cannot drift.
@@ -231,7 +233,7 @@ std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_coun
   const std::string lowered_query = ToLower(query);
   std::string lowered_line;
   for (std::size_t line_index = 0; line_index < line_count; ++line_index) {
-    util::ToLowerAsciiInto(line_at(line_index), lowered_line);
+    util::Utf8CaseFoldInto(line_at(line_index), lowered_line);
     std::size_t offset = lowered_line.find(lowered_query);
     while (offset != std::string::npos) {
       matches.push_back(editor::SelectionRange{
@@ -268,12 +270,11 @@ bool QueryExtendsCaseInsensitive(std::string_view prefix, std::string_view query
   if (prefix.size() > query.size()) {
     return false;
   }
-  for (std::size_t i = 0; i < prefix.size(); ++i) {
-    if (AsciiLower(prefix[i]) != AsciiLower(query[i])) {
-      return false;
-    }
-  }
-  return true;
+  // Length-preserving UTF-8 fold: fold(prefix) must equal the fold of query's first
+  // prefix.size() bytes. Compare folded byte ranges so café extends CAFÉ. Malformed
+  // partial byte sequences at a boundary are folded verbatim identically on both
+  // sides, so the comparison stays consistent. (TD-2026-07-16-58.)
+  return util::Utf8CaseFold(prefix) == util::Utf8CaseFold(query.substr(0, prefix.size()));
 }
 
 std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
@@ -309,13 +310,13 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
     if (column > text.size() || needle > text.size() - column) {
       continue;
     }
-    bool still_matches = true;
-    for (std::size_t i = 0; i < needle; ++i) {
-      if (AsciiLower(text[column + i]) != lowered_query[i]) {
-        still_matches = false;
-        break;
-      }
-    }
+    // Fold the candidate slice (length-preserving) and compare to the folded query,
+    // so a growing non-ASCII case-insensitive query refines correctly. The slice
+    // starts/ends on scalar boundaries (match offsets came from a length-preserving
+    // folded find). (TD-2026-07-16-58.)
+    thread_local std::string folded_slice;
+    util::Utf8CaseFoldInto(text.substr(column, needle), folded_slice);
+    const bool still_matches = folded_slice == lowered_query;
     if (still_matches) {
       matches.push_back(editor::SelectionRange{
           .start = editor::TextPosition{line, column},

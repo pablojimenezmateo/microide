@@ -17,12 +17,29 @@ std::optional<SDL_Rect> ToClipRect(const SDL_FRect& rect,
                                    const render::TextClipPadding& padding,
                                    int width,
                                    int height) {
-  const int x0 = std::max(0, static_cast<int>(std::floor(rect.x - padding.left)));
-  const int y0 = std::max(0, static_cast<int>(std::floor(rect.y - padding.top)));
-  const int x1 = std::min(width,
-                          static_cast<int>(std::ceil(rect.x + rect.w + padding.right)));
-  const int y1 = std::min(height,
-                          static_cast<int>(std::ceil(rect.y + rect.h + padding.bottom)));
+  // Reject non-finite or non-positive-size input BEFORE any arithmetic or float->int
+  // cast: NaN/inf flow through floor/ceil and the subsequent static_cast<int> is UB
+  // ([conv.fpint]). A negative/zero-size dirty rect is not a valid partial invalidation
+  // either. SDL eventually consumes integer rects, so invalid geometry is dropped here.
+  if (!std::isfinite(rect.x) || !std::isfinite(rect.y) || !std::isfinite(rect.w) ||
+      !std::isfinite(rect.h) || rect.w <= 0.0f || rect.h <= 0.0f) {
+    return std::nullopt;
+  }
+
+  // Compute padded edges and clamp to the surface bounds IN FLOAT space, so a huge
+  // finite coordinate saturates to [0, width]/[0, height] rather than overflowing int
+  // during the narrowing cast. width/height fit in int, so the clamped values do too.
+  const float fw = static_cast<float>(width);
+  const float fh = static_cast<float>(height);
+  const float fx0 = std::clamp(std::floor(rect.x - padding.left), 0.0f, fw);
+  const float fy0 = std::clamp(std::floor(rect.y - padding.top), 0.0f, fh);
+  const float fx1 = std::clamp(std::ceil(rect.x + rect.w + padding.right), 0.0f, fw);
+  const float fy1 = std::clamp(std::ceil(rect.y + rect.h + padding.bottom), 0.0f, fh);
+
+  const int x0 = static_cast<int>(fx0);
+  const int y0 = static_cast<int>(fy0);
+  const int x1 = static_cast<int>(fx1);
+  const int y1 = static_cast<int>(fy1);
   if (x1 <= x0 || y1 <= y0) {
     return std::nullopt;
   }

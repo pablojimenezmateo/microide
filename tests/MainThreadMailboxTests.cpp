@@ -9,6 +9,7 @@
 #include "TestSupport.h"
 
 #include "util/MainThreadMailbox.h"
+#include "util/SdlWake.h"
 
 #include <SDL3/SDL.h>
 
@@ -114,9 +115,75 @@ void TestWakeDisabledPushesNoEvent() {
   Expect(mailbox.Drain() == 1, "the action still queues and drains");
 }
 
+// TD-2026-07-16-53: when SDL_PushEvent rejects the wake, the queued action must stay
+// pending AND the mailbox must latch an "undelivered wake" so the scheduled poll can
+// retry — silently losing the only wake would strand the action.
+void TestPushWakeFailureLeavesActionPending() {
+  static const bool initialized = InitSdlEvents();
+  (void)initialized;
+  const Uint32 type = SDL_RegisterEvents(1);
+  Expect(type != 0 && type != static_cast<Uint32>(-1), "registered an SDL event type");
+
+  MainThreadMailbox::SetEventPusherForTesting([](const SDL_Event&) { return false; });
+  MainThreadMailbox mailbox;
+  mailbox.SetWakeEventType(type);
+
+  bool ran = false;
+  mailbox.Post([&ran]() { ran = true; });
+  Expect(mailbox.PendingCount() == 1, "a failed wake push must not drop the queued action");
+  Expect(mailbox.HasUndeliveredWake(),
+         "a failed wake push while work is pending latches an undelivered-wake bit");
+  Expect(!ran, "the action has not run yet (no drain)");
+
+  MainThreadMailbox::SetEventPusherForTesting(nullptr);  // restore before draining
+  Expect(mailbox.Drain() == 1 && ran, "the still-pending action drains and runs");
+  Expect(!mailbox.HasUndeliveredWake(), "draining clears the undelivered-wake bit");
+}
+
+// The undelivered wake retries successfully once the event queue accepts pushes again.
+void TestPostWakeFailureCanRetry() {
+  static const bool initialized = InitSdlEvents();
+  (void)initialized;
+  const Uint32 type = SDL_RegisterEvents(1);
+  Expect(type != 0 && type != static_cast<Uint32>(-1), "registered an SDL event type");
+
+  MainThreadMailbox::SetEventPusherForTesting([](const SDL_Event&) { return false; });
+  MainThreadMailbox mailbox;
+  mailbox.SetWakeEventType(type);
+  mailbox.Post([]() {});
+  Expect(mailbox.HasUndeliveredWake(), "wake push failed, bit latched");
+  Expect(mailbox.RetryWakeIfPending(), "retry still owes a wake while the queue rejects");
+
+  // Queue recovers: the retry now delivers and clears the bit.
+  FlushEvents(type);
+  MainThreadMailbox::SetEventPusherForTesting(nullptr);
+  Expect(!mailbox.RetryWakeIfPending(), "a successful retry clears the owed wake");
+  Expect(!mailbox.HasUndeliveredWake(), "no wake owed after a successful retry");
+  Expect(CountEvents(type) == 1, "the retry delivered exactly one wake event");
+  mailbox.Drain();
+}
+
+// TD-2026-07-16-56: the wake-registration-degraded flag drives the idle-wait fallback
+// poll. Verify it round-trips (the idle-wait consumer clamps its timeout when set).
+void TestSdlWakeRegistrationDegradedFlagRoundTrips() {
+  using microide::util::SdlWakeRegistrationDegraded;
+  using microide::util::SetSdlWakeRegistrationDegraded;
+  const bool prior = SdlWakeRegistrationDegraded();
+  SetSdlWakeRegistrationDegraded(true);
+  Expect(SdlWakeRegistrationDegraded(), "degraded flag reads true after being set");
+  SetSdlWakeRegistrationDegraded(false);
+  Expect(!SdlWakeRegistrationDegraded(), "degraded flag clears");
+  SetSdlWakeRegistrationDegraded(prior);  // restore
+}
+
 }  // namespace
 
 void RegisterMainThreadMailboxTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "MainThreadMailbox/SdlWakeRegistrationDegradedFlagRoundTrips",
+          TestSdlWakeRegistrationDegradedFlagRoundTrips);
+  AddTest(tests, "MainThreadMailbox/PushWakeFailureLeavesActionPending",
+          TestPushWakeFailureLeavesActionPending);
+  AddTest(tests, "MainThreadMailbox/PostWakeFailureCanRetry", TestPostWakeFailureCanRetry);
   AddTest(tests, "MainThreadMailbox/DrainRunsActionsInOrder", TestDrainRunsActionsInOrder);
   AddTest(tests, "MainThreadMailbox/ClearDropsWithoutRunning", TestClearDropsWithoutRunning);
   AddTest(tests, "MainThreadMailbox/PostPushesExactlyOneWakeEvent",

@@ -99,8 +99,10 @@ MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request)
     };
   }
 
-  const bool output_exists =
-      !merge_tab.output_path.empty() && std::filesystem::exists(merge_tab.output_path);
+  std::error_code output_exists_ec;
+  const bool output_exists = !merge_tab.output_path.empty() &&
+                             std::filesystem::exists(merge_tab.output_path, output_exists_ec) &&
+                             !output_exists_ec;
   if (request.result_should_exist != output_exists) {
     return MergeValidationResult{
         .ok = false,

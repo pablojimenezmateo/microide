@@ -14,41 +14,51 @@ std::vector<PathMutationCoordinator::DirtyPathTarget> PathMutationCoordinator::D
   const std::filesystem::path normalized_path = path.lexically_normal();
   std::vector<DirtyPathTarget> targets;
   const auto& state = CurrentProjectState();
-  for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
-    const TabEntry& tab = state.focused_group().open_tabs[i];
-    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
-      const auto& editor_state = *tab.editor_state;
-      if (!editor_state.needs_restore && !editor_state.viewport.path().empty() &&
-          editor_state.viewport.dirty() &&
-          PathEqualsOrWithin(editor_state.viewport.path().lexically_normal(), normalized_path)) {
+  // Scan EVERY editor group, not just the focused one: a dirty editor/compare/merge
+  // buffer in a background split is unsaved work too, so rename/delete preflight and the
+  // external-change banner must see it. Saving routes through SaveGroupTab(group,tab).
+  // (TD-2026-07-16-59.)
+  for (std::size_t g = 0; g < state.editor_groups.size(); ++g) {
+    const auto& open_tabs = state.editor_groups[g].open_tabs;
+    for (std::size_t i = 0; i < open_tabs.size(); ++i) {
+      const TabEntry& tab = open_tabs[i];
+      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+        const auto& editor_state = *tab.editor_state;
+        if (!editor_state.needs_restore && !editor_state.viewport.path().empty() &&
+            editor_state.viewport.dirty() &&
+            PathEqualsOrWithin(editor_state.viewport.path().lexically_normal(), normalized_path)) {
+          targets.push_back(DirtyPathTarget{
+              .kind = DirtyPathTarget::Kind::EditorView,
+              .group_index = g,
+              .tab_index = i,
+          });
+        }
+        continue;
+      }
+
+      if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+          tab.compare->right_editable && tab.compare->right_viewport.dirty() &&
+          PathEqualsOrWithin(tab.compare->right_path.lexically_normal(), normalized_path)) {
         targets.push_back(DirtyPathTarget{
-            .kind = DirtyPathTarget::Kind::EditorView,
+            .kind = DirtyPathTarget::Kind::CompareTab,
+            .group_index = g,
+            .tab_index = i,
+        });
+        continue;
+      }
+
+      if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
+          tab.merge->result_viewport.dirty() &&
+          (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), normalized_path) ||
+           PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), normalized_path) ||
+           PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), normalized_path) ||
+           PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), normalized_path))) {
+        targets.push_back(DirtyPathTarget{
+            .kind = DirtyPathTarget::Kind::MergeTab,
+            .group_index = g,
             .tab_index = i,
         });
       }
-      continue;
-    }
-
-    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
-        tab.compare->right_editable && tab.compare->right_viewport.dirty() &&
-        PathEqualsOrWithin(tab.compare->right_path.lexically_normal(), normalized_path)) {
-      targets.push_back(DirtyPathTarget{
-          .kind = DirtyPathTarget::Kind::CompareTab,
-          .tab_index = i,
-      });
-      continue;
-    }
-
-    if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
-        tab.merge->result_viewport.dirty() &&
-        (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), normalized_path) ||
-         PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), normalized_path) ||
-         PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), normalized_path) ||
-         PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), normalized_path))) {
-      targets.push_back(DirtyPathTarget{
-          .kind = DirtyPathTarget::Kind::MergeTab,
-          .tab_index = i,
-      });
     }
   }
   return targets;
@@ -104,14 +114,20 @@ std::vector<std::size_t> PathMutationCoordinator::AffectedMergeTabIndices(
 
 bool PathMutationCoordinator::HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                                         std::string* blocking_label) const {
-  const std::vector<std::size_t> dirty_tabs = DirtyTabIndicesForPath(path);
-  if (!dirty_tabs.empty()) {
-    if (blocking_label != nullptr) {
-      *blocking_label = CurrentProjectState().focused_group().open_tabs[dirty_tabs.front()].title;
-    }
-    return true;
+  const std::vector<DirtyPathTarget> targets = DirtyPathTargetsForPath(path);
+  if (targets.empty()) {
+    return false;
   }
-  return false;
+  if (blocking_label != nullptr) {
+    // Label from the FIRST dirty target's own group (targets may span splits).
+    const auto& groups = CurrentProjectState().editor_groups;
+    const DirtyPathTarget& first = targets.front();
+    if (first.group_index < groups.size() &&
+        first.tab_index < groups[first.group_index].open_tabs.size()) {
+      *blocking_label = groups[first.group_index].open_tabs[first.tab_index].title;
+    }
+  }
+  return true;
 }
 
 bool PathMutationCoordinator::ResolveDirtyTabsForPath(
@@ -133,17 +149,19 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
   if (resolution == DirtyPathResolution::Save) {
     bool saved_any = false;
     for (const DirtyPathTarget& target : dirty_targets) {
-      if (target.tab_index >= state.focused_group().open_tabs.size()) {
+      if (target.group_index >= state.editor_groups.size() ||
+          target.tab_index >= state.editor_groups[target.group_index].open_tabs.size()) {
         continue;
       }
 
-      auto& tab = state.focused_group().open_tabs[target.tab_index];
+      auto& group = state.editor_groups[target.group_index];
+      auto& tab = group.open_tabs[target.tab_index];
       if (target.kind == DirtyPathTarget::Kind::CompareTab) {
         if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
             !tab.compare->right_viewport.dirty()) {
           continue;
         }
-        if (!editor_tabs_.Save(target.tab_index)) {
+        if (!editor_tabs_.SaveGroupTab(target.group_index, target.tab_index)) {
           return false;
         }
         saved_any = true;
@@ -156,7 +174,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
         if (!tab.merge->result_viewport.dirty()) {
           continue;
         }
-        if (!editor_tabs_.Save(target.tab_index)) {
+        if (!editor_tabs_.SaveGroupTab(target.group_index, target.tab_index)) {
           return false;
         }
         saved_any = true;
@@ -167,7 +185,10 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
         continue;
       }
 
-      if (target.tab_index == state.focused_group().active_tab_index) {
+      // Sync the live active viewport back into its tab state before saving it. Only
+      // the focused group's active tab carries unflushed edits in the active viewport.
+      if (target.group_index == state.clamped_focused_group_index() &&
+          target.tab_index == group.active_tab_index) {
         editor_tabs_.SyncActiveEditorTab();
       }
 

@@ -324,6 +324,7 @@ bool Application::Initialize() {
   }
   if (renderer_ == nullptr) {
     SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
+    DestroySdlResources();  // release the already-created window before failing
     return false;
   }
 
@@ -363,26 +364,40 @@ bool Application::Initialize() {
       // operator-supplied, but capping it keeps the cold-start path from OOMing on a
       // mistakenly-huge path. Mirrors ControlChannelService's kMaxDescriptorFileBytes.
       constexpr std::uintmax_t kMaxControlSpecBytes = 1u << 20;  // 1 MiB
-      std::error_code size_ec;
-      const std::uintmax_t spec_size =
-          std::filesystem::file_size(*startup_options_.control_spec_path, size_ec);
-      if (!size_ec && spec_size > kMaxControlSpecBytes) {
-        SDL_Log("control spec too large (%llu bytes > %llu cap): %s",
-                static_cast<unsigned long long>(spec_size),
-                static_cast<unsigned long long>(kMaxControlSpecBytes),
-                startup_options_.control_spec_path->string().c_str());
+      const std::filesystem::path& spec_path = *startup_options_.control_spec_path;
+      // Require a regular file. A FIFO, device, or procfs node reports no usable size
+      // (or a wrong one) and would drop us into an unbounded/blocking iterator slurp
+      // below; only a real file is a valid cold-start spec.
+      std::error_code status_ec;
+      const std::filesystem::file_status status = std::filesystem::status(spec_path, status_ec);
+      if (status_ec || !std::filesystem::is_regular_file(status)) {
+        SDL_Log("control spec is not a regular file: %s", spec_path.string().c_str());
+      } else if (std::error_code size_ec;
+                 std::filesystem::file_size(spec_path, size_ec) > kMaxControlSpecBytes &&
+                 !size_ec) {
+        SDL_Log("control spec too large (> %llu byte cap): %s",
+                static_cast<unsigned long long>(kMaxControlSpecBytes), spec_path.string().c_str());
       } else {
-        std::ifstream in(*startup_options_.control_spec_path);
+        std::ifstream in(spec_path, std::ios::binary);
         if (in) {
-          const std::string json((std::istreambuf_iterator<char>(in)),
-                                 std::istreambuf_iterator<char>());
-          control_spec = workspace::ParseControlSpec(json);
-          if (!control_spec.valid) {
-            SDL_Log("control spec parse error: %s", control_spec.parse_error.c_str());
+          // Read at most cap+1 bytes so the actual read is bounded even if the file
+          // grew past the pre-check (TOCTOU): an unbounded iterator slurp would defeat
+          // the size cap. Crossing cap+1 means the file is over the limit — reject.
+          std::string json(static_cast<std::size_t>(kMaxControlSpecBytes) + 1, '\0');
+          in.read(json.data(), static_cast<std::streamsize>(json.size()));
+          json.resize(static_cast<std::size_t>(in.gcount()));
+          if (json.size() > kMaxControlSpecBytes) {
+            SDL_Log("control spec too large (> %llu byte cap): %s",
+                    static_cast<unsigned long long>(kMaxControlSpecBytes),
+                    spec_path.string().c_str());
+          } else {
+            control_spec = workspace::ParseControlSpec(json);
+            if (!control_spec.valid) {
+              SDL_Log("control spec parse error: %s", control_spec.parse_error.c_str());
+            }
           }
         } else {
-          SDL_Log("could not read control spec: %s",
-                  startup_options_.control_spec_path->string().c_str());
+          SDL_Log("could not read control spec: %s", spec_path.string().c_str());
         }
       }
     }
@@ -409,12 +424,25 @@ bool Application::Initialize() {
     if (explicit_project.has_value()) {
       initial_project = *explicit_project;
     } else if (!startup_options_.safe_mode) {
-      initial_project = std::filesystem::current_path();
+      // Non-throwing cwd: the launching shell's working directory may be deleted,
+      // permission-revoked, or hit ELOOP/overlong resolution. The throwing overload
+      // would terminate the process before WorkspaceShell::Initialize could open an
+      // empty project. An unresolvable cwd degrades to an empty initial project (same
+      // as safe mode). (TD-2026-07-16-41.)
+      std::error_code cwd_ec;
+      std::filesystem::path cwd = std::filesystem::current_path(cwd_ec);
+      if (cwd_ec) {
+        SDL_Log("could not resolve current working directory (%s); starting with no project",
+                cwd_ec.message().c_str());
+      } else {
+        initial_project = std::move(cwd);
+      }
     }
 
     util::StartupTrace::Scope workspace_init_scope("WorkspaceShell::Initialize");
     if (!workspace_shell_.Initialize(initial_project)) {
       SDL_Log("Workspace initialization failed");
+      DestroySdlResources();  // release the window + renderer before failing
       return false;
     }
 
@@ -459,16 +487,7 @@ bool Application::Initialize() {
   return true;
 }
 
-void Application::Shutdown() {
-  if (!initialized_) {
-    return;
-  }
-
-  workspace_shell_.SetDialogWindow(nullptr);
-
-  // Destroy the window and renderer immediately so the app disappears from the
-  // screen before any blocking workspace shutdown work (persisting state, waiting
-  // for terminal processes to exit, etc.).
+void Application::DestroySdlResources() {
   if (window_ != nullptr) {
     SDL_StopTextInput(window_);
   }
@@ -481,6 +500,24 @@ void Application::Shutdown() {
     SDL_DestroyWindow(window_);
     window_ = nullptr;
   }
+}
+
+void Application::Shutdown() {
+  // Release SDL resources even when initialization did not complete: a failed
+  // Initialize() (renderer/workspace init failure after the window was created) leaves
+  // window_/renderer_ non-null, and the old `!initialized_` early-return leaked them.
+  // (TD-2026-07-16-42.)
+  if (!initialized_) {
+    DestroySdlResources();
+    return;
+  }
+
+  workspace_shell_.SetDialogWindow(nullptr);
+
+  // Destroy the window and renderer immediately so the app disappears from the
+  // screen before any blocking workspace shutdown work (persisting state, waiting
+  // for terminal processes to exit, etc.).
+  DestroySdlResources();
 
   workspace_shell_.Shutdown();
 

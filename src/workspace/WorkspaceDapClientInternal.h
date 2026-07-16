@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -52,6 +53,25 @@ inline std::chrono::milliseconds RequestTimeoutFor(const std::string& command) {
     return kStartupRequestTimeout;
   }
   return kInteractiveRequestTimeout;
+}
+
+// An inbound DAP `request_seq` only matches one of OUR pending requests if it is an
+// exact integer within int range (our seqs are a small monotonic counter). A value
+// outside int range from a hostile/buggy adapter cannot match anything we sent, so
+// returning false skips it — mirrors the LSP transport's ResponseIdInRange. A bare
+// `static_cast<int>(AsInt())` would wrap e.g. 4294967297 to 1 and could collide with a
+// live pending seq, dispatching the wrong callback or forging an initialize match.
+inline bool DapResponseSeqInRange(const util::JsonValue& seq_value, int* out) {
+  if (!seq_value.IsInt() && !seq_value.IsDouble()) {
+    return false;
+  }
+  const std::int64_t raw = seq_value.AsInt();
+  if (raw < static_cast<std::int64_t>(std::numeric_limits<int>::min()) ||
+      raw > static_cast<std::int64_t>(std::numeric_limits<int>::max())) {
+    return false;
+  }
+  *out = static_cast<int>(raw);
+  return true;
 }
 
 // OOM backstop for the outbound/deferred queues. The I/O thread drains outbound
@@ -266,9 +286,13 @@ struct DapClient::Impl {
     return proc.Write(serialized);
   }
 
-  bool SendMessageAfterInitialize(const util::JsonValue& msg) {
+  bool SendMessageAfterInitialize(util::JsonValue msg) {
+    // Defer serialization into the builder (evaluated later, off the caller thread, and
+    // only after the queue-count cap passes) — mirroring the LSP client. Previously the
+    // caller eagerly serialized the whole framed string even when the message would be
+    // refused (wedged adapter / queue full). (TD-2026-07-16-25.)
     return SendMessageBuilderAfterInitialize(
-        [serialized = SerializeMessage(msg)]() mutable { return std::move(serialized); });
+        [this, m = std::move(msg)]() mutable { return SerializeMessage(m); });
   }
 
   bool SendMessageBuilderAfterInitialize(std::function<std::string()> build_serialized) {
@@ -533,13 +557,14 @@ struct DapClient::Impl {
   }
 
   void HandleResponse(util::JsonValue msg) {
-    // Correlate only on a numeric request_seq (mirrors the LSP dispatch's id
-    // IsInt() gate). A non-conformant adapter that encodes it as a string would
-    // otherwise yield AsInt()==0, silently mis-correlating or dropping the response.
-    if (!msg["request_seq"].IsInt() && !msg["request_seq"].IsDouble()) {
+    // Correlate only on a numeric request_seq within int range (mirrors the LSP
+    // dispatch's ResponseIdInRange). A string-encoded or out-of-int-range seq from a
+    // non-conformant/hostile adapter cannot match one of our small monotonic seqs, so
+    // skip it rather than narrow-and-collide with a live pending request.
+    int request_seq = 0;
+    if (!DapResponseSeqInRange(msg["request_seq"], &request_seq)) {
       return;
     }
-    const int request_seq = static_cast<int>(msg["request_seq"].AsInt());
     if (shutting_down.load(std::memory_order_acquire)) {
       std::lock_guard lock(mutex);
       if (request_seq == shutdown_request_seq) {
@@ -581,7 +606,14 @@ struct DapClient::Impl {
   // We advertise no client-side capabilities (runInTerminal etc.), so reject any
   // reverse request that does arrive.
   void HandleReverseRequest(util::JsonValue msg) {
-    const int request_seq = static_cast<int>(msg["seq"].AsInt());
+    // The adapter's seq is echoed back verbatim as our response's request_seq. If it
+    // is out of int range we cannot represent it faithfully, and narrowing it would
+    // reply against a different request id — a non-conformant adapter, so drop the
+    // reverse request without replying rather than send a mis-correlated response.
+    int request_seq = 0;
+    if (!DapResponseSeqInRange(msg["seq"], &request_seq)) {
+      return;
+    }
     const std::string& command = msg["command"].AsString();
     const int seq = GetNextSeq();
     SendMessageAfterInitialize(dap_protocol::MakeResponse(
@@ -766,8 +798,13 @@ struct DapClient::Impl {
       }
       const util::JsonValue& msg = *msg_opt;
       const std::string& type = msg["type"].AsString();
+      // Range-check the seq before comparing to init_seq: a wrapped out-of-range
+      // request_seq must not be able to forge an initialize match and cause us to
+      // trust capabilities from a response that was never the initialize reply.
+      int init_response_seq = 0;
       const bool is_init_response =
-          type == "response" && static_cast<int>(msg["request_seq"].AsInt()) == init_seq;
+          type == "response" && DapResponseSeqInRange(msg["request_seq"], &init_response_seq) &&
+          init_response_seq == init_seq;
       if (!is_init_response) {
         // Defer adapter-initiated messages that arrive before the initialize
         // response (e.g. an early `output`, or a non-conformant `initialized`)

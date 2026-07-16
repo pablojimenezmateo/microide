@@ -16,6 +16,10 @@ std::vector<RuleResult> RunWorkspaceArchitectureRules(const std::filesystem::pat
   run(CheckWorkspaceFriends);
   run(CheckCoordinatorShellConstructors);
   run(CheckThrowingStoParsers);
+  run(CheckDapTransportUsesCheckedResponseSeqNarrowing);
+  run(CheckPerfScenariosUseNonThrowingFilesystemProbes);
+  run(CheckOneShotWakeProducersCheckPushResultOrHaveBackstop);
+  run(CheckPublicScriptsUseRunChecksForCtest);
   run(CheckRenderSurfaceStateAccess);
   run(CheckRenderSurfaceGeometryAccess);
   run(CheckWorkspaceShellCompanionTuCount);

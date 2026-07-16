@@ -214,9 +214,15 @@ bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view
   const std::filesystem::path target = ResolveSymlinkTarget(path);
 
   std::error_code error;
-  std::filesystem::create_directories(target.parent_path(), error);
-  if (error) {
-    return false;
+  // Only create the parent when there is one. For a bare relative filename the parent
+  // path is empty, and libstdc++'s create_directories("") sets EINVAL and would fail
+  // every such save — mirror PersistedRecordWriter's guarded pattern instead.
+  const std::filesystem::path parent = target.parent_path();
+  if (!parent.empty()) {
+    std::filesystem::create_directories(parent, error);
+    if (error) {
+      return false;
+    }
   }
 
   // Snapshot the existing file's mode/ownership so the atomic replace does not silently

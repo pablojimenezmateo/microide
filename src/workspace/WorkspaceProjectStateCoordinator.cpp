@@ -102,10 +102,14 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
         !project_file_event_pending_.exchange(true, std::memory_order_acq_rel)) {
       SDL_Event event{};
       event.type = project_file_event_type_;
-      {
-        util::PerformanceTrace::Scope scope(
-            "WorkspaceShell::FileIndexWatcherCallback::PushWakeEvent");
-        SDL_PushEvent(&event);
+      util::PerformanceTrace::Scope scope(
+          "WorkspaceShell::FileIndexWatcherCallback::PushWakeEvent");
+      // Clear the coalescing flag if the push fails: otherwise the flag stays set with
+      // no event queued, and every later batch's exchange sees `true` and skips the
+      // push — the file index never gets drained/redrawn until an unrelated event
+      // wakes the loop. Same clear-on-push-failure contract as the other producers.
+      if (!SDL_PushEvent(&event)) {
+        project_file_event_pending_.store(false, std::memory_order_release);
       }
     }
   });
@@ -341,7 +345,9 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
 
   for (const auto& candidate : preferred_files) {
     editor::TextViewport startup_view;
-    if (std::filesystem::exists(candidate) && startup_view.OpenFile(candidate)) {
+    std::error_code exists_ec;
+    if (std::filesystem::exists(candidate, exists_ec) && !exists_ec &&
+        startup_view.OpenFile(candidate)) {
       ApplyEditorPreferences(startup_view);
       ApplyDetectedIndentOnOpen(startup_view);
       context_.current_project_state.focused_group().welcome_surface.viewport = startup_view;

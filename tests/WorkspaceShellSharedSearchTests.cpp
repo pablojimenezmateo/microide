@@ -200,6 +200,34 @@ void TestWorkspaceSharedLiteralSearchHelpers() {
          "literal replace helper should keep replacement offsets correct when replacement is shorter");
 }
 
+// TD-2026-07-16-58: buffer literal search folds non-ASCII case (café/CAFÉ, Δ/δ) to
+// match project search + ReplaceAll, and smart-case treats non-ASCII uppercase as
+// case-sensitive. Byte offsets stay valid because the folds are length-preserving.
+void TestWorkspaceSharedLiteralSearchUtf8Fold() {
+  const std::vector<std::string> lines = {"café CAFÉ", "ΔELTA δelta"};
+  const auto cafe = FindLiteralSearchMatches(lines, "café");
+  Expect(cafe.size() == 2, "buffer search folds café/CAFÉ as a case-insensitive match");
+  Expect(cafe[0].start.line == 0 && cafe[0].start.column == 0, "first café at column 0");
+  // "café" is 5 bytes (é is 2 bytes); the second match starts after "café " (6 bytes).
+  Expect(cafe[1].start.line == 0 && cafe[1].start.column == 6,
+         "second (uppercase) match's byte offset is preserved by the length-preserving fold");
+
+  const auto delta = FindLiteralSearchMatches(lines, "δ");
+  Expect(delta.size() == 2, "Greek Δ/δ fold as a case-insensitive match");
+
+  // Smart-case: a non-ASCII uppercase query is treated as case-sensitive.
+  Expect(UsesCaseSensitiveLiteralMatch("CAFÉ"),
+         "a non-ASCII uppercase query enables case-sensitive smart-case");
+  Expect(!UsesCaseSensitiveLiteralMatch("café"),
+         "an all-lowercase non-ASCII query stays case-insensitive");
+
+  // Replace folds non-ASCII case too, staying consistent with the match list.
+  std::string content = "café CAFÉ";
+  Expect(ReplaceLiteralMatchesInText(content, "café", "tea", false) == 2,
+         "replace folds non-ASCII case variants like the visible match list");
+  Expect(content == "tea tea", "both case variants are replaced");
+}
+
 void TestWorkspaceSharedLiteralSearchDoesNotOverlap() {
   // Regression: the find-all scan resumed one byte past the match start, so a
   // self-overlapping needle produced overlapping ranges and inflated the count,
@@ -464,6 +492,8 @@ void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedLiteralSearchHelpers);
   AddTest(tests, "WorkspaceTextSearch/LiteralSearchDoesNotOverlap",
           TestWorkspaceSharedLiteralSearchDoesNotOverlap);
+  AddTest(tests, "WorkspaceTextSearch/LiteralSearchUtf8Fold",
+          TestWorkspaceSharedLiteralSearchUtf8Fold);
   AddTest(tests, "WorkspaceTextSearch/LiteralReplaceModeHelpers",
           TestWorkspaceSharedLiteralReplaceModeHelpers);
   AddTest(tests, "WorkspaceTextSearch/LiteralNeedleScanCaseModeInLine",

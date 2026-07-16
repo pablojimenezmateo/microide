@@ -162,9 +162,65 @@ void TestGitRepositoryMetadataTrackerFollowsWorktreeGitFile() {
          "a HEAD change in a worktree's resolved gitdir must be detected");
 }
 
+// TD-2026-07-16-63: an ORDINARY same-branch commit leaves `.git/HEAD` text unchanged
+// but advances `refs/heads/<branch>`. The tracker must detect that via the resolved
+// branch-ref tick, not only branch switches that rewrite HEAD.
+void TestGitRepositoryMetadataTrackerDetectsSameBranchCommit() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / ".git/refs/heads");
+  WriteFile(root / ".git/HEAD", "ref: refs/heads/main\n");
+  WriteFile(root / ".git/index", "index\n");
+  WriteFile(root / ".git/refs/heads/main", "1111111111111111111111111111111111111111\n");
+
+  project::GitRepositoryMetadataTracker tracker;
+  tracker.SetProjectRoot(root);
+  Expect(tracker.SampleChanges().empty(), "baseline established with no changes");
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  // Same branch, new commit: HEAD text is UNCHANGED, only the branch ref advances.
+  WriteFile(root / ".git/refs/heads/main", "2222222222222222222222222222222222222222\n");
+  const std::vector<project::RepositoryChange> changes = tracker.SampleChanges();
+  Expect(std::any_of(changes.begin(), changes.end(),
+                     [](const project::RepositoryChange& change) {
+                       return change.kind == project::RepositoryChangeKind::HeadChanged;
+                     }),
+         "a same-branch commit advancing refs/heads/main must be detected as a head change");
+}
+
+// A packed-refs change (branch ref stored packed, no loose file) is also treated as
+// possible head movement.
+void TestGitRepositoryMetadataTrackerDetectsPackedRefsChange() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / ".git");
+  WriteFile(root / ".git/HEAD", "ref: refs/heads/main\n");
+  WriteFile(root / ".git/index", "index\n");
+  WriteFile(root / ".git/packed-refs", "# pack-refs with: peeled fully-peeled sorted\n");
+
+  project::GitRepositoryMetadataTracker tracker;
+  tracker.SetProjectRoot(root);
+  Expect(tracker.SampleChanges().empty(), "baseline established with no changes");
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  WriteFile(root / ".git/packed-refs",
+            "# pack-refs with: peeled fully-peeled sorted\n"
+            "3333333333333333333333333333333333333333 refs/heads/main\n");
+  const std::vector<project::RepositoryChange> changes = tracker.SampleChanges();
+  Expect(std::any_of(changes.begin(), changes.end(),
+                     [](const project::RepositoryChange& change) {
+                       return change.kind == project::RepositoryChangeKind::HeadChanged;
+                     }),
+         "a packed-refs change must be treated as possible head movement");
+}
+
 }  // namespace
 
 void RegisterProjectChangeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ProjectChange/GitMetadataSameBranchCommit",
+          TestGitRepositoryMetadataTrackerDetectsSameBranchCommit);
+  AddTest(tests, "ProjectChange/GitMetadataPackedRefsChange",
+          TestGitRepositoryMetadataTrackerDetectsPackedRefsChange);
   AddTest(tests, "ProjectChange/NormalizerMapsIndexUpdates", TestProjectChangeNormalizerMapsIndexUpdates);
   AddTest(tests, "ProjectChange/CoalescerMergesBursts", TestProjectChangeCoalescerMergesBursts);
   AddTest(tests, "ProjectChange/CoalescerCollapsesFloodToRescan",

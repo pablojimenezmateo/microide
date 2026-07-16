@@ -141,9 +141,13 @@ BAKED="$("$BUILD_DIR/microide/microide" --version 2>/dev/null | grep -oP '[0-9]+
 info "binary reports $BAKED"
 
 # --- 5. test gate ----------------------------------------------------------
+# Route through tools/run-checks.sh so the release gate produces the same
+# deterministic /tmp/microide-release.log artifact agents/reviewers are told to
+# inspect, instead of a bare ctest run. The `release` mode tests the already-built
+# Release+LTO tree in $BUILD_DIR without reconfiguring it. (TD-2026-07-16-28.)
 if [[ $SKIP_TESTS == 0 ]]; then
-  log "5/9  Test gate (ctest)"
-  ctest --test-dir "$BUILD_DIR" --output-on-failure
+  log "5/9  Test gate (tools/run-checks.sh release)"
+  MICROIDE_RELEASE_BUILD_DIR="$BUILD_DIR" bash tools/run-checks.sh release
 else
   log "5/9  Test gate SKIPPED (--skip-tests)"
 fi

@@ -64,13 +64,27 @@ void LspClient::Impl::HandleServerRequest(const util::JsonValue& id, const std::
                                           const util::JsonValue& params) {
   using namespace util;
   if (method == "workspace/configuration") {
+    // Bound response amplification: a valid (inbound-capped) request can carry a large
+    // `items` array full of empty sections, each of which would otherwise duplicate the
+    // entire `settings` object into the outbound reply. Cap the item count, and cap how
+    // many times the full settings object is duplicated (further empty-section items get
+    // null — servers treat a null config entry as "use defaults"). (TD-2026-07-16-24.)
+    constexpr std::size_t kMaxConfigurationItems = 256;
+    constexpr std::size_t kMaxFullSettingsDuplications = 16;
+    const JsonArray& items = params["items"].AsArray();
+    const std::size_t item_count = std::min(items.size(), kMaxConfigurationItems);
     JsonArray result;
-    for (const auto& item : params["items"].AsArray()) {
-      const std::string& section = item["section"].AsString();
+    result.reserve(item_count);
+    std::size_t full_settings_returned = 0;
+    for (std::size_t i = 0; i < item_count; ++i) {
+      const std::string& section = items[i]["section"].AsString();
       JsonValue value;  // Null when we have nothing configured.
       if (settings.IsObject()) {
         if (section.empty()) {
-          value = settings;
+          if (full_settings_returned < kMaxFullSettingsDuplications) {
+            value = settings;
+            ++full_settings_returned;
+          }  // else leave null to avoid duplicating a large object many times
         } else if (settings.HasKey(section)) {
           value = settings[section];
         }

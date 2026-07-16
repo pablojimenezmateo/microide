@@ -27,7 +27,7 @@ constexpr const char* kManyConflictsFixture = "tests/perf/fixtures/git_many_conf
 
 void PrimeGitWorkstationFixture(ScenarioContext& context, const std::filesystem::path& fixture,
                                 const char* scenario_label) {
-  if (!std::filesystem::is_directory(fixture)) {
+  if (!DirectoryExistsNoThrow(fixture)) {
     throw std::runtime_error(std::string(scenario_label) + ": missing fixture " + fixture.string());
   }
   std::error_code error;

@@ -1,6 +1,38 @@
 #include "workspace/WorkspacePersistenceBinaryInternal.h"
 
+#include "workspace/SettingsStore.h"
+
+#include <algorithm>
+
 namespace microide::workspace {
+
+namespace {
+
+// Product-sized decode budgets for persisted user/project config. The raw record is
+// already capped at 256 MiB by PersistedRecordReader, but that is far above any real
+// config: a corrupt/hostile file can otherwise spend startup time + heap on hundreds
+// of thousands of tiny unique settings / disabled IDs / sidebar policies. Every other
+// persisted collection (session trees, debug state, review state, plugin registries)
+// has an explicit product cap; config restore now matches. (TD-2026-07-16-36.)
+constexpr std::size_t kMaxPersistedSettings = 8192;
+constexpr std::size_t kMaxPersistedDisabledIds = 8192;
+constexpr std::size_t kMaxPersistedSidebarPolicies = 512;
+
+// Append `id` to `ids` unless already present (dedupe by value) or the cap is reached.
+// Returns false only when the cap would be exceeded by a NEW id, so the caller can fail
+// the record closed. Repeated stale entries are silently deduped.
+bool AppendDisabledIdCapped(std::vector<std::string>* ids, std::string id) {
+  if (std::find(ids->begin(), ids->end(), id) != ids->end()) {
+    return true;  // dedupe: repeated entries do not inflate downstream resolution
+  }
+  if (ids->size() >= kMaxPersistedDisabledIds) {
+    return false;
+  }
+  ids->push_back(std::move(id));
+  return true;
+}
+
+}  // namespace
 
 bool EncodeUserConfigRecord(const PersistedUserConfigState& state, std::vector<std::byte>* out) {
   if (out == nullptr) {
@@ -60,6 +92,11 @@ bool DecodeUserConfigRecord(std::span<const std::byte> input, PersistedUserConfi
                    if (!DecodeSettingPair(payload, &setting)) {
                      return false;
                    }
+                   // Fail closed on a malformed setting id: runtime mutation already
+                   // rejects invalid ids, so restore must not smuggle them in.
+                   if (!SettingsStore::IsValidSettingId(setting.first)) {
+                     return false;
+                   }
                    // Dedupe by id, last-writer-wins: a corrupt/hand-edited config
                    // with duplicate keys must not become a split-brain state where
                    // the UI shows one value and layering applies another.
@@ -69,6 +106,9 @@ bool DecodeUserConfigRecord(std::span<const std::byte> input, PersistedUserConfi
                    if (existing != state->settings.end()) {
                      existing->second = std::move(setting.second);
                    } else {
+                     if (state->settings.size() >= kMaxPersistedSettings) {
+                       return false;  // over the product settings budget
+                     }
                      state->settings.push_back(std::move(setting));
                    }
                    return true;
@@ -78,16 +118,14 @@ bool DecodeUserConfigRecord(std::span<const std::byte> input, PersistedUserConfi
                    if (!reader.ReadString(&id) || reader.remaining() != 0) {
                      return false;
                    }
-                   state->disabled_keybinding_ids.push_back(std::move(id));
-                   return true;
+                   return AppendDisabledIdCapped(&state->disabled_keybinding_ids, std::move(id));
                  }
                  case UserConfigTag::DisabledPlugin: {
                    std::string id;
                    if (!reader.ReadString(&id) || reader.remaining() != 0) {
                      return false;
                    }
-                   state->disabled_plugin_ids.push_back(std::move(id));
-                   return true;
+                   return AppendDisabledIdCapped(&state->disabled_plugin_ids, std::move(id));
                  }
                }
                return true;
@@ -221,6 +259,10 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
                    if (!DecodeSettingPair(payload, &setting)) {
                      return false;
                    }
+                   // Fail closed on a malformed setting id (see DecodeUserConfigRecord).
+                   if (!SettingsStore::IsValidSettingId(setting.first)) {
+                     return false;
+                   }
                    // Dedupe by id, last-writer-wins (see DecodeUserConfigRecord).
                    auto existing = std::find_if(
                        state->settings.begin(), state->settings.end(),
@@ -228,6 +270,9 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
                    if (existing != state->settings.end()) {
                      existing->second = std::move(setting.second);
                    } else {
+                     if (state->settings.size() >= kMaxPersistedSettings) {
+                       return false;  // over the product settings budget
+                     }
                      state->settings.push_back(std::move(setting));
                    }
                    return true;
@@ -236,6 +281,9 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
                   PersistedSidebarViewPolicy policy;
                   if (!DecodeSidebarPolicy(payload, &policy)) {
                     return false;
+                  }
+                  if (state->sidebar_policies.size() >= kMaxPersistedSidebarPolicies) {
+                    return false;  // over the product sidebar-policy budget
                   }
                   state->sidebar_policies.push_back(std::move(policy));
                   return true;

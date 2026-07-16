@@ -10,6 +10,11 @@ namespace microide::tests::architecture {
 RuleResult CheckWorkspaceFriends(const std::filesystem::path& repo_root);
 RuleResult CheckCoordinatorShellConstructors(const std::filesystem::path& repo_root);
 RuleResult CheckThrowingStoParsers(const std::filesystem::path& repo_root);
+RuleResult CheckDapTransportUsesCheckedResponseSeqNarrowing(const std::filesystem::path& repo_root);
+RuleResult CheckPerfScenariosUseNonThrowingFilesystemProbes(const std::filesystem::path& repo_root);
+RuleResult CheckOneShotWakeProducersCheckPushResultOrHaveBackstop(
+    const std::filesystem::path& repo_root);
+RuleResult CheckPublicScriptsUseRunChecksForCtest(const std::filesystem::path& repo_root);
 RuleResult CheckRenderSurfaceStateAccess(const std::filesystem::path& repo_root);
 RuleResult CheckRenderSurfaceGeometryAccess(const std::filesystem::path& repo_root);
 RuleResult CheckWorkspaceShellCompanionTuCount(const std::filesystem::path& repo_root);

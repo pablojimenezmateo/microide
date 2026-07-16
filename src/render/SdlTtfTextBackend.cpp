@@ -400,15 +400,20 @@ std::filesystem::path SdlTtfTextBackend::LocateFontFile() {
       "/usr/share/fonts/opentype/urw-base35/NimbusMonoPS-Regular.otf",
   };
 
+  // Non-throwing probes throughout: a bad asset root or an inaccessible font dir must
+  // fall through to the next candidate (and ultimately system fonts), never throw
+  // std::filesystem_error out of render initialization.
+  std::error_code font_ec;
   const std::filesystem::path bundled_font =
       platform::ResolveBundledAssetPath("fonts/JetBrainsMono-Regular.ttf");
-  if (!bundled_font.empty() && std::filesystem::exists(bundled_font)) {
+  if (!bundled_font.empty() && std::filesystem::exists(bundled_font, font_ec) && !font_ec) {
     return bundled_font;
   }
 
   for (const char* candidate : kSystemCandidates) {
     const std::filesystem::path path(candidate);
-    if (std::filesystem::exists(path)) {
+    font_ec.clear();
+    if (std::filesystem::exists(path, font_ec) && !font_ec) {
       return path;
     }
   }
@@ -842,7 +847,8 @@ std::vector<std::filesystem::path> SdlTtfTextBackend::LocateFallbackFontFiles(
     std::vector<std::filesystem::path> resolved;
     std::unordered_set<std::string> seen;
     const auto push = [&](std::filesystem::path candidate) {
-      if (candidate.empty() || !std::filesystem::exists(candidate)) {
+      std::error_code exists_ec;
+      if (candidate.empty() || !std::filesystem::exists(candidate, exists_ec) || exists_ec) {
         return;
       }
       std::error_code ec;
@@ -857,7 +863,8 @@ std::vector<std::filesystem::path> SdlTtfTextBackend::LocateFallbackFontFiles(
     push(platform::ResolveBundledAssetPath("fonts/JetBrainsMono-Regular.ttf"));
     for (const Fallback& fallback : kFallbacks) {
       const std::filesystem::path debian(fallback.debian_path);
-      if (std::filesystem::exists(debian)) {
+      std::error_code debian_ec;
+      if (std::filesystem::exists(debian, debian_ec) && !debian_ec) {
         push(debian);  // fast path: no directory scan / fontconfig query
       } else {
         push(ResolveFamilyToFile(fallback.family));  // portable resolution

@@ -121,6 +121,37 @@ void TestTrashReservationDoesNotOverwriteExistingMetadata() {
              new_contents.find("trash-me.txt") != std::string::npos,
          "the new metadata should record the trashed source path");
 }
+
+// TD-2026-07-16-49: when a file already occupies Trash/files/<name> (a slot the
+// .trashinfo reservation did not gate), the final content move must NOT overwrite it —
+// the trash retries the next suffix instead of clobbering the existing trashed file.
+void TestTrashFinalMoveRefusesExistingFilesDestination() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::filesystem::create_directories(root);
+
+  const auto trash_home = temp_dir.path() / "xdg-data-home";
+  ScopedEnvVar scoped_xdg_data_home("XDG_DATA_HOME", trash_home.string());
+
+  // Pre-occupy the base name's FILES slot (not the metadata slot) with a sentinel.
+  const auto files_dir = trash_home / "Trash" / "files";
+  std::filesystem::create_directories(files_dir);
+  const auto sentinel_file = files_dir / "collide.txt";
+  WriteFile(sentinel_file, "PRE-EXISTING TRASHED FILE");
+
+  const auto trash_target = root / "collide.txt";
+  WriteFile(trash_target, "new content");
+  const auto trashed = FileOperationService::TrashPath(trash_target);
+
+  Expect(trashed.ok, "trash should succeed by choosing a free files slot");
+  Expect(!std::filesystem::exists(trash_target), "source should disappear after trash");
+  Expect(ReadFile(sentinel_file) == "PRE-EXISTING TRASHED FILE",
+         "the pre-existing trashed file must NOT be overwritten by the final move");
+  Expect(trashed.resulting_path.filename().string() == "collide 2.txt",
+         "the final move must land on the next free suffix, not clobber the base slot");
+  Expect(ReadFile(trashed.resulting_path) == "new content",
+         "the newly trashed content lands at the retried slot");
+}
 #endif
 
 }  // namespace
@@ -180,6 +211,8 @@ void RegisterFileOperationServiceTests(std::vector<TestCase>& tests) {
 #if defined(__linux__)
   AddTest(tests, "Project/TrashReservationDoesNotOverwriteExistingMetadata",
           TestTrashReservationDoesNotOverwriteExistingMetadata);
+  AddTest(tests, "Project/TrashFinalMoveRefusesExistingFilesDestination",
+          TestTrashFinalMoveRefusesExistingFilesDestination);
 #endif
 }
 

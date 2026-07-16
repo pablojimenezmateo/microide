@@ -1,5 +1,7 @@
 #include "platform/ControlSocketServer.h"
 
+#include "util/SdlWake.h"
+
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -127,13 +129,10 @@ struct ControlSocketServer::Impl {
   std::vector<ControlInboundMessage> inbound;
 
   void PushWakeEvent() {
-    const std::uint32_t event_type = wake_event_type.load(std::memory_order_acquire);
-    if (event_type == 0) {
-      return;
-    }
-    SDL_Event ev{};
-    ev.type = event_type;
-    SDL_PushEvent(&ev);
+    // Checked push: inbound control messages are already queued in shared state, so a
+    // rejected push must latch the shared "wake owed" bit (idle poll fallback) rather
+    // than leave control-send requests waiting for an unrelated event.
+    util::PushSdlWake(wake_event_type.load(std::memory_order_acquire));
   }
 
   void WakeIoThread() {

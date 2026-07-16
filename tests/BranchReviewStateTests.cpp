@@ -183,6 +183,52 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "high-bit content_hash must be preserved exactly");
                    }});
 
+  // TD-2026-07-16-34: a persisted config with MORE targets / per-target files than the
+  // live service caps must be truncated to the caps at decode (a corrupt/hostile
+  // .microide config cannot bypass the runtime PruneTarget limits).
+  tests.push_back({"BranchReviewState/PersistedStateDecodeHonorsCaps",
+                   [] {
+                     using microide::workspace::PersistedBranchReviewFileEntry;
+                     using microide::workspace::PersistedBranchReviewState;
+                     using microide::workspace::PersistedBranchReviewTarget;
+
+                     PersistedBranchReviewState review;
+                     // 2x the target cap, each with 2x the per-target file cap.
+                     const std::size_t target_over =
+                         BranchReviewStateService::kMaxTargetsPerRepository * 2;
+                     const std::size_t file_over =
+                         BranchReviewStateService::kMaxFileEntriesPerTarget + 5;
+                     for (std::size_t t = 0; t < target_over; ++t) {
+                       PersistedBranchReviewTarget target;
+                       target.repository_root = std::filesystem::path("/repo");
+                       target.base_commit = "base" + std::to_string(t);
+                       target.head_commit = "HEAD";
+                       for (std::size_t f = 0; f < file_over; ++f) {
+                         target.reviewed_files.push_back(PersistedBranchReviewFileEntry{
+                             .path = std::filesystem::path("f" + std::to_string(f) + ".cpp")});
+                       }
+                       review.targets.push_back(std::move(target));
+                     }
+
+                     PersistedProjectConfigState persisted;
+                     persisted.branch_review = std::move(review);
+                     std::vector<std::byte> encoded;
+                     Expect(EncodeProjectConfigRecord(persisted, &encoded),
+                            "oversized branch-review config should still encode");
+
+                     PersistedProjectConfigState decoded;
+                     Expect(DecodeProjectConfigRecord(encoded, &decoded),
+                            "oversized branch-review config decodes (truncated, not rejected)");
+                     Expect(decoded.branch_review.targets.size() ==
+                                BranchReviewStateService::kMaxTargetsPerRepository,
+                            "targets are capped at the per-repository limit on decode");
+                     for (const auto& target : decoded.branch_review.targets) {
+                       Expect(target.reviewed_files.size() <=
+                                  BranchReviewStateService::kMaxFileEntriesPerTarget,
+                              "per-target reviewed files are capped on decode");
+                     }
+                   }});
+
   tests.push_back({"BranchReviewState/ClearTargetPreservesOtherTargets",
                    [] {
                      const BranchReviewTargetIdentity active =

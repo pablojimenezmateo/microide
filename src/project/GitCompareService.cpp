@@ -157,7 +157,11 @@ std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& 
   }
 
   std::vector<GitBranchReference> branches;
-  for (const std::string_view ref : util::SplitLineViews(result.output)) {
+  // Bound line materialization at the retained cap (plus small slack for filtered
+  // symbolic-head/empty lines) so a huge for-each-ref listing cannot build millions of
+  // line views before the branch cap stops collection. (TD-2026-07-16-30.)
+  for (const std::string_view ref :
+       util::SplitLineViews(result.output, kMaxGitCollectionEntries + 8)) {
     if (branches.size() >= kMaxGitCollectionEntries) {
       break;
     }
@@ -270,7 +274,11 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
 
 std::vector<GitBranchFileEntry> ParseGitBranchDiffNameStatusZ(std::string_view output) {
   std::vector<GitBranchFileEntry> entries;
-  const std::vector<std::string_view> tokens = util::SplitNulDelimited(output);
+  // Each retained entry consumes up to 3 NUL records (status + old-path + new-path for
+  // rename/copy), so bound token materialization at 3x the entry cap (+ slack) instead
+  // of splitting every record of hostile NUL-heavy diff output. (TD-2026-07-16-30.)
+  const std::vector<std::string_view> tokens =
+      util::SplitNulDelimited(output, kMaxGitCollectionEntries * 3 + 2);
   for (std::size_t i = 0; i < tokens.size() && entries.size() < kMaxGitCollectionEntries;) {
     const std::string_view status_token = tokens[i++];
     if (status_token.empty()) {
@@ -365,7 +373,10 @@ std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::files
   }
 
   std::vector<std::filesystem::path> paths;
-  for (const std::string_view record : util::SplitNulDelimited(result.output)) {
+  // One record per path: bound token materialization at the entry cap (+ slack for
+  // empty records) rather than splitting every record of a huge commit. (TD-30.)
+  for (const std::string_view record :
+       util::SplitNulDelimited(result.output, kMaxGitCollectionEntries + 8)) {
     if (paths.size() >= kMaxGitCollectionEntries) {
       break;
     }

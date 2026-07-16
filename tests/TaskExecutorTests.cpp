@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -83,9 +84,26 @@ void TestTaskExecutorCancelsActiveWorkAndDropsQueuedTasks() {
          "task executor should remain reusable after cancelling earlier work");
 }
 
+// TD-2026-07-16-09: a task that throws must not terminate the process or hang
+// WaitForIdle; the worker must keep draining and later tasks must still run.
+void TestTaskExecutorThrowingTaskDoesNotKillWorker() {
+  TaskExecutor executor;
+  std::atomic<bool> normal_ran = false;
+
+  executor.Submit(
+      [&](const CancellationToken&) { throw std::runtime_error("boom from a task"); });
+  executor.Submit([&](const CancellationToken&) { normal_ran.store(true); });
+
+  executor.WaitForIdle();  // must return despite the throwing task
+  Expect(normal_ran.load(),
+         "a task submitted after a throwing task must still run (worker survived)");
+}
+
 }  // namespace
 
 void RegisterTaskExecutorTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TaskExecutor/ThrowingTaskDoesNotKillWorker",
+          TestTaskExecutorThrowingTaskDoesNotKillWorker);
   AddTest(tests, "TaskExecutor/RunsSubmittedTasksInOrder",
           TestTaskExecutorRunsSubmittedTasksInOrder);
   AddTest(tests, "TaskExecutor/CancelsActiveWorkAndDropsQueuedTasks",

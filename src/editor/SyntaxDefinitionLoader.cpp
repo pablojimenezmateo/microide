@@ -35,6 +35,13 @@ constexpr std::size_t kMaxDefinitionsPerFile = 256;
 constexpr std::size_t kMaxStringArrayEntries = 4096;
 constexpr std::size_t kMaxRulesPerArray = 4096;
 constexpr int kSyntaxLoadInstructionBudget = 20'000'000;
+// Aggregate budgets across ALL discovered files: the per-file caps above bound one
+// file, but a plugin dir with thousands of tiny files (or many files each declaring
+// definitions) could still turn reload/startup into a large CPU+memory spike and inflate
+// the registry that every later file-open/tab-switch scans. Cap the discovered file
+// count and the total loaded runtime definitions. (TD-2026-07-16-23.)
+constexpr std::size_t kMaxDiscoveredSyntaxFiles = 8192;
+constexpr std::size_t kMaxTotalRuntimeDefinitions = 20000;
 
 void SyntaxLoadInstructionGuard(lua_State* state, lua_Debug* /*ar*/) {
   // Fired once the instruction budget is exhausted. Raising a Lua error longjmps
@@ -446,6 +453,10 @@ std::vector<std::filesystem::path> DiscoverDefinitionFiles(
     }
     std::sort(directory_files.begin(), directory_files.end());
     files.insert(files.end(), directory_files.begin(), directory_files.end());
+    if (files.size() >= kMaxDiscoveredSyntaxFiles) {
+      files.resize(kMaxDiscoveredSyntaxFiles);
+      break;  // aggregate discovered-file budget reached
+    }
   }
   return files;
 }
@@ -477,11 +488,27 @@ std::vector<RuntimeSyntaxDefinitionData> LoadDefinitionsFromDirectories(
 
 #if MICROIDE_HAS_LUA_PLUGINS
   for (const auto& path : DiscoverDefinitionFiles(directories)) {
+    // Aggregate runtime-definition budget: stop once the total across all files reaches
+    // the cap so a plugin spreading hundreds of thousands of definitions across many
+    // files cannot inflate the registry that every later file-open scans. Surface a
+    // diagnostic so the truncated plugin is visible rather than a silently missing
+    // language. (TD-2026-07-16-23.)
+    if (definitions.size() >= kMaxTotalRuntimeDefinitions) {
+      if (errors != nullptr) {
+        errors->push_back("syntax definitions truncated at the aggregate limit (" +
+                          std::to_string(kMaxTotalRuntimeDefinitions) + ")");
+      }
+      break;
+    }
     std::string error_message;
     if (!LoadDefinitionFile(path, &definitions, &error_message) && errors != nullptr &&
         !error_message.empty()) {
       errors->push_back(std::move(error_message));
     }
+  }
+  // A single file can push slightly past the cap (up to kMaxDefinitionsPerFile); trim.
+  if (definitions.size() > kMaxTotalRuntimeDefinitions) {
+    definitions.resize(kMaxTotalRuntimeDefinitions);
   }
 #else
   (void)directories;

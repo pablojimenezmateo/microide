@@ -441,9 +441,21 @@ std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const JsonValue& r
   const auto& ints = data.AsArray();
   const std::size_t groups = ints.size() / 5;  // 5 ints per token; trailing partial ignored
   tokens.reserve(std::min(groups, max_tokens));
-  // Accumulate the delta-encoded positions in 64-bit so a server feeding large
-  // deltas cannot overflow a signed int (UB) as they sum across up to max_tokens
-  // entries; out-of-range results are then dropped as degenerate.
+  // Accumulate the delta-encoded positions in 64-bit, but with SATURATING adds:
+  // AsInt() clamps to [INT64_MIN, INT64_MAX], and a dropped out-of-range token still
+  // leaves the accumulator huge, so a plain `line += delta` can execute signed int64
+  // overflow (UB) — e.g. two groups whose deltaLine is INT64_MAX each, or a same-line
+  // run of huge positive deltaStart. Saturating at the int64 bounds keeps the later
+  // `> INT_MAX` drop decision correct without ever overflowing.
+  const auto sat_add = [](std::int64_t a, std::int64_t b) -> std::int64_t {
+    if (b > 0 && a > std::numeric_limits<std::int64_t>::max() - b) {
+      return std::numeric_limits<std::int64_t>::max();
+    }
+    if (b < 0 && a < std::numeric_limits<std::int64_t>::min() - b) {
+      return std::numeric_limits<std::int64_t>::min();
+    }
+    return a + b;
+  };
   std::int64_t line = 0;
   std::int64_t start_char = 0;
   for (std::size_t i = 0; i + 5 <= ints.size() && tokens.size() < max_tokens; i += 5) {
@@ -452,10 +464,10 @@ std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const JsonValue& r
     const std::int64_t length = ints[i + 2].AsInt();
     const int token_type = JsonIntInRange(ints[i + 3]);
     if (delta_line > 0) {
-      line += delta_line;
+      line = sat_add(line, delta_line);
       start_char = delta_start;
     } else {
-      start_char += delta_start;
+      start_char = sat_add(start_char, delta_start);
     }
     static constexpr std::int64_t kMaxCoord = std::numeric_limits<int>::max();
     if (length <= 0 || length > kMaxCoord || line < 0 || line > kMaxCoord ||

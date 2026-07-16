@@ -7,6 +7,7 @@
 #include "project/GitCompareService.h"
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
+#include "util/Parse.h"
 
 #include <SDL3/SDL.h>
 
@@ -442,15 +443,11 @@ std::optional<int> ParseRunsArg(std::string_view text) {
   if (!text.starts_with(kPrefix)) {
     return std::nullopt;
   }
-  const std::string value(text.substr(kPrefix.size()));
-  if (value.empty()) {
+  const std::optional<int> parsed = microide::util::ParseInt(text.substr(kPrefix.size()));
+  if (!parsed.has_value()) {
     return std::nullopt;
   }
-  try {
-    return std::max(1, std::stoi(value));
-  } catch (...) {
-    return std::nullopt;
-  }
+  return std::max(1, *parsed);
 }
 
 RunMetrics RunBenchmark(const std::filesystem::path& repo_root,

@@ -524,6 +524,25 @@ std::vector<std::string_view> SplitNulDelimited(std::string_view text) {
   return records;
 }
 
+std::vector<std::string_view> SplitNulDelimited(std::string_view text, std::size_t max_records) {
+  std::vector<std::string_view> records;
+  if (max_records == 0) {
+    return records;
+  }
+  records.reserve(std::min<std::size_t>(max_records, 1024));
+  std::size_t offset = 0;
+  while (offset < text.size() && records.size() < max_records) {
+    const std::size_t nul = text.find('\0', offset);
+    if (nul == std::string_view::npos) {
+      records.push_back(text.substr(offset));
+      break;
+    }
+    records.push_back(text.substr(offset, nul - offset));
+    offset = nul + 1;
+  }
+  return records;
+}
+
 std::string CollapseAsciiWhitespace(std::string_view text) {
   std::string collapsed;
   collapsed.reserve(text.size());
@@ -746,6 +765,30 @@ std::vector<std::string_view> SplitLineViews(std::string_view content) {
   }
   if (lines.empty()) {
     lines.emplace_back();
+  }
+  return lines;
+}
+
+std::vector<std::string_view> SplitLineViews(std::string_view content, std::size_t max_lines) {
+  std::vector<std::string_view> lines;
+  if (max_lines == 0) {
+    return lines;
+  }
+  lines.reserve(std::min<std::size_t>(max_lines, 1024));
+  std::size_t line_start = 0;
+  for (std::size_t i = 0; i < content.size() && lines.size() < max_lines; ++i) {
+    if (content[i] != '\r' && content[i] != '\n') {
+      continue;
+    }
+    lines.push_back(content.substr(line_start, i - line_start));
+    if (content[i] == '\r' && i + 1 < content.size() && content[i + 1] == '\n') {
+      ++i;
+    }
+    line_start = i + 1;
+  }
+  // Trailing partial line (no terminator) if we still have budget and content left.
+  if (lines.size() < max_lines && line_start < content.size()) {
+    lines.push_back(content.substr(line_start));
   }
   return lines;
 }

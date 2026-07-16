@@ -1056,6 +1056,40 @@ void TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests() {
          "jump should move the cursor relative to the current line");
 }
 
+// TD-2026-07-16-68: `goto` is an absolute 1-based line. A negative or zero line must be
+// rejected (no navigation), NOT interpreted as the old hidden "from end" mode where
+// `goto -1` landed on the last line. `jump` keeps signed relative deltas.
+void TestWorkspaceShellGotoRejectsNonPositiveLine() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "line1\nline2\nline3\nline4\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  // Park the caret at a known line first.
+  Expect(ExecuteCommand(shell, "goto 2"), "goto 2 should move to line index 1");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1,
+         "caret is at line index 1 after goto 2");
+
+  // goto -1 must NOT navigate to the last line (old from-end behavior).
+  ExecuteCommand(shell, "goto -1");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1,
+         "goto -1 must be rejected and leave the caret where it was, not jump to EOF");
+
+  // goto 0 is likewise rejected.
+  ExecuteCommand(shell, "goto 0");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1,
+         "goto 0 must be rejected and leave the caret unchanged");
+
+  // jump -1 (relative) still works: moves one line up.
+  Expect(ExecuteCommand(shell, "jump -1"), "jump -1 relative should still execute");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 0,
+         "jump -1 moves the caret one line up (relative), unlike absolute goto");
+}
+
 void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -3737,6 +3771,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWheelScrollsPaneUnderPointer);
   AddTest(tests, "WorkspaceShell/GotoAndJumpCommandsUseTypedNavigationRequests",
           TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests);
+  AddTest(tests, "WorkspaceShell/GotoRejectsNonPositiveLine",
+          TestWorkspaceShellGotoRejectsNonPositiveLine);
   AddTest(tests, "WorkspaceShell/GlobalCommandsApplyTypedRequests",
           TestWorkspaceShellGlobalCommandsApplyTypedRequests);
   AddTest(tests, "WorkspaceShell/CommandPaletteTabCompletion",

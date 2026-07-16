@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 
+#include "project/GitPorcelainParser.h"
 #include "project/GitRepository.h"
 #include "util/GitConflictMarkers.h"
 #include "util/Parse.h"
@@ -95,8 +96,17 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
   // field. For a rename/copy the path field after the second tab is EMPTY and the
   // old and new paths follow as the next two NUL fields (git emits `... \t \0 old
   // \0 new`); we report the new path.
-  const std::vector<std::string_view> fields = util::SplitNulDelimited(numstat.output);
-  for (std::size_t i = 0; i < fields.size(); ++i) {
+  // Bound the numstat summary: a rename consumes up to 3 NUL fields per retained file,
+  // so materialize at most 3x the entry cap (+ slack) and retain at most the cap. This
+  // stops a hostile/huge staged diff from splitting millions of records for a summary
+  // that only needs a bounded file list. (TD-2026-07-16-30.)
+  constexpr std::size_t kMaxStagedSummaryFiles = kMaxGitStatusEntries;
+  const std::vector<std::string_view> fields =
+      util::SplitNulDelimited(numstat.output, kMaxStagedSummaryFiles * 3 + 2);
+  std::int64_t added_total = 0;
+  std::int64_t deleted_total = 0;
+  for (std::size_t i = 0; i < fields.size() && summary.files.size() < kMaxStagedSummaryFiles;
+       ++i) {
     const std::string_view field = fields[i];
     const std::size_t first_tab = field.find('\t');
     const std::size_t second_tab =
@@ -129,10 +139,18 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
       }
     }
     file_summary.relative_path = std::filesystem::path(path_text);
-    summary.added_lines += file_summary.added_lines;
-    summary.deleted_lines += file_summary.deleted_lines;
+    // Accumulate in 64-bit and clamp: two files each clamped to INT_MAX would overflow
+    // a plain `int` aggregate (UB / a wrapped negative "+N" in the sidebar). Both
+    // operands are already in [0, INT_MAX], so the running sum stays well within
+    // int64 across any realistic file count before the final clamp. (TD-2026-07-16-47.)
+    added_total += file_summary.added_lines;
+    deleted_total += file_summary.deleted_lines;
     summary.files.push_back(std::move(file_summary));
   }
+  summary.added_lines =
+      static_cast<int>(std::min<std::int64_t>(added_total, std::numeric_limits<int>::max()));
+  summary.deleted_lines =
+      static_cast<int>(std::min<std::int64_t>(deleted_total, std::numeric_limits<int>::max()));
 
   if (summary.files.empty()) {
     for (const GitRepositoryEntry& entry : repository_state.entries) {

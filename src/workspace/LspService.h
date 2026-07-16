@@ -30,6 +30,15 @@ struct CodeActionEdit;
 // provider-presence queries, readiness/status strings, and the in-flight request
 // indicator. WorkspaceShell keeps thin forwarders; render/menu/plugin TUs are
 // unchanged. The shell wiring is injected through the narrow Operations seam.
+// Outcome of applying a server WorkspaceEdit to already-open buffers. `any_rejected`
+// is set when a resolved buffer's edit group was dropped without applying — a line
+// beyond EOF or an overlapping group — so the server-initiated response never reports
+// success after silently discarding an open-buffer target.
+struct OpenBufferEditResult {
+  bool applied_any = false;
+  bool any_rejected = false;
+};
+
 class LspService {
  public:
   struct Operations {
@@ -40,8 +49,12 @@ class LspService {
     std::function<void()> request_bottom_panel_redraw;
     // Apply 0-based LSP edits to already-open buffers in place (the shell's
     // ApplyLspWorkspaceEdit). Used by the server-initiated workspace/applyEdit
-    // path; closed files are written on disk by LspService itself.
-    std::function<bool(const std::vector<CodeActionEdit>&)> apply_workspace_edit_to_open_buffers;
+    // path; closed files are written on disk by LspService itself. The result
+    // distinguishes "something applied" from "some open-buffer target was rejected"
+    // (beyond-EOF line, overlapping group) so the server response can report partial
+    // failure instead of conflating it with full success.
+    std::function<OpenBufferEditResult(const std::vector<CodeActionEdit>&)>
+        apply_workspace_edit_to_open_buffers;
     // Resolve a setting value (project-over-user) for LSP feature gating: the lsp.*
     // toggles plus inlay-hint gating (editor.inlay_hints.enabled). Bound to
     // WorkspaceShell::GetSettingValue; null in headless setups (treated as "on").

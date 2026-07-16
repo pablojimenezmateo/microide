@@ -3,6 +3,7 @@
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include <algorithm>
+#include <limits>
 
 #include "plugin/PluginLuaInterop.h"
 #include "util/TextFileIO.h"
@@ -23,6 +24,28 @@ constexpr lua_Integer kMaxTestRunResults = 20000;
 constexpr lua_Integer kMaxScmEntries = 200000;
 constexpr lua_Integer kMaxAnnotationLines = 200000;
 constexpr lua_Integer kMaxAuthScopes = 4096;
+
+// A discovered test's 1-based `line`, validated: a non-positive or out-of-int value is
+// treated as ABSENT (0), never a wrapped positive that would navigate the Tests sidebar
+// row to a wrong/huge line. (TD-2026-07-16-67.)
+constexpr int ReadTestLineOrAbsent(lua_Integer raw) {
+  if (raw <= 0 || raw > static_cast<lua_Integer>(std::numeric_limits<int>::max())) {
+    return 0;
+  }
+  return static_cast<int>(raw);
+}
+
+// A test-run `duration_ms`, clamped to [0, INT_MAX] so a huge/negative Lua integer can
+// never wrap into a misleading small/negative duration. (TD-2026-07-16-67.)
+constexpr int ClampDurationMs(lua_Integer raw) {
+  if (raw < 0) {
+    return 0;
+  }
+  if (raw > static_cast<lua_Integer>(std::numeric_limits<int>::max())) {
+    return std::numeric_limits<int>::max();
+  }
+  return static_cast<int>(raw);
+}
 
 }  // namespace
 
@@ -232,7 +255,7 @@ bool DiscoverTests(
       test.parent_id = lua_interop::ReadStringField(state, -1, "parent_id");
       lua_interop::GetFieldProtected(state, -1, "line");
       if (lua_isinteger(state, -1)) {
-        test.line = static_cast<int>(lua_tointeger(state, -1));
+        test.line = ReadTestLineOrAbsent(lua_tointeger(state, -1));
       }
       lua_pop(state, 1);
       if (!test.id.empty()) {
@@ -301,7 +324,7 @@ bool RunTests(
       result.message = lua_interop::ReadStringField(state, -1, "message");
       lua_interop::GetFieldProtected(state, -1, "duration_ms");
       if (lua_isinteger(state, -1)) {
-        result.duration_ms = static_cast<int>(lua_tointeger(state, -1));
+        result.duration_ms = ClampDurationMs(lua_tointeger(state, -1));
       }
       lua_pop(state, 1);
       if (!result.test_id.empty()) {

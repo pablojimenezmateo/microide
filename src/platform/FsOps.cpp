@@ -70,7 +70,21 @@ bool MovePath(const std::filesystem::path& source, const std::filesystem::path& 
     return true;
   }
 
+  // std::filesystem::copy is not transactional: a permission error, ENOSPC, a
+  // vanished source entry, or a read failure can strike after some of the
+  // destination tree already materialized. Capturing whether the destination
+  // pre-existed lets us roll back a partial copy without deleting content that was
+  // already there before the move.
+  const bool destination_preexisted = std::filesystem::exists(destination, error);
+  error.clear();
   if (!CopyPath(source, destination)) {
+    // Copy failed after possibly creating part of the destination. Leaving that
+    // partial tree behind poisons cross-device rename retries ("already exists")
+    // and can strand half-copied content in the trash. Remove it — but only when
+    // the destination did not exist before, so we never destroy prior content.
+    if (!destination_preexisted) {
+      RemovePath(destination);
+    }
     return false;
   }
   if (!RemovePath(source)) {
@@ -79,7 +93,9 @@ bool MovePath(const std::filesystem::path& source, const std::filesystem::path& 
     // turns a failed move into a silent duplicate — for a trash move that hides
     // "deleted" content at the new path; for a rename it poisons retries with an
     // already-existing target. Roll the copy back so a failed move is a no-op.
-    RemovePath(destination);
+    if (!destination_preexisted) {
+      RemovePath(destination);
+    }
     return false;
   }
   return true;
@@ -112,6 +128,10 @@ bool MovePathNoOverwrite(const std::filesystem::path& source,
     return false;
   }
   if (!CopyPath(source, destination)) {
+    // The exists() check above established the destination did not pre-exist, so any
+    // partial tree here is ours to remove — otherwise a failed no-overwrite move
+    // leaves debris that makes the next attempt refuse with "already exists".
+    RemovePath(destination);
     return false;
   }
   if (!RemovePath(source)) {

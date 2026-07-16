@@ -50,6 +50,26 @@ void TestResultsDoNotAliasAcrossCalls() {
          "results for 'b' are not clobbered by the second query");
 }
 
+// TD-2026-07-16-66: LatestTestResult returns the most recent result per id in O(1),
+// nullptr when none, matching TestResults(...).back() without the per-call allocation.
+void TestLatestTestResultReturnsMostRecent() {
+  TestController controller;
+  Expect(controller.LatestTestResult("a") == nullptr, "no result yet -> nullptr");
+
+  controller.RecordTestResult(TestResult{.test_id = "a", .state = TestResultState::Failed});
+  controller.RecordTestResult(TestResult{.test_id = "b", .state = TestResultState::Passed});
+  controller.RecordTestResult(TestResult{.test_id = "a", .state = TestResultState::Passed});
+
+  const TestResult* a = controller.LatestTestResult("a");
+  Expect(a != nullptr && a->state == TestResultState::Passed,
+         "LatestTestResult returns the newest result for 'a' (last-writer-wins)");
+  const TestResult* b = controller.LatestTestResult("b");
+  Expect(b != nullptr && b->state == TestResultState::Passed, "'b' latest is its only result");
+
+  controller.Clear();
+  Expect(controller.LatestTestResult("a") == nullptr, "Clear resets the latest-result index");
+}
+
 }  // namespace
 
 void RegisterWorkspaceTestControllerTests(std::vector<TestCase>& tests) {
@@ -57,6 +77,8 @@ void RegisterWorkspaceTestControllerTests(std::vector<TestCase>& tests) {
           TestRegisterTestItemUpsertsById);
   AddTest(tests, "WorkspaceTestController/ResultsDoNotAliasAcrossCalls",
           TestResultsDoNotAliasAcrossCalls);
+  AddTest(tests, "WorkspaceTestController/LatestTestResultReturnsMostRecent",
+          TestLatestTestResultReturnsMostRecent);
 }
 
 }  // namespace microide::tests

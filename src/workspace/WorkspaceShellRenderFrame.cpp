@@ -131,10 +131,19 @@ void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
             editor::FilterDiagnosticsAtLeastSeverity(
                 std::span<const editor::PublishedDiagnostic>(*diags), diag_min_severity,
                 tls_filtered);
+        // Saturate diagnostic rows into int: a std::size_t line beyond INT_MAX
+        // (a plugin/LSP coordinate near the host ceiling) would otherwise wrap to a
+        // negative/small row and mis-place the overview marker. (TD-2026-07-16-69.)
+        constexpr std::size_t kMaxRow = static_cast<std::size_t>(std::numeric_limits<int>::max());
+        const auto clamp_row = [](std::size_t line) {
+          return line > kMaxRow ? std::numeric_limits<int>::max() : static_cast<int>(line);
+        };
         for (const editor::PublishedDiagnostic& diagnostic : filtered) {
-          const int start = static_cast<int>(diagnostic.range.start.line);
+          const int start = clamp_row(diagnostic.range.start.line);
+          const std::size_t end_line =
+              std::max(diagnostic.range.end.line, diagnostic.range.start.line);
           const int end =
-              static_cast<int>(std::max(diagnostic.range.end.line, diagnostic.range.start.line)) + 1;
+              end_line >= kMaxRow ? std::numeric_limits<int>::max() : static_cast<int>(end_line) + 1;
           inputs.push_back(overview::MarkerInput{.start_row = start,
                                                  .end_row = end,
                                                  .color = OverviewSeverityColor(theme, diagnostic.severity),

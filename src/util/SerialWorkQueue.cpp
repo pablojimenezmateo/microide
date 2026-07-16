@@ -19,6 +19,10 @@ SerialWorkQueue::~SerialWorkQueue() { Shutdown(); }
 
 void SerialWorkQueue::EnsureStarted() {
   std::lock_guard lock(mutex_);
+  EnsureStartedLocked();
+}
+
+void SerialWorkQueue::EnsureStartedLocked() {
   if (started_.load(std::memory_order_acquire) || stop_) {
     return;
   }
@@ -32,6 +36,10 @@ void SerialWorkQueue::Post(std::function<void()> task) {
     if (stop_) {
       return;
     }
+    // Honor the lazy-start contract: a kLazy queue starts its worker on first post so
+    // a caller can default-construct + Post without a separate EnsureStarted() and
+    // still have the job run (rather than sit forever in an unstarted queue).
+    EnsureStartedLocked();
     if (hooks_.on_enqueue) {
       hooks_.on_enqueue();
     }
@@ -46,6 +54,7 @@ void SerialWorkQueue::PostFront(std::function<void()> task) {
     if (stop_) {
       return;
     }
+    EnsureStartedLocked();
     if (hooks_.on_enqueue) {
       hooks_.on_enqueue();
     }
@@ -60,6 +69,7 @@ void SerialWorkQueue::PostLatest(std::string key, std::function<void()> task) {
     if (stop_) {
       return;
     }
+    EnsureStartedLocked();
     // Drop superseded (queued, not cancelled, same key) jobs and balance their
     // enqueue hooks so the in-flight accounting stays exact.
     const std::size_t before = queue_.size();

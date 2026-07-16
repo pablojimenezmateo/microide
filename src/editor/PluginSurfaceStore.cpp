@@ -95,6 +95,13 @@ bool PluginSurfaceStore::ReplaceForOwnerSurface(std::string_view owner,
     return false;
   }
 
+  // Honor a live host-side dismissal: if the user closed this preview, a republish
+  // requesting a preview slot must not silently reopen it. (TD-2026-07-16-62.)
+  if (content.preview != SurfacePreviewSlot::None &&
+      dismissed_previews_.count(std::pair(owner_key, id_key)) != 0) {
+    content.preview = SurfacePreviewSlot::None;
+  }
+
   auto& surfaces = by_owner_[owner_key];
   if (!content.has_body() && content.preview == SurfacePreviewSlot::None) {
     // An empty, non-preview surface is a removal.
@@ -102,6 +109,7 @@ bool PluginSurfaceStore::ReplaceForOwnerSurface(std::string_view owner,
     if (surfaces.empty()) {
       by_owner_.erase(owner_key);
     }
+    dismissed_previews_.erase(std::pair(owner_key, id_key));  // surface gone: drop override
     if (changed) {
       RebuildAnchorIndex();
       ++revision_;
@@ -141,6 +149,7 @@ bool PluginSurfaceStore::ClearOwnerSurface(std::string_view owner, std::string_v
   if (owner_it->second.empty()) {
     by_owner_.erase(owner_it);
   }
+  dismissed_previews_.erase(std::pair(std::string(owner), std::string(surface_id)));
   RebuildAnchorIndex();
   ++revision_;
   return true;
@@ -152,6 +161,9 @@ bool PluginSurfaceStore::ClearOwner(std::string_view owner) {
     return false;
   }
   by_owner_.erase(owner_it);
+  // Drop all dismissal overrides for this owner (its surfaces are gone).
+  std::erase_if(dismissed_previews_,
+                [&](const auto& key) { return key.first == owner; });
   RebuildAnchorIndex();
   ++revision_;
   return true;
@@ -168,6 +180,15 @@ bool PluginSurfaceStore::SetPreviewSlot(std::string_view owner, std::string_view
     return false;
   }
   surface_it->second.preview = slot;
+  // Track the host-side override: dismissing (None) makes the close sticky across
+  // republish; re-opening (non-None) clears the override so the plugin can drive it
+  // again. (TD-2026-07-16-62.)
+  std::pair<std::string, std::string> key{std::string(owner), std::string(surface_id)};
+  if (slot == SurfacePreviewSlot::None) {
+    dismissed_previews_.insert(std::move(key));
+  } else {
+    dismissed_previews_.erase(key);
+  }
   ++revision_;
   return true;
 }
@@ -178,6 +199,7 @@ void PluginSurfaceStore::Clear() {
   }
   by_owner_.clear();
   anchored_by_path_.clear();
+  dismissed_previews_.clear();
   ++revision_;
 }
 

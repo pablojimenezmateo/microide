@@ -51,7 +51,9 @@ class SerialWorkQueue {
 
   // Spawn the worker if it is not already running. Idempotent; cheap when started.
   // A kEager queue calls this from its constructor; a kLazy queue stays threadless
-  // until the first EnsureStarted()/Post*.
+  // until the first EnsureStarted()/Post* — every Post*/PostLatest/PostFront starts
+  // the worker before enqueuing, so a default-constructed queue that is only ever
+  // Post()ed to still runs its work.
   void EnsureStarted();
   bool started() const { return started_.load(std::memory_order_acquire); }
 
@@ -78,6 +80,10 @@ class SerialWorkQueue {
 
  private:
   void WorkerMain();
+  // Spawn the worker assuming mutex_ is already held. EnsureStarted() and the Post*
+  // enqueue paths share this so a lazy queue starts on first post without a nested
+  // re-lock of mutex_ (which would deadlock).
+  void EnsureStartedLocked();
 
   struct Job {
     std::string key;  // empty = no dedup

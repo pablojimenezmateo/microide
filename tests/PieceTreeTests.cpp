@@ -289,9 +289,42 @@ void TestPieceTreeSpanningLineViewStableAcrossReReads() {
   Expect(tree.LineView(1) == "second", "neighbour line intact");
 }
 
+// TD-2026-07-16-35: a mutation that would push the live document past the byte ceiling
+// must be refused as a no-op (leaving content + line count intact) rather than wrap the
+// uint32 subtree_length and corrupt the tree. Exercised via a lowered test ceiling.
+void TestPieceTreeLiveDocumentByteCeiling() {
+  PieceTree tree({"hello", "world"});
+  const std::vector<std::string> before = tree.ToVector();
+  const std::size_t before_bytes = tree.ByteSize();
+  const std::size_t before_lines = tree.LineCount();
+
+  // Lower the ceiling to just below the current size + a small insert.
+  tree.SetMaxLiveDocumentBytesForTesting(static_cast<std::uint32_t>(before_bytes + 2));
+
+  // A small insert that fits under the ceiling still applies.
+  tree.PushBackLine("x");  // +2 bytes ("\n" + "x")
+  Expect(!tree.LastMutationRejectedForByteCeiling(), "an in-budget mutation applies");
+  Expect(tree.LineCount() == before_lines + 1, "the in-budget mutation grew the document");
+
+  // Now any further growth exceeds the ceiling and must be refused as a no-op.
+  const std::vector<std::string> at_cap = tree.ToVector();
+  const std::size_t at_cap_bytes = tree.ByteSize();
+  tree.PushBackLine("this would overflow the lowered ceiling");
+  Expect(tree.LastMutationRejectedForByteCeiling(),
+         "a mutation past the byte ceiling is rejected");
+  Expect(tree.ToVector() == at_cap, "a rejected mutation leaves content unchanged");
+  Expect(tree.ByteSize() == at_cap_bytes, "a rejected mutation leaves byte size unchanged");
+
+  // A delete (shrinking) is always allowed even at the ceiling.
+  tree.EraseLine(0);
+  Expect(!tree.LastMutationRejectedForByteCeiling(), "a shrinking mutation is never refused");
+  Expect(tree.LineCount() == at_cap.size() - 1, "the delete applied");
+}
+
 }  // namespace
 
 void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PieceTree/LiveDocumentByteCeiling", TestPieceTreeLiveDocumentByteCeiling);
   AddTest(tests, "PieceTree/BasicSemantics", TestPieceTreeBasicSemantics);
   AddTest(tests, "PieceTree/AddBufferCompaction", TestPieceTreeAddBufferCompaction);
   AddTest(tests, "PieceTree/MidLineEdits", TestPieceTreeMidLineEdits);

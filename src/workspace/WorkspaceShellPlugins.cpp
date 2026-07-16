@@ -175,7 +175,10 @@ WorkspaceShell::WorkspaceShell() {
           .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
           .apply_workspace_edit_to_open_buffers =
               [this](const std::vector<CodeActionEdit>& edits) {
-                return ApplyLspWorkspaceEdit(edits);
+                bool any_rejected = false;
+                const bool applied = ApplyLspWorkspaceEdit(edits, &any_rejected);
+                return OpenBufferEditResult{.applied_any = applied,
+                                            .any_rejected = any_rejected};
               },
           .get_setting_value = [this](std::string_view id) { return GetSettingValue(id); },
       });
@@ -1167,7 +1170,13 @@ bool WorkspaceShell::ApplyPluginWorkspaceEdit(
   return true;
 }
 
-bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& edits) {
+bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& edits,
+                                           bool* out_any_rejected) {
+  const auto mark_rejected = [&]() {
+    if (out_any_rejected != nullptr) {
+      *out_any_rejected = true;
+    }
+  };
   if (edits.empty()) {
     return false;
   }
@@ -1251,23 +1260,45 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
     const lsp_encoding::PositionEncoding vp_encoding =
         vp_client != nullptr ? LspEncodingForClient(*vp_client)
                              : lsp_encoding::PositionEncoding::Utf8;
-    // Convert 0-based LSP coordinates to editor byte columns, clamped to the live
-    // document. LspCharacterToByteColumn already clamps the column to the line.
-    const auto clamp = [&](editor::TextPosition pos) -> editor::TextPosition {
-      const std::size_t line_count = viewport->line_count();
+    // Convert 0-based LSP coordinates to editor byte columns. A line beyond EOF is a
+    // stale/confused/hostile server target: unlike the old forgiving clamp (which
+    // silently rewrote it onto the LAST real line and mutated it — visible data loss
+    // in dirty state, undo, diagnostics, folds), we now REJECT the whole buffer's edit
+    // group, matching the closed-file applier's range policy. The sole allowed
+    // beyond-EOF position is the end-of-document sentinel {line == line_count,
+    // character == 0} (an append at EOF). LspCharacterToByteColumn still soft-clamps
+    // the column within a valid line.
+    const std::size_t line_count = viewport->line_count();
+    const auto map_position =
+        [&](editor::TextPosition pos, bool* ok) -> editor::TextPosition {
       if (line_count == 0) {
+        if (pos.line != 0) {
+          *ok = false;
+        }
         return editor::TextPosition{0, 0};
       }
+      if (pos.line == line_count && pos.column == 0) {
+        // End-of-document append sentinel: keep it addressed to one-past-last-line.
+        return pos;
+      }
       if (pos.line >= line_count) {
-        pos.line = line_count - 1;
+        *ok = false;
+        return pos;
       }
       pos.column = lsp_encoding::LspCharacterToByteColumn(
           std::string_view(viewport->lines()[pos.line]), pos.column, vp_encoding);
       return pos;
     };
+    bool group_ok = true;
     for (auto& [range, text] : buffer_edits) {
-      range.start = clamp(range.start);
-      range.end = clamp(range.end);
+      range.start = map_position(range.start, &group_ok);
+      range.end = map_position(range.end, &group_ok);
+    }
+    if (!group_ok) {
+      // A beyond-EOF target invalidates this buffer's whole group; drop it and record
+      // the rejection so a server-initiated applyEdit reports partial failure.
+      mark_rejected();
+      continue;
     }
     // Apply highest-position-first so earlier ranges stay valid as later ones are
     // applied. For edits at the SAME position (e.g. two inserts at (0,0)), apply
@@ -1304,6 +1335,7 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
                     (lo.end.line == hi.start.line && lo.end.column > hi.start.column);
     }
     if (overlapping) {
+      mark_rejected();
       continue;
     }
 

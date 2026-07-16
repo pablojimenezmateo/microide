@@ -168,12 +168,16 @@ class AssistService {
     std::string language_id;
     std::vector<CompletionSessionItem> lsp_items;
     std::vector<CompletionSessionItem> plugin_items;
+    // Request generation: a callback for an OLDER request (slower to return) must not
+    // overwrite the items a newer same-file request already published. (TD-16-65.)
+    std::uint64_t generation = 0;
   };
   struct CodeActionMerge {
     assist_merge::TwoSourceState sources;
     std::string language_id;
     std::vector<CodeActionSessionItem> lsp_items;
     std::vector<CodeActionSessionItem> plugin_items;
+    std::uint64_t generation = 0;
   };
   struct NavigationMerge {
     assist_merge::TwoSourceState sources;
@@ -268,6 +272,12 @@ class AssistService {
   WorkspaceOutputChannels* output_channels_ = nullptr;
   WorkspaceLanguageContract* language_contract_ = nullptr;
   Operations operations_{};
+  // Monotonic per-kind request generations. A new request bumps its counter; an async
+  // callback carries the generation it was dispatched under and drops its result when a
+  // newer request has since superseded it, so a slower older same-file request cannot
+  // overwrite or apply against newer state. (TD-2026-07-16-65.)
+  std::uint64_t completion_request_generation_ = 0;
+  std::uint64_t code_action_request_generation_ = 0;
 };
 
 }  // namespace microide::workspace

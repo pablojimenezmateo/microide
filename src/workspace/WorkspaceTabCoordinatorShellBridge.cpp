@@ -249,21 +249,35 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
     return true;
   }
 
-  std::string text = SerializeViewportText(viewport);
-  if (plugin_runtime_.enabled() && !save_participant_registry_.Specs().empty() &&
-      !plugin_runtime_.Host().RunSaveParticipants(path, &text, error_message)) {
-    return false;
-  }
-
+  // Fast-return BEFORE serializing the whole buffer when no save transform can run:
+  // no active plugin save participants AND no enabled formatter for this filetype.
+  // The common no-plugin/no-formatter save then pays zero preparation serialization
+  // (TextViewport::Save does its own single serialize), instead of the previous
+  // two-or-three full-buffer passes. DetectFiletype only scans the first lines, so the
+  // filetype probe is cheap. (TD-2026-07-16-16.)
+  const bool has_save_participants =
+      plugin_runtime_.enabled() && !save_participant_registry_.Specs().empty();
   const std::string filetype = editor::runtime_syntax::DetectFiletype(path, viewport.lines());
   // Autosave suppresses the formatter so a background write never blocks the UI thread
   // on an external subprocess; explicit saves still format.
   const bool format_on_save = !autosave_suppress_format_on_save_ &&
                               SettingFlagEnabled(GetSettingValue("editor.format_on_save"), true);
-  if (const FormatterSpec* formatter =
-          (format_on_save && !filetype.empty()) ? FindFormatter(formatter_registry_, filetype)
-                                                : nullptr;
-      formatter != nullptr && !formatter->command.empty()) {
+  const FormatterSpec* formatter =
+      (format_on_save && !filetype.empty()) ? FindFormatter(formatter_registry_, filetype)
+                                            : nullptr;
+  const bool has_formatter = formatter != nullptr && !formatter->command.empty();
+  if (!has_save_participants && !has_formatter) {
+    return true;  // nothing will transform the text; skip preparation serialization
+  }
+
+  std::string text = SerializeViewportText(viewport);
+  const std::string original_text = text;  // to detect whether a transform changed it
+  if (has_save_participants &&
+      !plugin_runtime_.Host().RunSaveParticipants(path, &text, error_message)) {
+    return false;
+  }
+
+  if (has_formatter) {
     // Save is synchronous from the UI's perspective, so the formatter has to complete before
     // we return. Running it inline avoids the misleading executor-post-then-wait pattern that
     // implied background work but still blocked the calling thread. To keep a hung or
@@ -302,7 +316,9 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
     }
   }
 
-  if (text == SerializeViewportText(viewport)) {
+  // Compare against the snapshot captured before transforms, not a fresh re-serialize:
+  // when no participant/formatter changed the text there is nothing to apply. (TD-16.)
+  if (text == original_text) {
     return true;
   }
 

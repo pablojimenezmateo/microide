@@ -149,13 +149,22 @@ bool TextViewport::Save() {
   // and force an LF join (mirroring the '\n'-only split on open) so a stray CR or NUL is
   // never rewritten. Applying trim or an ending override to binary bytes would corrupt them.
   const bool opaque = document_->encoding == TextEncoding::Bytes;
-  std::vector<std::string> normalized = document_->lines.ToVector();
+  // Only materialize a whole-document vector when a save-time transform is actually
+  // enabled. A clean save with transforms off (or an opaque/binary buffer) skips the
+  // O(line count) ToVector pass entirely and serializes straight from the snapshot —
+  // the transform check is cheap and the common case is no transform. (TD-2026-07-16-12.)
+  const bool wants_transform =
+      !opaque && (save_trim_trailing_whitespace_ || save_ensure_final_newline_);
+  std::vector<std::string> normalized;
   bool changed = false;
-  if (!opaque && save_trim_trailing_whitespace_) {
-    if (TrimTrailingWhitespace(normalized)) changed = true;
-  }
-  if (!opaque && save_ensure_final_newline_) {
-    if (EnsureSingleFinalNewline(normalized)) changed = true;
+  if (wants_transform) {
+    normalized = document_->lines.ToVector();
+    if (save_trim_trailing_whitespace_ && TrimTrailingWhitespace(normalized)) {
+      changed = true;
+    }
+    if (save_ensure_final_newline_ && EnsureSingleFinalNewline(normalized)) {
+      changed = true;
+    }
   }
 
   // "auto" keeps the file's detected ending; an explicit lf/crlf override wins. Opaque

@@ -252,7 +252,13 @@ std::vector<CommandCompletionCandidate> CompletePath(const std::filesystem::path
     return matches;
   }
 
-  for (const auto& entry : iterator) {
+  // Advance with the non-throwing increment(error): range-for uses the throwing
+  // operator++, so a directory that vanishes, hits an I/O error, or exposes a hostile
+  // entry mid-completion would throw std::filesystem_error out of this UI-thread path.
+  // A mid-iteration error returns the candidates collected so far.
+  const std::filesystem::directory_iterator end;
+  for (; !error && iterator != end; iterator.increment(error)) {
+    const std::filesystem::directory_entry& entry = *iterator;
     const std::string name = entry.path().filename().string();
     if (!StartsWith(name, leaf_prefix)) {
       continue;

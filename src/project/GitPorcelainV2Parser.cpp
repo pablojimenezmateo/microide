@@ -134,7 +134,12 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
   };
   state.repo_available = true;
 
-  const std::vector<std::string_view> records = util::SplitNulDelimited(output);
+  // Bound BOTH the retained entries AND the pre-cap token materialization: a v2 rename
+  // entry consumes 2 records (the origin path is the following NUL field), so split at
+  // most 2x the entry cap (+ slack). Splitting the whole output first paid an O(record
+  // count) allocation for hostile millions-of-tiny-records output. (TD-2026-07-16-30.)
+  const std::vector<std::string_view> records =
+      util::SplitNulDelimited(output, kMaxGitStatusEntries * 2 + 2);
   // Cap entries (and the reserve) against a hostile repo's millions of records;
   // see kMaxGitStatusEntries. Extra records past the cap are dropped.
   state.entries.reserve(std::min(records.size(), kMaxGitStatusEntries));

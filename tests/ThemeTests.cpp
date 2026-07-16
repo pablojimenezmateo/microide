@@ -297,9 +297,38 @@ void ExpectBuiltinLightThemeIsSelectableAndReadable() {
          "the default theme should appear in the available colorscheme list");
 }
 
+// TD-2026-07-16-64: an oversized colorscheme file must be rejected before it is parsed
+// line by line, leaving the current theme unchanged, rather than stalling the UI thread.
+void ExpectOversizedColorschemeFileIsRejected() {
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() / "microide_theme_oversize_test";
+  std::error_code ec;
+  std::filesystem::remove_all(dir, ec);
+  std::filesystem::create_directories(dir, ec);
+  Expect(!ec, "should be able to create a temp theme directory");
+
+  {
+    std::ofstream out(dir / "huge.microide");
+    out << "color-link default \"#ffffff,#101010\"\n";
+    // One >4 MiB comment line pushes the file past the per-file byte budget.
+    out << "# " << std::string(5u * 1024 * 1024, 'x') << "\n";
+  }
+
+  render::Theme theme;
+  std::string resolved_name;
+  std::string error;
+  const bool loaded = render::LoadThemeByName("huge", theme, &resolved_name, &error, dir);
+  std::filesystem::remove_all(dir, ec);
+  Expect(!loaded, "an oversized colorscheme file must fail to load");
+  Expect(error.find("too large") != std::string::npos,
+         "the failure should name the file-size budget: " + error);
+}
+
 }  // namespace
 
 void RegisterThemeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Theme oversized colorscheme file is rejected",
+          ExpectOversizedColorschemeFileIsRejected);
   AddTest(tests, "Theme built-in light is selectable and readable",
           ExpectBuiltinLightThemeIsSelectableAndReadable);
   AddTest(tests, "Theme shared ANSI palette parity", ExpectSharedAnsiPaletteParity);

@@ -655,7 +655,13 @@ void ProjectSearchService::PushWakeEvent() const {
   SDL_Event event;
   SDL_zero(event);
   event.type = wake_event_type_;
-  SDL_PushEvent(&event);
+  // Clear the coalescing flag if the push fails: otherwise wake_pending_ stays true
+  // with no event queued, and every later result/progress/finished PushWakeEvent()
+  // early-returns on the stale flag — the sidebar sits on a completed search until
+  // some unrelated event drives the drain. Mirrors TerminalSession/file-monitor.
+  if (!SDL_PushEvent(&event)) {
+    wake_pending_ = false;
+  }
 }
 
 }  // namespace microide::project

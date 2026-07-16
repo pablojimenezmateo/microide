@@ -489,6 +489,20 @@ void PieceTree::ReplaceLineRange(std::size_t start, std::size_t removed,
     }
   }
 
+  // Live-document byte ceiling: subtree_length/TreeLength are uint32, so a document
+  // grown past the ceiling wraps and corrupts split/extract/serialize. Individual edits
+  // are bounded, but many bounded edits can accumulate past it. Compute the projected
+  // size (current − removed bytes + replacement) and refuse the WHOLE replace before any
+  // mutation runs, keeping the tree and line_count_ consistent. (TD-2026-07-16-35.)
+  const std::uint64_t projected = static_cast<std::uint64_t>(ByteSize()) -
+                                  static_cast<std::uint64_t>(old_end - old_start) +
+                                  replacement.size();
+  if (projected > max_live_document_bytes_) {
+    last_mutation_rejected_ = true;
+    return;
+  }
+  last_mutation_rejected_ = false;
+
   DeleteRange(old_start, old_end - old_start);
   InsertText(old_start, replacement);
   line_count_ = n - removed + inserted.size();

@@ -1,6 +1,8 @@
 #include "util/TaskExecutor.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <exception>
 #include <utility>
 
 namespace microide::util {
@@ -79,7 +81,18 @@ void TaskExecutor::WorkerMain(std::size_t slot) {
 
     CancellationToken token(entry.state);
     if (!token.IsCancellationRequested() && entry.task) {
-      entry.task(token);
+      // Exception firewall: background tasks touch the filesystem, allocation-heavy
+      // vectors, and regex/search state. An uncaught std::filesystem_error/bad_alloc
+      // would escape the std::thread entry point and std::terminate the whole IDE —
+      // and skip the active_states_ clear below, hanging WaitForIdle(). Swallow it
+      // here and keep the worker alive, matching SerialWorkQueue's firewall.
+      try {
+        entry.task(token);
+      } catch (const std::exception& ex) {
+        std::fprintf(stderr, "[task-executor] task threw std::exception: %s\n", ex.what());
+      } catch (...) {
+        std::fprintf(stderr, "[task-executor] task threw a non-standard exception\n");
+      }
     }
 
     {

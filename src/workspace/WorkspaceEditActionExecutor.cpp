@@ -142,8 +142,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
         return DispatchResult::Handled;
       }
 
-      if (id == ActionId::Goto && request->requested_line == 0) {
-        return DispatchResult::Handled;
+      // `goto` is an ABSOLUTE 1-based line per its public contract (README, control
+      // protocol). Reject any non-positive line with feedback rather than silently
+      // succeeding: a negative value previously fell through to the "from end" mode in
+      // ExecuteLineNavigation (goto -1 -> last line), which contradicts the documented
+      // absolute contract and made typos navigate to EOF. `jump` keeps signed relative
+      // deltas. (TD-2026-07-16-68.)
+      if (id == ActionId::Goto && request->requested_line <= 0) {
+        return reject("Go to Line expects a positive 1-based line number");
       }
 
       context_.ExecuteLineNavigation(*request, id == ActionId::Jump);

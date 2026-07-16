@@ -21,6 +21,7 @@
 #include "util/TransparentStringHash.h"
 #include "util/Parse.h"
 #include "util/SaturatingMath.h"
+#include "util/SdlWake.h"
 #include "util/TaskExecutor.h"
 
 namespace microide::project {
@@ -695,14 +696,10 @@ struct GitBlameService::Impl {
 
   void PushWakeEvent() const {
     std::lock_guard lock(mutex);
-    if (wake_event_type == 0) {
-      return;
-    }
-
-    SDL_Event event;
-    SDL_zero(event);
-    event.type = wake_event_type;
-    SDL_PushEvent(&event);
+    // Route through the checked pusher: on a rejected push the ready blame stays in
+    // the cache (shared state) and the shared "wake owed" bit is latched so the idle
+    // poll schedules a fallback wait instead of stranding the overlay stale.
+    util::PushSdlWake(wake_event_type);
   }
 
   mutable std::mutex mutex;

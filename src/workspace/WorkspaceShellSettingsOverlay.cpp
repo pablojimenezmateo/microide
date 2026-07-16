@@ -426,6 +426,12 @@ void WorkspaceShell::ApplyLiveSettings() {
     context_.current_project_state.directory_tree.Refresh();
     context_.current_project_state.file_index.Refresh();
     context_.current_project_state.file_finder.InvalidateIndexCache();
+    // Re-arm the native FileIndexWatcher too: its traversal filter is constructed at
+    // Watch() time from the exclude globs and is not mutated by SetExcludeGlobs alone, so
+    // without a restart a now-excluded subtree's live events could reinsert paths into
+    // the index/search state after the refresh above. Restart rebuilds the filter under a
+    // fresh generation guard. (TD-2026-07-16-40.)
+    StartFileIndexWatcherForCurrentProject();
     RequestSidebarRedraw();
   }
 

@@ -202,6 +202,15 @@ namespace {
 // grow the stack / open an unbounded number of files before failing.
 constexpr std::size_t kMaxThemeIncludeDepth = 16;
 constexpr std::size_t kMaxThemeIncludeCount = 128;
+// Per-file and aggregate parser budgets: the include-count cap bounds the NUMBER of
+// files but not the size of each. A single included colorscheme can still contain a
+// multi-megabyte line, millions of comment/ignored lines, or millions of unique style
+// groups that allocate+hash into the map. These bound each file's bytes/lines and the
+// total retained style groups so a large/hostile local theme cannot stall the UI
+// thread during startup restore or a `colorscheme <name>` command. (TD-2026-07-16-64.)
+constexpr std::size_t kMaxThemeFileBytes = 4u * 1024 * 1024;  // 4 MiB per file
+constexpr std::size_t kMaxThemeFileLines = 200000;
+constexpr std::size_t kMaxThemeStyleGroups = 20000;
 
 bool LoadThemeStylesRec(const std::filesystem::path& theme_directory,
                         std::string_view name,
@@ -233,6 +242,17 @@ bool LoadThemeStylesRec(const std::filesystem::path& theme_directory,
     return false;
   }
 
+  // Refuse an oversized file before reading it line by line (a single huge line would
+  // otherwise materialize into `line` + `trimmed`). Non-regular / unstat'able files
+  // fall through to the open below and fail there.
+  std::error_code size_ec;
+  const std::uintmax_t file_bytes = std::filesystem::file_size(theme_path, size_ec);
+  if (!size_ec && file_bytes > kMaxThemeFileBytes) {
+    error = "Colorscheme file too large (limit " + std::to_string(kMaxThemeFileBytes) +
+            " bytes): " + normalized_name;
+    return false;
+  }
+
   std::ifstream file(theme_path);
   if (!file) {
     error = "Failed to open colorscheme: " + theme_path.string();
@@ -241,7 +261,14 @@ bool LoadThemeStylesRec(const std::filesystem::path& theme_directory,
 
   include_stack.push_back(normalized_name);
   std::string line;
+  std::size_t lines_read = 0;
   while (std::getline(file, line)) {
+    if (++lines_read > kMaxThemeFileLines) {
+      error = "Colorscheme file has too many lines (limit " +
+              std::to_string(kMaxThemeFileLines) + "): " + normalized_name;
+      include_stack.pop_back();
+      return false;
+    }
     const std::string trimmed = util::TrimAsciiWhitespace(line);
     if (trimmed.empty() || trimmed[0] == '#') {
       continue;
@@ -261,7 +288,13 @@ bool LoadThemeStylesRec(const std::filesystem::path& theme_directory,
     std::string group;
     ThemeStyle style;
     if (ParseColorLink(trimmed, group, style)) {
-      styles[group] = style;
+      // Cap the retained style groups: BuildThemeFromStyles consumes only a finite set
+      // of known UI/syntax groups, so a theme advertising millions of unique group
+      // names must not allocate+hash an unbounded map. Updating an existing group stays
+      // allowed; only NEW groups past the cap are dropped.
+      if (styles.size() < kMaxThemeStyleGroups || styles.count(group) != 0) {
+        styles[group] = style;
+      }
       continue;
     }
   }

@@ -43,7 +43,11 @@ std::filesystem::path ResolveBundledAssetDirectoryForBasePath(
   };
 
   for (const auto& candidate : candidates) {
-    if (!candidate.empty() && std::filesystem::is_directory(candidate)) {
+    // Non-throwing probe: one candidate is the MICROIDE_ASSET_ROOT env value, so a
+    // hostile/broken path (ELOOP, permission-denied parent, overlong component) must
+    // degrade to "next candidate" rather than throw std::filesystem_error at startup.
+    std::error_code dir_ec;
+    if (!candidate.empty() && std::filesystem::is_directory(candidate, dir_ec) && !dir_ec) {
       return candidate.lexically_normal();
     }
   }

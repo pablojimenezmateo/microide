@@ -106,13 +106,18 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
   if (batch.tree_rescan_requested) {
     if (batch.file_changes.empty()) {
       ReloadCleanOpenBuffersFromDisk();
-      for (const TabEntry& tab : context_.current_project_state.focused_group().open_tabs) {
-        if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
-          refresh_compare_paths.insert(tab.compare->path);
-        }
-        if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
-            !tab.merge->output_path.empty()) {
-          InvalidateMergeTabsForPath(tab.merge->output_path);
+      // Reconcile compare/merge tabs across EVERY editor group, not just the focused
+      // one: a compare/merge tab open only in a background split must not keep a stale
+      // model/output after a pure tree-rescan. (TD-2026-07-16-57.)
+      for (const auto& group : context_.current_project_state.editor_groups) {
+        for (const TabEntry& tab : group.open_tabs) {
+          if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+            refresh_compare_paths.insert(tab.compare->path);
+          }
+          if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
+              !tab.merge->output_path.empty()) {
+            InvalidateMergeTabsForPath(tab.merge->output_path);
+          }
         }
       }
       for (const std::filesystem::path& path : refresh_compare_paths) {

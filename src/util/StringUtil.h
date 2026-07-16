@@ -93,6 +93,12 @@ std::vector<std::string_view> SplitAsciiWhitespace(std::string_view text);
 // aligned; a single terminating NUL yields no trailing empty record. Views are
 // valid only for the lifetime of `text`.
 std::vector<std::string_view> SplitNulDelimited(std::string_view text);
+// Bounded variant: stop after collecting at most `max_records` records. Git parsers
+// that cap the entries they RETAIN still paid an O(record count) materialization when
+// they split the whole (byte-bounded but possibly millions-of-tiny-records) command
+// output first. Passing `retained_cap + lookahead` here bounds the transient token
+// vector so hostile NUL-heavy output cannot amplify memory before the entry cap.
+std::vector<std::string_view> SplitNulDelimited(std::string_view text, std::size_t max_records);
 // Replace each run of ASCII whitespace with a single space. Leading whitespace
 // is dropped; trailing whitespace, if any, is also dropped.
 std::string CollapseAsciiWhitespace(std::string_view text);
@@ -116,6 +122,11 @@ std::vector<std::string> SplitLines(std::string_view content);
 // The returned views are valid only for the lifetime of `content`; callers that
 // outlive the source buffer must copy. Used by allocation-sensitive diff paths.
 std::vector<std::string_view> SplitLineViews(std::string_view content);
+// Bounded variant of SplitLineViews: stop after `max_lines` lines so a parser with a
+// retained-entry cap does not first materialize a line view for every line of a huge
+// ref/branch listing. Unlike the unbounded form it does NOT synthesize a single empty
+// line for empty input (callers here iterate and cap, and an empty listing is empty).
+std::vector<std::string_view> SplitLineViews(std::string_view content, std::size_t max_lines);
 std::string JoinLines(std::span<const std::string> lines, std::string_view separator);
 std::string SerializeLines(std::span<const std::string> lines, LineEnding line_ending);
 

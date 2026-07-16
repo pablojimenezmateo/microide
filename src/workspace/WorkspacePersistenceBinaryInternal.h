@@ -2,6 +2,7 @@
 
 #include "workspace/WorkspacePersistenceFormat.h"
 
+#include "compare/BranchReviewStateService.h"
 #include "persistence/PersistedRecord.h"
 
 #include <algorithm>
@@ -663,11 +664,22 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
   return true;
 }
 
+// Project-session decode budgets. The 256 MiB raw-file cap is not enough on its own:
+// a tiny empty-string BufferLine record still becomes a separate std::string + vector
+// slot, so millions of them turn a merely oversized session into a startup stall /
+// bad_alloc before any UI. Cap the repeated nested records and charge an aggregate
+// decoded-byte budget for the dirty buffer snapshot. (TD-2026-07-16-20.)
+inline constexpr std::size_t kMaxSessionBufferLines = 4'000'000;
+inline constexpr std::size_t kMaxSessionBufferBytes = 64u * 1024 * 1024;  // 64 MiB snapshot
+inline constexpr std::size_t kMaxSessionMergeHunkChoices = 200'000;
+inline constexpr std::size_t kMaxSessionTabsPerGroup = 4096;
+
 [[maybe_unused]] bool DecodeEditorTab(std::span<const std::byte> input, PersistedEditorTabState* tab) {
   if (tab == nullptr) {
     return false;
   }
   *tab = PersistedEditorTabState{};
+  std::size_t buffer_bytes = 0;
   return ParseRecordStream<EditorTabTag>(
       input, [&](EditorTabTag tag, std::span<const std::byte> payload) {
         PrimitiveReader reader(payload);
@@ -697,6 +709,13 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
             if (!reader.ReadString(&line) || reader.remaining() != 0) {
               return false;
             }
+            // Fail closed on a snapshot past the product line-count or aggregate-byte
+            // budget rather than materializing millions of tiny strings.
+            if (tab->buffer_lines.size() >= kMaxSessionBufferLines ||
+                buffer_bytes + line.size() > kMaxSessionBufferBytes) {
+              return false;
+            }
+            buffer_bytes += line.size();
             tab->buffer_lines.push_back(std::move(line));
             return true;
           }
@@ -749,6 +768,9 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
             if (!reader.ReadString(&choice) || reader.remaining() != 0) {
               return false;
             }
+            if (tab->merge_hunk_choices.size() >= kMaxSessionMergeHunkChoices) {
+              return false;
+            }
             tab->merge_hunk_choices.push_back(std::move(choice));
             return true;
           }
@@ -791,6 +813,9 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
             return ReadSize(reader, &group->active_tab_index) && reader.remaining() == 0;
           }
           case EditorGroupTag::Tab: {
+            if (group->tabs.size() >= kMaxSessionTabsPerGroup) {
+              return false;  // over the product per-group tab budget
+            }
             PersistedEditorTabState tab;
             if (!DecodeEditorTab(payload, &tab)) {
               return false;
@@ -1023,7 +1048,15 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
                     }
                   }
                   return true;
-                }) && (target->reviewed_files.push_back(std::move(file)), true);
+                }) &&
+                   // Enforce the live service's per-target file cap at decode so a
+                   // corrupt/hostile .microide config cannot bypass the caps that
+                   // runtime PruneTarget maintains. Excess entries are dropped (keep
+                   // the first N deterministically). (TD-2026-07-16-34.)
+                   ((target->reviewed_files.size() >=
+                             compare::BranchReviewStateService::kMaxFileEntriesPerTarget
+                         ? true
+                         : (target->reviewed_files.push_back(std::move(file)), true)));
           }
           case BranchReviewTargetTag::ReviewedHunk: {
             PersistedBranchReviewHunkEntry hunk;
@@ -1042,7 +1075,11 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
                     }
                   }
                   return true;
-                }) && (target->reviewed_hunks.push_back(std::move(hunk)), true);
+                }) &&
+                   ((target->reviewed_hunks.size() >=
+                             compare::BranchReviewStateService::kMaxHunkEntriesPerTarget
+                         ? true
+                         : (target->reviewed_hunks.push_back(std::move(hunk)), true)));
           }
           case BranchReviewTargetTag::Note: {
             PersistedBranchReviewNote note;
@@ -1072,7 +1109,11 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
                     }
                   }
                   return true;
-                }) && (target->notes.push_back(std::move(note)), true);
+                }) &&
+                   ((target->notes.size() >=
+                             compare::BranchReviewStateService::kMaxNotesPerTarget
+                         ? true
+                         : (target->notes.push_back(std::move(note)), true)));
           }
         }
         return true;
@@ -1106,6 +1147,12 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
         if (tag != BranchReviewStateTag::Target) {
           return true;
         }
+        // Enforce the live service's per-repository target cap at decode. Excess
+        // targets are dropped (keep the first N) so a corrupt config cannot load more
+        // review targets than runtime prunes to. (TD-2026-07-16-34.)
+        if (state->targets.size() >= compare::BranchReviewStateService::kMaxTargetsPerRepository) {
+          return true;
+        }
         PersistedBranchReviewTarget target;
         if (!DecodeBranchReviewTarget(payload, &target)) {
           return false;
@@ -1121,18 +1168,30 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
     return false;
   }
   *draft = PersistedCommitDraftState{};
+  // Per-field decode budgets: a persisted commit draft is a small INLINE editor draft,
+  // not a bulk payload. Without these one string inside the 256 MiB raw-record cap can
+  // load a huge body into the sidebar TextViewport and get re-snapshotted on every
+  // precheck/save/dispatch. Fail closed on an over-budget field. (TD-2026-07-16-37.)
+  constexpr std::size_t kMaxDraftOidBytes = 128;      // a git oid is 40-64 hex chars
+  constexpr std::size_t kMaxDraftBranchBytes = 1024;  // ref-name length bound
+  constexpr std::size_t kMaxDraftSubjectBytes = 8192;
+  constexpr std::size_t kMaxDraftBodyBytes = 1u << 20;  // 1 MiB inline body ceiling
+  const auto read_capped = [&](PrimitiveReader& reader, std::string* out,
+                               std::size_t cap) -> bool {
+    return reader.ReadString(out) && reader.remaining() == 0 && out->size() <= cap;
+  };
   return ParseRecordStream<CommitDraftTag>(
       input, [&](CommitDraftTag tag, std::span<const std::byte> payload) {
         PrimitiveReader reader(payload);
         switch (tag) {
           case CommitDraftTag::HeadOid:
-            return reader.ReadString(&draft->head_oid) && reader.remaining() == 0;
+            return read_capped(reader, &draft->head_oid, kMaxDraftOidBytes);
           case CommitDraftTag::BranchName:
-            return reader.ReadString(&draft->branch_name) && reader.remaining() == 0;
+            return read_capped(reader, &draft->branch_name, kMaxDraftBranchBytes);
           case CommitDraftTag::Subject:
-            return reader.ReadString(&draft->subject) && reader.remaining() == 0;
+            return read_capped(reader, &draft->subject, kMaxDraftSubjectBytes);
           case CommitDraftTag::Body:
-            return reader.ReadString(&draft->body) && reader.remaining() == 0;
+            return read_capped(reader, &draft->body, kMaxDraftBodyBytes);
         }
         return true;
       });

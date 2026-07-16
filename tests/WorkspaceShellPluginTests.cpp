@@ -4436,6 +4436,39 @@ void TestWorkspaceShellWorkspaceEditRejectsOverlappingEdits() {
          "overlapping edits must be rejected, leaving the buffer unchanged");
 }
 
+// TD-2026-07-16-45: an open-buffer LSP WorkspaceEdit whose range names a line beyond
+// EOF must be REJECTED (whole group dropped), not silently clamped onto the last real
+// line and mutated — matching the closed-file applier. The buffer stays untouched.
+void TestWorkspaceShellWorkspaceEditRejectsBeyondEofOpenBufferEdit() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path a_path = root / "a.txt";
+  WriteFile(a_path, "only line\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, a_path);
+
+  const auto range = [](std::size_t l0, std::size_t c0, std::size_t l1, std::size_t c1) {
+    return editor::SelectionRange{editor::TextPosition{l0, c0}, editor::TextPosition{l1, c1}};
+  };
+  // Line 999 of a one-line buffer: a stale/hostile server target. The old forgiving
+  // clamp would have edited the last real line; the strict policy rejects the group.
+  bool any_rejected = false;
+  const std::vector<microide::workspace::CodeActionEdit> edits = {
+      {a_path, range(999, 0, 999, 3), "XXX"},
+  };
+  Expect(!WorkspaceShellTestAccess::ApplyLspWorkspaceEdit(shell, edits, &any_rejected),
+         "a beyond-EOF open-buffer edit group applies to nothing");
+  Expect(any_rejected, "the beyond-EOF group must be reported as rejected");
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "only line",
+         "a beyond-EOF edit must not be clamped onto the last line and mutate it");
+}
+
 // Regression: an LSP WorkspaceEdit (code action / rename / Format Document / plugin
 // edit) that mutates a buffer must mark the fold model dirty. Without it, a same-line-
 // count edit that moves a fold boundary leaves EnsureActiveFoldingModelFresh early-
@@ -4637,6 +4670,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellServerApplyEditEditsOpenAndClosedFiles);
   AddTest(tests, "WorkspaceShell/ServerApplyEditRejectsOutOfRangeClosedFileEdit",
           TestWorkspaceShellServerApplyEditRejectsOutOfRangeClosedFileEdit);
+  AddTest(tests, "WorkspaceShell/WorkspaceEditRejectsBeyondEofOpenBufferEdit",
+          TestWorkspaceShellWorkspaceEditRejectsBeyondEofOpenBufferEdit);
   AddTest(tests, "WorkspaceShell/PluginsReloadFallsBackFromMissingActivePluginSidebar",
           TestWorkspaceShellPluginsReloadFallsBackFromMissingActivePluginSidebar);
   AddTest(tests, "WorkspaceShell/SidebarModeMenuListsPluginSidebars",

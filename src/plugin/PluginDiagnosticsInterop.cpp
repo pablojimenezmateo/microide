@@ -17,6 +17,13 @@ namespace {
 
 using path_interop::ResolveRuntimePath;
 
+// Host maximum for a 1-based plugin diagnostic coordinate. A line/column above this is
+// not a real editor position; storing it would let overview-ruler int narrowing wrap
+// (implementation-defined) and Problems-sidebar activation navigate to a clamped EOF.
+// Matches the language-provider/decoration coordinate ceiling. (TD-2026-07-16-69.)
+constexpr lua_Integer kMaxDiagnosticCoordinate =
+    static_cast<lua_Integer>(std::numeric_limits<std::uint32_t>::max());
+
 bool ParseDiagnosticSeverity(std::string_view raw_value, editor::DiagnosticSeverity* severity) {
   if (severity == nullptr) {
     return false;
@@ -66,9 +73,9 @@ bool ReadDiagnosticTable(lua_State* state,
 
   const std::optional<lua_Integer> line_field =
       lua_interop::ReadOptionalIntegerField(state, absolute_index, "line");
-  if (!line_field.has_value() || *line_field <= 0) {
+  if (!line_field.has_value() || *line_field <= 0 || *line_field > kMaxDiagnosticCoordinate) {
     if (error_message != nullptr) {
-      *error_message = "diagnostic line must be a positive integer";
+      *error_message = "diagnostic line must be a positive integer within the document range";
     }
     return false;
   }
@@ -76,9 +83,10 @@ bool ReadDiagnosticTable(lua_State* state,
 
   const std::optional<lua_Integer> column_field =
       lua_interop::ReadOptionalIntegerField(state, absolute_index, "column");
-  if (!column_field.has_value() || *column_field <= 0) {
+  if (!column_field.has_value() || *column_field <= 0 ||
+      *column_field > kMaxDiagnosticCoordinate) {
     if (error_message != nullptr) {
-      *error_message = "diagnostic column must be a positive integer";
+      *error_message = "diagnostic column must be a positive integer within the document range";
     }
     return false;
   }
@@ -92,9 +100,11 @@ bool ReadDiagnosticTable(lua_State* state,
       lua_interop::ReadOptionalIntegerField(state, absolute_index, "end_column")
           .value_or(column < std::numeric_limits<lua_Integer>::max() ? column + 1 : column);
 
-  if (end_line <= 0 || end_column <= 0) {
+  if (end_line <= 0 || end_column <= 0 || end_line > kMaxDiagnosticCoordinate ||
+      end_column > kMaxDiagnosticCoordinate) {
     if (error_message != nullptr) {
-      *error_message = "diagnostic end positions must be positive integers";
+      *error_message =
+          "diagnostic end positions must be positive integers within the document range";
     }
     return false;
   }

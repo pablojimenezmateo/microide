@@ -92,10 +92,34 @@ bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::p
     return true;
   }
 
+#if defined(_WIN32)
+  // Windows rename refuses to clobber an existing destination, so a remove+retry is the
+  // only way to get replace semantics there. But a rename failure does NOT prove the
+  // destination merely "exists" — it may be a directory, a special file, or a genuine
+  // I/O/permission error. Removing `to` in those cases can destroy an unrelated
+  // directory (empty dirs remove cleanly) and then replace it with our regular file.
+  // Only remove when the destination is an actual regular file (or a symlink, whose
+  // link we replace, never the target). `symlink_status` classifies without following.
+  std::error_code status_error;
+  const std::filesystem::file_status status = std::filesystem::symlink_status(to, status_error);
+  const bool removable_destination =
+      !status_error && (status.type() == std::filesystem::file_type::regular ||
+                        status.type() == std::filesystem::file_type::symlink);
+  if (!removable_destination) {
+    return false;
+  }
   std::filesystem::remove(to, error);
   error.clear();
   std::filesystem::rename(from, to, error);
   return !error;
+#else
+  // POSIX rename already atomically replaces a regular-file destination, so reaching
+  // here means the failure was something other than "destination exists" (destination
+  // is a directory, cross-device link, permission/I-O error, invalid source). Removing
+  // `to` cannot help any of those and can silently delete a valid directory or file,
+  // so we never remove on POSIX — we surface the failure to the caller instead.
+  return false;
+#endif
 }
 
 std::filesystem::path UniqueTemporaryPath(const std::filesystem::path& path) {

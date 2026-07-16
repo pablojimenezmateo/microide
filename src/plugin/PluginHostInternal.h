@@ -28,6 +28,7 @@
 #include "platform/Filesystem.h"
 #include "platform/Subprocess.h"
 #include "plugin/PluginContributionInterop.h"
+#include "plugin/PluginContributionLimits.h"
 #include "plugin/PluginDataDirectoryInterop.h"
 #include "plugin/PluginBufferLifecycleInterop.h"
 #include "plugin/PluginHoverQueryInterop.h"

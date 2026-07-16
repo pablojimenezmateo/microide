@@ -88,7 +88,7 @@ std::string MakeSnippetLinkedTen() {
 void RunEditorOccurrencesScan(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!std::filesystem::exists(cpp_50k)) {
+  if (!PathExistsNoThrow(cpp_50k)) {
     std::cerr << "editor_occurrences_scan: missing fixture " << cpp_50k << "\n";
     return;
   }
@@ -110,7 +110,7 @@ void RunEditorOccurrencesScan(ScenarioContext& context) {
 void RunEditorAddCursorNextMatch(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!std::filesystem::exists(cpp_50k)) {
+  if (!PathExistsNoThrow(cpp_50k)) {
     std::cerr << "editor_add_cursor_next_match: missing fixture " << cpp_50k << "\n";
     return;
   }
@@ -134,7 +134,7 @@ void RunEditorAddCursorNextMatch(ScenarioContext& context) {
 void RunEditorShapingMultiCaret(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!std::filesystem::exists(cpp_50k)) {
+  if (!PathExistsNoThrow(cpp_50k)) {
     std::cerr << "editor_shaping_multi_caret: missing fixture " << cpp_50k << "\n";
     return;
   }
@@ -159,7 +159,7 @@ void RunEditorShapingMultiCaret(ScenarioContext& context) {
 void RunEditorToggleCommentLargeSelection(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!std::filesystem::exists(cpp_50k)) {
+  if (!PathExistsNoThrow(cpp_50k)) {
     std::cerr << "editor_toggle_comment_large_selection: missing fixture " << cpp_50k << "\n";
     return;
   }
@@ -184,7 +184,7 @@ void RunEditorToggleCommentLargeSelection(ScenarioContext& context) {
 void RunEditorMouseSelectionDrag(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!std::filesystem::exists(cpp_50k)) {
+  if (!PathExistsNoThrow(cpp_50k)) {
     std::cerr << "editor_mouse_selection_drag: missing fixture " << cpp_50k << "\n";
     return;
   }
@@ -306,7 +306,7 @@ void RunMenuPopupHoverRows(ScenarioContext& context) {
 void RunEditorSortLinesLarge(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!std::filesystem::exists(cpp_50k)) {
+  if (!PathExistsNoThrow(cpp_50k)) {
     std::cerr << "editor_sort_lines_large: missing fixture " << cpp_50k << "\n";
     return;
   }
@@ -331,7 +331,7 @@ void RunEditorSortLinesLarge(ScenarioContext& context) {
 void RunEditorSnippetExpand(ScenarioContext& context) {
   const std::filesystem::path seed =
       "tests/perf/fixtures/editor_essentials_snippet_seed/snippet_expand.cpp";
-  if (!std::filesystem::exists(seed)) {
+  if (!PathExistsNoThrow(seed)) {
     std::cerr << "editor_snippet_expand: missing fixture " << seed << "\n";
     return;
   }
@@ -352,7 +352,7 @@ void RunEditorSnippetExpand(ScenarioContext& context) {
 void RunEditorSnippetPlaceholderEdit(ScenarioContext& context) {
   const std::filesystem::path seed =
       "tests/perf/fixtures/editor_essentials_snippet_seed/snippet_linked.cpp";
-  if (!std::filesystem::exists(seed)) {
+  if (!PathExistsNoThrow(seed)) {
     std::cerr << "editor_snippet_placeholder_edit: missing fixture " << seed << "\n";
     return;
   }
@@ -376,7 +376,7 @@ void RunEditorSnippetPlaceholderEdit(ScenarioContext& context) {
 
 void RunEditorSaveNormalization(ScenarioContext& context) {
   const std::filesystem::path file = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
-  if (!std::filesystem::exists(file)) {
+  if (!PathExistsNoThrow(file)) {
     std::cerr << "editor_save_normalization: missing fixture " << file << "\n";
     return;
   }
@@ -395,7 +395,7 @@ void RunEditorSaveNormalization(ScenarioContext& context) {
 
 void RunEditorIndentDetectOpen(ScenarioContext& context) {
   const std::filesystem::path file = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
-  if (!std::filesystem::exists(file)) {
+  if (!PathExistsNoThrow(file)) {
     std::cerr << "editor_indent_detect_open: missing fixture " << file << "\n";
     return;
   }
@@ -421,7 +421,7 @@ void RunEditorIndentDetectOpen(ScenarioContext& context) {
 void RunLargeFileRestoreDeepScrollFirstPaint(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!std::filesystem::exists(cpp_50k)) {
+  if (!PathExistsNoThrow(cpp_50k)) {
     std::cerr << "large_file_restore_deep_scroll_first_paint: missing fixture " << cpp_50k << "\n";
     return;
   }
@@ -451,7 +451,7 @@ void RunLargeFileRestoreDeepScrollFirstPaint(ScenarioContext& context) {
 void RunMidFileEditLatencyLargeFile(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!std::filesystem::exists(cpp_50k)) {
+  if (!PathExistsNoThrow(cpp_50k)) {
     std::cerr << "mid_file_edit_latency_large_file: missing fixture " << cpp_50k << "\n";
     return;
   }
@@ -489,7 +489,7 @@ void RunMidFileEditLatencyLargeFile(ScenarioContext& context) {
 void RunMobyDickWorkout(ScenarioContext& context) {
   const std::filesystem::path moby =
       "tests/perf/fixtures/editor_essentials_moby_dick/moby-dick.txt";
-  if (!std::filesystem::exists(moby)) {
+  if (!PathExistsNoThrow(moby)) {
     std::cerr << "editor_moby_dick_workout: missing fixture " << moby
               << " (run: python3 tests/perf/generate_editor_essentials_perf_fixtures.py"
               << " --fixture moby)\n";

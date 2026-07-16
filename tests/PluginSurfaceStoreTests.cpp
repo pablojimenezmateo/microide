@@ -68,6 +68,33 @@ void TestPreviewSurfacesSortedAndToggle() {
   Expect(store.PreviewSurfaces().size() == 1, "the withdrawn surface drops out of the tab list");
 }
 
+// TD-2026-07-16-62: a user-dismissed preview must stay closed across a plugin republish
+// of the same (owner, surface_id) that still requests a preview slot — until the user
+// re-opens it or the surface is removed.
+void TestDismissedPreviewIsStickyAcrossRepublish() {
+  PluginSurfaceStore store;
+  store.ReplaceForOwnerSurface("p", "s", RasterSurface(1, SurfacePreviewSlot::Bottom));
+  Expect(store.PreviewSurfaces().size() == 1, "surface starts as a preview");
+
+  // User closes the preview.
+  Expect(store.SetPreviewSlot("p", "s", SurfacePreviewSlot::None), "dismissal reports a change");
+  Expect(store.PreviewSurfaces().empty(), "dismissed surface leaves the preview list");
+
+  // Plugin republishes the SAME surface still requesting a Bottom preview.
+  store.ReplaceForOwnerSurface("p", "s", RasterSurface(2, SurfacePreviewSlot::Bottom));
+  Expect(store.PreviewSurfaces().empty(),
+         "a republish must not silently reopen a user-dismissed preview");
+  const SurfaceContent* content = store.Find("p", "s");
+  Expect(content != nullptr && content->preview == SurfacePreviewSlot::None,
+         "the stored preview slot stays None while dismissed");
+
+  // The user re-opens it: the override clears and future republishes honor the plugin.
+  Expect(store.SetPreviewSlot("p", "s", SurfacePreviewSlot::Bottom), "re-open reports a change");
+  store.ReplaceForOwnerSurface("p", "s", RasterSurface(3, SurfacePreviewSlot::Bottom));
+  Expect(store.PreviewSurfaces().size() == 1,
+         "after re-opening, a republished preview is honored again");
+}
+
 void TestAnchoredIndexSortedByLine() {
   PluginSurfaceStore store;
   const std::filesystem::path path = "/proj/main.cpp";
@@ -146,6 +173,8 @@ void RegisterPluginSurfaceStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginSurfaceStore/ClearPaths", TestClearPaths);
   AddTest(tests, "PluginSurfaceStore/PreviewSurfacesSortedAndToggle",
           TestPreviewSurfacesSortedAndToggle);
+  AddTest(tests, "PluginSurfaceStore/DismissedPreviewIsStickyAcrossRepublish",
+          TestDismissedPreviewIsStickyAcrossRepublish);
   AddTest(tests, "PluginSurfaceStore/AnchoredIndexSortedByLine", TestAnchoredIndexSortedByLine);
   AddTest(tests, "PluginSurfaceStore/RevisionBumps", TestRevisionBumps);
   AddTest(tests, "PluginSurfaceStore/PerOwnerSurfaceCountIsBounded",

@@ -103,11 +103,16 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
   // field + summary/hint + accent-marked rows + scrollbar). Used by the commit/ref
   // picker and the launch-config picker; `rows` carries prebuilt (primary,
   // secondary) display strings so this stays a pure draw.
+  // Row content is pulled via `row_at(index)` for only the VISIBLE rows rather than
+  // materializing a (primary,secondary) pair for every match each frame — the compare
+  // picker can hold up to kMaxGitCollectionEntries (50k) refs, so per-frame O(match)
+  // allocation was pure waste. (TD-2026-07-16-33.)
+  using PickerRowAccessor = std::function<std::pair<std::string_view, std::string_view>(std::size_t)>;
   const auto draw_two_column_picker =
       [&](TextInputSurface surface, std::string_view title, std::string_view context_label,
           const editor::SingleLineEditor& query, std::string_view summary_line,
-          const std::vector<std::pair<std::string_view, std::string_view>>& rows,
-          std::size_t selected_index, std::string_view empty_label) {
+          std::size_t total_rows, const PickerRowAccessor& row_at, std::size_t selected_index,
+          std::string_view empty_label) {
         const auto draw_picker_row = [&](int row_index, int sel_index, std::string_view primary,
                                          std::string_view secondary) {
           const bool selected = row_index == sel_index;
@@ -160,19 +165,19 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
                    theme_.overlay_background, kPickerHint);
         for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
           const int item_index = overlay_vm.scroll_row + row;
-          if (item_index >= static_cast<int>(rows.size())) {
+          if (item_index >= static_cast<int>(total_rows)) {
             break;
           }
-          const auto& item = rows[static_cast<std::size_t>(item_index)];
+          const auto item = row_at(static_cast<std::size_t>(item_index));
           draw_picker_row(row, static_cast<int>(selected_index) - overlay_vm.scroll_row, item.first,
                           item.second);
         }
-        if (rows.empty()) {
+        if (total_rows == 0) {
           DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset,
                      overlay_list_layout.list_rect.y + 6.0f, theme_.text_muted,
                      theme_.overlay_background, empty_label);
         }
-        draw_vertical_scrollbar(overlay_list_layout.list_rect, static_cast<float>(rows.size()),
+        draw_vertical_scrollbar(overlay_list_layout.list_rect, static_cast<float>(total_rows),
                                 overlay_list_layout.visible_units,
                                 static_cast<float>(overlay_vm.scroll_row));
       };
@@ -241,40 +246,35 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
     }
   } else if (overlay_vm.mode == OverlayMode::CommitPicker) {
     const ComparePickerState& picker = overlay_state.workflow.compare_picker;
-    std::vector<std::pair<std::string_view, std::string_view>> rows;
-    rows.reserve(picker.matches.size());
-    for (const auto& item : picker.matches) {
-      rows.emplace_back(item.primary_label, item.secondary_label);
-    }
     draw_two_column_picker(
         TextInputSurface::CommitPicker,
         picker.title.empty() ? std::string_view("Compare against") : picker.title,
-        picker.context_label, picker.query, picker.summary_line, rows, picker.selected_index,
+        picker.context_label, picker.query, picker.summary_line, picker.matches.size(),
+        [&picker](std::size_t i) -> std::pair<std::string_view, std::string_view> {
+          return {picker.matches[i].primary_label, picker.matches[i].secondary_label};
+        },
+        picker.selected_index,
         picker.loading ? std::string_view("Loading history…") : FormatEmptyState("matching refs"));
   } else if (overlay_vm.mode == OverlayMode::LaunchConfigPicker) {
     const LaunchConfigPickerState& picker = overlay_state.workflow.launch_config_picker;
-    std::vector<std::pair<std::string_view, std::string_view>> rows;
-    rows.reserve(picker.matches.size());
-    for (const auto& item : picker.matches) {
-      rows.emplace_back(item.primary_label, item.secondary_label);
-    }
     draw_two_column_picker(
         TextInputSurface::LaunchConfigPicker,
         picker.title.empty() ? std::string_view("Select Launch Configuration") : picker.title,
-        std::string_view{}, picker.query, picker.summary_line, rows, picker.selected_index,
-        FormatEmptyState("launch configurations"));
+        std::string_view{}, picker.query, picker.summary_line, picker.matches.size(),
+        [&picker](std::size_t i) -> std::pair<std::string_view, std::string_view> {
+          return {picker.matches[i].primary_label, picker.matches[i].secondary_label};
+        },
+        picker.selected_index, FormatEmptyState("launch configurations"));
   } else if (overlay_vm.mode == OverlayMode::CommandPalette) {
     const CommandPaletteState& palette = overlay_state.workflow.command_palette;
-    std::vector<std::pair<std::string_view, std::string_view>> rows;
-    rows.reserve(palette.matches.size());
-    for (const auto& item : palette.matches) {
-      rows.emplace_back(item.primary_label, item.secondary_label);
-    }
     draw_two_column_picker(
         TextInputSurface::CommandPalette,
         palette.title.empty() ? std::string_view("Commands") : palette.title,
-        std::string_view{}, palette.query, palette.summary_line, rows, palette.selected_index,
-        FormatEmptyState("commands"));
+        std::string_view{}, palette.query, palette.summary_line, palette.matches.size(),
+        [&palette](std::size_t i) -> std::pair<std::string_view, std::string_view> {
+          return {palette.matches[i].primary_label, palette.matches[i].secondary_label};
+        },
+        palette.selected_index, FormatEmptyState("commands"));
   } else if (overlay_vm.mode == OverlayMode::Completion) {
     if (!overlay_state.workflow.completion.error.empty()) {
       DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,

@@ -2264,6 +2264,11 @@ return ide.plugin({
     ctx.commands.add("diag.bad-path", function(ctx, args)
       ctx.diagnostics.publish({}, {})
     end)
+    ctx.commands.add("diag.huge-line", function(ctx, args)
+      ctx.diagnostics.publish("README.md", {
+        { message = "bogus", line = math.maxinteger, column = 1 }
+      })
+    end)
     ctx.commands.add("files.bad-arg", function(ctx, args)
       ctx.files.read_text({})
     end)
@@ -2320,6 +2325,14 @@ return ide.plugin({
   command_error.clear();
   Expect(!host.ExecuteCommand("diag.bad-path", {}, &command_error),
          "diagnostics.publish with a non-string path should fail the command");
+  // TD-2026-07-16-69: a diagnostic line beyond the host coordinate range must be
+  // rejected at the plugin boundary, not stored as a valid range (which would wrap the
+  // overview-ruler int narrowing and navigate Problems activation to EOF).
+  command_error.clear();
+  Expect(!host.ExecuteCommand("diag.huge-line", {}, &command_error),
+         "diagnostics.publish with an out-of-range line should fail the command");
+  Expect(!command_error.empty(),
+         "the huge-line rejection should surface a descriptive error");
   command_error.clear();
   Expect(!host.ExecuteCommand("files.bad-arg", {}, &command_error),
          "files.read_text with a non-string argument should fail the command");

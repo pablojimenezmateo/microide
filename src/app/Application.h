@@ -45,6 +45,10 @@ class Application {
   // (event time, renderer available) so the render path never polls input.
   void ReseedPointerAndForceCursorReassert();
   void ConsumeWindowActions();
+  // Destroy the SDL scene texture, renderer, and window if allocated. Idempotent and
+  // independent of `initialized_`, so a partial Initialize() failure (window/renderer
+  // created but init not finished) still releases them instead of leaking. (TD-42.)
+  void DestroySdlResources();
   SDL_HitTestResult WindowHitTest(const SDL_Point& area) const;
   static SDL_HitTestResult SDLCALL WindowHitTestCallback(SDL_Window* window,
                                                          const SDL_Point* area,

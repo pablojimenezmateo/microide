@@ -135,9 +135,6 @@ TrashOperationResult MovePathToTrashLinux(const std::filesystem::path& source) {
   // concurrent trashers of same-named files pick distinct slots. The prior
   // exists()-check + truncating ofstream was a TOCTOU that let both racers land on
   // the same name and silently overwrite each other's file and metadata.
-  std::string trashed_name;
-  std::filesystem::path info_path;
-  int fd = -1;
   for (int attempt = 1; attempt < 10000; ++attempt) {
     const std::string candidate_name =
         (attempt == 1) ? base_name
@@ -147,52 +144,58 @@ TrashOperationResult MovePathToTrashLinux(const std::filesystem::path& source) {
       continue;  // A leftover file occupies the slot (best-effort); try the next.
     }
     const std::filesystem::path candidate_info = trash_info / (candidate_name + ".trashinfo");
-    fd = ::open(candidate_info.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-    if (fd >= 0) {
-      trashed_name = candidate_name;
-      info_path = candidate_info;
-      break;
-    }
-    if (errno == EEXIST) {
-      continue;  // Name reserved by a concurrent trasher — the atomic gate fired.
-    }
-    return Failure("Failed to write trash metadata");
-  }
-  if (fd < 0) {
-    return Failure("Failed to reserve a trash slot");
-  }
-
-  const std::string contents = std::string("[Trash Info]\n") + "Path=" +
-                               PercentEncodeTrashPath(source.generic_string()) + "\n" +
-                               "DeletionDate=" + FormatDeletionTimestamp() + "\n";
-  const char* cursor = contents.data();
-  std::size_t remaining = contents.size();
-  bool write_ok = true;
-  while (remaining > 0) {
-    const ssize_t written = ::write(fd, cursor, remaining);
-    if (written < 0) {
-      if (errno == EINTR) {
-        continue;
+    const int fd = ::open(candidate_info.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (fd < 0) {
+      if (errno == EEXIST) {
+        continue;  // Name reserved by a concurrent trasher — the atomic gate fired.
       }
-      write_ok = false;
-      break;
+      return Failure("Failed to write trash metadata");
     }
-    cursor += written;
-    remaining -= static_cast<std::size_t>(written);
-  }
-  ::close(fd);
-  if (!write_ok) {
-    std::filesystem::remove(info_path, error);
-    return Failure("Failed to write trash metadata");
-  }
 
-  const std::filesystem::path trashed_path = trash_files / trashed_name;
-  if (!MovePath(source, trashed_path)) {
-    std::filesystem::remove(info_path, error);
+    const std::string contents = std::string("[Trash Info]\n") + "Path=" +
+                                 PercentEncodeTrashPath(source.generic_string()) + "\n" +
+                                 "DeletionDate=" + FormatDeletionTimestamp() + "\n";
+    const char* cursor = contents.data();
+    std::size_t remaining = contents.size();
+    bool write_ok = true;
+    while (remaining > 0) {
+      const ssize_t written = ::write(fd, cursor, remaining);
+      if (written < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        write_ok = false;
+        break;
+      }
+      cursor += written;
+      remaining -= static_cast<std::size_t>(written);
+    }
+    ::close(fd);
+    if (!write_ok) {
+      std::filesystem::remove(candidate_info, error);
+      return Failure("Failed to write trash metadata");
+    }
+
+    // Final content move must be NO-OVERWRITE: the reservation only gated the
+    // `.trashinfo` slot, so a file can still appear at Trash/files/<name> between the
+    // exists() check above and here (TOCTOU). An overwrite rename would clobber it.
+    // If the slot is now taken, drop our reserved metadata and try the next suffix
+    // instead of overwriting or failing the whole delete. (TD-2026-07-16-49.)
+    const std::filesystem::path trashed_path = trash_files / candidate_name;
+    if (MovePathNoOverwrite(source, trashed_path)) {
+      return Success(trashed_path);
+    }
+    std::error_code dest_exists_error;
+    if (std::filesystem::exists(trashed_path, dest_exists_error)) {
+      std::filesystem::remove(candidate_info, error);
+      continue;  // Slot taken during the window — reserve the next one.
+    }
+    // The move failed for another reason (source gone, permission, cross-device copy
+    // failure with rollback): clean up the reserved metadata and report failure.
+    std::filesystem::remove(candidate_info, error);
     return Failure("Failed to move the path to trash");
   }
-
-  return Success(trashed_path);
+  return Failure("Failed to reserve a trash slot");
 }
 #endif
 

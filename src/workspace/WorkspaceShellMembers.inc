@@ -967,7 +967,10 @@
   // to the open buffers. Sibling of ApplyPluginWorkspaceEdit (which takes 1-based
   // plugin coordinates); shares its resolve-open-buffer-only + grouped-undo +
   // highest-position-first apply discipline.
-  bool ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& edits);
+  // `out_any_rejected` (optional) is set true when a resolved buffer's edit group was
+  // dropped without applying (a line beyond EOF, or an overlapping group), so the
+  // server-initiated workspace/applyEdit response can report partial failure.
+  bool ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& edits, bool* out_any_rejected = nullptr);
   // Apply an LSP rename result. If every affected file is already open, applies in
   // place (dirty). If some are closed, stashes the edit and confirms before opening
   // them all, applying, and saving — a project-wide rename that stays undo-coherent.

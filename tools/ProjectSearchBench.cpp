@@ -1,5 +1,6 @@
 #include "project/ProjectFileScanner.h"
 #include "project/ProjectSearchService.h"
+#include "util/Parse.h"
 
 #include <algorithm>
 #include <chrono>
@@ -139,12 +140,13 @@ int main(int argc, char** argv) {
       continue;
     }
     if (argument.starts_with("--runs=")) {
-      try {
-        run_count = std::stoi(std::string(argument.substr(std::string_view("--runs=").size())));
-      } catch (...) {
+      const std::optional<int> parsed =
+          microide::util::ParseInt(argument.substr(std::string_view("--runs=").size()));
+      if (!parsed.has_value()) {
         std::cerr << "invalid run count: " << argument << '\n';
         return 1;
       }
+      run_count = *parsed;
       if (run_count <= 0) {
         std::cerr << "run count must be positive\n";
         return 1;

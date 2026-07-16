@@ -1530,8 +1530,17 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
 
   std::error_code error;
   const auto absolute_root = std::filesystem::absolute(root_path, error);
-  if (error || !std::filesystem::exists(absolute_root) ||
-      !std::filesystem::is_directory(absolute_root)) {
+  if (error) {
+    return false;
+  }
+  // Probe with the non-throwing overloads: the root can be on a disconnected mount,
+  // behind a permission-denied parent, or contain a symlink-loop/status edge that
+  // would make the throwing exists()/is_directory raise straight out of watcher setup
+  // instead of degrading to "cannot watch". Any probe error is a graceful false.
+  std::error_code exists_error;
+  std::error_code dir_error;
+  if (!std::filesystem::exists(absolute_root, exists_error) || exists_error ||
+      !std::filesystem::is_directory(absolute_root, dir_error) || dir_error) {
     return false;
   }
   impl_->root = absolute_root.lexically_normal();

@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "util/SdlWake.h"
+
 #include <filesystem>
 #include <iterator>
 #include <string>
@@ -76,11 +78,10 @@ void SDLCALL WorkspaceShell::OnProjectOpenDialogComplete(void* userdata,
     shell->project_dialog_state_.pending_result = std::move(pending);
   }
 
-  if (shell->project_open_dialog_event_type_ != 0) {
-    SDL_Event event{};
-    event.type = shell->project_open_dialog_event_type_;
-    SDL_PushEvent(&event);
-  }
+  // Checked push: the selected path is already stored under the dialog mutex, so a
+  // rejected push latches the shared "wake owed" bit for the idle-poll fallback
+  // rather than leaving the dialog active with its result unapplied.
+  util::PushSdlWake(shell->project_open_dialog_event_type_);
 }
 
 void WorkspaceShell::ConsumePendingProjectOpenDialogResult() {
@@ -160,12 +161,9 @@ void SDLCALL WorkspaceShell::OnFontFileDialogComplete(void* userdata, const char
   }
 
   // Reuse the project-dialog wake event: both dialog consumers run off it and are
-  // idempotent no-ops when their own result isn't ready.
-  if (shell->project_open_dialog_event_type_ != 0) {
-    SDL_Event event{};
-    event.type = shell->project_open_dialog_event_type_;
-    SDL_PushEvent(&event);
-  }
+  // idempotent no-ops when their own result isn't ready. Checked push latches the
+  // shared "wake owed" bit on failure for the idle-poll fallback.
+  util::PushSdlWake(shell->project_open_dialog_event_type_);
 }
 
 void WorkspaceShell::ConsumePendingFontFileDialogResult() {

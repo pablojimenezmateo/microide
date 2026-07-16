@@ -138,6 +138,20 @@ void TestWorkspaceSharedCompletePathIsBounded() {
   Expect(!candidates.empty(), "path completion still returns candidates up to the cap");
 }
 
+// TD-2026-07-16-51: CompletePath must not throw when the search directory vanishes
+// during iteration — it advances with the non-throwing increment(ec) and returns the
+// candidates gathered so far. We can't force a mid-iteration removal deterministically,
+// but a vanished search directory (constructor error) must return empty, not throw.
+void TestWorkspaceSharedCompletePathVanishedDirectoryReturnsEmpty() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "gone";
+  // Never created: the directory_iterator constructor fails; must return no matches.
+  const auto candidates =
+      microide::workspace::CompletePath(root, "sub/", /*directories_only=*/false);
+  Expect(candidates.empty(),
+         "completing under a non-existent directory returns empty, not a thrown exception");
+}
+
 void TestWorkspaceSharedUiScaleParsing() {
   const auto percent = ParseUiScaleValue("125%");
   Expect(percent.has_value() && *percent == 1.25f, "percent ui scale should parse to ratio");
@@ -646,6 +660,8 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedParseCommandLineBoundsHugeInput);
   AddTest(tests, "WorkspaceShared/UiScaleParsing", TestWorkspaceSharedUiScaleParsing);
   AddTest(tests, "WorkspaceShared/CompletePathIsBounded", TestWorkspaceSharedCompletePathIsBounded);
+  AddTest(tests, "WorkspaceShared/CompletePathVanishedDirectoryReturnsEmpty",
+          TestWorkspaceSharedCompletePathVanishedDirectoryReturnsEmpty);
   AddTest(tests, "WorkspaceShared/QuoteAndLineEndings", TestWorkspaceSharedQuoteAndLineEndings);
   AddTest(tests, "WorkspaceShared/SplitSyntaxLines", TestWorkspaceSharedSplitSyntaxLines);
   AddTest(tests, "WorkspaceShared/SerializeLines", TestWorkspaceSharedSerializeLines);

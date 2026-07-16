@@ -6,11 +6,21 @@
 #include <future>
 
 #include "project/SubprocessHelper.h"
+#include "util/DurableFile.h"
 #include "util/Hex.h"
 
 namespace microide::workspace {
 
 namespace {
+
+// Non-throwing existence probe. Tool-source and cache paths are influenced by plugin
+// manifests, settings, and user cache state; permission changes, unmounted network
+// paths, overlong names, or symlink loops make the throwing exists() overload raise
+// std::filesystem_error straight out of the download/query path. Fail closed instead.
+bool PathExistsNoThrow(const std::filesystem::path& path) {
+  std::error_code error;
+  return std::filesystem::exists(path, error) && !error;
+}
 
 // A tool_id becomes a single path component under the cache dir (`cache_dir_ /
 // tool_id`). Reject anything that could escape that directory — path separators,
@@ -55,7 +65,7 @@ std::optional<std::filesystem::path> ResolveToolSourcePath(const std::string& ur
   }
 
   const std::filesystem::path candidate(url);
-  if (candidate.is_absolute() || std::filesystem::exists(candidate)) {
+  if (candidate.is_absolute() || PathExistsNoThrow(candidate)) {
     return candidate.lexically_normal();
   }
   return std::nullopt;
@@ -191,7 +201,7 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
     return future.get();
   };
 
-  if (std::filesystem::exists(cached_path)) {
+  if (PathExistsNoThrow(cached_path)) {
     if (!expected_sha256.empty()) {
       if (const auto cached_sha = compute_sha256_async(cached_path);
           cached_sha.has_value() && *cached_sha == expected_sha256) {
@@ -209,7 +219,7 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
   }
 
   const auto source_path = ResolveToolSourcePath(url);
-  if (!source_path.has_value() || !std::filesystem::exists(*source_path)) {
+  if (!source_path.has_value() || !PathExistsNoThrow(*source_path)) {
     return std::nullopt;
   }
 
@@ -233,8 +243,14 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
   // place. Writing the final path directly and verifying afterwards left a
   // partial/unverified executable at cached_path on a crash or failed hash — one
   // a concurrent GetCachedTool/IsCached would observe and hand to a launcher.
-  std::filesystem::path temp_path = cached_path;
-  temp_path += ".partial";
+  //
+  // The temp name must be unique per call: a fixed `cached_path + ".partial"` lets
+  // two concurrent downloads of the same tool_id remove, overwrite, hash, or rename
+  // each other's partial file — A could hash B's bytes against A's expected digest
+  // (spurious mismatch), or one could rename the other's still-unverified bytes into
+  // place. A per-process/per-call suffix keeps each writer's staging file private up
+  // to its own verified rename, degrading concurrent callers to last-writer-wins.
+  const std::filesystem::path temp_path = util::UniqueTemporaryPath(cached_path);
   error.clear();
   std::filesystem::remove(temp_path, error);
   error.clear();
@@ -278,7 +294,7 @@ bool ToolDownloader::IsCached(const std::string& tool_id) const {
     return false;
   }
   const auto cached = cache_dir_ / tool_id;
-  return std::filesystem::exists(cached);
+  return PathExistsNoThrow(cached);
 }
 
 std::optional<std::filesystem::path> ToolDownloader::GetCachedTool(
@@ -287,7 +303,7 @@ std::optional<std::filesystem::path> ToolDownloader::GetCachedTool(
     return std::nullopt;
   }
   const auto cached = cache_dir_ / tool_id;
-  if (!std::filesystem::exists(cached)) {
+  if (!PathExistsNoThrow(cached)) {
     return std::nullopt;
   }
   if (!expected_sha256.empty()) {

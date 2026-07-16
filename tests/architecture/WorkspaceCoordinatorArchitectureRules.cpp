@@ -178,10 +178,30 @@ RuleResult CheckNoSynchronousSubprocessInWorkspace(const std::filesystem::path& 
   RuleResult result;
   result.label = "synchronous subprocess call in workspace";
   result.hard_fail = true;
-  const std::regex pattern(R"(\bplatform::RunSubprocess\s*\()");
+  // Catch BOTH the platform:: entry point and the transparent project:: alias — the
+  // old lint only saw platform::, letting project::RunSubprocess slip the "dispatch
+  // through ProjectBackgroundExecutor" policy. (TD-2026-07-16-15.)
+  const std::regex pattern(R"(\b(platform|project)::RunSubprocess\s*\()");
+  // Deliberate, documented exception: format-on-save runs the contributed formatter
+  // synchronously because an EXPLICIT save is a user-initiated blocking action that must
+  // complete before returning (bounded by a 5 s timeout; autosave — the frequent path —
+  // suppresses formatters so background writes never block the UI). This one site is
+  // allowlisted; making it async would change the save contract (visible in-progress /
+  // cancellation UX) and is tracked separately. Do NOT add new entries here.
+  const std::array<std::string_view, 2> allowed_files = {
+      "WorkspaceTabCoordinatorShellBridge.cpp",
+      // ToolDownloader runs its sha256 hash subprocess inside a lambda posted to its own
+      // background_executor_ (ComputeSha256Blocking off the shell thread), so it does not
+      // block the UI. Allowlisted as a deliberate off-thread use.
+      "WorkspaceToolDownloader.cpp",
+  };
   for (const auto& entry :
        std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    if (std::find(allowed_files.begin(), allowed_files.end(),
+                  entry.path().filename().string()) != allowed_files.end()) {
       continue;
     }
     const std::string text = ReadText(entry.path());

@@ -18,8 +18,13 @@ namespace microide::util {
 // must do that separately. (Intentionally omitted on the document-save hot path.)
 bool WriteFileBytesDurable(const std::filesystem::path& path, std::span<const std::byte> bytes);
 
-// Atomically replace `to` with `from` via rename, falling back to remove+retry when
-// the platform rename refuses to clobber an existing destination. Returns success.
+// Atomically replace `to` with `from` via rename. On POSIX this is a single rename
+// (which already clobbers a regular-file destination atomically); a failure is surfaced
+// as-is rather than papered over with a destructive remove+retry. On Windows, where
+// rename cannot clobber, a failure falls back to remove+retry ONLY when the destination
+// is a regular file or symlink — never a directory or special file, so an unrelated
+// directory collision can never be deleted and replaced with a regular file. Returns
+// success.
 bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::path& to);
 
 // Per-process, per-call unique staging path for `path` (`path` + ".tmp.<pid>.<seq>").

@@ -187,7 +187,7 @@ void RunRepoOpenRssIdle(ScenarioContext& context) {
 
 void RunLargeFileOpenFirstPaint(ScenarioContext& context) {
   const std::filesystem::path file = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
-  if (!std::filesystem::exists(file)) {
+  if (!PathExistsNoThrow(file)) {
     std::cerr << "large_file_open_first_paint: missing fixture " << file << "\n";
     return;
   }
@@ -210,7 +210,7 @@ void RunLargeFileOpenFirstPaint(ScenarioContext& context) {
 void RunLargeFileOpenLfFirstPaint(ScenarioContext& context) {
   const std::filesystem::path file =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!std::filesystem::exists(file)) {
+  if (!PathExistsNoThrow(file)) {
     std::cerr << "large_file_open_lf_first_paint: missing fixture " << file << "\n";
     return;
   }
@@ -234,7 +234,7 @@ void RunLargeFileOpenLfFirstPaint(ScenarioContext& context) {
 void RunEditorBufferFindIncremental(ScenarioContext& context) {
   const std::filesystem::path file =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!std::filesystem::exists(file)) {
+  if (!PathExistsNoThrow(file)) {
     std::cerr << "editor_buffer_find_incremental: missing fixture " << file << "\n";
     return;
   }
@@ -264,7 +264,7 @@ void RunEditorBufferFindIncremental(ScenarioContext& context) {
 
 void RunMergeScrollLargeFixture(ScenarioContext& context) {
   const std::filesystem::path seed = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
-  if (!std::filesystem::exists(seed)) {
+  if (!PathExistsNoThrow(seed)) {
     std::cerr << "merge_scroll_large_fixture: missing fixture " << seed << "\n";
     return;
   }
@@ -296,7 +296,7 @@ void RunMergeScrollLargeFixture(ScenarioContext& context) {
 
 void RunCompareScrollLargeFixture(ScenarioContext& context) {
   const std::filesystem::path seed = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
-  if (!std::filesystem::exists(seed)) {
+  if (!PathExistsNoThrow(seed)) {
     std::cerr << "compare_scroll_large_fixture: missing fixture " << seed << "\n";
     return;
   }

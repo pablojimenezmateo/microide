@@ -21,6 +21,21 @@
 
 namespace microide::tests::perf {
 
+// Non-throwing fixture probes. The perf runner is the speed-regression oracle, so
+// fixture discovery must fail in controlled, diagnosable ways: a probe error
+// (permission denied, symlink loop, stale mount, overlong component) must degrade to
+// "fixture absent" so the scenario can print its labelled message and honor
+// --require-fixtures, never throw a raw std::filesystem_error mid-run.
+inline bool PathExistsNoThrow(const std::filesystem::path& path) {
+  std::error_code ec;
+  return std::filesystem::exists(path, ec) && !ec;
+}
+
+inline bool DirectoryExistsNoThrow(const std::filesystem::path& path) {
+  std::error_code ec;
+  return std::filesystem::is_directory(path, ec) && !ec;
+}
+
 struct MetricSnapshot {
   double wall_ms = 0.0;
   std::uint64_t allocations = 0;

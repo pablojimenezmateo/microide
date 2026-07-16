@@ -125,6 +125,7 @@ bool AssistService::ShowCompletionOverlay(std::string* error_message) {
 
   auto merge = std::make_shared<CompletionMerge>();
   merge->language_id = language_id;
+  merge->generation = ++completion_request_generation_;
 
   // Language-server source. A present server is authoritative for its language.
   LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
@@ -143,7 +144,8 @@ bool AssistService::ShowCompletionOverlay(std::string* error_message) {
           merge->sources.lsp_pending = false;
           // finish_tracked above must run first so the in-flight counter is not
           // leaked when a stale result bails.
-          if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+          if (ResultIsStale(operations_.active_editable_viewport(), request_path) ||
+              merge->generation != completion_request_generation_) {
             return;
           }
           merge->lsp_items = TransformLspCompletions(items, encoding);
@@ -159,7 +161,8 @@ bool AssistService::ShowCompletionOverlay(std::string* error_message) {
       [this, request_path, merge](std::vector<plugin::PluginHost::CompletionCandidate> items,
                                   std::string /*provider_error*/) {
         merge->sources.plugin_pending = false;
-        if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+        if (ResultIsStale(operations_.active_editable_viewport(), request_path) ||
+            merge->generation != completion_request_generation_) {
           return;
         }
         merge->plugin_items = TransformPluginCompletions(items);
@@ -584,6 +587,7 @@ bool AssistService::ShowCodeActionsOverlay(std::string* error_message,
 
   auto merge = std::make_shared<CodeActionMerge>();
   merge->language_id = language_id;
+  merge->generation = ++code_action_request_generation_;
 
   LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
   merge->sources.lsp_authoritative = client != nullptr;
@@ -607,7 +611,8 @@ bool AssistService::ShowCodeActionsOverlay(std::string* error_message,
         [this, request_path, merge](std::optional<std::vector<LspClient::CodeAction>> actions) {
           operations_.finish_tracked_lsp_request();
           merge->sources.lsp_pending = false;
-          if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+          if (ResultIsStale(operations_.active_editable_viewport(), request_path) ||
+              merge->generation != code_action_request_generation_) {
             return;
           }
           merge->lsp_items = TransformLspCodeActions(actions);
@@ -623,7 +628,8 @@ bool AssistService::ShowCodeActionsOverlay(std::string* error_message,
       [this, request_path, merge](std::vector<plugin::PluginHost::CodeActionCandidate> items,
                                   std::string /*provider_error*/) {
         merge->sources.plugin_pending = false;
-        if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+        if (ResultIsStale(operations_.active_editable_viewport(), request_path) ||
+            merge->generation != code_action_request_generation_) {
           return;
         }
         merge->plugin_items = TransformPluginCodeActions(items);

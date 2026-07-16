@@ -401,7 +401,9 @@ bool PersistenceCoordinator::RestoreSessionState() {
                                            persisted_tab.horizontal_scroll);
       editor_state.viewport = std::move(restored_view);
       editor_state.needs_restore = false;
-    } else if (!view_path.empty() && std::filesystem::exists(view_path)) {
+    } else if (std::error_code exists_ec;
+               !view_path.empty() && std::filesystem::exists(view_path, exists_ec) &&
+               !exists_ec) {
       editor_state.needs_restore = true;
     } else {
       return std::nullopt;

@@ -6,7 +6,9 @@
 #include <filesystem>
 #include <optional>
 #include <span>
+#include <set>
 #include <string>
+#include <utility>
 #include <string_view>
 #include <unordered_map>
 #include <variant>
@@ -150,6 +152,13 @@ class PluginSurfaceStore {
   std::unordered_map<std::string, std::vector<AnchoredSurface>, util::TransparentStringHash,
                      std::equal_to<>>
       anchored_by_path_;
+  // Host-side "user dismissed this preview" overrides keyed by (owner, surface_id).
+  // A republish of the same surface with a non-None preview slot must NOT silently
+  // reopen a preview the user closed, so ReplaceForOwnerSurface forces the stored
+  // preview back to None while the pair is dismissed. Cleared when the user re-opens
+  // the preview (SetPreviewSlot to a non-None slot) or the surface is removed.
+  // (TD-2026-07-16-62.)
+  std::set<std::pair<std::string, std::string>> dismissed_previews_;
   std::uint64_t revision_ = 0;
   // Revision-keyed cache for PreviewSurfaces(). `mutable` so the const accessor
   // can refresh it lazily; invalidated whenever `revision_` advances.

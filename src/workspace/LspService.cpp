@@ -1197,19 +1197,27 @@ bool LspService::ApplyServerWorkspaceEdit(LspClient::WorkspaceEdit edit) {
   if (flat.empty()) {
     return false;
   }
-  bool applied = false;
+  OpenBufferEditResult open_result;
   // Open buffers edit in place (the shell resolves + re-syncs them); closed files
   // are written silently on disk. Passing the full set to both is safe: the
   // open-buffer applier skips paths that are not open, and the disk applier skips
   // paths that are open.
   if (operations_.apply_workspace_edit_to_open_buffers) {
-    applied = operations_.apply_workspace_edit_to_open_buffers(flat);
+    open_result = operations_.apply_workspace_edit_to_open_buffers(flat);
   }
   const DiskEditResult disk = ApplyLspEditsToClosedFilesOnDisk(
       flat, [this](const std::filesystem::path& normalized) {
         return IsPathOpenInProject(normalized);
       });
-  return applied || disk.files_written > 0;
+  // Report `applied: false` whenever ANY target that survived parsing/containment
+  // failed to apply — a beyond-EOF/overlapping open-buffer group, or a closed-file
+  // failure (bad open, out-of-range edit, save error). Conflating a partial apply
+  // with full success would let a rename/refactor server update its index as if
+  // every file changed while the workspace is only half-rewritten. (TD-2026-07-16-43.)
+  if (open_result.any_rejected || disk.any_failed) {
+    return false;
+  }
+  return open_result.applied_any || disk.files_written > 0;
 }
 
 void LspService::ConsumeLspCallbacks() { CurrentLspManager().DrainCallbacks(); }

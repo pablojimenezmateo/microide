@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -100,6 +101,17 @@ class PieceTree {
     BumpRevision();
   }
 
+  // True when the last mutation was refused because it would push the live document
+  // past the byte ceiling (see max_live_document_bytes_). Lets edit callers detect a
+  // dropped mutation instead of silently desyncing cursor/undo state.
+  bool LastMutationRejectedForByteCeiling() const noexcept { return last_mutation_rejected_; }
+
+  // Testing seam: lower the live-document byte ceiling so the overflow-refusal path can
+  // be exercised without allocating ~4 GiB. Restore with uint32_max after the test.
+  void SetMaxLiveDocumentBytesForTesting(std::uint32_t ceiling) {
+    max_live_document_bytes_ = ceiling;
+  }
+
  private:
   // 0 = null sentinel; real nodes are indices >= 1 into nodes_.
   using NodeId = std::uint32_t;
@@ -183,6 +195,13 @@ class PieceTree {
   NodeId root_ = kNull;
   std::size_t line_count_ = 0;     // authoritative line count (0 == empty document)
   std::uint32_t priority_state_ = 0x9e3779b9u;  // deterministic treap priorities
+  // Live-document byte ceiling. subtree_length/TreeLength are uint32, so a live
+  // document above this wraps and corrupts split/extract/serialize. Defaults to the
+  // uint32 max (the true wrap point); a test can lower it. (TD-2026-07-16-35.)
+  std::uint32_t max_live_document_bytes_ = std::numeric_limits<std::uint32_t>::max();
+  // Set when the most recent ReplaceLineRange was refused because it would exceed the
+  // ceiling (so the mutation was a no-op), cleared when a mutation is applied.
+  bool last_mutation_rejected_ = false;
 
   // Spanning-line materialization, valid for the current revision only.
   mutable std::unordered_map<std::size_t, std::string> line_view_cache_;

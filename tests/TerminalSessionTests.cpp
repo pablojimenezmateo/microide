@@ -801,6 +801,29 @@ void TestTerminalSessionAppliesKittyKeyboardProtocol() {
          "popping the Kitty stack should restore zero flags");
 }
 
+// TD-2026-07-16-55: a huge Kitty pop count (CSI < 65535 u) must clear the stack and
+// reset flags in O(stack depth), not iterate the 65535 numeric parameter. Behavior is
+// verified via the resulting flags; the loop is now bounded by the 16-entry stack.
+void TestTerminalSessionKittyHugePopIsBoundedByStackDepth() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  // Push two flag states, then pop with a hostile huge count.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[>1u");  // push, flags = 1
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[>3u");  // push, flags = 3
+  Expect(TerminalSessionTestAccess::KittyKeyboardFlags(session) == 3,
+         "two pushes leave the latest flags active");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[<65535u");  // pop far past depth
+  Expect(TerminalSessionTestAccess::KittyKeyboardFlags(session) == 0,
+         "a huge pop drains the whole stack and resets flags to 0");
+
+  // A subsequent huge pop on the already-empty stack is a no-op that stays at 0.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[<65535u");
+  Expect(TerminalSessionTestAccess::KittyKeyboardFlags(session) == 0,
+         "popping an empty stack with a huge count stays at flags 0");
+}
+
 void TestTerminalSessionTracksSynchronizedOutputMode() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -2329,6 +2352,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionReportsWorkingDirectoryAndColors);
   AddTest(tests, "TerminalSession/EncodesModifiedAndFunctionKeys",
           TestTerminalSessionEncodesModifiedAndFunctionKeys);
+  AddTest(tests, "TerminalSession/KittyHugePopIsBoundedByStackDepth",
+          TestTerminalSessionKittyHugePopIsBoundedByStackDepth);
   AddTest(tests, "TerminalSession/AppliesKittyKeyboardProtocol",
           TestTerminalSessionAppliesKittyKeyboardProtocol);
   AddTest(tests, "TerminalSession/TracksSynchronizedOutputMode",

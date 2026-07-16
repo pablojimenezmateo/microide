@@ -122,8 +122,27 @@ check_sanitizer() {
   return $rc
 }
 
+# Release test gate: run ctest against an ALREADY-CONFIGURED-AND-BUILT release tree
+# (tools/release.sh builds Release+LTO in $MICROIDE_RELEASE_BUILD_DIR, default "build").
+# Unlike check_tests this does NOT reconfigure the tree (that would clobber the Release
+# config with a Debug one); it only builds the test target and runs ctest, preserving
+# the wrapper's deterministic /tmp log so the release gate produces the same artifact
+# agents/reviewers are told to read. (TD-2026-07-16-28.)
+check_release() {
+  local build_dir="${MICROIDE_RELEASE_BUILD_DIR:-build}"
+  local log="${LOG_DIR}/microide-release.log"
+  run_logged "$log" bash -c '
+    set -e
+    cmake --build '"$build_dir"' --target microide_tests -j'"$JOBS"'
+    ctest --test-dir '"$build_dir"' --output-on-failure
+  '
+  local rc=$?
+  echo "run-checks: release test gate finished (exit $rc); log at $log"
+  return $rc
+}
+
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|all}" >&2
   exit 2
 }
 
@@ -134,6 +153,7 @@ main() {
     asan)  check_sanitizer asan ;;
     ubsan) check_sanitizer ubsan ;;
     tsan)  check_sanitizer tsan ;;
+    release) check_release ;;
     all)
       local overall=0
       check_tests            || overall=1

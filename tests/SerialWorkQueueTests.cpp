@@ -187,25 +187,40 @@ void TestHookBalanceAcrossAllPaths() {
   Expect(enqueued.load() == 9, "1 gate + 5 PostLatest + 3 plain = 9 admitted jobs");
 }
 
-void TestNeverStartedHookBalance() {
+// TD-2026-07-16-14: the lazy-start contract says a kLazy queue starts on first
+// EnsureStarted()/Post*. Posting to a default (lazy) queue must therefore start the
+// worker and actually run the work — not leave it stranded in an unstarted queue.
+void TestLazyQueueStartsOnFirstPost() {
   std::atomic<int> enqueued{0};
   std::atomic<int> completed{0};
+  std::atomic<int> ran{0};
   SerialWorkQueue::Hooks hooks{
       .on_enqueue = [&enqueued]() { enqueued.fetch_add(1); },
       .on_complete = [&completed]() { completed.fetch_add(1); },
   };
   {
-    // Lazy + never started: jobs queue but no worker runs. Shutdown must still
-    // balance the hooks for the abandoned backlog.
     SerialWorkQueue queue(SerialWorkQueue::StartMode::kLazy, std::move(hooks));
+    Expect(!queue.started(), "a freshly constructed lazy queue is not yet started");
     for (int i = 0; i < 3; ++i) {
-      queue.Post([]() {});
+      queue.Post([&ran]() { ran.fetch_add(1); });
     }
-    Expect(!queue.started(), "queue stayed lazy");
+    Expect(queue.started(), "posting to a lazy queue must start its worker");
+    Expect(WaitFor([&ran]() { return ran.load() == 3; }),
+           "a lazy queue must run jobs posted before any explicit start");
     queue.Shutdown();
   }
+  Expect(ran.load() == 3, "a lazy queue must run jobs posted before any explicit start");
   Expect(enqueued.load() == 3 && completed.load() == 3,
-         "a never-started queue still balances enqueue hooks at shutdown");
+         "hooks stay balanced across the lazy auto-start path");
+}
+
+// A truly untouched lazy queue (never posted, never EnsureStarted) stays threadless
+// and Shutdown is a clean no-op.
+void TestUntouchedLazyQueueStaysUnstarted() {
+  SerialWorkQueue queue(SerialWorkQueue::StartMode::kLazy);
+  Expect(!queue.started(), "an untouched lazy queue never spawns a worker");
+  queue.Shutdown();
+  Expect(!queue.started(), "shutting down an untouched lazy queue stays unstarted");
 }
 
 // A job that throws must not escape the worker functor (that is a std::terminate
@@ -283,7 +298,9 @@ void RegisterSerialWorkQueueTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SerialWorkQueue/PostFrontJumpsTheQueue", TestPostFrontJumpsTheQueue);
   AddTest(tests, "SerialWorkQueue/CancelSkipsQueuedJobs", TestCancelSkipsQueuedJobs);
   AddTest(tests, "SerialWorkQueue/HookBalanceAcrossAllPaths", TestHookBalanceAcrossAllPaths);
-  AddTest(tests, "SerialWorkQueue/NeverStartedHookBalance", TestNeverStartedHookBalance);
+  AddTest(tests, "SerialWorkQueue/LazyQueueStartsOnFirstPost", TestLazyQueueStartsOnFirstPost);
+  AddTest(tests, "SerialWorkQueue/UntouchedLazyQueueStaysUnstarted",
+          TestUntouchedLazyQueueStaysUnstarted);
   AddTest(tests, "SerialWorkQueue/ThrowingJobDoesNotKillWorker", TestThrowingJobDoesNotKillWorker);
   AddTest(tests, "SerialWorkQueue/DrainQuiescesButKeepsWorkerUsable",
           TestDrainQuiescesButKeepsWorkerUsable);
