@@ -925,7 +925,29 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   endif()
 endif()
 
-add_test(NAME microide_tests COMMAND microide_tests)
+# The suite is one long serial process; the only way to use more than one core
+# (which dominates sanitizer wall-clock) is to split it into N shard processes
+# that `ctest -jN` runs concurrently. Each shard runs a deterministic round-robin
+# slice of the selected tests (see tests/TestMain.cpp). More shards than cores
+# improves load balancing when a few tests are much slower than the rest.
+# Override with -DMICROIDE_TEST_SHARDS=N (1 = a single legacy `microide_tests`).
+# 24 (2x a typical core count) gives the `ctest -j` scheduler finer buckets to
+# balance a handful of individually-heavy tests across, and matters most on the
+# memory-capped sanitizer path (run-checks caps ctest at -j6), where more shards
+# means fewer serialized waves. Per-process startup is negligible, so this does
+# not slow the fully-parallel plain run.
+set(MICROIDE_TEST_SHARDS "24" CACHE STRING
+    "Number of parallel shards the microide_tests suite is split into for ctest")
+if(MICROIDE_TEST_SHARDS GREATER 1)
+  math(EXPR _microide_last_shard "${MICROIDE_TEST_SHARDS} - 1")
+  foreach(_microide_shard RANGE ${_microide_last_shard})
+    add_test(NAME microide_tests_shard_${_microide_shard}
+             COMMAND microide_tests --shard-index=${_microide_shard}
+                     --shard-count=${MICROIDE_TEST_SHARDS})
+  endforeach()
+else()
+  add_test(NAME microide_tests COMMAND microide_tests)
+endif()
 
 if(MICROIDE_FUZZ)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")

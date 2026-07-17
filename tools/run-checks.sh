@@ -23,7 +23,17 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-JOBS="${MICROIDE_BUILD_JOBS:-8}"
+# Default build parallelism to the full core count (was a hardcoded 8, which
+# left cores idle on a 12-thread box). Override with MICROIDE_BUILD_JOBS.
+JOBS="${MICROIDE_BUILD_JOBS:-$(nproc 2>/dev/null || echo 8)}"
+
+# ctest parallelism. The suite is registered as MICROIDE_TEST_SHARDS ctest
+# tests (see CMakeLists.txt), so `ctest -jN` runs N shard processes at once —
+# the change that turns an 18-30 min serial sanitizer run into a few minutes.
+# Each sanitizer process has a large RSS, so cap concurrency below the build
+# job count to avoid swap thrash; plain (non-sanitized) runs use the full width.
+CTEST_JOBS="${MICROIDE_CTEST_JOBS:-$JOBS}"
+CTEST_SAN_JOBS="${MICROIDE_CTEST_SAN_JOBS:-$(( JOBS > 6 ? 6 : JOBS ))}"
 
 # ccache caches PCH-using translation units only when told to tolerate the
 # precompiled-header define/time-macro sloppiness. Harmless when ccache is not
@@ -68,7 +78,7 @@ check_tests() {
     set -e
     cmake -S . -B build
     cmake --build build --target microide_tests -j'"$JOBS"'
-    ctest --test-dir build --output-on-failure
+    ctest --test-dir build --output-on-failure -j'"$CTEST_JOBS"'
   '
   local rc=$?
   echo "run-checks: tests finished (exit $rc); log at $log"
@@ -98,7 +108,7 @@ check_sanitizer() {
     set -e
     cmake --preset '"$preset"'
     cmake --build '"$build_dir"' -j'"$JOBS"'
-    ctest --test-dir '"$build_dir"' --output-on-failure
+    ctest --test-dir '"$build_dir"' --output-on-failure -j'"$CTEST_SAN_JOBS"'
   '
   local rc=$?
 
@@ -134,7 +144,7 @@ check_release() {
   run_logged "$log" bash -c '
     set -e
     cmake --build '"$build_dir"' --target microide_tests -j'"$JOBS"'
-    ctest --test-dir '"$build_dir"' --output-on-failure
+    ctest --test-dir '"$build_dir"' --output-on-failure -j'"$CTEST_JOBS"'
   '
   local rc=$?
   echo "run-checks: release test gate finished (exit $rc); log at $log"

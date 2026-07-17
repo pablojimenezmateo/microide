@@ -1,5 +1,7 @@
 #include "TestRunnerCli.h"
 
+#include "util/Parse.h"
+
 #include <ostream>
 
 namespace microide::tests {
@@ -69,6 +71,10 @@ TestRunnerCliParseResult ParseTestRunnerArgs(const std::vector<std::string_view>
       result.options.verbose = true;
       continue;
     }
+    if (arg == "--timings") {
+      result.options.print_timings = true;
+      continue;
+    }
     if (arg == "--list-tests" || arg == "--list" || arg == "--gtest_list_tests") {
       result.options.list_mode =
           arg == "--gtest_list_tests" ? TestListMode::Gtest : TestListMode::Flat;
@@ -97,6 +103,39 @@ TestRunnerCliParseResult ParseTestRunnerArgs(const std::vector<std::string_view>
       continue;
     }
 
+    std::string shard_value;
+    const auto shard_index_result =
+        ConsumeOptionalValue(arg, "--shard-index", args, &i, &shard_value);
+    if (shard_index_result == ConsumeOptionalValueResult::MissingValue) {
+      result.error = "missing value for --shard-index";
+      return result;
+    }
+    if (shard_index_result == ConsumeOptionalValueResult::Matched) {
+      const std::optional<int> parsed = util::ParseInt(shard_value);
+      if (!parsed.has_value()) {
+        result.error = "invalid value for --shard-index: " + shard_value;
+        return result;
+      }
+      result.options.shard_index = *parsed;
+      continue;
+    }
+
+    const auto shard_count_result =
+        ConsumeOptionalValue(arg, "--shard-count", args, &i, &shard_value);
+    if (shard_count_result == ConsumeOptionalValueResult::MissingValue) {
+      result.error = "missing value for --shard-count";
+      return result;
+    }
+    if (shard_count_result == ConsumeOptionalValueResult::Matched) {
+      const std::optional<int> parsed = util::ParseInt(shard_value);
+      if (!parsed.has_value()) {
+        result.error = "invalid value for --shard-count: " + shard_value;
+        return result;
+      }
+      result.options.shard_count = *parsed;
+      continue;
+    }
+
     if (!arg.empty() && arg.front() == '-') {
       result.error = "unknown argument: " + std::string(arg);
       return result;
@@ -105,6 +144,16 @@ TestRunnerCliParseResult ParseTestRunnerArgs(const std::vector<std::string_view>
     if (!arg.empty()) {
       result.options.substring_filters.emplace_back(arg);
     }
+  }
+
+  if (result.options.shard_count < 1) {
+    result.error = "--shard-count must be >= 1";
+    return result;
+  }
+  if (result.options.shard_index < 0 ||
+      result.options.shard_index >= result.options.shard_count) {
+    result.error = "--shard-index must be in [0, shard-count)";
+    return result;
   }
 
   return result;
@@ -116,12 +165,15 @@ void PrintTestRunnerUsage(std::ostream& out, std::string_view program_name) {
       << "Options:\n"
       << "  -h, --help, --gtest_help     Show this help text.\n"
       << "  -v, --verbose                Print each selected test before running it.\n"
+      << "  --timings                    Print the slowest tests after the run.\n"
       << "  --list-tests, --list         List registered tests and exit.\n"
       << "  --gtest_list_tests           List registered tests and exit.\n"
       << "  --filter=EXPR                Wildcard filter expression using '*' '?' and ':' separators.\n"
       << "  --filter EXPR                Same as --filter=EXPR.\n"
       << "  --gtest_filter=EXPR          Alias for --filter=EXPR.\n"
       << "  --gtest_filter EXPR          Alias for --filter EXPR.\n"
+      << "  --shard-count=N              Split the selected tests into N round-robin shards.\n"
+      << "  --shard-index=I              Run only shard I (0-based) of --shard-count shards.\n"
       << "  --                           Treat remaining arguments as substring filters.\n"
       << "\n"
       << "Examples:\n"

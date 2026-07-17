@@ -1,9 +1,14 @@
 #include "TestSupport.h"
 #include "TestRunnerCli.h"
 #include "terminal/TerminalSession.h"
+#include "util/Parse.h"
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <exception>
 #include <cstdlib>
 #include <filesystem>
@@ -12,6 +17,8 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
+#include <utility>
 #include <vector>
 
 namespace microide::tests {
@@ -497,7 +504,6 @@ int main(int argc, char** argv) {
   microide::tests::RegisterEditorFoldingTests(tests);
   microide::tests::RegisterEditorMultiCaretTests(tests);
 
-  bool ran_any = false;
   std::size_t selected_count = 0;
   for (const auto& test : tests) {
     if (!IsSelected(test.name, parsed.options.substring_filters, parsed.options.gtest_filter ? &*parsed.options.gtest_filter : nullptr)) {
@@ -520,40 +526,140 @@ int main(int argc, char** argv) {
     return selected_count == 0 ? 1 : 0;
   }
 
-  std::size_t current_index = 0;
-  for (const auto& test : tests) {
-    if (!IsSelected(test.name, parsed.options.substring_filters,
-                    parsed.options.gtest_filter ? &*parsed.options.gtest_filter : nullptr)) {
-      continue;
-    }
-    ran_any = true;
-    ++current_index;
-    if (parsed.options.verbose) {
-      std::cerr << "[" << current_index << "/" << selected_count << "] " << test.name << '\n';
-    }
-    try {
-      test.run();
-    } catch (const std::exception& error) {
-      shutdown_sdl();
-      std::cerr << "microide_tests failed in " << test.name << ": " << error.what() << '\n';
-      return 1;
-    } catch (...) {
-      shutdown_sdl();
-      std::cerr << "microide_tests failed in " << test.name << ": unknown exception\n";
-      return 1;
-    }
-  }
-
-  if (!ran_any) {
+  if (selected_count == 0) {
     shutdown_sdl();
     std::cerr << "microide_tests: no tests matched the provided filters\n";
     return 1;
   }
 
+  // Config knobs (env-driven so ctest/run-checks can tune without a rebuild):
+  //   MICROIDE_TEST_TIMEOUT_MS  watchdog per-test limit; a test that exceeds it
+  //                             is named and the process aborts (0 disables).
+  //   MICROIDE_TEST_SLOW_MS     threshold above which a test prints a SLOW line.
+  //   MICROIDE_TEST_TIMINGS     any non-empty value prints the slowest tests.
+  const auto env_i64 = [](const char* name, std::int64_t fallback) -> std::int64_t {
+    const char* raw = std::getenv(name);
+    if (raw == nullptr || *raw == '\0') {
+      return fallback;
+    }
+    const std::optional<std::int64_t> parsed_value = microide::util::ParseInt64(raw);
+    return parsed_value.value_or(fallback);
+  };
+  const std::int64_t watchdog_ms = env_i64("MICROIDE_TEST_TIMEOUT_MS", 300000);
+  const std::int64_t slow_ms = env_i64("MICROIDE_TEST_SLOW_MS", 2000);
+  const bool print_timings =
+      parsed.options.print_timings || std::getenv("MICROIDE_TEST_TIMINGS") != nullptr;
+
+  using Clock = std::chrono::steady_clock;
+  const auto to_ms = [](Clock::duration d) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
+  };
+
+  // Watchdog: names (then aborts on) any test that runs away, so a hang or a
+  // pathological test surfaces as a clear diagnostic instead of a mysterious
+  // whole-shard ctest timeout. It watches an atomic "current test started at"
+  // stamp; the run loop clears it between tests.
+  std::atomic<std::int64_t> current_test_started{0};  // 0 == no test running
+  std::atomic<const std::string*> current_test_name{nullptr};
+  std::atomic<bool> watchdog_stop{false};
+  std::thread watchdog;
+  if (watchdog_ms > 0) {
+    watchdog = std::thread([&]() {
+      while (!watchdog_stop.load(std::memory_order_relaxed)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        const std::int64_t started = current_test_started.load(std::memory_order_acquire);
+        if (started == 0) {
+          continue;
+        }
+        const std::int64_t elapsed = to_ms(Clock::now().time_since_epoch()) - started;
+        if (elapsed >= watchdog_ms) {
+          const std::string* name = current_test_name.load(std::memory_order_acquire);
+          std::cerr << "microide_tests: TIMEOUT after " << elapsed << "ms in "
+                    << (name != nullptr ? *name : std::string("<unknown>")) << '\n';
+          std::cerr.flush();
+          std::abort();
+        }
+      }
+    });
+  }
+
+  // Round-robin sharding: assign every selected test a stable 0-based ordinal
+  // and run only those whose ordinal lands in this shard. With the default
+  // shard_count == 1 this runs the whole suite. A shard whose slice is empty
+  // (shard_count > selected_count) is NOT an error — only a truly empty filter
+  // selection is (handled above). See TestRunnerCliOptions.
+  const int shard_index = parsed.options.shard_index;
+  const auto shard_count = static_cast<std::size_t>(parsed.options.shard_count);
+  std::size_t selected_ordinal = 0;
+  std::size_t ran_count = 0;
+  std::vector<std::pair<std::int64_t, const std::string*>> timings;
+  int exit_code = 0;
+  for (const auto& test : tests) {
+    if (!IsSelected(test.name, parsed.options.substring_filters,
+                    parsed.options.gtest_filter ? &*parsed.options.gtest_filter : nullptr)) {
+      continue;
+    }
+    const std::size_t ordinal = selected_ordinal++;
+    if (static_cast<int>(ordinal % shard_count) != shard_index) {
+      continue;
+    }
+    ++ran_count;
+    if (parsed.options.verbose) {
+      std::cerr << "[" << ran_count << "] " << test.name << '\n';
+    }
+    current_test_name.store(&test.name, std::memory_order_release);
+    current_test_started.store(to_ms(Clock::now().time_since_epoch()),
+                               std::memory_order_release);
+    const auto start = Clock::now();
+    try {
+      test.run();
+    } catch (const std::exception& error) {
+      std::cerr << "microide_tests failed in " << test.name << ": " << error.what() << '\n';
+      exit_code = 1;
+      break;
+    } catch (...) {
+      std::cerr << "microide_tests failed in " << test.name << ": unknown exception\n";
+      exit_code = 1;
+      break;
+    }
+    const std::int64_t elapsed_ms = to_ms(Clock::now() - start);
+    current_test_started.store(0, std::memory_order_release);
+    timings.emplace_back(elapsed_ms, &test.name);
+    if (slow_ms > 0 && elapsed_ms >= slow_ms) {
+      std::cerr << "microide_tests: SLOW " << elapsed_ms << "ms " << test.name << '\n';
+    }
+  }
+
+  watchdog_stop.store(true, std::memory_order_relaxed);
+  if (watchdog.joinable()) {
+    watchdog.join();
+  }
+
+  if (print_timings && !timings.empty()) {
+    std::stable_sort(timings.begin(), timings.end(),
+                     [](const auto& a, const auto& b) { return a.first > b.first; });
+    const std::size_t show = std::min<std::size_t>(timings.size(), 25);
+    std::cerr << "microide_tests: slowest " << show << " of " << timings.size() << " tests:\n";
+    for (std::size_t i = 0; i < show; ++i) {
+      std::cerr << "  " << timings[i].first << "ms\t" << *timings[i].second << '\n';
+    }
+  }
+
+  if (exit_code != 0) {
+    shutdown_sdl();
+    return exit_code;
+  }
+
   // Final summary so callers (and agents) get an unambiguous pass signal
   // without having to inspect the exit code or scrape verbose output.
-  std::cerr << "microide_tests: OK (" << selected_count
-            << (selected_count == 1 ? " test passed)\n" : " tests passed)\n");
+  if (shard_count > 1) {
+    std::cerr << "microide_tests: OK (shard " << shard_index << "/" << shard_count << ": "
+              << ran_count << " of " << selected_count
+              << (selected_count == 1 ? " test)\n" : " tests)\n");
+  } else {
+    std::cerr << "microide_tests: OK (" << selected_count
+              << (selected_count == 1 ? " test passed)\n" : " tests passed)\n");
+  }
   shutdown_sdl();
   return 0;
 }

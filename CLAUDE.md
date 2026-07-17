@@ -80,8 +80,19 @@ already exports the `CCACHE_SLOPPINESS` needed for ccache to cache PCH builds.
 Run the full automated test suite with:
 
 ```bash
-ctest --test-dir build --output-on-failure
+ctest --test-dir build --output-on-failure -j$(nproc)
 ```
+
+The suite is registered as `MICROIDE_TEST_SHARDS` ctest tests (default 24), each
+a `microide_tests --shard-index=I --shard-count=N` process running a
+deterministic round-robin slice, so `ctest -jN` uses every core instead of
+running the whole suite in one serial process. This is the dominant win for the
+sanitizers, which used to run 18–30 min single-threaded. `run-checks.sh` passes
+`-j` automatically (full width for plain runs, capped at 6 for the
+memory-heavy sanitizers; override with `MICROIDE_CTEST_JOBS` /
+`MICROIDE_CTEST_SAN_JOBS`). Set `-DMICROIDE_TEST_SHARDS=1` to get the old single
+`microide_tests` test back. Run one shard directly with
+`./build/microide/microide_tests --shard-index=0 --shard-count=24`.
 
 Prefer the logging wrapper, which tees all build+test output to a deterministic
 file under `/tmp` so results can be read back without rerunning:

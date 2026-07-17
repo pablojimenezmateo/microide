@@ -23,6 +23,16 @@ struct RuleResult {
   std::vector<Violation> violations;
 };
 
+// A single architecture rule paired with a stable name. Exposing rule groups as
+// lists of NamedRule lets the test layer register one ctest case per rule (so
+// sharding runs them in parallel) while the aggregating Run*ArchitectureRules
+// functions iterate the same list — one source of truth, no drift.
+using ArchitectureRuleFn = RuleResult (*)(const std::filesystem::path&);
+struct NamedRule {
+  std::string_view name;
+  ArchitectureRuleFn fn;
+};
+
 void ReportRule(const RuleResult& result);
 void AppendViolations(RuleResult& result,
                       const std::filesystem::path& path,

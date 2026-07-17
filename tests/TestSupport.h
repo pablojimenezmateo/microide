@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -14,10 +15,14 @@ namespace microide::tests {
 
 struct TestCase {
   std::string name;
-  void (*run)();
+  // std::function (not a bare function pointer) so parameterized suites can
+  // register per-case closures — e.g. one test per architecture rule so ctest
+  // sharding runs them in parallel. Plain `void(*)()` callers still work via
+  // implicit conversion.
+  std::function<void()> run;
 };
 
-void AddTest(std::vector<TestCase>& tests, std::string_view name, void (*run)());
+void AddTest(std::vector<TestCase>& tests, std::string_view name, std::function<void()> run);
 void Expect(bool condition, std::string_view message);
 
 std::filesystem::path TestRoot();

@@ -15,8 +15,8 @@
 
 namespace microide::tests {
 
-void AddTest(std::vector<TestCase>& tests, std::string_view name, void (*run)()) {
-  tests.push_back(TestCase{std::string(name), run});
+void AddTest(std::vector<TestCase>& tests, std::string_view name, std::function<void()> run) {
+  tests.push_back(TestCase{std::string(name), std::move(run)});
 }
 
 void Expect(bool condition, std::string_view message) {

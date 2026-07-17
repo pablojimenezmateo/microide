@@ -163,6 +163,14 @@ std::string DebugValueTree::PathKey(const Node& node) const {
 std::vector<DebugValueTree::ChildFetch> DebugValueTree::CollectAutoExpand(
     const std::vector<std::uint32_t>& node_ids) {
   std::vector<ChildFetch> fetches;
+  // With no remembered expansions there is nothing to restore, so skip the
+  // per-node PathKey construction below entirely. PathKey walks a node's whole
+  // ancestor chain (O(depth)); without this guard, incrementally loading a very
+  // deep chain one page at a time costs O(depth^2) in wasted PathKey work even
+  // though not a single child can match the empty set.
+  if (expanded_paths_.empty()) {
+    return fetches;
+  }
   for (const std::uint32_t id : node_ids) {
     Node* node = FindNode(id);
     if (node == nullptr || node->variables_reference <= 0 || node->expanded ||

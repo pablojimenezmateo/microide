@@ -16,7 +16,35 @@
 namespace microide::tests {
 namespace {
 
-void TestArchitectureInvariants() {
+// Shared assertion: report every rule result and fail if any hard rule was
+// violated. Soft (non-hard_fail) rules still print but do not fail the test.
+void AssertRuleResultsPass(const std::vector<architecture::RuleResult>& results) {
+  bool hard_failure = false;
+  for (const architecture::RuleResult& result : results) {
+    architecture::ReportRule(result);
+    if (result.hard_fail && !result.violations.empty()) {
+      hard_failure = true;
+    }
+  }
+  Expect(!hard_failure, "hard-fail architecture invariants should have no violations");
+}
+
+// One workspace rule, run in isolation. Registered once per rule (see
+// RegisterArchitectureInvariantsTests) so ctest sharding runs the individually
+// slow, std::regex-heavy rules in parallel instead of as one ~30s serial test.
+void RunWorkspaceRuleTest(architecture::ArchitectureRuleFn fn) {
+  AssertRuleResultsPass({fn(architecture::RepoRoot())});
+}
+
+void TestArchitecturePluginRules() {
+  AssertRuleResultsPass(architecture::RunPluginArchitectureRules(architecture::RepoRoot()));
+}
+
+void TestArchitectureTerminalRules() {
+  AssertRuleResultsPass(architecture::RunTerminalArchitectureRules(architecture::RepoRoot()));
+}
+
+void TestArchitectureFileSizes() {
   const std::filesystem::path repo_root = architecture::RepoRoot();
   std::vector<architecture::RuleResult> results;
   const auto run_rule = [&](const char* label, auto&& fn) {
@@ -26,16 +54,6 @@ void TestArchitectureInvariants() {
       throw std::runtime_error(std::string(label) + ": " + error.what());
     }
   };
-
-  for (architecture::RuleResult& result : architecture::RunWorkspaceArchitectureRules(repo_root)) {
-    results.push_back(std::move(result));
-  }
-  for (architecture::RuleResult& result : architecture::RunPluginArchitectureRules(repo_root)) {
-    results.push_back(std::move(result));
-  }
-  for (architecture::RuleResult& result : architecture::RunTerminalArchitectureRules(repo_root)) {
-    results.push_back(std::move(result));
-  }
 
   run_rule("CheckShellFileSize(WorkspaceShell.h)", [&](const std::filesystem::path& root) {
     return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShell.h", 400);
@@ -172,15 +190,7 @@ void TestArchitectureInvariants() {
                                                      1692);
            });
 
-  bool hard_failure = false;
-  for (const architecture::RuleResult& result : results) {
-    architecture::ReportRule(result);
-    if (result.hard_fail && !result.violations.empty()) {
-      hard_failure = true;
-    }
-  }
-
-  Expect(!hard_failure, "hard-fail architecture invariants should have no violations");
+  AssertRuleResultsPass(results);
 }
 
 void TestTryCatchStoScanner() {
@@ -391,7 +401,16 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
 }  // namespace
 
 void RegisterArchitectureInvariantsTests(std::vector<TestCase>& tests) {
-  AddTest(tests, "ArchitectureInvariants/SoftChecks", TestArchitectureInvariants);
+  // One ctest case per workspace rule so sharding parallelizes the std::regex-
+  // heavy architecture lint (formerly a single ~30s serial "SoftChecks" test).
+  for (const architecture::NamedRule& rule : architecture::WorkspaceArchitectureRuleList()) {
+    const architecture::ArchitectureRuleFn fn = rule.fn;
+    AddTest(tests, "ArchitectureInvariants/Workspace/" + std::string(rule.name),
+            [fn]() { RunWorkspaceRuleTest(fn); });
+  }
+  AddTest(tests, "ArchitectureInvariants/PluginRules", TestArchitecturePluginRules);
+  AddTest(tests, "ArchitectureInvariants/TerminalRules", TestArchitectureTerminalRules);
+  AddTest(tests, "ArchitectureInvariants/FileSizes", TestArchitectureFileSizes);
   AddTest(tests, "ArchitectureInvariants/TryCatchStoScanner", TestTryCatchStoScanner);
   AddTest(tests, "ArchitectureInvariants/CountCodeLinesScanner", TestCountCodeLinesScanner);
   AddTest(tests, "ArchitectureInvariants/TargetedScannerFixtures",
