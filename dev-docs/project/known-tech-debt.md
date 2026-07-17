@@ -91,7 +91,23 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 - **047 — compare/merge model construction runs synchronously on the shell path.**
   Fingerprint-cached + budgeted, but a content change rebuilds on-thread; move large
   `BuildCompareModel`/`BuildMergeModel` to a generation-gated background job. Same
-  family as **TD-2026-07-16-19** below.
+  family as **TD-2026-07-16-19** below. **[PARTIAL 2026-07-17 — no-op refresh is now
+  allocation-free]** `RefreshCompareTabDerivedState` fires from ~10 call sites (key
+  input, mouse, focus, plugin refresh, external change), most leaving the compared
+  content untouched, and each call used to `SerializeLines(right_viewport.Snapshot())`
+  (an O(right) whole-buffer copy) *and* hash both buffers just to compute the
+  change-detection fingerprint. It now detects a real change from O(1)/allocation-free
+  signals — the editable right pane's monotonic `content_revision` + line ending, an
+  allocation-free `std::hash` of the read-only `left_content`, and the ignore-whitespace
+  option — and only serializes the right buffer inside the `content_changed` rebuild
+  branch. So a no-op refresh (the dominant case: cursor move, focus, scroll, plugin
+  refresh) no longer pays a per-event whole-right-buffer allocation, matching the
+  31/068/083 "drop the whole-buffer copy from the hot path" family. Same on-thread
+  `BuildCompareModel` remains for an actual content change; the full move to a
+  generation-gated background build is still deferred. Covered by the extended
+  `WorkspaceShell/CompareRecomputeGate` (adds right-pane-edit-via-content_revision
+  rebuild + no-op-after-edit reuse assertions to the existing left-content/ignore-
+  whitespace gate coverage).
 - **[WON'T-DO 2026-07-17 — deliberate, bounded, opt-out-able] 048 — format-on-save can
   block the UI up to 5s.** The synchronous formatter subprocess on *explicit* save is a
   deliberate, lint-allowlisted product choice: autosave already suppresses the formatter

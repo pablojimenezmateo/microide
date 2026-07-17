@@ -117,11 +117,19 @@ struct CompareTabState {
   std::size_t syntax_rows_tokenized = 0;
   bool syntax_highlighting_enabled = true;
   std::uint64_t model_revision = 0;
-  // Fingerprint of the (left_content, right_content, build_options) the model was
-  // last built from. Lets RefreshCompareTabDerivedState skip the expensive model
-  // + syntax + tokenization rebuild when a refresh fires (mouse, focus, plugin,
-  // external change) without the compared content having actually changed.
-  std::size_t derived_fingerprint = 0;
+  // Cheap change-detection signals the model + syntax + tokenization were last built
+  // from. The editable right pane is the one refreshes touch repeatedly (every keystroke,
+  // mouse, focus, plugin, external-change event fires RefreshCompareTabDerivedState from
+  // ~10 sites, most leaving content untouched), so its change is detected by the viewport's
+  // monotonic `content_revision` + line ending — no whole-buffer serialize on the no-op
+  // path. The read-only `left_content` string has no viewport/revision, so it is hashed
+  // directly; it is write-once in production (BuildCompareTabFromBuffers on a fresh state)
+  // and the hash is allocation-free. Together with the ignore-whitespace option these
+  // reproduce the old fingerprint's coverage without the per-refresh right-buffer copy.
+  std::uint64_t derived_right_content_revision = 0;
+  util::LineEnding derived_right_line_ending = util::LineEnding::LF;
+  std::size_t derived_left_content_hash = 0;
+  bool derived_ignore_whitespace = false;
   bool derived_fingerprint_valid = false;
   bool model_stale = false;
   bool model_refreshing = false;

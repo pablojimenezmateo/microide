@@ -1363,6 +1363,20 @@ void TestWorkspaceShellCompareRecomputeGate() {
   WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
   Expect(compare.model_revision == after_content + 1,
          "toggling ignore-whitespace must rebuild the compare model");
+
+  // An edit to the editable right pane is detected via the viewport's monotonic
+  // content_revision (no whole-buffer serialize on the no-op path) and rebuilds once;
+  // a subsequent no-op refresh must reuse the model rather than re-serialize + rebuild.
+  const std::uint64_t before_right_edit = compare.model_revision;
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "// note "),
+         "typing into the editable current-state pane should edit it");
+  Expect(compare.model_revision > before_right_edit,
+         "editing the right pane must rebuild the compare model");
+  const std::uint64_t after_right_edit = compare.model_revision;
+  WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
+  WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
+  Expect(compare.model_revision == after_right_edit,
+         "no-op refreshes after a right-pane edit must not rebuild the compare model");
 }
 
 }  // namespace

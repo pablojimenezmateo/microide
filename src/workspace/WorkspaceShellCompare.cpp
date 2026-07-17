@@ -20,24 +20,6 @@ namespace {
 
 constexpr float kCompareDividerHitWidth = 12.0f;
 
-std::size_t HashCombine(std::size_t seed, std::size_t value) {
-  return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
-}
-
-// Fingerprint of the inputs BuildCompareModel derives from. Includes both content
-// lengths alongside their hashes so a hash collision cannot alias two differently
-// sized buffers, and folds in the build options (ignore-whitespace changes the
-// model with no content change).
-std::size_t ComputeCompareDerivedFingerprint(std::string_view left, std::string_view right,
-                                             const compare::CompareBuildOptions& options) {
-  std::size_t fingerprint = std::hash<std::string_view>{}(left);
-  fingerprint = HashCombine(fingerprint, std::hash<std::string_view>{}(right));
-  fingerprint = HashCombine(fingerprint, left.size());
-  fingerprint = HashCombine(fingerprint, right.size());
-  fingerprint = HashCombine(fingerprint, options.ignore_whitespace ? 1u : 0u);
-  return fingerprint;
-}
-
 std::size_t CompareMaxVisualColumns(const compare::CompareModel& model) {
   std::size_t max_columns = 0;
   for (const auto& row : model.rows) {
@@ -480,27 +462,40 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildCompareTextI
 }
 
 void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab) const {
-  const std::string right_content =
-      util::SerializeLines(compare_tab.right_viewport.lines().Snapshot(),
-                           compare_tab.right_viewport.line_ending());
-  // The model, syntax state, and per-row token buffers derive purely from the
-  // two content buffers and the build options. This refresh fires from ~10 call
-  // sites (key input, mouse, focus, plugin refresh, external change), many of
-  // which leave the compared content untouched, so recompute that block only when
-  // the content actually changed. The review/presentation markers below depend on
-  // external git + branch-review state and always refresh.
-  const std::size_t fingerprint = ComputeCompareDerivedFingerprint(
-      compare_tab.left_content, right_content, compare_tab.build_options);
+  // The model, syntax state, and per-row token buffers derive purely from the two
+  // content buffers and the build options. This refresh fires from ~10 call sites (key
+  // input, mouse, focus, plugin refresh, external change), many of which leave the
+  // compared content untouched. Detect a real change with O(1)/allocation-free signals
+  // instead of serializing the whole right buffer and hashing both buffers on every
+  // refresh: the editable right pane changes exactly when its viewport `content_revision`
+  // (or line ending) advances, so it needs no per-refresh serialize; the read-only left
+  // string is hashed directly (allocation-free); the ignore-whitespace option changes the
+  // model with no content change. The serialize below then runs only on an actual rebuild.
+  // The review/presentation markers further down depend on external git + branch-review
+  // state and always refresh.
+  const std::uint64_t right_content_revision = compare_tab.right_viewport.content_revision();
+  const util::LineEnding right_line_ending = compare_tab.right_viewport.line_ending();
+  const std::size_t left_content_hash = std::hash<std::string_view>{}(compare_tab.left_content);
+  const bool ignore_whitespace = compare_tab.build_options.ignore_whitespace;
   const bool content_changed =
-      !compare_tab.derived_fingerprint_valid || compare_tab.derived_fingerprint != fingerprint;
+      !compare_tab.derived_fingerprint_valid ||
+      compare_tab.derived_right_content_revision != right_content_revision ||
+      compare_tab.derived_right_line_ending != right_line_ending ||
+      compare_tab.derived_left_content_hash != left_content_hash ||
+      compare_tab.derived_ignore_whitespace != ignore_whitespace;
   if (content_changed) {
+    const std::string right_content =
+        util::SerializeLines(compare_tab.right_viewport.lines().Snapshot(), right_line_ending);
     compare_tab.model = compare::BuildCompareModel(compare_tab.left_content, right_content,
                                                    compare_tab.build_options);
     ++compare_tab.model_revision;
     compare_tab.visible_layout_cache_model_revision = compare_tab.model_revision;
     compare_tab.visible_layout_cache.clear();
     compare_tab.visible_layout_cache_index.clear();
-    compare_tab.derived_fingerprint = fingerprint;
+    compare_tab.derived_right_content_revision = right_content_revision;
+    compare_tab.derived_right_line_ending = right_line_ending;
+    compare_tab.derived_left_content_hash = left_content_hash;
+    compare_tab.derived_ignore_whitespace = ignore_whitespace;
     compare_tab.derived_fingerprint_valid = true;
   }
   CompareTabReviewRefreshInput review_input{
