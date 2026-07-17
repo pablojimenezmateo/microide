@@ -3,7 +3,13 @@
 #include <SDL3/SDL.h>
 
 #include <string>
+#include <system_error>
 #include <vector>
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 namespace microide::platform {
 
@@ -65,6 +71,51 @@ std::filesystem::path ResolveBundledAssetPath(std::string_view relative_path) {
     return {};
   }
   return (asset_root / std::string(relative_path)).lexically_normal();
+}
+
+bool EnsureSecurePrivateDirectory(const std::filesystem::path& dir) {
+  if (dir.empty()) {
+    return false;
+  }
+#if defined(__unix__) || defined(__APPLE__)
+  // Create any missing ancestors with normal permissions, then handle the leaf
+  // ourselves so we never follow a symlink or trust a pre-existing foreign leaf.
+  std::error_code ec;
+  if (dir.has_parent_path()) {
+    std::filesystem::create_directories(dir.parent_path(), ec);
+  }
+
+  struct stat st{};
+  if (::lstat(dir.c_str(), &st) == 0) {
+    if (S_ISLNK(st.st_mode)) {
+      return false;  // a symlink at the path could redirect state elsewhere
+    }
+    if (!S_ISDIR(st.st_mode)) {
+      return false;  // a regular file / device squatting the directory name
+    }
+    if (st.st_uid != ::geteuid()) {
+      return false;  // owned by another user — do not trust it
+    }
+    if ((st.st_mode & (S_IRWXG | S_IRWXO)) != 0) {
+      // We own it, so tighten group/other bits away; refuse if that fails.
+      if (::chmod(dir.c_str(), S_IRWXU) != 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Leaf does not exist: create it owner-only. mkdir is subject to umask, so
+  // chmod afterward to guarantee 0700 regardless of the inherited mask.
+  if (::mkdir(dir.c_str(), S_IRWXU) != 0) {
+    return false;
+  }
+  return ::chmod(dir.c_str(), S_IRWXU) == 0;
+#else
+  std::error_code ec;
+  std::filesystem::create_directories(dir, ec);
+  return !ec;
+#endif
 }
 
 }  // namespace microide::platform

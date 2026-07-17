@@ -15,6 +15,7 @@
 #endif
 
 #include "platform/AppDirectories.h"
+#include "platform/RuntimePaths.h"
 #include "util/Parse.h"
 #include "workspace/ControlProtocol.h"
 #include "workspace/WorkspaceProjectPresentation.h"
@@ -228,6 +229,14 @@ bool ControlChannelService::Start(const std::filesystem::path& project_root) {
     return true;
   }
   const int pid = CurrentProcessId();
+  // Harden the runtime base directory before binding. In the `/tmp/microide`
+  // fallback (no $XDG_RUNTIME_DIR, no app state dir) the parent is world-writable,
+  // so a local attacker could pre-create it as a symlink or a foreign-owned dir to
+  // force rebinds or plant forged descriptors. Refuse to start on an untrusted
+  // directory rather than expose sockets/descriptors there. (TD-2026-07-17-040.)
+  if (!platform::EnsureSecurePrivateDirectory(RuntimeBaseDir())) {
+    return false;
+  }
   const std::filesystem::path socket_path = SocketPathForPid(pid);
   if (!server_.Start(socket_path)) {
     return false;

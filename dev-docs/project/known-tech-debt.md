@@ -219,10 +219,16 @@ build and verify the target platform. Descriptions retained as intake for that p
 
 **Security:**
 
-- **040 — control-socket `/tmp/microide` fallback trusts parent ownership too late.**
-  Add a secure-directory helper (reject symlinks, require current-user ownership, mode
-  ≤ 0700, else disable the channel) with hostile-fallback-dir / symlinked-/tmp /
-  forged-descriptor fixtures. The socket is already chmod 0600.
+- **[RESOLVED 2026-07-17] 040 — control-socket `/tmp/microide` fallback trusts parent
+  ownership too late.** Added `platform::EnsureSecurePrivateDirectory` and gate it in
+  `ControlChannelService::Start` *before* binding: it creates the runtime base dir
+  owner-only (0700, umask-proof), and on a pre-existing leaf rejects a symlink, a
+  non-directory, or a foreign owner, and tightens away any group/other bits (refusing if
+  it can't). If the base dir can't be made trustworthy the channel refuses to start rather
+  than exposing sockets/descriptors in an attacker-influenceable `/tmp` fallback. Coverage:
+  `RuntimePaths/EnsureSecurePrivateDirectory` (fresh→0700, idempotent, symlink refused,
+  loose-mode tightened, regular-file refused). Socket file stays chmod 0600.
+  `run-checks.sh tests` (3/3) green.
 
 ### Deferred from the 2026-07-16 audit sweep (TD-2026-07-16-*)
 
