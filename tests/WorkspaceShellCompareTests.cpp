@@ -1043,6 +1043,34 @@ void TestWorkspaceShellMergeTabUsesFilenameOnlyLabelAndTooltip() {
          "active merge breadcrumbs should keep the relative path");
 }
 
+// A conflicted binary/NUL worktree file must NOT build a text merge tab (the compare
+// path already refuses these). Building one would let the result viewport later save text
+// over binary bytes (TD-2026-07-17A-111). BuildMergeTabEntry classifies the three inputs
+// and OpenMergeEditor returns false when any is binary/too-large/unreadable.
+void TestWorkspaceShellMergeEditorRefusesBinaryInput() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.bin";
+  const std::filesystem::path incoming = root / "incoming.bin";
+  const std::filesystem::path current = root / "current.bin";
+  const std::filesystem::path output = root / "result.bin";
+  WriteFile(base, "top\nbase\nbottom\n");
+  WriteFile(incoming, "top\nincoming\nbottom\n");
+  // Current side carries an embedded NUL — classified as binary, not editable text.
+  WriteFile(current, std::string("top\ncur\0rent\nbottom\n", 20));
+  WriteFile(output, "top\ncurrent\nbottom\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(!WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "a binary/NUL merge input must not build a text merge tab");
+
+  // Sanity: with the same paths made all-text, the merge editor opens.
+  WriteFile(current, "top\ncurrent\nbottom\n");
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "an all-text merge input should still open the merge editor");
+}
+
 void TestWorkspaceShellCompareDividerMatchesMarkerWidth() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1549,6 +1577,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareTabUsesFilenameOnlyLabelAndTooltip);
   AddTest(tests, "WorkspaceShell/MergeTabUsesFilenameOnlyLabelAndTooltip",
           TestWorkspaceShellMergeTabUsesFilenameOnlyLabelAndTooltip);
+  AddTest(tests, "WorkspaceShell/MergeEditorRefusesBinaryInput",
+          TestWorkspaceShellMergeEditorRefusesBinaryInput);
   AddTest(tests, "WorkspaceShell/CompareDividerMatchesMarkerWidth",
           TestWorkspaceShellCompareDividerMatchesMarkerWidth);
   AddTest(tests, "WorkspaceShell/CompareRenderKeepsDividerBorderOnUnchangedRows",

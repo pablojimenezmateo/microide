@@ -4,7 +4,7 @@ Reviewed on 2026-07-17. A follow-on deferred-backlog full sweep is in progress
 (see "Fixed in the 2026-07-13 deferred-backlog full sweep" below); closed tranche
 entries have been pruned as they land. The **2026-07-17A addendum burndown** then
 dispositioned every item in the "Cross-subsystem bug/perf audit addendum" section:
-32 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
+33 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
 clusters or marked platform-only — see the burndown blockquote under that heading.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
@@ -82,7 +82,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > test this pass), **DEFERRED** (folded into a focused-pass cluster below), or **WON'T-DO
 > here** (platform-only, cannot build/verify on this Linux host).
 >
-> **RESOLVED this pass (32 fixed + 1 already-satisfied; each with a regression test):**
+> **RESOLVED this pass (33 fixed + 1 already-satisfied; each with a regression test):**
 > - **001** — passive menu measurement (`ComputePopupMenuRect`, `MenuItemLabel`, `IsMenuItemEnabled`) reads LSP readiness with `ensure_started=false`, so opening/hovering a menu never spawns a server; servers still start on explicit LSP actions via `GetServer`.
 > - **011** — plugin-command menu enablement uses `PluginHost::HasCommand` (O(log n), allocation-free) instead of a linear `std::find` + per-item `std::string` materialization.
 > - **012** — command-line completion takes the plugin command-name vector by reference (no whole-registry copy per open/keystroke).
@@ -94,6 +94,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > - **034** — workspace-symbol requests carry a generation token; superseded responses are dropped (no stale results overwriting the newer query).
 > - **089** — restored tree expansion/collapse keys are validated for root containment (absolute/`..`-escape keys dropped).
 > - **065** — terminal Copy-Last-Command enablement uses a cheap `HasLastTerminalCommand()` predicate instead of building the whole scrollback transcript.
+> - **111** — three-way merge tab builders classify inputs (`ReadTextFileClassified`) and refuse binary/NUL/too-large worktree files.
 > - **003** — `DetectIndent(LineSpan)` overload; file open reads the live buffer zero-copy (no `Snapshot()`).
 > - **006** — settings query filter routes through allocation-free `util::ContainsCaseInsensitiveAscii` (no per-row lowercase of query/label/detail on every keystroke).
 > - **009** — merge validation scans a zero-copy `LineSpan` once via `util::ScanConflictMarkers` (no `Snapshot()`, no whole-document serialize, no second snapshot for the marker line).
@@ -139,8 +140,8 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    match-data cache keyed by revision, symlinked-state-file writes, terminal-tab reap grace):
 >    030, 050, 052, 059, 082, 083, 086, 100, 115, 127, 130. *(001, 034 RESOLVED 2026-07-17A.)*
 > 8. **Path/containment correctness (small, but cross-group)**: 036
->    (retarget background compare/merge tabs on rename/delete across all groups), 088, 111.
->    *(010, 089 RESOLVED 2026-07-17A — `util::RelativePathWithin`; restored-tree-key containment.)*
+>    (retarget background compare/merge tabs on rename/delete across all groups), 088.
+>    *(010, 089, 111 RESOLVED 2026-07-17A — `util::RelativePathWithin`; restored-tree-key containment.)*
 > 9. **Search / traversal**: 055 (parent-linked ignore layers).
 >    *(065 RESOLVED 2026-07-17A — split cheap `HasLastTerminalCommand` predicate from the transcript builder.)*
 >
@@ -1155,8 +1156,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
   but the code is already a malformed-HEAD defense. Constrain symbolic refs to relative
   `refs/...` names with no root name, no absolute path, no empty components, and no `.`/`..` segments
   before constructing the watched ref path.
-- **TD-2026-07-17A-111 — three-way merge tab builders accept binary/NUL worktree files that compare
-  tabs reject.** Compare-tab creation uses `ReadTextFileClassified` so unreadable, too-large, and
+- **[RESOLVED 2026-07-17A] TD-2026-07-17A-111 — three-way merge tab builders accept binary/NUL worktree files that compare
+  tabs reject.** Fixed: `WorkspaceShell::BuildMergeTabEntry` reads base/incoming/current via
+  `util::ReadTextFileClassified` and refuses when any is Binary/TooLarge/Unreadable (Ok
+  requires text with no embedded NUL), so a conflicted binary file no longer enters the
+  text merge model (and can't be saved as text over the binary through the result
+  viewport). Regression: `WorkspaceShell/MergeEditorRefusesBinaryInput`. Compare-tab creation uses `ReadTextFileClassified` so unreadable, too-large, and
   binary files do not masquerade as empty/editable text. `WorkspaceShell::BuildMergeTabEntry` and
   `BuildMergeTabFromBuffers` still call the generic `ReadTextFile` for base/incoming/current/output
   paths, which size-caps the read but does not classify embedded NUL bytes as binary. A conflicted

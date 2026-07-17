@@ -633,16 +633,22 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabEntry(
   const std::filesystem::path normalized_current = current_path.lexically_normal();
   const std::filesystem::path normalized_output = output_path.lexically_normal();
 
-  const std::optional<std::string> base_text = util::ReadTextFile(normalized_base);
-  const std::optional<std::string> incoming_text = util::ReadTextFile(normalized_incoming);
-  const std::optional<std::string> current_text = util::ReadTextFile(normalized_current);
-  if (!base_text.has_value() || !incoming_text.has_value() || !current_text.has_value()) {
+  // Classify the three worktree inputs so a binary/NUL, too-large, or unreadable file
+  // cannot masquerade as text and enter the merge model — compare tabs already refuse
+  // these via ReadTextFileClassified, and a text merge over binary bytes could later be
+  // saved through the result viewport and corrupt the file (TD-2026-07-17A-111). Missing
+  // is rejected here as before (the merge flow stages all three sides).
+  const util::TextFileReadResult base_read = util::ReadTextFileClassified(normalized_base);
+  const util::TextFileReadResult incoming_read = util::ReadTextFileClassified(normalized_incoming);
+  const util::TextFileReadResult current_read = util::ReadTextFileClassified(normalized_current);
+  if (!base_read.ok() || !incoming_read.ok() || !current_read.ok()) {
     return std::nullopt;
   }
 
   auto merge_tab = BuildMergeTabFromBuffers(
-      normalized_output.empty() ? normalized_current : normalized_output, *base_text, *incoming_text,
-      *current_text, RelativePathLabel(context_.current_project_state.root, normalized_incoming),
+      normalized_output.empty() ? normalized_current : normalized_output, base_read.content,
+      incoming_read.content, current_read.content,
+      RelativePathLabel(context_.current_project_state.root, normalized_incoming),
       RelativePathLabel(context_.current_project_state.root, normalized_output.empty() ? normalized_current : normalized_output),
       RelativePathLabel(context_.current_project_state.root, normalized_current), 0, true);
   if (!merge_tab.has_value() || !merge_tab->merge.has_value()) {
