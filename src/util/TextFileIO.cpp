@@ -1,5 +1,6 @@
 #include "util/TextFileIO.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <fstream>
@@ -24,6 +25,8 @@ bool IsRegularFileFollowingSymlinks(const std::filesystem::path& path) {
   }
   return std::filesystem::is_regular_file(status);
 }
+
+std::atomic<std::size_t> g_text_search_read_count{0};
 
 }  // namespace
 
@@ -128,6 +131,10 @@ TextFileReadResult ReadTextFileClassified(const std::filesystem::path& path) {
 
 bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out,
                            std::uintmax_t max_bytes) {
+  // Count every entry (before any early-out) so a test can observe exactly how many
+  // files replace-all touched. Relaxed is sufficient: the count is only read after
+  // the concurrent search work has quiesced.
+  g_text_search_read_count.fetch_add(1, std::memory_order_relaxed);
   // Reject non-regular files before opening so a special file under the project
   // tree cannot block a search worker on open/seek.
   if (!IsRegularFileFollowingSymlinks(path)) {
@@ -166,6 +173,14 @@ bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out,
     }
   }
   return true;
+}
+
+std::size_t TextSearchReadCount() {
+  return g_text_search_read_count.load(std::memory_order_relaxed);
+}
+
+void ResetTextSearchReadCount() {
+  g_text_search_read_count.store(0, std::memory_order_relaxed);
 }
 
 FileSignature StatFileSignature(const std::filesystem::path& path) {

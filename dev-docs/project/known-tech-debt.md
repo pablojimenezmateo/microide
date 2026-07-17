@@ -378,8 +378,23 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
   **TD-2026-07-17-047**.
 - **TD-2026-07-16-21 — replace-all in project performs bulk file I/O synchronously on
   the shell thread.** The pre-loop path-vector copy was removed
-  (**TD-2026-07-17-094**, fixed); the full move to a cancellable background
-  preflight/commit workflow remains deferred.
+  (**TD-2026-07-17-094**, fixed). **[PARTIAL 2026-07-17 — candidate-set reduction]**
+  Replace-all no longer re-reads and re-scans *every* file in the project to
+  rediscover the match set: when the just-completed search's cached results provably
+  cover all matches (finished, query unchanged, and neither truncated nor capped —
+  the worker flags `truncated` on any cap hit and the consumer stops storing at
+  `kMaxProjectSearchResults`), it iterates only the distinct matched-file paths from
+  `results` instead of the whole `SnapshotPathsWithVersion()` catalog. Every
+  non-matching file would replace zero and be skipped anyway, so on a large project
+  the read/scan loop drops from O(all files) to O(matched files) of shell-thread I/O.
+  Outside that window (stale query, still running, truncated/capped) it falls back to
+  the authoritative whole-project scan, so no match is ever silently skipped.
+  Instrumented by a thread-safe `util::TextSearchReadCount()` seam; covered by
+  `WorkspaceShell/ReplaceAllReadsOnlyMatchedFiles` (fast path reads only the matched
+  subset, via a control-refresh read-count subtraction) and
+  `WorkspaceShell/ReplaceAllFallsBackWhenResultsTruncated` (>cap matches still all
+  rewritten). The full move to a cancellable background preflight/commit workflow
+  (off-thread writes with generation gating) remains deferred.
 - **TD-2026-07-16-22 — plugin extension surfaces still expose raw `lua_State*` despite
   the LuaRuntime boundary spec.** Won't-do pending a dedicated plugin-API refactor;
   same Lua-safety family as **TD-2026-07-17-020/058**.

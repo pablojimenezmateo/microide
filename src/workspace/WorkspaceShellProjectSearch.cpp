@@ -376,19 +376,56 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   const std::size_t kMaxAggregateReplaceBytes = replace_all_aggregate_cap_bytes_;
   std::size_t aggregate_bytes = 0;
 
+  // Fast path: when the just-completed search's cached results provably cover every
+  // matching file, replace-all only needs to touch those files. Every other project
+  // file contains zero matches of the current query, so `ReplaceLiteralMatchesInText`
+  // would return 0 and skip it anyway -- re-reading and re-scanning the whole project
+  // (potentially thousands of files) to rediscover the same subset is pure wasted I/O
+  // on the shell thread. Eligibility requires the results to be authoritative and
+  // complete: the search finished (`!running`), still describes the current query
+  // (`searched_query == query`), and was neither truncated nor capped (the worker
+  // flags `truncated` on any cap hit, and the consumer stops storing at
+  // `kMaxProjectSearchResults`, so a capped set silently omits whole files). Outside
+  // that window the cached results are an incomplete subset, so fall back to the
+  // authoritative whole-project scan below.
+  const ProjectSearchState& search_state =
+      context_.current_project_state.overlay.workflow.project_search;
+  const bool results_cover_all_matches =
+      !search_state.running && !search_state.truncated &&
+      search_state.results.size() < kMaxProjectSearchResults &&
+      search_state.searched_query == search_state.query.text();
+
+  std::vector<std::filesystem::path> matched_relative_paths;
+  if (results_cover_all_matches) {
+    // results are sorted by (file_index, line, column), so all matches for one file
+    // are adjacent; collapse to one relative path per file (results hold one entry
+    // per match).
+    matched_relative_paths.reserve(search_state.results.size());
+    for (const auto& result : search_state.results) {
+      if (matched_relative_paths.empty() ||
+          matched_relative_paths.back() != result.relative_path) {
+        matched_relative_paths.push_back(result.relative_path);
+      }
+    }
+  }
+
   // TD-2026-07-17-094: use the shared-pointer snapshot rather than SnapshotPaths(),
   // which deep-copies the entire catalog path vector on the shell thread before the
   // per-file read/replace/write loop even starts. On large projects that copy alone
   // froze the UI; SnapshotPathsWithVersion() hands back a SharedPathList (shared with
-  // the index cache) that we iterate without copying.
-  const project::FilePathSnapshot path_snapshot =
-      context_.current_project_state.file_index.SnapshotPathsWithVersion(
-          context_.current_project_state.overlay.workflow.project_search.options.show_hidden
-              ? project::ProjectFileScanMode::IncludeHidden
-              : project::ProjectFileScanMode::ExcludeHidden);
+  // the index cache) that we iterate without copying. Only materialized on the
+  // whole-project fallback -- the fast path above never scans the full catalog.
+  project::FilePathSnapshot path_snapshot;
+  if (!results_cover_all_matches) {
+    path_snapshot = context_.current_project_state.file_index.SnapshotPathsWithVersion(
+        search_state.options.show_hidden ? project::ProjectFileScanMode::IncludeHidden
+                                         : project::ProjectFileScanMode::ExcludeHidden);
+  }
   static const std::vector<std::filesystem::path> kEmptyPaths;
   const std::vector<std::filesystem::path>& files =
-      path_snapshot.files ? *path_snapshot.files : kEmptyPaths;
+      results_cover_all_matches ? matched_relative_paths
+      : path_snapshot.files     ? *path_snapshot.files
+                                : kEmptyPaths;
   for (const auto& relative_path : files) {
     const std::filesystem::path absolute_path = context_.current_project_state.root / relative_path;
     const std::filesystem::path normalized_absolute = absolute_path.lexically_normal();

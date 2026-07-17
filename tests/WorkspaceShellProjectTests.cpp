@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "util/PerformanceCounters.h"
+#include "util/TextFileIO.h"
 #include "workspace/TabReorder.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 #include "platform/FileIndexWatcher.h"
@@ -3377,6 +3378,118 @@ void TestWorkspaceShellReplaceAllAbortsWithFeedbackPastAggregateCap() {
          "an aborted replace-all must not have written any file");
 }
 
+// TD-2026-07-16-21 / TD-2026-07-17-021: replace-all used to re-read and re-scan
+// EVERY file in the project to rediscover the match set the just-completed search
+// already knew. When the cached results provably cover all matches, it must touch
+// only the matched-file subset -- a large no-match decoy set proves the whole
+// project is not re-read.
+void TestWorkspaceShellReplaceAllReadsOnlyMatchedFiles() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "match_a.txt", "needle here\n");
+  WriteFile(root / "match_b.txt", "a needle line\n");
+  // A no-match decoy set the fast path must never read during replace-all.
+  constexpr int kDecoyCount = 30;
+  for (int i = 0; i < kDecoyCount; ++i) {
+    WriteFile(root / ("decoy_" + std::to_string(i) + ".txt"), "hay only\n");
+  }
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "replace-all matched-only fixture should open the project");
+  // Wait for the whole tree to be indexed so both the trailing refresh and the
+  // control refresh below pin an identical candidate set (the read-count subtraction
+  // relies on the two "needle" scans reading exactly the same files).
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("match_b.txt"), true,
+                              std::chrono::milliseconds(1500)),
+         "replace-all matched-only fixture should index the matched files");
+  Expect(WaitForFileIndexPath(shell,
+                              std::filesystem::path("decoy_" + std::to_string(kDecoyCount - 1) +
+                                                    ".txt"),
+                              true, std::chrono::milliseconds(1500)),
+         "replace-all matched-only fixture should index the whole decoy set");
+
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "replace-all matched-only fixture should complete the search");
+  Expect(!WorkspaceShellTestAccess::ProjectSearchTruncated(shell),
+         "a two-file search must not truncate");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 2,
+         "the search should find exactly the two matching files");
+
+  // Replace-all reads its candidate files synchronously, then fires a trailing
+  // "needle" refresh that reads every candidate on worker threads. To isolate the
+  // synchronous replace reads deterministically, drain that refresh, then measure a
+  // control search over the same tree: a search reads every candidate regardless of
+  // the query (the query only decides whether a read file MATCHES, not whether it is
+  // read), so the control equals the trailing refresh's whole-project read count and
+  // (replace-pass total - control) is the synchronous replace read count alone. The
+  // control uses a distinct no-match query so it bypasses the same-query result cache
+  // and actually re-runs.
+  util::ResetTextSearchReadCount();
+  WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "replace-all should settle its trailing refresh");
+  const std::size_t replace_pass_reads = util::TextSearchReadCount();
+
+  util::ResetTextSearchReadCount();
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "zqxjq_no_match", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "control refresh should settle");
+  const std::size_t control_refresh_reads = util::TextSearchReadCount();
+
+  Expect(replace_pass_reads >= control_refresh_reads,
+         "the replace pass includes at least the trailing refresh's whole-project reads");
+  Expect(replace_pass_reads - control_refresh_reads == 2,
+         "replace-all must read only the two matched files, not the whole project");
+
+  Expect(ReadFile(root / "match_a.txt").find("needle") == std::string::npos,
+         "the first matched file should have its needle replaced");
+  Expect(ReadFile(root / "match_b.txt").find("needle") == std::string::npos,
+         "the second matched file should have its needle replaced");
+  Expect(ReadFile(root / "decoy_0.txt") == "hay only\n",
+         "a no-match decoy file must be left untouched");
+}
+
+// The fast path is only safe when the cached results are COMPLETE. A truncated
+// (capped) search omits whole matching files, so replace-all must fall back to the
+// authoritative whole-project scan -- otherwise it would silently skip every match
+// beyond the display cap. Create more matching files than the cap and prove every
+// one is still rewritten.
+void TestWorkspaceShellReplaceAllFallsBackWhenResultsTruncated() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  // kMaxProjectSearchResults is 200; go comfortably past it so the search truncates.
+  constexpr int kMatchFiles = 210;
+  for (int i = 0; i < kMatchFiles; ++i) {
+    WriteFile(root / ("m_" + std::to_string(i) + ".txt"), "needle\n");
+  }
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "truncated replace-all fixture should open the project");
+  Expect(WaitForFileIndexPath(shell,
+                              std::filesystem::path("m_" + std::to_string(kMatchFiles - 1) + ".txt"),
+                              true, std::chrono::milliseconds(2000)),
+         "truncated replace-all fixture should index the whole match set");
+
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(3000)),
+         "truncated replace-all fixture should complete the search");
+  Expect(WorkspaceShellTestAccess::ProjectSearchTruncated(shell),
+         "more matches than the display cap must mark the results truncated");
+
+  WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
+
+  // Every file must be rewritten despite the truncation -- the fallback scanned the
+  // whole project rather than trusting the capped result subset.
+  for (int i = 0; i < kMatchFiles; ++i) {
+    Expect(ReadFile(root / ("m_" + std::to_string(i) + ".txt")).find("needle") ==
+               std::string::npos,
+           "truncated replace-all must still rewrite every matching file");
+  }
+}
+
 void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3737,6 +3850,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch);
   AddTest(tests, "WorkspaceShell/ReplaceAllAbortsWithFeedbackPastAggregateCap",
           TestWorkspaceShellReplaceAllAbortsWithFeedbackPastAggregateCap);
+  AddTest(tests, "WorkspaceShell/ReplaceAllReadsOnlyMatchedFiles",
+          TestWorkspaceShellReplaceAllReadsOnlyMatchedFiles);
+  AddTest(tests, "WorkspaceShell/ReplaceAllFallsBackWhenResultsTruncated",
+          TestWorkspaceShellReplaceAllFallsBackWhenResultsTruncated);
   AddTest(tests, "WorkspaceShell/UnknownCommandKeepsPromptOpenWithFeedback",
           TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback);
   AddTest(tests, "WorkspaceShell/CommandReportsMissingProjectInsteadOfSilentNoOp",
