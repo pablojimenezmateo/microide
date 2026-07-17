@@ -133,10 +133,18 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 - **077 — plugin contribution registration is O(N²)** via linear duplicate scans;
   per-kind id sets threaded through every `Register*` signature. Memory already
   capped; only a pathological plugin hits it.
-- **090 — plugin decoration aggregate cap applies after full concat + sort.**
-  Retained memory/render already bounded; a work-bounded k-way merge across the four
-  decoration kinds is the correct fix. Only reachable by 3+ plugins hammering one
-  file.
+- **[RESOLVED 2026-07-17] 090 — plugin decoration aggregate cap applies after full
+  concat + sort.** `PluginDecorationStore::RebuildPath`'s multi-owner branch replaced
+  the concatenate-all / sort-all / resize-down path with a bounded k-way merge
+  (`CappedSortedMerge`): every owner's per-kind vector is already sorted at publish, so
+  a min-heap merge emits the same total render order but reserves at most `kMaxMergedPerKind`
+  and stops there — both allocation and O(N log N) work are now bounded by the retained
+  cap, not the (arbitrarily larger) total contributed. The four per-kind orderings were
+  factored into named comparators (`TextStyleLess`/`GutterMarkLess`/`InlineTextLess`/
+  `CodeLensLess`) shared by the publish-time sort and the merge. Coverage: extended
+  `AggregatePerFileCapTruncatesMergedKinds` with a peak-allocation assertion
+  (`capacity() <= cap`) and added `AggregateCapBoundsEveryKind` (all four kinds
+  independently capped + peak-bounded + render order). `run-checks.sh tests` (3/3) green.
 
 **Platform-specific (no build/verify on this Linux host — dedicated Windows/macOS
 passes):**

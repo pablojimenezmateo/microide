@@ -160,6 +160,45 @@ void TestAggregatePerFileCapTruncatesMergedKinds() {
   // 200k lines (0 .. 199999) -- a deterministic head, never a wrapped/undefined tail.
   Expect(file->text_styles.front().line == 0 && file->text_styles.back().line == 199999,
          "the aggregate cap should keep the lowest-line decorations after sorting");
+  // TD-2026-07-17-090: the cap must bound WORK, not just the retained result. The
+  // bounded k-way merge reserves at most the cap and stops there, so the retained
+  // vector never over-allocates to the full 270k concatenation. (The old
+  // concatenate/sort/resize path left capacity at the full contributed total.)
+  Expect(file->text_styles.capacity() <= 200000,
+         "the merge must not allocate beyond the aggregate cap (peak work bounded)");
+}
+
+// A multi-kind, multi-owner merge: every kind must independently honor the cap and
+// its peak allocation, and the retained set must stay in each kind's render order.
+void TestAggregateCapBoundsEveryKind() {
+  PluginDecorationStore store;
+  const std::filesystem::path path = "/tmp/p/multi-kind.cpp";
+  constexpr std::uint32_t kPerOwner = 90000;
+  constexpr std::size_t kCap = 200000;
+  for (int owner = 0; owner < 3; ++owner) {
+    PluginDecorationData data;
+    const std::uint32_t base = static_cast<std::uint32_t>(owner) * kPerOwner;
+    for (std::uint32_t i = 0; i < kPerOwner; ++i) {
+      const std::uint32_t line = base + i;
+      data.text_styles.push_back(Style(line, 0, 1));
+      data.gutter_marks.push_back(Mark(line, GutterIconShape::Dot, 0));
+      data.inline_texts.push_back(InlineTextDecoration{.line = line, .text = "x"});
+      data.code_lenses.push_back(
+          CodeLensDecoration{.line = line, .text = "x", .command = "c"});
+    }
+    store.ReplaceForOwnerFile("owner" + std::to_string(owner), path, std::move(data));
+  }
+
+  const FileDecorations* file = store.FindByPath(path);
+  Expect(file != nullptr, "the multi-kind file should be present");
+  Expect(file->text_styles.size() == kCap && file->gutter_marks.size() == kCap &&
+             file->inline_texts.size() == kCap && file->code_lenses.size() == kCap,
+         "every decoration kind should be independently capped at the aggregate limit");
+  Expect(file->text_styles.capacity() <= kCap && file->gutter_marks.capacity() <= kCap &&
+             file->inline_texts.capacity() <= kCap && file->code_lenses.capacity() <= kCap,
+         "every kind's peak allocation should be bounded by the cap");
+  Expect(file->code_lenses.front().line == 0 && file->code_lenses.back().line == 199999,
+         "the retained set should be the lowest-line decorations in render order");
 }
 
 }  // namespace
@@ -175,6 +214,8 @@ void RegisterPluginDecorationStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginDecorationStore/ClearOwnerAndPathPrefix", TestClearOwnerAndPathPrefix);
   AddTest(tests, "PluginDecorationStore/AggregatePerFileCapTruncatesMergedKinds",
           TestAggregatePerFileCapTruncatesMergedKinds);
+  AddTest(tests, "PluginDecorationStore/AggregateCapBoundsEveryKind",
+          TestAggregateCapBoundsEveryKind);
 }
 
 }  // namespace microide::tests

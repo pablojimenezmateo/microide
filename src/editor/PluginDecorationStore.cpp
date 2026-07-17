@@ -13,30 +13,84 @@ namespace {
 using util::PathEqualsOrWithin;
 using util::ReplacePathPrefix;
 
+// Per-kind render orderings (used both to sort per-owner data at publish and to
+// k-way merge across owners). Each is a strict weak ordering keyed first by line.
+inline bool TextStyleLess(const TextStyleDecoration& a, const TextStyleDecoration& b) {
+  if (a.line != b.line) return a.line < b.line;
+  return a.start_column < b.start_column;
+}
+inline bool GutterMarkLess(const GutterMarkDecoration& a, const GutterMarkDecoration& b) {
+  if (a.line != b.line) return a.line < b.line;
+  return a.priority > b.priority;  // highest priority first within a line
+}
+inline bool InlineTextLess(const InlineTextDecoration& a, const InlineTextDecoration& b) {
+  if (a.line != b.line) return a.line < b.line;
+  return a.anchor_column < b.anchor_column;
+}
+inline bool CodeLensLess(const CodeLensDecoration& a, const CodeLensDecoration& b) {
+  return a.line < b.line;
+}
+
 // Sort the four decoration vectors of `decorations` into the per-line render
 // order the slice lookups rely on. Works on both PluginDecorationData (per-owner,
 // sorted once at publish) and FileDecorations (the merged multi-owner view).
 template <typename Decorations>
 void SortDecorations(Decorations& decorations) {
-  std::sort(decorations.text_styles.begin(), decorations.text_styles.end(),
-            [](const TextStyleDecoration& a, const TextStyleDecoration& b) {
-              if (a.line != b.line) return a.line < b.line;
-              return a.start_column < b.start_column;
-            });
-  std::sort(decorations.gutter_marks.begin(), decorations.gutter_marks.end(),
-            [](const GutterMarkDecoration& a, const GutterMarkDecoration& b) {
-              if (a.line != b.line) return a.line < b.line;
-              return a.priority > b.priority;  // highest priority first within a line
-            });
-  std::sort(decorations.inline_texts.begin(), decorations.inline_texts.end(),
-            [](const InlineTextDecoration& a, const InlineTextDecoration& b) {
-              if (a.line != b.line) return a.line < b.line;
-              return a.anchor_column < b.anchor_column;
-            });
-  std::sort(decorations.code_lenses.begin(), decorations.code_lenses.end(),
-            [](const CodeLensDecoration& a, const CodeLensDecoration& b) {
-              return a.line < b.line;
-            });
+  std::sort(decorations.text_styles.begin(), decorations.text_styles.end(), TextStyleLess);
+  std::sort(decorations.gutter_marks.begin(), decorations.gutter_marks.end(), GutterMarkLess);
+  std::sort(decorations.inline_texts.begin(), decorations.inline_texts.end(), InlineTextLess);
+  std::sort(decorations.code_lenses.begin(), decorations.code_lenses.end(), CodeLensLess);
+}
+
+// Bounded k-way merge of one already-sorted per-owner vector per contributor into
+// a single sorted, capped result. Because every input is pre-sorted by `less`
+// (SortDecorations at publish), the merge emits in the same total order a full
+// concatenate+std::sort would — but reserves at most `cap` and stops after `cap`
+// elements, so both allocation and work are bounded by the retained cap rather than
+// the (potentially far larger) total contributed. `project` selects the per-kind
+// vector from each contributor. (TD-2026-07-17-090.)
+template <typename T, typename Proj, typename Less>
+std::vector<T> CappedSortedMerge(const std::vector<const PluginDecorationData*>& contributors,
+                                 Proj project, std::size_t cap, Less less) {
+  std::vector<T> out;
+  if (cap == 0) {
+    return out;
+  }
+  std::size_t total = 0;
+  for (const PluginDecorationData* data : contributors) {
+    total += project(*data).size();
+  }
+  out.reserve(std::min(total, cap));
+
+  struct Head {
+    std::size_t owner;
+    std::size_t index;
+  };
+  // Min-heap on the projected element: `greater` orders the heap so the smallest
+  // element sits at the top (std::*_heap builds a max-heap under the comparator).
+  const auto greater = [&](const Head& a, const Head& b) {
+    return less(project(*contributors[b.owner])[b.index], project(*contributors[a.owner])[a.index]);
+  };
+  std::vector<Head> heap;
+  heap.reserve(contributors.size());
+  for (std::size_t i = 0; i < contributors.size(); ++i) {
+    if (!project(*contributors[i]).empty()) {
+      heap.push_back({i, 0});
+    }
+  }
+  std::make_heap(heap.begin(), heap.end(), greater);
+  while (!heap.empty() && out.size() < cap) {
+    std::pop_heap(heap.begin(), heap.end(), greater);
+    const Head top = heap.back();
+    heap.pop_back();
+    const std::vector<T>& src = project(*contributors[top.owner]);
+    out.push_back(src[top.index]);
+    if (top.index + 1 < src.size()) {
+      heap.push_back({top.owner, top.index + 1});
+      std::push_heap(heap.begin(), heap.end(), greater);
+    }
+  }
+  return out;
 }
 
 // Contiguous slice of a line-sorted vector whose elements have `.line == line`.
@@ -125,50 +179,41 @@ void PluginDecorationStore::RebuildPath(std::string_view path_key) {
         contributors.push_back(&it->second.data);
       }
     }
-    std::size_t ts = 0, gm = 0, it = 0, cl = 0;
-    for (const PluginDecorationData* data : contributors) {
-      ts += data->text_styles.size();
-      gm += data->gutter_marks.size();
-      it += data->inline_texts.size();
-      cl += data->code_lenses.size();
-    }
-    merged.text_styles.reserve(ts);
-    merged.gutter_marks.reserve(gm);
-    merged.inline_texts.reserve(it);
-    merged.code_lenses.reserve(cl);
-    for (const PluginDecorationData* data : contributors) {
-      merged.text_styles.insert(merged.text_styles.end(), data->text_styles.begin(),
-                                data->text_styles.end());
-      merged.gutter_marks.insert(merged.gutter_marks.end(), data->gutter_marks.begin(),
-                                 data->gutter_marks.end());
-      merged.inline_texts.insert(merged.inline_texts.end(), data->inline_texts.begin(),
-                                 data->inline_texts.end());
-      merged.code_lenses.insert(merged.code_lenses.end(), data->code_lenses.begin(),
-                                data->code_lenses.end());
-    }
     merged.path = sole->path;
-    SortDecorations(merged);
 
-    // Per-owner input is capped (kMaxEntriesPerKind) at publish, but the merge sums
-    // across every owner, so a pathological set of plugins could push a single
-    // file's per-kind totals arbitrarily high and bloat render/slice work. Apply an
-    // aggregate per-file cap. The vectors are already line-sorted above (gutter
-    // marks additionally by descending priority within a line), so truncating to
-    // the first N is deterministic and keeps the lowest-line decorations. resize()
-    // down never reallocates, so this stays allocation-conscious.
+    // Per-owner input is capped (kMaxEntriesPerKind) at publish, but a pathological
+    // set of plugins targeting one file could still push the summed per-kind totals
+    // arbitrarily high. Rather than concatenate every contribution, sort the whole
+    // thing, then truncate — which does O(all-contributed) allocation + O(N log N)
+    // work before the cap ever applies — do a bounded k-way merge of the already-
+    // sorted per-owner vectors that reserves and emits at most kMaxMergedPerKind.
+    // Result is byte-for-byte identical (lowest-line decorations kept in render
+    // order); work and peak allocation are now bounded by the retained cap.
     constexpr std::size_t kMaxMergedPerKind = 200000;
-    if (merged.text_styles.size() > kMaxMergedPerKind) {
-      merged.text_styles.resize(kMaxMergedPerKind);
-    }
-    if (merged.gutter_marks.size() > kMaxMergedPerKind) {
-      merged.gutter_marks.resize(kMaxMergedPerKind);
-    }
-    if (merged.inline_texts.size() > kMaxMergedPerKind) {
-      merged.inline_texts.resize(kMaxMergedPerKind);
-    }
-    if (merged.code_lenses.size() > kMaxMergedPerKind) {
-      merged.code_lenses.resize(kMaxMergedPerKind);
-    }
+    merged.text_styles = CappedSortedMerge<TextStyleDecoration>(
+        contributors,
+        [](const PluginDecorationData& d) -> const std::vector<TextStyleDecoration>& {
+          return d.text_styles;
+        },
+        kMaxMergedPerKind, TextStyleLess);
+    merged.gutter_marks = CappedSortedMerge<GutterMarkDecoration>(
+        contributors,
+        [](const PluginDecorationData& d) -> const std::vector<GutterMarkDecoration>& {
+          return d.gutter_marks;
+        },
+        kMaxMergedPerKind, GutterMarkLess);
+    merged.inline_texts = CappedSortedMerge<InlineTextDecoration>(
+        contributors,
+        [](const PluginDecorationData& d) -> const std::vector<InlineTextDecoration>& {
+          return d.inline_texts;
+        },
+        kMaxMergedPerKind, InlineTextLess);
+    merged.code_lenses = CappedSortedMerge<CodeLensDecoration>(
+        contributors,
+        [](const PluginDecorationData& d) -> const std::vector<CodeLensDecoration>& {
+          return d.code_lenses;
+        },
+        kMaxMergedPerKind, CodeLensLess);
   }
 
   const auto existing = merged_by_path_.find(path_key);
