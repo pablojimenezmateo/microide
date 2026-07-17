@@ -25,7 +25,9 @@ class ActionAvailability {
     std::function<TextInputSurface()> current_text_input_surface;
     std::function<bool()> active_single_line_text_has_selection;
     std::function<const TerminalTabState*()> active_terminal_tab;
-    std::function<std::optional<std::string>()> last_terminal_command_text;
+    // Cheap "is Copy Last Command available?" predicate. Enablement must NOT build the
+    // whole scrollback transcript (that is LastTerminalCommandText's job on invoke).
+    std::function<bool()> has_last_terminal_command;
     std::function<bool()> terminal_has_selection;
     std::function<bool()> active_tab_is_editor;
     std::function<std::size_t()> editor_group_count;

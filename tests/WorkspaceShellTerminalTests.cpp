@@ -616,6 +616,32 @@ void TestWorkspaceShellCopyLastTerminalCommandIncludesOutput() {
          "copy last terminal command should include the submitted command and rendered output");
 }
 
+// Copy Last Command enablement uses the cheap HasLastTerminalCommand() predicate, not the
+// full transcript build (TD-2026-07-17A-065). Disabled before any command, enabled after —
+// and the predicate must agree with the expensive builder returning a value.
+void TestWorkspaceShellCopyLastTerminalCommandEnablementUsesCheapPredicate() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(
+             shell, WorkspaceShell::ActionId::CopyLastTerminalCommand),
+         "Copy Last Command is disabled before any command has run");
+
+  TerminalSessionTestAccess::AppendOutput(session, "user@host:~/repo$ ");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "ll"),
+         "terminal text input should be handled");
+  TerminalSessionTestAccess::AppendOutput(session, "ll");
+  Expect(WorkspaceShellTestAccess::HandleTerminalKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should submit the terminal command");
+  TerminalSessionTestAccess::AppendOutput(session, "\nout\nuser@host:~/repo$ ");
+
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(
+             shell, WorkspaceShell::ActionId::CopyLastTerminalCommand),
+         "Copy Last Command is enabled once a command has run");
+}
+
 void TestWorkspaceShellCopyLastTerminalCommandFallsBackDuringAlternateScreen() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1232,6 +1258,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellHandleEventPassesEscapeToTerminal);
   AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandIncludesOutput",
           TestWorkspaceShellCopyLastTerminalCommandIncludesOutput);
+  AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandEnablementUsesCheapPredicate",
+          TestWorkspaceShellCopyLastTerminalCommandEnablementUsesCheapPredicate);
   AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandFallsBackDuringAlternateScreen",
           TestWorkspaceShellCopyLastTerminalCommandFallsBackDuringAlternateScreen);
   AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandIgnoresPrecedingFullWidthOutput",

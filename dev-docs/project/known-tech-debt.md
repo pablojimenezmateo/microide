@@ -4,7 +4,7 @@ Reviewed on 2026-07-17. A follow-on deferred-backlog full sweep is in progress
 (see "Fixed in the 2026-07-13 deferred-backlog full sweep" below); closed tranche
 entries have been pruned as they land. The **2026-07-17A addendum burndown** then
 dispositioned every item in the "Cross-subsystem bug/perf audit addendum" section:
-31 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
+32 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
 clusters or marked platform-only — see the burndown blockquote under that heading.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
@@ -82,7 +82,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > test this pass), **DEFERRED** (folded into a focused-pass cluster below), or **WON'T-DO
 > here** (platform-only, cannot build/verify on this Linux host).
 >
-> **RESOLVED this pass (25 fixed + 1 already-satisfied; each with a regression test):**
+> **RESOLVED this pass (32 fixed + 1 already-satisfied; each with a regression test):**
 > - **001** — passive menu measurement (`ComputePopupMenuRect`, `MenuItemLabel`, `IsMenuItemEnabled`) reads LSP readiness with `ensure_started=false`, so opening/hovering a menu never spawns a server; servers still start on explicit LSP actions via `GetServer`.
 > - **011** — plugin-command menu enablement uses `PluginHost::HasCommand` (O(log n), allocation-free) instead of a linear `std::find` + per-item `std::string` materialization.
 > - **012** — command-line completion takes the plugin command-name vector by reference (no whole-registry copy per open/keystroke).
@@ -93,6 +93,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > - **032** — command palette match list stores indices into `items`, not copied rows (no per-keystroke row-string copies).
 > - **034** — workspace-symbol requests carry a generation token; superseded responses are dropped (no stale results overwriting the newer query).
 > - **089** — restored tree expansion/collapse keys are validated for root containment (absolute/`..`-escape keys dropped).
+> - **065** — terminal Copy-Last-Command enablement uses a cheap `HasLastTerminalCommand()` predicate instead of building the whole scrollback transcript.
 > - **003** — `DetectIndent(LineSpan)` overload; file open reads the live buffer zero-copy (no `Snapshot()`).
 > - **006** — settings query filter routes through allocation-free `util::ContainsCaseInsensitiveAscii` (no per-row lowercase of query/label/detail on every keystroke).
 > - **009** — merge validation scans a zero-copy `LineSpan` once via `util::ScanConflictMarkers` (no `Snapshot()`, no whole-document serialize, no second snapshot for the marker line).
@@ -140,8 +141,8 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 8. **Path/containment correctness (small, but cross-group)**: 036
 >    (retarget background compare/merge tabs on rename/delete across all groups), 088, 111.
 >    *(010, 089 RESOLVED 2026-07-17A — `util::RelativePathWithin`; restored-tree-key containment.)*
-> 9. **Search / traversal**: 055 (parent-linked ignore layers), 065 (split cheap predicate from
->    transcript builder).
+> 9. **Search / traversal**: 055 (parent-linked ignore layers).
+>    *(065 RESOLVED 2026-07-17A — split cheap `HasLastTerminalCommand` predicate from the transcript builder.)*
 >
 > **WON'T-DO here — platform-only (Windows `RunSubprocess`; no Windows host to build/verify):**
 > 104, 133, 134. Keep as intake for a Windows subprocess-hardening pass.
@@ -745,8 +746,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   work despite each owner respecting its individual cap. Apply a merged per-file diagnostic budget
   before sorting/storing the render view, preserve severity/line ordering under truncation, and make
   the truncation flag represent aggregate drops as well as per-owner drops.
-- **TD-2026-07-17A-065 — terminal copy-command enablement materializes the whole
-  transcript.** `ActionAvailability::IsEnabled(ActionId::CopyLastTerminalCommand)` checks
+- **[RESOLVED 2026-07-17A] TD-2026-07-17A-065 — terminal copy-command enablement materializes the whole
+  transcript.** Fixed: split into a cheap `WorkspaceShell::HasLastTerminalCommand()`
+  predicate (the exact precondition under which `LastTerminalCommandText()` returns a
+  value — no scrollback snapshot/join) and the existing expensive transcript builder.
+  Action enablement (`ActionAvailability`) now calls the predicate via a new
+  `has_last_terminal_command` op; the copy action still builds the transcript on invoke.
+  Regression: `WorkspaceShell/CopyLastTerminalCommandEnablementUsesCheapPredicate`. `ActionAvailability::IsEnabled(ActionId::CopyLastTerminalCommand)` checks
   availability by calling `operations_.last_terminal_command_text().has_value()`. That callback is
   `WorkspaceShell::LastTerminalCommandText`, which snapshots every terminal row from
   `last_command_start_row` to the end, converts each row to `std::string`, trims prompt rows, and

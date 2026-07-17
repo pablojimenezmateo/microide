@@ -265,8 +265,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::TreeRefresh:
       return !context_.current_project_state.root.empty();
     case ActionId::CopyLastTerminalCommand:
-      return active_terminal_tab != nullptr &&
-             operations_.last_terminal_command_text().has_value();
+      return active_terminal_tab != nullptr && operations_.has_last_terminal_command();
     case ActionId::CopySelectionWithContext:
       return active_viewport != nullptr;
     case ActionId::CopySelection:

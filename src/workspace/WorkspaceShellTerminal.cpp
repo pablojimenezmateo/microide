@@ -445,12 +445,21 @@ void WorkspaceShell::SubmitTerminalPendingInput() {
   terminal_tab->pending_input.clear();
 }
 
-std::optional<std::string> WorkspaceShell::LastTerminalCommandText() const {
+bool WorkspaceShell::HasLastTerminalCommand() const {
+  // Cheap predicate for action enablement: the exact precondition under which
+  // LastTerminalCommandText() is guaranteed to return a value. Menu/context enablement
+  // must not snapshot + join the whole scrollback transcript just to answer "is Copy Last
+  // Command available?" (TD-2026-07-17A-065).
   const auto* terminal_tab = ActiveTerminalTab();
-  if (terminal_tab == nullptr || !terminal_tab->has_last_command ||
-      terminal_tab->last_command_invocation.empty()) {
+  return terminal_tab != nullptr && terminal_tab->has_last_command &&
+         !terminal_tab->last_command_invocation.empty();
+}
+
+std::optional<std::string> WorkspaceShell::LastTerminalCommandText() const {
+  if (!HasLastTerminalCommand()) {
     return std::nullopt;
   }
+  const auto* terminal_tab = ActiveTerminalTab();
 
   if (terminal_tab->session.using_alternate_screen()) {
     return terminal_tab->last_command_invocation;

@@ -125,7 +125,7 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
                 return shell->MakeTextInputCoordinator().HasSelectionAtActiveSingleLineSurface();
               },
           .active_terminal_tab = [shell]() { return shell->ActiveTerminalTab(); },
-          .last_terminal_command_text = [shell]() { return shell->LastTerminalCommandText(); },
+          .has_last_terminal_command = [shell]() { return shell->HasLastTerminalCommand(); },
           .terminal_has_selection = [shell]() { return shell->TerminalHasSelection(); },
           .active_tab_is_editor = [shell]() { return shell->ActiveTabIsEditor(); },
           .editor_group_count = [shell]() { return shell->EditorGroupCount(); },

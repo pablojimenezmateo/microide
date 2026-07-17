@@ -1463,6 +1463,7 @@
   void AppendTerminalPendingInput(std::string_view input);
   void EraseLastTerminalPendingInputCodepoint();
   void SubmitTerminalPendingInput();
+  bool HasLastTerminalCommand() const;
   std::optional<std::string> LastTerminalCommandText() const;
   TextInputSurface CurrentTextInputSurface() const;
   TerminalTabState* ActiveTerminalTab();
