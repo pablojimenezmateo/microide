@@ -22,12 +22,12 @@ detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 ### ⏭️ Standing backlog — deferred to dedicated passes (revisit; NOT dropped)
 
 The 2026-07-17 correctness/perf burndown implemented the concrete, self-contained wins
-(068, 31, 090, 083, 040) and marked the rest **WON'T-DO *in that burndown*** with per-item
-rationale in the subsections below. "WON'T-DO in this burndown" ≠ "not worth ever" — most
-are real work deferred because each is a multi-file *dedicated pass* the audit explicitly
-said not to bundle. This section is the durable reminder to actually schedule them. Pick
-one cluster at a time, give it its own reviewed change + test matrix, and move its items to
-RESOLVED as they land.
+(068, 31, 090, 083, 040) and left the rest **DEFERRED** with per-item rationale in the
+subsections below. These are real work — each is a multi-file *dedicated pass* the audit
+explicitly said not to bundle — deferred, NOT declined. This section is the durable reminder
+to actually schedule them. Pick one cluster at a time (async first — speed is the #1 project
+priority), give it its own reviewed change + test matrix, and move its items to RESOLVED as
+they land.
 
 **Worth doing — schedule these (each = one focused pass):**
 
@@ -75,7 +75,7 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Async / off-thread refactors** (move blocking work off the shell/UI thread):
 
-> **[WON'T-DO 2026-07-17 in this burndown]** Every item in this subsection (047, 055,
+> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** Every item in this subsection (047, 055,
 > 061, 081/082, 080, 086, 091, 016/017, 014, 075) is a multi-file async redesign —
 > moving synchronous work onto `ProjectBackgroundExecutor`/a worker lane with
 > generation/token gating and an SDL-wake completion, then reconciling the callers that
@@ -140,7 +140,7 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Render view-model / string-allocation cleanup:**
 
-> **[WON'T-DO 2026-07-17 in this burndown]** 084 (overlay view model holding live
+> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 084 (overlay view model holding live
 > `OverlayState*`/`ProjectWorkspaceState*` pointers + rebuilding labels in the render TU)
 > is the same render-view-model expansion class as the already-shipped 26/083 work but
 > for the overlay surface — a focused view-model build-out, not a hot bug (labels are
@@ -167,7 +167,7 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Editor / Unicode (schedule as one coherent pass):**
 
-> **[WON'T-DO 2026-07-17 in this burndown]** 021 (centralize grapheme segmentation +
+> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 021 (centralize grapheme segmentation +
 > visual width into one editor service, rerouting cursor movement / hit-testing / layout /
 > selection) and 023 (route inlay-hint columns through that same display-column map) are a
 > single large editor-primitive unification touching every column-math site — the audit
@@ -193,7 +193,7 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Debug / DAP:**
 
-> **[WON'T-DO 2026-07-17 in this burndown]** 025 (session-generation + request-id gating
+> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 025 (session-generation + request-id gating
 > across REPL/hover/watch) and 026 (bounded disconnect→wait→kill→drain teardown escalation)
 > are a focused DAP-lifecycle hardening pass over the adapter request/response and shutdown
 > paths, with their own generation/timeout test matrix. No live hang was observed here (the
@@ -207,7 +207,7 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Scanner / search incomplete-state plumbing (land together):**
 
-> **[WON'T-DO 2026-07-17 in this burndown]** 008/033 (thread a
+> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 008/033 (thread a
 > complete/truncated_by_budget/incomplete status from the file scanner through to the
 > search UI) is a status-plumbing change across the scanner → index → search-result
 > pipeline + UI surfacing, and 009 (degrade the fallback watcher's full-tree snapshot to
@@ -224,7 +224,7 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **LSP feature completeness:**
 
-> **[WON'T-DO 2026-07-17 in this burndown]** 011 (`WorkspaceEdit` create/delete/rename
+> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 011 (`WorkspaceEdit` create/delete/rename
 > resource operations + version-aware edits) is net-new LSP feature scope, not a bug; 012
 > (replace empty-success-shaped LSP timeouts with explicit result variants) is a
 > result-type refactor threaded through every LSP request site with a slow-server fixture.
@@ -238,7 +238,7 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Plugin caps / policy:**
 
-> **[WON'T-DO 2026-07-17 in this burndown]** 018 (per-field byte caps on every provider
+> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 018 (per-field byte caps on every provider
 > result surface — 078 already landed the aggregate string cap, so remaining surfaces are
 > incremental hardening) and 019 (re-derive status/contribution caps from *measured*
 > render/registry budgets — a measurement task) are policy/tuning, not defects. 077
@@ -293,7 +293,7 @@ build and verify the target platform. Descriptions retained as intake for that p
 
 **Tab identity:**
 
-> **[WON'T-DO 2026-07-17 in this burndown]** 024 (dirty-prompt state keyed by tab index)
+> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 024 (dirty-prompt state keyed by tab index)
 > needs a stable per-tab id added to `TabEntry` and threaded through the dirty-prompt
 > creation/storage/completion flow *and* session persistence, plus a close/reorder-during-
 > active-prompt test matrix — a multi-file tab-lifecycle change. The race also requires
@@ -306,7 +306,7 @@ build and verify the target platform. Descriptions retained as intake for that p
 
 **Architecture lint / test infrastructure:**
 
-> **[WON'T-DO 2026-07-17 in this burndown]** These are all *test-infrastructure* sweeps,
+> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** These are all *test-infrastructure* sweeps,
 > not product defects: 020/058 (mechanical no-longjmp-across-C++-locals audit) needs
 > clang-tidy/AST tooling the repo doesn't wire up; 032/037 add architecture lints with
 > negative fixtures; 036 is a backend-independent watcher contract suite; 015 a terminal
@@ -360,7 +360,7 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
 (all multi-file refactors flagged for their own reviewed pass). Several overlap the
 2026-07-17 set above and should be merged when tackled.
 
-> **[WON'T-DO 2026-07-17 in this burndown]** All remaining open items in this section are
+> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** All remaining open items in this section are
 > multi-file dedicated passes, and all overlap a 2026-07-17 subsection already dispositioned
 > above: 18→011 (LSP WorkspaceEdit async), 19→047 (compare/merge git blob async), 21→094-fixed
 > +cancellable-replace-all async, 22→020/058 (whole-plugin `lua_State*` boundary refactor),
