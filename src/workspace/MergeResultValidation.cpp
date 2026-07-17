@@ -29,9 +29,13 @@ bool ResolvedResultShouldExist(const MergeTabState& merge_tab) {
   }
   // Existence-choice conflict: an empty serialized result means the user accepted
   // the deletion, so the file should not exist. Non-empty content means keep it.
-  const std::string serialized =
-      util::SerializeLines(merge_tab.result_viewport.lines().Snapshot(), merge_tab.result_line_ending);
-  return !serialized.empty();
+  // Check emptiness against the live LineSpan without serializing/materializing:
+  // SerializeLines is empty iff there are no lines or a single empty line (any
+  // second line contributes a separator, and a non-empty first line contributes
+  // content).
+  const auto lines = merge_tab.result_viewport.lines();
+  const bool result_empty = lines.size() == 0 || (lines.size() == 1 && lines[0].empty());
+  return !result_empty;
 }
 
 std::size_t CountRemainingMergeConflicts(std::span<const MergeTrackedConflict> conflicts) {
@@ -68,9 +72,8 @@ MergeResultState ComputeMergeResultState(const MergeTabState& merge_tab,
   if (!metadata.text_hunks_available) {
     return MergeResultState::Invalid;
   }
-  const std::string serialized =
-      util::SerializeLines(merge_tab.result_viewport.lines().Snapshot(), merge_tab.result_line_ending);
-  if (util::ContainsCompleteConflictMarkers(serialized)) {
+  // Scan the live buffer directly for conflict markers (no Snapshot/serialize).
+  if (util::ScanConflictMarkers(merge_tab.result_viewport.lines()).complete) {
     return MergeResultState::Invalid;
   }
   return MergeResultState::Saved;
@@ -87,15 +90,16 @@ MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request)
     };
   }
 
-  const std::string serialized =
-      util::SerializeLines(merge_tab.result_viewport.lines().Snapshot(), merge_tab.result_line_ending);
-  if (util::ContainsCompleteConflictMarkers(serialized) && !request.allow_conflict_marker_override) {
-    const auto marker_line = util::FirstConflictMarkerLine(merge_tab.result_viewport.lines().Snapshot());
+  // One pass over the live buffer yields both "markers still present" and the first
+  // marker line — no double Snapshot(), no whole-document serialize (TD-2026-07-17A-009).
+  const util::ConflictMarkerScan conflicts =
+      util::ScanConflictMarkers(merge_tab.result_viewport.lines());
+  if (conflicts.complete && !request.allow_conflict_marker_override) {
     return MergeValidationResult{
         .ok = false,
         .issue = MergeValidationIssue::ConflictMarkers,
         .message = "Conflict markers remain in the merge result.",
-        .marker_line = marker_line,
+        .marker_line = conflicts.first_marker_line,
     };
   }
 

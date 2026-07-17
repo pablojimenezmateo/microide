@@ -20,7 +20,10 @@ class CommandLineCoordinator {
 
   struct Operations {
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
-    std::function<std::vector<std::string>()> plugin_command_names;
+    // Returns a reference to the host-owned, stable published command-name vector so
+    // command-line completion does not copy the whole plugin registry on every open/
+    // keystroke (TD-2026-07-17A-012). The reference is consumed synchronously.
+    std::function<const std::vector<std::string>&()> plugin_command_names;
     std::function<std::vector<std::string>()> sidebar_view_ids;
     std::function<PluginCommandResult(const std::string&, const std::vector<std::string>&)>
         execute_plugin_command;

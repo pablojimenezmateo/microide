@@ -248,12 +248,17 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
 
   const std::array<std::string_view, 2> local_defaults = {"main", "master"};
   for (std::string_view candidate : local_defaults) {
+    std::string full_ref = "refs/heads/" + std::string(candidate);
     const auto exists_result =
-        repo.Execute({"show-ref", "--verify", "--quiet",
-                      "refs/heads/" + std::string(candidate)});
+        repo.Execute({"show-ref", "--verify", "--quiet", full_ref});
     if (exists_result.success()) {
+      // Keep the FULL ref (refs/heads/main) as identity, not the bare short name.
+      // The identity flows into `git diff <ref>...HEAD`, where a tag or other object
+      // also named "main"/"master" would otherwise win over the verified local
+      // branch (TD-2026-07-17A-025). Match the other GitBranchReference builders,
+      // which keep the short form only as the label.
       return GitBranchReference{
-          .ref = std::string(candidate),
+          .ref = std::move(full_ref),
           .label = std::string(candidate),
       };
     }

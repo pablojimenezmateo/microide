@@ -270,6 +270,29 @@ void TestSavePreservesTrailingNewlinePresence() {
   }
 }
 
+// A clean save (no whitespace/final-newline transform enabled) serializes straight from
+// the live TextBuffer via SerializeLinesStreaming rather than materializing a
+// whole-document vector with Snapshot() first (TD-2026-07-17A-013). Pin that a
+// multi-line buffer round-trips byte-for-byte and that repeated clean saves stay
+// byte-stable, so the streaming path matches the old snapshot-then-join output exactly.
+void TestCleanSaveStreamsMultiLineBufferByteExact() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "multiline.txt";
+  const std::string content = "alpha\nbeta\n\ngamma\n    indented\nlast line no nl";
+  WriteFile(path, content);
+
+  TextViewport viewport;
+  Expect(viewport.OpenFile(path), "opening the multi-line file should succeed");
+  // Transforms default off — this is the clean/streaming path, not the normalize path.
+  Expect(viewport.Save(), "clean save should succeed");
+  Expect(ReadFile(path) == content,
+         "a clean multi-line save must reproduce the buffer byte-for-byte via streaming");
+
+  // A second clean save must be idempotent (streaming is deterministic; no drift).
+  Expect(viewport.Save(), "a second clean save should succeed");
+  Expect(ReadFile(path) == content, "repeated clean saves stay byte-stable");
+}
+
 // C12: binary / non-text ("Bytes"-encoded) content must survive an unedited open->save
 // round-trip byte-for-byte. The editor canonicalizes CR/CRLF to an LF buffer for text, but
 // for opaque bytes a 0x0D or 0x0A is payload, not a line ending -- rewriting it silently
@@ -530,6 +553,8 @@ void RegisterSaveDataIntegrityTests(std::vector<TestCase>& tests) {
           TestSaveLineEndingOverrideRewritesEndings);
   AddTest(tests, "SaveDataIntegrity/SavePreservesTrailingNewlinePresence",
           TestSavePreservesTrailingNewlinePresence);
+  AddTest(tests, "SaveDataIntegrity/CleanSaveStreamsMultiLineBufferByteExact",
+          TestCleanSaveStreamsMultiLineBufferByteExact);
   AddTest(tests, "SaveDataIntegrity/SaveBinaryContentRoundTripsExactly",
           TestSaveBinaryContentRoundTripsExactly);
   AddTest(tests, "SaveDataIntegrity/SaveDetectsExternalChangeConflict",

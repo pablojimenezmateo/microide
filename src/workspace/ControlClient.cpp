@@ -258,11 +258,14 @@ int RunControlSend(int argc, char** argv) {
     EmitError(build_error);
     return 2;
   }
-  // The id we will match the response against (honors --json's own id).
-  int response_id = options.request_id;
+  // The id we will match the response against (honors --json's own id), kept as a
+  // full 64-bit value so a large --json id is not narrowed to int (which could wrap
+  // and match the wrong reply) (TD-2026-07-17A-123). A non-integer id in the --json
+  // body falls back to the option id.
+  std::int64_t response_id = options.request_id;
   if (const std::optional<util::JsonValue> parsed = util::ParseJson(*request);
-      parsed && parsed->IsObject() && parsed->HasKey("id")) {
-    response_id = static_cast<int>((*parsed)["id"].AsInt(options.request_id));
+      parsed && parsed->IsObject() && parsed->HasKey("id") && (*parsed)["id"].IsInt()) {
+    response_id = (*parsed)["id"].AsInt(options.request_id);
   }
 
   std::string resolve_error;
@@ -325,7 +328,8 @@ int RunControlSend(int argc, char** argv) {
           wait_seen = true;
         }
       }
-    } else if (parsed->HasKey("ok") && static_cast<int>((*parsed)["id"].AsInt(-1)) == response_id) {
+    } else if (parsed->HasKey("ok") && (*parsed)["id"].IsInt() &&
+               (*parsed)["id"].AsInt(-1) == response_id) {
       response_seen = true;
       response_ok = (*parsed)["ok"].AsBool(false);
     }

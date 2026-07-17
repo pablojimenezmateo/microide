@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 
@@ -19,7 +20,28 @@
 // reject negatives do so on the clamped, sign-preserving result.
 namespace microide::workspace::protocol_numeric {
 
+// True only for a JSON number that represents an exact integer: a real integer
+// token, or a double with no fractional part (e.g. `5.0`). A fractional double
+// (`5.9`) is NOT an integer — accepting it and truncating would steer a protocol
+// field (position, id, enum, breakpoint line) to an adjacent-but-wrong value
+// (TD-2026-07-17A-117 / TD-2026-07-17A-122).
+inline bool IsIntegralJsonNumber(const util::JsonValue& value) {
+  if (value.IsInt()) {
+    return true;
+  }
+  if (value.IsDouble()) {
+    const double raw = value.AsDouble();
+    return std::isfinite(raw) && std::trunc(raw) == raw;
+  }
+  return false;
+}
+
 inline int JsonIntInRange(const util::JsonValue& value, int fallback = 0) {
+  // A fractional double is not a valid protocol integer: return the fallback rather
+  // than truncating 12.9 -> 12. Exact-integral doubles (12.0) still narrow normally.
+  if (value.IsDouble() && !IsIntegralJsonNumber(value)) {
+    return fallback;
+  }
   const std::int64_t raw = value.AsInt(fallback);
   if (raw < static_cast<std::int64_t>(std::numeric_limits<int>::min())) {
     return std::numeric_limits<int>::min();

@@ -156,6 +156,19 @@ return ide.plugin({
              host.CommandNames().end(),
          "plugin host should expose secondary user-scope plugin commands");
 
+  // HasCommand backs the O(log n), allocation-free plugin-command menu enablement
+  // path (TD-2026-07-17A-011). It must agree with the published command-name view:
+  // true for a registered command, false for an unknown one, and (unlike a linear
+  // scan of CommandNames) it takes a string_view without materializing a std::string.
+  Expect(host.HasCommand("global.echo"),
+         "HasCommand should find a registered plugin command");
+  Expect(host.HasCommand("secondary.open-readme"),
+         "HasCommand should find the secondary plugin command");
+  Expect(!host.HasCommand("global.echo-not-real"),
+         "HasCommand should reject an unregistered command name");
+  Expect(!host.HasCommand(""),
+         "HasCommand should reject an empty command name");
+
   const std::vector<std::string>& load_messages = host.Messages();
   Expect(load_messages.size() >= 4, "plugin load should record setup and project-open messages");
   Expect(load_messages[0] == "global.sample: setup:global",

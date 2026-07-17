@@ -171,8 +171,13 @@ bool TextViewport::Save() {
   // content ignores both and always joins with LF.
   const LineEnding effective_ending =
       opaque ? LineEnding::LF : save_line_ending_override_.value_or(document_->line_ending);
-  const std::string text = util::SerializeLines(
-      changed ? normalized : document_->lines.Snapshot(), effective_ending);
+  // The changed path already holds a materialized `normalized` vector. The common
+  // clean-save path streams straight from the live TextBuffer (zero-copy via LineView)
+  // instead of materializing a whole-document vector with Snapshot() before the join
+  // (TD-2026-07-17A-013).
+  const std::string text =
+      changed ? util::SerializeLines(normalized, effective_ending)
+              : util::SerializeLinesStreaming(LineSpan(document_->lines), effective_ending);
   if (!util::WriteTextFileAtomically(document_->path, text)) {
     return false;
   }

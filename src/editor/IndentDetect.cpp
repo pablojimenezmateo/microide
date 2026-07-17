@@ -6,14 +6,14 @@ namespace microide::editor {
 
 namespace {
 
-bool LineLooksBlank(const std::string& line) {
+bool LineLooksBlank(std::string_view line) {
   for (char c : line) {
     if (c != ' ' && c != '\t') return false;
   }
   return true;
 }
 
-std::size_t LeadingSpaces(const std::string& line) {
+std::size_t LeadingSpaces(std::string_view line) {
   std::size_t i = 0;
   while (i < line.size() && line[i] == ' ') ++i;
   return i;
@@ -23,7 +23,7 @@ std::size_t LeadingSpaces(const std::string& line) {
 // first non-whitespace byte. A mixed run like `"  \tcode"` (spaces then a tab) is
 // tab-indented in effect; classifying it by its first byte alone would miscount
 // the file as space-indented.
-bool LineLeadsWithTab(const std::string& line) {
+bool LineLeadsWithTab(std::string_view line) {
   for (char c : line) {
     if (c == '\t') return true;
     if (c != ' ') return false;
@@ -33,8 +33,7 @@ bool LineLeadsWithTab(const std::string& line) {
 
 }  // namespace
 
-IndentDetection DetectIndent(const std::vector<std::string>& lines,
-                             std::size_t max_inspect_lines) {
+IndentDetection DetectIndent(LineSpan lines, std::size_t max_inspect_lines) {
   IndentDetection out;
   std::size_t inspected = 0;
   std::size_t tab_count = 0;
@@ -42,7 +41,9 @@ IndentDetection DetectIndent(const std::vector<std::string>& lines,
   std::array<std::size_t, 9> width_hits{};  // index 1..8
 
   std::size_t prev_indent = 0;
-  for (const std::string& line : lines) {
+  const std::size_t line_count = lines.size();
+  for (std::size_t line_index = 0; line_index < line_count; ++line_index) {
+    const std::string_view line = lines[line_index];
     if (inspected >= max_inspect_lines) break;
     if (LineLooksBlank(line)) continue;
     ++inspected;

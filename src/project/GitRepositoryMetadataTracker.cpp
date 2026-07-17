@@ -21,6 +21,47 @@ std::optional<std::uint64_t> FileModificationTick(const std::filesystem::path& p
   return static_cast<std::uint64_t>(tick.time_since_epoch().count());
 }
 
+// Read the first line of a tiny git metadata file, refusing non-regular nodes
+// (FIFO/device/socket) before opening. Opening/reading a FIFO named `.git`,
+// `commondir`, or `HEAD` could block the change-sampling thread indefinitely
+// (TD-2026-07-17A-113). status() stats without opening, so a special file is
+// rejected before any potentially-blocking stream read.
+std::optional<std::string> ReadFirstLineOfRegularFile(const std::filesystem::path& path) {
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(std::filesystem::status(path, error))) {
+    return std::nullopt;
+  }
+  std::ifstream stream(path);
+  if (!stream) {
+    return std::nullopt;
+  }
+  std::string line;
+  std::getline(stream, line);
+  return line;
+}
+
+// A symbolic HEAD ref must be a relative name under the common gitdir (e.g.
+// `refs/heads/main`). Reject absolute paths, root names, and empty/`.`/`..`
+// components so `common_dir / ref` cannot escape the git directory
+// (TD-2026-07-17A-110). A dangling `ref: /tmp/x` would otherwise ignore common_dir
+// entirely on POSIX.
+bool IsSafeRelativeRefName(const std::string& ref) {
+  if (ref.empty() || ref.find('\\') != std::string::npos) {
+    return false;
+  }
+  const std::filesystem::path ref_path(ref);
+  if (ref_path.is_absolute() || ref_path.has_root_name() || ref_path.has_root_directory()) {
+    return false;
+  }
+  for (const std::filesystem::path& part : ref_path) {
+    const std::string component = part.string();
+    if (component.empty() || component == "." || component == "..") {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Resolve the real git directory for a project root. For an ordinary checkout
 // `<root>/.git` is a directory. For a linked worktree or a submodule it is a
 // regular *file* containing `gitdir: <path>` (that gitdir holds this
@@ -37,13 +78,11 @@ std::optional<std::filesystem::path> ResolveGitDir(const std::filesystem::path& 
     return git_marker;
   }
 
-  std::ifstream stream(git_marker);
-  if (!stream) {
+  const std::optional<std::string> line = ReadFirstLineOfRegularFile(git_marker);
+  if (!line.has_value()) {
     return std::nullopt;
   }
-  std::string line;
-  std::getline(stream, line);
-  const std::string trimmed = util::TrimAsciiWhitespace(line);
+  const std::string trimmed = util::TrimAsciiWhitespace(*line);
   constexpr std::string_view kPrefix = "gitdir:";
   if (std::string_view(trimmed).substr(0, kPrefix.size()) != kPrefix) {
     return std::nullopt;
@@ -64,13 +103,11 @@ std::optional<std::filesystem::path> ResolveGitDir(const std::filesystem::path& 
 // `<gitdir>/commondir`. Absent that file (an ordinary checkout), the gitdir IS the
 // common dir. Returns the resolved common directory. (TD-2026-07-16-63.)
 std::filesystem::path ResolveCommonDir(const std::filesystem::path& git_dir) {
-  std::ifstream stream(git_dir / "commondir");
-  if (!stream) {
+  const std::optional<std::string> line = ReadFirstLineOfRegularFile(git_dir / "commondir");
+  if (!line.has_value()) {
     return git_dir;
   }
-  std::string line;
-  std::getline(stream, line);
-  const std::string trimmed = util::TrimAsciiWhitespace(line);
+  const std::string trimmed = util::TrimAsciiWhitespace(*line);
   if (trimmed.empty()) {
     return git_dir;
   }
@@ -85,21 +122,19 @@ std::filesystem::path ResolveCommonDir(const std::filesystem::path& git_dir) {
 // common gitdir (e.g. `refs/heads/main`). Returns nullopt for a detached HEAD (raw oid),
 // where the HEAD file tick itself already tracks movement.
 std::optional<std::string> ReadSymbolicHeadRef(const std::filesystem::path& head_path) {
-  std::ifstream stream(head_path);
-  if (!stream) {
+  const std::optional<std::string> line = ReadFirstLineOfRegularFile(head_path);
+  if (!line.has_value()) {
     return std::nullopt;
   }
-  std::string line;
-  std::getline(stream, line);
-  const std::string trimmed = util::TrimAsciiWhitespace(line);
+  const std::string trimmed = util::TrimAsciiWhitespace(*line);
   constexpr std::string_view kPrefix = "ref:";
   if (std::string_view(trimmed).substr(0, kPrefix.size()) != kPrefix) {
     return std::nullopt;  // detached HEAD (raw object id)
   }
   std::string ref = util::TrimAsciiWhitespace(std::string_view(trimmed).substr(kPrefix.size()));
-  // Refuse a traversal-y ref (defense against a malformed HEAD): a real ref is a
-  // slash-separated name with no "..".
-  if (ref.empty() || ref.find("..") != std::string::npos) {
+  // Refuse anything that is not a safe relative ref name so `common_dir / ref`
+  // cannot escape the git directory (absolute/rooted refs, `..` segments).
+  if (!IsSafeRelativeRefName(ref)) {
     return std::nullopt;
   }
   return ref;

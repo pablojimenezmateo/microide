@@ -71,7 +71,7 @@ void CommandLineCoordinator::CompleteInput(editor::SingleLineEditor& input) {
     }
   }
   std::vector<std::string> command_names = WorkspaceCommandNames();
-  const auto plugin_command_names = operations_.plugin_command_names();
+  const std::vector<std::string>& plugin_command_names = operations_.plugin_command_names();
   command_names.insert(command_names.end(), plugin_command_names.begin(), plugin_command_names.end());
 
   std::vector<CommandCompletionCandidate> candidates;

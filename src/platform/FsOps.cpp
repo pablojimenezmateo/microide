@@ -24,6 +24,32 @@ std::filesystem::path NormalizeAbsolutePath(const std::filesystem::path& path) {
 
 bool CopyPath(const std::filesystem::path& source, const std::filesystem::path& destination) {
   std::error_code error;
+
+  // Classify the source by its own node type (symlink_status does not follow the
+  // link). A top-level symlink must be reproduced as a link, not dereferenced: the
+  // recursive-directory branch below already preserves *nested* symlinks via
+  // copy_symlinks, but a bare symlink source would otherwise fall through to
+  // copy_file and copy the target's bytes into a regular file (TD-2026-07-17A-131).
+  // Cross-device trash/rename fallbacks would then silently convert a file symlink
+  // into a regular file and delete the original link. copy_symlink reproduces the
+  // link node and works for dangling links too.
+  const std::filesystem::file_status source_link_status =
+      std::filesystem::symlink_status(source, error);
+  if (error) {
+    return false;
+  }
+  if (std::filesystem::is_symlink(source_link_status)) {
+    const std::filesystem::path link_parent = destination.parent_path();
+    if (!link_parent.empty()) {
+      std::filesystem::create_directories(link_parent, error);
+      if (error) {
+        return false;
+      }
+    }
+    std::filesystem::copy_symlink(source, destination, error);
+    return !error;
+  }
+
   if (std::filesystem::is_directory(source, error)) {
     if (error) {
       return false;
@@ -131,7 +157,15 @@ bool MovePathNoOverwrite(const std::filesystem::path& source,
   // check (a small residual TOCTOU window — the atomic path above covers the
   // common same-filesystem case) then copy + remove with rollback.
   std::error_code error;
-  if (std::filesystem::exists(destination, error)) {
+  // symlink_status classifies the destination *node* without following it, so a
+  // dangling destination symlink (whose target is absent) is still detected as an
+  // existing directory entry and refused, matching the atomic RENAME_NOREPLACE path
+  // above. exists() would follow the link and wrongly report "not present"
+  // (TD-2026-07-17A-132). Any non-not_found status (including a stat error) fails
+  // closed rather than overwriting.
+  const std::filesystem::file_status destination_status =
+      std::filesystem::symlink_status(destination, error);
+  if (destination_status.type() != std::filesystem::file_type::not_found) {
     return false;
   }
   if (!CopyPath(source, destination)) {

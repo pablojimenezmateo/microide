@@ -45,6 +45,16 @@ int ExclusiveCreateEmptyFile(const std::filesystem::path& path) {
 #endif
 }
 
+// Presence of the directory entry itself, without following a symlink. exists()
+// dereferences the link, so a dangling symlink (a real, renameable entry) reports
+// as absent (TD-2026-07-17A-125). A stat error also counts as "present" so
+// rename/no-overwrite decisions fail closed rather than clobbering.
+bool NodeExists(const std::filesystem::path& path) {
+  std::error_code error;
+  return std::filesystem::symlink_status(path, error).type() !=
+         std::filesystem::file_type::not_found;
+}
+
 FileOperationResult Failure(std::string message) {
   return FileOperationResult{
       .ok = false,
@@ -155,13 +165,13 @@ FileOperationResult FileOperationService::RenamePath(const std::filesystem::path
   }
 
   std::error_code error;
-  if (!std::filesystem::exists(normalized_source, error)) {
+  if (!NodeExists(normalized_source)) {
     return Failure("The source path does not exist");
   }
   // A pre-check is kept only for a clear early error message; the actual move is
   // no-overwrite and atomic (renameat2 RENAME_NOREPLACE) on the same filesystem,
   // so a destination racing into existence after this check still cannot clobber.
-  if (std::filesystem::exists(normalized_destination, error)) {
+  if (NodeExists(normalized_destination)) {
     return Failure("The destination path already exists");
   }
 
@@ -176,8 +186,7 @@ FileOperationResult FileOperationService::RenamePath(const std::filesystem::path
 
   if (!MovePathNoOverwrite(normalized_source, normalized_destination)) {
     // Distinguish a lost race (destination now exists) from a generic failure.
-    std::error_code dest_error;
-    if (std::filesystem::exists(normalized_destination, dest_error)) {
+    if (NodeExists(normalized_destination)) {
       return Failure("The destination path already exists");
     }
     return Failure("Failed to rename the path");

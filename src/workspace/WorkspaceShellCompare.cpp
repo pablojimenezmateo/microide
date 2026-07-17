@@ -217,16 +217,12 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
   // be sized from the largest displayed line number — i.e. the longer of the two
   // files — not the presentation-row count. In a collapsed diff of large files the
   // presentation collapses to a handful of rows while the visible line numbers stay
-  // in the thousands, and sizing by row count clipped them. Computed once here (not
-  // inside `measure`, which runs up to 4x) to keep the newline scan off the hot path.
-  const std::size_t left_line_count =
-      compare_tab.left_content.empty()
-          ? 0
-          : static_cast<std::size_t>(std::count(compare_tab.left_content.begin(),
-                                                 compare_tab.left_content.end(), '\n')) +
-                1;
-  const std::size_t gutter_max_line =
-      std::max<std::size_t>({left_line_count, compare_tab.right_viewport.lines().size(), 1});
+  // in the thousands, and sizing by row count clipped them. The left line count is
+  // cached in derived state (recomputed only on a fingerprint rebuild), so this hot
+  // path — render/hit-test/scroll/cursor — no longer rescans left_content for '\n'
+  // per call (TD-2026-07-17A-094).
+  const std::size_t gutter_max_line = std::max<std::size_t>(
+      {compare_tab.derived_left_line_count, compare_tab.right_viewport.lines().size(), 1});
   const auto measure = [&](bool reserve_vertical, bool reserve_horizontal) {
     CompareSurfaceLayout layout;
     layout.line_height = text_renderer_.LineHeight();
@@ -495,6 +491,12 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
     compare_tab.derived_right_content_revision = right_content_revision;
     compare_tab.derived_right_line_ending = right_line_ending;
     compare_tab.derived_left_content_hash = left_content_hash;
+    compare_tab.derived_left_line_count =
+        compare_tab.left_content.empty()
+            ? 0
+            : static_cast<std::size_t>(std::count(compare_tab.left_content.begin(),
+                                                  compare_tab.left_content.end(), '\n')) +
+                  1;
     compare_tab.derived_ignore_whitespace = ignore_whitespace;
     compare_tab.derived_fingerprint_valid = true;
   }

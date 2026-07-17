@@ -313,6 +313,26 @@ void TestLspProtocolClampsOutOfRangePositions() {
   Expect(under.character == -1, "an in-range negative character is preserved");
 }
 
+// TD-2026-07-17A-122: a fractional JSON number is not a valid protocol integer.
+// JsonIntInRange (exercised here via ParsePosition/severity) must reject it and use
+// the field's fallback rather than truncating 12.9 -> 12 and steering an edit or
+// diagnostic to an adjacent-but-wrong location. Exact-integral doubles still narrow.
+void TestLspProtocolRejectsFractionalIntegers() {
+  const LspClient::Position fractional =
+      codec::ParsePosition(Json(R"({"line":12.9,"character":4.5})"));
+  Expect(fractional.line == 0, "a fractional line is rejected to the 0 fallback, not truncated to 12");
+  Expect(fractional.character == 0, "a fractional character is rejected to the 0 fallback");
+
+  const LspClient::Position integral_double =
+      codec::ParsePosition(Json(R"({"line":12.0,"character":4.0})"));
+  Expect(integral_double.line == 12, "an exact-integral double (12.0) is still accepted");
+  Expect(integral_double.character == 4, "an exact-integral double (4.0) is still accepted");
+
+  const LspClient::Position integer =
+      codec::ParsePosition(Json(R"({"line":7,"character":3})"));
+  Expect(integer.line == 7 && integer.character == 3, "a plain integer is accepted");
+}
+
 void TestLspProtocolParsesWorkspaceEdit() {
   // `changes` object shape (uri -> TextEdit[]).
   const JsonValue changes = Json(R"({"changes":{
@@ -526,6 +546,8 @@ void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspProtocol/HoverContentsAreBounded", TestLspProtocolHoverContentsAreBounded);
   AddTest(tests, "LspProtocol/ClampsOutOfRangePositions",
           TestLspProtocolClampsOutOfRangePositions);
+  AddTest(tests, "LspProtocol/RejectsFractionalIntegers",
+          TestLspProtocolRejectsFractionalIntegers);
   AddTest(tests, "LspProtocol/ParseCapsBoundHostileArrays",
           TestLspProtocolParseCapsBoundHostileArrays);
   AddTest(tests, "LspProtocol/DecodesSemanticTokens", TestLspProtocolDecodesSemanticTokens);

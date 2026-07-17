@@ -123,10 +123,17 @@ void WorkspaceOutputChannels::EnsureChannel(std::string_view id, std::string_vie
   Channel channel;
   channel.label = std::string(label);
   auto [it, inserted] = channels_.try_emplace(std::string(id), std::move(channel));
-  if (!inserted && it->second.label != label) {
+  // Only invalidate channel *metadata* views when the channel set or a label actually
+  // changed. A chatty stream calls EnsureChannel on every AppendLine; marking dirty
+  // unconditionally forced the bottom-panel/tab computation to rebuild the whole
+  // channel-info vector per line even though only row content changed
+  // (TD-2026-07-17A-085). Entry-content revisions are tracked separately by AppendLine.
+  if (inserted) {
+    MarkDirty();
+  } else if (it->second.label != label) {
     it->second.label = std::string(label);
+    MarkDirty();
   }
-  MarkDirty();
 }
 
 void WorkspaceOutputChannels::AppendLine(std::string_view id, std::string_view label, std::string line) {

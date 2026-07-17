@@ -167,7 +167,6 @@ class SettingsOverlayService {
 
  private:
   bool RowMatchesQuery(std::string_view label, std::string_view detail) const;
-  bool RowInCategory(const SettingsOverlayRow& row, int category) const;
   void ClampSelection();
 
   bool visible_ = false;
@@ -193,6 +192,11 @@ class SettingsOverlayService {
   std::vector<SettingsOverlayRow> settings_rows_;
   std::vector<HelpAboutRow> help_rows_;
   std::vector<std::string> categories_;
+  // Per-category ordered indices into settings_rows_, rebuilt once per
+  // RebuildSettingsRows. RowAtVisibleIndex/RowCountInCategory read these instead of
+  // rescanning settings_rows_ from the start on every call, which turned the render
+  // loop that walks a category row-by-row into an O(rows^2) pass (TD-2026-07-17A-019).
+  std::vector<std::vector<int>> category_row_indices_;
   int selected_category_ = 0;
   int selected_row_ = 0;
   SettingsPane focused_pane_ = SettingsPane::Filter;

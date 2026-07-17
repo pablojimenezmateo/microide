@@ -658,7 +658,98 @@ void TestSettingsOverlaySectionHeaderAndSubsections() {
          "the Features sub-header pushes its first row down below the master row");
 }
 
+// Query filtering matches label and id/detail case-insensitively, with no per-row
+// allocation churn (TD-2026-07-17A-006): the row filter now routes through the
+// allocation-free util::ContainsCaseInsensitiveAscii instead of lowering the query,
+// label, and detail into fresh strings for every row on every keystroke.
+void TestSettingsOverlayQueryFilterIsCaseInsensitive() {
+  SettingsOverlayService service;
+  service.OpenSettings();
+
+  std::vector<SettingsOverlayRow> rows;
+  SettingsOverlayRow theme;
+  theme.id = "editor.colorScheme";
+  theme.label = "Color Theme";
+  rows.push_back(theme);
+  SettingsOverlayRow tabs;
+  tabs.id = "editor.tabSize";
+  tabs.label = "Tab Width";
+  rows.push_back(tabs);
+
+  // Uppercase query matches a mixed-case LABEL ("THEME" ⊂ "Color Theme").
+  service.SetQuery("THEME");
+  service.RebuildSettingsRows({}, {}, {}, rows);
+  Expect(service.VisibleRowCount() == 1, "uppercase query should match the mixed-case label");
+
+  // Query matches only the row ID/detail, case-insensitively ("tabsize" ⊂ "editor.tabSize").
+  service.SetQuery("tabsize");
+  service.RebuildSettingsRows({}, {}, {}, rows);
+  Expect(service.VisibleRowCount() == 1, "lowercase query should match the camelCase row id");
+
+  // Empty query keeps every row; a non-matching query hides them all.
+  service.SetQuery("");
+  service.RebuildSettingsRows({}, {}, {}, rows);
+  Expect(service.VisibleRowCount() == 2, "empty query should keep every row");
+  service.SetQuery("zzz-nomatch");
+  service.RebuildSettingsRows({}, {}, {}, rows);
+  Expect(service.VisibleRowCount() == 0, "a non-matching query should hide every row");
+}
+
+// RowAtVisibleIndex / RowCountInCategory resolve rows through per-category index vectors
+// built once per RebuildSettingsRows, so the render loop that walks a category row-by-row
+// is O(rows) not O(rows^2) (TD-2026-07-17A-019). The cache must be correct across multiple
+// categories AND rebuilt on every re-filter (no stale indices from a prior query).
+void TestSettingsOverlayCategoryIndexIsRebuiltPerFilter() {
+  SettingsOverlayService service;
+  service.OpenSettings();
+
+  std::vector<SettingsOverlayRow> rows;
+  SettingsOverlayRow a;
+  a.id = "editor.a";
+  a.label = "Editor Alpha";
+  a.group = "Editor";
+  rows.push_back(a);
+  SettingsOverlayRow b;
+  b.id = "editor.b";
+  b.label = "Editor Beta";
+  b.group = "Editor";
+  rows.push_back(b);
+  SettingsOverlayRow c;
+  c.id = "lsp.c";
+  c.label = "Lsp Gamma";
+  c.group = "LSP";
+  rows.push_back(c);
+
+  service.SetQuery("");
+  service.RebuildSettingsRows({}, {}, {}, rows);
+  // Categories are first-seen order over the filtered rows: Editor (2 rows), LSP (1 row).
+  Expect(service.RowCountInCategory(0) == 2, "the first category should hold both Editor rows");
+  Expect(service.RowCountInCategory(1) == 1, "the second category should hold the single LSP row");
+  const SettingsOverlayRow* r00 = service.RowAtVisibleIndex(0, 0);
+  const SettingsOverlayRow* r01 = service.RowAtVisibleIndex(0, 1);
+  const SettingsOverlayRow* r10 = service.RowAtVisibleIndex(1, 0);
+  Expect(r00 != nullptr && r00->id == "editor.a", "category 0 row 0 is editor.a");
+  Expect(r01 != nullptr && r01->id == "editor.b", "category 0 row 1 is editor.b");
+  Expect(r10 != nullptr && r10->id == "lsp.c", "category 1 row 0 is lsp.c");
+  Expect(service.RowAtVisibleIndex(0, 2) == nullptr, "out-of-range row index returns null");
+  Expect(service.RowAtVisibleIndex(2, 0) == nullptr, "out-of-range category returns null");
+
+  // Re-filter to only the LSP row: the index cache must rebuild, not report the stale
+  // two-category layout.
+  service.SetQuery("lsp.c");
+  service.RebuildSettingsRows({}, {}, {}, rows);
+  Expect(service.RowCountInCategory(0) == 1, "after filtering, category 0 holds only the LSP row");
+  Expect(service.RowCountInCategory(1) == 0, "the second category no longer exists after filtering");
+  const SettingsOverlayRow* filtered = service.RowAtVisibleIndex(0, 0);
+  Expect(filtered != nullptr && filtered->id == "lsp.c",
+         "the rebuilt index resolves the surviving LSP row");
+}
+
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RenderViewModelBuilder/SettingsOverlayCategoryIndexIsRebuiltPerFilter",
+          TestSettingsOverlayCategoryIndexIsRebuiltPerFilter);
+  AddTest(tests, "RenderViewModelBuilder/SettingsOverlayQueryFilterIsCaseInsensitive",
+          TestSettingsOverlayQueryFilterIsCaseInsensitive);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayCategoryRailScrolls",
           TestSettingsOverlayCategoryRailScrolls);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlaySectionHeaderAndSubsections",

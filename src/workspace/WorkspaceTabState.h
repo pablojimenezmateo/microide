@@ -129,6 +129,10 @@ struct CompareTabState {
   std::uint64_t derived_right_content_revision = 0;
   util::LineEnding derived_right_line_ending = util::LineEnding::LF;
   std::size_t derived_left_content_hash = 0;
+  // Cached line count of the read-only left content, so compare gutter sizing does not
+  // rescan left_content for '\n' on every render/hit-test/scroll/cursor layout request
+  // (TD-2026-07-17A-094). Recomputed only when the derived fingerprint rebuilds.
+  std::size_t derived_left_line_count = 0;
   bool derived_ignore_whitespace = false;
   bool derived_fingerprint_valid = false;
   bool model_stale = false;

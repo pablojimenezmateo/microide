@@ -266,7 +266,14 @@ bool GitRepository::Discard(const std::filesystem::path& relative_path,
   // directory target here (a recursive clean must go through an explicit,
   // separately-confirmed directory flow) and drop `-d` so only the file is removed.
   std::error_code dir_error;
-  if (std::filesystem::is_directory(root_ / relative_path, dir_error)) {
+  // Classify the row node itself (symlink_status does not follow the link). An
+  // untracked symlink whose target happens to be a directory is a single entry that
+  // `git clean -f -- <link>` removes on its own; is_directory() would follow it and
+  // refuse the discard as if it were a real subtree (TD-2026-07-17A-124). Only a
+  // genuine directory node must be refused here.
+  const std::filesystem::file_status node_status =
+      std::filesystem::symlink_status(root_ / relative_path, dir_error);
+  if (std::filesystem::is_directory(node_status)) {
     return false;
   }
   return ExecuteSucceeds(

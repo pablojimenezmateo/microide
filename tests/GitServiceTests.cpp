@@ -216,8 +216,11 @@ void TestGitOutgoingBranchFiles() {
 
   const auto base_ref = ResolveGitBaseReference(repo_path);
   Expect(base_ref.has_value(), "git base reference should resolve in a main-based repo");
-  Expect(base_ref->ref == "main",
-         "local repo without remotes should resolve main as the base branch");
+  // TD-2026-07-17A-025: the default-branch fallback keeps the FULL ref as identity
+  // (so a same-named tag cannot shadow it in `git diff`), and the short name as label.
+  Expect(base_ref->ref == "refs/heads/main",
+         "local repo without remotes should resolve the full refs/heads/main as the base ref");
+  Expect(base_ref->label == "main", "the base label stays the short branch name");
 
   const auto outgoing = CollectGitBranchOutgoingFiles(repo_path, base_ref->ref);
   Expect(outgoing.size() == 2, "feature branch should report two outgoing files");
@@ -257,9 +260,9 @@ void TestGitOutgoingBaseChoiceResolution() {
 
   const auto auto_base = ResolveGitOutgoingBase(
       repo_path, OutgoingBaseChoice{.kind = OutgoingBaseChoice::Kind::Auto, .custom_ref = {}}, true);
-  Expect(auto_base.repo_available && auto_base.base_ref == "main" &&
+  Expect(auto_base.repo_available && auto_base.base_ref == "refs/heads/main" &&
              auto_base.base_label == "main",
-         "auto outgoing base should resolve the repository base branch");
+         "auto outgoing base should resolve the full base ref with the short label");
   const auto auto_outgoing = CollectGitBranchOutgoingFiles(repo_path, auto_base.base_ref);
   Expect(auto_outgoing.size() == 2,
          "auto outgoing base should include both commits ahead of the base branch");

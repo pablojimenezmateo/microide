@@ -496,6 +496,66 @@ void TestTextViewportSameLineCountUndoOnLargeFilePreservesContent() {
          "redo via fast path must preserve line count");
 }
 
+// TD-2026-07-17A-092: a range replacement whose text equals the covered content is a
+// no-op. It must not bump content_revision, dirty the buffer, or create an undo entry.
+void TestTextViewportNoOpRangeReplaceDoesNotDirty() {
+  TextViewport viewport;
+  viewport.LoadContent("hello world\nsecond line\n", "/tmp/noop-range.txt");
+  const std::uint64_t revision_before = viewport.content_revision();
+  Expect(!viewport.dirty(), "freshly loaded buffer is clean");
+
+  // Replace "world" (line 0, cols 6..11) with the identical text.
+  const microide::editor::SelectionRange range{
+      .start = microide::editor::TextPosition{0, 6},
+      .end = microide::editor::TextPosition{0, 11}};
+  const bool changed = viewport.ReplaceRange(range, "world", /*record_undo=*/true);
+  Expect(!changed, "an identical range replacement reports no change");
+  Expect(viewport.content_revision() == revision_before,
+         "a no-op range replacement must not bump content_revision");
+  Expect(!viewport.dirty(), "a no-op range replacement must not dirty the buffer");
+  Expect(!viewport.Undo(), "a no-op range replacement must not create an undo entry");
+
+  // A genuine change still applies.
+  Expect(viewport.ReplaceRange(range, "WORLD", /*record_undo=*/true),
+         "a real range replacement still applies");
+  Expect(viewport.content_revision() != revision_before, "a real edit bumps content_revision");
+  Expect(viewport.dirty(), "a real edit dirties the buffer");
+}
+
+// TD-2026-07-17A-091/093: replacing a line span with byte-identical content (e.g. Sort
+// Lines on an already-sorted selection) is a no-op and must not dirty or create undo.
+void TestTextViewportNoOpLineReplaceDoesNotDirty() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/noop-line.txt");
+  const std::uint64_t revision_before = viewport.content_revision();
+
+  const bool changed = viewport.ReplaceLines(0, 2, {"alpha", "beta"}, /*record_undo=*/true);
+  Expect(!changed, "an identical line replacement reports no change");
+  Expect(viewport.content_revision() == revision_before,
+         "a no-op line replacement must not bump content_revision");
+  Expect(!viewport.dirty(), "a no-op line replacement must not dirty the buffer");
+  Expect(!viewport.Undo(), "a no-op line replacement must not create an undo entry");
+
+  // Sorting an already-sorted selection is the canonical no-op (routes to ReplaceLines).
+  Expect(viewport.ReplaceLines(0, 2, {"beta", "alpha"}, /*record_undo=*/true),
+         "a reordering line replacement still applies");
+  Expect(viewport.dirty(), "a real line replacement dirties the buffer");
+}
+
+// A line replacement that shrinks the span (real deletion of content) must still
+// apply — the no-op guard only skips edits that leave the buffer byte-identical.
+void TestTextViewportEmptyLineDeleteIsNotTreatedAsNoOp() {
+  TextViewport viewport;
+  viewport.LoadContent("a\nb\nc\n", "/tmp/line-shrink.txt");
+  const std::size_t lines_before = viewport.lines().size();
+
+  // Collapse lines [0,2) ("a","b") into a single line "ab": a real edit.
+  const bool changed = viewport.ReplaceLines(0, 2, {"ab"}, /*record_undo=*/true);
+  Expect(changed, "collapsing two lines into one is a real edit, not a no-op");
+  Expect(viewport.lines().size() == lines_before - 1, "the line count shrinks by one");
+  Expect(viewport.dirty(), "a real line-count change dirties the buffer");
+}
+
 void TestTextViewportSameLineCountEditInvalidatesSyntaxCache() {
   // After a fast-path edit the highlight token kinds for the affected line
   // must reflect the new content rather than a stale cache.
@@ -3407,6 +3467,12 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSyntaxConfigForcesHighlightCacheMiss);
   AddTest(tests, "TextViewport/Tiers/ContentEditInvalidatesBracketAndHighlightCaches",
           TestTextViewportContentEditInvalidatesBracketAndHighlightCaches);
+  AddTest(tests, "TextViewport/NoOpRangeReplaceDoesNotDirty",
+          TestTextViewportNoOpRangeReplaceDoesNotDirty);
+  AddTest(tests, "TextViewport/NoOpLineReplaceDoesNotDirty",
+          TestTextViewportNoOpLineReplaceDoesNotDirty);
+  AddTest(tests, "TextViewport/EmptyLineDeleteIsNotTreatedAsNoOp",
+          TestTextViewportEmptyLineDeleteIsNotTreatedAsNoOp);
 }
 
 }  // namespace microide::tests

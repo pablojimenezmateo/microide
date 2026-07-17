@@ -209,6 +209,20 @@ void IgnoreMatcher::LoadIgnoreFile(const std::filesystem::path& path) {
   // .gitignore is KB-scale, so a multi-MB one (or a single multi-GB line with no
   // newline, which getline would buffer whole) is hostile/degenerate. 4 MiB is
   // far above any legitimate ignore file.
+  // Reject a non-regular ignore file (FIFO/device/socket) before opening: a project
+  // can contain a special file named `.gitignore`, and opening/getline on it could
+  // block the tree/scanner/traversal/watcher thread building ignore matchers
+  // (TD-2026-07-17A-112). status() stats without opening; a stat failure also fails
+  // closed here. A symlink to a real file is still allowed (status follows it).
+  std::error_code status_error;
+  if (!std::filesystem::is_regular_file(std::filesystem::status(path, status_error))) {
+    return;
+  }
+
+  // Skip an absurdly large ignore file rather than allocate/parse it: a real
+  // .gitignore is KB-scale, so a multi-MB one (or a single multi-GB line with no
+  // newline, which getline would buffer whole) is hostile/degenerate. 4 MiB is
+  // far above any legitimate ignore file.
   constexpr std::uintmax_t kMaxIgnoreFileBytes = 4ull * 1024 * 1024;
   std::error_code size_error;
   const std::uintmax_t file_bytes = std::filesystem::file_size(path, size_error);

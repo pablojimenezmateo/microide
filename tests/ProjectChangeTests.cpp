@@ -4,9 +4,14 @@
 #include "platform/FileIndexWatcher.h"
 #include "TestSupport.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <thread>
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/stat.h>
+#endif
 
 namespace microide::tests {
 namespace {
@@ -214,9 +219,61 @@ void TestGitRepositoryMetadataTrackerDetectsPackedRefsChange() {
          "a packed-refs change must be treated as possible head movement");
 }
 
+// TD-2026-07-17A-110: a malformed symbolic HEAD with an absolute (unsafe) ref must not
+// be followed. Otherwise `common_dir / ref` resolves to a path outside the git dir and
+// that external file would drive change detection.
+void TestGitRepositoryMetadataTrackerRejectsUnsafeSymbolicRef() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / ".git");
+  WriteFile(root / ".git/index", "index\n");
+  // A file OUTSIDE the git dir that a malformed absolute ref points at.
+  const std::filesystem::path external = temp_dir.path() / "external_target";
+  WriteFile(external, "one\n");
+  WriteFile(root / ".git/HEAD", "ref: " + external.string() + "\n");
+
+  project::GitRepositoryMetadataTracker tracker;
+  tracker.SetProjectRoot(root);
+  Expect(tracker.SampleChanges().empty(), "baseline established from the (rejected) unsafe ref");
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  WriteFile(external, "two\n");  // mutate the external target the unsafe ref named
+  const std::vector<project::RepositoryChange> changes = tracker.SampleChanges();
+  Expect(std::none_of(changes.begin(), changes.end(),
+                      [](const project::RepositoryChange& change) {
+                        return change.kind == project::RepositoryChangeKind::HeadChanged;
+                      }),
+         "an absolute (unsafe) symbolic HEAD ref must not be followed for change detection");
+}
+
+#if defined(__unix__) || defined(__APPLE__)
+// TD-2026-07-17A-113: a special file (FIFO) named HEAD must be rejected before any
+// stream open, or opening it O_RDONLY would block the sampling thread forever. If the
+// guard regressed, this test would hang and be killed by the ctest timeout.
+void TestGitRepositoryMetadataTrackerSkipsFifoHeadWithoutBlocking() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / ".git");
+  WriteFile(root / ".git/index", "index\n");
+  const std::filesystem::path head = root / ".git/HEAD";
+  Expect(::mkfifo(head.c_str(), 0644) == 0, "FIFO HEAD fixture created");
+
+  project::GitRepositoryMetadataTracker tracker;
+  tracker.SetProjectRoot(root);  // must return promptly, not block on the FIFO
+  // Index still ticks normally; a FIFO HEAD is simply treated as unavailable.
+  Expect(tracker.SampleChanges().empty(), "sampling a FIFO HEAD returns without blocking");
+}
+#endif
+
 }  // namespace
 
 void RegisterProjectChangeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ProjectChange/GitMetadataRejectsUnsafeSymbolicRef",
+          TestGitRepositoryMetadataTrackerRejectsUnsafeSymbolicRef);
+#if defined(__unix__) || defined(__APPLE__)
+  AddTest(tests, "ProjectChange/GitMetadataSkipsFifoHead",
+          TestGitRepositoryMetadataTrackerSkipsFifoHeadWithoutBlocking);
+#endif
   AddTest(tests, "ProjectChange/GitMetadataSameBranchCommit",
           TestGitRepositoryMetadataTrackerDetectsSameBranchCommit);
   AddTest(tests, "ProjectChange/GitMetadataPackedRefsChange",

@@ -17,7 +17,10 @@ void ApplyDetectedIndentAfterPreferences(
     return;
   }
 
-  const editor::IndentDetection detected = editor::DetectIndent(viewport.lines().Snapshot());
+  // Pass the live TextBuffer as a LineSpan so detection reads lines zero-copy via
+  // LineView instead of materializing the whole document with Snapshot() on every
+  // file open (TD-2026-07-17A-003).
+  const editor::IndentDetection detected = editor::DetectIndent(viewport.lines());
   if (!detected.detected) {
     return;
   }

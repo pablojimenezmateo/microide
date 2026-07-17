@@ -471,6 +471,15 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
     after_lines.push_back(replacement_lines.back() + suffix);
   }
 
+  // Exact no-op: the replacement reproduces the covered text byte-for-byte, so the
+  // reconstructed lines equal the original slice. Reject it here so LSP WorkspaceEdits,
+  // plugin apply_edits, formatters, and editor commands that return an identical
+  // replacement do not bump content_revision, clear redo, invalidate layout/syntax/
+  // folding caches, or notify LSP as if the file changed (TD-2026-07-17A-092).
+  if (after_lines == before_lines) {
+    return std::nullopt;
+  }
+
   ViewState after_state = CaptureViewState();
   after_state.cursor_line = start.line + after_lines.size() - 1;
   after_state.cursor_column =
@@ -561,6 +570,19 @@ bool TextViewport::ApplyLineEdit(std::size_t start_line,
   }
 
   HistoryEntry entry = BuildLineHistoryEntry(start_line, end_line, replacement);
+  // Exact no-op: the lines this edit would install are byte-for-byte identical to the
+  // span it would replace, so applying it leaves the buffer unchanged. Reject it
+  // centrally so line-level operations (Sort Lines on an already-sorted selection —
+  // TD-2026-07-17A-091 — Toggle Comment/Move Line/Indent no-ops, direct ReplaceLines
+  // callers) do not dirty the buffer, create an undo entry, or invalidate syntax/
+  // folding/LSP state (TD-2026-07-17A-093). Callers already treat false as "no change".
+  // after_lines/before_lines are the vectors ApplyHistoryEntry swaps, so their equality
+  // is the precise "buffer unchanged" condition (empty replacements are normalized to
+  // one blank line in both, matching the existing keep-at-least-one-line behavior).
+  if (entry.after_lines == entry.before_lines) {
+    ClearLastAppliedEdit();
+    return false;
+  }
   ApplyHistoryEntry(entry, true);
   SetLastAppliedEditFromEntry(entry, true);
   if (record_undo) {

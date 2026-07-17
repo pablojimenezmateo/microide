@@ -200,6 +200,30 @@ void TestMovePathNoOverwriteRefusesExistingDestination() {
   Expect(ReadFile(fresh) == "A", "the content is at the new path");
 }
 
+// TD-2026-07-17A-125: a dangling symlink is a real directory entry the file manager
+// should be able to rename. The source pre-check used std::filesystem::exists, which
+// follows the link and reports a broken target as absent, so the rename was refused.
+#if defined(__unix__) || defined(__APPLE__)
+void TestRenamePathAcceptsDanglingSymlinkSource() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::filesystem::create_directories(root);
+  const auto link = root / "broken_link";
+  std::error_code ec;
+  std::filesystem::create_symlink(root / "no_such_target", link, ec);
+  Expect(!ec, "dangling symlink fixture created");
+  Expect(!std::filesystem::exists(link), "the symlink target is absent (dangling)");
+
+  const auto dest = root / "renamed_link";
+  const auto result = FileOperationService::RenamePath(link, dest);
+  Expect(result.ok, "a dangling symlink source must be renameable, not rejected as absent");
+  Expect(std::filesystem::is_symlink(std::filesystem::symlink_status(dest)),
+         "the renamed node is still a symlink at the new path");
+  Expect(!std::filesystem::is_symlink(std::filesystem::symlink_status(link)),
+         "the original link node is gone after the rename");
+}
+#endif
+
 void RegisterFileOperationServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Project/FileOperationService", TestFileOperationService);
   AddTest(tests, "Project/RenamePathRefusesToOverwriteExistingDestination",
@@ -208,6 +232,10 @@ void RegisterFileOperationServiceTests(std::vector<TestCase>& tests) {
           TestMovePathNoOverwriteRefusesExistingDestination);
   AddTest(tests, "Project/CreateDirectoryClassifiesExistingTargets",
           TestCreateDirectoryClassifiesExistingTargets);
+#if defined(__unix__) || defined(__APPLE__)
+  AddTest(tests, "Project/RenamePathAcceptsDanglingSymlinkSource",
+          TestRenamePathAcceptsDanglingSymlinkSource);
+#endif
 #if defined(__linux__)
   AddTest(tests, "Project/TrashReservationDoesNotOverwriteExistingMetadata",
           TestTrashReservationDoesNotOverwriteExistingMetadata);

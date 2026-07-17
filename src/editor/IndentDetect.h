@@ -1,8 +1,8 @@
 #pragma once
 
 #include <cstddef>
-#include <string>
-#include <vector>
+
+#include "editor/LineSpan.h"
 
 namespace microide::editor {
 
@@ -18,7 +18,10 @@ struct IndentDetection {
 // and returns a heuristic detection. Tabs majority -> hard tabs; spaces
 // majority -> soft tabs with the most-common positive indent step. Ties or
 // insufficient signal leave `detected = false` and the defaults intact.
-IndentDetection DetectIndent(const std::vector<std::string>& lines,
-                             std::size_t max_inspect_lines = 256);
+//
+// `lines` is a LineSpan, so a live `TextBuffer` can be passed directly (zero-copy
+// via LineView) without materializing the whole document with Snapshot()
+// (TD-2026-07-17A-003). A `std::vector<std::string>` still converts implicitly.
+IndentDetection DetectIndent(LineSpan lines, std::size_t max_inspect_lines = 256);
 
 }  // namespace microide::editor

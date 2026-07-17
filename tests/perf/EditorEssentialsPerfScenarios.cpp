@@ -402,7 +402,9 @@ void RunEditorIndentDetectOpen(ScenarioContext& context) {
   (void)context.Open("tests/perf/fixtures/small_project");
   context.SetSetting("editor.indent.detect_on_open", "true");
   context.Measure("open_tab.with_indent_detect", [&] { context.OpenTab(file); });
-  const editor::IndentDetection det = editor::DetectIndent(context.ActiveViewport().lines().Snapshot());
+  // Zero-copy LineSpan path (TD-2026-07-17A-003): detect over the live buffer without
+  // a Snapshot() materialization.
+  const editor::IndentDetection det = editor::DetectIndent(context.ActiveViewport().lines());
   if (det.non_blank_lines_inspected > 256) {
     throw std::runtime_error("editor_indent_detect_open: DetectIndent exceeded non-blank budget");
   }

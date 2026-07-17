@@ -1,11 +1,12 @@
 #include "workspace/ReviewSessionCoordinator.h"
 
+#include <optional>
 #include <string>
-#include <system_error>
 #include <utility>
 
 #include "project/GitCompareService.h"
 #include "project/GitStatusService.h"
+#include "util/PathMatch.h"
 #include "workspace/ReviewTabPlan.h"
 
 namespace microide::workspace {
@@ -13,14 +14,14 @@ namespace microide::workspace {
 namespace {
 
 // Project-relative, forward-slashed path for compact summaries; falls back to the
-// generic string when the file is outside the root.
+// generic string when the file is outside the root. Purely lexical: this is a display
+// label, and std::filesystem::relative touches the filesystem (canonicalization) so it
+// can fail/slow on deleted paths, symlinks, or inaccessible mounts (TD-2026-07-17A-010).
 std::string DisplayPath(const std::filesystem::path& path, const std::filesystem::path& root) {
-  std::error_code ec;
-  const std::filesystem::path relative = std::filesystem::relative(path, root, ec);
-  if (ec || relative.empty() || relative.native().rfind("..", 0) == 0) {
-    return path.generic_string();
+  if (std::optional<std::string> relative = util::RelativePathWithin(path, root)) {
+    return std::move(*relative);
   }
-  return relative.generic_string();
+  return path.generic_string();
 }
 
 std::string BuildReviewSummary(std::string_view verb,

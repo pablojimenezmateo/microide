@@ -1,7 +1,9 @@
 #include "TestSupport.h"
 
 #include "plugin/PluginHost.h"
+#include "editor/SingleLineEditor.h"
 #include "workspace/WorkspaceActionTypes.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspaceMenuRegistry.h"
@@ -59,6 +61,7 @@ using microide::workspace::PersistedProjectSessionState;
 using microide::workspace::PersistedUserConfigState;
 using microide::workspace::PersistedWorkspaceSessionState;
 using microide::workspace::QuoteCommandArg;
+using microide::util::RelativePathWithin;
 using microide::util::ReplacePathPrefix;
 using microide::workspace::RelativePathLabel;
 using microide::workspace::SidebarViewIds;
@@ -275,6 +278,33 @@ void TestWorkspaceOutputChannelsParseAndCacheContextSnippets() {
 
 // RemoveChannel drops a channel entirely (Phase 10 debug-console cleanup): the
 // channel disappears from Channels()/Entries() while siblings are untouched.
+// TD-2026-07-17A-085: appending to an existing channel must not invalidate the
+// channel-metadata view. The Channels() list is a cache rebuilt only when the dirty
+// flag is set; appending many lines keeps its cached identity, while a real
+// label/insert/remove change still refreshes it.
+void TestWorkspaceOutputChannelsAppendKeepsMetadataCacheStable() {
+  WorkspaceOutputChannels channels;
+  channels.AppendLine("build", "Build", "first");
+  // Prime the cache.
+  const std::vector<WorkspaceOutputChannels::ChannelInfo>& first = channels.Channels();
+  Expect(first.size() == 1 && first.front().label == "Build", "one channel with its label");
+  const void* cached_data = first.data();
+
+  // Many content appends with the SAME id/label must not rebuild the metadata cache.
+  for (int i = 0; i < 50; ++i) {
+    channels.AppendLine("build", "Build", "line");
+  }
+  const std::vector<WorkspaceOutputChannels::ChannelInfo>& after = channels.Channels();
+  Expect(after.data() == cached_data,
+         "same-id/label appends must not rebuild the channel-metadata cache");
+  Expect(after.size() == 1, "still exactly one channel");
+
+  // A genuine label change still refreshes the metadata view.
+  channels.AppendLine("build", "Build (2 errors)", "line");
+  Expect(channels.Channels().front().label == "Build (2 errors)",
+         "a changed label still refreshes the channel-metadata cache");
+}
+
 void TestWorkspaceOutputChannelsRemoveChannel() {
   WorkspaceOutputChannels channels;
   channels.AppendLine("debug.console.1", "Session 1", "hello");
@@ -375,6 +405,32 @@ void TestWorkspaceSharedCommandCompletionHelpers() {
          "formatted completion should quote spaced tokens and append a space");
   Expect(JoinCommandArguments({"cmd", "left", "right value"}, 1) == "left right value",
          "joined command arguments should preserve argument order");
+}
+
+// Command-line completion pulls plugin command names by reference from the host-owned
+// vector (TD-2026-07-17A-012): the operation returns `const std::vector<std::string>&`,
+// so opening/completing the command line no longer copies the whole plugin registry. A
+// plugin-only command prefix still completes, proving the reference-returned names take
+// part in the merged candidate set.
+void TestCommandLineCompletionIncludesPluginCommandsByReference() {
+  microide::workspace::ProjectWorkspaceState state;
+  std::vector<std::string> colorschemes;
+  // Stable, host-owned command vector; the operation hands back a reference to it (never
+  // a copy). A distinctive name avoids colliding with any built-in command verb.
+  const std::vector<std::string> plugin_commands = {"zzsampleplugincommand"};
+
+  microide::workspace::CommandLineCoordinator::Operations ops;
+  ops.plugin_command_names = [&plugin_commands]() -> const std::vector<std::string>& {
+    return plugin_commands;
+  };
+  ops.sidebar_view_ids = []() { return std::vector<std::string>{}; };
+  microide::workspace::CommandLineCoordinator coordinator(state, colorschemes, std::move(ops));
+
+  microide::editor::SingleLineEditor input;
+  input.SetText("zzsamplepl");
+  coordinator.CompleteInput(input);
+  Expect(input.text() == "zzsampleplugincommand ",
+         "a unique plugin-command prefix should complete to the full command name");
 }
 
 void TestWorkspaceCommandRegistry() {
@@ -557,6 +613,27 @@ void TestWorkspaceSharedPathMutationHelpers() {
   Expect(ReplacePathPrefix(root / "docs", root / "docs", root / "manual") ==
              std::filesystem::path("/tmp/project/manual"),
          "path prefix replacement should replace exact-prefix paths");
+
+  // RelativePathWithin backs display labels (e.g. review-session summaries): it is a
+  // purely lexical relative-string that must never call std::filesystem::relative
+  // (which stats/canonicalizes and can fail on deleted paths/symlinks/dead mounts).
+  Expect(RelativePathWithin(nested, root) == std::optional<std::string>("src/main.cpp"),
+         "relative-within should return the forward-slashed nested suffix");
+  Expect(RelativePathWithin(root / "src/./main.cpp", root) ==
+             std::optional<std::string>("src/main.cpp"),
+         "relative-within should normalize `.` segments without I/O");
+  Expect(RelativePathWithin(root, root) == std::nullopt,
+         "relative-within should reject the root itself (not a nested file)");
+  Expect(RelativePathWithin(root / "../sibling/file.cpp", root) == std::nullopt,
+         "relative-within should reject a candidate escaping the root via ..");
+  Expect(RelativePathWithin(std::filesystem::path{}, root) == std::nullopt,
+         "relative-within should reject an empty candidate");
+  Expect(RelativePathWithin(nested, std::filesystem::path{}) == std::nullopt,
+         "relative-within should reject an empty root");
+  // A path pointing at a non-existent file still yields a label (no filesystem probe).
+  Expect(RelativePathWithin(root / "deleted/gone.cpp", root) ==
+             std::optional<std::string>("deleted/gone.cpp"),
+         "relative-within should label a non-existent path without touching disk");
 }
 
 void TestWorkspaceSharedUtf8Editing() {
@@ -671,6 +748,8 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
           TestWorkspaceOutputChannelsParseAndCacheContextSnippets);
   AddTest(tests, "WorkspaceShared/OutputChannelsRemoveChannel",
           TestWorkspaceOutputChannelsRemoveChannel);
+  AddTest(tests, "WorkspaceShared/OutputChannelsAppendKeepsMetadataCacheStable",
+          TestWorkspaceOutputChannelsAppendKeepsMetadataCacheStable);
   AddTest(tests, "WorkspaceShared/OutputChannelsCapsEntries",
           TestWorkspaceOutputChannelsCapsEntries);
   AddTest(tests, "WorkspaceShared/OutputChannelsCapLargeLineBytes",
@@ -681,6 +760,8 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
           TestWorkspaceOutputReferenceRejectsZeroLineOrColumn);
   AddTest(tests, "WorkspaceShared/CommandCompletionHelpers",
           TestWorkspaceSharedCommandCompletionHelpers);
+  AddTest(tests, "WorkspaceShared/CommandLineCompletionIncludesPluginCommandsByReference",
+          TestCommandLineCompletionIncludesPluginCommandsByReference);
   AddTest(tests, "Workspace/CommandRegistry", TestWorkspaceCommandRegistry);
   AddTest(tests, "Workspace/MenuRegistry", TestWorkspaceMenuRegistry);
   AddTest(tests, "Workspace/MenuRegistryLspAvailabilityLabels",

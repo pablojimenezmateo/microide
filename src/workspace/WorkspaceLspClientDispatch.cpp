@@ -15,6 +15,7 @@
 
 #include "util/StartupTrace.h"
 #include "workspace/LspProtocol.h"
+#include "workspace/ProtocolNumeric.h"
 
 namespace microide::workspace {
 
@@ -27,6 +28,11 @@ namespace {
 // would wrap it and could collide with a live pending id, dispatching the wrong
 // callback.
 bool ResponseIdInRange(const util::JsonValue& id_value, int* out) {
+  // Our request ids are exact integers. A fractional double (5.9) or a non-numeric
+  // id must not alias a pending id via AsInt() truncation (TD-2026-07-17A-117).
+  if (!protocol_numeric::IsIntegralJsonNumber(id_value)) {
+    return false;
+  }
   const std::int64_t raw = id_value.AsInt();
   if (raw < static_cast<std::int64_t>(std::numeric_limits<int>::min()) ||
       raw > static_cast<std::int64_t>(std::numeric_limits<int>::max())) {

@@ -2,6 +2,7 @@
 
 #include "workspace/DapProtocol.h"
 #include "workspace/WorkspaceDapClient.h"
+#include "workspace/ProtocolNumeric.h"
 #include "workspace/StdioClientQueue.h"
 #include "util/DebugTrace.h"
 #include "util/MainThreadMailbox.h"
@@ -62,7 +63,9 @@ inline std::chrono::milliseconds RequestTimeoutFor(const std::string& command) {
 // `static_cast<int>(AsInt())` would wrap e.g. 4294967297 to 1 and could collide with a
 // live pending seq, dispatching the wrong callback or forging an initialize match.
 inline bool DapResponseSeqInRange(const util::JsonValue& seq_value, int* out) {
-  if (!seq_value.IsInt() && !seq_value.IsDouble()) {
+  // Our seqs are exact integers; reject a fractional double (5.9) instead of
+  // truncating it into a live pending seq (TD-2026-07-17A-117).
+  if (!protocol_numeric::IsIntegralJsonNumber(seq_value)) {
     return false;
   }
   const std::int64_t raw = seq_value.AsInt();

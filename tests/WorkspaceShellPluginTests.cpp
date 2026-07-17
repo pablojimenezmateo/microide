@@ -3641,6 +3641,15 @@ return ide.plugin({
       })
       ctx.log(ok and "applied" or "rejected")
     end)
+    ctx.commands.add("editops.cursor_missing_col", function()
+      -- A cursor request with no column must fail closed (not clamp to column 0).
+      local ok = ctx.editor.set_cursor({ line = 1 })
+      ctx.log(ok and "applied" or "rejected")
+    end)
+    ctx.commands.add("editops.selection_missing_col", function()
+      local ok = ctx.editor.set_selection({ start_line = 1, end_line = 1, end_col = 3 })
+      ctx.log(ok and "applied" or "rejected")
+    end)
   end
 })
 )");
@@ -3718,6 +3727,44 @@ void TestWorkspaceShellPluginApplyEditsSetsSelection() {
   Expect(selection->start.line == 0 && selection->start.column == 0 &&
              selection->end.line == 0 && selection->end.column == 2,
          "set_selection should map 1-based input to the 0-based range [0,0)-(0,2)");
+}
+
+// TD-2026-07-17A-087: plugin cursor/selection requests that omit a column must fail
+// closed rather than being accepted and silently clamped to column 0.
+void TestWorkspaceShellPluginCursorSelectionRequireColumns() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  RunEditPluginSetup(shell, plugins_root, project_root, source, "hello\nworld\n");
+
+  // Plugin log messages are prefixed with the plugin id ("editops: ..."), so match the
+  // suffix.
+  const auto last_message_is_rejected = [&]() {
+    const auto& messages = WorkspaceShellTestAccess::PluginMessages(shell);
+    if (messages.empty()) return false;
+    const std::string& last = messages.back();
+    return last.size() >= 8 && last.compare(last.size() - 8, 8, "rejected") == 0;
+  };
+
+  WorkspaceShellTestAccess::ClearPluginMessages(shell);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "editops.cursor_missing_col"),
+         "cursor command should dispatch");
+  Expect(last_message_is_rejected(),
+         "a set_cursor without a column must be rejected, not clamped to column 0");
+
+  WorkspaceShellTestAccess::ClearPluginMessages(shell);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "editops.selection_missing_col"),
+         "selection command should dispatch");
+  Expect(last_message_is_rejected(),
+         "a set_selection missing a column must be rejected");
 }
 
 void TestWorkspaceShellPluginApplyEditsRejectsUnopenedPath() {
@@ -4585,6 +4632,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginApplyEditsMultiEditAtomicUndo);
   AddTest(tests, "WorkspaceShell/PluginApplyEditsSetsSelection",
           TestWorkspaceShellPluginApplyEditsSetsSelection);
+  AddTest(tests, "WorkspaceShell/PluginCursorSelectionRequireColumns",
+          TestWorkspaceShellPluginCursorSelectionRequireColumns);
   AddTest(tests, "WorkspaceShell/PluginApplyEditsRejectsUnopenedPath",
           TestWorkspaceShellPluginApplyEditsRejectsUnopenedPath);
   AddTest(tests, "WorkspaceShell/PluginApplyEditsRejectsNonFiniteCoords",

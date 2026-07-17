@@ -76,9 +76,11 @@ CommandLineCoordinator WorkspaceShell::MakeCommandLineCoordinator() {
                 return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
               },
           .plugin_command_names =
-              [this]() {
-                const auto& names = plugin_runtime_.Host().CommandNames();
-                return std::vector<std::string>(names.begin(), names.end());
+              [this]() -> const std::vector<std::string>& {
+                // Hand back the stable host-owned vector directly (no copy); the
+                // command-line coordinator only iterates it to append prefix
+                // candidates (TD-2026-07-17A-012).
+                return plugin_runtime_.Host().CommandNames();
               },
           .sidebar_view_ids = [this]() { return OrderedSidebarViewIds(); },
           .execute_plugin_command =

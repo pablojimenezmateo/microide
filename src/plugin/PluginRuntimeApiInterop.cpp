@@ -312,7 +312,10 @@ int LuaEditorSetCursor(lua_State* state,
     ReadOptionalPathField(state, current_project_root, &request);
     request.cursor_line = ReadIndexField(state, 1, "line");
     request.cursor_column = ReadIndexField(state, 1, "col");
-    request.has_cursor = request.cursor_line >= 1;
+    // Require BOTH a 1-based line and column. A missing/zero column would otherwise
+    // be accepted and silently clamped to column 0 by the host, instead of failing
+    // closed like a malformed apply_edits entry (TD-2026-07-17A-087).
+    request.has_cursor = request.cursor_line >= 1 && request.cursor_column >= 1;
     if (request.has_cursor) {
       applied = callbacks.apply_workspace_edit(plugin->id, request);
     }
@@ -338,8 +341,12 @@ int LuaEditorSetSelection(lua_State* state,
     request.selection_start_column = ReadIndexField(state, 1, "start_col");
     request.selection_end_line = ReadIndexField(state, 1, "end_line");
     request.selection_end_column = ReadIndexField(state, 1, "end_col");
+    // Require all four 1-based endpoints. Missing/zero columns would otherwise be
+    // accepted and silently clamped to column 0 rather than failing closed like a
+    // malformed apply_edits entry (TD-2026-07-17A-087).
     request.has_selection =
-        request.selection_start_line >= 1 && request.selection_end_line >= 1;
+        request.selection_start_line >= 1 && request.selection_start_column >= 1 &&
+        request.selection_end_line >= 1 && request.selection_end_column >= 1;
     if (request.has_selection) {
       applied = callbacks.apply_workspace_edit(plugin->id, request);
     }

@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "workspace/WorkspaceLspClient.h"
+#include "workspace/WorkspaceLspManager.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
@@ -134,6 +135,48 @@ void TestLspMenuItemsHideWhenDisabled() {
   }
 }
 
+// Passive menu measurement must NOT start a language server. Menu geometry,
+// labels, and enablement compute LSP readiness only to display availability;
+// starting the server there means merely opening or hovering the editor context
+// menu spawns a server process (TD-2026-07-17A-001). Register a server WITHOUT
+// starting it (a long-lived `/bin/cat` command that would stay alive if spawned),
+// then assert reading the menu leaves it unstarted.
+void TestMenuReadDoesNotStartLspServer() {
+  TemporaryDirectory temp;
+  const std::filesystem::path project = temp.path() / "proj";
+  const std::filesystem::path file = project / "main.py";
+  WriteFile(file, "value = 1\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "fixture project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+
+  // A registered-but-unstarted server: `HasServer` is true (so the LSP menu
+  // entries surface and their labels/enablement query readiness), but nothing is
+  // running yet. `/bin/cat` blocks on stdin, so IF the menu read starts it the
+  // process stays alive and IsServerRunning flips true — a deterministic probe.
+  workspace::LspManager& manager = WorkspaceShellTestAccess::LspManagerForTesting(shell);
+  manager.RegisterServer({"python"}, {"/bin/cat"}, "file://" + project.string(),
+                         project.string(), /*eager_start=*/false);
+  Expect(manager.HasServer("python"), "server is registered");
+  Expect(!manager.IsServerRunning("python"), "server is not started yet");
+
+  // Reading the editor context menu labels is a passive UI read that touches the
+  // LSP-driven entries' labels (and thus ActiveLspReadinessSnapshot).
+  const auto labels =
+      WorkspaceShellTestAccess::MenuItemLabels(shell, WorkspaceShell::MenuId::EditorContext);
+  Expect(LabelsContain(labels, "Go to Definition"),
+         "a registered server surfaces the LSP menu entry");
+
+  // The fix: passive reads pass ensure_started=false, so GetServer/Start was never
+  // called and the server was never spawned.
+  Expect(!manager.IsServerRunning("python"),
+         "reading the menu must not start the language server");
+  Expect(manager.LastServerError("python").empty(),
+         "reading the menu must not even attempt to spawn the server");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellLspSettingsTests(std::vector<TestCase>& tests) {
@@ -141,6 +184,8 @@ void RegisterWorkspaceShellLspSettingsTests(std::vector<TestCase>& tests) {
           TestLspActionGatingRespectsToggles);
   AddTest(tests, "WorkspaceShellLspSettings/MenuItemsHideWhenDisabled",
           TestLspMenuItemsHideWhenDisabled);
+  AddTest(tests, "WorkspaceShellLspSettings/MenuReadDoesNotStartLspServer",
+          TestMenuReadDoesNotStartLspServer);
 }
 
 }  // namespace microide::tests

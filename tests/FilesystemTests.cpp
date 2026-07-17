@@ -298,6 +298,60 @@ void TestCopyPathPreservesSymlinksAndDoesNotThrow() {
 
   fs::remove_all(base, ec);
 }
+
+// TD-2026-07-17A-131: a top-level symlink to a file must be reproduced as a link,
+// not dereferenced into a regular file. Previously is_directory() followed the link
+// and CopyPath fell through to copy_file, copying the target bytes — so cross-device
+// trash/rename fallbacks turned a file symlink into a real file and dropped the link.
+void TestCopyPathPreservesTopLevelFileSymlink() {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path base = fs::temp_directory_path(ec) / "microide_copypath_toplevel_link";
+  fs::remove_all(base, ec);
+  fs::create_directories(base, ec);
+  const fs::path target = base / "target.txt";
+  { std::ofstream(target) << "external"; }
+  const fs::path link = base / "link.txt";
+  fs::create_symlink(target, link, ec);
+  Expect(!ec, "top-level file symlink fixture created");
+
+  const fs::path destination = base / "copied_link.txt";
+  const bool ok = microide::platform::CopyPath(link, destination);
+  Expect(ok, "CopyPath copies a top-level file symlink");
+  Expect(fs::is_symlink(fs::symlink_status(destination)),
+         "a top-level file symlink is copied as a symlink, not dereferenced into a real file");
+  Expect(fs::read_symlink(destination, ec) == target, "the copied symlink keeps its target");
+
+  fs::remove_all(base, ec);
+}
+
+// TD-2026-07-17A-132: the portable no-overwrite move fallback must refuse a dangling
+// destination symlink. exists() follows the link and reports the broken target as
+// absent, so the fallback would clobber the existing link node; symlink_status sees
+// the node itself. The cross-device fallback is forced by moving between two temp
+// subtrees (same device here, but the exists()/symlink_status distinction is what the
+// test pins — the atomic RENAME_NOREPLACE path already refuses a present node).
+void TestMovePathNoOverwriteRefusesDanglingDestinationSymlink() {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path base = fs::temp_directory_path(ec) / "microide_move_nooverwrite_link";
+  fs::remove_all(base, ec);
+  fs::create_directories(base, ec);
+  const fs::path source = base / "source.txt";
+  { std::ofstream(source) << "payload"; }
+  const fs::path destination = base / "dest_link";
+  fs::create_symlink(base / "no_such_target", destination, ec);
+  Expect(!ec, "dangling destination symlink fixture created");
+  Expect(!fs::exists(destination), "the destination symlink target is absent (dangling)");
+
+  const bool moved = microide::platform::MovePathNoOverwrite(source, destination);
+  Expect(!moved, "a dangling destination symlink must block a no-overwrite move");
+  Expect(fs::is_symlink(fs::symlink_status(destination)),
+         "the pre-existing destination link node is left intact");
+  Expect(fs::exists(source), "the source is left in place when the move is refused");
+
+  fs::remove_all(base, ec);
+}
 #endif
 
 // TD-2026-07-17-064: CopyPath must accept a bare-filename destination (empty
@@ -381,6 +435,10 @@ void RegisterFilesystemTests(std::vector<TestCase>& tests) {
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "Filesystem/CopyPathPreservesSymlinksAndDoesNotThrow",
           TestCopyPathPreservesSymlinksAndDoesNotThrow);
+  AddTest(tests, "Filesystem/CopyPathPreservesTopLevelFileSymlink",
+          TestCopyPathPreservesTopLevelFileSymlink);
+  AddTest(tests, "Filesystem/MovePathNoOverwriteRefusesDanglingDestinationSymlink",
+          TestMovePathNoOverwriteRefusesDanglingDestinationSymlink);
 #endif
   AddTest(tests, "Filesystem/ListDirectorySortsAndClassifiesEntries",
           TestFilesystemListDirectorySortsAndClassifiesEntries);

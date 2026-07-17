@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <string>
 
 namespace microide::util {
@@ -41,6 +42,30 @@ namespace microide::util {
   }
   const std::string relative_text = relative.generic_string();
   return relative_text != "." && relative_text != ".." && relative_text.rfind("../", 0) != 0;
+}
+
+// Forward-slashed, project-relative representation of `candidate` when it is nested
+// under `root`, else nullopt. Purely lexical — never touches the filesystem — so it
+// stays correct and cheap on deleted paths, symlinks, or inaccessible mounts, where
+// std::filesystem::relative would stat/canonicalize and can fail, slow, or depend on
+// the process cwd. Returns nullopt when either input is empty, when candidate is root
+// itself, or when candidate escapes root via `..`. Use this for display labels and
+// any prefix trimming that must not incur a syscall per path.
+[[nodiscard]] inline std::optional<std::string> RelativePathWithin(
+    const std::filesystem::path& candidate, const std::filesystem::path& root) {
+  if (candidate.empty() || root.empty()) {
+    return std::nullopt;
+  }
+  const std::filesystem::path relative =
+      candidate.lexically_normal().lexically_relative(root.lexically_normal());
+  if (relative.empty()) {
+    return std::nullopt;
+  }
+  std::string text = relative.generic_string();
+  if (text == "." || text == ".." || text.rfind("../", 0) == 0) {
+    return std::nullopt;
+  }
+  return text;
 }
 
 // Rewrite `path` so a leading `old_prefix` becomes `new_prefix`, returning the

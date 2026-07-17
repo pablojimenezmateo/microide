@@ -3,11 +3,15 @@
 
 #include "compare/MergeConflictKind.h"
 #include "compare/MergeModel.h"
+#include "util/GitConflictMarkers.h"
 #include "workspace/MergeResultValidation.h"
 #include "workspace/WorkspaceCompareInteractionCoordinator.h"
 
 #include <filesystem>
+#include <optional>
+#include <string>
 #include <system_error>
+#include <vector>
 
 namespace microide::tests {
 namespace {
@@ -251,6 +255,44 @@ void TestValidationBlocksConflictMarkers() {
   });
   Expect(!validation.ok && validation.issue == MergeValidationIssue::ConflictMarkers,
          "validation should block conflict markers");
+  // The reported marker line is the first `<<<<<<<` line (index 1 here). This exercises
+  // the single-pass LineSpan scan that replaced serialize + a second Snapshot()
+  // (TD-2026-07-17A-009): the "markers present" verdict and the marker line index now
+  // come from one walk of the live buffer.
+  Expect(validation.marker_line == std::optional<std::size_t>(1),
+         "validation should report the first conflict-marker line");
+}
+
+// The single-pass conflict scanner reproduces the old serialize+span behavior:
+// `complete` requires all three sigils anywhere; `first_marker_line` is the first
+// line ANCHORED at `<<<<<<<`. A partial marker set is not complete, and a `<<<<<<<`
+// that is not at line start is not the anchored first line.
+void TestScanConflictMarkersMatchesLegacyBehavior() {
+  using microide::util::ConflictMarkerScan;
+  using microide::util::ScanConflictMarkers;
+
+  const std::vector<std::string> full = {"before", "<<<<<<< HEAD", "side",
+                                         "=======", "other", ">>>>>>> x"};
+  const ConflictMarkerScan complete = ScanConflictMarkers(full);
+  Expect(complete.complete, "all three sigils present should read as complete");
+  Expect(complete.first_marker_line == std::optional<std::size_t>(1),
+         "first anchored `<<<<<<<` is line 1");
+
+  // Only two of the three sigils: not a complete conflict.
+  const std::vector<std::string> partial = {"<<<<<<< HEAD", "side", "======="};
+  Expect(!ScanConflictMarkers(partial).complete,
+         "a missing `>>>>>>>` sigil should not read as complete");
+
+  // A `<<<<<<<` mid-line contributes to `complete` (substring semantics) but is not
+  // the anchored first-marker line.
+  const std::vector<std::string> mid_line = {"x <<<<<<< y", "=======", ">>>>>>>"};
+  const ConflictMarkerScan mid = ScanConflictMarkers(mid_line);
+  Expect(mid.complete, "mid-line sigils still count toward completeness");
+  Expect(mid.first_marker_line == std::nullopt,
+         "a non-line-anchored `<<<<<<<` is not the first marker line");
+
+  Expect(!ScanConflictMarkers(std::vector<std::string>{}).complete,
+         "empty input has no conflict markers");
 }
 
 void TestRemainingConflictCount() {
@@ -407,6 +449,8 @@ void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MergeConflict/BothMergeOrders", TestBothMergeOrders);
   AddTest(tests, "MergeConflict/ValidationBlocksConflictMarkers",
           TestValidationBlocksConflictMarkers);
+  AddTest(tests, "MergeConflict/ScanConflictMarkersMatchesLegacyBehavior",
+          TestScanConflictMarkersMatchesLegacyBehavior);
   AddTest(tests, "MergeConflict/RemainingConflictCount", TestRemainingConflictCount);
   AddTest(tests, "MergeConflict/ConflictMarkerDetection", TestConflictMarkerDetection);
   AddTest(tests, "MergeConflict/CrlfHeavyClassification", TestCrlfHeavyClassification);

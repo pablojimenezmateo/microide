@@ -347,8 +347,8 @@ void TestWorkspaceShellGitOutgoingBaseChoiceRefreshesOutgoingEntries() {
   };
 
   auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
-  Expect(state.sidebar.git.base_ref == "main",
-         "auto outgoing base should resolve the repository base branch");
+  Expect(state.sidebar.git.base_ref == "refs/heads/main",
+         "auto outgoing base should resolve the full base ref (TD-2026-07-17A-025)");
   Expect(count_outgoing() == 2,
          "auto outgoing base should include both feature-branch commits");
 

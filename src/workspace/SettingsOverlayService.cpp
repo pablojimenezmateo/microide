@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <unordered_map>
 
 #include "util/Parse.h"
 #include "util/StringUtil.h"
@@ -287,6 +288,23 @@ void SettingsOverlayService::RebuildSettingsRows(
       categories_.emplace_back(label);
     }
   }
+
+  // Index every filtered row into its category once (O(rows)), so RowAtVisibleIndex /
+  // RowCountInCategory become O(1)/O(index) lookups instead of full rescans of
+  // settings_rows_ per call (TD-2026-07-17A-019).
+  std::unordered_map<std::string_view, int> category_index;
+  category_index.reserve(categories_.size());
+  for (int c = 0; c < static_cast<int>(categories_.size()); ++c) {
+    category_index.emplace(categories_[static_cast<std::size_t>(c)], c);
+  }
+  category_row_indices_.assign(categories_.size(), {});
+  for (int i = 0; i < static_cast<int>(settings_rows_.size()); ++i) {
+    const std::string_view label = SettingsCategoryLabel(settings_rows_[static_cast<std::size_t>(i)].group);
+    if (const auto it = category_index.find(label); it != category_index.end()) {
+      category_row_indices_[static_cast<std::size_t>(it->second)].push_back(i);
+    }
+  }
+
   ClampSelection();
 }
 
@@ -314,26 +332,20 @@ bool SettingsOverlayService::RowMatchesQuery(std::string_view label, std::string
   if (query_.empty()) {
     return true;
   }
-  const std::string needle = util::ToLowerAscii(query_);
-  return util::ToLowerAscii(label).find(needle) != std::string::npos ||
-         util::ToLowerAscii(detail).find(needle) != std::string::npos;
-}
-
-bool SettingsOverlayService::RowInCategory(const SettingsOverlayRow& row, int category) const {
-  if (category < 0 || category >= static_cast<int>(categories_.size())) {
-    return false;
-  }
-  return SettingsCategoryLabel(row.group) == categories_[static_cast<std::size_t>(category)];
+  // Allocation-free case-insensitive substring test on both operands. RebuildSettings/
+  // Help/plugin-rows call this once per row on every keystroke; the previous form
+  // lowered the query, the label, AND the detail into fresh strings per row — 3N
+  // allocations per rebuild (TD-2026-07-17A-006). ContainsCaseInsensitiveAscii folds
+  // each byte in place, so filtering is O(bytes) with zero churn.
+  return util::ContainsCaseInsensitiveAscii(label, query_) ||
+         util::ContainsCaseInsensitiveAscii(detail, query_);
 }
 
 std::size_t SettingsOverlayService::RowCountInCategory(int category) const {
-  std::size_t count = 0;
-  for (const SettingsOverlayRow& row : settings_rows_) {
-    if (RowInCategory(row, category)) {
-      ++count;
-    }
+  if (category < 0 || category >= static_cast<int>(category_row_indices_.size())) {
+    return 0;
   }
-  return count;
+  return category_row_indices_[static_cast<std::size_t>(category)].size();
 }
 
 std::size_t SettingsOverlayService::RowCountInSelectedCategory() const {
@@ -342,20 +354,15 @@ std::size_t SettingsOverlayService::RowCountInSelectedCategory() const {
 
 const SettingsOverlayRow* SettingsOverlayService::RowAtVisibleIndex(int category,
                                                                     int row_in_category) const {
-  if (row_in_category < 0) {
+  if (category < 0 || category >= static_cast<int>(category_row_indices_.size()) ||
+      row_in_category < 0) {
     return nullptr;
   }
-  int seen = 0;
-  for (const SettingsOverlayRow& row : settings_rows_) {
-    if (!RowInCategory(row, category)) {
-      continue;
-    }
-    if (seen == row_in_category) {
-      return &row;
-    }
-    ++seen;
+  const std::vector<int>& indices = category_row_indices_[static_cast<std::size_t>(category)];
+  if (row_in_category >= static_cast<int>(indices.size())) {
+    return nullptr;
   }
-  return nullptr;
+  return &settings_rows_[static_cast<std::size_t>(indices[static_cast<std::size_t>(row_in_category)])];
 }
 
 const SettingsOverlayRow* SettingsOverlayService::SelectedSettingRow() const {
