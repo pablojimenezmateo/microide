@@ -34,10 +34,17 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   Fingerprint-cached + budgeted, but a content change rebuilds on-thread; move large
   `BuildCompareModel`/`BuildMergeModel` to a generation-gated background job. Same
   family as **TD-2026-07-16-19** below.
-- **048 — format-on-save can block the UI up to 5s.** The synchronous formatter
-  subprocess is a deliberate, lint-allowlisted product choice; an async save
-  transaction (write → format in background → apply if same generation → cancellable)
-  is a UX redesign.
+- **[WON'T-DO 2026-07-17 — deliberate, bounded, opt-out-able] 048 — format-on-save can
+  block the UI up to 5s.** The synchronous formatter subprocess on *explicit* save is a
+  deliberate, lint-allowlisted product choice: autosave already suppresses the formatter
+  (`autosave_suppress_format_on_save_`) so background writes never block, the run is
+  bounded by a 5s timeout that only bites on a hung/pathological formatter, and
+  format-on-save is a user setting (`editor.format_on_save`). The audit's fix — a full
+  async save transaction (stage pending write → format off-thread → apply if same
+  generation → cancellable progress) — reshapes save *semantics* (dirty flag, session
+  save, external-change reconciliation, the synchronous `bool` return every save trigger
+  depends on) and is disproportionate risk for a bounded, opt-out, explicit-save-only
+  stall. Revisit only if a concrete slow-formatter complaint materializes.
 - **055 — project search spawns/joins per-run helper threads.** Worker count is
   capped and catastrophic-regex is bounded (034, fixed); reuse a bounded pool with
   finer-grained cancellation.
@@ -65,10 +72,13 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   through a nonblocking bounded writer queue with backpressure surfaced to the panel.
 - **075 — DAP debug trace serializes + flushes whole messages under a global mutex.**
   Trace-only (off by default); move to a bounded async writer with payload caps.
-- **003 — commit-workflow `&state` capture across executor + mailbox.** Non-actionable
-  today (owners outlive queued work) but fragile; value-owned op context / shared_ptr
-  generation. Same item as **TD-2026-07-16-*** commit-lifetime note; see 093 (fixed)
-  for the analogous git-executor ownership fix.
+- **[WON'T-DO 2026-07-17 — non-actionable, no live defect] 003 — commit-workflow
+  `&state` capture across executor + mailbox.** The audit itself classified this
+  non-actionable: the captured owners provably outlive the queued work today, so there
+  is no live defect — only a fragility if ownership later changes. A speculative
+  value-owned-op-context / shared_ptr-generation rework of a correct path carries more
+  regression risk than the latent fragility it guards. The analogous *real* git-executor
+  ownership issue was already fixed (093). Revisit if commit ownership is restructured.
 
 **Render view-model / string-allocation cleanup:**
 
@@ -146,8 +156,13 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   (`capacity() <= cap`) and added `AggregateCapBoundsEveryKind` (all four kinds
   independently capped + peak-bounded + render order). `run-checks.sh tests` (3/3) green.
 
-**Platform-specific (no build/verify on this Linux host — dedicated Windows/macOS
-passes):**
+**Platform-specific — [WON'T-DO 2026-07-17 in this environment]:** all six below are
+Windows/macOS-only code paths with no compiler, runtime, or test harness on this Linux
+host. Implementing them blind — no build, no sanitizer, no way to exercise the ConPTY /
+FSEvents / Win32 handle behavior they concern — would violate the "every meaningful fix
+adds/executes regression coverage" rule and risk shipping unverified platform code. They
+are marked WON'T-DO *here*; each must be picked up in a dedicated pass on a host that can
+build and verify the target platform. Descriptions retained as intake for that pass.
 
 - **004 — Windows async subprocess HANDLE lifetime race** (ref-counted handle
   ownership + loop stress test).
