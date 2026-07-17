@@ -4,7 +4,7 @@ Reviewed on 2026-07-17. A follow-on deferred-backlog full sweep is in progress
 (see "Fixed in the 2026-07-13 deferred-backlog full sweep" below); closed tranche
 entries have been pruned as they land. The **2026-07-17A addendum burndown** then
 dispositioned every item in the "Cross-subsystem bug/perf audit addendum" section:
-29 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
+30 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
 clusters or marked platform-only — see the burndown blockquote under that heading.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
@@ -91,6 +91,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > - **020** — plugin log/error history is capped (front-trim to `kMaxRecordedLogEntries`) so a flooding plugin can't grow host memory unbounded.
 > - **035** — no-selection context copy reads the live buffer via LineSpan (no whole-document `Snapshot()`); `JoinLineRange` takes a LineSpan.
 > - **032** — command palette match list stores indices into `items`, not copied rows (no per-keystroke row-string copies).
+> - **034** — workspace-symbol requests carry a generation token; superseded responses are dropped (no stale results overwriting the newer query).
 > - **003** — `DetectIndent(LineSpan)` overload; file open reads the live buffer zero-copy (no `Snapshot()`).
 > - **006** — settings query filter routes through allocation-free `util::ContainsCaseInsensitiveAscii` (no per-row lowercase of query/label/detail on every keystroke).
 > - **009** — merge validation scans a zero-copy `LineSpan` once via `util::ScanConflictMarkers` (no `Snapshot()`, no whole-document serialize, no second snapshot for the marker line).
@@ -134,7 +135,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 7. **Protocol / session lifecycle & decode-order** (LSP/DAP/persistence pass — commit-after-
 >    success open/close, per-request generations, decode-before-cap, event-drain budget, regex
 >    match-data cache keyed by revision, symlinked-state-file writes, terminal-tab reap grace):
->    030, 034, 050, 052, 059, 082, 083, 086, 100, 115, 127, 130. *(001 RESOLVED 2026-07-17A.)*
+>    030, 050, 052, 059, 082, 083, 086, 100, 115, 127, 130. *(001, 034 RESOLVED 2026-07-17A.)*
 > 8. **Path/containment correctness (small, but cross-group)**: 036
 >    (retarget background compare/merge tabs on rename/delete across all groups), 088, 089, 111.
 >    *(010 RESOLVED 2026-07-17A — `util::RelativePathWithin`.)*
@@ -450,7 +451,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   for literal `NotifyLspBufferOpen`/`EnsureLspDocumentOpen` calls in `Activate`, so the
   injected callback bypasses the hard invariant. Queue this hydration after the tab switch
   is visible, and tighten the lint so `notify_lsp_buffer_open` callbacks are caught too.
-- **TD-2026-07-17A-034 — workspace-symbol results are not latest-query guarded.**
+- **[RESOLVED 2026-07-17A] TD-2026-07-17A-034 — workspace-symbol results are not latest-query guarded.**
+  Fixed: added `workspace_symbol_request_generation_`; `ShowWorkspaceSymbols` captures the
+  generation at dispatch and the async callback drops when superseded (same pattern as
+  completions/code actions), so a slower older-query response can't clear the channel and
+  render over the newer query. Regression:
+  `Phase5.WorkspaceSymbolDropsSupersededResponse` (delivers an older response after a newer
+  one and asserts it is dropped).
   `AssistService::ShowWorkspaceSymbols` clears `lsp.workspaceSymbols`, posts a loading row
   for the query, and starts `RequestWorkspaceSymbolAsync`; the callback unconditionally
   clears the same output channel and appends the returned symbols. There is no generation

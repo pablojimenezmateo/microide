@@ -1063,12 +1063,20 @@ bool AssistService::ShowWorkspaceSymbols(const std::string& query, std::string* 
   }
   // Ensure the channel exists and show progress synchronously so the host can
   // surface it immediately; the response rebuilds it.
+  const std::uint64_t request_generation = ++workspace_symbol_request_generation_;
   output_channels_->Clear("lsp.workspaceSymbols");
   output_channels_->AppendLine("lsp.workspaceSymbols", "Workspace Symbols",
                                "Searching for \"" + query + "\"…");
   client->RequestWorkspaceSymbolAsync(
-      query, [this, query](std::optional<std::vector<LspClient::WorkspaceSymbol>> symbols) {
+      query,
+      [this, query, request_generation](
+          std::optional<std::vector<LspClient::WorkspaceSymbol>> symbols) {
         operations_.finish_tracked_lsp_request();
+        // Drop a superseded query's response so it can't clear the channel and render
+        // stale results over the newer query (TD-2026-07-17A-034).
+        if (request_generation != workspace_symbol_request_generation_) {
+          return;
+        }
         output_channels_->Clear("lsp.workspaceSymbols");
         if (!symbols.has_value() || symbols->empty()) {
           output_channels_->AppendLine("lsp.workspaceSymbols", "Workspace Symbols",

@@ -4,9 +4,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include "workspace/WorkspaceLspClient.h"
+#include "workspace/WorkspaceLspManager.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <filesystem>
+#include <memory>
+#include <optional>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -527,6 +531,60 @@ return ide.plugin({
          "workspace-symbol should list the returned symbol with its container");
 }
 
+// workspace/symbol is project-wide, so there is no active-file cursor to anchor a
+// staleness check on. A slower response for an OLDER query must not clear the channel and
+// render over the newer query's results: the request now carries a generation token and
+// the callback drops when superseded (TD-2026-07-17A-034). Uses a stub client whose
+// workspace-symbol handler CAPTURES the callbacks so the test can deliver them out of
+// order.
+void TestPhase5WorkspaceSymbolDropsSupersededResponse() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project = temp_dir.path() / "project";
+  const std::filesystem::path file = project / "main.py";
+  WriteFile(file, "value = 1\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "fixture project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  stub->EnableTestStubMode();
+  std::vector<workspace::LspClient::WorkspaceSymbolCallback> captured;
+  stub->SetTestWorkspaceSymbolHandler(
+      [&captured](std::string /*query*/, workspace::LspClient::WorkspaceSymbolCallback cb) {
+        captured.push_back(std::move(cb));
+      });
+  WorkspaceShellTestAccess::LspManagerForTesting(shell).InstallTestClientForTesting(
+      "python", std::move(stub));
+
+  // Fire two queries; drain so the stub handler captures each callback.
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "workspace-symbol AAA"),
+         "first workspace-symbol query should dispatch");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "workspace-symbol BBB"),
+         "second workspace-symbol query should dispatch");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(captured.size() == 2, "both workspace-symbol requests should capture a callback");
+
+  const auto channel_has = [&](std::string_view line) {
+    const auto* channel =
+        WorkspaceShellTestAccess::OutputChannelEntries(shell, "lsp.workspaceSymbols");
+    return channel != nullptr &&
+           std::find(channel->begin(), channel->end(), std::string(line)) != channel->end();
+  };
+
+  // Deliver the OLDER (AAA) response: it is superseded and must be dropped.
+  captured[0](std::nullopt);
+  Expect(!channel_has("No symbols matching \"AAA\""),
+         "a superseded workspace-symbol response must not clear/render over the newer query");
+
+  // Deliver the NEWER (BBB) response: it is current and renders.
+  captured[1](std::nullopt);
+  Expect(channel_has("No symbols matching \"BBB\""),
+         "the current workspace-symbol response should render its result");
+}
+
 void TestPhase5LspMergeBuffersPublishDiagnosticsAndBufferHooks() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -811,6 +869,8 @@ void RegisterPhase5Tests(std::vector<TestCase>& tests) {
           TestPhase5LspMergeBuffersPublishDiagnosticsAndBufferHooks);
   AddTest(tests, "Phase5.DeferredTabHydrationCompletesBeforeDidOpenDiagnostics",
           TestPhase5DeferredTabHydrationCompletesBeforeDidOpenDiagnostics);
+  AddTest(tests, "Phase5.WorkspaceSymbolDropsSupersededResponse",
+          TestPhase5WorkspaceSymbolDropsSupersededResponse);
 }
 
 }  // namespace microide::tests

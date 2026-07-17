@@ -277,6 +277,11 @@ class AssistService {
   // overwrite or apply against newer state. (TD-2026-07-16-65.)
   std::uint64_t completion_request_generation_ = 0;
   std::uint64_t code_action_request_generation_ = 0;
+  // workspace/symbol has no active-file cursor to anchor a staleness check on (it is
+  // project-wide), so a slower response for an OLDER query could otherwise clear the
+  // channel and render its results over the newer query's. Gate it on a generation
+  // token like completions/code actions do (TD-2026-07-17A-034).
+  std::uint64_t workspace_symbol_request_generation_ = 0;
 };
 
 }  // namespace microide::workspace
