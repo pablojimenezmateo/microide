@@ -78,9 +78,52 @@ void TestNotificationServiceToneAndEmptyHandling() {
   Expect(service.Empty(), "empty messages should be ignored");
 }
 
+// A single oversized toast is byte-capped at ingress on a UTF-8 boundary and flagged
+// truncated, so a plugin ctx.notify or a subprocess error string can't force large string
+// copies + text measurement during a full redraw (TD-2026-07-17A-101).
+void TestNotificationServiceByteCapsOversizedMessage() {
+  NotificationService service;
+
+  // A short message is stored verbatim, not flagged.
+  service.Show(NotificationService::Tone::Info, "short", 0);
+  Expect(service.Active().back().message == "short" && !service.Active().back().truncated,
+         "a short message is stored unchanged and not marked truncated");
+
+  // An oversized message is truncated to <= the byte cap (+ the multi-byte ellipsis
+  // marker) and flagged.
+  const std::string huge(NotificationService::MaxMessageBytes() * 4, 'x');
+  service.Show(NotificationService::Tone::Error, huge, 0);
+  const auto& capped = service.Active().back();
+  Expect(capped.truncated, "an oversized message is flagged truncated");
+  Expect(capped.message.size() <= NotificationService::MaxMessageBytes() + 4,
+         "the stored message is bounded by the byte cap plus the ellipsis marker");
+  Expect(capped.message.size() < huge.size(), "the stored message is shorter than the input");
+
+  // Truncation must not split a multi-byte codepoint: a message of many 2-byte
+  // codepoints ("é") truncated mid-run keeps whole codepoints (the byte just past the
+  // kept prefix, before the ellipsis, is not a UTF-8 continuation byte).
+  std::string accents;
+  while (accents.size() <= NotificationService::MaxMessageBytes() * 2) {
+    accents += "\xC3\xA9";  // U+00E9 é
+  }
+  service.Show(NotificationService::Tone::Info, accents, 0);
+  const std::string& acc_msg = service.Active().back().message;
+  // Strip the trailing "…" (3 bytes) then verify the kept prefix is an even number of
+  // bytes (whole 2-byte codepoints) with no dangling lead byte.
+  Expect(service.Active().back().truncated, "the accented message is truncated");
+  const std::string ellipsis = "…";
+  Expect(acc_msg.size() >= ellipsis.size() &&
+             acc_msg.compare(acc_msg.size() - ellipsis.size(), ellipsis.size(), ellipsis) == 0,
+         "a truncated message ends with the ellipsis marker");
+  const std::size_t kept = acc_msg.size() - ellipsis.size();
+  Expect(kept % 2 == 0, "truncation kept whole 2-byte codepoints (no split multi-byte sequence)");
+}
+
 }  // namespace
 
 void RegisterNotificationServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "NotificationService/ByteCapsOversizedMessage",
+          TestNotificationServiceByteCapsOversizedMessage);
   AddTest(tests, "NotificationService/ExpiresAfterDuration",
           TestNotificationServiceExpiresAfterDuration);
   AddTest(tests, "NotificationService/DelayClampsToZeroWhenDue",

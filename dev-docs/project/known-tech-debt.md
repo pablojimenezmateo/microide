@@ -4,7 +4,7 @@ Reviewed on 2026-07-17. A follow-on deferred-backlog full sweep is in progress
 (see "Fixed in the 2026-07-13 deferred-backlog full sweep" below); closed tranche
 entries have been pruned as they land. The **2026-07-17A addendum burndown** then
 dispositioned every item in the "Cross-subsystem bug/perf audit addendum" section:
-34 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
+35 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
 clusters or marked platform-only — see the burndown blockquote under that heading.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
@@ -82,7 +82,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > test this pass), **DEFERRED** (folded into a focused-pass cluster below), or **WON'T-DO
 > here** (platform-only, cannot build/verify on this Linux host).
 >
-> **RESOLVED this pass (34 fixed + 1 already-satisfied; each with a regression test):**
+> **RESOLVED this pass (35 fixed + 1 already-satisfied; each with a regression test):**
 > - **001** — passive menu measurement (`ComputePopupMenuRect`, `MenuItemLabel`, `IsMenuItemEnabled`) reads LSP readiness with `ensure_started=false`, so opening/hovering a menu never spawns a server; servers still start on explicit LSP actions via `GetServer`.
 > - **011** — plugin-command menu enablement uses `PluginHost::HasCommand` (O(log n), allocation-free) instead of a linear `std::find` + per-item `std::string` materialization.
 > - **012** — command-line completion takes the plugin command-name vector by reference (no whole-registry copy per open/keystroke).
@@ -96,6 +96,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > - **065** — terminal Copy-Last-Command enablement uses a cheap `HasLastTerminalCommand()` predicate instead of building the whole scrollback transcript.
 > - **111** — three-way merge tab builders classify inputs (`ReadTextFileClassified`) and refuse binary/NUL/too-large worktree files.
 > - **059** — project-session decode skips over-cap editor groups BEFORE decoding their nested tab/buffer payloads (decode-before-cap).
+> - **101** — notification toasts are byte-capped at ingress on a UTF-8 boundary with a `truncated` flag (no oversized-toast string copies/measurement in redraw).
 > - **003** — `DetectIndent(LineSpan)` overload; file open reads the live buffer zero-copy (no `Snapshot()`).
 > - **006** — settings query filter routes through allocation-free `util::ContainsCaseInsensitiveAscii` (no per-row lowercase of query/label/detail on every keystroke).
 > - **009** — merge validation scans a zero-copy `LineSpan` once via `util::ScanConflictMarkers` (no `Snapshot()`, no whole-document serialize, no second snapshot for the marker line).
@@ -123,8 +124,8 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test):
 >    018, 029, 037, 038, 039, 040, 041, 042, 043, 044, 046, 056, 057, 064, 068, 070,
->    071, 072, 073, 074, 090, 095, 096, 097, 098, 099, 101, 105, 106, 107, 116, 118, 119, 121.
->    *(020 RESOLVED 2026-07-17A — plugin log/error history cap.)*
+>    071, 072, 073, 074, 090, 095, 096, 097, 098, 099, 105, 106, 107, 116, 118, 119, 121.
+>    *(020, 101 RESOLVED 2026-07-17A — plugin log/error history cap.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): 045, 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
 >    *(011, 012, 032 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices.)*
@@ -1075,7 +1076,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   one frame even though the idle wait policy itself no longer spins. Add an event-drain time/count
   budget that yields to rendering once a redraw is pending, while preserving ordering for events that
   must remain atomic.
-- **TD-2026-07-17A-101 — notification messages are count-capped but not byte-capped.**
+- **[RESOLVED 2026-07-17A] TD-2026-07-17A-101 — notification messages are count-capped but not byte-capped.**
+  Fixed: `NotificationService::Show` byte-caps each toast at ingress on a UTF-8 codepoint
+  boundary (`MaxMessageBytes()` = 512, via `util::IsUtf8ContinuationByte`), appends an
+  ellipsis marker, and sets a `truncated` flag on the stored `Notification`, so an
+  oversized `ctx.notify`/subprocess/provider string can't force large string copies +
+  text measurement during a full redraw. Regression:
+  `NotificationService/ByteCapsOversizedMessage`.
   `NotificationService` retains at most four toasts, but `Show` stores each message verbatim and
   `RenderViewModelBuilder::BuildNotifications` copies the full strings into the render view model.
   `WorkspaceShellRenderStatusBar` then calls `text_renderer_.MeasureWidth(message)` even though the

@@ -20,8 +20,9 @@ class NotificationService {
 
   struct Notification {
     Tone tone = Tone::Info;
-    std::string message;
+    std::string message;  // already byte-capped at ingress (see MaxMessageBytes)
     std::uint64_t expiry_ms = 0;
+    bool truncated = false;  // true when the original message exceeded MaxMessageBytes
   };
 
   // Map a plugin-supplied level string to a tone ("warning"/"warn" -> Warning,
@@ -45,6 +46,11 @@ class NotificationService {
 
   static constexpr std::uint64_t DurationMs() { return 4000; }
   static constexpr std::size_t MaxVisible() { return 4; }
+  // Ingress byte cap for a single toast. A toast is clipped to ~320px on screen, so no
+  // visible message needs more than a few hundred bytes; capping here stops a plugin
+  // `ctx.notify` or a subprocess/provider error string from forcing large string copies
+  // and text measurement during a full redraw (TD-2026-07-17A-101).
+  static constexpr std::size_t MaxMessageBytes() { return 512; }
 
  private:
   std::vector<Notification> notifications_;
