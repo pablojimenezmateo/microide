@@ -194,15 +194,20 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                  case ProjectSessionTag::SidebarViewId:
                    return reader.ReadString(&state->sidebar_view_id) && reader.remaining() == 0;
                  case ProjectSessionTag::Group: {
+                   // Check the group cap BEFORE decoding the payload. DecodeEditorGroup can
+                   // parse up to 4096 tabs, each carrying a dirty-buffer snapshot up to the
+                   // session byte budget; a forged session could list oversized third-and-
+                   // later groups purely to make startup materialize nested payloads that are
+                   // then discarded. Skip over-cap groups without decoding their nested tabs
+                   // (TD-2026-07-17A-059). Editor groups are capped at 2.
+                   if (state->groups.size() >= 2) {
+                     return true;  // tolerate extra groups; keep only the first two
+                   }
                    PersistedEditorGroupState group;
                    if (!DecodeEditorGroup(payload, &group)) {
                      return false;
                    }
-                   // Editor groups are capped at 2: tolerate a malformed/forged
-                   // session that lists more by keeping only the first two.
-                   if (state->groups.size() < 2) {
-                     state->groups.push_back(std::move(group));
-                   }
+                   state->groups.push_back(std::move(group));
                    return true;
                  }
                 case ProjectSessionTag::ChatRegistry:

@@ -241,6 +241,41 @@ PersistedProjectSessionState BuildProjectSessionFixture() {
 
 // TD-2026-07-16-20: project-session decode caps repeated nested records. A group with
 // more tabs than the per-group budget must fail closed rather than materialize them.
+// Editor groups are capped at 2, and the third-and-later groups must be skipped BEFORE
+// their nested tab payloads are decoded (TD-2026-07-17A-059). A forged session that lists
+// an oversized third group (here: one that would fail DecodeEditorGroup because it exceeds
+// the per-group tab cap) must still decode successfully with two groups — proving the
+// over-cap group's payload was never materialized/validated.
+void TestPersistedStateProjectSessionSkipsOverCapGroupsBeforeDecoding() {
+  PersistedProjectSessionState session;
+  PersistedEditorGroupState group_zero;
+  PersistedEditorGroupState group_one;
+  for (PersistedEditorGroupState* g : {&group_zero, &group_one}) {
+    PersistedEditorTabState tab;
+    tab.kind = "editor";
+    tab.path = "/tmp/keep.txt";
+    g->tabs.push_back(std::move(tab));
+  }
+  // A third group whose payload would FAIL to decode (over the 4096 per-group tab cap):
+  // if the decoder reached and validated it, the whole record would fail closed.
+  PersistedEditorGroupState over_cap_group;
+  for (std::size_t i = 0; i < 4097; ++i) {
+    PersistedEditorTabState tab;
+    tab.kind = "editor";
+    tab.path = "/tmp/x" + std::to_string(i) + ".txt";
+    over_cap_group.tabs.push_back(std::move(tab));
+  }
+  session.groups = {std::move(group_zero), std::move(group_one), std::move(over_cap_group)};
+
+  std::vector<std::byte> record;
+  Expect(EncodeProjectSessionRecord(session, &record),
+         "encoding a three-group session should write bytes");
+  PersistedProjectSessionState decoded;
+  Expect(DecodeProjectSessionRecord(record, &decoded),
+         "an over-cap third group must be skipped before decoding, not fail the whole record");
+  Expect(decoded.groups.size() == 2, "only the first two editor groups are kept");
+}
+
 void TestPersistedStateProjectSessionDecodeHonorsTabCap() {
   PersistedProjectSessionState session;
   PersistedEditorGroupState group;
@@ -1006,6 +1041,8 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
           TestPersistedStateCommitDraftBodyBudget);
   AddTest(tests, "PersistedStateRecord/ProjectSessionDecodeHonorsTabCap",
           TestPersistedStateProjectSessionDecodeHonorsTabCap);
+  AddTest(tests, "PersistedStateRecord/ProjectSessionSkipsOverCapGroupsBeforeDecoding",
+          TestPersistedStateProjectSessionSkipsOverCapGroupsBeforeDecoding);
   AddTest(tests, "PersistedStateRecord/ProjectSessionRoundTripOmitsChatRegistry",
           TestPersistedStateProjectSessionRoundTripOmitsChatRegistry);
   AddTest(tests, "PersistedStateRecord/ProjectSessionAcceptsLegacyChatRegistryTag",

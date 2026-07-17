@@ -4,7 +4,7 @@ Reviewed on 2026-07-17. A follow-on deferred-backlog full sweep is in progress
 (see "Fixed in the 2026-07-13 deferred-backlog full sweep" below); closed tranche
 entries have been pruned as they land. The **2026-07-17A addendum burndown** then
 dispositioned every item in the "Cross-subsystem bug/perf audit addendum" section:
-33 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
+34 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
 clusters or marked platform-only — see the burndown blockquote under that heading.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
@@ -82,7 +82,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > test this pass), **DEFERRED** (folded into a focused-pass cluster below), or **WON'T-DO
 > here** (platform-only, cannot build/verify on this Linux host).
 >
-> **RESOLVED this pass (33 fixed + 1 already-satisfied; each with a regression test):**
+> **RESOLVED this pass (34 fixed + 1 already-satisfied; each with a regression test):**
 > - **001** — passive menu measurement (`ComputePopupMenuRect`, `MenuItemLabel`, `IsMenuItemEnabled`) reads LSP readiness with `ensure_started=false`, so opening/hovering a menu never spawns a server; servers still start on explicit LSP actions via `GetServer`.
 > - **011** — plugin-command menu enablement uses `PluginHost::HasCommand` (O(log n), allocation-free) instead of a linear `std::find` + per-item `std::string` materialization.
 > - **012** — command-line completion takes the plugin command-name vector by reference (no whole-registry copy per open/keystroke).
@@ -95,6 +95,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > - **089** — restored tree expansion/collapse keys are validated for root containment (absolute/`..`-escape keys dropped).
 > - **065** — terminal Copy-Last-Command enablement uses a cheap `HasLastTerminalCommand()` predicate instead of building the whole scrollback transcript.
 > - **111** — three-way merge tab builders classify inputs (`ReadTextFileClassified`) and refuse binary/NUL/too-large worktree files.
+> - **059** — project-session decode skips over-cap editor groups BEFORE decoding their nested tab/buffer payloads (decode-before-cap).
 > - **003** — `DetectIndent(LineSpan)` overload; file open reads the live buffer zero-copy (no `Snapshot()`).
 > - **006** — settings query filter routes through allocation-free `util::ContainsCaseInsensitiveAscii` (no per-row lowercase of query/label/detail on every keystroke).
 > - **009** — merge validation scans a zero-copy `LineSpan` once via `util::ScanConflictMarkers` (no `Snapshot()`, no whole-document serialize, no second snapshot for the marker line).
@@ -138,7 +139,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 7. **Protocol / session lifecycle & decode-order** (LSP/DAP/persistence pass — commit-after-
 >    success open/close, per-request generations, decode-before-cap, event-drain budget, regex
 >    match-data cache keyed by revision, symlinked-state-file writes, terminal-tab reap grace):
->    030, 050, 052, 059, 082, 083, 086, 100, 115, 127, 130. *(001, 034 RESOLVED 2026-07-17A.)*
+>    030, 050, 052, 082, 083, 086, 100, 115, 127, 130. *(001, 034, 059 RESOLVED 2026-07-17A.)*
 > 8. **Path/containment correctness (small, but cross-group)**: 036
 >    (retarget background compare/merge tabs on rename/delete across all groups), 088.
 >    *(010, 089, 111 RESOLVED 2026-07-17A — `util::RelativePathWithin`; restored-tree-key containment.)*
@@ -692,7 +693,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
   settings layering can run. Decode through a temporary id-to-index map (or an ordered map plus a
   final vector projection) so the cap remains a product budget rather than a quadratic restore
   workload.
-- **TD-2026-07-17A-059 — extra project-session groups are decoded before the group cap.**
+- **[RESOLVED 2026-07-17A] TD-2026-07-17A-059 — extra project-session groups are decoded before the group cap.**
+  Fixed: `DecodeProjectSessionRecord` checks `groups.size() >= 2` and skips a `Group`
+  record BEFORE calling `DecodeEditorGroup`, so a forged session listing oversized third-
+  and-later groups can't make startup materialize/validate nested tab+buffer payloads that
+  are then discarded. Regression:
+  `PersistedStateRecord/ProjectSessionSkipsOverCapGroupsBeforeDecoding`.
   `DecodeProjectSessionRecord` says editor groups are capped at two, but for each `Group` record it
   first calls `DecodeEditorGroup(payload, &group)` and only then checks `state->groups.size() < 2`
   before keeping the result. `DecodeEditorGroup` can parse up to 4,096 tabs, and each tab can carry
