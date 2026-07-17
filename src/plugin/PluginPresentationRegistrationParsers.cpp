@@ -101,7 +101,16 @@ bool RegisterTheme(lua_State* state,
     lua_pushnil(state);
     while (lua_next(state, colors_index) != 0) {
       // key at -2, value at -1.
-      if (lua_type(state, -2) == LUA_TSTRING && theme.styles.size() < kMaxThemeStyles) {
+      // TD-2026-07-17-079: stop draining the table once the retained-style cap is
+      // reached. A hostile/accidental theme with a huge or sparse `colors`/`styles`
+      // map would otherwise spend O(table) setup CPU even though only kMaxThemeStyles
+      // entries are ever kept. Pop the pending value AND key to rebalance the stack
+      // before breaking (the post-loop lua_pop expects only the table remaining).
+      if (theme.styles.size() >= kMaxThemeStyles) {
+        lua_pop(state, 2);
+        break;
+      }
+      if (lua_type(state, -2) == LUA_TSTRING) {
         PluginHost::ContributedThemeStyle style;
         style.group = util::ToLowerAscii(lua_tostring(state, -2));
         if (lua_isstring(state, -1)) {

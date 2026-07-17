@@ -319,6 +319,27 @@ std::vector<std::string> FindStaleBaselineScenarios(const std::vector<Scenario>&
   return stale;
 }
 
+// TD-2026-07-17-059: the symmetric half of the manifest check. FindStaleBaseline-
+// Scenarios catches baseline files with no registered scenario (orphans); this
+// catches the reverse — a baseline-gated scenario with NO committed baseline file,
+// which would otherwise run against harness defaults instead of a pinned budget.
+std::vector<std::string> FindScenariosMissingBaseline(const std::vector<Scenario>& scenarios) {
+  std::vector<std::string> missing;
+  std::error_code error;
+  const std::filesystem::path baseline_dir = "tests/perf/baselines";
+  for (const Scenario& scenario : scenarios) {
+    if (!scenario.baseline_gated) {
+      continue;
+    }
+    const std::filesystem::path baseline = baseline_dir / (scenario.name + ".json");
+    if (!std::filesystem::exists(baseline, error) || error) {
+      missing.push_back(scenario.name);
+    }
+  }
+  std::sort(missing.begin(), missing.end());
+  return missing;
+}
+
 void EnforceP95Microseconds(const char* label, std::vector<double>& samples_us, double p95_budget_us) {
   if (samples_us.size() < 8) {
     throw std::runtime_error(std::string(label) + ": insufficient samples");
@@ -1311,6 +1332,21 @@ int main(int argc, char** argv) {
     }
     std::cerr << "remove or restore these scenarios before running perf baselines\n";
     return 1;
+  }
+  // TD-2026-07-17-059: the reverse manifest direction — every baseline-gated
+  // scenario must have a committed baseline. A missing one would silently run
+  // against harness-default tolerances instead of a pinned budget. --update-baseline
+  // is exempt (that run is how a new scenario's baseline gets written).
+  if (!options->update_baseline) {
+    const auto missing_baselines = FindScenariosMissingBaseline(PerfHarness::RegisteredScenarios());
+    if (!missing_baselines.empty()) {
+      std::cerr << "registered perf scenarios missing a committed baseline:\n";
+      for (const std::string& name : missing_baselines) {
+        std::cerr << "  - " << name << "\n";
+      }
+      std::cerr << "run with --update-baseline to write baselines for new scenarios\n";
+      return 1;
+    }
   }
   std::vector<Aggregate> aggregates;
   bool all_passed = true;

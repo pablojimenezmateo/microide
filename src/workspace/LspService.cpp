@@ -80,7 +80,10 @@ std::string DetectActiveLanguageIdCached(const editor::TextViewport& viewport,
 }
 
 std::string SerializeViewportText(const editor::TextViewport& viewport) {
-  return util::SerializeLines(viewport.lines().Snapshot(), viewport.line_ending());
+  // TD-2026-07-17-095: stream directly from the TextBuffer via a zero-copy LineSpan
+  // rather than materializing a whole-document vector of strings with Snapshot().
+  return util::SerializeLinesStreaming(editor::LineSpan(viewport.lines()),
+                                       viewport.line_ending());
 }
 
 // Resolve the open editor viewport backing `path`, or nullptr if the file is not
@@ -690,7 +693,7 @@ void LspService::RequestLspInlayHints(const editor::TextViewport& viewport, LspC
   const std::size_t line_count = viewport.lines().size();
   LspClient::Range range{
       .start = LspClient::Position{0, 0},
-      .end = LspClient::Position{static_cast<int>(line_count), 0},
+      .end = LspClient::Position{SaturateToLspInt(line_count), 0},
   };
   const std::uint64_t generation = NextOverlayGeneration(inlay_hint_generation_, uri);
   const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(client);
@@ -961,8 +964,8 @@ void LspService::SyncLspForActiveEditableLastChange() {
     if (!applied_edit.has_value() || !client->SupportsIncrementalSync() || !utf8_positions) {
       util::PerformanceTrace::Scope scope(
           "LspService::SyncLspForActiveEditableLastChange::FullSync");
-      client->DidChange(uri,
-                        util::SerializeLines(viewport->lines().Snapshot(), viewport->line_ending()));
+      client->DidChange(uri, util::SerializeLinesStreaming(editor::LineSpan(viewport->lines()),
+                                                           viewport->line_ending()));
     } else {
       util::PerformanceTrace::Scope scope(
           "LspService::SyncLspForActiveEditableLastChange::IncrementalSync");
@@ -989,12 +992,12 @@ void LspService::SyncLspForActiveEditableLastChange() {
           uri,
           LspClient::Range{
               .start = LspClient::Position{
-                  static_cast<int>(applied_edit->range_before.start.line),
-                  static_cast<int>(applied_edit->range_before.start.column),
+                  SaturateToLspInt(applied_edit->range_before.start.line),
+                  SaturateToLspInt(applied_edit->range_before.start.column),
               },
               .end = LspClient::Position{
-                  static_cast<int>(applied_edit->range_before.end.line),
-                  static_cast<int>(applied_edit->range_before.end.column),
+                  SaturateToLspInt(applied_edit->range_before.end.line),
+                  SaturateToLspInt(applied_edit->range_before.end.column),
               },
           },
           replacement);

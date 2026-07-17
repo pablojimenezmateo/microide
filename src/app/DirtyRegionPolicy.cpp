@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <optional>
 
 namespace microide::app {
@@ -48,10 +49,14 @@ std::optional<SDL_Rect> ToClipRect(const SDL_FRect& rect,
 }
 
 bool RectsOverlapOrNearlyTouch(const SDL_Rect& a, const SDL_Rect& b) {
-  const int a_right = a.x + a.w;
-  const int b_right = b.x + b.w;
-  const int a_bottom = a.y + a.h;
-  const int b_bottom = b.y + b.h;
+  // Edge arithmetic in int64 so a near-INT_MAX coordinate (fuzzed or future
+  // offscreen/high-DPI input) cannot overflow signed int before the comparison.
+  // The normal AnalyzeDirtyRegions path already clamps rects to the surface, so
+  // this only hardens the general helper.
+  const std::int64_t a_right = static_cast<std::int64_t>(a.x) + a.w;
+  const std::int64_t b_right = static_cast<std::int64_t>(b.x) + b.w;
+  const std::int64_t a_bottom = static_cast<std::int64_t>(a.y) + a.h;
+  const std::int64_t b_bottom = static_cast<std::int64_t>(b.y) + b.h;
   return a.x <= b_right + kDirtyRegionMergeGapPixels &&
          b.x <= a_right + kDirtyRegionMergeGapPixels &&
          a.y <= b_bottom + kDirtyRegionMergeGapPixels &&
@@ -59,11 +64,23 @@ bool RectsOverlapOrNearlyTouch(const SDL_Rect& a, const SDL_Rect& b) {
 }
 
 SDL_Rect UnionRects(const SDL_Rect& a, const SDL_Rect& b) {
-  const int left = std::min(a.x, b.x);
-  const int top = std::min(a.y, b.y);
-  const int right = std::max(a.x + a.w, b.x + b.w);
-  const int bottom = std::max(a.y + a.h, b.y + b.h);
-  return SDL_Rect{.x = left, .y = top, .w = right - left, .h = bottom - top};
+  // Compute edges in int64 then clamp back to the int range so a pathological
+  // union can never wrap the resulting SDL_Rect width/height.
+  constexpr std::int64_t kIntMax = std::numeric_limits<int>::max();
+  constexpr std::int64_t kIntMin = std::numeric_limits<int>::min();
+  const std::int64_t left = std::min(a.x, b.x);
+  const std::int64_t top = std::min(a.y, b.y);
+  const std::int64_t right =
+      std::max(static_cast<std::int64_t>(a.x) + a.w, static_cast<std::int64_t>(b.x) + b.w);
+  const std::int64_t bottom =
+      std::max(static_cast<std::int64_t>(a.y) + a.h, static_cast<std::int64_t>(b.y) + b.h);
+  const auto clamp_int = [kIntMin, kIntMax](std::int64_t value) {
+    return static_cast<int>(std::clamp(value, kIntMin, kIntMax));
+  };
+  return SDL_Rect{.x = clamp_int(left),
+                  .y = clamp_int(top),
+                  .w = clamp_int(right - left),
+                  .h = clamp_int(bottom - top)};
 }
 
 }  // namespace

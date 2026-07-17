@@ -54,7 +54,17 @@ void GitRepositoryService::SetWakeCallbacks(WakeCallbacks callbacks) {
 }
 
 void GitRepositoryService::Reset() {
-  background_executor_.Cancel();
+  // TD-2026-07-17-093: do NOT cancel the shared project background executor here.
+  // That queue is also used by commit workflow, patch apply, project-file-monitor
+  // arming, project-state refresh, and raster decode; a git-state reset must not
+  // discard their queued work. Git-result correctness is already guaranteed by
+  // generation gating — every posted refresh carries `request.generation`, and its
+  // completion discards itself when `request.generation != refresh_generation_`.
+  // Bumping the generation below (via the reset to 0; subsequent refreshes do
+  // `++refresh_generation_`) supersedes any in-flight git refresh. The lifecycle
+  // reset path (WorkspaceShell::ResetProjectScopedState) still cancels the shared
+  // executor itself, before calling this — that is the correct owner of queue-wide
+  // cancellation, not this leaf git service.
   std::lock_guard lock(mutex_);
   current_state_ = {};
   pending_sidebar_snapshot_.reset();

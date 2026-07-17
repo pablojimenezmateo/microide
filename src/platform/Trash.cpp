@@ -247,8 +247,17 @@ TrashOperationResult MovePathToTrash(const std::filesystem::path& path) {
     return Failure("No path was provided");
   }
 
+  // Validate against the directory entry itself, not the symlink target.
+  // std::filesystem::exists follows symlinks, so a *dangling* symlink (target
+  // gone) would report non-existent and could never be trashed — even though the
+  // link node is a real, removable entry that a normal file manager would trash.
+  // symlink_status inspects the link node directly, so a broken symlink is
+  // accepted while a genuinely absent path still reports not_found.
   std::error_code error;
-  if (!std::filesystem::exists(normalized_path, error) || error) {
+  const std::filesystem::file_status link_status =
+      std::filesystem::symlink_status(normalized_path, error);
+  if (error || link_status.type() == std::filesystem::file_type::not_found ||
+      link_status.type() == std::filesystem::file_type::none) {
     return Failure("The path does not exist");
   }
 

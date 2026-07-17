@@ -4,6 +4,8 @@
 #include "workspace/LspPositionEncoding.h"
 #include "workspace/LspViewportPositions.h"
 
+#include <limits>
+
 namespace microide::tests {
 namespace {
 
@@ -112,6 +114,24 @@ void TestViewportInboundColumnFastPaths() {
   Expect(LspInboundColumn(&viewport, 0, 4, PositionEncoding::Utf16) == 5, "utf-16 converts to byte 5");
 }
 
+// TD-2026-07-17-089: an outbound line/column past INT_MAX must saturate to INT_MAX
+// rather than wrapping to a negative value (which would ask the server about the
+// wrong location). LspLineView tolerates an out-of-range line, so we can pass a
+// huge line index directly.
+void TestViewportOutboundPositionSaturates() {
+  const TextViewport viewport = MakeViewport("abc");
+  constexpr std::size_t kHuge = static_cast<std::size_t>(std::numeric_limits<int>::max()) + 100;
+  const LspClient::Position pos =
+      ByteColumnToLspPosition(viewport, kHuge, kHuge, PositionEncoding::Utf8);
+  Expect(pos.line == std::numeric_limits<int>::max(),
+         "an out-of-int line saturates to INT_MAX, never wraps negative");
+  Expect(pos.character >= 0, "the outbound character is never negative after saturation");
+  // The shared helper saturates directly.
+  Expect(microide::workspace::SaturateToLspInt(kHuge) == std::numeric_limits<int>::max(),
+         "SaturateToLspInt clamps an over-range size_t to INT_MAX");
+  Expect(microide::workspace::SaturateToLspInt(42) == 42, "SaturateToLspInt is identity in range");
+}
+
 void TestViewportRangeToEditorRange() {
   const TextViewport viewport = MakeViewport(kCafe);  // space at unit 4/byte 5, 'x' at unit 5/byte 6.
   const editor::SelectionRange range = LspRangeToEditorRange(
@@ -133,6 +153,8 @@ void RegisterLspPositionEncodingTests(std::vector<TestCase>& tests) {
           TestViewportOutboundInboundRoundTrip);
   AddTest(tests, "LspViewportPositions/InboundColumnFastPaths", TestViewportInboundColumnFastPaths);
   AddTest(tests, "LspViewportPositions/RangeToEditorRange", TestViewportRangeToEditorRange);
+  AddTest(tests, "LspViewportPositions/OutboundPositionSaturates",
+          TestViewportOutboundPositionSaturates);
 }
 
 }  // namespace microide::tests

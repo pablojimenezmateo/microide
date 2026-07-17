@@ -15,6 +15,7 @@
 #include "app/BackgroundTaskCounter.h"
 #include "util/Parse.h"
 #include "util/PerformanceCounters.h"
+#include "util/SdlWake.h"
 #include "util/RegexUtil.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
@@ -652,14 +653,13 @@ void ProjectSearchService::PushWakeEvent() const {
   }
   wake_pending_ = true;
 
-  SDL_Event event;
-  SDL_zero(event);
-  event.type = wake_event_type_;
-  // Clear the coalescing flag if the push fails: otherwise wake_pending_ stays true
-  // with no event queued, and every later result/progress/finished PushWakeEvent()
-  // early-returns on the stale flag — the sidebar sits on a completed search until
-  // some unrelated event drives the drain. Mirrors TerminalSession/file-monitor.
-  if (!SDL_PushEvent(&event)) {
+  // TD-2026-07-17-085: route through util::PushSdlWake instead of a raw
+  // SDL_PushEvent. On a rejected push it latches the process-wide owed-wake bit
+  // that CurrentIdleWaitState() consumes to schedule a short fallback wait, so a
+  // dropped FINAL (PublishFinished) wake self-heals within one poll interval
+  // instead of stranding a completed search until unrelated input. We still clear
+  // the local coalescing flag on failure so a later producer retries the push.
+  if (!util::PushSdlWake(wake_event_type_)) {
     wake_pending_ = false;
   }
 }

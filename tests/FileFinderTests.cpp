@@ -314,7 +314,43 @@ void TestFileFinderNarrowsToEntryBeyondDisplayCap() {
   }
 }
 
+// TD-2026-07-17-076: empty-query recents are deep-copied into results_ BEFORE the
+// ranked tail applies its cap. A large (or corrupt persisted) recents list must not
+// bypass the visible-result budget, so the recents prefix is now capped too.
+void TestFileFinderCapsRecentsOnEmptyQuery() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+
+  // Index far more files than the finder's visible cap (512), and make every one a
+  // recent so the empty-query recents loop alone would exceed the cap if unbounded.
+  constexpr int kFileCount = 900;
+  IndexUpdateBatch batch;
+  batch.is_initial = true;
+  std::vector<std::filesystem::path> recents;
+  recents.reserve(kFileCount);
+  for (int i = 0; i < kFileCount; ++i) {
+    std::filesystem::path rel = std::filesystem::path("src") / ("file_" + std::to_string(i) + ".cpp");
+    batch.changes.push_back(MakeCreateChange(rel));
+    recents.push_back(std::move(rel));
+  }
+
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred),
+         "recents-cap fixture should initialize deferred file index root");
+  Expect(index.ApplyBatch(std::move(batch)), "recents-cap fixture should apply initial batch");
+
+  FileFinder finder;
+  finder.SetIndex(&index);
+  finder.SetRecentRelativePaths(recents);
+  finder.SetQuery("");
+
+  Expect(finder.results().size() <= 512,
+         "empty-query recents must not exceed the finder's visible result cap");
+}
+
 void RegisterFileFinderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileFinder/CapsRecentsOnEmptyQuery", TestFileFinderCapsRecentsOnEmptyQuery);
   AddTest(tests, "FileFinder/CapsBroadResultCount", TestFileFinderCapsBroadResultCount);
   AddTest(tests, "FileFinder/NarrowsToEntryBeyondDisplayCap",
           TestFileFinderNarrowsToEntryBeyondDisplayCap);

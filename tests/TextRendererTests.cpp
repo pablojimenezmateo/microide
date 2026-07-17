@@ -2238,9 +2238,38 @@ void TestEditorViewRendererWhitespaceMarkersMatchAcrossViewModelAndFallbackPaths
   SDL_DestroySurface(fallback_pixels);
 }
 
+// TD-2026-07-17-042: TruncateToWidthEphemeralView returns a view into a
+// thread-local scratch that the NEXT truncation on the same thread overwrites.
+// This test documents (and pins) that contract so a future refactor that stored
+// the returned view would fail here. The default DebugTextBackend measures 8px per
+// char deterministically.
+void TestTruncateToWidthEphemeralViewIsInvalidatedByNextCall() {
+  microide::render::TextRenderer renderer;  // default DebugTextBackend: 8px/char
+
+  const std::string long_a(80, 'a');
+  const std::string long_b(80, 'b');  // SAME length so the scratch does not reallocate
+  const float max_width = 80.0f;       // forces truncation (640px) yet fits the "..." (24px)
+
+  const std::string_view view_a = renderer.TruncateToWidthEphemeralView(long_a, max_width);
+  Expect(!view_a.empty() && view_a.substr(view_a.size() - 3) == "...",
+         "a too-wide string truncates with an ellipsis");
+  Expect(view_a.front() == 'a', "the first ephemeral view initially reflects string A");
+  const std::string captured_a(view_a);
+
+  // A second truncation overwrites the shared scratch the first view points into.
+  const std::string_view view_b = renderer.TruncateToWidthEphemeralView(long_b, max_width);
+  Expect(view_b.front() == 'b', "the second view reflects string B");
+  Expect(view_a == view_b,
+         "the first view now aliases the scratch overwritten by the second call");
+  Expect(std::string(view_a) != captured_a,
+         "the first ephemeral view is invalidated (no longer equals its original content)");
+}
+
 }  // namespace
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextRenderer/TruncateToWidthEphemeralViewIsInvalidatedByNextCall",
+          TestTruncateToWidthEphemeralViewIsInvalidatedByNextCall);
   AddTest(tests, "TextLayout identifier range at cursor", TestTextLayoutIdentifierRangeAt);
   AddTest(tests,
           "TextRenderer decorated grid paints row fills and underlines separately",

@@ -3,6 +3,8 @@
 #include "platform/FileWatcher.h"
 #include "platform/Filesystem.h"
 #include "platform/FsOps.h"
+#include "platform/HostIntegration.h"
+#include "platform/Trash.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -298,9 +300,84 @@ void TestCopyPathPreservesSymlinksAndDoesNotThrow() {
 }
 #endif
 
+// TD-2026-07-17-064: CopyPath must accept a bare-filename destination (empty
+// parent_path). Previously it unconditionally called create_directories("") which
+// libstdc++ fails with EINVAL, breaking an otherwise valid copy-into-cwd.
+void TestCopyPathAcceptsBareFilenameDestination() {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path previous_cwd = fs::current_path(ec);
+  TemporaryDirectory temp_dir;
+  const fs::path source = temp_dir.path() / "source.txt";
+  WriteFile(source, "bare filename copy");
+
+  // Run with the process cwd inside the temp dir so a bare relative filename
+  // resolves to a writable location, then restore it no matter the outcome.
+  fs::current_path(temp_dir.path(), ec);
+  Expect(!ec, "should be able to chdir into the temp dir");
+  const bool ok = microide::platform::CopyPath(source, fs::path("copy.txt"));
+  const bool copied_exists = fs::exists(temp_dir.path() / "copy.txt", ec);
+  const std::string copied = copied_exists ? ReadFile(temp_dir.path() / "copy.txt") : std::string();
+  fs::current_path(previous_cwd, ec);
+
+  Expect(ok, "CopyPath should succeed for a bare-filename destination");
+  Expect(copied_exists, "the bare-filename copy should exist in the cwd");
+  Expect(copied == "bare filename copy", "the bare-filename copy should hold the source bytes");
+}
+
+#if defined(__linux__)
+// TD-2026-07-17-063: a dangling symlink is a real, removable directory entry that a
+// normal file manager can trash. MovePathToTrash validated the source with
+// std::filesystem::exists, which follows the link and reports a broken link as
+// absent — so it could never be trashed. It now validates the link node itself.
+// XDG_DATA_HOME is redirected to a temp dir so the test never touches the real trash.
+void TestTrashAcceptsDanglingSymlink() {
+  namespace fs = std::filesystem;
+  TemporaryDirectory temp_dir;
+  const fs::path data_home = temp_dir.path() / "xdg_data";
+  std::error_code ec;
+  fs::create_directories(data_home, ec);
+  ScopedEnvVar data_home_env("XDG_DATA_HOME", data_home.string());
+
+  const fs::path link = temp_dir.path() / "broken_link";
+  fs::create_symlink(temp_dir.path() / "no_such_target", link, ec);
+  Expect(!ec, "dangling symlink fixture should be created");
+  Expect(fs::is_symlink(fs::symlink_status(link)), "fixture should be a symlink");
+  Expect(!fs::exists(link), "the symlink target should be absent (dangling)");
+
+  const microide::platform::TrashOperationResult result = microide::platform::MovePathToTrash(link);
+  Expect(result.ok, "a dangling symlink should be accepted for trashing, not rejected as absent");
+  Expect(!fs::is_symlink(fs::symlink_status(link)),
+         "the dangling symlink should be removed from its original location");
+}
+#endif
+
+// TD-2026-07-17-027: OpenUrl is a trust boundary. Unsupported schemes and
+// over-long URLs must be refused before reaching the OS opener. Only the
+// rejection paths are exercised here (an allowed scheme would launch a real
+// browser); each rejection returns before any SDL/xdg call.
+void TestOpenUrlRejectsUnsafeSchemesAndOverlongInput() {
+  Expect(!microide::platform::OpenUrl("").ok, "an empty URL is refused");
+  Expect(!microide::platform::OpenUrl("javascript:alert(1)").ok,
+         "a javascript: URL is refused");
+  Expect(!microide::platform::OpenUrl("file:///etc/passwd").ok, "a file: URL is refused");
+  Expect(!microide::platform::OpenUrl("data:text/html,<script>").ok, "a data: URL is refused");
+  Expect(!microide::platform::OpenUrl("customscheme://x").ok, "an unknown scheme is refused");
+  Expect(!microide::platform::OpenUrl("no-scheme-here").ok, "a schemeless string is refused");
+  const std::string overlong = "https://example.com/" + std::string(9000, 'a');
+  Expect(!microide::platform::OpenUrl(overlong).ok, "an over-long URL is refused");
+}
+
 }  // namespace
 
 void RegisterFilesystemTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Platform/OpenUrlRejectsUnsafeSchemesAndOverlongInput",
+          TestOpenUrlRejectsUnsafeSchemesAndOverlongInput);
+  AddTest(tests, "Filesystem/CopyPathAcceptsBareFilenameDestination",
+          TestCopyPathAcceptsBareFilenameDestination);
+#if defined(__linux__)
+  AddTest(tests, "Trash/AcceptsDanglingSymlink", TestTrashAcceptsDanglingSymlink);
+#endif
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "Filesystem/CopyPathPreservesSymlinksAndDoesNotThrow",
           TestCopyPathPreservesSymlinksAndDoesNotThrow);

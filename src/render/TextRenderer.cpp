@@ -126,10 +126,10 @@ std::string_view TextRenderer::BackendName() const {
 }
 
 std::string TextRenderer::TruncateToWidth(std::string_view text, float max_width) const {
-  return std::string(TruncateToWidthView(text, max_width));
+  return std::string(TruncateToWidthEphemeralView(text, max_width));
 }
 
-std::string_view TextRenderer::TruncateToWidthView(std::string_view text, float max_width) const {
+std::string_view TextRenderer::TruncateToWidthEphemeralView(std::string_view text, float max_width) const {
   if (max_width <= 0.0f || text.empty()) {
     return {};
   }

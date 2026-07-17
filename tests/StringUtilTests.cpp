@@ -90,6 +90,27 @@ void TestStringUtilJoinLinesHonorsSeparatorsAndEmptyInput() {
          "join lines should place the requested separator between every line");
   Expect(JoinLines({}, "\n").empty(),
          "join lines should keep empty inputs empty");
+
+  // A single line has no separators; the reserve-size loop (which adds one
+  // separator per line beyond the first) must not append a trailing separator.
+  const std::vector<std::string> one = {"solo"};
+  Expect(JoinLines(one, "::") == "solo", "a single line joins to itself with no separator");
+
+  // TD-2026-07-17-053: the reserve-size accumulation was hardened with saturating
+  // adds. Verify a larger, multi-length input still joins exactly so the refactor
+  // did not disturb the fast path (correct total reserve, no off-by-one).
+  std::vector<std::string> many;
+  std::string expected;
+  for (int i = 0; i < 500; ++i) {
+    std::string token(static_cast<std::size_t>(i % 7), 'x');
+    if (i != 0) {
+      expected += "|";
+    }
+    expected += token;
+    many.push_back(std::move(token));
+  }
+  Expect(JoinLines(many, "|") == expected,
+         "join lines should produce the exact concatenation for many varied-length lines");
 }
 
 void TestStringUtilLineEndingHelpersRoundTrip() {
@@ -112,6 +133,20 @@ void TestStringUtilLineEndingHelpersRoundTrip() {
          "line ending labels should expose persistence-friendly lowercase forms");
   Expect(ParseLineEndingLabel("cr") == LineEnding::CR,
          "line ending labels should parse back into enum values");
+
+  // TD-2026-07-17-095: the streaming serializer (used by LSP over a zero-copy
+  // LineSpan) must produce byte-identical output to SerializeLines for every line
+  // ending, so switching the LSP path off Snapshot() cannot change the payload.
+  for (const LineEnding ending : {LineEnding::LF, LineEnding::CRLF, LineEnding::CR}) {
+    Expect(microide::util::SerializeLinesStreaming(lines, ending) == SerializeLines(lines, ending),
+           "streaming serializer matches SerializeLines for all line endings");
+  }
+  const std::vector<std::string> single = {"only"};
+  Expect(microide::util::SerializeLinesStreaming(single, LineEnding::LF) == "only",
+         "streaming serializer emits no trailing separator for a single line");
+  const std::vector<std::string> empty_lines;
+  Expect(microide::util::SerializeLinesStreaming(empty_lines, LineEnding::LF).empty(),
+         "streaming serializer keeps empty input empty");
 }
 
 void TestCompareModelHandlesCrLfInputViaSharedSplitter() {

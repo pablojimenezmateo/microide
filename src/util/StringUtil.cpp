@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
+
+#include "util/SaturatingMath.h"
 
 namespace microide::util {
 
@@ -798,14 +801,23 @@ std::string JoinLines(std::span<const std::string> lines, std::string_view separ
     return {};
   }
 
+  // Accumulate the exact byte total with saturating adds so a pathological set of
+  // lines cannot wrap std::size_t and yield a too-small reserve (forcing repeated
+  // reallocation) or a wrapped-huge one. Separators are added per-line to sidestep
+  // a multiply overflow. A saturated (== max) total is treated as "do not reserve"
+  // — such a string could never be held in memory anyway, so we let it grow lazily.
   std::size_t size = 0;
   for (const std::string& line : lines) {
-    size += line.size();
+    size = SaturatingAdd(size, line.size());
   }
-  size += separator.size() * (lines.size() - 1);
+  for (std::size_t i = 1; i < lines.size(); ++i) {
+    size = SaturatingAdd(size, separator.size());
+  }
 
   std::string joined;
-  joined.reserve(size);
+  if (size != std::numeric_limits<std::size_t>::max()) {
+    joined.reserve(size);
+  }
   for (std::size_t i = 0; i < lines.size(); ++i) {
     if (i > 0) {
       joined += separator;

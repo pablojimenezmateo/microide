@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <ios>
 #include <optional>
@@ -31,6 +32,17 @@ bool ReadAllBytes(const std::filesystem::path& path,
                   std::vector<std::byte>* bytes,
                   PersistedRecordReaderError* error) {
   if (bytes == nullptr) {
+    SetError(error, PersistedRecordReaderError::ReadFailed);
+    return false;
+  }
+
+  // TD-2026-07-17-073: prove the path is a regular file before opening. A persisted
+  // path swapped for a FIFO/device/procfs entry can block ifstream open/seek before
+  // the size cap below runs. A non-regular path (or a stat error) is a read failure,
+  // not a missing record. std::filesystem::status follows symlinks to the target.
+  std::error_code status_error;
+  const std::filesystem::file_status status = std::filesystem::status(path, status_error);
+  if (status_error || !std::filesystem::is_regular_file(status)) {
     SetError(error, PersistedRecordReaderError::ReadFailed);
     return false;
   }

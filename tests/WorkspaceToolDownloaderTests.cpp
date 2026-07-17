@@ -200,14 +200,10 @@ void TestToolDownloaderGetCachedToolVerifiesHash() {
   std::filesystem::create_directories(cache_dir);
   WriteFile(cache_dir / "tool", "cached-bytes\n");
 
-  const std::filesystem::path shasum_path = bin_dir / "shasum";
-  WriteFile(shasum_path,
-            "#!/bin/sh\n"
-            "echo \"d4e4877bac978b7952f0d544fc52ebff5411d351d129f1f056fa43f11da9af2b  $3\"\n");
-  std::filesystem::permissions(shasum_path, std::filesystem::perms::owner_exec |
-                                                std::filesystem::perms::owner_read |
-                                                std::filesystem::perms::owner_write,
-                               std::filesystem::perm_options::add);
+  // TD-2026-07-17-060: hashing is now in-process (util::Sha256FileHex), so there is
+  // no external shasum/sha256sum subprocess to stub. The expected digest is the real
+  // SHA-256 of "cached-bytes\n". Point PATH at an empty dir to prove no hash tool is
+  // consulted (the verification must succeed with no external binary available).
   ScopedEnvVar path_env("PATH", bin_dir.string());
 
   ToolDownloader downloader;
@@ -215,9 +211,9 @@ void TestToolDownloaderGetCachedToolVerifiesHash() {
 
   Expect(downloader
              .GetCachedTool("tool",
-                            "d4e4877bac978b7952f0d544fc52ebff5411d351d129f1f056fa43f11da9af2b")
+                            "c6c1e528822cfad8fef7151f1eef6d626e884d873ae7ac4b3ac8d90768787a19")
              .has_value(),
-         "GetCachedTool returns the path when the expected digest matches");
+         "GetCachedTool returns the path when the expected (in-process) digest matches");
   Expect(!downloader.GetCachedTool("tool", std::string(64, 'f')).has_value(),
          "GetCachedTool rejects a cached file whose digest does not match");
   Expect(downloader.GetCachedTool("tool").has_value(),

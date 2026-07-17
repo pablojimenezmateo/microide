@@ -96,7 +96,28 @@ void TestInverseSnapsInsidePhantomRegionToAnchor() {
 
 }  // namespace
 
+// TD-2026-07-17-070: inlay hints are external plugin data. The displacement
+// accumulators must saturate rather than wrap std::size_t so hit-testing /
+// display-column mapping stays monotonic even for pathological hint widths.
+void TestDisplacementAccumulatorsSaturate() {
+  constexpr std::size_t kMax = std::numeric_limits<std::size_t>::max();
+  const std::vector<InlayCellSpan> spans{
+      {.anchor_visual_column = 2, .cell_width = kMax - 10},
+      {.anchor_visual_column = 4, .cell_width = 1000},  // would wrap without saturation
+  };
+  InlayRowDisplacement d(spans);
+  Expect(d.TotalInsertedCells() == kMax,
+         "total inserted cells saturate to size_t max instead of wrapping to a tiny value");
+  Expect(d.CellsInsertedBefore(4) == kMax,
+         "cells-before at the second anchor saturates rather than wrapping");
+  // Monotonic: a later column is never reported as having fewer inserted cells.
+  Expect(d.CellsInsertedBefore(2) <= d.CellsInsertedBefore(4),
+         "inserted-cell count stays monotonic across columns");
+}
+
 void RegisterInlayHintColumnsTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "InlayHintColumns/DisplacementAccumulatorsSaturate",
+          TestDisplacementAccumulatorsSaturate);
   AddTest(tests, "InlayHintColumns/EmptyIsIdentity", TestEmptyIsIdentity);
   AddTest(tests, "InlayHintColumns/CellsInsertedBeforeCountsAnchorAtColumn",
           TestCellsInsertedBeforeCountsAnchorAtColumn);

@@ -1,10 +1,13 @@
 #pragma once
 
 #include <cstddef>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "util/SaturatingMath.h"
 
 namespace microide::util {
 
@@ -129,5 +132,40 @@ std::vector<std::string_view> SplitLineViews(std::string_view content);
 std::vector<std::string_view> SplitLineViews(std::string_view content, std::size_t max_lines);
 std::string JoinLines(std::span<const std::string> lines, std::string_view separator);
 std::string SerializeLines(std::span<const std::string> lines, LineEnding line_ending);
+
+// TD-2026-07-17-095: streaming line serializer that works over ANY lines-like source
+// exposing `size()` and `operator[]` returning something string_view-convertible —
+// in particular `editor::LineSpan` over a `TextBuffer` (zero-copy via LineView). Use
+// this instead of `SerializeLines(buffer.Snapshot(), ...)` so an LSP didOpen /
+// full-sync fallback never materializes a whole-document vector-of-strings before
+// building the payload. Kept in `util` (no editor dependency) via the template.
+template <typename LinesLike>
+std::string SerializeLinesStreaming(const LinesLike& lines, LineEnding line_ending) {
+  const std::string_view separator = LineEndingSeparator(line_ending);
+  const std::size_t count = lines.size();
+  if (count == 0) {
+    return {};
+  }
+  // Exact reserve with saturating adds (mirrors JoinLines) so the final string is
+  // built in a single allocation without an intermediate vector.
+  std::size_t total = 0;
+  for (std::size_t i = 0; i < count; ++i) {
+    total = SaturatingAdd(total, std::string_view(lines[i]).size());
+  }
+  for (std::size_t i = 1; i < count; ++i) {
+    total = SaturatingAdd(total, separator.size());
+  }
+  std::string out;
+  if (total != std::numeric_limits<std::size_t>::max()) {
+    out.reserve(total);
+  }
+  for (std::size_t i = 0; i < count; ++i) {
+    if (i != 0) {
+      out += separator;
+    }
+    out += std::string_view(lines[i]);
+  }
+  return out;
+}
 
 }  // namespace microide::util

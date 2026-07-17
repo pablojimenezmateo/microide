@@ -46,10 +46,13 @@ SurfaceTextureCache::Decoded WrapRgba8(std::uint64_t hash, std::vector<std::byte
 }  // namespace
 
 SurfaceTextureCache::SurfaceTextureCache(project::ProjectBackgroundExecutor& executor,
-                                         std::size_t vram_budget_bytes)
+                                         std::size_t vram_budget_bytes,
+                                         std::size_t pending_decoded_budget_bytes)
     : executor_(executor),
       sink_(std::make_shared<DecodeSink>()),
-      vram_budget_bytes_(vram_budget_bytes) {}
+      vram_budget_bytes_(vram_budget_bytes) {
+  sink_->budget_bytes = pending_decoded_budget_bytes;
+}
 
 SurfaceTextureCache::~SurfaceTextureCache() { Clear(); }
 
@@ -73,6 +76,22 @@ void SurfaceTextureCache::Request(std::uint64_t hash, RasterFormat format,
                           ? DecodeEncoded(hash, bytes)
                           : WrapRgba8(hash, std::move(bytes), declared_w, declared_h);
     std::lock_guard<std::mutex> lock(sink->mutex);
+    // TD-2026-07-17-092: bound the pre-upload decoded-buffer backlog. If this valid
+    // decode would push pending host memory over budget, drop its RGBA and hand
+    // Upload a lightweight "over budget" marker so the in-flight marker is released
+    // and the image can be re-decoded later when the sink has drained.
+    if (decoded.ok) {
+      const std::size_t decoded_bytes = decoded.rgba.size();
+      if (decoded_bytes > sink->budget_bytes - sink->pending_bytes) {
+        Decoded marker;
+        marker.hash = decoded.hash;
+        marker.ok = false;
+        marker.dropped_over_budget = true;
+        sink->ready.push_back(std::move(marker));
+        return;
+      }
+      sink->pending_bytes += decoded_bytes;
+    }
     sink->ready.push_back(std::move(decoded));
   });
 }
@@ -82,6 +101,7 @@ void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
   {
     std::lock_guard<std::mutex> lock(sink_->mutex);
     ready.swap(sink_->ready);
+    sink_->pending_bytes = 0;  // the whole backlog is now owned by `ready`
   }
   if (ready.empty()) {
     return;
@@ -94,8 +114,29 @@ void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
     if (pending == in_flight_or_failed_.end()) {
       continue;
     }
+    if (decoded.dropped_over_budget) {
+      // Transient host-memory backpressure, NOT a decode failure: drop the marker
+      // so a later Request re-decodes when the pre-upload backlog has drained.
+      in_flight_or_failed_.erase(pending);
+      continue;
+    }
     if (!decoded.ok) {
-      continue;  // permanent failure: same content hash → correct never to retry
+      // Permanent failure: same content hash → correct never to retry. Keep the
+      // marker to short-circuit re-requests, but bound the retained-failure set so
+      // a plugin streaming distinct invalid hashes cannot grow it without limit
+      // (TD-2026-07-17-043). Evict the oldest failure once over the cap.
+      failed_hash_order_.push_back(decoded.hash);
+      while (failed_hash_order_.size() > kMaxFailedHashes) {
+        const std::uint64_t oldest = failed_hash_order_.front();
+        failed_hash_order_.pop_front();
+        // Only forget it if it is still a failure marker (not resurrected as a live
+        // entry or re-requested in-flight since).
+        if (entries_.find(oldest) == entries_.end()) {
+          in_flight_or_failed_.erase(oldest);
+          texture_create_failures_.erase(oldest);
+        }
+      }
+      continue;
     }
     if (renderer == nullptr) {
       // Transient, NOT a decode failure: a valid image arrived without a live
@@ -135,6 +176,11 @@ void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
     lru_pos_[decoded.hash] = lru_.begin();
   }
   EvictToBudget();
+}
+
+std::size_t SurfaceTextureCache::pending_decoded_bytes() const {
+  std::lock_guard<std::mutex> lock(sink_->mutex);
+  return sink_->pending_bytes;
 }
 
 const SurfaceTextureCache::Entry* SurfaceTextureCache::Lookup(std::uint64_t hash) {
@@ -186,6 +232,7 @@ void SurfaceTextureCache::Clear() {
   lru_pos_.clear();
   in_flight_or_failed_.clear();
   texture_create_failures_.clear();
+  failed_hash_order_.clear();
   vram_bytes_ = 0;
 }
 

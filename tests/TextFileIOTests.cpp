@@ -8,6 +8,11 @@
 #include <string>
 #include <system_error>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/stat.h>
+#include <sys/types.h>
+#endif
+
 namespace microide::tests {
 namespace {
 
@@ -164,6 +169,40 @@ void TestReadTextFileClassifiedDistinguishesCases() {
   }
 }
 
+// TD-2026-07-17-039: every text-read entry point must reject a non-regular path
+// (directory, FIFO, device) BEFORE opening it. Opening a special file with
+// ifstream can block on open/seek before the size guard runs, so the read must
+// fail cleanly and quickly on a directory everywhere, and on a FIFO on POSIX.
+void TestReadTextFileRejectsNonRegularFiles() {
+  TemporaryDirectory temp_dir;
+
+  // A directory is a non-regular path on every platform.
+  const std::filesystem::path dir_path = temp_dir.path() / "a_directory";
+  std::error_code ec;
+  std::filesystem::create_directory(dir_path, ec);
+  Expect(!ec, "creating the probe directory should succeed");
+
+  Expect(!ReadTextFile(dir_path).has_value(), "ReadTextFile must reject a directory");
+  Expect(ReadTextFileClassified(dir_path).status == TextFileReadStatus::Unreadable,
+         "ReadTextFileClassified classifies a directory as Unreadable, not Ok/Missing");
+  std::string out;
+  Expect(!ReadFileForTextSearch(dir_path, out), "the search reader must reject a directory");
+
+#if defined(__unix__) || defined(__APPLE__)
+  // A FIFO is the canonical block-on-open hazard. mkfifo is POSIX-only.
+  const std::filesystem::path fifo_path = temp_dir.path() / "a_fifo";
+  if (::mkfifo(fifo_path.c_str(), 0600) == 0) {
+    Expect(!ReadTextFile(fifo_path).has_value(),
+           "ReadTextFile must reject a FIFO without blocking on open");
+    Expect(ReadTextFileClassified(fifo_path).status == TextFileReadStatus::Unreadable,
+           "ReadTextFileClassified must classify a FIFO as Unreadable, not open it");
+    Expect(!ReadFileForTextSearch(fifo_path, out),
+           "the search reader must reject a FIFO without blocking");
+    std::filesystem::remove(fifo_path, ec);
+  }
+#endif
+}
+
 }  // namespace
 
 void RegisterTextFileIOTests(std::vector<TestCase>& tests) {
@@ -175,6 +214,8 @@ void RegisterTextFileIOTests(std::vector<TestCase>& tests) {
           TestReadFileForTextSearchRespectsMaxBytes);
   AddTest(tests, "TextFileIO/ReadTextFileClassifiedDistinguishesCases",
           TestReadTextFileClassifiedDistinguishesCases);
+  AddTest(tests, "TextFileIO/ReadTextFileRejectsNonRegularFiles",
+          TestReadTextFileRejectsNonRegularFiles);
 }
 
 }  // namespace microide::tests

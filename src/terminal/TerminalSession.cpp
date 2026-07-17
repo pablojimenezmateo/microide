@@ -10,6 +10,7 @@
 #include "platform/TerminalBackend.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
+#include "util/SdlWake.h"
 #include "util/StringUtil.h"
 
 #include <algorithm>
@@ -657,9 +658,12 @@ void TerminalSession::PushWakeEvent() const {
     return;
   }
 
-  SDL_Event event{};
-  event.type = event_type;
-  if (!SDL_PushEvent(&event)) {
+  // TD-2026-07-17-087: route through util::PushSdlWake so a rejected push latches
+  // the process-wide owed-wake bit (consumed by the idle-wait poll). Otherwise a
+  // dropped final PTY-output or process-exit-marker wake leaves parsed terminal
+  // state undrawn until unrelated input wakes the loop. Clear the local coalescing
+  // flag on failure so a later producer retries.
+  if (!util::PushSdlWake(event_type)) {
     std::scoped_lock lock(mutex_);
     wake_event_pending_ = false;
   }

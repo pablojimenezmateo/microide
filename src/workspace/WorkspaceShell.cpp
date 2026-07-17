@@ -53,6 +53,10 @@ WorkspaceShell::~WorkspaceShell() {
   // into compare_picker_mailbox_ while every member it touches is still alive.
   project_background_executor_.Shutdown();
   interactive_background_executor_.Shutdown();
+  // Drain the plugin raster-decode lane too (TD-2026-07-17-044). Decode tasks only
+  // touch the cache's shared sink, so this is belt-and-suspenders, but shutting it
+  // down here keeps teardown ordering explicit alongside the other lanes.
+  media_background_executor_.Shutdown();
   // Shut down the plugin runtime while every shell member it still calls back
   // into (e.g. the pending redraw invalidation) is alive. Reverse-order member
   // destruction would otherwise tear down `pending_render_invalidation_`

@@ -52,7 +52,10 @@ class TextRenderer {
   // returns `text` unchanged; when truncation is needed the returned view points
   // into a thread-local scratch that is overwritten by the NEXT call on the same
   // thread. Consume the view immediately (draw it before truncating again).
-  std::string_view TruncateToWidthView(std::string_view text, float max_width) const;
+  // NEVER store the returned view (in a view model, member, or across a second
+  // call) — the "Ephemeral" in the name is the contract. Use TruncateToWidth (owns
+  // a std::string) for anything that outlives the immediate draw. (TD-2026-07-17-042.)
+  std::string_view TruncateToWidthEphemeralView(std::string_view text, float max_width) const;
   // Greedy word-wrap on spaces: invokes `emit(line)` for each wrapped line,
   // where every `line` is a view into the original `text` (no allocation).
   // A single word wider than `max_width` is emitted on its own line unbroken.

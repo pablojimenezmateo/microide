@@ -8,6 +8,7 @@
 
 #include "project/ProjectTraversalFilter.h"
 #include "util/PerformanceTrace.h"
+#include "util/SdlWake.h"
 #include "util/StringUtil.h"
 
 namespace microide::workspace {
@@ -387,9 +388,11 @@ void WorkspaceProjectFileMonitor::PushWakeEvent() const {
     return;
   }
 
-  SDL_Event event{};
-  event.type = event_type;
-  if (!SDL_PushEvent(&event)) {
+  // TD-2026-07-17-087: route through util::PushSdlWake so a rejected push latches
+  // the owed-wake bit the idle-wait poll consumes. Otherwise a dropped final
+  // project-file-change wake leaves the change ready but undrained until unrelated
+  // input. Clear the local coalescing flag on failure so a later producer retries.
+  if (!util::PushSdlWake(event_type)) {
     std::scoped_lock lock(wake_mutex_);
     wake_event_pending_ = false;
   }

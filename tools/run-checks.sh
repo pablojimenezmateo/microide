@@ -141,19 +141,71 @@ check_release() {
   return $rc
 }
 
+# libFuzzer gate for parser/decoder-adjacent changes. Configures a dedicated
+# clang + MICROIDE_FUZZ=ON tree and runs each fuzz target for a bounded time
+# against its committed corpus. `tools/run-checks.sh fuzz --list` configures and
+# lists the targets without running them (a cheap smoke check). Any crash or
+# sanitizer error fails the run. (TD-2026-07-17-049.)
+check_fuzz() {
+  local mode="${1:-run}"
+  local build_dir="build/microide-fuzz"
+  local log="${LOG_DIR}/microide-fuzz.log"
+  # Per-target wall-clock budget (seconds). Keep small so the gate stays cheap;
+  # override with MICROIDE_FUZZ_SECONDS for a deeper local campaign.
+  local seconds="${MICROIDE_FUZZ_SECONDS:-30}"
+  # Every libFuzzer executable in the tree. Keep in sync with add_executable(*Fuzz)
+  # in CMakeLists.txt; check_fuzz --list prints exactly what was built.
+  local targets=(
+    PersistedRecordReaderFuzz DebugStateRecordFuzz GitBlameParserFuzz
+    JsonValueParseFuzz PluginDisplayListParseFuzz SearchRegexFuzz
+    SurfaceRasterDecodeFuzz TerminalCsiParserFuzz TerminalSessionOutputFuzz
+    PieceTreeEquivalenceFuzz
+  )
+
+  run_logged "$log" bash -c '
+    set -e
+    cmake -S . -B '"$build_dir"' -DMICROIDE_FUZZ=ON \
+      -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+    targets="'"${targets[*]}"'"
+    cmake --build '"$build_dir"' -j'"$JOBS"' --target $targets
+    mode="'"$mode"'"
+    seconds="'"$seconds"'"
+    if [[ "$mode" == "--list" ]]; then
+      echo "=== fuzz targets built (list mode; no runs) ==="
+      for t in $targets; do
+        bin=$(find '"$build_dir"' -name "$t" -type f -perm -u+x | head -n1)
+        echo "  $t -> ${bin:-<not found>}"
+      done
+      exit 0
+    fi
+    for t in $targets; do
+      bin=$(find '"$build_dir"' -name "$t" -type f -perm -u+x | head -n1)
+      corpus="tests/fuzz/corpora/$t"
+      echo "=== fuzzing $t for ${seconds}s (corpus: $corpus) ==="
+      mkdir -p "$corpus"
+      "$bin" -max_total_time="$seconds" "$corpus"
+    done
+  '
+  local rc=$?
+  echo "run-checks: fuzz finished (exit $rc); log at $log"
+  return $rc
+}
+
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|all}" >&2
+  echo "       tools/run-checks.sh fuzz --list   # configure+build fuzz targets, list them, no runs" >&2
   exit 2
 }
 
 main() {
-  [[ $# -eq 1 ]] || usage
+  [[ $# -ge 1 ]] || usage
   case "$1" in
     tests) check_tests ;;
     asan)  check_sanitizer asan ;;
     ubsan) check_sanitizer ubsan ;;
     tsan)  check_sanitizer tsan ;;
     release) check_release ;;
+    fuzz)  check_fuzz "${2:-run}" ;;
     all)
       local overall=0
       check_tests            || overall=1

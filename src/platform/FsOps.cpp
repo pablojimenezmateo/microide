@@ -41,9 +41,16 @@ bool CopyPath(const std::filesystem::path& source, const std::filesystem::path& 
     return !error;
   }
 
-  std::filesystem::create_directories(destination.parent_path(), error);
-  if (error) {
-    return false;
+  // Only create a parent directory when the destination has one. For a bare
+  // filename (e.g. "backup.txt") parent_path() is empty, and libstdc++'s
+  // create_directories("") sets EINVAL — which would spuriously fail an otherwise
+  // valid copy-into-cwd. Mirror WriteTextFileAtomically's guarded pattern.
+  const std::filesystem::path parent = destination.parent_path();
+  if (!parent.empty()) {
+    std::filesystem::create_directories(parent, error);
+    if (error) {
+      return false;
+    }
   }
   std::filesystem::copy_file(source, destination, std::filesystem::copy_options::none, error);
   return !error;

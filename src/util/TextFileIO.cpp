@@ -9,7 +9,32 @@
 
 namespace microide::util {
 
+namespace {
+
+// Non-throwing check that `path` resolves (following symlinks) to a regular file.
+// Opening a FIFO, device node, or procfs/sysfs entry with std::ifstream can block
+// on open or seek in implementation-specific ways *before* any later size guard
+// runs, so every text-read entry point rejects non-regular paths up front. A
+// directory, socket, dangling symlink, or stat error all report false here.
+bool IsRegularFileFollowingSymlinks(const std::filesystem::path& path) {
+  std::error_code error;
+  const std::filesystem::file_status status = std::filesystem::status(path, error);
+  if (error) {
+    return false;
+  }
+  return std::filesystem::is_regular_file(status);
+}
+
+}  // namespace
+
 std::optional<std::string> ReadTextFile(const std::filesystem::path& path) {
+  // Prove the target is a regular file before opening: a special file (FIFO,
+  // device, procfs entry) can block the caller on open/seek before the size
+  // guard below can reject it.
+  if (!IsRegularFileFollowingSymlinks(path)) {
+    return std::nullopt;
+  }
+
   std::ifstream file(path, std::ios::binary);
   if (!file) {
     return std::nullopt;
@@ -50,6 +75,15 @@ TextFileReadResult ReadTextFileClassified(const std::filesystem::path& path) {
   }
   if (!exists) {
     result.status = TextFileReadStatus::Missing;
+    return result;
+  }
+
+  // A path that exists but is not a regular file (directory, FIFO, device,
+  // socket, procfs entry) must be rejected before opening: ifstream open/seek on
+  // a special file can block instead of failing cleanly. Classify as Unreadable
+  // rather than opening it to find out.
+  if (!IsRegularFileFollowingSymlinks(path)) {
+    result.status = TextFileReadStatus::Unreadable;
     return result;
   }
 
@@ -94,6 +128,11 @@ TextFileReadResult ReadTextFileClassified(const std::filesystem::path& path) {
 
 bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out,
                            std::uintmax_t max_bytes) {
+  // Reject non-regular files before opening so a special file under the project
+  // tree cannot block a search worker on open/seek.
+  if (!IsRegularFileFollowingSymlinks(path)) {
+    return false;
+  }
   std::ifstream file(path, std::ios::binary);
   if (!file) {
     return false;

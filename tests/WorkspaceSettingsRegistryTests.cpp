@@ -545,9 +545,39 @@ void TestSettingsOverlayRowControlMetadata() {
          "bool settings should use a checkbox control");
 }
 
+// TD-2026-07-17-028: pane cycling now derives its wrap modulus from the
+// SettingsPane::Count sentinel instead of a hard-coded 3, so adding/removing a
+// pane cannot desync keyboard navigation. Verify forward/backward wrap covers
+// exactly the focusable panes.
+void TestSettingsOverlayPaneCyclingWrapsAllPanes() {
+  using microide::workspace::SettingsPane;
+  SettingsOverlayService service;
+
+  service.SetFocusedPane(SettingsPane::Filter);
+  service.CycleFocusedPane(1);
+  Expect(service.FocusedPane() == SettingsPane::Categories, "forward: Filter -> Categories");
+  service.CycleFocusedPane(1);
+  Expect(service.FocusedPane() == SettingsPane::Values, "forward: Categories -> Values");
+  service.CycleFocusedPane(1);
+  Expect(service.FocusedPane() == SettingsPane::Filter, "forward wraps: Values -> Filter");
+
+  // Backward wrap from the first pane lands on the last.
+  service.CycleFocusedPane(-1);
+  Expect(service.FocusedPane() == SettingsPane::Values, "backward wraps: Filter -> Values");
+
+  // A full-cycle delta returns to the start regardless of pane count.
+  const int pane_count = static_cast<int>(SettingsPane::Count);
+  service.SetFocusedPane(SettingsPane::Categories);
+  service.CycleFocusedPane(pane_count);
+  Expect(service.FocusedPane() == SettingsPane::Categories,
+         "cycling by exactly the pane count is a no-op");
+}
+
 }  // namespace
 
 void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceSettingsOverlay/PaneCyclingWrapsAllPanes",
+          TestSettingsOverlayPaneCyclingWrapsAllPanes);
   AddTest(tests, "WorkspaceSettingsRegistry/IncludesPolishKeys",
           TestSettingsCatalogIncludesPolishKeys);
   AddTest(tests, "WorkspaceSettingsRegistry/SaveDefaultsAndDedup",

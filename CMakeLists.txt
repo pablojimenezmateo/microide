@@ -355,6 +355,7 @@ set(MICROIDE_CORE_SOURCES
   src/util/Parse.cpp
   src/util/PerformanceCounters.cpp
   src/util/PerformanceTrace.cpp
+  src/util/Sha256.cpp
   src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
   src/util/TaskExecutor.cpp
@@ -810,6 +811,7 @@ add_executable(microide_tests
   tests/AssistServiceTests.cpp
   tests/PluginHostTests.cpp
   tests/PluginSurfaceCoverageTests.cpp
+  tests/SurfaceTextureCacheTests.cpp
   tests/PluginThreadTests.cpp
   tests/ParseTests.cpp
   tests/JsonValueTests.cpp
@@ -839,6 +841,7 @@ add_executable(microide_tests
   tests/RowDecorationBuilderTests.cpp
   tests/RuntimeSyntaxSkipTests.cpp
   tests/SyntaxDefinitionLoaderTests.cpp
+  tests/Sha256Tests.cpp
   tests/StringUtilTests.cpp
   tests/SubprocessTests.cpp
   tests/TextRendererTests.cpp

@@ -6,6 +6,7 @@
 #include "terminal/TerminalCsiParser.h"
 #include "terminal/TerminalMouseEncoder.h"
 #include "util/PerformanceCounters.h"
+#include "util/SdlWake.h"
 
 #include <chrono>
 #include <string_view>
@@ -941,6 +942,29 @@ void TestTerminalSessionCoalescesWakeEventsUntilConsumed() {
          "consuming terminal wake events should clear the pending wake marker");
   Expect(TerminalSessionTestAccess::ReserveWakeEvent(session, event_type),
          "terminal sessions should allow another wake request after the UI consumes the prior one");
+}
+
+// TD-2026-07-17-087: when the terminal's wake push is rejected by SDL, the
+// producer must latch the process-wide owed-wake bit so the idle-wait poll
+// self-heals, instead of only clearing its local coalescing flag and stranding
+// ready terminal state until unrelated input.
+void TestTerminalSessionRejectedWakeLatchesOwedBit() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  session.SetWakeEventType(SDL_EVENT_USER);
+
+  // Force every SDL push to fail, and clear any pre-existing owed state.
+  microide::util::SetSdlEventPusherForTesting([](const SDL_Event&) { return false; });
+  (void)microide::util::ConsumeOwedSdlWake();
+
+  TerminalSessionTestAccess::PushWakeEvent(session);
+
+  const bool owed = microide::util::HasOwedSdlWake();
+  // Restore the default pusher before asserting so a failure cannot leak the hook.
+  microide::util::SetSdlEventPusherForTesting(nullptr);
+  (void)microide::util::ConsumeOwedSdlWake();
+
+  Expect(owed, "a rejected terminal wake push must latch the process-wide owed-wake bit");
 }
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -2219,7 +2243,31 @@ void TestTerminalSessionResizeReexpandsSavedScrollRegion() {
          "the restored primary region re-expands to the new full height (row 5)");
 }
 
+// TD-2026-07-17-067: a state-restore path that copies an oversized saved cursor
+// row into cursor_row_ must not resize the line deque past the scrollback budget.
+// EnsureCursorLineExistsLocked now clamps at max_scrollback_lines_ + rows_, so the
+// restore allocates a bounded number of lines rather than tens of millions.
+void TestTerminalSessionRestoreClampsOversizedCursorRow() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  session.SetMaxScrollbackLines(2000);
+
+  // A saved primary cursor row far beyond any legitimate scrollback position.
+  const std::size_t restored_line_count =
+      TerminalSessionTestAccess::RestoreWithSavedPrimaryCursorRow(session, 50'000'000);
+
+  // The cap is max_scrollback_lines_ + rows_ (+1 for the row itself). 2000 + 24 + 1.
+  Expect(restored_line_count <= 2000 + 24 + 1,
+         "restore of an oversized cursor row must stay within the scrollback+visible budget");
+  Expect(session.cursor_row() <= 2000 + 24,
+         "the restored cursor row must be clamped to the scrollback ceiling");
+}
+
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TerminalSession/RestoreClampsOversizedCursorRow",
+          TestTerminalSessionRestoreClampsOversizedCursorRow);
+  AddTest(tests, "TerminalSession/RejectedWakeLatchesOwedBit",
+          TestTerminalSessionRejectedWakeLatchesOwedBit);
   AddTest(tests, "TerminalSession/PrimaryScreenScrollRegionScrollsOnlyRegion",
           TestTerminalSessionPrimaryScreenScrollRegionScrollsOnlyRegion);
   AddTest(tests, "TerminalSession/DecstbmClampsOutOfRangeBottom",

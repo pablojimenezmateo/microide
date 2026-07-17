@@ -166,8 +166,10 @@ void TestArchitectureInvariants() {
              // so the blocking git history/branch queries run off the render thread.
              // 1691: +1 for interactive_background_executor_, a dedicated lane so the
              // compare/ref picker git queries never queue behind an in-flight sidebar git status.
+             // 1692: +1 for media_background_executor_ (TD-2026-07-17-044), a dedicated lane so
+             // plugin raster decode never queues ahead of core git/diff/merge/project-state work.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1691);
+                                                     1692);
            });
 
   bool hard_failure = false;

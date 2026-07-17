@@ -376,10 +376,19 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   const std::size_t kMaxAggregateReplaceBytes = replace_all_aggregate_cap_bytes_;
   std::size_t aggregate_bytes = 0;
 
-  const std::vector<std::filesystem::path> files = context_.current_project_state.file_index.SnapshotPaths(
-      context_.current_project_state.overlay.workflow.project_search.options.show_hidden
-          ? project::ProjectFileScanMode::IncludeHidden
-          : project::ProjectFileScanMode::ExcludeHidden);
+  // TD-2026-07-17-094: use the shared-pointer snapshot rather than SnapshotPaths(),
+  // which deep-copies the entire catalog path vector on the shell thread before the
+  // per-file read/replace/write loop even starts. On large projects that copy alone
+  // froze the UI; SnapshotPathsWithVersion() hands back a SharedPathList (shared with
+  // the index cache) that we iterate without copying.
+  const project::FilePathSnapshot path_snapshot =
+      context_.current_project_state.file_index.SnapshotPathsWithVersion(
+          context_.current_project_state.overlay.workflow.project_search.options.show_hidden
+              ? project::ProjectFileScanMode::IncludeHidden
+              : project::ProjectFileScanMode::ExcludeHidden);
+  static const std::vector<std::filesystem::path> kEmptyPaths;
+  const std::vector<std::filesystem::path>& files =
+      path_snapshot.files ? *path_snapshot.files : kEmptyPaths;
   for (const auto& relative_path : files) {
     const std::filesystem::path absolute_path = context_.current_project_state.root / relative_path;
     const std::filesystem::path normalized_absolute = absolute_path.lexically_normal();

@@ -91,6 +91,18 @@ void TerminalSession::RestoreSavedScreenLocked() {
   if (use_alternate_screen_ && rows_ > 0) {
     cursor_row_ = std::min(cursor_row_, rows_ - 1);
     saved_cursor_row_ = std::min(saved_cursor_row_, rows_ - 1);
+  } else {
+    // TD-2026-07-17-067: the primary restore trusts the saved cursor_row_ and then
+    // allocates lines up to it via EnsureCursorLineExistsLocked. An oversized or
+    // corrupted saved row would balloon the deque, so clamp to the same scrollback
+    // ceiling MoveCursorLocked enforces (max_scrollback_lines_ + rows_) — exactly
+    // what TrimScrollbackLocked would collapse to anyway. The alternate branch above
+    // already clamps to rows_ - 1. This clamp is deliberately NOT inside
+    // EnsureCursorLineExistsLocked: the normal scroll path grows the deque past this
+    // ceiling within one output chunk and relies on end-of-chunk trimming.
+    const std::size_t max_row = max_scrollback_lines_ + std::max<std::size_t>(1, rows_);
+    cursor_row_ = std::min(cursor_row_, max_row);
+    saved_cursor_row_ = std::min(saved_cursor_row_, max_row);
   }
   ClampScrollRegionLocked();
   EnsureCursorLineExistsLocked();

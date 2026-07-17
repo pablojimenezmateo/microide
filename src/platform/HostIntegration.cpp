@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <cctype>
+#include <string>
 #include <system_error>
 #include <utility>
 
@@ -31,11 +33,42 @@ std::filesystem::path NormalizeExistingPath(const std::filesystem::path& path) {
   return (error ? path : absolute).lexically_normal();
 }
 
+// TD-2026-07-17-027: opening an external URL is a trust boundary — plugin- or
+// project-supplied URLs must not launch arbitrary schemes (`javascript:`,
+// `file:`, `data:`, custom handlers). Allowlist the schemes we intend to hand to
+// the OS opener. A URL longer than this is almost certainly hostile/malformed and
+// would also degrade prompt/log layout.
+constexpr std::size_t kMaxUrlBytes = 8192;
+
+bool IsAllowedUrlScheme(std::string_view url) {
+  const std::size_t colon = url.find(':');
+  if (colon == std::string_view::npos || colon == 0) {
+    return false;  // no scheme delimiter -> not a fully-qualified URL we will open
+  }
+  // RFC 3986 scheme chars only, folded to lowercase for comparison.
+  std::string scheme;
+  scheme.reserve(colon);
+  for (std::size_t i = 0; i < colon; ++i) {
+    const unsigned char ch = static_cast<unsigned char>(url[i]);
+    if (!(std::isalnum(ch) || ch == '+' || ch == '-' || ch == '.')) {
+      return false;
+    }
+    scheme.push_back(static_cast<char>(std::tolower(ch)));
+  }
+  return scheme == "http" || scheme == "https" || scheme == "mailto";
+}
+
 }  // namespace
 
 HostIntegrationResult OpenUrl(std::string_view url) {
   if (url.empty()) {
     return Failure("No URL was provided");
+  }
+  if (url.size() > kMaxUrlBytes) {
+    return Failure("URL is too long to open");
+  }
+  if (!IsAllowedUrlScheme(url)) {
+    return Failure("Refusing to open a URL with an unsupported scheme (only http, https, mailto)");
   }
   if (SDL_OpenURL(std::string(url).c_str())) {
     return Success();

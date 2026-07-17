@@ -736,7 +736,11 @@ bool FileTreeWatcher::Poll() {
   std::unique_ptr<NativeBackend> old_backend;
   std::scoped_lock lock(mutex_);
   if (roots != roots_) {
-    return changed;
+    // Roots were superseded while this poll scanned the filesystem unlocked. The
+    // computed `changed` flag describes the *old* root set, so reporting it would
+    // leak a stale change into the new root generation (a spurious project refresh
+    // after a project switch). Discard it exactly like the early superseded branch.
+    return false;
   }
   if (too_large) {
     snapshot_.clear();

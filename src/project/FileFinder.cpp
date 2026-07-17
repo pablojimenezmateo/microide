@@ -67,6 +67,12 @@ void FileFinder::Refresh() {
   std::unordered_set<std::string> recent_shown;
   if (query_.text().empty() && !recent_relative_paths_.empty()) {
     for (const std::filesystem::path& recent : recent_relative_paths_) {
+      // Recents are deep-copied into results_ before the ranked tail applies its
+      // cap, so a large/corrupt persisted recents list would otherwise materialize
+      // an unbounded result set. Enforce the same visible budget here.
+      if (results_.size() >= kMaxResults) {
+        break;
+      }
       const std::string recent_string = recent.string();
       if (recent_string.empty() || recent_shown.count(recent_string) != 0) {
         continue;

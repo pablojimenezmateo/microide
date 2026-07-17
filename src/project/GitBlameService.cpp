@@ -399,10 +399,13 @@ struct GitBlameService::Impl {
                   .start = std::max(visible_window.start,
                                     std::min(request.result_start_line,
                                              request.total_line_count - 1)),
+                  // Saturating add matches the visible-window math above: a huge
+                  // result_start_line + result_line_count must not wrap and point
+                  // the window end at a small line. result_line_count is > 0 here.
                   .end = std::min(visible_window.end,
                                   std::min(request.total_line_count - 1,
-                                           request.result_start_line +
-                                               request.result_line_count - 1)),
+                                           util::SaturatingAdd(request.result_start_line,
+                                                               request.result_line_count - 1))),
               };
     const Span normalized_window =
         NormalizeWindow(request.visible_start_line, request.visible_line_count, request.total_line_count);

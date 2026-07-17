@@ -14,6 +14,11 @@
 #include <system_error>
 #include <vector>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/stat.h>
+#include <sys/types.h>
+#endif
+
 namespace microide::tests {
 namespace {
 
@@ -395,7 +400,39 @@ void TestPersistedRecordReaderRejectsLargeUnsupportedVersionOnHeader() {
 
 }  // namespace
 
+// TD-2026-07-17-073: a persisted path swapped for a directory/FIFO/device must be
+// classified as a read failure (not opened, not NotFound). The reader now proves
+// the path is a regular file before opening it.
+void TestPersistedRecordReaderRejectsNonRegularPath() {
+  TemporaryDirectory temp_dir;
+
+  // Directory case (all platforms).
+  const std::filesystem::path dir_path = temp_dir.path() / "state_dir";
+  std::error_code ec;
+  std::filesystem::create_directory(dir_path, ec);
+  Expect(!ec, "probe directory should be created");
+  PersistedRecordReaderError dir_error = PersistedRecordReaderError::None;
+  const auto dir_result = PersistedRecordReader::ReadFile(dir_path, &dir_error);
+  Expect(!dir_result.has_value(), "reading a directory path must not yield a record");
+  Expect(dir_error == PersistedRecordReaderError::ReadFailed,
+         "a directory persisted-state path is a read failure, not NotFound");
+
+#if defined(__unix__) || defined(__APPLE__)
+  const std::filesystem::path fifo_path = temp_dir.path() / "state_fifo";
+  if (::mkfifo(fifo_path.c_str(), 0600) == 0) {
+    PersistedRecordReaderError fifo_error = PersistedRecordReaderError::None;
+    const auto fifo_result = PersistedRecordReader::ReadFile(fifo_path, &fifo_error);
+    Expect(!fifo_result.has_value(), "reading a FIFO path must not block or yield a record");
+    Expect(fifo_error == PersistedRecordReaderError::ReadFailed,
+           "a FIFO persisted-state path is a read failure");
+    std::filesystem::remove(fifo_path, ec);
+  }
+#endif
+}
+
 void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PersistedRecordIo/ReaderRejectsNonRegularPath",
+          TestPersistedRecordReaderRejectsNonRegularPath);
   AddTest(tests, "PersistedRecordIo/ReaderRejectsLargeBadMagicOnHeader",
           TestPersistedRecordReaderRejectsLargeBadMagicOnHeader);
   AddTest(tests, "PersistedRecordIo/ReaderRejectsLargeUnsupportedVersionOnHeader",

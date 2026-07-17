@@ -10,6 +10,7 @@
 
 #include "project/ProjectChangeNormalizer.h"
 #include "util/PerformanceTrace.h"
+#include "util/SdlWake.h"
 #include "util/StringUtil.h"
 #include "platform/AppDirectories.h"
 #include "app/BackgroundTaskCounter.h"
@@ -100,15 +101,14 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
     }
     if (project_file_event_type_ != 0 && (batch.is_initial || applied_to_index) &&
         !project_file_event_pending_.exchange(true, std::memory_order_acq_rel)) {
-      SDL_Event event{};
-      event.type = project_file_event_type_;
       util::PerformanceTrace::Scope scope(
           "WorkspaceShell::FileIndexWatcherCallback::PushWakeEvent");
-      // Clear the coalescing flag if the push fails: otherwise the flag stays set with
-      // no event queued, and every later batch's exchange sees `true` and skips the
-      // push — the file index never gets drained/redrawn until an unrelated event
-      // wakes the loop. Same clear-on-push-failure contract as the other producers.
-      if (!SDL_PushEvent(&event)) {
+      // TD-2026-07-17-087: route through util::PushSdlWake so a rejected push latches
+      // the owed-wake bit the idle-wait poll consumes. Otherwise the flag stays set
+      // with no event queued, every later batch's exchange sees `true` and skips the
+      // push, and the file index is never drained/redrawn until an unrelated event
+      // wakes the loop. Clear the local flag on failure so a later producer retries.
+      if (!util::PushSdlWake(project_file_event_type_)) {
         project_file_event_pending_.store(false, std::memory_order_release);
       }
     }

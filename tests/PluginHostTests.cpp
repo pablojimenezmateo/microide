@@ -1738,6 +1738,42 @@ return ide.plugin({
          "a language_ids array should be preserved in order for one shared server");
 }
 
+// TD-2026-07-17-078: a command array with an oversized argv token must be rejected
+// at the plugin boundary. ReadStringArrayField now caps per-item (64 KiB) and
+// aggregate (8 MiB) copied bytes, so a single enormous string fails the whole
+// command and the server is not registered.
+void TestPluginHostRejectsOversizedCommandArgv() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "oversized argv\n");
+  WritePluginInit(
+      global_plugins, "hugelsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "hugelsp",
+  setup = function(ctx)
+    -- A ~70 KiB argv token exceeds the 64 KiB per-item cap.
+    ctx.lsp.add({ id = "huge", language_ids = { "cpp" },
+                  command = { "clangd", string.rep("x", 70000) } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  host.Reload(project_root);
+  for (const auto& server : host.ContributedLanguageServers()) {
+    Expect(server.id != "hugelsp.huge",
+           "a language server with an oversized argv token must not be registered");
+  }
+}
+
 // Regression: a language-server registration whose language_ids array contains an
 // empty/whitespace entry must be rejected, not seed a "" key into the activation
 // table.
@@ -2264,6 +2300,14 @@ return ide.plugin({
     ctx.commands.add("diag.bad-path", function(ctx, args)
       ctx.diagnostics.publish({}, {})
     end)
+    ctx.commands.add("diag.clear-bad", function(ctx, args)
+      -- TD-2026-07-17-001: a table (or number) argument to clear must fail cleanly.
+      -- Previously luaL_checkstring longjmped over the live std::optional<path> local.
+      ctx.diagnostics.clear({})
+    end)
+    ctx.commands.add("dec.clear-bad", function(ctx, args)
+      ctx.decorations.clear(123)
+    end)
     ctx.commands.add("diag.huge-line", function(ctx, args)
       ctx.diagnostics.publish("README.md", {
         { message = "bogus", line = math.maxinteger, column = 1 }
@@ -2339,6 +2383,24 @@ return ide.plugin({
   command_error.clear();
   Expect(!host.ExecuteCommand("ws.bad-line", {}, &command_error),
          "workspace.open_file with a non-numeric line should fail the command");
+
+  // TD-2026-07-17-001: diagnostics.clear / decorations.clear validated their path
+  // argument with luaL_checkstring while a std::optional<std::filesystem::path>
+  // local was live, so bad input longjmped over its destructor. A table/number
+  // argument must now fail cleanly, a nil/absent argument must still succeed, and
+  // the host must survive both (proven by the proc.ok success below).
+  command_error.clear();
+  Expect(!host.ExecuteCommand("diag.clear-bad", {}, &command_error),
+         "diagnostics.clear with a table argument should fail the command without crashing");
+  Expect(command_error.find("diagnostics.clear requires a path string or nil") !=
+             std::string::npos,
+         "diagnostics.clear should surface the descriptive path-type error");
+  command_error.clear();
+  Expect(!host.ExecuteCommand("dec.clear-bad", {}, &command_error),
+         "decorations.clear with a number argument should fail the command without crashing");
+  Expect(command_error.find("decorations.clear requires a path string or nil") !=
+             std::string::npos,
+         "decorations.clear should surface the descriptive path-type error");
 
   host.ClearMessages();
   command_error.clear();
@@ -3719,6 +3781,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostShorthandRejectsBadArgsWithoutLongjmp);
   AddTest(tests, "PluginHost/Phase5WorkspaceApis", TestPluginHostPhase5WorkspaceApis);
   AddTest(tests, "PluginHost/Phase5LspApis", TestPluginHostPhase5LspApis);
+  AddTest(tests, "PluginHost/RejectsOversizedCommandArgv",
+          TestPluginHostRejectsOversizedCommandArgv);
   AddTest(tests, "PluginHost/LspRegistrationRejectsEmptyLanguageId",
           TestPluginHostLspRegistrationRejectsEmptyLanguageId);
   AddTest(tests, "PluginHost/DebugAdapterRegistration", TestPluginHostDebugAdapterRegistration);

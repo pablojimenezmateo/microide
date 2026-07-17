@@ -154,6 +154,29 @@ struct TerminalSessionTestAccess {
                                Uint32& event_type) {
     return session.ReserveWakeEvent(event_type);
   }
+
+  // TD-2026-07-17-087: drive the private wake producer directly so a test can force
+  // a rejected SDL push (via util::SetSdlEventPusherForTesting) and assert the
+  // owed-wake backstop latches.
+  static void PushWakeEvent(const microide::terminal::TerminalSession& session) {
+    session.PushWakeEvent();
+  }
+
+  // TD-2026-07-17-067: inject an oversized saved primary cursor row and run the
+  // restore path. Primary restores do not clamp the saved row (only alternate
+  // restores do), so this exercises the scrollback cap inside
+  // EnsureCursorLineExistsLocked. Returns the resulting line count so the caller
+  // can assert the allocation stayed within the scrollback+visible budget.
+  static std::size_t RestoreWithSavedPrimaryCursorRow(microide::terminal::TerminalSession& session,
+                                                      std::size_t saved_row) {
+    std::scoped_lock lock(session.mutex_);
+    session.use_alternate_screen_ = false;
+    session.primary_screen_.lines.clear();  // force the empty-buffer restore branch
+    session.primary_screen_.cursor_row = saved_row;
+    session.primary_screen_.cursor_column = 0;
+    session.RestoreSavedScreenLocked();
+    return session.lines_.size();
+  }
 };
 
 }  // namespace microide::tests

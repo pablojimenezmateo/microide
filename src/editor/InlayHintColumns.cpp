@@ -4,14 +4,27 @@
 #include <cmath>
 #include <limits>
 
+#include "util/SaturatingMath.h"
+
 namespace microide::editor {
+
+namespace {
+// TD-2026-07-17-070: inlay hints are external plugin/LSP data. A per-hint cell
+// width and per-line total that grow without a cap can wrap std::size_t or make
+// the phantom-cell displacement far larger than any viewport can use, corrupting
+// hit-testing / display-column mapping. No single legitimate hint spans more than
+// a few dozen cells; 64K is a generous ceiling that never clips a real hint while
+// bounding a hostile one, and saturating totals guarantee the displacement math
+// stays monotonic even under thousands of maxed-out hints.
+constexpr std::size_t kMaxInlayHintCells = 1u << 16;  // 65536 cells per hint
+}  // namespace
 
 std::size_t InlayHintCellWidth(const render::TextRenderer& text_renderer, std::string_view text,
                                float char_width) {
   const float width = text_renderer.MeasureWidth(text);
   const float cell = std::max(1.0f, char_width);
   const std::size_t cells = static_cast<std::size_t>(std::ceil(width / cell - 1e-4f));
-  return std::max<std::size_t>(1, cells);
+  return std::clamp<std::size_t>(cells, 1, kMaxInlayHintCells);
 }
 
 std::size_t InlayLineTotalCells(std::span<const InlineTextDecoration> inline_texts,
@@ -21,7 +34,7 @@ std::size_t InlayLineTotalCells(std::span<const InlineTextDecoration> inline_tex
     if (inl.anchor_column == kInlineTextEndOfLine) {
       continue;
     }
-    total += InlayHintCellWidth(text_renderer, inl.text, char_width);
+    total = util::SaturatingAdd(total, InlayHintCellWidth(text_renderer, inl.text, char_width));
   }
   return total;
 }
@@ -59,7 +72,7 @@ void BuildInlayRowSpans(std::span<const InlineTextDecoration> inline_texts,
       continue;  // end-of-line virtual text is handled by BuildEolDecorationSegments
     }
     const std::size_t width = InlayHintCellWidth(text_renderer, inl.text, char_width);
-    total += width;  // every mid-line hint shifts the end-of-line anchor
+    total = util::SaturatingAdd(total, width);  // every mid-line hint shifts the end-of-line anchor
     const std::size_t vcol = ResolveInlayVisualColumn(layout, visual_map, row_visual_start,
                                                       row_visual_end, inl.anchor_column);
     // Drop hints whose anchor lands outside the visible window: those scrolled off
@@ -115,7 +128,7 @@ std::size_t InlayRowDisplacement::CellsInsertedBefore(std::size_t visual_column)
     if (span.anchor_visual_column > visual_column) {
       break;  // spans are sorted; the rest anchor further right
     }
-    sum += span.cell_width;
+    sum = util::SaturatingAdd(sum, span.cell_width);
   }
   return sum;
 }
@@ -123,7 +136,7 @@ std::size_t InlayRowDisplacement::CellsInsertedBefore(std::size_t visual_column)
 std::size_t InlayRowDisplacement::TotalInsertedCells() const {
   std::size_t sum = 0;
   for (const InlayCellSpan& span : spans_) {
-    sum += span.cell_width;
+    sum = util::SaturatingAdd(sum, span.cell_width);
   }
   return sum;
 }

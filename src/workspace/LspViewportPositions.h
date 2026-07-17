@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <string_view>
 
 #include "editor/TextViewport.h"
@@ -18,6 +19,18 @@
 // Snapshot() (which materializes the whole document) — the previous AssistService
 // copies snapshotted the entire buffer just to read one line.
 namespace microide::workspace {
+
+// TD-2026-07-17-089: outbound LSP fields are protocol `int`. A pathological/generated
+// buffer can have a line or column past INT_MAX; a raw static_cast<int> would wrap to
+// a negative/wrong value and ask the server about the wrong location. Saturating to
+// INT_MAX instead sends a large-but-valid position that every server clamps to EOF —
+// never a wrapped negative. (Documents this large are outside the editor's normal byte
+// caps; clamping is the safe outbound policy without threading an optional through every
+// request caller.)
+inline int SaturateToLspInt(std::size_t value) {
+  constexpr std::size_t kMax = static_cast<std::size_t>(std::numeric_limits<int>::max());
+  return static_cast<int>(std::min(value, kMax));
+}
 
 // Encoding the server negotiated for `client`, ready to feed the converters below.
 inline lsp_encoding::PositionEncoding LspEncodingForClient(const LspClient& client) {
@@ -37,8 +50,8 @@ inline LspClient::Position ByteColumnToLspPosition(const editor::TextViewport& v
                                                    lsp_encoding::PositionEncoding encoding) {
   const std::string_view text = LspLineView(viewport, line);
   return LspClient::Position{
-      static_cast<int>(line),
-      static_cast<int>(lsp_encoding::ByteColumnToLspCharacter(text, byte_column, encoding))};
+      SaturateToLspInt(line),
+      SaturateToLspInt(lsp_encoding::ByteColumnToLspCharacter(text, byte_column, encoding))};
 }
 
 // Inbound LSP `character` (server encoding) on `line` -> editor byte column, given

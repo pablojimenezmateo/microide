@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <future>
 #include <mutex>
 #include <thread>
@@ -391,9 +392,55 @@ void TestOutgoingBaseResolutionIsMemoizedByRepositoryIdentity() {
   executor.Shutdown();
 }
 
+// TD-2026-07-17-093: GitRepositoryService::Reset() must NOT cancel the shared
+// project background executor — a git-state reset would otherwise discard queued
+// commit/patch/monitor/refresh work. Git-result correctness is preserved by
+// generation gating, not by cancelling the queue. Enqueue an unrelated job behind
+// a worker-blocking latch, reset git while it is still queued, then prove the
+// unrelated job still runs.
+void TestResetDoesNotCancelUnrelatedQueuedWork() {
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService service(executor);
+
+  std::mutex m;
+  std::condition_variable cv;
+  bool release = false;
+  std::atomic<bool> victim_ran{false};
+
+  // Blocker occupies the single worker thread until released, so the victim stays
+  // queued (not yet running) when Reset() is called.
+  executor.Post([&] {
+    std::unique_lock<std::mutex> lock(m);
+    cv.wait(lock, [&] { return release; });
+  });
+  // An unrelated (non-git) job queued behind the blocker.
+  executor.Post([&] { victim_ran.store(true); });
+
+  // A git-state reset must leave the queued unrelated job intact.
+  service.Reset();
+
+  // Release the blocker and wait (bounded) for the victim to run.
+  {
+    std::lock_guard<std::mutex> lock(m);
+    release = true;
+  }
+  cv.notify_all();
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (!victim_ran.load() && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  Expect(victim_ran.load(),
+         "git Reset() must not cancel unrelated queued project background work");
+
+  executor.Shutdown();
+}
+
 }  // namespace
 
 void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "GitRepositoryService/ResetDoesNotCancelUnrelatedQueuedWork",
+          TestResetDoesNotCancelUnrelatedQueuedWork);
   AddTest(tests, "GitRepositoryService/CurrentStateReturnsSnapshotCopy",
           TestCurrentStateReturnsSnapshotCopy);
   AddTest(tests, "GitRepositoryService/CurrentStateReadsDuringRefresh",

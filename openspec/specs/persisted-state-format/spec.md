@@ -43,17 +43,21 @@ The format SHALL support adding new typed records without breaking older readers
 - **WHEN** a reader opens a file written by an older minor version of the same major
 - **THEN** it SHALL parse all known tags and SHALL fill missing fields with documented defaults
 
-### Requirement: One-Shot Migration From Legacy Text Format
+### Requirement: Legacy Text Format Is Fully Retired
 
-The application SHALL migrate existing text-command-based workspace state, user configuration, and session restore files to the structured format on first launch and SHALL NOT retain a runtime fallback to the legacy parser.
+The one-shot legacy-text-format importer has been removed (the source tree no
+longer contains any legacy command-style parser or importer). The application
+SHALL NOT parse, import, or retain any runtime fallback to the legacy
+command-style format. This supersedes the earlier one-shot-migration requirement,
+which has been satisfied and retired.
 
-#### Scenario: First launch with legacy files
-- **WHEN** the application starts and detects legacy `project.state`, `user.config`, or `session.workspace` files
-- **THEN** it SHALL import each file once, write the equivalent structured file via the atomic writer, verify the round-trip by re-reading the new file, and only then rename the legacy file to `<name>.legacy`
-
-#### Scenario: Legacy reader is deleted
-- **WHEN** the migration step lands
-- **THEN** the source tree SHALL NOT contain any code path that parses the legacy command-style format outside the one-shot importer
+#### Scenario: No legacy parser or importer exists
+- **WHEN** the architectural-lint test runs over `src/`, `tests/`, and `tools/`
+- **THEN** it SHALL fail the build if any legacy persistence symbol
+  (`WorkspacePersistenceLegacyFormat`, `EncodeSessionNodePath`,
+  `DecodeSessionNodePath`, `ParseUserConfigText`, `ParseProjectConfigText`,
+  `ParseProjectSessionText`, `ParseWorkspaceSessionText`) or a one-shot importer
+  path reappears
 
 ### Requirement: Non-Throwing Typed Token Parser
 
@@ -75,9 +79,9 @@ A debug tooling path SHALL exist to dump the contents of any persisted file in h
 - **WHEN** a developer runs the `microide` binary (or test tool) with the documented dump subcommand against a persisted file
 - **THEN** the tool SHALL print each record's tag, length, and decoded payload in a stable text form suitable for diff
 
-### Requirement: Reader And Importer Survive Adversarial Input
+### Requirement: Reader Survives Adversarial Input
 
-`PersistedRecordReader` and the one-shot legacy importer SHALL survive truncated input, swapped or unknown record tags, length fields that exceed the available buffer, and CRC-mismatched bodies, without aborting, without out-of-bounds reads, and without unbounded allocation. A libFuzzer harness SHALL exercise both paths in CI.
+`PersistedRecordReader` SHALL survive truncated input, swapped or unknown record tags, length fields that exceed the available buffer, and CRC-mismatched bodies, without aborting, without out-of-bounds reads, and without unbounded allocation. It SHALL also reject a non-regular path (directory, FIFO, device) before opening it. A libFuzzer harness SHALL exercise the reader in CI.
 
 #### Scenario: Truncated input is rejected cleanly
 - **WHEN** the reader is given fewer bytes than the header or record framing requires
@@ -93,19 +97,18 @@ A debug tooling path SHALL exist to dump the contents of any persisted file in h
 
 #### Scenario: Fuzz CI runs on every merge candidate
 - **WHEN** CI builds with `MICROIDE_FUZZ=ON`
-- **THEN** the `PersistedRecordReaderFuzz` and `LegacyImporterFuzz` targets SHALL run for at least 60 seconds against the committed corpus, and SHALL fail the merge on any crash or sanitizer error
+- **THEN** the `PersistedRecordReaderFuzz` target SHALL run for at least 60 seconds against the committed corpus, and SHALL fail the merge on any crash or sanitizer error
 
-### Requirement: One-Shot Legacy Importer Has A Documented End-Of-Life
+### Requirement: One-Shot Legacy Importer Removal Is Complete
 
-The one-shot legacy importer added in `comprehensive-tech-debt-cleanup` SHALL be scheduled for removal in the release-after-next, and the change that removes it SHALL also delete remaining `<file>.legacy` files written by the original migration.
+The one-shot legacy importer added in `comprehensive-tech-debt-cleanup` has been
+removed, along with its `LegacyImporterFuzz` target. No further end-of-life work
+is pending; the architectural-lint ban on legacy persistence symbols keeps it
+from returning.
 
-#### Scenario: End-of-life is scheduled in this change
-- **WHEN** this change lands
-- **THEN** the change record SHALL include a `legacy-persistence-cleanup` follow-up entry naming the target release and the files to be removed (`WorkspacePersistenceLegacyFormat.{h,cpp}`, the importer call sites, and any `<file>.legacy` files still present in the user data directory at upgrade time)
-
-#### Scenario: End-of-life cleanup is gated on harness baseline
-- **WHEN** the follow-up change runs
-- **THEN** the harness `cold_startup_*` scenarios SHALL be green on the same release, and the legacy importer SHALL be deleted in one commit; partial deletions are not allowed
+#### Scenario: End-of-life cleanup is complete
+- **WHEN** the source tree is inspected
+- **THEN** `WorkspacePersistenceLegacyFormat.{h,cpp}`, every importer call site, and the `LegacyImporterFuzz` target SHALL be absent, and the architectural-lint ban on legacy persistence symbols SHALL keep them from returning
 
 ### Requirement: User-Config Records New Polish Setting Keys
 

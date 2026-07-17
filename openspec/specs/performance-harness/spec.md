@@ -24,7 +24,7 @@ The repository SHALL ship a `microide_perf` binary that drives a real SDL window
 
 ### Requirement: Scenario Definition And Coverage
 
-Performance scenarios SHALL be authored as C++ files under `tests/perf/scenarios/<name>.cpp` that register themselves with a static registrar and declare their setup, driving loop, and per-iteration assertions inline. The repository SHALL ship at minimum the following scenarios as part of the initial harness landing, plus the `editor_scroll_only_no_content_bump` scenario added by the tiered-document-revisions change.
+Performance scenarios SHALL be authored as C++ in grouped translation units under `tests/perf/*PerfScenarios.cpp` (for example `EditorEssentialsPerfScenarios.cpp`, `GitWorkstationPerfScenarios.cpp`, `DebugPerfScenarios.cpp`, `LspPerfScenarios.cpp`), each registering its scenarios with the static registrar and declaring setup, driving loop, and per-iteration assertions inline. (Grouped TUs replaced the earlier one-file-per-scenario `tests/perf/scenarios/<name>.cpp` layout to keep the file count manageable; scenario names and baselines are unchanged.) The repository SHALL ship at minimum the following scenarios as part of the initial harness landing, plus the `editor_scroll_only_no_content_bump` scenario added by the tiered-document-revisions change.
 
 #### Scenario: Initial scenario set covers required workloads
 - **WHEN** the harness suite runs
@@ -110,7 +110,7 @@ The performance harness SHALL maintain explicit scenario coverage for any hotspo
 
 #### Scenario: Hotspot class lacks scenario coverage
 - **WHEN** the hotspot-audit ledger includes a class not represented by current scenarios
-- **THEN** the change SHALL add at least one deterministic `tests/perf/scenarios/<name>.cpp` entry and a matching `tests/perf/baselines/<name>.json` baseline in the same change
+- **THEN** the change SHALL add at least one deterministic scenario (registered in a `tests/perf/*PerfScenarios.cpp` grouped TU) and a matching `tests/perf/baselines/<name>.json` baseline in the same change
 
 ### Requirement: Hotspot Scenarios Capture Multi-Metric Evidence
 Scenarios introduced for hotspot coverage SHALL capture frame-time percentiles, wall time, CPU time, redraw counts, wake-up counts, allocation counts, and RSS movement so regression triage can distinguish rendering, scheduling, and memory causes.

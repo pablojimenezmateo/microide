@@ -29,8 +29,12 @@ bool AssistService::ResultIsStale(const editor::TextViewport* active_editable,
 
 namespace {
 
-std::string_view LineAtOrEmpty(const std::vector<std::string>& lines, std::size_t index) {
-  return index < lines.size() ? std::string_view(lines[index]) : std::string_view{};
+// TD-2026-07-17-072: read one line zero-copy via TextBuffer::LineView instead of
+// materializing the whole document with Snapshot() just to index a single line.
+// Opening completion / attempting a snippet on a large file no longer pays an
+// O(document) copy before any provider/LSP work.
+std::string_view LineViewAt(const editor::TextViewport& viewport, std::size_t index) {
+  return index < viewport.lines().size() ? viewport.lines().LineView(index) : std::string_view{};
 }
 
 std::string LspUnavailableMessage(const LspManager& manager,
@@ -57,7 +61,7 @@ std::string JsonValueToArgumentString(const util::JsonValue& value) {
 }
 
 editor::SelectionRange CompletionReplacementRange(const editor::TextViewport& viewport) {
-  const std::string_view line = LineAtOrEmpty(viewport.lines().Snapshot(), viewport.cursor_line());
+  const std::string_view line = LineViewAt(viewport, viewport.cursor_line());
   std::size_t start_column = std::min(viewport.cursor_column(), line.size());
   while (start_column > 0) {
     const char ch = line[start_column - 1];
@@ -424,7 +428,7 @@ bool AssistService::TrySnippetPrefixExpansion(TabEntry::EditorTabState& tab,
   if (range.start.line != range.end.line || range.end.column <= range.start.column) {
     return false;
   }
-  const std::string_view line = LineAtOrEmpty(viewport.lines().Snapshot(), range.start.line);
+  const std::string_view line = LineViewAt(viewport, range.start.line);
   if (range.end.column > line.size()) {
     return false;
   }

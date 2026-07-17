@@ -684,7 +684,36 @@ void TestProjectFileScannerTerminatesOnSymlinkLoop() {
 
 }  // namespace
 
+// TD-2026-07-17-034: a pathological (catastrophic-backtracking) regex must not
+// monopolize a search worker. RegexUtil sets a PCRE2 match-step limit
+// (kRegexMatchLimit), so a classic exponential pattern hits the limit in bounded
+// steps and the search FINISHES quickly rather than hanging. Without the limit the
+// pattern below on ~45 non-terminating chars would take ~2^45 steps.
+void TestProjectSearchServiceCatastrophicRegexIsBounded() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  // A run of 'a' with no trailing 'b' forces (a+)+b to backtrack exponentially.
+  WriteFile(root / "evil.txt", std::string(45, 'a') + "\n");
+
+  ProjectSearchOptions regex_options;
+  regex_options.pattern_mode = ProjectSearchPatternMode::Regex;
+
+  const auto start = std::chrono::steady_clock::now();
+  const auto result = RunProjectSearch(root, "(a+)+b", regex_options);
+  const auto elapsed = std::chrono::steady_clock::now() - start;
+
+  Expect(result.finished,
+         "a catastrophic-backtracking regex search must finish (match-step limit fires)");
+  // RunProjectSearch's own deadline is 2s; a bounded match limit finishes far faster.
+  // Assert comfortably under the deadline so a regression that removed the limit
+  // (and hung to the deadline) would fail here.
+  Expect(elapsed < std::chrono::milliseconds(1500),
+         "the bounded match limit must let the search complete well before the deadline");
+}
+
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ProjectSearchService/CatastrophicRegexIsBounded",
+          TestProjectSearchServiceCatastrophicRegexIsBounded);
   AddTest(tests, "ProjectSearchService/LiteralModesAndCaseControls",
           TestProjectSearchServiceLiteralModesAndCaseControls);
   AddTest(tests, "ProjectSearchService/UnicodeCaseFolding",

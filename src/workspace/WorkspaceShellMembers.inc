@@ -1752,7 +1752,7 @@
   std::string ProjectTabTooltipLabel(std::size_t index) const;
   std::string TruncateLabel(std::string_view text, float max_width) const;
   // Allocation-free truncate for render hot paths; see
-  // render::TextRenderer::TruncateToWidthView for the returned view's lifetime.
+  // render::TextRenderer::TruncateToWidthEphemeralView for the returned view's lifetime.
   std::string_view TruncateLabelView(std::string_view text, float max_width) const;
   std::optional<SDL_FRect> CurrentWindowRect() const;
   std::optional<WorkspaceLayout> CurrentWorkspaceLayout() const;
@@ -1964,9 +1964,15 @@
   std::function<std::vector<project::GitCommitEntry>(const std::filesystem::path& root,
                                                     std::size_t limit)>
       compare_picker_recent_commits_provider_;
+  // Dedicated lane for plugin raster decode (TD-2026-07-17-044). Kept OFF
+  // project_background_executor_ so a plugin flooding image decodes cannot queue
+  // ahead of core git/diff/merge/project-state work on the single shared serial
+  // worker. Decode tasks capture the cache's sink (shared_ptr), never `this`, so
+  // this executor destructing after the cache is safe.
+  project::ProjectBackgroundExecutor media_background_executor_;
   // Host-owned cache of plugin-published raster surfaces (Phase E). Declared after
   // the executor so it tears down first, while the executor is still alive.
-  render::SurfaceTextureCache surface_texture_cache_{project_background_executor_};
+  render::SurfaceTextureCache surface_texture_cache_{media_background_executor_};
   std::mutex save_tab_mutex_;
   std::unique_ptr<platform::FileIndexWatcher> file_index_watcher_;
   std::atomic<std::uint64_t> file_index_watcher_generation_{0};

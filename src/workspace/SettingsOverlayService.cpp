@@ -410,7 +410,9 @@ void SettingsOverlayService::MoveRow(int delta) {
 }
 
 void SettingsOverlayService::CycleFocusedPane(int delta) {
-  constexpr int kPaneCount = 3;
+  // Derive the wrap modulus from the enum's Count sentinel so adding/removing a
+  // pane never desyncs cycling (TD-2026-07-17-028).
+  constexpr int kPaneCount = static_cast<int>(SettingsPane::Count);
   int pane = static_cast<int>(focused_pane_) + delta;
   pane = ((pane % kPaneCount) + kPaneCount) % kPaneCount;
   focused_pane_ = static_cast<SettingsPane>(pane);

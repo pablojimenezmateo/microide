@@ -19,6 +19,204 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
+### Deferred from the 2026-07-17 audit sweep (TD-2026-07-17-*)
+
+A 95-finding external audit was worked in one pass: **34 fixed** (each with a
+regression test), 1 partial, 10 won't-do, and the **50 deferred items below**.
+Fixed items are not listed here (they are in the tree + the pass's commit). Each
+deferred item is a multi-file refactor, platform-specific (no build/verify on this
+Linux host), or a test-infra/coverage sweep — the kind the audit itself flagged as
+"do as a focused reviewed pass, not bundled". Numbers are `TD-2026-07-17-NNN`.
+
+**Async / off-thread refactors** (move blocking work off the shell/UI thread):
+
+- **047 — compare/merge model construction runs synchronously on the shell path.**
+  Fingerprint-cached + budgeted, but a content change rebuilds on-thread; move large
+  `BuildCompareModel`/`BuildMergeModel` to a generation-gated background job. Same
+  family as **TD-2026-07-16-19** below.
+- **048 — format-on-save can block the UI up to 5s.** The synchronous formatter
+  subprocess is a deliberate, lint-allowlisted product choice; an async save
+  transaction (write → format in background → apply if same generation → cancellable)
+  is a UX redesign.
+- **055 — project search spawns/joins per-run helper threads.** Worker count is
+  capped and catastrophic-regex is bounded (034, fixed); reuse a bounded pool with
+  finer-grained cancellation.
+- **061 — file-manager reveal can block the UI up to 10s.** Common path (xdg-open
+  forks) is fast; only a wedged launcher hits the bounded timeout. Needs an async
+  host-integration service with SDL-event completion (the reveal returns a
+  success bool that drives an error message).
+- **081 / 082 — forced project refresh + change-batch stat run on the shell thread.**
+  Route forced refresh and per-file metadata stat through the background executor
+  with a generation/token SDL-wake result; land together.
+- **080 — live exclude-glob changes don't rebuild the native watch set.**
+  `SetExcludeGlobs` updates the filter but not `SetRoots`; needs a
+  `ReconfigureFilter` that rebuilds the prepared native backend with a config
+  generation. Native-backend work; pairs with 036/081.
+- **086 — file-index watcher buffers unbounded incremental batches before the
+  initial scan lands.** Replace the pending-vector with a capped path-keyed
+  coalescer / rescan-after-baseline flag.
+- **091 — LSP shutdown can synchronously block project reset / app teardown.**
+  Preserve retiring clients in a host-owned lifecycle service that outlives
+  project-state replacement. Pairs with debug teardown (026).
+- **016 / 017 — save-participant + `process.run_async` can occupy plugin worker
+  capacity.** Cancellation/generation ownership + a dedicated process worker pool
+  returning handles to Lua.
+- **014 — POSIX terminal write can block without a deadline.** Route PTY writes
+  through a nonblocking bounded writer queue with backpressure surfaced to the panel.
+- **075 — DAP debug trace serializes + flushes whole messages under a global mutex.**
+  Trace-only (off by default); move to a bounded async writer with payload caps.
+- **003 — commit-workflow `&state` capture across executor + mailbox.** Non-actionable
+  today (owners outlive queued work) but fragile; value-owned op context / shared_ptr
+  generation. Same item as **TD-2026-07-16-*** commit-lifetime note; see 093 (fixed)
+  for the analogous git-executor ownership fix.
+
+**Render view-model / string-allocation cleanup:**
+
+- **083 — commit-body render mutates viewport state + `Snapshot()`s during paint.**
+  Move sizing/scroll-clamp to input/layout prep; render visible rows via `LineView`.
+- **084 — overlay view model holds live `OverlayState*`/`ProjectWorkspaceState*`
+  pointers and rebuilds labels in the render TU.** Expand into an owned/precomputed
+  row+string model; move label composition into `RenderViewModelBuilder`; add a
+  view-model-pointer lint. Same family as **TD-2026-07-16-26**.
+- **029 / 030 — expand render-string lint coverage + add per-frame-prep regression
+  counters** (layout recompute / view-model build / frame-prep counts).
+
+**Editor / Unicode (schedule as one coherent pass):**
+
+- **021 — centralize grapheme segmentation + visual width into one editor service**
+  and route cursor movement / hit-testing / layout / selection through it.
+- **023 — inlay hints should consume the same display-column map as text layout**
+  (part of 021; 070 already bounded inlay width).
+- **068 — grouped-undo FALLBACK still `Snapshot()`s the whole document** for
+  non-contiguous multi-caret/snippet edits; replace with a sparse affected-range
+  model. Same family as **TD-2026-07-16-31**.
+
+**Debug / DAP:**
+
+- **025 — debug request/response paths need session-generation + request-id gating**
+  (REPL / hover / watch, matched by stable id).
+- **026 — DAP stop/terminate needs a bounded escalation** (disconnect → wait → kill →
+  bounded drain) with timeout surfaced to the pane. Pairs with 091.
+
+**Scanner / search incomplete-state plumbing (land together):**
+
+- **008 / 033 — surface a scanner result status** (complete / truncated_by_budget /
+  permission_limited / error) and thread searched/skipped/incomplete-catalog through
+  the file-finder / search / tree view models so partial results are never silently
+  authoritative.
+- **009 — fallback watcher snapshots are expensive on huge trees;** degrade to
+  manual-refresh-with-banner + incremental directory hashing.
+
+**LSP feature completeness:**
+
+- **011 — `WorkspaceEdit` resource ops (create/delete/rename) + version-aware edits**
+  with atomic/rollback-safe staging. Same item as **TD-2026-07-16-18**.
+- **012 — replace empty-success-shaped LSP timeouts with explicit result variants**
+  (success / empty_success / timeout / cancelled / protocol_error).
+
+**Plugin caps / policy:**
+
+- **018 — per-field byte caps for every provider result surface** (078 landed the
+  string-array caps; the remaining diagnostics/hover/status/sidebar/tools/tasks/
+  scm/auth surfaces are a bounded parser sweep).
+- **019 — re-derive plugin status/contribution caps from measured render/registry
+  budgets** (a measurement task).
+- **077 — plugin contribution registration is O(N²)** via linear duplicate scans;
+  per-kind id sets threaded through every `Register*` signature. Memory already
+  capped; only a pathological plugin hits it.
+- **090 — plugin decoration aggregate cap applies after full concat + sort.**
+  Retained memory/render already bounded; a work-bounded k-way merge across the four
+  decoration kinds is the correct fix. Only reachable by 3+ plugins hammering one
+  file.
+
+**Platform-specific (no build/verify on this Linux host — dedicated Windows/macOS
+passes):**
+
+- **004 — Windows async subprocess HANDLE lifetime race** (ref-counted handle
+  ownership + loop stress test).
+- **005 — Windows ConPTY terminal backend unsynchronized stop/read** (lifecycle state
+  machine + Windows-only stress suite).
+- **010 — Windows ignore rules corrupt literal backslash semantics** (separate
+  gitignore escape parsing from separator normalization).
+- **035 — Windows terminal launch quoting + `lpApplicationName`** (single quoting
+  helper + test matrix; has a security dimension).
+- **006 — macOS FSEvents watcher ignore-filter + run-loop hazards** (ignore filtering
+  in canonical event normalization + run-loop shutdown handshake). Pairs with 036.
+- **062 — macOS trash exists-then-rename TOCTOU** (atomic O_EXCL reservation like the
+  Linux path already uses, or the native macOS trash API). 063 (dangling symlink)
+  was fixed cross-platform.
+
+**Tab identity:**
+
+- **024 — dirty-prompt state keyed by tab indices is fragile.** Add a stable per-tab
+  id to `TabEntry`, thread it through the prompt flow + persistence, revalidate on
+  completion.
+
+**Architecture lint / test infrastructure:**
+
+- **020 / 058 — mechanical no-longjmp-across-C++-locals audit.** Needs a clang-tidy
+  AST matcher (a regex would false-positive on the ~30 legitimate entry-position
+  `luaL_check*` calls); the concrete instance (001) was fixed + tested.
+- **032 — architecture lint for direct persistence file I/O outside
+  `PersistenceService`** (hard to make precise by regex; the legacy-symbol ban
+  already guards the biggest regression; 050 retired the stale legacy-importer spec).
+- **037 — convert more policy invariants into narrow lint checks with failing
+  negative fixtures** (no `lua_State*` outside LuaRuntime, no render-TU project-state
+  reads, etc.).
+- **036 — one backend-independent watcher contract test suite** run against every
+  backend (pairs with 006/010/080).
+- **022 — large-buffer insert/delete/undo perf scenario + a lint for direct
+  `document_->lines` copies** in mutation paths (the affected-range architecture is
+  already invariant-enforced).
+- **030 — per-frame-prep regression counters** (see render section).
+- **015 — terminal lifecycle platform stress suite** (tab-close-during-output/exit,
+  alt-screen shutdown, multi-terminal shutdown, open/close loops).
+- **052 — seed the seed-light fuzz corpora** (PersistedRecordReader / GitBlameParser /
+  PluginDisplayListParse / SurfaceRasterDecode / DebugStateRecord); the
+  `run-checks.sh fuzz` runner landed (049).
+- **088 — replace ~132 duplicated fixed-sleep polling loops** with shared WaitUntil /
+  DrainUntilIdle helpers + a no-raw-sleep lint.
+
+**Security:**
+
+- **040 — control-socket `/tmp/microide` fallback trusts parent ownership too late.**
+  Add a secure-directory helper (reject symlinks, require current-user ownership, mode
+  ≤ 0700, else disable the channel) with hostile-fallback-dir / symlinked-/tmp /
+  forged-descriptor fixtures. The socket is already chmod 0600.
+
+### Deferred from the 2026-07-16 audit sweep (TD-2026-07-16-*)
+
+The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won't-do
+(all multi-file refactors flagged for their own reviewed pass). Several overlap the
+2026-07-17 set above and should be merged when tackled.
+
+- **TD-2026-07-16-18 — server-pushed LSP `WorkspaceEdit` can synchronously load and
+  save thousands of files on the main thread.** Dedicated async pass. Same item as
+  **TD-2026-07-17-011**.
+- **TD-2026-07-16-19 — compare/merge/review open paths run git blob reads
+  synchronously on the workspace thread.** Dedicated async pass. Overlaps
+  **TD-2026-07-17-047**.
+- **TD-2026-07-16-21 — replace-all in project performs bulk file I/O synchronously on
+  the shell thread.** The pre-loop path-vector copy was removed
+  (**TD-2026-07-17-094**, fixed); the full move to a cancellable background
+  preflight/commit workflow remains deferred.
+- **TD-2026-07-16-22 — plugin extension surfaces still expose raw `lua_State*` despite
+  the LuaRuntime boundary spec.** Won't-do pending a dedicated plugin-API refactor;
+  same Lua-safety family as **TD-2026-07-17-020/058**.
+- **TD-2026-07-16-26 — render view models smuggle mutable project-state pointers back
+  into render TUs.** Dedicated architecture pass. Same item as **TD-2026-07-17-084**.
+- **TD-2026-07-16-31 — merge result edit side effects snapshot the full buffer on each
+  mutation.** Dedicated edit-engine pass. Same family as **TD-2026-07-17-068**.
+- **TD-2026-07-16-38 — stage/unstage/discard serialize unified patches synchronously
+  on the UI path.** Dedicated async pass. Overlaps **TD-2026-07-17-082**.
+- **TD-2026-07-16-39 — encoded raster surfaces publish layout dimensions before decode
+  knows the real image size.** Dedicated cross-layer pass; related to the raster
+  budget work (**TD-2026-07-17-043/092**, fixed).
+- **TD-2026-07-16-60 — bottom-panel plugin surface previews cannot scroll their own
+  content.** Dedicated UI-feature pass.
+- **TD-2026-07-16-61 — plugin surface hit regions are parsed and documented but never
+  dispatched.** Dedicated UI-feature pass.
+
 ### Fixed in the 2026-07-16 cross-subsystem bug-hunt pass
 
 A broad correctness sweep across every major subsystem — util, terminal, compare,

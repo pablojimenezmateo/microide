@@ -4,8 +4,10 @@
 #include "editor/PluginDecorationStore.h"
 #include "editor/PluginSurfaceStore.h"
 #include "perf/AllocationCounter.h"
+#include "plugin/LuaRuntime.h"
 #include "plugin/PluginHost.h"
 #include "plugin/PluginHostRuntimeTypes.h"
+#include "plugin/PluginPresentationRegistrationParsers.h"
 #include "project/DirectoryTree.h"
 #include "workspace/WorkspaceFileIconRegistry.h"
 #include "workspace/WorkspaceProjectState.h"
@@ -15,6 +17,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace microide::tests {
@@ -417,7 +420,45 @@ void TestFileIconCacheGateLeavesNoFootprintWhenDisabled() {
 
 }  // namespace
 
+// TD-2026-07-17-079: a theme with far more style keys than the 512-entry cap must
+// register at most the cap and stop draining the table early. This asserts the
+// retained-style cap holds for a large `styles` map (the early break keeps setup
+// CPU bounded; the cap is the observable contract).
+void TestThemeStyleMapRespectsCap() {
+#if MICROIDE_HAS_LUA_PLUGINS
+  std::string create_error;
+  auto runtime = microide::plugin::LuaRuntime::Create(&create_error);
+  Expect(runtime != nullptr, "lua runtime should create");
+  lua_State* state = runtime->state();
+
+  // Build { id = "big", styles = { g0 = "#101010", g1 = ..., ... } } with 2000
+  // distinct valid style entries — well past the 512 cap.
+  lua_newtable(state);
+  lua_pushstring(state, "big");
+  lua_setfield(state, -2, "id");
+  lua_newtable(state);
+  for (int i = 0; i < 2000; ++i) {
+    const std::string group = "grp" + std::to_string(i);
+    lua_pushstring(state, "#112233");
+    lua_setfield(state, -2, group.c_str());
+  }
+  lua_setfield(state, -2, "styles");
+
+  std::vector<microide::plugin::PluginHost::ContributedTheme> themes;
+  std::string error_message;
+  const bool ok = microide::plugin::presentation_interop::RegisterTheme(
+      state, "test.plugin", &themes, &error_message);
+  lua_pop(state, 1);  // pop the argument table
+
+  Expect(ok, "a valid (if oversized) theme table should register: " + error_message);
+  Expect(themes.size() == 1, "exactly one theme should be contributed");
+  Expect(themes.front().styles.size() <= 512,
+         "an oversized style map must be truncated to the retained-style cap (512)");
+#endif
+}
+
 void RegisterPluginPresentationAllocationTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PluginPresentation/ThemeStyleMapRespectsCap", TestThemeStyleMapRespectsCap);
   AddTest(tests, "PluginPresentation/FileIconRegistryWarmResolveIsAllocationFree",
           TestFileIconRegistryWarmResolveIsAllocationFree);
   AddTest(tests, "PluginPresentation/FileIconRegistryRevisionBumpsOnMutation",

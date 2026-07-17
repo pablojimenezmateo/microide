@@ -468,7 +468,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
           current_reference_path = resolved_path.lexically_normal();
 
           const std::string_view visible_prefix =
-              text_renderer_.TruncateToWidthView(parsed->prefix, panel_layout.text_width);
+              text_renderer_.TruncateToWidthEphemeralView(parsed->prefix, panel_layout.text_width);
           DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y, theme_.text_secondary,
                      theme_.surface_background, visible_prefix);
 
@@ -477,7 +477,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
             const float remaining_width = panel_layout.text_width - prefix_width;
             if (remaining_width > 0.0f && !parsed->code.empty()) {
               const std::string_view visible_code =
-                  text_renderer_.TruncateToWidthView(parsed->code, remaining_width);
+                  text_renderer_.TruncateToWidthEphemeralView(parsed->code, remaining_width);
               const editor::HighlightedLine* highlighted =
                   output_channels_.HighlightedContextSnippet(
                       panel_vm.output_channel_id, output_index,
@@ -510,7 +510,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       }
       DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y, theme_.text_secondary,
                  theme_.surface_background,
-                 text_renderer_.TruncateToWidthView(output_line, panel_layout.text_width));
+                 text_renderer_.TruncateToWidthEphemeralView(output_line, panel_layout.text_width));
       continue;
     }
   }

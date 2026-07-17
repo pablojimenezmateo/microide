@@ -29,6 +29,10 @@ enum class SettingsPane {
   Filter,
   Categories,
   Values,
+  // Sentinel: number of focusable panes. Keep last. CycleFocusedPane derives the
+  // wrap modulus from this so adding/removing a pane cannot desync keyboard
+  // navigation (TD-2026-07-17-028).
+  Count,
 };
 
 // Returns the top-level category label for a setting group path. An empty group

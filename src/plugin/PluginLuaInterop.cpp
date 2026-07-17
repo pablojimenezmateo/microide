@@ -184,7 +184,16 @@ std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
   // the enclosing pcall, skipping its destructor (the no-longjmp-over-C++-locals
   // invariant). Raw access also sidesteps the unbounded-__index drain entirely.
   constexpr lua_Integer kMaxLuaStringArrayItems = 100000;
+  // TD-2026-07-17-078: the item-count cap does not bound the host-side bytes copied.
+  // A plugin could return a few but enormous strings (these arrays feed LSP/DAP/
+  // task/formatter argv, subprocess setup, UI labels, diagnostics) and blow past the
+  // intended plugin memory envelope, since the copied host strings live outside Lua's
+  // per-state allocator budget. Reject any single over-long item and any array whose
+  // total copied bytes exceed the aggregate cap. Both are far beyond a real argv.
+  constexpr std::size_t kMaxLuaStringArrayItemBytes = 64u * 1024;        // 64 KiB / item
+  constexpr std::size_t kMaxLuaStringArrayAggregateBytes = 8u * 1024 * 1024;  // 8 MiB total
   std::vector<std::string> values;
+  std::size_t aggregate_bytes = 0;
   for (lua_Integer i = 1; i <= kMaxLuaStringArrayItems; ++i) {
     lua_rawgeti(state, -1, i);
     if (lua_isnil(state, -1)) {
@@ -195,7 +204,15 @@ std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
       lua_pop(state, 2);
       return std::nullopt;
     }
-    values.emplace_back(lua_tostring(state, -1));
+    std::size_t item_length = 0;
+    const char* item = lua_tolstring(state, -1, &item_length);
+    if (item_length > kMaxLuaStringArrayItemBytes ||
+        item_length > kMaxLuaStringArrayAggregateBytes - aggregate_bytes) {
+      lua_pop(state, 2);
+      return std::nullopt;  // reject the whole field rather than truncate silently
+    }
+    aggregate_bytes += item_length;
+    values.emplace_back(item, item_length);
     lua_pop(state, 1);
   }
   lua_pop(state, 1);

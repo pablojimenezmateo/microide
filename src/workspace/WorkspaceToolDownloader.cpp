@@ -8,6 +8,7 @@
 #include "project/SubprocessHelper.h"
 #include "util/DurableFile.h"
 #include "util/Hex.h"
+#include "util/Sha256.h"
 
 namespace microide::workspace {
 
@@ -81,79 +82,12 @@ std::string LowercaseDigest(std::string digest) {
 }
 
 std::optional<std::string> ComputeSha256Blocking(const std::filesystem::path& path) {
-  auto parse_digest = [](const std::string& stdout_text) -> std::optional<std::string> {
-    const std::size_t split = stdout_text.find_first_of(" \t\r\n");
-    if (split == std::string::npos) {
-      return std::nullopt;
-    }
-    return stdout_text.substr(0, split);
-  };
-#ifdef _WIN32
-  auto parse_certutil_digest = [](const std::string& stdout_text) -> std::optional<std::string> {
-    for (std::size_t offset = 0; offset < stdout_text.size();) {
-      const std::size_t next = stdout_text.find('\n', offset);
-      std::string line = stdout_text.substr(
-          offset, next == std::string::npos ? std::string::npos : next - offset);
-      if (!line.empty() && line.back() == '\r') {
-        line.pop_back();
-      }
-
-      std::string digest;
-      digest.reserve(line.size());
-      bool valid = true;
-      for (char ch : line) {
-        if (std::isspace(static_cast<unsigned char>(ch))) {
-          continue;
-        }
-        if (!std::isxdigit(static_cast<unsigned char>(ch))) {
-          valid = false;
-          break;
-        }
-        digest.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-      }
-      if (valid && digest.size() == 64) {
-        return digest;
-      }
-
-      if (next == std::string::npos) {
-        break;
-      }
-      offset = next + 1;
-    }
-    return std::nullopt;
-  };
-  auto certutil_path = []() {
-    const char* system_root = std::getenv("SystemRoot");
-    if (system_root == nullptr || system_root[0] == '\0') {
-      system_root = std::getenv("WINDIR");
-    }
-    const std::filesystem::path root =
-        (system_root != nullptr && system_root[0] != '\0')
-            ? std::filesystem::path(system_root)
-            : std::filesystem::path("C:\\Windows");
-    return (root / "System32" / "certutil.exe").lexically_normal();
-  };
-#endif
-
-  const platform::SubprocessResult sha256sum =
-      project::RunSubprocess({"sha256sum", path.string()});
-  if (sha256sum.success()) {
-    return parse_digest(sha256sum.stdout_text);
-  }
-
-  const platform::SubprocessResult shasum =
-      project::RunSubprocess({"shasum", "-a", "256", path.string()});
-  if (shasum.success()) {
-    return parse_digest(shasum.stdout_text);
-  }
-#ifdef _WIN32
-  const platform::SubprocessResult certutil =
-      project::RunSubprocess({certutil_path().string(), "-hashfile", path.string(), "SHA256"});
-  if (certutil.success()) {
-    return parse_certutil_digest(certutil.stdout_text);
-  }
-#endif
-  return std::nullopt;
+  // TD-2026-07-17-060: hash in-process instead of shelling out to sha256sum /
+  // shasum / certutil. The old subprocess chain occupied the downloader's serial
+  // lane, had no cancellation token, and could hang the tool install/update flow if
+  // a platform hash tool was missing or wedged. util::Sha256FileHex reads the file
+  // in bounded chunks, rejects non-regular paths, and returns a lowercase hex digest.
+  return util::Sha256FileHex(path);
 }
 
 }  // namespace

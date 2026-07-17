@@ -836,14 +836,22 @@
   static int LuaDiagnosticsClear(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    // Validate the optional path argument with non-raising checks BEFORE any
+    // non-trivial C++ local exists. luaL_checkstring can longjmp on bad input
+    // (e.g. clear({})), which would skip the ~std::optional/~path destructors.
+    const bool has_path_arg = lua_gettop(state) >= 1 && !lua_isnil(state, 1);
+    if (has_path_arg && lua_type(state, 1) != LUA_TSTRING) {
+      lua_error_util::PushMessage(state, "diagnostics.clear requires a path string or nil");
+      return lua_error(state);
+    }
     int rc = 0;
     {
       std::optional<std::filesystem::path> path;
-      if (lua_gettop(state) >= 1 && !lua_isnil(state, 1)) {
-        const char* raw_path = luaL_checkstring(state, 1);
+      if (has_path_arg) {
+        const char* raw_path = lua_tostring(state, 1);
         path = path_interop::ResolveRuntimePath(
             host != nullptr ? host->current_project_root : EmptyProjectRoot(),
-            std::filesystem::path(raw_path));
+            std::filesystem::path(raw_path != nullptr ? raw_path : ""));
       }
       rc = runtime_api_interop::LuaDiagnosticsClear(
           state, plugin, path, host != nullptr ? host->callbacks : EmptyCallbacks());
@@ -863,14 +871,22 @@
   static int LuaDecorationsClear(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    // Validate the optional path argument with non-raising checks BEFORE any
+    // non-trivial C++ local exists. luaL_checkstring can longjmp on bad input
+    // (e.g. clear({})), which would skip the ~std::optional/~path destructors.
+    const bool has_path_arg = lua_gettop(state) >= 1 && !lua_isnil(state, 1);
+    if (has_path_arg && lua_type(state, 1) != LUA_TSTRING) {
+      lua_error_util::PushMessage(state, "decorations.clear requires a path string or nil");
+      return lua_error(state);
+    }
     int rc = 0;
     {
       std::optional<std::filesystem::path> path;
-      if (lua_gettop(state) >= 1 && !lua_isnil(state, 1)) {
-        const char* raw_path = luaL_checkstring(state, 1);
+      if (has_path_arg) {
+        const char* raw_path = lua_tostring(state, 1);
         path = path_interop::ResolveRuntimePath(
             host != nullptr ? host->current_project_root : EmptyProjectRoot(),
-            std::filesystem::path(raw_path));
+            std::filesystem::path(raw_path != nullptr ? raw_path : ""));
       }
       rc = runtime_api_interop::LuaDecorationsClear(
           state, plugin, path, host != nullptr ? host->callbacks : EmptyCallbacks());
