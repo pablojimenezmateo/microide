@@ -268,7 +268,6 @@ AssistService::EditSideEffectsSnapshot AssistService::CaptureEditSnapshot(
   snapshot.cursor_before_line = viewport.cursor_line();
   if (auto* merge_tab = operations_.active_merge_tab();
       merge_tab != nullptr && &viewport == &merge_tab->result_viewport) {
-    snapshot.before_lines = viewport.lines().Snapshot();
     snapshot.selection_before = viewport.selection_range();
     snapshot.cursor_before = editor::TextPosition{viewport.cursor_line(), viewport.cursor_column()};
   }
@@ -285,8 +284,7 @@ void AssistService::ApplyEditSideEffects(editor::TextViewport& viewport,
   if (auto* merge_tab = operations_.active_merge_tab();
       merge_tab != nullptr && &viewport == &merge_tab->result_viewport &&
       snapshot.cursor_before.has_value()) {
-    operations_.update_merge_tracking_after_viewport_edit(*merge_tab, snapshot.before_lines,
-                                                          snapshot.selection_before,
+    operations_.update_merge_tracking_after_viewport_edit(*merge_tab, snapshot.selection_before,
                                                           *snapshot.cursor_before);
   }
   operations_.reset_caret_blink();

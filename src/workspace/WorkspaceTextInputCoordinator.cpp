@@ -335,12 +335,10 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
         }
         const bool was_dirty = viewport->dirty();
         const std::size_t cursor_before_line = viewport->cursor_line();
-        std::vector<std::string> before_lines;
         std::optional<editor::SelectionRange> selection_before;
         std::optional<editor::TextPosition> cursor_before;
         if (auto* merge_tab = operations_.active_merge_tab();
             merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-          before_lines = viewport->lines().Snapshot();
           selection_before = viewport->selection_range();
           cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
         }
@@ -355,8 +353,8 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
         }
         if (auto* merge_tab = operations_.active_merge_tab();
             merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-          operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
-                                                                selection_before, *cursor_before);
+          operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
+                                                                *cursor_before);
         }
         operations_.reset_caret_blink();
         operations_.request_active_editable_last_change_redraw();

@@ -398,6 +398,32 @@ std::optional<AppliedEdit> TextViewportUndoHistory::BuildAppliedEdit(const Entry
   };
 }
 
+std::optional<AppliedEditLineSpan> TextViewportUndoHistory::BuildAppliedEditLineSpan(
+    const Entry& entry, bool forward) {
+  const std::vector<std::string>& before = forward ? entry.before_lines : entry.after_lines;
+  const std::vector<std::string>& after = forward ? entry.after_lines : entry.before_lines;
+
+  std::size_t prefix = 0;
+  while (prefix < before.size() && prefix < after.size() && before[prefix] == after[prefix]) {
+    ++prefix;
+  }
+  if (prefix == before.size() && prefix == after.size()) {
+    return std::nullopt;  // no line-level change
+  }
+
+  std::size_t suffix = 0;
+  while (suffix < before.size() - prefix && suffix < after.size() - prefix &&
+         before[before.size() - 1 - suffix] == after[after.size() - 1 - suffix]) {
+    ++suffix;
+  }
+
+  return AppliedEditLineSpan{
+      .old_start = entry.start_line + prefix,
+      .old_end = entry.start_line + (before.size() - suffix),
+      .new_end = entry.start_line + (after.size() - suffix),
+  };
+}
+
 TextViewportUndoHistory::Entry TextViewportUndoHistory::BuildEntryForDocumentChange(
     const std::vector<std::string>& before_lines, const ViewState& before_state,
     const std::vector<std::string>& after_lines, const ViewState& after_state) {

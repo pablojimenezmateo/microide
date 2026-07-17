@@ -174,7 +174,6 @@ class KeyInputCoordinator {
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
     std::function<MergeTabState*()> active_merge_tab;
     std::function<void(MergeTabState&,
-                       const std::vector<std::string>&,
                        std::optional<editor::SelectionRange>,
                        editor::TextPosition)>
         update_merge_tracking_after_viewport_edit;

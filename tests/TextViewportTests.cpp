@@ -599,6 +599,84 @@ void TestTextViewportLastAppliedEditTracksMultilineReplacement() {
          "multiline replacement should publish normalized replacement text");
 }
 
+// TD-2026-07-16-31: merge conflict tracking derives its changed-line span from
+// last_applied_edit_line_span() instead of diffing a whole-buffer snapshot. The
+// span must be whole-line-trimmed (matching WorkspaceShell::ComputeChangedLineSpan),
+// which differs from the character-level AppliedEdit at line boundaries — e.g.
+// pressing Enter at the end of a line is a PURE line insertion (old_start ==
+// old_end) even though the char edit sits on the preceding line.
+void TestTextViewportLastAppliedEditLineSpanMatchesWholeLineDiff() {
+  using microide::editor::AppliedEditLineSpan;
+
+  // Mid-line insert: exactly one before-line changed, no line-count delta.
+  {
+    TextViewport viewport;
+    viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/line-span-insert.txt");
+    viewport.MoveCursorTo(0, 2);
+    viewport.InsertText("XYZ");
+    const auto& span = viewport.last_applied_edit_line_span();
+    Expect(span.has_value(), "mid-line insert must publish a line span");
+    Expect(span->old_start == 0 && span->old_end == 1 && span->new_end == 1,
+           "mid-line insert must report a single changed line, no line delta");
+  }
+
+  // Enter at end of a line: the char edit is on line 0, but the whole-line diff
+  // sees line 0 unchanged and a new line inserted after it -> PURE insertion.
+  {
+    TextViewport viewport;
+    viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/line-span-newline.txt");
+    viewport.MoveCursorTo(0, 5);
+    viewport.InsertText("\n");
+    const auto& span = viewport.last_applied_edit_line_span();
+    Expect(span.has_value(), "newline insert must publish a line span");
+    Expect(span->old_start == 1 && span->old_end == 1 && span->new_end == 2,
+           "Enter at end-of-line must trim to a pure line insertion (old_start == old_end)");
+  }
+
+  // Backspace joining line 1 into line 0: two before-lines collapse to one.
+  {
+    TextViewport viewport;
+    viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/line-span-join.txt");
+    viewport.MoveCursorTo(1, 0);
+    viewport.Backspace();
+    const auto& span = viewport.last_applied_edit_line_span();
+    Expect(span.has_value(), "line-join backspace must publish a line span");
+    Expect(span->old_start == 0 && span->old_end == 2 && span->new_end == 1,
+           "line-join must span the two collapsed before-lines and end one line shorter");
+  }
+
+  // Undo/redo of a single edit publishes the reverse/forward span.
+  {
+    TextViewport viewport;
+    viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/line-span-undo.txt");
+    viewport.MoveCursorTo(0, 5);
+    viewport.InsertText("\n");
+    Expect(viewport.Undo(), "undo must succeed");
+    const auto& undo_span = viewport.last_applied_edit_line_span();
+    Expect(undo_span.has_value() && undo_span->old_start == 1 && undo_span->old_end == 2 &&
+               undo_span->new_end == 1,
+           "undo of the pure insertion must report the reverse (deletion) span");
+    Expect(viewport.Redo(), "redo must succeed");
+    const auto& redo_span = viewport.last_applied_edit_line_span();
+    Expect(redo_span.has_value() && redo_span->old_start == 1 && redo_span->old_end == 1 &&
+               redo_span->new_end == 2,
+           "redo must restore the forward pure-insertion span");
+  }
+
+  // A disjoint multi-caret edit cannot be one contiguous span; it must be empty so
+  // merge tracking (and other single-range consumers) take the resync fallback.
+  {
+    TextViewport viewport;
+    viewport.LoadContent("alpha\nbeta\ngamma\ndelta\n", "/tmp/line-span-multicaret.txt");
+    viewport.MoveCursorTo(0, 0);
+    viewport.AddSecondaryCaret(2, 0);
+    Expect(viewport.has_multiple_carets(), "multi-caret setup must hold");
+    Expect(viewport.DeleteCurrentLine(), "multi-caret delete must apply");
+    Expect(!viewport.last_applied_edit_line_span().has_value(),
+           "a disjoint multi-caret edit must clear the line span");
+  }
+}
+
 void TestTextViewportUndoRedoPreservesLatestViewState() {
   TextViewport viewport;
   viewport.LoadContent("zero\none\ntwo\nthree\nfour\nfive\nsix\nseven\n", "/tmp/history.cpp");
@@ -3163,6 +3241,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportMultiCaretDeleteLineClearsLastAppliedEdit);
   AddTest(tests, "TextViewport/LastAppliedEditTracksMultilineReplacement",
           TestTextViewportLastAppliedEditTracksMultilineReplacement);
+  AddTest(tests, "TextViewport/LastAppliedEditLineSpanMatchesWholeLineDiff",
+          TestTextViewportLastAppliedEditLineSpanMatchesWholeLineDiff);
   AddTest(tests, "TextViewport/UndoRedoPreservesLatestViewState",
           TestTextViewportUndoRedoPreservesLatestViewState);
   AddTest(tests, "TextViewport/UndoRedoPreservesSecondaryCarets",

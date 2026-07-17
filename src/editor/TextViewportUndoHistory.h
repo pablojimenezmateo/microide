@@ -119,6 +119,13 @@ class TextViewportUndoHistory {
   // through its splice primitive. Used by the live undo/redo apply path.
   static void ApplyEntryToBuffer(TextBuffer& lines, const Entry& entry, bool forward);
   static std::optional<AppliedEdit> BuildAppliedEdit(const Entry& entry, bool forward);
+  // Whole-line-trimmed line span of `entry` (common leading/trailing identical
+  // lines dropped), offset into document coordinates. Equivalent to running
+  // ComputeChangedLineSpan over the whole before/after document — the entry's
+  // slice already isolates the changed region, so trimming within it and adding
+  // start_line yields the identical span at O(entry) cost. nullopt for a no-op.
+  static std::optional<AppliedEditLineSpan> BuildAppliedEditLineSpan(const Entry& entry,
+                                                                     bool forward);
   static Entry BuildEntryForDocumentChange(const std::vector<std::string>& before_lines,
                                             const ViewState& before_state,
                                             const std::vector<std::string>& after_lines,

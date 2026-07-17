@@ -35,4 +35,17 @@ struct AppliedEdit {
   std::string replacement_text;
 };
 
+// Whole-line-trimmed span of the last applied edit, in the same coordinate model
+// as WorkspaceShell::ComputeChangedLineSpan (common leading/trailing IDENTICAL
+// lines trimmed): before-lines occupied [old_start, old_end), after-lines occupy
+// [old_start, new_end). Lets edit-side-effect consumers (e.g. merge conflict
+// tracking) shift/invalidate line-keyed state from a single edit without diffing a
+// whole-buffer before/after snapshot. Empty for true multi-region edits (the
+// consumer takes its resync fallback), matching AppliedEdit's contract.
+struct AppliedEditLineSpan {
+  std::size_t old_start = 0;
+  std::size_t old_end = 0;
+  std::size_t new_end = 0;
+};
+
 }  // namespace microide::editor

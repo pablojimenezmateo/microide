@@ -408,7 +408,7 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   if (MultiCaretSelectionsOverlap()) {
     return false;
   }
-  last_applied_edit_.reset();
+  ClearLastAppliedEdit();
   EnsureDocument();
   if (document_->lines.empty()) {
     document_->lines.PushBackLine("");

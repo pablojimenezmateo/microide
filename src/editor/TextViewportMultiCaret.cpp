@@ -158,7 +158,7 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
 bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view insert_text,
                                        bool record_undo,
                                        const std::vector<std::string>* per_caret_insert) {
-  last_applied_edit_.reset();
+  ClearLastAppliedEdit();
   EnsureDocument();
   if (document_->lines.empty()) {
     document_->lines.PushBackLine("");
@@ -405,9 +405,11 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   for (const std::optional<PlannedCaretEdit>& plan : planned) {
     if (plan.has_value()) ++edited_region_count;
   }
-  last_applied_edit_ = edited_region_count <= 1
-                           ? TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true)
-                           : std::nullopt;
+  if (edited_region_count <= 1) {
+    SetLastAppliedEditFromEntry(aggregate_entry, true);
+  } else {
+    ClearLastAppliedEdit();
+  }
   if (record_undo) {
     PushHistoryEntry(aggregate_entry);
   } else {

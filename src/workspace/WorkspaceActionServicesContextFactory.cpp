@@ -630,11 +630,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               },
           .active_merge_tab = [this]() { return ActiveMergeTab(); },
           .update_merge_tracking_after_viewport_edit =
-              [this](MergeTabState& merge_tab, const std::vector<std::string>& before_lines,
+              [this](MergeTabState& merge_tab,
                      std::optional<editor::SelectionRange> selection_before,
                      editor::TextPosition cursor_before) {
-                UpdateMergeTrackingAfterViewportEdit(merge_tab, before_lines, selection_before,
-                                                     cursor_before);
+                UpdateMergeTrackingAfterViewportEdit(merge_tab, selection_before, cursor_before);
               },
           .request_active_tab_redraw =
               [this](bool include_tree_sidebar) { RequestActiveTabRedraw(include_tree_sidebar); },

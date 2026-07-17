@@ -36,7 +36,6 @@ class MergeMouseCoordinator {
     std::function<void(compare::MergeChoice)> apply_merge_choice;
     std::function<std::optional<std::string>()> read_primary_selection_text;
     std::function<void(MergeTabState&,
-                       const std::vector<std::string>&,
                        std::optional<editor::SelectionRange>,
                        editor::TextPosition)>
         update_merge_tracking_after_viewport_edit;

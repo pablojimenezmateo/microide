@@ -953,7 +953,6 @@
                                           std::size_t visible_start_row,
                                           std::size_t visible_end_row);
   void UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_tab,
-                                            const std::vector<std::string>& before_lines,
                                             std::optional<editor::SelectionRange> selection_before,
                                             editor::TextPosition cursor_before);
   editor::TextViewport* ActiveEditableViewport();

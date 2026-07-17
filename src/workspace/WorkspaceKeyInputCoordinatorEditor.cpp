@@ -285,12 +285,11 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
   const auto apply_merge_edit = [&](auto&& edit) {
     const bool was_dirty = viewport.dirty();
     const std::size_t cursor_before_line = viewport.cursor_line();
-    const std::vector<std::string> before_lines = viewport.lines().Snapshot();
     const std::optional<editor::SelectionRange> selection_before = viewport.selection_range();
     const editor::TextPosition cursor_before{viewport.cursor_line(), viewport.cursor_column()};
     edit();
-    operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
-                                                          selection_before, cursor_before);
+    operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
+                                                          cursor_before);
     operations_.reset_caret_blink();
     operations_.request_active_editable_last_change_redraw();
     if (viewport.dirty() != was_dirty) {

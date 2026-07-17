@@ -646,12 +646,10 @@ void WorkspaceActionContext::Undo() {
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
     const bool was_dirty = viewport->dirty();
     const std::size_t cursor_before_line = viewport->cursor_line();
-    std::vector<std::string> before_lines;
     std::optional<editor::SelectionRange> selection_before;
     std::optional<editor::TextPosition> cursor_before;
     if (auto* merge_tab = operations_.active_merge_tab();
         merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-      before_lines = viewport->lines().Snapshot();
       selection_before = viewport->selection_range();
       cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
     }
@@ -683,8 +681,8 @@ void WorkspaceActionContext::Undo() {
           merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
         util::PerformanceTrace::Scope scope(
             "WorkspaceActionContext::Undo::UpdateMergeTracking");
-        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
-                                                              selection_before, *cursor_before);
+        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
+                                                              *cursor_before);
       }
       {
         util::PerformanceTrace::Scope scope("WorkspaceActionContext::Undo::ResetCaretBlink");
@@ -719,12 +717,10 @@ void WorkspaceActionContext::Redo() {
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
     const bool was_dirty = viewport->dirty();
     const std::size_t cursor_before_line = viewport->cursor_line();
-    std::vector<std::string> before_lines;
     std::optional<editor::SelectionRange> selection_before;
     std::optional<editor::TextPosition> cursor_before;
     if (auto* merge_tab = operations_.active_merge_tab();
         merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-      before_lines = viewport->lines().Snapshot();
       selection_before = viewport->selection_range();
       cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
     }
@@ -749,8 +745,8 @@ void WorkspaceActionContext::Redo() {
           merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
         util::PerformanceTrace::Scope scope(
             "WorkspaceActionContext::Redo::UpdateMergeTracking");
-        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
-                                                              selection_before, *cursor_before);
+        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
+                                                              *cursor_before);
       }
       {
         util::PerformanceTrace::Scope scope("WorkspaceActionContext::Redo::ResetCaretBlink");
@@ -840,12 +836,10 @@ void WorkspaceActionContext::CutSelection() {
     if (!text.empty() && operations_.write_clipboard_text(text)) {
       operations_.write_primary_selection_text(text);
       const std::size_t cursor_before_line = viewport->cursor_line();
-      std::vector<std::string> before_lines;
       std::optional<editor::SelectionRange> selection_before;
       std::optional<editor::TextPosition> cursor_before;
       if (auto* merge_tab = operations_.active_merge_tab();
           merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-        before_lines = viewport->lines().Snapshot();
         selection_before = viewport->selection_range();
         cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
       }
@@ -863,8 +857,8 @@ void WorkspaceActionContext::CutSelection() {
       }
       if (auto* merge_tab = operations_.active_merge_tab();
           merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
-                                                              selection_before, *cursor_before);
+        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
+                                                              *cursor_before);
       }
       operations_.reset_caret_blink();
       operations_.request_active_tab_redraw(false);
@@ -911,12 +905,10 @@ void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
     const bool was_dirty = viewport->dirty();
     const std::size_t cursor_before_line = viewport->cursor_line();
-    std::vector<std::string> before_lines;
     std::optional<editor::SelectionRange> selection_before;
     std::optional<editor::TextPosition> cursor_before;
     if (auto* merge_tab = operations_.active_merge_tab();
         merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-      before_lines = viewport->lines().Snapshot();
       selection_before = viewport->selection_range();
       cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
     }
@@ -932,8 +924,8 @@ void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
     }
     if (auto* merge_tab = operations_.active_merge_tab();
         merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-      operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
-                                                            selection_before, *cursor_before);
+      operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
+                                                            *cursor_before);
     }
     operations_.reset_caret_blink();
     operations_.request_active_tab_redraw(false);

@@ -66,6 +66,7 @@ TextViewport::TextViewport(const TextViewport& other)
       highlight_checkpoint_advances_(other.highlight_checkpoint_advances_),
       selection_anchor_(other.selection_anchor_),
       last_applied_edit_(other.last_applied_edit_),
+      last_applied_edit_line_span_(other.last_applied_edit_line_span_),
       folding_model_(nullptr),
       undo_history_(other.undo_history_) {
   InvalidateVisualColumnCache();
@@ -119,6 +120,7 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       highlight_checkpoint_advances_(other.highlight_checkpoint_advances_),
       selection_anchor_(std::move(other.selection_anchor_)),
       last_applied_edit_(std::move(other.last_applied_edit_)),
+      last_applied_edit_line_span_(std::move(other.last_applied_edit_line_span_)),
       folding_model_(nullptr),
       undo_history_(std::move(other.undo_history_)) {
   other.folding_model_ = nullptr;
@@ -169,6 +171,7 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   highlight_checkpoint_advances_ = other.highlight_checkpoint_advances_;
   selection_anchor_ = std::move(other.selection_anchor_);
   last_applied_edit_ = std::move(other.last_applied_edit_);
+  last_applied_edit_line_span_ = std::move(other.last_applied_edit_line_span_);
   folding_model_ = nullptr;
   undo_history_ = std::move(other.undo_history_);
   other.folding_model_ = nullptr;
@@ -704,7 +707,7 @@ bool TextViewport::DeleteCurrentLine() {
     // feed a stale range/replacement to the incremental LSP sync and the
     // breakpoint shifter. Clear it so both fall back to a full resync, matching
     // the sibling aggregate paths (TextViewportMultiCaret / LanguageBehavior).
-    last_applied_edit_.reset();
+    ClearLastAppliedEdit();
     PushHistoryEntry(std::move(aggregate_entry));
     return true;
   }

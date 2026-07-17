@@ -322,6 +322,11 @@ class TextViewport {
   bool has_selection() const;
   std::optional<SelectionRange> selection_range() const;
   const std::optional<AppliedEdit>& last_applied_edit() const { return last_applied_edit_; }
+  // Whole-line-trimmed span of the last applied edit (see AppliedEditLineSpan).
+  // Set/cleared in lockstep with last_applied_edit(); empty for multi-region edits.
+  const std::optional<AppliedEditLineSpan>& last_applied_edit_line_span() const {
+    return last_applied_edit_line_span_;
+  }
   std::string SelectedText() const;
   // VSCode-style multi-caret copy: each caret's selection text joined by '\n' in
   // caret position order. Returns nullopt unless there are multiple carets and
@@ -352,6 +357,18 @@ class TextViewport {
   using SecondaryCaret = TextViewportUndoHistory::SecondaryCaret;
   using ViewState = TextViewportUndoHistory::ViewState;
   using HistoryEntry = TextViewportUndoHistory::Entry;
+
+  // Stamp/clear the last-applied-edit metadata (character-level AppliedEdit + the
+  // whole-line-trimmed line span) in lockstep, so consumers never see one without
+  // the other. Called from every edit primitive that sets/resets the metadata.
+  void SetLastAppliedEditFromEntry(const HistoryEntry& entry, bool forward) {
+    last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(entry, forward);
+    last_applied_edit_line_span_ = TextViewportUndoHistory::BuildAppliedEditLineSpan(entry, forward);
+  }
+  void ClearLastAppliedEdit() {
+    last_applied_edit_.reset();
+    last_applied_edit_line_span_.reset();
+  }
 
   struct DocumentState {
     std::filesystem::path path;
@@ -600,6 +617,7 @@ class TextViewport {
   mutable std::size_t highlight_checkpoint_advances_ = 0;
   std::optional<TextPosition> selection_anchor_;
   std::optional<AppliedEdit> last_applied_edit_;
+  std::optional<AppliedEditLineSpan> last_applied_edit_line_span_;
   const FoldingModel* folding_model_ = nullptr;
   TextViewportUndoHistory undo_history_;
 

@@ -330,11 +330,9 @@ WorkspaceShell::WorkspaceShell() {
               },
           .update_merge_tracking_after_viewport_edit =
               [this](MergeTabState& tab,
-                     const std::vector<std::string>& before_lines,
                      const std::optional<editor::SelectionRange>& selection_before,
                      const editor::TextPosition& cursor_before) {
-                UpdateMergeTrackingAfterViewportEdit(tab, before_lines, selection_before,
-                                                     cursor_before);
+                UpdateMergeTrackingAfterViewportEdit(tab, selection_before, cursor_before);
               },
       });
   plugin_runtime_.SetCallbacks(plugin::PluginHost::Callbacks{

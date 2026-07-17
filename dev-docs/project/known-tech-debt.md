@@ -214,8 +214,24 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
   same Lua-safety family as **TD-2026-07-17-020/058**.
 - **TD-2026-07-16-26 — render view models smuggle mutable project-state pointers back
   into render TUs.** Dedicated architecture pass. Same item as **TD-2026-07-17-084**.
-- **TD-2026-07-16-31 — merge result edit side effects snapshot the full buffer on each
-  mutation.** Dedicated edit-engine pass. Same family as **TD-2026-07-17-068**.
+- **[RESOLVED 2026-07-17] TD-2026-07-16-31 (== TD-2026-07-17-068's sibling) — merge
+  result edit side effects snapshot the full buffer on each mutation.** The edit
+  engine now stamps a whole-line-trimmed applied-edit line span (`AppliedEditLineSpan`,
+  `TextViewport::last_applied_edit_line_span()`), computed once from the undo entry's
+  before/after slices in lockstep with the existing char-level `AppliedEdit` (via the
+  DRY `SetLastAppliedEditFromEntry`/`ClearLastAppliedEdit` helpers). The span matches
+  `WorkspaceShell::ComputeChangedLineSpan` exactly — the entry's slice already isolates
+  the changed region, so trimming within it and offsetting by `start_line` is identical
+  to a whole-document diff, at O(edit) cost — which is why the boundary semantics (Enter
+  at end-of-line = pure insertion) are preserved and the conflict shift/invalidate logic
+  is byte-for-byte unchanged. `UpdateMergeTrackingAfterViewportEdit` now reads that span
+  instead of snapshotting + diffing the whole result buffer before/after every keystroke,
+  and updates max-visual-columns from a bounded `LineView` slice. Dropped the whole-buffer
+  `before_lines` capture at all 8 human call sites + the plugin path (multi-region edits
+  leave the span empty → safe scroll-only resync, matching the old no-change early-out).
+  Coverage: `TextViewport/LastAppliedEditLineSpanMatchesWholeLineDiff` (mid-line insert,
+  end-of-line newline pure-insertion, line-join backspace, undo/redo reverse/forward,
+  multi-caret empty). `run-checks.sh tests` (3/3, perf incl.) green; ASAN batched.
 - **TD-2026-07-16-38 — stage/unstage/discard serialize unified patches synchronously
   on the UI path.** Dedicated async pass. Overlaps **TD-2026-07-17-082**.
 - **TD-2026-07-16-39 — encoded raster surfaces publish layout dimensions before decode

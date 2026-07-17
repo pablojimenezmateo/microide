@@ -209,7 +209,7 @@ bool TextViewport::Undo() {
   }
   {
     util::PerformanceTrace::Scope scope("TextViewport::Undo::BuildAppliedEdit");
-    last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(entry, false);
+    SetLastAppliedEditFromEntry(entry, false);
   }
   undo_history_.PushRedo(std::move(entry));
   return true;
@@ -232,7 +232,7 @@ bool TextViewport::Redo() {
   }
   {
     util::PerformanceTrace::Scope scope("TextViewport::Redo::BuildAppliedEdit");
-    last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(entry, true);
+    SetLastAppliedEditFromEntry(entry, true);
   }
   undo_history_.PushUndo(std::move(entry));
   return true;
@@ -533,12 +533,12 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
 
   std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(range, replacement);
   if (!entry.has_value()) {
-    last_applied_edit_.reset();
+    ClearLastAppliedEdit();
     return false;
   }
 
   ApplyHistoryEntry(*entry, true);
-  last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(*entry, true);
+  SetLastAppliedEditFromEntry(*entry, true);
   if (record_undo) {
     // `entry` is dead after this read, so move its line vectors into the saved
     // entry instead of deep-copying them on every keystroke.
@@ -562,7 +562,7 @@ bool TextViewport::ApplyLineEdit(std::size_t start_line,
 
   HistoryEntry entry = BuildLineHistoryEntry(start_line, end_line, replacement);
   ApplyHistoryEntry(entry, true);
-  last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(entry, true);
+  SetLastAppliedEditFromEntry(entry, true);
   if (record_undo) {
     // `entry` is dead after this read; move rather than deep-copy the lines.
     HistoryEntry saved_entry = std::move(entry);

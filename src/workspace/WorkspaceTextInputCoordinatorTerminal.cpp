@@ -227,11 +227,9 @@ TextInputCoordinator WorkspaceShell::MakeTextInputCoordinator() {
           .active_merge_tab = [this]() { return ActiveMergeTab(); },
           .update_merge_tracking_after_viewport_edit =
               [this](MergeTabState& merge_tab,
-                     const std::vector<std::string>& before_lines,
                      std::optional<editor::SelectionRange> selection_before,
                      editor::TextPosition cursor_before) {
-                UpdateMergeTrackingAfterViewportEdit(merge_tab, before_lines, selection_before,
-                                                     cursor_before);
+                UpdateMergeTrackingAfterViewportEdit(merge_tab, selection_before, cursor_before);
               },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
           .mark_active_editor_folding_dirty =

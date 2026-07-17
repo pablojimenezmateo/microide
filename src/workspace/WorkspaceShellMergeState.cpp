@@ -534,21 +534,36 @@ void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab
 
 void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(
     MergeTabState& merge_tab,
-    const std::vector<std::string>& before_lines,
     std::optional<editor::SelectionRange> selection_before,
     editor::TextPosition cursor_before) {
-  const auto changed_span = ComputeChangedLineSpan(before_lines, merge_tab.result_viewport.lines().Snapshot());
-  if (!changed_span.has_value()) {
+  // TD-2026-07-16-31: derive the changed line span from the viewport's own
+  // last-applied-edit metadata instead of snapshotting + diffing the whole result
+  // buffer before and after every mutation. The span is whole-line-trimmed to match
+  // the previous ComputeChangedLineSpan(before, after) result exactly, so the
+  // conflict shift/invalidate logic below is byte-for-byte unchanged — it just no
+  // longer pays an O(document) copy + diff per keystroke. Merge result editing is
+  // single-caret, so an absent span means the edit was a no-op (nothing to
+  // re-track); a true multi-region edit (which resets the span) also lands here and
+  // safely refreshes scroll only, matching the old no-change early-out.
+  const std::optional<editor::AppliedEditLineSpan>& applied_span =
+      merge_tab.result_viewport.last_applied_edit_line_span();
+  if (!applied_span.has_value()) {
     merge_tab.scroll_row = static_cast<int>(merge_tab.result_viewport.scroll_line());
     merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
     return;
   }
 
-  const auto& change = *changed_span;
+  const ChangedLineSpan change{
+      .old_start = applied_span->old_start,
+      .old_end = applied_span->old_end,
+      .new_end = applied_span->new_end,
+  };
   const long long line_delta =
       static_cast<long long>(change.new_end) - static_cast<long long>(change.old_end);
-  const bool pure_insertion = !selection_before.has_value() && change.old_start == change.old_end &&
-                              merge_tab.result_viewport.lines().size() >= before_lines.size();
+  // old_start == old_end means no before-line was consumed -> a pure line insertion.
+  // (The old whole-buffer path additionally checked new_size >= old_size, but that
+  // is implied: with old_start == old_end the delta is non-negative.)
+  const bool pure_insertion = !selection_before.has_value() && change.old_start == change.old_end;
   const std::size_t insertion_anchor_line =
       selection_before.has_value() ? selection_before->start.line : cursor_before.line;
 
@@ -585,16 +600,18 @@ void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(
     conflict.valid = false;
   }
 
-  // Snapshot() returns a cached, lazily materialized whole-document vector; bind
-  // it once and pass a non-owning span over the changed sub-range instead of
-  // copying those lines into a temporary vector.
-  const std::vector<std::string>& result_snapshot = merge_tab.result_viewport.lines().Snapshot();
-  const std::size_t changed_start = std::min(change.old_start, result_snapshot.size());
-  const std::size_t changed_end = std::min(change.new_end, result_snapshot.size());
+  // Materialize only the changed rows (bounded by the edit) via zero-copy LineView
+  // instead of snapshotting the whole result buffer.
+  const std::size_t line_count = merge_tab.result_viewport.lines().size();
+  const std::size_t changed_start = std::min(change.old_start, line_count);
+  const std::size_t changed_end = std::min(change.new_end, line_count);
   if (changed_start < changed_end) {
-    UpdateMergeMaxVisualColumns(
-        merge_tab, std::span<const std::string>(result_snapshot.data() + changed_start,
-                                                changed_end - changed_start));
+    std::vector<std::string> changed_rows;
+    changed_rows.reserve(changed_end - changed_start);
+    for (std::size_t ln = changed_start; ln < changed_end; ++ln) {
+      changed_rows.emplace_back(merge_tab.result_viewport.lines().LineView(ln));
+    }
+    UpdateMergeMaxVisualColumns(merge_tab, changed_rows);
   }
 
   merge_tab.hover_state.reset();

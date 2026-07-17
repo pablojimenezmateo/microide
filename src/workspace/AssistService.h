@@ -74,8 +74,8 @@ class AssistService {
     std::function<void()> request_tab_strip_redraw;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
-    std::function<void(MergeTabState&, const std::vector<std::string>&,
-                       const std::optional<editor::SelectionRange>&, const editor::TextPosition&)>
+    std::function<void(MergeTabState&, const std::optional<editor::SelectionRange>&,
+                       const editor::TextPosition&)>
         update_merge_tracking_after_viewport_edit;
   };
 
@@ -145,7 +145,6 @@ class AssistService {
   struct EditSideEffectsSnapshot {
     bool was_dirty = false;
     std::size_t cursor_before_line = 0;
-    std::vector<std::string> before_lines;
     std::optional<editor::SelectionRange> selection_before;
     std::optional<editor::TextPosition> cursor_before;
   };
