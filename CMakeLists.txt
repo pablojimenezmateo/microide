@@ -846,6 +846,7 @@ add_executable(microide_tests
   tests/SubprocessTests.cpp
   tests/TextRendererTests.cpp
   tests/TextViewportTests.cpp
+  tests/TextLayoutTests.cpp
   tests/PieceTreeTests.cpp
   tests/EditorEssentialsTests.cpp
   tests/EditorRenderViewModelAllocationTests.cpp

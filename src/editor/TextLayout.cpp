@@ -200,16 +200,18 @@ std::size_t TextLayout::VisualColumnFromLayoutClipped(const LayoutLine& layout,
   return row_start_visual + cell_index;
 }
 
-std::size_t TextLayout::AdvanceVisualColumn(std::size_t visual_column,
-                                            char character,
-                                            std::size_t tab_size) {
-  if (character != '\t') {
-    return visual_column + 1;
+std::size_t TextLayout::ResolveVisualColumn(const LayoutLine* layout,
+                                            const LineVisualColumnMap* visual_map,
+                                            std::size_t row_visual_start,
+                                            std::size_t row_visual_end,
+                                            std::size_t source_column) {
+  if (layout != nullptr) {
+    return VisualColumnFromLayoutClipped(*layout, row_visual_start, row_visual_end, source_column);
   }
-
-  const std::size_t safe_tab_size = std::max<std::size_t>(1, tab_size);
-  const std::size_t remainder = visual_column % safe_tab_size;
-  return visual_column + (remainder == 0 ? safe_tab_size : safe_tab_size - remainder);
+  if (visual_map != nullptr) {
+    return visual_map->VisualColumnFor(source_column);
+  }
+  return source_column;
 }
 
 TextLayout::ByteRange TextLayout::IdentifierRangeAt(std::string_view line,

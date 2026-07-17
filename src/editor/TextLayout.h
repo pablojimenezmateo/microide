@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -67,11 +68,32 @@ class TextLayout {
                                                    std::size_t row_end_visual,
                                                    std::size_t source_column);
 
+  // Resolve a source byte column to its visual column using whichever mapper the caller has for
+  // the row: the cached cell-grid `layout` (clipped to `[row_visual_start, row_visual_end)`), else
+  // the prebuilt per-line `visual_map`, else identity (source column == visual column). This is the
+  // single mapper the row-decoration builder and the inlay-hint column resolver both call, so
+  // inlay hints land on exactly the same visual grid the text, fills, selections and diagnostics do.
+  static std::size_t ResolveVisualColumn(const LayoutLine* layout,
+                                         const LineVisualColumnMap* visual_map,
+                                         std::size_t row_visual_start,
+                                         std::size_t row_visual_end,
+                                         std::size_t source_column);
+
   // Visual column after advancing past `character` from `visual_column`. Tabs advance to the next
-  // multiple of `tab_size`; every other byte advances by one cell.
+  // multiple of `tab_size`; every other byte advances by one cell. Defined inline: this is the one
+  // authoritative tab-stop/width step shared by every visual-column walk in the editor (the layout
+  // walks in this class, the wrapped-row builder, and the whitespace-marker / indent-guide render
+  // paths), so hot per-codepoint loops keep it zero-cost while there is exactly one implementation.
   static std::size_t AdvanceVisualColumn(std::size_t visual_column,
                                          char character,
-                                         std::size_t tab_size);
+                                         std::size_t tab_size) {
+    if (character != '\t') {
+      return visual_column + 1;
+    }
+    const std::size_t safe_tab_size = std::max<std::size_t>(1, tab_size);
+    const std::size_t remainder = visual_column % safe_tab_size;
+    return visual_column + (remainder == 0 ? safe_tab_size : safe_tab_size - remainder);
+  }
 
   // A half-open byte range [start, end) within a line. Empty when start >= end.
   struct ByteRange {

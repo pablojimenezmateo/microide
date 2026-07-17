@@ -867,13 +867,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         for (std::size_t i = 0; i < line_text.size();) {
           const char c = line_text[i];
           i += util::Utf8SequenceLength(line_text, i);
-          std::size_t cell_width = 1;
-          if (c == '\t') {
-            const std::size_t step = tab_size == 0 ? 1 : tab_size;
-            cell_width = step - (visual_col % step);
-          }
+          // One authoritative tab-stop/width step (tabs expand to the next stop,
+          // every other codepoint is one cell) — same walk text layout uses.
           const std::size_t cell_start = visual_col;
-          visual_col += cell_width;
+          visual_col = TextLayout::AdvanceVisualColumn(cell_start, c, tab_size);
+          const std::size_t cell_width = visual_col - cell_start;
           if (cell_start >= row_end_visual) break;
           if (cell_start < row_start_visual) continue;
           if (visual_col > row_end_visual) continue;

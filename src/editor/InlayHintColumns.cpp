@@ -39,24 +39,6 @@ std::size_t InlayLineTotalCells(std::span<const InlineTextDecoration> inline_tex
   return total;
 }
 
-namespace {
-
-std::size_t ResolveInlayVisualColumn(const LayoutLine* layout,
-                                     const TextLayout::LineVisualColumnMap* visual_map,
-                                     std::size_t row_visual_start, std::size_t row_visual_end,
-                                     std::size_t source_column) {
-  if (layout != nullptr) {
-    return TextLayout::VisualColumnFromLayoutClipped(*layout, row_visual_start, row_visual_end,
-                                                     source_column);
-  }
-  if (visual_map != nullptr) {
-    return visual_map->VisualColumnFor(source_column);
-  }
-  return source_column;
-}
-
-}  // namespace
-
 void BuildInlayRowSpans(std::span<const InlineTextDecoration> inline_texts,
                         const LayoutLine* layout,
                         const TextLayout::LineVisualColumnMap* visual_map,
@@ -73,8 +55,10 @@ void BuildInlayRowSpans(std::span<const InlineTextDecoration> inline_texts,
     }
     const std::size_t width = InlayHintCellWidth(text_renderer, inl.text, char_width);
     total = util::SaturatingAdd(total, width);  // every mid-line hint shifts the end-of-line anchor
-    const std::size_t vcol = ResolveInlayVisualColumn(layout, visual_map, row_visual_start,
-                                                      row_visual_end, inl.anchor_column);
+    // Same source->visual mapper the row-decoration builder uses, so a hint's phantom cells anchor
+    // on exactly the visual column its annotated glyph renders at.
+    const std::size_t vcol = TextLayout::ResolveVisualColumn(layout, visual_map, row_visual_start,
+                                                             row_visual_end, inl.anchor_column);
     // Drop hints whose anchor lands outside the visible window: those scrolled off
     // the left contribute no visible shift (their displacement cancels in the
     // display origin), and those off the right shift nothing on screen. The
