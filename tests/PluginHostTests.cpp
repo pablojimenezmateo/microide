@@ -214,6 +214,51 @@ return ide.plugin({
          "shutdown should run each plugin's shutdown hook");
 }
 
+// A plugin that logs in a tight loop must not grow the host-owned message history
+// without bound: RecordMessage/RecordError trim to PluginHost::kMaxRecordedLogEntries
+// even though the visible panel is capped separately (TD-2026-07-17A-020). The most
+// recent messages are retained (front-trimmed), so the last logged line survives.
+void TestPluginHostCapsRecordedLogHistory() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "log flood fixture\n");
+
+  // Log well past the cap during setup so the trim path is exercised.
+  const std::size_t flood = PluginHost::kMaxRecordedLogEntries + 500;
+  WritePluginInit(
+      global_plugins, "flood-sample",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "flood.sample",
+  setup = function(ctx)
+    for i = 1, )" + std::to_string(flood) + R"( do
+      ctx.log("m" .. i)
+    end
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.enabled(), "plugin host should be enabled when Lua support is compiled in");
+  Expect(host.Reload(project_root), "plugin reload should succeed for the flood fixture");
+
+  Expect(host.Messages().size() <= PluginHost::kMaxRecordedLogEntries,
+         "recorded message history must stay within the cap under a logging flood");
+  Expect(host.Messages().size() >= PluginHost::kMaxRecordedLogEntries * 3 / 4,
+         "the cap should retain a healthy recent window, not collapse to near-empty");
+  // Front-trimming keeps the most recent entries: the final logged line survives.
+  Expect(!host.Messages().empty() &&
+             host.Messages().back() == "flood.sample: m" + std::to_string(flood),
+         "the most recent log line must be retained after trimming");
+}
+
 void TestPluginHostIgnoresProjectLocalPlugins() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3733,6 +3778,7 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostProcessAndContributionCapabilities);
   AddTest(tests, "PluginHost/LoadsPluginsAndDispatchesLifecycle",
           TestPluginHostLoadsPluginsAndDispatchesLifecycle);
+  AddTest(tests, "PluginHost/CapsRecordedLogHistory", TestPluginHostCapsRecordedLogHistory);
   AddTest(tests, "PluginHost/IgnoresProjectLocalPlugins",
           TestPluginHostIgnoresProjectLocalPlugins);
   AddTest(tests, "PluginHost/LoadsUserConfigPlugins", TestPluginHostLoadsUserConfigPlugins);

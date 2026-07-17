@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "editor/FoldingModel.h"
+#include "editor/LineSpan.h"
 #include "editor/TextViewport.h"
 #include "util/StringUtil.h"
 
@@ -25,7 +26,7 @@ bool IsBlankOrWhitespace(std::string_view text) {
   return true;
 }
 
-std::string JoinLineRange(const std::vector<std::string>& lines,
+std::string JoinLineRange(editor::LineSpan lines,
                           std::size_t first,
                           std::size_t last_inclusive) {
   std::string joined;
@@ -275,7 +276,10 @@ std::optional<std::string> WorkspaceShell::SelectionTextWithContext() {
       --end_line;
     }
   } else {
-    const std::vector<std::string>& lines = viewport->lines().Snapshot();
+    // No selection: read the live buffer zero-copy (LineView) instead of materializing
+    // every line with Snapshot() just to return the current line or a small enclosing
+    // fold (TD-2026-07-17A-035).
+    const editor::LineSpan lines = viewport->lines();
     const std::size_t cursor = viewport->cursor_line();
     if (cursor >= lines.size()) {
       return std::nullopt;

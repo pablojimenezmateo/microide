@@ -795,6 +795,11 @@ class PluginHost {
   const std::vector<ContributedSnippet>& ContributedSnippets() const;
   const std::vector<ContributedTheme>& ContributedThemes() const;
   const std::vector<ContributedFileIconTheme>& ContributedFileIconThemes() const;
+  // Upper bound on the retained plugin log/error history (per stream). The visible
+  // output panel is capped separately by WorkspaceOutputChannels; this bounds the
+  // host-owned debug/test copy so a flooding plugin cannot grow host memory without
+  // limit (TD-2026-07-17A-020).
+  static constexpr std::size_t kMaxRecordedLogEntries = 2048;
   const std::vector<std::string>& Messages() const;
   const std::vector<std::string>& Errors() const;
   void ClearMessages();

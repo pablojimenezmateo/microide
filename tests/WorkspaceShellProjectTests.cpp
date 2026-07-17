@@ -2214,6 +2214,44 @@ void TestWorkspaceShellCopySelectionWithContextWithoutSelectionCopiesCurrentLine
          "copy with context without a selection should copy the current line plus context");
 }
 
+// A no-selection context copy on a large buffer returns ONLY the current line (plus its
+// enclosing opener), never the whole document. This pins that the LineSpan/LineView path
+// that replaced lines().Snapshot() (TD-2026-07-17A-035) reads just the range it needs.
+void TestWorkspaceShellCopySelectionWithContextNoSelectionReadsSingleLineFromLargeBuffer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source_dir = root / "src";
+  const std::filesystem::path source = source_dir / "big.cpp";
+  std::filesystem::create_directories(source_dir);
+
+  // A function with many body lines; each line is distinct so a broadened range would
+  // show up as extra content in the clipboard.
+  std::string content = "void f() {\n";
+  for (int i = 0; i < 40; ++i) {
+    content += "  step_" + std::to_string(i) + "();\n";
+  }
+  content += "}\n";
+  WriteFile(source, content);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+
+  // Cursor on body line "  step_20();" — file line 22 (1-based), buffer index 21.
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(21, 4);
+  Expect(WorkspaceShellTestAccess::ExecuteCopySelectionWithContext(shell),
+         "copy with context should execute on a large buffer without a selection");
+  Expect(clipboard_text == "// context: void f() {\nsrc/big.cpp:22\n  step_20();",
+         "a no-selection copy on a large buffer must return only the current line + context");
+}
+
 void TestWorkspaceShellCopySelectionWithContextOnBlankLineExpandsToEnclosingFold() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3966,6 +4004,9 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange);
   AddTest(tests, "WorkspaceShell/CopySelectionWithContextWithoutSelectionCopiesCurrentLine",
           TestWorkspaceShellCopySelectionWithContextWithoutSelectionCopiesCurrentLine);
+  AddTest(tests,
+          "WorkspaceShell/CopySelectionWithContextNoSelectionReadsSingleLineFromLargeBuffer",
+          TestWorkspaceShellCopySelectionWithContextNoSelectionReadsSingleLineFromLargeBuffer);
   AddTest(tests, "WorkspaceShell/CopySelectionWithContextOnBlankLineExpandsToEnclosingFold",
           TestWorkspaceShellCopySelectionWithContextOnBlankLineExpandsToEnclosingFold);
   AddTest(tests, "WorkspaceShell/EditorRightClickOpensSymbolAwareContextMenu",

@@ -4,7 +4,7 @@ Reviewed on 2026-07-17. A follow-on deferred-backlog full sweep is in progress
 (see "Fixed in the 2026-07-13 deferred-backlog full sweep" below); closed tranche
 entries have been pruned as they land. The **2026-07-17A addendum burndown** then
 dispositioned every item in the "Cross-subsystem bug/perf audit addendum" section:
-26 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
+28 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
 clusters or marked platform-only — see the burndown blockquote under that heading.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
@@ -88,6 +88,8 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > - **012** — command-line completion takes the plugin command-name vector by reference (no whole-registry copy per open/keystroke).
 > - **013** — clean saves stream from the live TextBuffer (`SerializeLinesStreaming`) with no whole-document `Snapshot()`.
 > - **019** — settings per-category row lookup uses cached index vectors (O(rows) build; O(1) lookup) instead of an O(rows²) render rescan.
+> - **020** — plugin log/error history is capped (front-trim to `kMaxRecordedLogEntries`) so a flooding plugin can't grow host memory unbounded.
+> - **035** — no-selection context copy reads the live buffer via LineSpan (no whole-document `Snapshot()`); `JoinLineRange` takes a LineSpan.
 > - **003** — `DetectIndent(LineSpan)` overload; file open reads the live buffer zero-copy (no `Snapshot()`).
 > - **006** — settings query filter routes through allocation-free `util::ContainsCaseInsensitiveAscii` (no per-row lowercase of query/label/detail on every keystroke).
 > - **009** — merge validation scans a zero-copy `LineSpan` once via `util::ScanConflictMarkers` (no `Snapshot()`, no whole-document serialize, no second snapshot for the marker line).
@@ -114,8 +116,9 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 1. **Off-UI-thread / async** (Standing #1): 005, 024, 033, 108.
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test):
->    018, 020, 029, 037, 038, 039, 040, 041, 042, 043, 044, 046, 056, 057, 064, 068, 070,
+>    018, 029, 037, 038, 039, 040, 041, 042, 043, 044, 046, 056, 057, 064, 068, 070,
 >    071, 072, 073, 074, 090, 095, 096, 097, 098, 099, 101, 105, 106, 107, 116, 118, 119, 121.
+>    *(020 RESOLVED 2026-07-17A — plugin log/error history cap.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): 032, 045, 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
 >    *(011, 012 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; command-name completion by reference.)*
@@ -126,7 +129,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    validation; needs security-focused fixtures): 047, 048, 049, 077, 078, 080, 109, 126, 128, 129.
 > 6. **Editor/save allocation & edit primitives** (edit-engine pass — streaming serializers,
 >    range-wrap/replace primitives that avoid whole-buffer transients): 015, 016, 021,
->    022, 028, 031, 035, 075, 120. *(009, 013 RESOLVED 2026-07-17A — `util::ScanConflictMarkers`; clean-save streaming.)*
+>    022, 028, 031, 075, 120. *(009, 013, 035 RESOLVED 2026-07-17A — `util::ScanConflictMarkers`; clean-save streaming; no-selection context copy via LineSpan.)*
 > 7. **Protocol / session lifecycle & decode-order** (LSP/DAP/persistence pass — commit-after-
 >    success open/close, per-request generations, decode-before-cap, event-drain budget, regex
 >    match-data cache keyed by revision, symlinked-state-file writes, terminal-tab reap grace):
@@ -312,7 +315,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   call scans `settings_rows_` from the beginning and calls `RowInCategory` for every
   skipped row. Build/cache per-category row index vectors during `RebuildSettingsRows`
   so view-model construction is O(rows), not O(selected_rows * rows).
-- **TD-2026-07-17A-020 — plugin log/error storage keeps an uncapped second copy.**
+- **[RESOLVED 2026-07-17A] TD-2026-07-17A-020 — plugin log/error storage keeps an uncapped second copy.**
+  Fixed: `PluginHost::Impl::RecordMessage`/`RecordError` now front-trim the retained
+  `messages`/`errors` vectors to `PluginHost::kMaxRecordedLogEntries` (2048) with an
+  amortized batch-drop (drop the oldest quarter once the ceiling is crossed). The visible
+  panel still receives the full line via the sink before the debug/test copy is trimmed;
+  the most recent entries are retained. Regression:
+  `PluginHost/CapsRecordedLogHistory`.
   `WorkspaceOutputChannels::AppendLine` caps visible plugin output by entry count, line
   bytes, and retained bytes, but `PluginHost::Impl::RecordMessage`/`RecordError` still
   append every formatted message into `messages`/`errors` without a count or byte cap.
@@ -441,7 +450,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   or captured active query check like completions/code actions use, so a slower response
   for an older `workspace-symbol` command can overwrite the newer query's results. Add a
   workspace-symbol request generation/token and drop callbacks that are no longer current.
-- **TD-2026-07-17A-035 — no-selection context copy snapshots the whole active buffer.**
+- **[RESOLVED 2026-07-17A] TD-2026-07-17A-035 — no-selection context copy snapshots the whole active buffer.**
+  Fixed: the no-selection branch of `SelectionTextWithContext` reads the live buffer as an
+  `editor::LineSpan` (zero-copy LineView) and `JoinLineRange` now takes a `LineSpan`, so a
+  context-menu/assistant copy on a large file materializes only the current line or a small
+  enclosing fold — no `lines().Snapshot()`. Fold expansion still consults the folding
+  model. Regression:
+  `WorkspaceShell/CopySelectionWithContextNoSelectionReadsSingleLineFromLargeBuffer` plus
+  the existing current-line/blank-fold context-copy tests.
   `WorkspaceShell::SelectionTextWithContext` handles the common no-selection case by calling
   `viewport->lines().Snapshot()` before it checks the cursor line, blank-line fold expansion,
   or final line-range join. A context-menu/assistant action on a large file therefore

@@ -622,12 +622,28 @@ struct PluginHost::Impl {
   // UI thread reads, so the whole record-and-sink runs through ApplyHostMutation:
   // inline under exclusive access (setup/round-trip), or marshalled to the UI thread
   // when a fire-and-forget event records on the worker.
+  // Bound the host-owned messages/errors history so a long-running or flooding plugin
+  // (repeated ctx.log / callback errors) cannot grow host memory without limit, even
+  // though the visible output panel is already capped by WorkspaceOutputChannels
+  // (TD-2026-07-17A-020). The real panel gets the full line via the sink first; only the
+  // retained debug/test copy is trimmed. Batch-drop the oldest quarter once the ceiling
+  // is crossed so the trim is amortized O(1) per append rather than an O(n) front-erase
+  // every time.
+  static void TrimRecordedHistory(std::vector<std::string>& entries) {
+    if (entries.size() <= PluginHost::kMaxRecordedLogEntries) {
+      return;
+    }
+    const std::size_t keep = PluginHost::kMaxRecordedLogEntries * 3 / 4;
+    entries.erase(entries.begin(), entries.begin() + (entries.size() - keep));
+  }
+
   void RecordMessage(std::string message) {
     ApplyHostMutation([this, message = std::move(message)]() mutable {
       messages.push_back(std::move(message));
       if (raw_callbacks.log_sink) {
         raw_callbacks.log_sink(messages.back());
       }
+      TrimRecordedHistory(messages);
     });
   }
 
@@ -637,6 +653,7 @@ struct PluginHost::Impl {
       if (raw_callbacks.error_sink) {
         raw_callbacks.error_sink(errors.back());
       }
+      TrimRecordedHistory(errors);
     });
   }
 
