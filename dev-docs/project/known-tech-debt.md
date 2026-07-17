@@ -23,8 +23,10 @@ detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
 The 2026-07-17 correctness/perf burndown implemented the concrete, self-contained wins
 (068, 31, 090, 083, 040) and left the rest **DEFERRED** with per-item rationale in the
-subsections below. These are real work — each is a multi-file *dedicated pass* the audit
-explicitly said not to bundle — deferred, NOT declined. This section is the durable reminder
+subsections below. A follow-up editor-display-column pass has since landed cluster 3 in full
+(**021/023 RESOLVED**) plus partial wins on the async cluster (047, 21). These are real work
+— each is a multi-file *dedicated pass* the audit explicitly said not to bundle — deferred,
+NOT declined. This section is the durable reminder
 to actually schedule them. Pick one cluster at a time (async first — speed is the #1 project
 priority), give it its own reviewed change + test matrix, and move its items to RESOLVED as
 they land.
@@ -41,7 +43,7 @@ they land.
 2. **Render view-model build-out** — overlay view model owns state, no live pointers in
    render TUs (084/26); + the residual commit-body sizing/scroll-clamp move-to-prep from 083.
 3. **Editor display-column unification** — one grapheme/visual-width service; inlay hints
-   share it (021/023).
+   share it (021/023). **[RESOLVED 2026-07-17 — see the Editor / Unicode subsection]**
 4. **DAP lifecycle hardening** — session-generation + request-id gating (025), bounded
    stop/terminate escalation (026).
 5. **Scanner/search incomplete-state plumbing** — surface complete/truncated/incomplete
@@ -183,17 +185,25 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Editor / Unicode (schedule as one coherent pass):**
 
-> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 021 (centralize grapheme segmentation +
-> visual width into one editor service, rerouting cursor movement / hit-testing / layout /
-> selection) and 023 (route inlay-hint columns through that same display-column map) are a
-> single large editor-primitive unification touching every column-math site — the audit
-> itself says "schedule as one coherent pass." High blast radius, no isolated defect
-> (070 already bounded inlay width). Deferred to a dedicated editor-display-column change.
+> **[RESOLVED 2026-07-17 — dedicated editor-display-column pass landed]** The coherent pass
+> the audit asked for shipped: column math is now centralized on `TextLayout` with exactly one
+> tab-stop/width primitive and one source→visual mapper. See the two RESOLVED items below.
 
-- **021 — centralize grapheme segmentation + visual width into one editor service**
-  and route cursor movement / hit-testing / layout / selection through it.
-- **023 — inlay hints should consume the same display-column map as text layout**
-  (part of 021; 070 already bounded inlay width).
+- **[RESOLVED 2026-07-17] 021 — centralize grapheme segmentation + visual width into one
+  editor service.** `TextLayout::AdvanceVisualColumn` is now the single inline tab-stop/width
+  primitive (in the header, so the per-codepoint render loop stays zero-cost); the two
+  remaining hand-rolled walks — `IndentGuides::LeadingVisualIndent` and the
+  `EditorViewRenderer` whitespace-marker loop — route through it byte-identically. Coverage:
+  new `tests/TextLayoutTests.cpp` (tab-stop, cached-map-vs-direct-walk parity, text↔visual
+  round-trip). Editor suites (EditorEssentials/TextViewport/EditorMultiCaret/RowDecorationBuilder)
+  stay green.
+- **[RESOLVED 2026-07-17] 023 — inlay hints consume the same display-column map as text
+  layout.** New `TextLayout::ResolveVisualColumn(layout, visual_map, start, end, col)` is the
+  one source→visual mapper; both `RowDecorationBuilder::ResolveVisualColumn` and the inlay-hint
+  column resolver call it, so inlay-hint phantom cells anchor on exactly the visual grid the
+  text/fills/selection/diagnostics use instead of a duplicated resolver (070 had already
+  bounded inlay width). Coverage: the `TextLayoutTests` inlay-column-matches-text-layout parity
+  test across ASCII / tab / CJK / combining rows.
 - **[RESOLVED 2026-07-17] 068 — grouped-undo FALLBACK still `Snapshot()`s the whole
   document** for non-contiguous multi-caret/snippet edits. Replaced the whole-buffer
   fallback with a sparse disjoint-range model: `UndoGroupFrame` now holds a sorted,
@@ -443,6 +453,37 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
   content.** Dedicated UI-feature pass.
 - **TD-2026-07-16-61 — plugin surface hit regions are parsed and documented but never
   dispatched.** Dedicated UI-feature pass.
+
+### Fixed in the 2026-07-17 test-parallelism + slow-test pass
+
+The whole suite ran as a single ctest test (one process, single-threaded), so
+`ctest -j` could not parallelize it — 11 of 12 cores sat idle and the sanitizers
+took 18–30 min. Fixed alongside two genuine slow-path fixes surfaced by the
+per-test instrumentation. Not tied to a numbered audit finding; recorded here as
+the durable audit trail (touches the standing-backlog test-infra cluster #9).
+
+- **Suite is sharded for parallel ctest.** Registered as `MICROIDE_TEST_SHARDS`
+  (default 24) ctest tests, each a `microide_tests --shard-index=I --shard-count=N`
+  process running a deterministic round-robin slice, so `ctest -jN` uses every
+  core. Separate processes each own their SDL/global state, so this respects the
+  "redraw tests serial under shared SDL state" invariant (that is within-process).
+  `run-checks.sh` defaults build `-j` to `nproc` and passes `ctest -j` (full width
+  for plain runs, capped at 6 for the memory-heavy sanitizers). Sanitizer presets
+  now use Ninja. ASAN test phase 1110s → 55s (~20×); full Debug suite straggler
+  ~150s+ → 19.8s wall. Docs updated in `CLAUDE.md`.
+- **Per-test instrumentation.** Per-test timing, a `--timings` slowest-tests report,
+  and a watchdog thread that names — then aborts on — any test exceeding
+  `MICROIDE_TEST_TIMEOUT_MS` (default 300s), so a hang surfaces as a named
+  diagnostic instead of a mysterious whole-shard ctest timeout.
+- **`DebugValueTree::CollectAutoExpand` short-circuits when no expansions are
+  remembered** (real production fix, not a test tweak). Building a deep value tree
+  one page at a time was O(depth²) via a per-node PathKey ancestor walk;
+  `ValueTreeDeepSubtreeErase` went from >120s to 0.29s.
+- **`ArchitectureInvariants/SoftChecks` split into one ctest case per workspace
+  rule** (was ~32s of `std::regex` over the whole tree in a single case) so
+  sharding runs them in parallel. The rules are a single `NamedRule` list that both
+  `RunWorkspaceArchitectureRules` and the test iterate — one source of truth, no
+  drift. (Advances the deferred test-infra items 032/037 tooling.)
 
 ### Fixed in the 2026-07-16 cross-subsystem bug-hunt pass
 
