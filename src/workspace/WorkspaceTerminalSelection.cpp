@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "util/StringUtil.h"
+
 namespace microide::workspace {
 
 std::optional<TerminalSelectionBounds> NormalizeTerminalSelection(
@@ -33,7 +35,8 @@ terminal::TerminalSession::MouseButton TerminalMouseButtonFromSdl(Uint8 button) 
 }
 
 std::string ExtractTerminalSelectionText(const std::vector<terminal::TerminalLine>& lines,
-                                         const TerminalSelectionBounds& selection) {
+                                         const TerminalSelectionBounds& selection,
+                                         std::size_t max_bytes) {
   if (lines.empty() || selection.start.row >= lines.size()) {
     return {};
   }
@@ -52,6 +55,18 @@ std::string ExtractTerminalSelectionText(const std::vector<terminal::TerminalLin
     // render as a single space. Trailing blanks are preserved per row because a
     // mid-selection span may legitimately end on blank cells.
     text.append(TerminalLineSliceText(line, start_column, end_column, /*trim_trailing=*/false));
+    // Cap the copied bytes so a drag over the full scrollback can't materialize an
+    // unbounded transcript on the UI thread (TD-2026-07-17A-090). Truncate on a UTF-8
+    // boundary and report truncation rather than silently clipping mid-codepoint.
+    if (text.size() >= max_bytes) {
+      std::size_t cut = std::min(text.size(), max_bytes);
+      while (cut > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(text[cut]))) {
+        --cut;
+      }
+      text.resize(cut);
+      text += "\n[selection truncated]";
+      return text;
+    }
     if (row != end_row) {
       // Only emit a hard newline at a *real* line boundary. If the next row is a
       // soft-wrap continuation of this one, the terminal never saw a newline

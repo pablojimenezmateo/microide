@@ -90,6 +90,35 @@ void TestWorkspaceSharedTerminalSelectionHelpers() {
          "soft-wrapped rows must join without an injected newline; hard breaks keep it");
 }
 
+// A terminal selection copy is bounded by a byte budget: a drag over a huge scrollback
+// truncates on a UTF-8 boundary and appends a marker instead of materializing an
+// unbounded transcript on the UI thread (TD-2026-07-17A-090).
+void TestWorkspaceSharedTerminalSelectionCopyByteBudget() {
+  std::vector<microide::terminal::TerminalLine> lines;
+  for (int i = 0; i < 50; ++i) {
+    lines.push_back(MakeTerminalLine("row-" + std::to_string(i) + "-payload"));
+  }
+  const TerminalSelectionBounds selection{
+      .start = TerminalSelectionPoint{.row = 0, .column = 0},
+      .end = TerminalSelectionPoint{.row = lines.size() - 1, .column = 8},
+  };
+
+  const std::string full = ExtractTerminalSelectionText(lines, selection);
+  const std::string capped = ExtractTerminalSelectionText(lines, selection, /*max_bytes=*/32);
+  const std::string marker = "\n[selection truncated]";
+
+  Expect(capped.size() < full.size(), "a small byte budget truncates the selection copy");
+  Expect(capped.size() <= 32 + marker.size(),
+         "the truncated copy is bounded by the byte budget plus the marker");
+  Expect(capped.size() >= marker.size() &&
+             capped.compare(capped.size() - marker.size(), marker.size(), marker) == 0,
+         "a truncated selection copy ends with the truncation marker");
+  // A selection that fits within the budget is returned verbatim (no marker).
+  const std::string small = ExtractTerminalSelectionText(lines, selection, /*max_bytes=*/1u << 20);
+  Expect(small == full && small.find("[selection truncated]") == std::string::npos,
+         "a selection within the budget is copied verbatim without a marker");
+}
+
 void TestWorkspaceSharedTerminalMouseHelpers() {
   Expect(TerminalMouseButtonFromSdl(SDL_BUTTON_LEFT) ==
              microide::terminal::TerminalSession::MouseButton::Left,
@@ -111,6 +140,8 @@ void RegisterWorkspaceShellSharedTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/TerminalPanelHelpers", TestWorkspaceSharedTerminalPanelHelpers);
   AddTest(tests, "WorkspaceShared/TerminalSelectionHelpers",
           TestWorkspaceSharedTerminalSelectionHelpers);
+  AddTest(tests, "WorkspaceShared/TerminalSelectionCopyByteBudget",
+          TestWorkspaceSharedTerminalSelectionCopyByteBudget);
   AddTest(tests, "WorkspaceShared/TerminalMouseHelpers", TestWorkspaceSharedTerminalMouseHelpers);
 }
 
