@@ -19,6 +19,51 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
+### ⏭️ Standing backlog — deferred to dedicated passes (revisit; NOT dropped)
+
+The 2026-07-17 correctness/perf burndown implemented the concrete, self-contained wins
+(068, 31, 090, 083, 040) and marked the rest **WON'T-DO *in that burndown*** with per-item
+rationale in the subsections below. "WON'T-DO in this burndown" ≠ "not worth ever" — most
+are real work deferred because each is a multi-file *dedicated pass* the audit explicitly
+said not to bundle. This section is the durable reminder to actually schedule them. Pick
+one cluster at a time, give it its own reviewed change + test matrix, and move its items to
+RESOLVED as they land.
+
+**Worth doing — schedule these (each = one focused pass):**
+
+1. **Async / off-thread hardening** — move blocking work off the shell/UI thread:
+   compare/merge model build (047/19), LSP `WorkspaceEdit` apply (011/18), project
+   replace-all (21), forced refresh + per-file stat (081/082), git patch serialize (38),
+   exclude-glob watcher rebuild (080), file-index batch coalescing (086), LSP shutdown
+   lifecycle (091), file-manager reveal (061), search worker pool (055), save-participant /
+   `process.run_async` worker capacity (016/017), POSIX terminal write deadline (014).
+   *Speed is the #1 project priority, so this cluster is the highest-value backlog.*
+2. **Render view-model build-out** — overlay view model owns state, no live pointers in
+   render TUs (084/26); + the residual commit-body sizing/scroll-clamp move-to-prep from 083.
+3. **Editor display-column unification** — one grapheme/visual-width service; inlay hints
+   share it (021/023).
+4. **DAP lifecycle hardening** — session-generation + request-id gating (025), bounded
+   stop/terminate escalation (026).
+5. **Scanner/search incomplete-state plumbing** — surface complete/truncated/incomplete
+   status (008/033); targeted fallback rescan (009).
+6. **LSP completeness** — resource ops + version-aware edits (011), explicit timeout result
+   variants (012).
+7. **Plugin registry** — O(1) duplicate-id detection (077); per-field byte caps (018);
+   measured caps (019); `lua_State*` boundary refactor (22/020/058).
+8. **Tab identity** — stable per-tab id threaded through dirty-prompt + persistence (024).
+9. **Test-infra sweeps** — architecture lints + negative fixtures (032/037), watcher
+   contract suite (036), terminal stress suite (015), fuzz corpus seeding (052), no-raw-sleep
+   WaitUntil helpers (088), large-buffer edit perf scenario + direct-`Snapshot()` lint (022),
+   per-frame-prep counters (030).
+10. **Plugin UI features** — bottom-panel preview scroll (60), hit-region dispatch (61).
+
+**Platform passes (need a Windows/macOS host to build+verify):** 004/005/010/035 (Windows),
+006/062 (macOS). See the Platform-specific subsection.
+
+**Genuinely not worth (true WON'T-DO, do not re-file):** 048 (deliberate bounded explicit-
+save formatter), 003 (non-actionable, no live defect), 041/045/046/056/057/069/013/066/031/038
+(from the earlier passes — unreachable/deliberate; rationale recorded inline).
+
 ### Deferred from the 2026-07-17 audit sweep (TD-2026-07-17-*)
 
 A 95-finding external audit was worked in one pass: **34 fixed** (each with a
