@@ -87,9 +87,18 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   and route cursor movement / hit-testing / layout / selection through it.
 - **023 — inlay hints should consume the same display-column map as text layout**
   (part of 021; 070 already bounded inlay width).
-- **068 — grouped-undo FALLBACK still `Snapshot()`s the whole document** for
-  non-contiguous multi-caret/snippet edits; replace with a sparse affected-range
-  model. Same family as **TD-2026-07-16-31**.
+- **[RESOLVED 2026-07-17] 068 — grouped-undo FALLBACK still `Snapshot()`s the whole
+  document** for non-contiguous multi-caret/snippet edits. Replaced the whole-buffer
+  fallback with a sparse disjoint-range model: `UndoGroupFrame` now holds a sorted,
+  pairwise-non-adjacent `std::vector<Entry>` (current after-coords); each child folds
+  into a containing/adjacent range or inserts a new one via `MergeChildIntoDisjoint`
+  (integer delta-reindex of lower ranges, neighbour coalesce — no line copies), and
+  `FinishActiveGroup` stitches them into one undo Entry reading only untouched gap
+  lines via `LineView` (bounded by the touched span, never the whole doc). The two
+  `Snapshot()` calls are gone; contiguous fast path stays a single-element vector so
+  `editor_shaping_multi_caret` is unchanged. Test seam `TextBuffer::snapshot_build_count()`
+  + regressions `EditorMultiCaret/DisjointGrouped{Insert,Join}NoSnapshotRoundTrips`
+  (±delta, round-trip + zero-snapshot). `run-checks.sh tests` + ASAN green.
 
 **Debug / DAP:**
 

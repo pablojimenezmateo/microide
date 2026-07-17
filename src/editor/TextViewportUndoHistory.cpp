@@ -65,13 +65,12 @@ void TextViewportUndoHistory::RecordEntry(Entry entry,
     return;
   }
 
-  // A grouped edit owns its own aggregation; never coalesce across it. The
-  // aggregate entry is the single source of truth per frame: merge-clean edits
-  // fold into it, and a merge conflict reconstructs the pre-group buffer from it
-  // rather than from a retained per-child copy. Keeping only the aggregate (not
-  // a `child_entries` list) matters on the hot path: a grouped line-move over a
-  // wide multi-caret range records one entry holding hundreds of line slices, so
-  // an extra deep copy per edit is what regressed `editor_shaping_multi_caret`.
+  // A grouped edit owns its own aggregation; never coalesce across it. Each frame
+  // keeps a disjoint-range set (see UndoGroupFrame): contiguous children fold into
+  // one range, non-contiguous children accumulate as extra ranges. This keeps the
+  // wholly-contiguous fast path a single-element vector (matching the old single
+  // aggregate — `editor_shaping_multi_caret` stays one merge/deep-copy per child)
+  // while never materializing a whole-buffer snapshot for non-contiguous edits.
   active_run_kind_ = CoalesceKind::None;
   const std::size_t frame_count = group_stack_.size();
   for (std::size_t fi = 0; fi < frame_count; ++fi) {
@@ -79,29 +78,73 @@ void TextViewportUndoHistory::RecordEntry(Entry entry,
     // Only the innermost (last) frame may consume `entry` by move: outer frames
     // are processed first and still read it; after the loop `entry` is dead.
     const bool can_move = (fi + 1 == frame_count);
-    if (frame.using_fallback) {
-      continue;  // fallback mode captures the final buffer snapshot at finish
+    MergeChildIntoDisjoint(frame.disjoint_entries, can_move ? std::move(entry) : entry);
+  }
+}
+
+void TextViewportUndoHistory::MergeChildIntoDisjoint(std::vector<Entry>& entries, Entry next) {
+  const std::size_t child_start = next.start_line;
+  const std::size_t child_before_end = child_start + next.before_lines.size();
+  const std::ptrdiff_t delta = static_cast<std::ptrdiff_t>(next.after_lines.size()) -
+                               static_cast<std::ptrdiff_t>(next.before_lines.size());
+
+  // Detect (in pre-shift coordinates) an existing range whose after-content wholly
+  // contains the child's replaced span — the child re-edited inside an earlier
+  // aggregate. TryMergeGroupEntry splices it in place; no new range is created.
+  std::optional<std::size_t> container;
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    const std::size_t after_start = entries[i].start_line;
+    const std::size_t after_end = after_start + entries[i].after_lines.size();
+    if (after_start <= child_start && child_before_end <= after_end) {
+      container = i;
+      break;
     }
-    if (!frame.aggregate_entry.has_value()) {
-      frame.aggregate_entry = can_move ? std::move(entry) : entry;
-      continue;
+  }
+
+  // Shift every range strictly below the child's replaced span into the post-edit
+  // coordinate frame. The container (start < child_before_end) is never in this set;
+  // a right neighbour that sat exactly at child_before_end shifts to abut the child.
+  if (delta != 0) {
+    for (Entry& e : entries) {
+      if (e.start_line >= child_before_end) {
+        e.start_line =
+            static_cast<std::size_t>(static_cast<std::ptrdiff_t>(e.start_line) + delta);
+      }
     }
-    std::optional<Entry> merged = TryMergeGroupEntry(*frame.aggregate_entry, entry);
+  }
+
+  if (container.has_value()) {
+    std::optional<Entry> merged = TryMergeGroupEntry(entries[*container], next);
     if (merged.has_value()) {
-      frame.aggregate_entry = std::move(merged);
-      continue;
+      entries[*container] = std::move(*merged);
+    } else {
+      InsertSortedDisjoint(entries, std::move(next));
     }
-    // Merge conflict: drop to whole-buffer-snapshot mode. Reconstruct the
-    // pre-group document by reverse-applying the failing entry and then the
-    // aggregate-so-far onto the current buffer. This equals reverse-applying
-    // every child edit in turn (the aggregate is exactly their contiguous
-    // merge), but without retaining a per-entry copy of each grouped edit.
-    std::vector<std::string> reconstructed = current_lines.Snapshot();
-    ApplyEntryToLines(reconstructed, entry, /*forward=*/false);
-    ApplyEntryToLines(reconstructed, *frame.aggregate_entry, /*forward=*/false);
-    frame.fallback_lines = std::move(reconstructed);
-    frame.aggregate_entry.reset();
-    frame.using_fallback = true;
+  } else {
+    InsertSortedDisjoint(entries, std::move(next));
+  }
+  CoalesceAdjacentDisjoint(entries);
+}
+
+void TextViewportUndoHistory::InsertSortedDisjoint(std::vector<Entry>& entries, Entry next) {
+  const auto pos = std::lower_bound(
+      entries.begin(), entries.end(), next.start_line,
+      [](const Entry& e, std::size_t value) { return e.start_line < value; });
+  entries.insert(pos, std::move(next));
+}
+
+void TextViewportUndoHistory::CoalesceAdjacentDisjoint(std::vector<Entry>& entries) {
+  for (std::size_t i = 0; i + 1 < entries.size();) {
+    const std::size_t prev_after_end = entries[i].start_line + entries[i].after_lines.size();
+    if (entries[i + 1].start_line == prev_after_end) {
+      std::optional<Entry> merged = TryMergeGroupEntry(entries[i], entries[i + 1]);
+      if (merged.has_value()) {
+        entries[i] = std::move(*merged);
+        entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(i) + 1);
+        continue;
+      }
+    }
+    ++i;
   }
 }
 
@@ -154,17 +197,41 @@ TextViewportUndoHistory::FinishActiveGroup(const TextBuffer& current_lines,
   UndoGroupFrame frame = std::move(group_stack_.back());
   group_stack_.pop_back();
 
-  Entry agg;
-  if (frame.using_fallback) {
-    agg = BuildEntryForDocumentChange(frame.fallback_lines, frame.state, current_lines.Snapshot(),
-                                      std::move(after_state));
-  } else if (frame.aggregate_entry.has_value()) {
-    agg = std::move(*frame.aggregate_entry);  // frame is local + popped; safe to move out
-    agg.before_state = frame.state;
-    agg.after_state = std::move(after_state);
-  } else {
-    agg = BuildEntryForDocumentChange({}, frame.state, {}, std::move(after_state));
+  std::vector<Entry>& parts = frame.disjoint_entries;
+  if (parts.empty()) {
+    return std::nullopt;
   }
+
+  Entry agg;
+  if (parts.size() == 1) {
+    agg = std::move(parts.front());  // frame is local + popped; safe to move out
+  } else {
+    // Stitch the disjoint ranges into one contiguous undo entry. The untouched gap
+    // lines between consecutive ranges are read from the current buffer (also their
+    // pre-group content, since no child edited them) — bounded by the touched span,
+    // never a whole-buffer snapshot.
+    agg.start_line = parts.front().start_line;
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+      Entry& part = parts[i];
+      const std::size_t part_after_end = part.start_line + part.after_lines.size();
+      agg.before_lines.insert(agg.before_lines.end(),
+                              std::make_move_iterator(part.before_lines.begin()),
+                              std::make_move_iterator(part.before_lines.end()));
+      agg.after_lines.insert(agg.after_lines.end(),
+                             std::make_move_iterator(part.after_lines.begin()),
+                             std::make_move_iterator(part.after_lines.end()));
+      if (i + 1 < parts.size()) {
+        const std::size_t gap_end = parts[i + 1].start_line;
+        for (std::size_t ln = part_after_end; ln < gap_end && ln < current_lines.size(); ++ln) {
+          std::string gap_line(current_lines.LineView(ln));
+          agg.before_lines.push_back(gap_line);
+          agg.after_lines.push_back(std::move(gap_line));
+        }
+      }
+    }
+  }
+  agg.before_state = frame.state;
+  agg.after_state = std::move(after_state);
 
   if (agg.before_lines.empty() && agg.after_lines.empty()) {
     return std::nullopt;

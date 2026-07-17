@@ -3,6 +3,7 @@
 #include "editor/FoldingModel.h"
 #include "editor/LanguageContractView.h"
 #include "editor/ShapingActions.h"
+#include "editor/TextBuffer.h"
 #include "editor/TextViewport.h"
 
 namespace microide::tests {
@@ -642,7 +643,104 @@ void TestMultiCaretDisjointSelectionsStillApply() {
   Expect(line.find("def") != std::string::npos, "content between the selections is preserved");
 }
 
+namespace {
+
+std::string JoinViewportLines(const TextViewport& viewport) {
+  std::string joined;
+  for (std::size_t i = 0; i < viewport.lines().size(); ++i) {
+    if (i != 0) joined.push_back('\n');
+    joined += viewport.lines()[i];
+  }
+  return joined;
+}
+
+std::string MakeNumberedLines(std::size_t count) {
+  std::string text;
+  for (std::size_t i = 0; i < count; ++i) {
+    text += "L";
+    text += std::to_string(i);
+    text.push_back('\n');
+  }
+  return text;
+}
+
+}  // namespace
+
+// TD-2026-07-17-068: a grouped, NON-contiguous multi-caret edit used to drop to a
+// whole-buffer-snapshot fallback (two full TextBuffer::Snapshot() copies). The
+// disjoint-range model must (a) never materialize the whole buffer and (b) still
+// undo/redo the group atomically and exactly, including the net line-count shift
+// each earlier caret imposes on the ranges below it (delta reindex + gap stitch).
+void TestMultiCaretDisjointGroupedInsertNoSnapshotRoundTrips() {
+  using microide::editor::TextBuffer;
+  TextViewport viewport;
+  viewport.LoadContent(MakeNumberedLines(400), "/tmp/mc-disjoint-insert.txt");
+  const std::string original = JoinViewportLines(viewport);
+  const std::size_t initial_lines = viewport.lines().size();
+
+  viewport.MoveCursorTo(5, 0, false);
+  // Non-contiguous carets far apart, so each lands in its own disjoint range.
+  viewport.SetSecondaryCarets({{200, 0}, {350, 0}});
+
+  TextBuffer::reset_snapshot_build_count();
+  viewport.InsertText("A\nB");  // +1 line at each caret -> exercises delta reindex
+  Expect(TextBuffer::snapshot_build_count() == 0,
+         "a disjoint grouped insert must not materialize the whole buffer");
+
+  const std::string edited = JoinViewportLines(viewport);
+  Expect(edited != original, "the grouped insert should have changed the buffer");
+  Expect(viewport.lines().size() == initial_lines + 3,
+         "three carets each added exactly one line");
+
+  Expect(viewport.Undo(), "the disjoint group should undo as one step");
+  Expect(JoinViewportLines(viewport) == original,
+         "undo must exactly restore the pre-group buffer across all disjoint ranges");
+  Expect(TextBuffer::snapshot_build_count() == 0,
+         "applying the stitched undo entry must not snapshot the whole buffer");
+
+  Expect(viewport.Redo(), "the disjoint group should redo as one step");
+  Expect(JoinViewportLines(viewport) == edited,
+         "redo must exactly reproduce the post-group buffer");
+}
+
+// Negative-delta coverage: a grouped multi-caret backspace at column 0 joins each
+// caret's line onto the previous one (removing a newline, delta -1 per site). The
+// ranges below each join must reindex downward without a whole-buffer snapshot,
+// and the group must undo/redo exactly.
+void TestMultiCaretDisjointGroupedJoinNoSnapshotRoundTrips() {
+  using microide::editor::TextBuffer;
+  TextViewport viewport;
+  viewport.LoadContent(MakeNumberedLines(300), "/tmp/mc-disjoint-join.txt");
+  const std::string original = JoinViewportLines(viewport);
+  const std::size_t initial_lines = viewport.lines().size();
+
+  viewport.MoveCursorTo(10, 0, false);
+  viewport.SetSecondaryCarets({{150, 0}, {250, 0}});
+
+  TextBuffer::reset_snapshot_build_count();
+  viewport.Backspace();  // each col-0 backspace joins with the previous line
+  Expect(TextBuffer::snapshot_build_count() == 0,
+         "a disjoint grouped join must not materialize the whole buffer");
+
+  const std::string edited = JoinViewportLines(viewport);
+  Expect(edited != original, "the grouped join should have changed the buffer");
+  Expect(viewport.lines().size() == initial_lines - 3,
+         "three col-0 backspaces removed three lines");
+
+  Expect(viewport.Undo(), "the disjoint join group should undo as one step");
+  Expect(JoinViewportLines(viewport) == original,
+         "undo must exactly restore the pre-group buffer across all disjoint joins");
+  Expect(viewport.Redo() && JoinViewportLines(viewport) == edited,
+         "redo must exactly reproduce the joined buffer");
+  Expect(TextBuffer::snapshot_build_count() == 0,
+         "undo/redo of the stitched entry must not snapshot the whole buffer");
+}
+
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorMultiCaret/DisjointGroupedInsertNoSnapshotRoundTrips",
+          TestMultiCaretDisjointGroupedInsertNoSnapshotRoundTrips);
+  AddTest(tests, "EditorMultiCaret/DisjointGroupedJoinNoSnapshotRoundTrips",
+          TestMultiCaretDisjointGroupedJoinNoSnapshotRoundTrips);
   AddTest(tests, "EditorMultiCaret/RefusesOverlappingSelections",
           TestMultiCaretRefusesOverlappingSelections);
   AddTest(tests, "EditorMultiCaret/DisjointSelectionsStillApply",

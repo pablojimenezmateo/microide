@@ -92,11 +92,18 @@ class TextBuffer {
   // Prefer LineView for anything per-line or hot.
   const std::vector<std::string>& Snapshot() const {
     if (!snapshot_valid_) {
+      ++s_snapshot_builds_;
       snapshot_ = tree_.ToVector();
       snapshot_valid_ = true;
     }
     return snapshot_;
   }
+
+  // Test-only: process-wide count of full-document Snapshot() materializations.
+  // Lets regression tests assert that hot edit paths (e.g. grouped/multi-caret
+  // undo) never fall back to whole-buffer copies. Cold-path increment only.
+  static std::size_t snapshot_build_count() { return s_snapshot_builds_; }
+  static void reset_snapshot_build_count() { s_snapshot_builds_ = 0; }
 
   // --- Mutate ---
   // Universal primitive: erase `removed` lines starting at `start`, then insert
@@ -148,6 +155,7 @@ class TextBuffer {
   mutable std::vector<std::string> snapshot_;
   mutable bool snapshot_valid_ = false;
   mutable std::unordered_map<std::size_t, std::string> line_cache_;
+  inline static std::size_t s_snapshot_builds_ = 0;
 };
 
 }  // namespace microide::editor

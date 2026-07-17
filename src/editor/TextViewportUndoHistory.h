@@ -127,12 +127,24 @@ class TextViewportUndoHistory {
  private:
   struct UndoGroupFrame {
     ViewState state;
-    std::optional<Entry> aggregate_entry;
-    bool using_fallback = false;
-    std::vector<std::string> fallback_lines;
+    // Sorted-ascending, pairwise-non-adjacent set of contiguous aggregate edits,
+    // all expressed in the current buffer's after-coordinates. A wholly contiguous
+    // group keeps a single element (the old fast path); non-contiguous grouped
+    // edits (multi-caret/snippet across gaps) accumulate as separate ranges instead
+    // of collapsing to a whole-buffer snapshot. FinishActiveGroup stitches them
+    // into one undo Entry, reading only the untouched gap lines.
+    std::vector<Entry> disjoint_entries;
   };
 
   static std::optional<Entry> TryMergeGroupEntry(const Entry& aggregate, const Entry& next);
+  // Fold a freshly recorded child edit into a frame's disjoint-range set: splice
+  // into a containing/adjacent range or insert a new one, reindexing strictly-lower
+  // ranges by the child's net line delta. O(#ranges), never a whole-buffer copy.
+  static void MergeChildIntoDisjoint(std::vector<Entry>& entries, Entry next);
+  // Insert `next` keeping `entries` sorted ascending by start_line.
+  static void InsertSortedDisjoint(std::vector<Entry>& entries, Entry next);
+  // Merge any now-adjacent (gap-free) neighbours so the disjoint invariant holds.
+  static void CoalesceAdjacentDisjoint(std::vector<Entry>& entries);
   // Attempts to fold `next` into the current undo-stack top as a continuation
   // of an open typing/deletion run. Returns true (and mutates the top entry)
   // on success; false means the caller should push `next` as a fresh entry.
