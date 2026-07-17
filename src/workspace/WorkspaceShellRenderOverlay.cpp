@@ -272,7 +272,8 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
         palette.title.empty() ? std::string_view("Commands") : palette.title,
         std::string_view{}, palette.query, palette.summary_line, palette.matches.size(),
         [&palette](std::size_t i) -> std::pair<std::string_view, std::string_view> {
-          return {palette.matches[i].primary_label, palette.matches[i].secondary_label};
+          const CommandPaletteItem& item = palette.items[palette.matches[i]];
+          return {item.primary_label, item.secondary_label};
         },
         palette.selected_index, FormatEmptyState("commands"));
   } else if (overlay_vm.mode == OverlayMode::Completion) {

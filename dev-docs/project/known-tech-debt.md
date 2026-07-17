@@ -4,7 +4,7 @@ Reviewed on 2026-07-17. A follow-on deferred-backlog full sweep is in progress
 (see "Fixed in the 2026-07-13 deferred-backlog full sweep" below); closed tranche
 entries have been pruned as they land. The **2026-07-17A addendum burndown** then
 dispositioned every item in the "Cross-subsystem bug/perf audit addendum" section:
-28 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
+29 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
 clusters or marked platform-only — see the burndown blockquote under that heading.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
@@ -90,6 +90,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > - **019** — settings per-category row lookup uses cached index vectors (O(rows) build; O(1) lookup) instead of an O(rows²) render rescan.
 > - **020** — plugin log/error history is capped (front-trim to `kMaxRecordedLogEntries`) so a flooding plugin can't grow host memory unbounded.
 > - **035** — no-selection context copy reads the live buffer via LineSpan (no whole-document `Snapshot()`); `JoinLineRange` takes a LineSpan.
+> - **032** — command palette match list stores indices into `items`, not copied rows (no per-keystroke row-string copies).
 > - **003** — `DetectIndent(LineSpan)` overload; file open reads the live buffer zero-copy (no `Snapshot()`).
 > - **006** — settings query filter routes through allocation-free `util::ContainsCaseInsensitiveAscii` (no per-row lowercase of query/label/detail on every keystroke).
 > - **009** — merge validation scans a zero-copy `LineSpan` once via `util::ScanConflictMarkers` (no `Snapshot()`, no whole-document serialize, no second snapshot for the marker line).
@@ -120,8 +121,8 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    071, 072, 073, 074, 090, 095, 096, 097, 098, 099, 101, 105, 106, 107, 116, 118, 119, 121.
 >    *(020 RESOLVED 2026-07-17A — plugin log/error history cap.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
->    latent): 032, 045, 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
->    *(011, 012 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; command-name completion by reference.)*
+>    latent): 045, 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
+>    *(011, 012, 032 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices.)*
 > 4. **Render-TU / view-model hoist + frame-prep** (Standing #2): 004, 007, 008, 014, 017,
 >    023, 026, 027, 069, 079, 084, 103. *(006, 019 RESOLVED 2026-07-17A — allocation-free filter; per-category row index.)*
 > 5. **Plugin correctness / safety** (plugin-safety pass — fail-open providers, interest-mask
@@ -426,8 +427,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   UTF-8-case-folds the entire current line every call, so a dense single-line match set is
   O(matches * line_bytes) before multi-caret editing even starts. Add a product-sized caret
   cap/truncated notice and a per-line folded scan that reuses the lowered line once.
-- **TD-2026-07-17A-032 — command-palette filtering copies full row payloads on every
-  keystroke.** `OpenCommandPalette` builds `CommandPaletteItem` rows with
+- **[RESOLVED 2026-07-17A] TD-2026-07-17A-032 — command-palette filtering copies full row payloads on every
+  keystroke.** Fixed: `CommandPaletteState::matches` is now `std::vector<std::size_t>` of
+  indices into `items` (the owner), so `RefreshCommandPalette` stores one index per
+  surviving row instead of copying each matched `CommandPaletteItem`'s
+  primary/secondary/search/token strings on every keystroke. Render and confirm
+  dereference `items[matches[i]]`. Regression:
+  `WorkspaceShell/CommandPaletteMatchesIndexIntoItems`.
+  `OpenCommandPalette` builds `CommandPaletteItem` rows with
   `primary_label`, `secondary_label`, `search_text`, and plugin `command_token` strings.
   `RefreshCommandPalette` then clears `palette.matches` and `push_back(item)` copies the
   entire row for every match on each query edit. Built-ins are small, but plugin commands

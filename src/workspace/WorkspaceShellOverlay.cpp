@@ -400,14 +400,14 @@ void WorkspaceShell::RefreshCommandPalette() {
   palette.matches.clear();
   palette.selected_index = 0;
   const std::string query = util::ToLowerAscii(palette.query.text());
-  for (const CommandPaletteItem& item : palette.items) {
+  for (std::size_t i = 0; i < palette.items.size(); ++i) {
     // item.search_text is the lowercased "primary secondary", precomputed when the
     // palette was populated — avoids re-lowercasing + concatenating per item on every
-    // keystroke.
-    if (!query.empty() && item.search_text.find(query) == std::string::npos) {
+    // keystroke. Store the matching index, not a copy of the row.
+    if (!query.empty() && palette.items[i].search_text.find(query) == std::string::npos) {
       continue;
     }
-    palette.matches.push_back(item);
+    palette.matches.push_back(i);
   }
   palette.summary_line =
       std::to_string(palette.matches.size()) + " of " + std::to_string(palette.items.size());
@@ -444,7 +444,7 @@ void WorkspaceShell::ConfirmCommandPaletteSelection() {
     // Copy the selected item before dismissing: the dispatched action may itself open
     // another overlay (e.g. Find File, Settings), so the palette must be gone first and
     // we must not hold a reference into state that the action could mutate.
-    const CommandPaletteItem selected = palette.matches[palette.selected_index];
+    const CommandPaletteItem selected = palette.items[palette.matches[palette.selected_index]];
     DismissOverlay(true);
     if (selected.is_plugin) {
       ExecuteCommandName(selected.command_token, {}, ActionSource::Menu, nullptr);

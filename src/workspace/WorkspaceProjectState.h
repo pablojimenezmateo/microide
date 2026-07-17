@@ -276,7 +276,10 @@ struct CommandPaletteState {
   std::string summary_line;  // "<matches> of <total>" precomputed on refresh
   editor::SingleLineEditor query;
   std::vector<CommandPaletteItem> items;
-  std::vector<CommandPaletteItem> matches;
+  // Indices into `items` for the rows surviving the current query. Storing indices (not
+  // full CommandPaletteItem copies) keeps palette typing from copying every matched row's
+  // strings on each keystroke (TD-2026-07-17A-032); `items` stays the owner.
+  std::vector<std::size_t> matches;
   std::size_t selected_index = 0;
 };
 

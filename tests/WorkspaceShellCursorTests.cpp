@@ -397,6 +397,56 @@ void TestWorkspaceShellCursorSplitNonFocusedGroupTabUsesPointer() {
          "hovering a non-focused split-group tab should cache the pointer cursor");
 }
 
+// The command palette stores match rows as INDICES into `items` (not copied rows) to
+// avoid copying every matched row's strings on each keystroke (TD-2026-07-17A-032). This
+// pins that the index indirection resolves to the correct rows: with no query every match
+// maps 1:1 to its item, and after filtering, the surviving match still resolves to a row
+// whose label actually contains the query.
+void TestWorkspaceShellCommandPaletteMatchesIndexIntoItems() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::OpenCommandPalette(shell);
+
+  // No query: every item is a match, and matches[i] must resolve back to items[i].
+  const std::size_t item_count = WorkspaceShellTestAccess::CommandPaletteItemCount(shell);
+  Expect(item_count > 0, "the command palette should populate built-in command rows");
+  Expect(WorkspaceShellTestAccess::CommandPaletteMatchCount(shell) == item_count,
+         "with no query every item is a match");
+  for (std::size_t i = 0; i < item_count; ++i) {
+    Expect(WorkspaceShellTestAccess::CommandPaletteMatchLabelAt(shell, i) ==
+               WorkspaceShellTestAccess::CommandPaletteItemLabelAt(shell, i),
+           "each unfiltered match index must resolve to the same-position item");
+  }
+
+  // Filter by the first item's exact label: it must keep that row (querying a row's own
+  // label always matches its search text), never grow the set, and every surviving match
+  // must resolve through a valid index to a non-empty label.
+  const std::string first_label = WorkspaceShellTestAccess::CommandPaletteItemLabelAt(shell, 0);
+  Expect(!first_label.empty(), "the first palette item should carry a label");
+  WorkspaceShellTestAccess::SetCommandPaletteQueryAndRefresh(shell, first_label);
+  const std::size_t narrowed = WorkspaceShellTestAccess::CommandPaletteMatchCount(shell);
+  Expect(narrowed >= 1 && narrowed <= item_count,
+         "an exact-label query keeps at least the matching row and never grows the set");
+  bool first_label_survives = false;
+  for (std::size_t i = 0; i < narrowed; ++i) {
+    const std::string label = WorkspaceShellTestAccess::CommandPaletteMatchLabelAt(shell, i);
+    Expect(!label.empty(), "every surviving match must resolve to a valid item row");
+    if (label == first_label) {
+      first_label_survives = true;
+    }
+  }
+  Expect(first_label_survives,
+         "querying a row's own label must keep that row among the matches");
+}
+
 void TestWorkspaceShellCursorRecomputesWhenCommandPaletteOpensWithoutMotion() {
   EnsureDummySdlVideoInitialized();
 
@@ -528,6 +578,8 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCursorSplitNonFocusedGroupTabUsesPointer);
   AddTest(tests, "WorkspaceShell/CursorRecomputesWhenCommandPaletteOpensWithoutMotion",
           TestWorkspaceShellCursorRecomputesWhenCommandPaletteOpensWithoutMotion);
+  AddTest(tests, "WorkspaceShell/CommandPaletteMatchesIndexIntoItems",
+          TestWorkspaceShellCommandPaletteMatchesIndexIntoItems);
   AddTest(tests, "WorkspaceShell/RenderDoesNotPollLivePointer",
           TestWorkspaceShellRenderDoesNotPollLivePointer);
   AddTest(tests, "WorkspaceShell/CursorChangeRequestsPresent",

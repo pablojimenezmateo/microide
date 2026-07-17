@@ -539,6 +539,27 @@
   static std::size_t CommandPaletteMatchCount(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.command_palette.matches.size();
   }
+  static std::size_t CommandPaletteItemCount(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.command_palette.items.size();
+  }
+  // Resolve a match row's primary label through matches[i] -> items[...] (the index
+  // indirection the palette now uses instead of copying rows). Empty if out of range.
+  static std::string CommandPaletteMatchLabelAt(const WorkspaceShell& shell, std::size_t i) {
+    const auto& palette = shell.context_.current_project_state.overlay.workflow.command_palette;
+    if (i >= palette.matches.size() || palette.matches[i] >= palette.items.size()) {
+      return {};
+    }
+    return palette.items[palette.matches[i]].primary_label;
+  }
+  static std::string CommandPaletteItemLabelAt(const WorkspaceShell& shell, std::size_t i) {
+    const auto& palette = shell.context_.current_project_state.overlay.workflow.command_palette;
+    return i < palette.items.size() ? palette.items[i].primary_label : std::string{};
+  }
+  static void SetCommandPaletteQueryAndRefresh(WorkspaceShell& shell, std::string_view text) {
+    auto& palette = shell.context_.current_project_state.overlay.workflow.command_palette;
+    palette.query.SetText(std::string(text));
+    shell.RefreshCommandPalette();
+  }
   static std::size_t EditorTabSize(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_preferences.tab_size;
   }
