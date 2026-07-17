@@ -1,6 +1,7 @@
 #include "editor/IndentGuides.h"
 
 #include "editor/FoldingModel.h"
+#include "editor/TextLayout.h"
 
 #include <algorithm>
 #include <climits>
@@ -27,14 +28,12 @@ std::size_t ActiveGuideColumnFromLeading(std::size_t caret_leading_visual_indent
 std::size_t LeadingVisualIndent(std::string_view line, std::size_t tab_size) {
   std::size_t visual = 0;
   for (char c : line) {
-    if (c == ' ') {
-      ++visual;
-    } else if (c == '\t') {
-      const std::size_t step = tab_size == 0 ? 1 : tab_size;
-      visual += step - (visual % step);
-    } else {
+    if (c != ' ' && c != '\t') {
       break;
     }
+    // Leading indent is space+tab only, both of which advance exactly as the one
+    // authoritative tab-stop/width step does.
+    visual = TextLayout::AdvanceVisualColumn(visual, c, tab_size);
   }
   return visual;
 }

@@ -62,14 +62,8 @@ void AppendChangedSpanUnderlines(DecoratedTextRow& row,
 namespace {
 
 std::size_t ResolveVisualColumn(const RowDecorationInput& in, std::size_t column) {
-  if (in.layout != nullptr) {
-    return TextLayout::VisualColumnFromLayoutClipped(*in.layout, in.row_visual_start,
-                                                     in.row_visual_end, column);
-  }
-  if (in.visual_map != nullptr) {
-    return in.visual_map->VisualColumnFor(column);
-  }
-  return column;
+  return TextLayout::ResolveVisualColumn(in.layout, in.visual_map, in.row_visual_start,
+                                         in.row_visual_end, column);
 }
 
 // Row-local display column of an absolute visual column, counting any phantom
