@@ -193,6 +193,41 @@ void TestDirectoryTreeStopsExpandingSymlinkCycle() {
 // Expanded/collapsed key sets accumulate forever otherwise; a deleted directory's
 // key must be pruned on the fs-resync Refresh so the sets stay bounded and a
 // deleted-then-recreated dir renders collapsed (like VSCode) instead of expanded.
+// Restored expansion/collapse keys are validated for root containment before storing, so
+// a tampered or cross-root session file cannot seed absolute or `..`-escaping keys that
+// PruneDeletedDirectoryKeys would stat or that would be re-serialized as outside-root
+// relatives (TD-2026-07-17A-089).
+void TestDirectoryTreeRestoreRejectsOutsideRootExpansionKeys() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha" / "child.txt", "a\n");
+  WriteFile(root / "beta" / "child.txt", "b\n");
+
+  DirectoryTree tree;
+  Expect(tree.SetRoot(root), "directory tree should open fixture root");
+
+  // One contained key plus hostile ones: an absolute path, a `..` escape, and a deep
+  // traversal that normalizes to a sibling of the root.
+  tree.RestoreExpansionState({"alpha", "/etc", "../../outside", "beta/../../escape"},
+                             {"../sibling-collapsed", "/var"});
+
+  const auto has = [](const std::vector<std::string>& keys, const std::string& key) {
+    return std::find(keys.begin(), keys.end(), key) != keys.end();
+  };
+  const std::vector<std::string> expanded = tree.ExpandedRelativePaths();
+  Expect(has(expanded, "alpha"), "a contained expansion key must be restored");
+  for (const std::string& key : expanded) {
+    Expect(!key.empty() && key.front() != '/',
+           "no restored expansion key may be an absolute path");
+    Expect(key.find("..") == std::string::npos,
+           "no restored expansion key may contain a `..` escape");
+  }
+  for (const std::string& key : tree.ManuallyCollapsedRelativePaths()) {
+    Expect(!key.empty() && key.front() != '/' && key.find("..") == std::string::npos,
+           "no restored collapsed key may escape the root");
+  }
+}
+
 void TestDirectoryTreePrunesDeletedDirectoryKeysOnRefresh() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -238,6 +273,8 @@ void TestDirectoryTreePrunesDeletedDirectoryKeysOnRefresh() {
 void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DirectoryTree/PrunesDeletedDirectoryKeysOnRefresh",
           TestDirectoryTreePrunesDeletedDirectoryKeysOnRefresh);
+  AddTest(tests, "DirectoryTree/RestoreRejectsOutsideRootExpansionKeys",
+          TestDirectoryTreeRestoreRejectsOutsideRootExpansionKeys);
   AddTest(tests, "DirectoryTree/TracksIgnoredStatusIndependentlyFromVisibility",
           TestDirectoryTreeTracksIgnoredStatusIndependentlyFromVisibility);
   AddTest(tests, "DirectoryTree/TracksMaterializationIndependentlyFromIgnoredStatus",

@@ -525,20 +525,31 @@ void DirectoryTree::RestoreExpansionState(const std::vector<std::string>& expand
   if (root_.empty()) {
     return;
   }
+  // Reject restored keys that are absolute, escape the root via `..`, or otherwise
+  // resolve outside the project. A tampered or cross-root session file could otherwise
+  // seed outside-root keys that PruneDeletedDirectoryKeys would stat (a syscall on an
+  // arbitrary path) or that would be re-serialized as outside-root relatives
+  // (TD-2026-07-17A-089). Purely lexical — no filesystem access.
+  const auto insert_contained = [this](std::unordered_set<std::string>& target,
+                                       const std::string& relative) {
+    if (relative.empty()) {
+      return;
+    }
+    const std::filesystem::path candidate = root_ / std::filesystem::path(relative);
+    if (!util::PathEqualsOrWithin(candidate, root_)) {
+      return;
+    }
+    target.insert(NormalizePathKey(candidate));
+  };
+
   expanded_paths_.clear();
   expanded_paths_.insert(NormalizePathKey(root_));
   for (const auto& relative : expanded_relative) {
-    if (relative.empty()) {
-      continue;
-    }
-    expanded_paths_.insert(NormalizePathKey(root_ / std::filesystem::path(relative)));
+    insert_contained(expanded_paths_, relative);
   }
   manually_collapsed_paths_.clear();
   for (const auto& relative : collapsed_relative) {
-    if (relative.empty()) {
-      continue;
-    }
-    manually_collapsed_paths_.insert(NormalizePathKey(root_ / std::filesystem::path(relative)));
+    insert_contained(manually_collapsed_paths_, relative);
   }
   RebuildEntries(false);
 }

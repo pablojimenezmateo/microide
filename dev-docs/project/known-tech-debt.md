@@ -4,7 +4,7 @@ Reviewed on 2026-07-17. A follow-on deferred-backlog full sweep is in progress
 (see "Fixed in the 2026-07-13 deferred-backlog full sweep" below); closed tranche
 entries have been pruned as they land. The **2026-07-17A addendum burndown** then
 dispositioned every item in the "Cross-subsystem bug/perf audit addendum" section:
-30 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
+31 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
 clusters or marked platform-only — see the burndown blockquote under that heading.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
@@ -92,6 +92,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > - **035** — no-selection context copy reads the live buffer via LineSpan (no whole-document `Snapshot()`); `JoinLineRange` takes a LineSpan.
 > - **032** — command palette match list stores indices into `items`, not copied rows (no per-keystroke row-string copies).
 > - **034** — workspace-symbol requests carry a generation token; superseded responses are dropped (no stale results overwriting the newer query).
+> - **089** — restored tree expansion/collapse keys are validated for root containment (absolute/`..`-escape keys dropped).
 > - **003** — `DetectIndent(LineSpan)` overload; file open reads the live buffer zero-copy (no `Snapshot()`).
 > - **006** — settings query filter routes through allocation-free `util::ContainsCaseInsensitiveAscii` (no per-row lowercase of query/label/detail on every keystroke).
 > - **009** — merge validation scans a zero-copy `LineSpan` once via `util::ScanConflictMarkers` (no `Snapshot()`, no whole-document serialize, no second snapshot for the marker line).
@@ -137,8 +138,8 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    match-data cache keyed by revision, symlinked-state-file writes, terminal-tab reap grace):
 >    030, 050, 052, 059, 082, 083, 086, 100, 115, 127, 130. *(001, 034 RESOLVED 2026-07-17A.)*
 > 8. **Path/containment correctness (small, but cross-group)**: 036
->    (retarget background compare/merge tabs on rename/delete across all groups), 088, 089, 111.
->    *(010 RESOLVED 2026-07-17A — `util::RelativePathWithin`.)*
+>    (retarget background compare/merge tabs on rename/delete across all groups), 088, 111.
+>    *(010, 089 RESOLVED 2026-07-17A — `util::RelativePathWithin`; restored-tree-key containment.)*
 > 9. **Search / traversal**: 055 (parent-linked ignore layers), 065 (split cheap predicate from
 >    transcript builder).
 >
@@ -960,7 +961,11 @@ speed-path items first, then the correctness/lifecycle cleanups.
   synchronous filesystem-probe sweep on the UI path even if only one file changed. Prune lazily from
   watcher delete events or amortize the cleanup across refreshes so normal refresh cost depends on
   visible/changed rows, not the full remembered history.
-- **TD-2026-07-17A-089 — restored tree expansion keys are capped but not root-contained.**
+- **[RESOLVED 2026-07-17A] TD-2026-07-17A-089 — restored tree expansion keys are capped but not root-contained.**
+  Fixed: `DirectoryTree::RestoreExpansionState` validates each restored expanded/collapsed
+  relative through `util::PathEqualsOrWithin(root_ / relative, root_)` before inserting, so
+  absolute paths, `..` escapes, and otherwise-outside-root keys are dropped (purely lexical,
+  no syscall). Regression: `DirectoryTree/RestoreRejectsOutsideRootExpansionKeys`.
   `WorkspaceShell::RestoreSessionState` passes decoded `expanded_tree_paths` /
   `collapsed_tree_paths` directly into `DirectoryTree::RestoreExpansionState`, which inserts
   `NormalizePathKey(root_ / relative)` for each non-empty string without rejecting absolute paths,
