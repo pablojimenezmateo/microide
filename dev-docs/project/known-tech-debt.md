@@ -30,6 +30,19 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Async / off-thread refactors** (move blocking work off the shell/UI thread):
 
+> **[WON'T-DO 2026-07-17 in this burndown]** Every item in this subsection (047, 055,
+> 061, 081/082, 080, 086, 091, 016/017, 014, 075) is a multi-file async redesign —
+> moving synchronous work onto `ProjectBackgroundExecutor`/a worker lane with
+> generation/token gating and an SDL-wake completion, then reconciling the callers that
+> today depend on a synchronous return. Each is a focused, individually-reviewed pass with
+> its own cancellation/lifetime test matrix, and the triggers are bounded or rare per the
+> notes below (budgeted/cached model builds, capped search workers, wedged-launcher-only
+> reveal, manual-refresh scans, trace-off-by-default). Bundling them is exactly what the
+> audit warned against. They stay as intake for dedicated async-hardening changes (pair
+> with the 2026-07-16 async items 18/19/21/38); not implemented in this correctness/perf
+> burndown. The two highest-value whole-buffer-copy hot paths the audit flagged in this
+> family were already fixed here: TD-2026-07-16-31 (merge tracking) and -068 (grouped undo).
+
 - **047 — compare/merge model construction runs synchronously on the shell path.**
   Fingerprint-cached + budgeted, but a content change rebuilds on-thread; move large
   `BuildCompareModel`/`BuildMergeModel` to a generation-gated background job. Same
@@ -82,6 +95,14 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Render view-model / string-allocation cleanup:**
 
+> **[WON'T-DO 2026-07-17 in this burndown]** 084 (overlay view model holding live
+> `OverlayState*`/`ProjectWorkspaceState*` pointers + rebuilding labels in the render TU)
+> is the same render-view-model expansion class as the already-shipped 26/083 work but
+> for the overlay surface — a focused view-model build-out, not a hot bug (labels are
+> small). 029/030 are lint/regression-counter *test-infra* additions. The concrete
+> render hot-path perf win in this family was taken here: 083 (commit body now paints via
+> `LineView`, no whole-buffer `Snapshot()`). Deferred to a dedicated render-view-model pass.
+
 - **[RESOLVED 2026-07-17 — perf core] 083 — commit-body render mutates viewport state +
   `Snapshot()`s during paint.** `RenderCommitBodyField` now draws only the visible rows
   via zero-copy `TextBuffer::LineView` (all render APIs — `MeasureWidth`/`TruncateToWidth`/
@@ -100,6 +121,13 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   counters** (layout recompute / view-model build / frame-prep counts).
 
 **Editor / Unicode (schedule as one coherent pass):**
+
+> **[WON'T-DO 2026-07-17 in this burndown]** 021 (centralize grapheme segmentation +
+> visual width into one editor service, rerouting cursor movement / hit-testing / layout /
+> selection) and 023 (route inlay-hint columns through that same display-column map) are a
+> single large editor-primitive unification touching every column-math site — the audit
+> itself says "schedule as one coherent pass." High blast radius, no isolated defect
+> (070 already bounded inlay width). Deferred to a dedicated editor-display-column change.
 
 - **021 — centralize grapheme segmentation + visual width into one editor service**
   and route cursor movement / hit-testing / layout / selection through it.
@@ -120,12 +148,27 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Debug / DAP:**
 
+> **[WON'T-DO 2026-07-17 in this burndown]** 025 (session-generation + request-id gating
+> across REPL/hover/watch) and 026 (bounded disconnect→wait→kill→drain teardown escalation)
+> are a focused DAP-lifecycle hardening pass over the adapter request/response and shutdown
+> paths, with their own generation/timeout test matrix. No live hang was observed here (the
+> earlier gdb-DAP freezes were fixed); this is defense-in-depth against a misbehaving
+> adapter. Deferred to a dedicated debugger-lifecycle change (pairs with 091).
+
 - **025 — debug request/response paths need session-generation + request-id gating**
   (REPL / hover / watch, matched by stable id).
 - **026 — DAP stop/terminate needs a bounded escalation** (disconnect → wait → kill →
   bounded drain) with timeout surfaced to the pane. Pairs with 091.
 
 **Scanner / search incomplete-state plumbing (land together):**
+
+> **[WON'T-DO 2026-07-17 in this burndown]** 008/033 (thread a
+> complete/truncated_by_budget/incomplete status from the file scanner through to the
+> search UI) is a status-plumbing change across the scanner → index → search-result
+> pipeline + UI surfacing, and 009 (degrade the fallback watcher's full-tree snapshot to
+> a targeted rescan) is native-watcher work — both "land together" multi-layer passes. The
+> partial-result case is currently silent but not incorrect (results returned are real).
+> Deferred to a dedicated scanner-status change (pairs with the async 081/082/086 watcher work).
 
 - **008 / 033 — surface a scanner result status** (complete / truncated_by_budget /
   permission_limited / error) and thread searched/skipped/incomplete-catalog through
@@ -136,12 +179,29 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **LSP feature completeness:**
 
+> **[WON'T-DO 2026-07-17 in this burndown]** 011 (`WorkspaceEdit` create/delete/rename
+> resource operations + version-aware edits) is net-new LSP feature scope, not a bug; 012
+> (replace empty-success-shaped LSP timeouts with explicit result variants) is a
+> result-type refactor threaded through every LSP request site with a slow-server fixture.
+> Both are focused LSP passes with feature/robustness (not correctness-regression) payoff.
+> Deferred to a dedicated LSP-completeness change (pairs with the async 091 shutdown work).
+
 - **011 — `WorkspaceEdit` resource ops (create/delete/rename) + version-aware edits**
   with atomic/rollback-safe staging. Same item as **TD-2026-07-16-18**.
 - **012 — replace empty-success-shaped LSP timeouts with explicit result variants**
   (success / empty_success / timeout / cancelled / protocol_error).
 
 **Plugin caps / policy:**
+
+> **[WON'T-DO 2026-07-17 in this burndown]** 018 (per-field byte caps on every provider
+> result surface — 078 already landed the aggregate string cap, so remaining surfaces are
+> incremental hardening) and 019 (re-derive status/contribution caps from *measured*
+> render/registry budgets — a measurement task) are policy/tuning, not defects. 077
+> (O(N²) duplicate-id scan in contribution registration) is reachable only by a
+> pathological/malicious plugin registering thousands of unique ids — memory is already
+> capped (100k/kind) and the setup watchdog bounds a runaway loop; the clean fix is
+> persistent per-kind id sets threaded through the whole `Register*` registry shape,
+> disproportionate for a non-realistic trigger. Deferred to a dedicated plugin-registry pass.
 
 - **018 — per-field byte caps for every provider result surface** (078 landed the
   string-array caps; the remaining diagnostics/hover/status/sidebar/tools/tasks/
@@ -188,11 +248,30 @@ build and verify the target platform. Descriptions retained as intake for that p
 
 **Tab identity:**
 
+> **[WON'T-DO 2026-07-17 in this burndown]** 024 (dirty-prompt state keyed by tab index)
+> needs a stable per-tab id added to `TabEntry` and threaded through the dirty-prompt
+> creation/storage/completion flow *and* session persistence, plus a close/reorder-during-
+> active-prompt test matrix — a multi-file tab-lifecycle change. The race also requires
+> interacting with tabs while a modal dirty prompt is up, so it is latent rather than a
+> reproduced live bug. Deferred to a dedicated tab-identity change.
+
 - **024 — dirty-prompt state keyed by tab indices is fragile.** Add a stable per-tab
   id to `TabEntry`, thread it through the prompt flow + persistence, revalidate on
   completion.
 
 **Architecture lint / test infrastructure:**
+
+> **[WON'T-DO 2026-07-17 in this burndown]** These are all *test-infrastructure* sweeps,
+> not product defects: 020/058 (mechanical no-longjmp-across-C++-locals audit) needs
+> clang-tidy/AST tooling the repo doesn't wire up; 032/037 add architecture lints with
+> negative fixtures; 036 is a backend-independent watcher contract suite; 015 a terminal
+> lifecycle stress suite; 052 seeds fuzz corpora; 022 adds a large-buffer edit perf
+> scenario + a direct-`Snapshot()`-in-edit-paths lint; 030 adds per-frame-prep regression
+> counters; 088 replaces ~132 duplicated fixed-sleep polling loops with a shared WaitUntil.
+> Each is a sizable mechanical pass; none fixes a live bug. Note: 022's *intent* (guard the
+> no-whole-buffer-snapshot invariant) is now partially served by the `TextBuffer::
+> snapshot_build_count()` seam added here and its use in the -068/-31/-083 regressions.
+> Deferred to dedicated test-infra passes.
 
 - **020 / 058 — mechanical no-longjmp-across-C++-locals audit.** Needs a clang-tidy
   AST matcher (a regex would false-positive on the ~30 legitimate entry-position
@@ -235,6 +314,16 @@ build and verify the target platform. Descriptions retained as intake for that p
 The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won't-do
 (all multi-file refactors flagged for their own reviewed pass). Several overlap the
 2026-07-17 set above and should be merged when tackled.
+
+> **[WON'T-DO 2026-07-17 in this burndown]** All remaining open items in this section are
+> multi-file dedicated passes, and all overlap a 2026-07-17 subsection already dispositioned
+> above: 18→011 (LSP WorkspaceEdit async), 19→047 (compare/merge git blob async), 21→094-fixed
+> +cancellable-replace-all async, 22→020/058 (whole-plugin `lua_State*` boundary refactor),
+> 26→084 (render-TU project-state pointers), 38→082 (git patch serialize async), 39→raster
+> decode/layout ordering (raster budget 043/092 already fixed), 60/61 (bottom-panel plugin
+> preview scroll + hit-region dispatch — net-new plugin-UI features). Deferred to the same
+> dedicated passes as their 2026-07-17 counterparts. The one whole-buffer-copy hot path in
+> this set (31, merge tracking) was fixed here.
 
 - **TD-2026-07-16-18 — server-pushed LSP `WorkspaceEdit` can synchronously load and
   save thousands of files on the main thread.** Dedicated async pass. Same item as
