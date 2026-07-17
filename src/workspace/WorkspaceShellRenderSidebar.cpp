@@ -76,24 +76,27 @@ void RenderCommitBodyField(const render::TextRenderer& tr, const render::Theme& 
   }
   body.SetScrollLine(scroll);
 
-  const std::vector<std::string>& lines = body.lines().Snapshot();
+  // Draw only the visible rows via zero-copy LineView. TextBuffer::Snapshot() is a
+  // whole-document materialization documented for cold paths; a large pasted commit
+  // body must not pay an O(body) copy every paint. (TD-2026-07-17-083.)
+  const editor::TextBuffer& body_lines = body.lines();
+  const std::size_t line_count = body_lines.size();
   scroll = body.scroll_line();
   const std::optional<editor::SelectionRange> selection = body.selection_range();
   const std::size_t caret_line = body.cursor_line();
   const std::size_t caret_col = body.cursor_column();
 
-  if (lines.size() == 1 && lines[0].empty() && !focused) {
+  if (line_count == 1 && body_lines.LineView(0).empty() && !focused) {
     DrawTextOn(tr, renderer, text_x, top_y, theme.text_muted, theme.surface_background, "<optional>");
     return;
   }
 
   for (int row = 0; row < visible_rows; ++row) {
     const std::size_t line_index = scroll + static_cast<std::size_t>(row);
-    if (line_index >= lines.size()) {
+    if (line_index >= line_count) {
       break;
     }
-    const std::string& text = lines[line_index];
-    const std::string_view text_view = text;
+    const std::string_view text = body_lines.LineView(line_index);
     const float row_y = top_y + static_cast<float>(row) * line_height;
 
     if (selection.has_value() && line_index >= selection->start.line &&
@@ -104,8 +107,8 @@ void RenderCommitBodyField(const render::TextRenderer& tr, const render::Theme& 
           line_index == selection->end.line ? std::min(selection->end.column, text.size())
                                             : text.size();
       if (sel_start_col < sel_end_col && sel_start_col <= text.size()) {
-        const float sx = text_x + tr.MeasureWidth(text_view.substr(0, sel_start_col));
-        const float sw = tr.MeasureWidth(text_view.substr(sel_start_col, sel_end_col - sel_start_col));
+        const float sx = text_x + tr.MeasureWidth(text.substr(0, sel_start_col));
+        const float sw = tr.MeasureWidth(text.substr(sel_start_col, sel_end_col - sel_start_col));
         if (sw > 0.0f) {
           FillRect(renderer, MakeRect(sx, row_y - 1.0f, sw, line_height), theme.selection_fill);
         }
@@ -117,7 +120,7 @@ void RenderCommitBodyField(const render::TextRenderer& tr, const render::Theme& 
 
     if (focused && line_index == caret_line) {
       const std::size_t clamped_col = std::min(caret_col, text.size());
-      const float caret_x = std::min(text_x + tr.MeasureWidth(text_view.substr(0, clamped_col)),
+      const float caret_x = std::min(text_x + tr.MeasureWidth(text.substr(0, clamped_col)),
                                      field.x + field.w - 2.0f);
       const SDL_FRect caret = MakeRect(caret_x, row_y - 1.0f, 1.0f, line_height);
       if (caret_rect_out != nullptr) {

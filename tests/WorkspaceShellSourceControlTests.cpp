@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "editor/TextBuffer.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
@@ -756,9 +757,11 @@ void TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable() {
   Expect(WorkspaceShellTestAccess::CommitBodyText(shell).find("More detail") != std::string::npos,
          "typed text should populate the commit body");
 
-  // Exercise the multi-line body render path: add several wrapped lines (so the body
-  // scrolls), select across them, and render to confirm the panel paints without faulting.
-  for (int i = 0; i < 8; ++i) {
+  // Exercise the multi-line body render path: add many lines (far more than the body's
+  // visible rows, so most are scrolled off), select across them, and render to confirm the
+  // panel paints without faulting. A large body also guards TD-2026-07-17-083: the commit
+  // body must paint via per-visible-row LineView, never a whole-buffer TextBuffer::Snapshot().
+  for (int i = 0; i < 40; ++i) {
     Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
            "Enter should insert a newline in the commit body");
     Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "more body text"),
@@ -766,7 +769,12 @@ void TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable() {
   }
   WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_HOME, SDL_KMOD_CTRL);
   WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_END, SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
+  // No editor/merge tab is open, so the commit body is the only TextViewport in the frame;
+  // a whole-buffer snapshot here could only come from the commit-body paint path.
+  microide::editor::TextBuffer::reset_snapshot_build_count();
   WorkspaceShellTestAccess::RenderFrame(shell);
+  Expect(microide::editor::TextBuffer::snapshot_build_count() == 0,
+         "commit-body render must not materialize a whole-buffer snapshot");
 
   // Shift+Tab returns to the subject.
   Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_TAB, SDL_KMOD_SHIFT),

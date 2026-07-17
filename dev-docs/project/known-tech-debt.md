@@ -82,8 +82,16 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Render view-model / string-allocation cleanup:**
 
-- **083 — commit-body render mutates viewport state + `Snapshot()`s during paint.**
-  Move sizing/scroll-clamp to input/layout prep; render visible rows via `LineView`.
+- **[RESOLVED 2026-07-17 — perf core] 083 — commit-body render mutates viewport state +
+  `Snapshot()`s during paint.** `RenderCommitBodyField` now draws only the visible rows
+  via zero-copy `TextBuffer::LineView` (all render APIs — `MeasureWidth`/`TruncateToWidth`/
+  `DrawTextOn` — already take `string_view`), so a large pasted commit body no longer pays
+  an O(body) whole-buffer materialization every paint. Guarded by extending
+  `WorkspaceShell/CommitWorkflowFieldsAreKeyboardEditable` (40-line body, only-viewport-in-
+  frame) with a `TextBuffer::snapshot_build_count() == 0` assertion across the render.
+  Residual: the O(1) viewport size/scroll-clamp setters still run in paint — cheap, not a
+  perf issue; moving them into layout prep is architectural cleanup folded into 084's
+  render-view-model work, not tracked separately. `run-checks.sh tests` (3/3) green.
 - **084 — overlay view model holds live `OverlayState*`/`ProjectWorkspaceState*`
   pointers and rebuilds labels in the render TU.** Expand into an owned/precomputed
   row+string model; move label composition into `RenderViewModelBuilder`; add a
