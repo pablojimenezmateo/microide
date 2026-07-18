@@ -113,6 +113,17 @@ WorkspaceOutputChannels::ParsedEntry BuildParsedEntry(
   return parsed;
 }
 
+// Owned bytes a ParsedEntry adds ON TOP of its raw `entries[i]` line: the
+// context-snippet `prefix`/`code` are separate heap copies of (part of) the line,
+// so they must count toward the channel's retained-byte budget or a stream of
+// compiler-style context snippets exceeds the intended cap by the duplicated text.
+// (The lazily-built `highlighted_code` cache is not counted — it is at most one per
+// parsed entry and is trimmed in lockstep with entries, so it stays bounded by the
+// entry count that the budget already governs.)
+std::size_t ParsedEntryOwnedBytes(const WorkspaceOutputChannels::ParsedEntry& parsed) {
+  return parsed.prefix.size() + parsed.code.size();
+}
+
 }  // namespace
 
 void WorkspaceOutputChannels::TouchChannel(Channel& channel) {
@@ -172,8 +183,10 @@ void WorkspaceOutputChannels::AppendLine(std::string_view id, std::string_view l
   EnsureChannel(id, label);
   auto& channel = channels_.find(id)->second;
   TruncateOutputLine(line);
-  channel.retained_bytes += line.size();
-  channel.parsed_entries.push_back(BuildParsedEntry(line, &channel.current_reference_path));
+  ParsedEntry parsed = BuildParsedEntry(line, &channel.current_reference_path);
+  // Charge both the raw line and the parsed entry's owned duplicate text.
+  channel.retained_bytes += line.size() + ParsedEntryOwnedBytes(parsed);
+  channel.parsed_entries.push_back(std::move(parsed));
   channel.entries.push_back(std::move(line));
 
   // Bound retained history: a chatty or hostile LSP / debug adapter / plugin can
@@ -192,15 +205,16 @@ void WorkspaceOutputChannels::AppendLine(std::string_view id, std::string_view l
                            : 0;
     std::size_t projected_bytes = channel.retained_bytes;
     for (std::size_t i = 0; i < drop; ++i) {
-      projected_bytes -= channel.entries[i].size();
+      projected_bytes -= channel.entries[i].size() + ParsedEntryOwnedBytes(channel.parsed_entries[i]);
     }
     while (drop < channel.entries.size() &&
            projected_bytes > kMaxChannelRetainedBytes) {
-      projected_bytes -= channel.entries[drop].size();
+      projected_bytes -=
+          channel.entries[drop].size() + ParsedEntryOwnedBytes(channel.parsed_entries[drop]);
       ++drop;
     }
     for (std::size_t i = 0; i < drop; ++i) {
-      channel.retained_bytes -= channel.entries[i].size();
+      channel.retained_bytes -= channel.entries[i].size() + ParsedEntryOwnedBytes(channel.parsed_entries[i]);
     }
     channel.entries.erase(channel.entries.begin(),
                           channel.entries.begin() + static_cast<std::ptrdiff_t>(drop));
@@ -229,6 +243,11 @@ const std::vector<WorkspaceOutputChannels::ChannelInfo>& WorkspaceOutputChannels
 const std::vector<std::string>* WorkspaceOutputChannels::Entries(std::string_view id) const {
   const auto it = channels_.find(id);
   return it == channels_.end() ? nullptr : &it->second.entries;
+}
+
+std::size_t WorkspaceOutputChannels::RetainedBytes(std::string_view id) const {
+  const auto it = channels_.find(id);
+  return it == channels_.end() ? 0 : it->second.retained_bytes;
 }
 
 const WorkspaceOutputChannels::ParsedEntry* WorkspaceOutputChannels::ParsedEntryAt(

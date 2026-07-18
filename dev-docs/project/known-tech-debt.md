@@ -1201,7 +1201,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   `CachedGitSidebarPresentation` memo (stable between prep and render of one frame — git
   state never mutates mid-frame), so a cache-hit repaint copies nothing. Covered by the
   existing git-sidebar tests.
-- **TD-2026-07-17A-070 — output-channel byte caps ignore parsed-entry duplicate storage.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-070 — output-channel byte caps ignore parsed-entry duplicate storage.**
+  Fixed: `WorkspaceOutputChannels` now charges each parsed entry's owned context-snippet text
+  (`ParsedEntryOwnedBytes` = `prefix.size() + code.size()`) to `channel.retained_bytes` at append and
+  subtracts it symmetrically when trimming, so a stream of compiler-style context snippets can no
+  longer exceed the 16 MiB retained-channel budget by the duplicated code text. (The lazily-built
+  `highlighted_code` cache stays uncounted but is at most one per parsed entry and is trimmed in
+  lockstep, so it is bounded by the entry count the budget already governs.) Added a
+  `RetainedBytes(id)` accessor for the accounting. Regression:
+  `BoundedResourceCaps/OutputChannelBudgetCountsParsedSnippetBytes`.
   `WorkspaceOutputChannels::AppendLine` truncates and charges each retained line against
   `channel.retained_bytes`, but `BuildParsedEntry` separately copies context-snippet `prefix` and
   `code` strings into `parsed_entries`, and `HighlightedContextSnippet` can later cache a

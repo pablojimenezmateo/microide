@@ -45,6 +45,11 @@ class WorkspaceOutputChannels {
     mutable bool resolved_reference_valid = false;
   };
   const ParsedEntry* ParsedEntryAt(std::string_view id, std::size_t index) const;
+  // Total bytes charged to the channel's retained-memory budget: each raw entry
+  // line PLUS that entry's parsed context-snippet owned text (prefix/code). 0 for
+  // an unknown id. Exposed for tests/telemetry of the byte-cap accounting
+  // (TD-2026-07-17A-070).
+  std::size_t RetainedBytes(std::string_view id) const;
   // reference_path resolved against project_root (relative -> root/path) and
   // lexically_normalized, cached per entry so a steady output panel does not
   // re-resolve/normalize every visible reference/snippet row per paint. Returns an

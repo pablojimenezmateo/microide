@@ -216,6 +216,31 @@ void TestOutputChannelCountIsCappedWithLru() {
          "the least recently touched channel must be evicted");
 }
 
+// TD-2026-07-17A-070: an output channel's retained-byte budget must include the
+// parsed context-snippet entries' owned prefix/code text (separate heap copies of
+// the line), not just the raw entry line — otherwise a stream of compiler-style
+// context snippets exceeds the intended memory cap by the duplicated code text.
+void TestOutputChannelBudgetCountsParsedSnippetBytes() {
+  workspace::WorkspaceOutputChannels channels;
+  const std::string id = "build";
+  const std::string ref = "src/main.cpp:10:5";           // parsed as a ReferencePath
+  const std::string code(1000, 'x');
+  const std::string snippet = "   10 | " + code;         // parsed as a ContextSnippet
+  channels.AppendLine(id, id, ref);
+  channels.AppendLine(id, id, snippet);
+
+  const auto* entries = channels.Entries(id);
+  Expect(entries != nullptr && entries->size() == 2, "both lines are retained");
+
+  // The snippet's parsed entry owns prefix ("   10 | ", 8 bytes) + code (1000
+  // bytes) on top of the raw snippet line, so the budget must exceed the raw bytes.
+  const std::size_t raw = ref.size() + snippet.size();
+  const std::size_t retained = channels.RetainedBytes(id);
+  Expect(retained == raw + 8 + code.size(),
+         "retained bytes include the parsed snippet's duplicated prefix+code");
+  Expect(retained > raw, "parsed-entry owned bytes are charged to the channel budget");
+}
+
 void TestExcludeGlobsNormalInputIsNotFlaggedTruncated() {
   bool truncated = true;
   const std::vector<std::string> globs =
@@ -235,6 +260,8 @@ void RegisterBoundedResourceCapsTests(std::vector<TestCase>& tests) {
           TestExcludeGlobsByteBudgetIsCapped);
   AddTest(tests, "BoundedResourceCaps/ExcludeGlobsNormalInputIsNotFlaggedTruncated",
           TestExcludeGlobsNormalInputIsNotFlaggedTruncated);
+  AddTest(tests, "BoundedResourceCaps/OutputChannelBudgetCountsParsedSnippetBytes",
+          TestOutputChannelBudgetCountsParsedSnippetBytes);
   AddTest(tests, "BoundedResourceCaps/DebugValueTreeAggregateNodeBudget",
           TestDebugValueTreeAggregateNodeBudget);
   AddTest(tests, "BoundedResourceCaps/DebugValueTreeSmallContainerIsNotTruncated",
