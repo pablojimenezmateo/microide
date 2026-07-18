@@ -77,14 +77,109 @@ void WorkspacePluginRuntime::ReloadAsync(const std::filesystem::path& project_ro
   syntax_definitions_changed_ = false;
   changed_syntax_languages_.clear();
   changed_syntax_language_views_.clear();
-  // The host reload runs the plugin Lua off the UI thread; ApplySyntaxReload then loads
-  // runtime syntax definitions when the rebuilt snapshot is published. With no worker
-  // wired the host completion fires inline, so this stays synchronous in that config.
+  const std::uint64_t generation = ++syntax_reload_generation_;
+  // The host reload runs the plugin Lua off the UI thread; its completion fires on the
+  // main thread (mailbox drain) or inline when no worker is wired. From that completion
+  // the runtime-syntax sources are stat/read/parsed on the plugin worker and only the
+  // built registry is swapped in on the main thread (TD-2026-07-17A-108).
   plugin_host_.ReloadAsync(
-      project_root, [this, project_root, reload_syntax_definitions,
+      project_root, [this, project_root, reload_syntax_definitions, generation,
                      on_complete = std::move(on_complete)](bool clean_reload) mutable {
-        on_complete(ApplySyntaxReload(project_root, reload_syntax_definitions, clean_reload));
+        if (!reload_syntax_definitions) {
+          asset_monitor_.SetProjectRoot(project_root);
+          on_complete(clean_reload);
+          return;
+        }
+        if (!plugin_thread_.started()) {
+          // No plugin worker (no plugins to load): stay fully synchronous, exactly as
+          // before — nothing to gain from a worker hop and most tests run this path.
+          on_complete(ApplySyntaxReload(project_root, /*reload_syntax_definitions=*/true,
+                                        clean_reload));
+          return;
+        }
+        // DataDirectories reads the UI-thread-owned published plugin snapshot, so it is
+        // resolved here on the main thread and the resulting paths are handed to the
+        // worker (which never touches host state).
+        std::vector<std::filesystem::path> directories = plugin_host_.DataDirectories("syntax");
+        const std::uint64_t last_fingerprint = syntax_source_fingerprint_;
+        const bool has_last_fingerprint = syntax_fingerprint_initialized_;
+        plugin_thread_.Post([this, project_root, clean_reload, generation,
+                             directories = std::move(directories), last_fingerprint,
+                             has_last_fingerprint,
+                             on_complete = std::move(on_complete)]() mutable {
+          SyntaxLoadResult result =
+              LoadSyntaxDefinitionsOffThread(directories, last_fingerprint, has_last_fingerprint);
+          plugin_thread_.PostToMain([this, project_root, clean_reload, generation,
+                                     result = std::move(result),
+                                     on_complete = std::move(on_complete)]() mutable {
+            on_complete(PublishSyntaxReload(project_root, clean_reload, std::move(result),
+                                            generation));
+          });
+        });
       });
+}
+
+WorkspacePluginRuntime::SyntaxLoadResult WorkspacePluginRuntime::LoadSyntaxDefinitionsOffThread(
+    const std::vector<std::filesystem::path>& directories, std::uint64_t last_fingerprint,
+    bool has_last_fingerprint) {
+  off_thread_syntax_load_count_.fetch_add(1, std::memory_order_relaxed);
+  SyntaxLoadResult result;
+  result.fingerprint = syntax_fingerprint_cache_.Compute(directories);
+  if (has_last_fingerprint && last_fingerprint == result.fingerprint) {
+    // Sources unchanged since the last publish: skip the load + registry rebuild.
+    result.unchanged = true;
+    return result;
+  }
+  {
+    util::StartupTrace::Scope load_scope("LoadSyntaxDefinitions");
+    result.definitions = editor::runtime_syntax::LoadDefinitionsFromDirectories(
+        directories, &result.loader_errors);
+  }
+  return result;
+}
+
+bool WorkspacePluginRuntime::PublishSyntaxReload(const std::filesystem::path& project_root,
+                                                 bool clean_reload, SyntaxLoadResult result,
+                                                 std::uint64_t generation) {
+  asset_monitor_.SetProjectRoot(project_root);
+  // Drop a superseded reload's publish: a newer ReloadAsync bumped the generation, so
+  // its (latest) worker result must own the global registry — never this stale one.
+  if (generation != syntax_reload_generation_) {
+    return clean_reload && runtime_syntax_errors_.empty();
+  }
+  if (result.unchanged) {
+    syntax_fingerprint_initialized_ = true;
+    syntax_source_fingerprint_ = result.fingerprint;
+    syntax_definitions_changed_ = false;
+    return clean_reload && runtime_syntax_errors_.empty();
+  }
+
+  runtime_syntax_errors_.clear();
+  {
+    util::StartupTrace::Scope reload_scope("ReloadSyntaxDefinitions");
+    const editor::runtime_syntax::RuntimeSyntaxReloadResult syntax_reload =
+        editor::runtime_syntax::ReloadDefinitions(result.definitions, &runtime_syntax_errors_);
+    runtime_syntax_plugin_definition_count_ = syntax_reload.plugin_definition_count;
+  }
+  runtime_syntax_errors_.insert(runtime_syntax_errors_.end(), result.loader_errors.begin(),
+                                result.loader_errors.end());
+  std::unordered_set<std::string> unique_languages;
+  for (const auto& definition : result.definitions) {
+    if (!definition.filetype.empty()) {
+      unique_languages.insert(definition.filetype);
+    }
+  }
+  changed_syntax_languages_.assign(unique_languages.begin(), unique_languages.end());
+  std::sort(changed_syntax_languages_.begin(), changed_syntax_languages_.end());
+  changed_syntax_language_views_.clear();
+  changed_syntax_language_views_.reserve(changed_syntax_languages_.size());
+  for (const std::string& language : changed_syntax_languages_) {
+    changed_syntax_language_views_.push_back(language);
+  }
+  syntax_fingerprint_initialized_ = true;
+  syntax_source_fingerprint_ = result.fingerprint;
+  syntax_definitions_changed_ = true;
+  return clean_reload && runtime_syntax_errors_.empty();
 }
 
 bool WorkspacePluginRuntime::ApplySyntaxReload(const std::filesystem::path& project_root,

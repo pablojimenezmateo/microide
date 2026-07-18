@@ -523,6 +523,8 @@ std::uint64_t SyntaxSourceFingerprint::Compute(
   (void)directories;
   return 0;
 #else
+  // Guard the cache so Compute can run on the plugin worker (TD-2026-07-17A-108).
+  std::lock_guard<std::mutex> lock(mutex_);
   std::uint64_t fingerprint = 0;
   for (const auto& path : DiscoverDefinitionFiles(directories)) {
     fingerprint = Fnv1aAppend(fingerprint, path.generic_string());

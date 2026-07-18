@@ -8,7 +8,9 @@
 #include "plugin/PluginDiagnosticsInterop.h"
 #include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginContributionLimits.h"
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "workspace/WorkspacePluginAssetMonitor.h"
+#include "workspace/WorkspacePluginRuntime.h"
 
 #include <chrono>
 #include <algorithm>
@@ -3228,6 +3230,77 @@ return ide.plugin({
   host.Shutdown();
 }
 
+// TD-2026-07-17A-108: WorkspacePluginRuntime::ReloadAsync must run the runtime-syntax
+// discovery/stat/read/parse on the plugin worker (off the UI thread) and only swap the
+// built definitions into the global registry on the main thread. Wires a real worker,
+// drives the async reload to completion by draining the mailbox, and proves the load ran
+// off-thread AND the changed definition reached the (main-thread-owned) registry.
+void TestWorkspacePluginRuntimeLoadsSyntaxOffTheMainThread() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path notes = project_root / "notes.offthreadtodo";
+  WriteFile(project_root / "README.md", "off-thread syntax fixture\n");
+  WriteFile(notes, "TODO item\n");
+  WritePluginInit(global_plugins, "syntax",
+                  R"(local ide = require("microide")
+return ide.plugin({ id = "syntax" })
+)");
+  WriteFile(global_plugins / "syntax" / "syntax" / "offthreadtodo.lua",
+            R"(return {
+  filetype = "offthreadtodo",
+  files = { "\\.offthreadtodo$" },
+  rules = { { pattern = "\\bTODO\\b", group = "keyword" } }
+}
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  workspace::WorkspacePluginRuntime runtime;
+  runtime.Host().SetCallbacks(MakePluginHostCallbacks());
+  runtime.Thread().SetWakeEventType(0);  // No SDL loop; we drain the mailbox by hand.
+  runtime.Host().SetWorker(&runtime.Thread());
+
+  bool done = false;
+  bool clean = false;
+  runtime.ReloadAsync(project_root, /*reload_syntax_definitions=*/true, [&](bool ok) {
+    clean = ok;
+    done = true;
+  });
+
+  // Pump the worker<->main round-trips: host reload (worker) -> completion (main) ->
+  // syntax load (worker) -> publish + on_complete (main). Draining the mailbox runs the
+  // main-thread halves; the worker runs its halves on its own thread in between.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!done && std::chrono::steady_clock::now() < deadline) {
+    runtime.DrainPluginThreadActions();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  Expect(done, "the async syntax reload should complete within the deadline");
+  Expect(clean, "the syntax reload should report a clean load");
+
+  Expect(runtime.OffThreadSyntaxLoadCount() > 0,
+         "the syntax discovery/load must have run on the plugin worker, not inline");
+  Expect(runtime.syntax_definitions_changed(),
+         "loading a new plugin syntax definition should mark the definitions changed");
+  const auto changed = runtime.ChangedSyntaxLanguages();
+  Expect(std::any_of(changed.begin(), changed.end(),
+                     [](std::string_view language) { return language == "offthreadtodo"; }),
+         "the changed-language set should include the newly loaded filetype");
+  // The publish step swapped the built registry on the main thread, so detection sees it.
+  Expect(editor::runtime_syntax::DetectFiletype(notes) == "offthreadtodo",
+         "the off-thread reload must publish the definition onto the main-thread registry");
+
+  runtime.Shutdown();  // join the worker before teardown
+  // Restore the global registry to built-ins so this test does not leak plugin syntax
+  // definitions into later tests sharing the process-wide registry.
+  editor::runtime_syntax::ReloadDefinitions({}, nullptr);
+}
+
 // A workspace edit deferred from the worker (a reactive editor event calling
 // ctx.editor.apply_edits) must carry the capturing snapshot's staleness guard:
 // the active buffer path and its content revision at capture time. The host uses
@@ -3823,6 +3896,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostRunAsyncCallbackOutlivesOuterWatchdog);
   AddTest(tests, "PluginHost/RoutesEventsThroughWorkerThread",
           TestPluginHostRoutesEventsThroughWorkerThread);
+  AddTest(tests, "PluginHost/WorkspacePluginRuntimeLoadsSyntaxOffTheMainThread",
+          TestWorkspacePluginRuntimeLoadsSyntaxOffTheMainThread);
   AddTest(tests, "PluginHost/DeferredWorkspaceEditCarriesStalenessGuard",
           TestPluginHostDeferredWorkspaceEditCarriesStalenessGuard);
   AddTest(tests, "PluginHost/QueryCompletionsAsyncDeliversThroughWorker",

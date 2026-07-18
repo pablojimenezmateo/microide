@@ -124,7 +124,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > matrix; folded into the Standing backlog above where a matching cluster exists). Union of the
 > numbers below covers every remaining addendum item:
 >
-> 1. **Off-UI-thread / async** (Standing #1): 108. *(005, 024, 033 RESOLVED 2026-07-18 — `TaskExecutor` latest-only keyed submit + blame coalescing; `util::ReadFileLineWindow` bounded reference-snippet reader + live-buffer reuse; tab-activation LSP hydration deferred to post-present drain + tightened lint.)*
+> 1. **Off-UI-thread / async** (Standing #1): **fully RESOLVED 2026-07-18** — 005 (`TaskExecutor` latest-only keyed submit + blame coalescing), 024 (`util::ReadFileLineWindow` bounded reference-snippet reader + live-buffer reuse), 033 (tab-activation LSP hydration deferred to post-present drain + tightened lint), 108 (plugin syntax fingerprint/load moved to the plugin worker; only the registry swap stays main-thread, generation-guarded).
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test):
 >    018, 029, 038, 039, 040, 041, 043, 044, 046, 056, 057, 064, 068, 070,
@@ -1216,8 +1216,25 @@ speed-path items first, then the correctness/lifecycle cleanups.
   retain many full path batches and then replay them as a long burst onto the index. Add a bounded
   pre-initial queue, coalesce by path/recursive delete, or collapse overflow into one post-initial
   rescan/dirty marker before replay.
-- **TD-2026-07-17A-108 — plugin runtime syntax reload still runs bounded file discovery and regex
-  compilation on the main-thread completion path.** Plugin Lua reload is dispatched through
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-108 — plugin runtime syntax reload still runs bounded file discovery and regex
+  compilation on the main-thread completion path.** Fixed: `WorkspacePluginRuntime::ReloadAsync`
+  now splits the syntax reload. When the plugin worker is running, the reload completion dispatches
+  `LoadSyntaxDefinitionsOffThread` — `SyntaxSourceFingerprint::Compute` (stat/read up to 8,192
+  files) + `LoadDefinitionsFromDirectories` (each file compiled in its own throwaway `lua_State`,
+  so it is independent of the host's shared runtime) — onto the plugin worker (`plugin_thread_`,
+  which IS the host's worker via `SetWorker`). Only the global-registry swap (`ReloadDefinitions`)
+  and the changed-language bookkeeping run on the main thread in `PublishSyntaxReload`, keeping the
+  lock-free main-thread registry-reader invariant intact. The publish is dropped when a newer
+  reload has bumped `syntax_reload_generation_`, so a superseded reload's late worker result can't
+  swap the registry back to older definitions; `DataDirectories` is resolved on the main thread
+  (UI-thread-owned published snapshot) and handed to the worker. `SyntaxSourceFingerprint::Compute`
+  is now mutex-guarded so its cache is safe across the worker/main split. The no-worker config keeps
+  the original synchronous `ApplySyntaxReload` fallback. Regression:
+  `PluginHost/WorkspacePluginRuntimeLoadsSyntaxOffTheMainThread` (wires a real worker, drives the
+  async reload to completion, asserts the load ran off-thread via `OffThreadSyntaxLoadCount` and the
+  changed definition reached the main-thread registry) plus the existing
+  `PluginsReloadRefreshesRuntimeSyntaxHighlighting` / `...SkipsUnchangedRuntimeSyntaxRebuild`.
+  Plugin Lua reload is dispatched through
   `PluginHost::ReloadAsync`, but `WorkspacePluginRuntime::ApplySyntaxReload` is invoked from the
   reload completion and then calls `SyntaxSourceFingerprint::Compute`,
   `LoadDefinitionsFromDirectories`, and `ReloadDefinitions` before the shell consumes the result.
