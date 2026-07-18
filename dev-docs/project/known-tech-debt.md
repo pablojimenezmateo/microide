@@ -1593,7 +1593,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   for the full timeout window and grow `early_messages` without an item or retained-byte budget.
   Bound the buffered pre-response messages by count/bytes, drop or summarize excess output events, and
   fail initialization cleanly when the adapter exceeds the startup event budget.
-- **TD-2026-07-17A-099 — patch generation materializes whole unified diffs on the UI path.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-099 — patch generation materializes whole unified diffs on the UI path.**
+  Fixed: `BuildUnifiedPatch` now writes the header then streams the body into a single buffer
+  (the `body_lines` vector already holds only `string_view`s into the model — no second
+  full-patch-sized `body.str()` copy), and enforces a `PatchGenerationOptions::max_patch_bytes`
+  budget (default 64 MiB) that returns `nullopt` (surfaced as "no patch") when exceeded instead
+  of building arbitrarily large patch text on the copy/stage path. Regression:
+  `PatchApply/GeneratorByteBudget`.
   `project::BuildUnifiedPatch` collects every emitted body line in a `std::vector`, renders those rows
   into one `std::ostringstream`, then copies that body into a second `std::ostringstream` for the final
   patch. `WorkspaceCompareInteractionCoordinator` copy-to-clipboard commands and

@@ -714,9 +714,56 @@ void TestFileIndexWatcherBuffersIncrementalsUntilInitialBatch() {
          "incrementals after the initial batch are delivered immediately");
 }
 
+// The pre-initial buffer is bounded: a flood of incremental batches arriving
+// before the initial (wholesale-replace) batch cannot retain unbounded path
+// batches. Batches past the batch-count budget are dropped (newest-first) while
+// the earlier ones still replay after the initial batch. TD-2026-07-17A-107.
+void TestFileIndexWatcherBoundsPreInitialBatchFlood() {
+  FileIndexWatcher watcher;
+  std::vector<IndexUpdateBatch> received;
+  watcher.SetCallback([&](IndexUpdateBatch batch) { received.push_back(std::move(batch)); });
+
+  const auto make_incremental = [](const std::filesystem::path& rel) {
+    IndexUpdateBatch batch;
+    batch.is_initial = false;
+    IndexUpdateBatch::Change change;
+    change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
+    change.entry.relative_path = rel;
+    batch.changes.push_back(std::move(change));
+    return batch;
+  };
+
+  // Flood more pre-initial batches than the batch-count budget allows.
+  const std::size_t flood = 5000;  // > kMaxPendingBatches (4096)
+  for (std::size_t i = 0; i < flood; ++i) {
+    watcher.DispatchBatchForTesting(make_incremental("f" + std::to_string(i) + ".cpp"));
+  }
+  Expect(received.empty(), "pre-initial incrementals are buffered, not delivered");
+
+  IndexUpdateBatch initial;
+  initial.is_initial = true;
+  watcher.DispatchBatchForTesting(std::move(initial));
+
+  // Delivered: the initial batch + at most the bounded number of buffered batches.
+  Expect(!received.empty() && received.front().is_initial,
+         "the initial batch is delivered first");
+  Expect(received.size() < flood + 1,
+         "the pre-initial buffer must drop batches past its budget rather than replay all");
+  // The earliest buffered batch (the oldest delta) is preserved, not the newest.
+  bool has_first = false;
+  for (const IndexUpdateBatch& batch : received) {
+    if (BatchContainsPath(batch, "f0.cpp")) {
+      has_first = true;
+    }
+  }
+  Expect(has_first, "the earliest buffered delta survives (newest are dropped on overflow)");
+}
+
 void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
   AddTest(tests, "FileIndexWatcher/BuffersIncrementalsUntilInitialBatch",
           TestFileIndexWatcherBuffersIncrementalsUntilInitialBatch);
+  AddTest(tests, "FileIndexWatcher/BoundsPreInitialBatchFlood",
+          TestFileIndexWatcherBoundsPreInitialBatchFlood);
   AddTest(tests, "FileIndexWatcher/InitialBatchContainsExistingFiles",
           TestFileIndexWatcherInitialBatchContainsExistingFiles);
   AddTest(tests, "FileIndexWatcher/DetectsCreatedFile",

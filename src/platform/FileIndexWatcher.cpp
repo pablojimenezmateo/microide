@@ -1484,6 +1484,16 @@ struct FileIndexWatcher::DispatchState {
   std::mutex mutex;
   bool initial_applied = false;
   std::vector<IndexUpdateBatch> pending;
+  // Aggregate change/batch counters for the pre-initial buffer so a slow initial
+  // scan plus rapid create/delete churn cannot retain unbounded path batches before
+  // the wholesale-replace baseline lands. Once either budget is hit, further
+  // pre-initial batches are dropped (newest-first) and `pending_overflow` records
+  // it; the earlier buffered batches (which carry the oldest deltas) still replay.
+  // TD-2026-07-17A-107.
+  std::size_t pending_change_count = 0;
+  bool pending_overflow = false;
+  static constexpr std::size_t kMaxPendingChanges = 200000;
+  static constexpr std::size_t kMaxPendingBatches = 4096;
 };
 
 void FileIndexWatcher::SetCallback(Callback callback) {
@@ -1497,6 +1507,17 @@ void FileIndexWatcher::SetCallback(Callback callback) {
     const bool is_initial = batch.is_initial;
     std::lock_guard<std::mutex> lock(state->mutex);
     if (!is_initial && !state->initial_applied) {
+      // Bound the pre-initial buffer: drop the batch (newest-first) once either the
+      // aggregate change budget or the batch-count budget is exceeded, so churn
+      // during a slow initial scan cannot retain unbounded path batches.
+      if (state->pending_overflow ||
+          state->pending.size() >= DispatchState::kMaxPendingBatches ||
+          state->pending_change_count + batch.changes.size() >
+              DispatchState::kMaxPendingChanges) {
+        state->pending_overflow = true;
+        return;
+      }
+      state->pending_change_count += batch.changes.size();
       state->pending.push_back(std::move(batch));
       return;
     }
@@ -1513,6 +1534,8 @@ void FileIndexWatcher::SetCallback(Callback callback) {
         }
       }
       state->pending.clear();
+      state->pending_change_count = 0;
+      state->pending_overflow = false;
     }
   };
 }
@@ -1551,6 +1574,8 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
     std::lock_guard<std::mutex> lock(dispatch_state_->mutex);
     dispatch_state_->initial_applied = false;
     dispatch_state_->pending.clear();
+    dispatch_state_->pending_change_count = 0;
+    dispatch_state_->pending_overflow = false;
   }
   // The traversal filter (root .gitignore + built-in defaults + exclude_globs) is
   // constructed per-walk on the walk's own thread; exclude_globs / entry_budget are
