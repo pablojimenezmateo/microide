@@ -160,12 +160,14 @@ void LspClient::DrainCallbacks() {
 
 bool LspClient::DidOpen(std::string uri, std::string language_id, std::string text) {
   TraceLspLifecycle(language_id, impl_->proc.pid(), "didOpen", uri);
-  {
-    std::lock_guard lock(impl_->mutex);
-    impl_->document_versions[uri] = 1;
-  }
-  return impl_->SendMessageBuilderAfterInitialize(
-      [impl = impl_, uri = std::move(uri), language_id = std::move(language_id),
+  // Commit the open state (version 1) only after a successful enqueue, matching
+  // DidChange. Committing before the enqueue (the old operator[] = 1) would make
+  // the host believe the document is open even when the queue was full / the I/O
+  // thread stopped / shutdown rejected the frame, so later version-gated
+  // diagnostics would be checked against a document the server never opened.
+  // `uri` is captured by value so it stays valid for the post-enqueue commit.
+  const bool queued = impl_->SendMessageBuilderAfterInitialize(
+      [impl = impl_, uri, language_id = std::move(language_id),
        text = std::move(text)]() mutable {
         using namespace util;
         JsonObject text_doc;
@@ -178,6 +180,11 @@ bool LspClient::DidOpen(std::string uri, std::string language_id, std::string te
         return impl->SerializeMessage(
             impl->MakeNotification("textDocument/didOpen", JsonValue(std::move(params))));
       });
+  if (queued) {
+    std::lock_guard lock(impl_->mutex);
+    impl_->document_versions[uri] = 1;
+  }
+  return queued;
 }
 
 bool LspClient::DidChange(const std::string& uri, const std::string& text) {
@@ -285,16 +292,22 @@ bool LspClient::DidSave(const std::string& uri) {
 
 bool LspClient::DidClose(const std::string& uri) {
   using namespace util;
-  {
-    std::lock_guard lock(impl_->mutex);
-    impl_->document_versions.erase(uri);
-  }
   JsonObject text_doc;
   text_doc["uri"] = JsonValue(uri);
   JsonObject params;
   params["textDocument"] = JsonValue(std::move(text_doc));
-  return impl_->SendMessageAfterInitialize(
+  const bool queued = impl_->SendMessageAfterInitialize(
       impl_->MakeNotification("textDocument/didClose", JsonValue(std::move(params))));
+  if (queued) {
+    // Erase the open state only after the didClose notification is enqueued.
+    // Erasing first (the old unconditional erase) would let the host treat the
+    // document as closed while the server still has it open, so a later
+    // didChange would be dropped by the missing-version guard and a re-open
+    // could violate LSP ordering against a version the server never released.
+    std::lock_guard lock(impl_->mutex);
+    impl_->document_versions.erase(uri);
+  }
+  return queued;
 }
 
 void LspClient::BeginShutdown() {

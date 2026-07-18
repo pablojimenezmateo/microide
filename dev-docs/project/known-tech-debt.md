@@ -1308,8 +1308,17 @@ speed-path items first, then the correctness/lifecycle cleanups.
   rebuilds the full channel-info vector even though only entry content changed. Mark channel metadata
   dirty only on insertion/removal/label change, and use a separate entry-content revision for views that
   actually depend on output rows.
-- **TD-2026-07-17A-086 — LSP open-document state mutates before didOpen/didClose enqueue
-  succeeds.** `LspClient::DidChange` correctly computes the next version and commits
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-086 — LSP open-document state mutates before didOpen/didClose enqueue
+  succeeds.** Fixed: `DidOpen` now commits `document_versions[uri] = 1` only after
+  `SendMessageBuilderAfterInitialize` accepts the frame (uri captured by value so it survives the
+  post-enqueue commit), and `DidClose` erases the entry only after `SendMessageAfterInitialize`
+  accepts the didClose notification — mirroring the existing `DidChange` commit-after-success
+  pattern. A rejected enqueue (queue at the OOM backstop cap, I/O thread stopped, or shutdown)
+  therefore leaves the host's open/close belief consistent with what the server actually saw, so
+  later diagnostics are version-gated correctly and a re-open/change cannot violate LSP ordering.
+  Regression: `WorkspaceLspClient/DidOpenCloseCommitAfterSuccess` (a rejected didOpen leaves the
+  document not-open; a rejected didClose leaves it open).
+  `LspClient::DidChange` correctly computes the next version and commits
   `document_versions[uri]` only after `SendMessageBuilderAfterInitialize` accepts the message. The
   neighboring `DidOpen` stores `document_versions[uri] = 1` before enqueueing, and `DidClose` erases the
   entry before enqueueing. If the outbound queue is full, the I/O thread has stopped, or shutdown rejects

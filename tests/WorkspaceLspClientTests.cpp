@@ -1361,6 +1361,52 @@ void TestLspClientRejectsChangeAndSaveForUnopenedDocument() {
   Expect(client.DidSave(uri), "didSave after didOpen is accepted");
 }
 
+// Regression (TD-2026-07-17A-086): didOpen/didClose must commit the local
+// open-document state only after the notification is successfully enqueued,
+// matching didChange. If the enqueue is rejected (here: the outbound queue is at
+// the OOM backstop cap), the host's open/close belief must not diverge from what
+// the server actually saw. A never-initialized client parks notifications in the
+// deferred queue, so filling it to kMaxQueuedMessages gives a deterministic,
+// stable rejecting state (no subprocess, no shutdown-thread race).
+void TestLspClientDidOpenCloseCommitAfterSuccess() {
+  workspace::LspClient client;  // not initialized: enqueues defer, then cap
+  const std::string open_uri = "file:///tmp/commit-after-success.py";
+
+  // Open succeeds (deferred) and marks the document open.
+  Expect(client.DidOpen(open_uri, "python", "hello"), "first didOpen enqueues");
+  Expect(client.HasOpenDocument(open_uri), "the document is marked open after didOpen");
+
+  // Fill the deferred queue to the OOM backstop cap so further enqueues are
+  // rejected. Re-opening the same URI grows the deferred queue by one each call
+  // without adding map entries. The hard bound guards against an infinite loop
+  // if the cap semantics ever change; kMaxQueuedMessages is 50000.
+  bool reached_cap = false;
+  for (int i = 0; i < 200000; ++i) {
+    if (!client.DidOpen(open_uri, "python", "hello")) {
+      reached_cap = true;
+      break;
+    }
+  }
+  Expect(reached_cap, "the deferred outbound queue reaches its OOM backstop cap");
+
+  // A rejected didOpen must NOT record the new document as open — a phantom
+  // version-1 entry would version-gate future diagnostics for a document the
+  // server never opened.
+  const std::string other_uri = "file:///tmp/never-delivered.py";
+  Expect(!client.DidOpen(other_uri, "python", "x"),
+         "didOpen is rejected once the outbound queue is full");
+  Expect(!client.HasOpenDocument(other_uri),
+         "a rejected didOpen must not leave the document marked open");
+
+  // A rejected didClose must NOT erase the open state — the server still has the
+  // document open, so erasing early would drop a later didChange via the
+  // missing-version guard.
+  Expect(!client.DidClose(open_uri),
+         "didClose is rejected once the outbound queue is full");
+  Expect(client.HasOpenDocument(open_uri),
+         "a rejected didClose must not erase the open-document state");
+}
+
 // Regression: re-registering a server under the same canonical key with a
 // narrower language-id set must drop the aliases for the removed ids. Previously
 // re-registering ["cpp","c"] as ["cpp"] left alias_["c"] pointing at the C++
@@ -1868,6 +1914,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestLspManagerReRegistrationDropsStaleAliases);
   AddTest(tests, "WorkspaceLspClient/RejectsChangeAndSaveForUnopenedDocument",
           TestLspClientRejectsChangeAndSaveForUnopenedDocument);
+  AddTest(tests, "WorkspaceLspClient/DidOpenCloseCommitAfterSuccess",
+          TestLspClientDidOpenCloseCommitAfterSuccess);
   AddTest(tests, "WorkspaceLspClient/FramerOversizedFrameSkips",
           TestLspMessageFramerOversizedFrameSkips);
   AddTest(tests, "WorkspaceLspClient/FramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync",
