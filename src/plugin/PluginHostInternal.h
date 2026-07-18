@@ -179,9 +179,11 @@ struct PluginHost::Impl {
 
   std::optional<std::string> ResolveSetting(std::string_view id) const {
     if (g_exec.snapshot != nullptr) {
-      for (const auto& [key, value] : g_exec.snapshot->settings) {
-        if (key == id) {
-          return value;
+      if (g_exec.snapshot->settings != nullptr) {
+        for (const auto& [key, value] : *g_exec.snapshot->settings) {
+          if (key == id) {
+            return value;
+          }
         }
       }
       return std::nullopt;
@@ -197,6 +199,11 @@ struct PluginHost::Impl {
 
   // Capture the immutable host view a plugin call may read. Runs on the UI thread.
   PluginHostSnapshot CaptureSnapshot() const;
+
+  // Build or reuse the shared immutable resolved-settings block for a snapshot.
+  // Rebuilt only when the host settings revision or contributed specs change;
+  // otherwise returns the cached shared block. UI-thread only.
+  std::shared_ptr<const ResolvedPluginSettings> ResolveSettingsSnapshot() const;
 
   // Dispatch a plugin call onto the worker. Detached = fire-and-forget (events);
   // Blocking = bounded synchronous round-trip preserving the synchronous API.
@@ -425,6 +432,14 @@ struct PluginHost::Impl {
   // status geometry. UI-thread-owned: bumped when a snapshot is published and when a
   // runtime status update is applied to published_.status_item_order.
   std::uint64_t status_view_revision = 0;
+  // Cached shared resolved-settings block for snapshot capture, plus the revisions
+  // it was built at. Reused across snapshots until the host settings revision or the
+  // contributed specs (status_view_revision) change. UI-thread-owned (only
+  // ResolveSettingsSnapshot reads/writes it); the block itself is immutable so
+  // worker snapshots may hold shared references safely. See TD-2026-07-17A-076.
+  mutable std::shared_ptr<const ResolvedPluginSettings> cached_settings_;
+  mutable std::uint64_t cached_settings_revision_ = 0;
+  mutable std::uint64_t cached_settings_specs_revision_ = 0;
 
   std::vector<PluginInstance> plugins;
   // Plugin ids the user has disabled: their setup is skipped on Reload. disabled_plugin_meta

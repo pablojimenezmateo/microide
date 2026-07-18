@@ -531,6 +531,12 @@ class PluginHost {
     std::function<void(const std::string&)> error_sink;
     std::function<void(const std::string&)> log_sink;
     std::function<std::optional<std::string>(std::string_view)> get_setting;
+    // Monotonic revision of the host's resolved settings, bumped on every setting
+    // mutation/reset/layer-bind. Lets CaptureSnapshot reuse a shared immutable
+    // resolved-settings snapshot when nothing changed, instead of re-reading and
+    // copying every contributed setting value into every per-call snapshot. When
+    // unset, the snapshot cache is disabled (values are re-resolved each capture).
+    std::function<std::uint64_t()> settings_revision;
     std::function<void()> request_status_redraw;
     // Post a transient, auto-dismissing notification ("toast"). level is one of
     // "info"/"warning"/"error" (host maps unknown values to info).

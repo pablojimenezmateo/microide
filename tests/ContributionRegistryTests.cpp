@@ -894,6 +894,85 @@ return ide.plugin({
   Expect(logged_custom, "plugin should receive the custom value from the callback");
 }
 
+// The snapshot settings cache (TD-2026-07-17A-076) must reuse the resolved
+// values while the host settings revision is unchanged, and re-resolve exactly
+// when it advances. A plugin reading the same setting across two commands should
+// see the OLD value while the revision is pinned (cache reuse, no re-resolve) and
+// the NEW value after the revision bumps (invalidation), never a stale read.
+void TestPluginSettingsSnapshotCacheInvalidation() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  WriteFile(plugins_dir / "settings-rev" / "init.lua", R"(
+local ide = require("microide")
+return ide.plugin({
+  id = "settings.rev",
+  setup = function(ctx)
+    ctx.settings.declare({
+      id = "my_val",
+      type = "string",
+      default = "default-val",
+      label = "Val",
+    })
+    ctx.commands.add("settings.rev.read", function(c, args)
+      local v = ctx.settings.get("settings.rev.my_val")
+      ctx.log("value=" .. (v or "nil"))
+    end)
+  end,
+})
+)");
+
+  PluginHost host;
+  std::string current_value = "first";
+  std::uint64_t revision = 1;
+  int resolve_calls = 0;
+  PluginHost::Callbacks callbacks;
+  callbacks.get_setting = [&](std::string_view id) -> std::optional<std::string> {
+    if (id == "settings.rev.my_val") {
+      ++resolve_calls;
+      return current_value;
+    }
+    return std::nullopt;
+  };
+  callbacks.settings_revision = [&]() { return revision; };
+  host.SetCallbacks(std::move(callbacks));
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+
+  const auto last_logged_value = [&]() -> std::string {
+    for (auto it = host.Messages().rbegin(); it != host.Messages().rend(); ++it) {
+      const auto pos = it->find("value=");
+      if (pos != std::string::npos) {
+        return it->substr(pos + 6);
+      }
+    }
+    return "<none>";
+  };
+
+  host.ExecuteCommand("settings.rev.read", {});
+  Expect(last_logged_value() == "first", "plugin should read the resolved value 'first'");
+  const int calls_after_first = resolve_calls;
+
+  // Change the underlying value WITHOUT bumping the revision: the cache must serve
+  // the previously-resolved value and must not re-invoke get_setting.
+  current_value = "second";
+  host.ExecuteCommand("settings.rev.read", {});
+  Expect(last_logged_value() == "first",
+         "with the revision pinned, the cached resolved value must be reused (no stale re-resolve)");
+  Expect(resolve_calls == calls_after_first,
+         "an unchanged revision must not re-resolve the setting through get_setting");
+
+  // Bump the revision: the cache invalidates and the new value is resolved.
+  revision = 2;
+  host.ExecuteCommand("settings.rev.read", {});
+  Expect(last_logged_value() == "second",
+         "advancing the settings revision must invalidate the cache and resolve the new value");
+  Expect(resolve_calls > calls_after_first,
+         "a bumped revision must re-resolve the setting through get_setting");
+}
+
 // ---------------------------------------------------------------------------
 // Phase C: tree-capable plugin sidebar
 // ---------------------------------------------------------------------------
@@ -1225,6 +1304,8 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SidebarRegistry/HideView", TestSidebarHideView);
   AddTest(tests, "SidebarRegistry/ReorderViews", TestSidebarReorderViews);
   AddTest(tests, "SettingsRegistry/GetCallback", TestPluginSettingsGetCallback);
+  AddTest(tests, "SettingsRegistry/SnapshotCacheInvalidation",
+          TestPluginSettingsSnapshotCacheInvalidation);
   AddTest(tests, "SidebarRegistry/PluginTreeToggle", TestPluginTreeSidebarToggle);
   AddTest(tests, "LanguageProviders/PluginQueries", TestPluginLanguageProviders);
   AddTest(tests, "LanguageProviders/DocumentSymbolsBoundedAgainstAdversarialArray",

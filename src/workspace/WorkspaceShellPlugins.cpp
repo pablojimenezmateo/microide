@@ -493,6 +493,10 @@ WorkspaceShell::WorkspaceShell() {
           [this](std::string_view id) {
             return GetSettingValue(id);
           },
+      .settings_revision =
+          [this]() {
+            return settings_store_.Revision();
+          },
       .request_status_redraw =
           [this]() {
             RequestChromeRedraw();
