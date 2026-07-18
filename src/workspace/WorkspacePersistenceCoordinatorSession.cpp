@@ -668,9 +668,19 @@ PersistenceCoordinator::BuildPersistedMergeTabState(
   persisted_tab.merge_horizontal_scroll = tab.merge->horizontal_scroll;
   persisted_tab.merge_left_divider_fraction = tab.merge->left_divider_fraction;
   persisted_tab.merge_right_divider_fraction = tab.merge->right_divider_fraction;
-  persisted_tab.merge_hunk_choices.reserve(tab.merge->model.hunks.size());
-  for (const auto& hunk : tab.merge->model.hunks) {
-    persisted_tab.merge_hunk_choices.push_back(compare::MergeChoiceLabel(hunk.choice));
+  // Cap the save-side choice vector at the reader's budget so a huge generated
+  // conflict tab never builds a record set the reader (kMaxSessionMergeHunkChoices)
+  // would reject. Choices stay positional and every entry is persisted verbatim —
+  // the restore model rebuild does not reproduce the save-time inferred choice for
+  // every hunk, so an empty/default-skip encoding would change the restored result
+  // (bootstrap_choice is not the value a rebuild lands on). TD-2026-07-17A-097.
+  constexpr std::size_t kMaxPersistedMergeHunkChoices = 200'000;
+  const std::vector<compare::MergeHunk>& hunks = tab.merge->model.hunks;
+  const std::size_t bounded =
+      std::min<std::size_t>(hunks.size(), kMaxPersistedMergeHunkChoices);
+  persisted_tab.merge_hunk_choices.reserve(bounded);
+  for (std::size_t i = 0; i < bounded; ++i) {
+    persisted_tab.merge_hunk_choices.emplace_back(compare::MergeChoiceLabel(hunks[i].choice));
   }
   return persisted_tab;
 }

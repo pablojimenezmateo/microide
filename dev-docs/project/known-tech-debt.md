@@ -1530,7 +1530,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   the model is already built, so a static left side still pays an O(left_bytes) scan just to size line
   numbers. Store the left line count/max gutter digits in `CompareTabState` when content/model
   changes and have layout consume the cached scalar.
-- **TD-2026-07-17A-095 — control query responses have no aggregate result budget.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-095 — control query responses have no aggregate result budget.**
+  Fixed: every control query array (`debug-state` frames, `breakpoints` [aggregate across
+  files], `function-breakpoints`, `tabs`, `launch-configs`) is capped at
+  `ControlChannelService::kMaxControlQueryEntries` (10000) before JSON construction, so a
+  huge stack/breakpoint set/tab list can no longer materialize a multi-megabyte response on
+  the UI path (only to be dropped by the write-buffer cap). `debug-state` sets
+  `framesTruncated:true` when the call stack is clipped. Regression:
+  `ControlChannelService/QueryResponseIsBounded`.
   `ControlChannelService::ConsumeControlCallbacks` answers each queued request on the main thread,
   and queries such as `debug-state`, `breakpoints`, `tabs`, `projects`, `launch-configs`, and
   `adapters` build full JSON arrays before `SerializeControlResponse`. The socket layer caps request

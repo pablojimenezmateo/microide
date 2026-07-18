@@ -2095,6 +2095,64 @@ void TestWorkspaceShellRestoreSessionPreservesMergeNavigationState() {
          "merge session restore should preserve the committed conflict choice metadata");
 }
 
+// Merge session save keeps hunk choices positional and capped at the reader's
+// budget; a multi-hunk tab round-trips every hunk's choice exactly.
+// TD-2026-07-17A-097.
+void TestWorkspaceShellRestoreSessionRoundTripsMultiHunkMergeChoices() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  // Two independent conflict hunks (section 1 and section 2).
+  WriteFile(base,
+            "section 1\nvalue: base 1\ncontext: unchanged1\n\n"
+            "section 2\nvalue: base 2\ncontext: unchanged2\n");
+  WriteFile(incoming,
+            "section 1\nvalue: feature 1\ncontext: unchanged1\n\n"
+            "section 2\nvalue: feature 2\ncontext: unchanged2\n");
+  WriteFile(current,
+            "section 1\nvalue: main 1\ncontext: unchanged1\n\n"
+            "section 2\nvalue: main 2\ncontext: unchanged2\n");
+  WriteFile(output,
+            "section 1\nvalue: main 1\ncontext: unchanged1\n\n"
+            "section 2\nvalue: main 2\ncontext: unchanged2\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for the two-hunk fixture");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(merge.model.hunks.size() >= 2, "fixture should produce at least two hunks");
+  // Distinct explicit choices per hunk exercise the positional persist/restore.
+  merge.model.hunks[0].choice = MergeChoice::Both;
+  merge.model.hunks[1].choice = MergeChoice::Incoming;
+  WorkspaceShellTestAccess::RefreshMergeTabDerivedState(shell);
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "merge session restore should succeed");
+  const auto& rebuilt = WorkspaceShellTestAccess::ActiveMerge(restored);
+  Expect(rebuilt.model.hunks.size() >= 2, "restore should rebuild both hunks");
+  Expect(rebuilt.model.hunks[0].choice == MergeChoice::Both,
+         "the first hunk restores to its persisted choice (positional)");
+  Expect(rebuilt.model.hunks[1].choice == MergeChoice::Incoming,
+         "the second hunk restores to its persisted choice (positional)");
+}
+
 void TestWorkspaceShellRestoreSessionDefersInactiveCleanEditorTabs() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2581,6 +2639,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMoveMergeSelectionInvalidatesConflictBand);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesMergeNavigationState",
           TestWorkspaceShellRestoreSessionPreservesMergeNavigationState);
+  AddTest(tests, "WorkspaceShell/RestoreSessionRoundTripsMultiHunkMergeChoices",
+          TestWorkspaceShellRestoreSessionRoundTripsMultiHunkMergeChoices);
   AddTest(tests, "WorkspaceShell/RestoreSessionDefersInactiveCleanEditorTabs",
           TestWorkspaceShellRestoreSessionDefersInactiveCleanEditorTabs);
   AddTest(tests, "WorkspaceShell/DeferredTabHydrationPreservesCursorAndScroll",
