@@ -371,30 +371,20 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       } else {
         // Add a ranged cursor at every match in the file, each keeping its
         // selection so a following keystroke replaces all occurrences at once.
-        std::vector<editor::SelectionRange> ranges;
-        for (std::size_t li = 0; li < lines.LineCount(); ++li) {
-          const std::string_view current = lines.LineView(li);
-          std::size_t from = 0;
-          while (true) {
-            const auto pos =
-                FindLiteralNeedleInLine(current, from, needle_view, case_sensitive);
-            if (!pos.has_value()) {
-              break;
-            }
-            // Skip the seed selection; the primary caret already covers it.
-            if (li == sel->start.line && *pos == a) {
-              from = *pos + needle_view.size();
-              continue;
-            }
-            ranges.push_back(editor::SelectionRange{
-                editor::TextPosition{li, *pos},
-                editor::TextPosition{li, *pos + needle_view.size()},
-            });
-            from = *pos + needle_view.size();
-            if (from >= current.size()) break;
-          }
+        // CollectAddCursorMatchRanges folds each line once (not once per match)
+        // and caps the installed carets so a dense single-line match set stays
+        // bounded (TD-2026-07-17A-031).
+        AddCursorMatchScan scan = CollectAddCursorMatchRanges(
+            lines, sel->start.line, a, needle_view, case_sensitive);
+        const std::size_t match_count = scan.ranges.size();
+        const bool truncated = scan.truncated;
+        viewport->SetSecondaryCaretsWithRanges(std::move(scan.ranges));
+        if (truncated) {
+          context_.Notify(
+              NotificationService::Tone::Warning,
+              "Added cursors at the first " + std::to_string(match_count) +
+                  " matches (more remain)");
         }
-        viewport->SetSecondaryCaretsWithRanges(std::move(ranges));
       }
       context_.NotifyEditorCaretMoved();
       return DispatchResult::Handled;

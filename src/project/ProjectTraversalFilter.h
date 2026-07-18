@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -38,11 +39,16 @@ class ProjectTraversalFilter {
 
  private:
   std::filesystem::path RelativeToRoot(const std::filesystem::path& path) const;
-  const IgnoreMatcher& MatcherForParentDirectory(const std::filesystem::path& directory);
+  std::shared_ptr<const IgnoreMatcher> MatcherForParentDirectory(
+      const std::filesystem::path& directory);
 
   std::filesystem::path root_;
-  IgnoreMatcher root_matcher_;
-  std::unordered_map<std::string, IgnoreMatcher> directory_matchers_;
+  // Matchers are parent-linked (each holds only its own directory's rules and
+  // shares the ancestor chain), so the cache stores shared pointers a descendant
+  // can reference cheaply instead of a full copy of the inherited rule set per
+  // directory (TD-2026-07-17A-055).
+  std::shared_ptr<const IgnoreMatcher> root_matcher_;
+  std::unordered_map<std::string, std::shared_ptr<const IgnoreMatcher>> directory_matchers_;
 };
 
 }  // namespace microide::project

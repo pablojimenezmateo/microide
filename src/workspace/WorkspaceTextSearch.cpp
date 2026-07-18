@@ -281,6 +281,53 @@ std::vector<editor::SelectionRange> FindLiteralSearchMatches(
       buffer.LineCount(), [&](std::size_t i) { return buffer.LineView(i); }, query, truncated);
 }
 
+AddCursorMatchScan CollectAddCursorMatchRanges(const editor::TextBuffer& buffer,
+                                               std::size_t seed_line,
+                                               std::size_t seed_column,
+                                               std::string_view needle,
+                                               bool case_sensitive,
+                                               std::size_t max_matches) {
+  AddCursorMatchScan scan;
+  if (needle.empty()) {
+    return scan;
+  }
+  // Fold the needle once (case-insensitive). The fold is length-preserving, so
+  // the folded needle's byte length equals the raw needle's, keeping the end
+  // column correct.
+  std::string lowered_needle;
+  if (!case_sensitive) {
+    util::Utf8CaseFoldInto(needle, lowered_needle);
+  }
+  const std::string_view search_needle = case_sensitive ? needle : std::string_view(lowered_needle);
+  std::string lowered_line;
+  for (std::size_t li = 0; li < buffer.LineCount(); ++li) {
+    const std::string_view raw = buffer.LineView(li);
+    std::string_view haystack = raw;
+    if (!case_sensitive) {
+      // Fold this line exactly ONCE, then reuse the folded buffer for every match
+      // on the line instead of re-folding per occurrence.
+      util::Utf8CaseFoldInto(raw, lowered_line);
+      haystack = lowered_line;
+    }
+    std::size_t offset = haystack.find(search_needle);
+    while (offset != std::string_view::npos) {
+      // Skip the seeded span; the primary caret already covers it.
+      if (!(li == seed_line && offset == seed_column)) {
+        if (scan.ranges.size() >= max_matches) {
+          scan.truncated = true;
+          return scan;
+        }
+        scan.ranges.push_back(editor::SelectionRange{
+            editor::TextPosition{li, offset},
+            editor::TextPosition{li, offset + search_needle.size()},
+        });
+      }
+      offset = haystack.find(search_needle, offset + search_needle.size());
+    }
+  }
+  return scan;
+}
+
 bool QueryExtendsCaseInsensitive(std::string_view prefix, std::string_view query) {
   if (prefix.size() > query.size()) {
     return false;

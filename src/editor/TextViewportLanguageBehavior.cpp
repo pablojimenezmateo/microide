@@ -235,16 +235,42 @@ bool TextViewport::TrySurroundInsert(char ch) {
     return false;
   }
 
-  const std::string inner = detail::TextBetweenLines(document_->lines, norm);
-  const std::string replacement = pair->open + inner + pair->close;
-  const std::string first_prefix = document_->lines[norm.start.line].substr(0, norm.start.column);
+  // Surround only prepends `open` to the selection's first line and appends
+  // `close` to its last line; the middle lines are untouched. Wrap the boundary
+  // lines in place instead of materializing the whole selected text and the
+  // open+inner+close transient the generic range-replace path builds (A-021).
+  // Delimiters never carry a line break in practice (openers are single chars),
+  // but guard and fall back to the generic path if one does so line accounting
+  // stays correct.
+  const bool boundary_safe =
+      pair->open.find('\n') == std::string::npos && pair->open.find('\r') == std::string::npos &&
+      pair->close.find('\n') == std::string::npos && pair->close.find('\r') == std::string::npos;
+
   TextPosition inner_anchor{};
   TextPosition inner_cursor{};
-  PostSurroundInnerSelection(*pair, inner, norm.start.line, first_prefix, &inner_anchor,
-                             &inner_cursor);
-
-  if (!ApplyRangeEdit(norm, replacement, true)) {
-    return false;
+  if (boundary_safe) {
+    // Inner-selection endpoints derived from the range, no text materialization:
+    // the anchor sits just past `open` on the first line; the cursor sits at the
+    // end of the selected content on the last line (offset by `open` too when the
+    // selection is single-line, mirroring PostSurroundInnerSelection).
+    inner_anchor = TextPosition{norm.start.line, norm.start.column + pair->open.size()};
+    const bool single_line = norm.start.line == norm.end.line;
+    const std::size_t last_inner_line_size =
+        single_line ? norm.end.column - norm.start.column : norm.end.column;
+    const std::size_t single_line_offset = single_line ? norm.start.column + pair->open.size() : 0;
+    inner_cursor = TextPosition{norm.end.line, single_line_offset + last_inner_line_size};
+    if (!SurroundRangeBoundaries(norm, pair->open, pair->close)) {
+      return false;
+    }
+  } else {
+    const std::string inner = detail::TextBetweenLines(document_->lines, norm);
+    const std::string replacement = pair->open + inner + pair->close;
+    const std::string first_prefix = document_->lines[norm.start.line].substr(0, norm.start.column);
+    PostSurroundInnerSelection(*pair, inner, norm.start.line, first_prefix, &inner_anchor,
+                               &inner_cursor);
+    if (!ApplyRangeEdit(norm, replacement, true)) {
+      return false;
+    }
   }
   selection_anchor_ = inner_anchor;
   cursor_line_ = inner_cursor.line;

@@ -156,7 +156,27 @@ void WorkspaceShell::ReplaceAllBufferSearchMatches() {
 
   buffer_search.preserve_temporarily_expanded_folds = true;
   if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
-    viewport->ReplaceAll(buffer_search.query.text(), buffer_search.replace_text.text());
+    // TD-2026-07-17A-028: RefreshBufferSearch already computed the exact match
+    // set (same case-insensitive fold ReplaceAll uses) for this query over the
+    // current content. When that set is fresh (same viewport + content revision +
+    // query) and complete (below the retained-match cap, so not truncated), apply
+    // it as one grouped range edit instead of re-scanning + re-folding the whole
+    // document. Any inconsistency makes ReplaceAllRanges return nullopt, and we
+    // fall back to the self-contained scanning ReplaceAll.
+    const auto& incremental = buffer_search.incremental;
+    const bool matches_fresh =
+        incremental.valid && incremental.viewport == static_cast<const void*>(viewport) &&
+        incremental.content_revision == viewport->content_revision() &&
+        incremental.query == buffer_search.query.text() &&
+        buffer_search.matches.size() < kMaxBufferSearchMatches;
+    const bool applied =
+        matches_fresh &&
+        viewport
+            ->ReplaceAllRanges(buffer_search.matches, buffer_search.replace_text.text())
+            .has_value();
+    if (!applied) {
+      viewport->ReplaceAll(buffer_search.query.text(), buffer_search.replace_text.text());
+    }
   }
   RefreshBufferSearch();
   RequestEditorSurfaceRedraw();

@@ -69,6 +69,33 @@ std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
                                                    std::string_view needle,
                                                    bool case_sensitive);
 
+// TD-2026-07-17A-031: "Add Cursor at All Matches" scans the whole buffer for
+// every occurrence of the seed selection and installs a ranged secondary caret
+// at each. Cap the number of installed carets at a product-sized ceiling so a
+// dense single-line match set cannot install an unbounded caret vector.
+inline constexpr std::size_t kMaxAddCursorAtAllMatches = 10000;
+
+struct AddCursorMatchScan {
+  std::vector<editor::SelectionRange> ranges;
+  bool truncated = false;
+};
+
+// Collect a ranged secondary caret at every literal occurrence of `needle` in
+// `buffer`, excluding the seeded selection at (seed_line, seed_column). The
+// case-insensitive path folds each line ONCE (and the needle once) instead of
+// re-folding the whole line for every match, so a dense single-line match set
+// is O(line_bytes) per line rather than O(matches * line_bytes). The scan stops
+// after `max_matches` ranges and reports it via `truncated`. Folding is
+// length-preserving, so folded byte offsets are valid columns in the original
+// line. (TD-2026-07-17A-031.)
+AddCursorMatchScan CollectAddCursorMatchRanges(const editor::TextBuffer& buffer,
+                                               std::size_t seed_line,
+                                               std::size_t seed_column,
+                                               std::string_view needle,
+                                               bool case_sensitive,
+                                               std::size_t max_matches =
+                                                   kMaxAddCursorAtAllMatches);
+
 /// Returns the start column of the next occurrence after scanning forward from
 /// `(seed_line, seed_end_col)`, then wrapping once from the beginning of the
 /// document. On `seed_line` after the wrap, matches before `seed_end_col` count,

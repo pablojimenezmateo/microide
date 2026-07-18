@@ -297,12 +297,12 @@ void PersistenceCoordinator::SaveConfigState() const {
       .branch_review = ToPersistedBranchReviewState(state.branch_review),
   };
   if (!state.sidebar.git.commit_workflow.subject.text().empty() ||
-      !CommitWorkflowBodyText(state.sidebar.git.commit_workflow.body).empty()) {
+      !state.sidebar.git.commit_workflow.BodyText().empty()) {
     persisted.commit_draft = PersistedCommitDraftState{
         .head_oid = state.sidebar.git.commit_workflow.draft_context.head_oid,
         .branch_name = state.sidebar.git.commit_workflow.draft_context.branch_name,
         .subject = state.sidebar.git.commit_workflow.subject.text(),
-        .body = CommitWorkflowBodyText(state.sidebar.git.commit_workflow.body),
+        .body = state.sidebar.git.commit_workflow.BodyText(),
     };
   }
   StripTransientSettings(persisted.settings);

@@ -1125,6 +1125,12 @@ bool WorkspaceActionContext::SetSettingValue(std::string_view id, std::string va
   return operations_.set_setting_value(id, std::move(value));
 }
 
+void WorkspaceActionContext::Notify(NotificationService::Tone tone, std::string message) {
+  if (operations_.notify) {
+    operations_.notify(tone, std::move(message));
+  }
+}
+
 void WorkspaceActionContext::ToggleEditorEssentialsCapability(ActionId id) {
   const char* key = EditorEssentialsCapabilitySettingKey(id);
   if (key == nullptr) {

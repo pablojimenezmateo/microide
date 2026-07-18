@@ -24,7 +24,10 @@ struct SortableEntry {
   bool is_directory = false;
   bool is_symlink = false;
   bool ignored = false;
-  IgnoreMatcher matcher;
+  // Parent-linked matcher for descending into this directory (null for files and
+  // collapsed dirs, which are never descended); shares the ancestor rule chain
+  // instead of copying it (TD-2026-07-17A-055).
+  std::shared_ptr<const IgnoreMatcher> matcher;
 };
 
 std::string DisplayName(const std::filesystem::path& path) {
@@ -343,13 +346,13 @@ void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
     return;
   }
 
-  IgnoreMatcher matcher;
-  matcher.SetRoot(root_);
+  auto matcher = std::make_shared<IgnoreMatcher>();
+  matcher->SetRoot(root_);
   // Seed the same defaults + user excludes the index/finder use, so VCS metadata,
   // dependency, and build-output dirs render grayed (ignored) here rather than as
   // normal entries — and stay consistent with what the finder indexes.
-  matcher.AddDefaultRules();
-  matcher.AddExcludeGlobs(exclude_globs_);
+  matcher->AddDefaultRules();
+  matcher->AddExcludeGlobs(exclude_globs_);
   if (refresh_git_statuses) {
     git_statuses_ = CollectGitStatuses(root_);
   }
@@ -378,7 +381,7 @@ void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
 
 void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
                                     int depth,
-                                    const IgnoreMatcher& matcher,
+                                    const std::shared_ptr<const IgnoreMatcher>& matcher,
                                     SymlinkLoopGuard& loop_guard) {
   util::PerformanceTrace::Scope perf_scope("DirectoryTree::AppendDirectory");
   if (depth > platform::kMaxTreeWalkDepth) {
@@ -411,7 +414,7 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
 
     // .git/.svn/build-output/etc. are no longer special-cased: the seeded matcher
     // marks them ignored, so they render grayed (and stay lazily expandable).
-    const bool ignored = matcher.Ignored(relative, is_directory);
+    const bool ignored = matcher->Ignored(relative, is_directory);
     if (sort_key.starts_with('.') && !ignored) {
       iterator.increment(error);
       continue;
@@ -426,10 +429,13 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
       // this one. So skip the matcher copy + .gitignore stat/open for collapsed rows
       // — otherwise every refresh pays ~2 syscalls + a rules-vector copy per collapsed
       // directory that is immediately discarded (a monorepo has many at the root).
-      IgnoreMatcher child_matcher;
+      std::shared_ptr<const IgnoreMatcher> child_matcher;
       if (IsExpanded(path)) {
-        child_matcher = matcher;
-        child_matcher.LoadIgnoreFile(path / ".gitignore");
+        // Inherit the parent as a shared layer + this directory's own .gitignore;
+        // no copy of the inherited rule set (TD-2026-07-17A-055).
+        std::shared_ptr<IgnoreMatcher> child = IgnoreMatcher::MakeChild(matcher);
+        child->LoadIgnoreFile(path / ".gitignore");
+        child_matcher = std::move(child);
       }
       children.push_back(SortableEntry{
           .path = path,
@@ -448,7 +454,7 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
         .sort_key = sort_key,
         .is_directory = false,
         .ignored = ignored,
-        .matcher = IgnoreMatcher{},
+        .matcher = nullptr,
     });
     iterator.increment(error);
   }

@@ -59,6 +59,18 @@ struct CommitWorkflowState {
   SDL_FRect commit_button_rect{};
   SDL_FRect caret_rect{};
   int body_visible_rows = 0;
+
+  // Serialized commit body, memoized against the body viewport's content
+  // revision. Typing in the body runs a precheck (RefreshDerivedState) and can
+  // then persist the draft; both need the full body string, so without this
+  // cache each keystroke re-snapshots and re-concatenates the whole (possibly
+  // large) body (A-075). content_revision advances on every content edit, so a
+  // matching revision guarantees the cached string is current.
+  const std::string& BodyText() const;
+
+ private:
+  mutable std::string body_text_cache_;
+  mutable std::uint64_t body_text_cache_revision_ = std::numeric_limits<std::uint64_t>::max();
 };
 
 }  // namespace microide::workspace

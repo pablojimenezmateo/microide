@@ -1773,6 +1773,74 @@ void TestTextViewportReplaceAllMultiLineReplacementSplitsLines() {
   }
 }
 
+// TD-2026-07-17A-028: ReplaceAllRanges applies a precomputed match set as one
+// grouped edit and must be byte-identical to the scanning ReplaceAll (including
+// undo/redo). It must also validate its input and leave the document untouched
+// (returning nullopt) when the caller's ranges are stale/inconsistent.
+void TestTextViewportReplaceAllRangesMatchesScanningReplaceAll() {
+  using microide::editor::SelectionRange;
+  using microide::editor::TextPosition;
+
+  auto make_range = [](std::size_t line, std::size_t start, std::size_t end) {
+    return SelectionRange{TextPosition{line, start}, TextPosition{line, end}};
+  };
+
+  {
+    // Multiple matches per line, across lines, longer replacement. Compare a
+    // range-driven apply to a freshly-scanned ReplaceAll on identical content.
+    const char* content = "xax\nbetween\nxxb";
+    TextViewport range_view;
+    range_view.LoadContent(content, "/tmp/replace-ranges-a.txt");
+    // Matches of "x": (0,0),(0,2),(2,0),(2,1). Ascending, single-line, non-overlapping.
+    const std::vector<SelectionRange> matches = {
+        make_range(0, 0, 1), make_range(0, 2, 3), make_range(2, 0, 1), make_range(2, 1, 2)};
+    const auto applied = range_view.ReplaceAllRanges(matches, "zz");
+    Expect(applied.has_value() && *applied == 4, "all four ranges applied");
+
+    TextViewport scan_view;
+    scan_view.LoadContent(content, "/tmp/replace-ranges-b.txt");
+    const std::size_t scanned = scan_view.ReplaceAll("x", "zz");
+    Expect(scanned == 4, "scanning replace-all finds the same four matches");
+    Expect(range_view.lines().Snapshot() == scan_view.lines().Snapshot(),
+           "range-driven replace-all must equal scanning replace-all byte-for-byte");
+
+    // Undo restores the exact original for the range-driven edit.
+    Expect(range_view.Undo(), "undo after range replace-all succeeds");
+    Expect(range_view.lines()[0] == "xax" && range_view.lines()[1] == "between" &&
+               range_view.lines()[2] == "xxb",
+           "undo restores the pre-replacement buffer exactly");
+    Expect(range_view.Redo() && range_view.lines()[0] == "zzazz",
+           "redo reapplies the range replace-all");
+  }
+
+  {
+    // A multi-line replacement splices in real lines, matching ReplaceAll.
+    TextViewport range_view;
+    range_view.LoadContent("foo\nbar\nfoo", "/tmp/replace-ranges-nl.txt");
+    const std::vector<SelectionRange> matches = {make_range(0, 0, 3), make_range(2, 0, 3)};
+    const auto applied = range_view.ReplaceAllRanges(matches, "one\r\ntwo");
+    Expect(applied.has_value() && *applied == 2, "both matches applied");
+    Expect(range_view.line_count() == 5 && range_view.lines()[0] == "one" &&
+               range_view.lines()[1] == "two" && range_view.lines()[2] == "bar" &&
+               range_view.lines()[3] == "one" && range_view.lines()[4] == "two",
+           "multi-line replacement splices real lines around the untouched middle line");
+  }
+
+  {
+    // Validation: an out-of-range / unsorted / overlapping set must bail with
+    // nullopt and leave the buffer untouched.
+    TextViewport view;
+    view.LoadContent("abc", "/tmp/replace-ranges-invalid.txt");
+    Expect(!view.ReplaceAllRanges({make_range(0, 1, 1)}, "z").has_value(),
+           "an empty range is rejected");
+    Expect(!view.ReplaceAllRanges({make_range(0, 0, 99)}, "z").has_value(),
+           "a range past the line end is rejected");
+    Expect(!view.ReplaceAllRanges({make_range(0, 2, 3), make_range(0, 0, 1)}, "z").has_value(),
+           "a descending range set is rejected");
+    Expect(view.lines()[0] == "abc", "a rejected range set leaves the buffer untouched");
+  }
+}
+
 void TestRuntimeSyntaxDetectFiletypeDisambiguatesCppHeader() {
   const std::vector<std::string> lines = {
       "#pragma once",
@@ -3413,6 +3481,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportReplaceAllUnicodeCaseInsensitive);
   AddTest(tests, "TextViewport/ReplaceAllMultiLineReplacementSplitsLines",
           TestTextViewportReplaceAllMultiLineReplacementSplitsLines);
+  AddTest(tests, "TextViewport/ReplaceAllRangesMatchesScanningReplaceAll",
+          TestTextViewportReplaceAllRangesMatchesScanningReplaceAll);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeDisambiguatesCppHeader",
           TestRuntimeSyntaxDetectFiletypeDisambiguatesCppHeader);
   AddTest(tests, "TextViewport/RuntimeSyntaxCarriesRegionAcrossBlankLine",

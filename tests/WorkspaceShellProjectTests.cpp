@@ -3522,16 +3522,27 @@ void TestWorkspaceShellReplaceAllReadsOnlyMatchedFiles() {
   // (replace-pass total - control) is the synchronous replace read count alone. The
   // control uses a distinct no-match query so it bypasses the same-query result cache
   // and actually re-runs.
+  // The read counter is a process-global atomic incremented by search worker
+  // tasks. `running == false` is published when the worker signals `finished`,
+  // but the task may not have fully JOINED yet — under load a trailing counted
+  // read can land after ResetTextSearchReadCount() and corrupt the measurement.
+  // Drain the worker to fully idle (a hard join barrier that also flushes the
+  // relaxed counter writes) before every reset and every read so both windows
+  // count exactly one whole-project scan.
+  WorkspaceShellTestAccess::WaitForProjectSearchWorkersIdle(shell);
   util::ResetTextSearchReadCount();
   WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
   Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
          "replace-all should settle its trailing refresh");
+  WorkspaceShellTestAccess::WaitForProjectSearchWorkersIdle(shell);
   const std::size_t replace_pass_reads = util::TextSearchReadCount();
 
+  WorkspaceShellTestAccess::WaitForProjectSearchWorkersIdle(shell);
   util::ResetTextSearchReadCount();
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "zqxjq_no_match", false);
   Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
          "control refresh should settle");
+  WorkspaceShellTestAccess::WaitForProjectSearchWorkersIdle(shell);
   const std::size_t control_refresh_reads = util::TextSearchReadCount();
 
   Expect(replace_pass_reads >= control_refresh_reads,

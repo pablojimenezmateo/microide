@@ -359,8 +359,7 @@
     return shell.context_.current_project_state.sidebar.git.commit_workflow.subject.text();
   }
   static std::string CommitBodyText(const WorkspaceShell& shell) {
-    return CommitWorkflowBodyText(
-        shell.context_.current_project_state.sidebar.git.commit_workflow.body);
+    return shell.context_.current_project_state.sidebar.git.commit_workflow.BodyText();
   }
   static TextInputSurface CurrentTextInputSurface(const WorkspaceShell& shell) {
     return shell.CurrentTextInputSurface();

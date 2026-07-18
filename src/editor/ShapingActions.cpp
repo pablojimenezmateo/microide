@@ -13,6 +13,8 @@ namespace microide::editor {
 
 namespace {
 
+using SecondaryCaret = TextViewportUndoHistory::SecondaryCaret;
+
 struct LineRange {
   std::size_t first = 0;
   std::size_t last = 0;  // inclusive
@@ -38,9 +40,16 @@ LineRange ResolveLineRange(const TextViewport& viewport) {
     }
   }
 
-  for (const TextPosition& secondary : viewport.secondary_caret_positions()) {
-    r.first = std::min(r.first, secondary.line);
-    r.last = std::max(r.last, secondary.line);
+  // Cover every line a secondary caret touches, INCLUDING lines spanned only by
+  // a ranged caret's selection anchor (A-120) — a Ctrl-D selection whose anchor
+  // sits on a different line than its cursor must not be partially missed.
+  for (const SecondaryCaret& secondary : viewport.secondary_caret_ranges()) {
+    r.first = std::min(r.first, secondary.position.line);
+    r.last = std::max(r.last, secondary.position.line);
+    if (secondary.selection_anchor.has_value()) {
+      r.first = std::min(r.first, secondary.selection_anchor->line);
+      r.last = std::max(r.last, secondary.selection_anchor->line);
+    }
   }
   if (r.last >= viewport.line_count()) {
     r.last = viewport.line_count() == 0 ? 0 : viewport.line_count() - 1;
@@ -198,7 +207,9 @@ struct LineMoveCaretSnapshot {
   std::size_t primary_line = 0;
   std::size_t primary_column = 0;
   std::optional<SelectionRange> selection;
-  std::vector<TextPosition> secondaries;
+  // Full secondary carets (with anchors) so a ranged Ctrl-D selection survives
+  // the transform instead of collapsing to a bare caret (A-120).
+  std::vector<SecondaryCaret> secondaries;
 };
 
 LineMoveCaretSnapshot SnapshotCaretsForLineMove(const TextViewport& viewport) {
@@ -206,8 +217,27 @@ LineMoveCaretSnapshot SnapshotCaretsForLineMove(const TextViewport& viewport) {
       .primary_line = viewport.cursor_line(),
       .primary_column = viewport.cursor_column(),
       .selection = viewport.selection_range(),
-      .secondaries = viewport.secondary_carets(),
+      .secondaries = viewport.secondary_caret_ranges(),
   };
+}
+
+// Restore the snapshot's secondary carets, preserving each caret's selection
+// anchor. `remap` maps a snapshot TextPosition (line+column) to its post-edit
+// position. A plain caret (no anchor) restores as an empty range = bare caret,
+// so the position-only behavior is unchanged for column-only caret sets.
+template <typename Remap>
+void RestoreSecondaryCaretRanges(TextViewport& viewport,
+                                 const std::vector<SecondaryCaret>& secondaries,
+                                 Remap&& remap) {
+  std::vector<SelectionRange> ranges;
+  ranges.reserve(secondaries.size());
+  for (const SecondaryCaret& secondary : secondaries) {
+    const TextPosition cursor = remap(secondary.position);
+    const TextPosition anchor =
+        secondary.selection_anchor.has_value() ? remap(*secondary.selection_anchor) : cursor;
+    ranges.push_back(SelectionRange{anchor, cursor});
+  }
+  viewport.SetSecondaryCaretsWithRanges(std::move(ranges));
 }
 
 void RestoreCaretsAfterLineMove(TextViewport& viewport,
@@ -247,15 +277,12 @@ void RestoreCaretsAfterLineMove(TextViewport& viewport,
     viewport.MoveCursorTo(shift(snapshot.primary_line), snapshot.primary_column);
   }
 
-  // Rebuild the shifted secondary carets in a single SetSecondaryCarets pass
-  // instead of an AddSecondaryCaret-per-caret loop, which re-sorted the whole
-  // set on every insert (O(N^2 log N) for a line move with many carets).
-  std::vector<TextPosition> shifted;
-  shifted.reserve(snapshot.secondaries.size());
-  for (const TextPosition& secondary : snapshot.secondaries) {
-    shifted.push_back(TextPosition{shift(secondary.line), secondary.column});
-  }
-  viewport.SetSecondaryCarets(std::move(shifted));
+  // Rebuild the shifted secondary carets in a single pass, preserving each
+  // caret's selection anchor (A-120): a line move shifts a caret's line while
+  // its column is unchanged.
+  RestoreSecondaryCaretRanges(viewport, snapshot.secondaries, [&](const TextPosition& pos) {
+    return TextPosition{shift(pos.line), pos.column};
+  });
 }
 
 }  // namespace
@@ -392,12 +419,11 @@ void RestoreCaretsAfterIndentEdit(TextViewport& viewport,
                           shift_col(snapshot.primary_line, snapshot.primary_column));
   }
 
-  std::vector<TextPosition> shifted;
-  shifted.reserve(snapshot.secondaries.size());
-  for (const TextPosition& secondary : snapshot.secondaries) {
-    shifted.push_back(TextPosition{secondary.line, shift_col(secondary.line, secondary.column)});
-  }
-  viewport.SetSecondaryCarets(std::move(shifted));
+  // An indent/outdent shifts each caret's column by its line's delta while the
+  // line stays put; preserve every secondary caret's selection anchor (A-120).
+  RestoreSecondaryCaretRanges(viewport, snapshot.secondaries, [&](const TextPosition& pos) {
+    return TextPosition{pos.line, shift_col(pos.line, pos.column)};
+  });
 }
 
 }  // namespace

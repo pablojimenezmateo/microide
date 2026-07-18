@@ -152,6 +152,50 @@ void TestShapingMoveLineDownKeepsWholeLineSelection() {
          "the selection follows the moved block (now lines 1..2, exclusive end at line 3)");
 }
 
+// TD-2026-07-17A-120: shaping actions must not drop a ranged secondary caret's
+// selection anchor, and line-range resolution must cover lines spanned only by
+// such an anchor.
+void TestShapingPreservesRangedSecondaryCaretAnchors() {
+  using microide::editor::SelectionRange;
+  using microide::editor::TextPosition;
+
+  {
+    // A ranged secondary caret (anchor on a different line than its cursor) must
+    // keep its anchor across a line move, not collapse to a bare caret.
+    TextViewport viewport;
+    viewport.LoadContent("aaa\nbbb\nccc\nddd", "/tmp/shaping-anchor-move.txt");
+    viewport.MoveCursorTo(0, 1);
+    viewport.AddSecondaryCaretWithRange(SelectionRange{TextPosition{2, 0}, TextPosition{2, 3}});
+    Expect(microide::editor::MoveLineDown(viewport), "MoveLineDown should succeed");
+    const auto ranges = viewport.secondary_caret_ranges();
+    Expect(ranges.size() == 1, "the ranged secondary caret survives the move");
+    Expect(ranges[0].position == TextPosition{3, 3},
+           "the secondary caret's cursor follows the moved block (+1 line)");
+    Expect(ranges[0].selection_anchor.has_value(),
+           "the secondary caret's selection anchor is preserved, not dropped");
+    Expect(ranges[0].selection_anchor.value() == TextPosition{3, 0},
+           "the preserved anchor shifts with the moved block too");
+  }
+
+  {
+    // ResolveLineRange must include a line spanned only by a secondary caret's
+    // anchor. Primary caret has no selection on line 3; a ranged secondary caret
+    // spans lines 0..1 (anchor on line 0, cursor on line 1). Indent must reach
+    // line 0 — with the old positions-only resolution it was missed.
+    TextViewport viewport;
+    viewport.LoadContent("aa\nbb\ncc\ndd", "/tmp/shaping-anchor-indent.txt");
+    viewport.SetSoftTabs(true);
+    viewport.SetIndentWidth(2);
+    viewport.MoveCursorTo(3, 0);
+    viewport.AddSecondaryCaretWithRange(SelectionRange{TextPosition{0, 0}, TextPosition{1, 1}});
+    Expect(microide::editor::IndentSelection(viewport), "IndentSelection should succeed");
+    Expect(viewport.lines()[0] == "  aa",
+           "the line covered only by the secondary anchor must be indented (A-120)");
+    Expect(viewport.lines()[1] == "  bb", "the secondary caret's own line is indented");
+    Expect(viewport.lines()[3] == "  dd", "the primary caret line is indented");
+  }
+}
+
 void TestShapingMoveLineDownMultiCaretSingleUndoStep() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\nd", "/tmp/sample.txt");
@@ -912,6 +956,50 @@ void TestMultiCaretSurroundMultiLineSelections() {
          "undo should restore every multi-line surround atomically");
 }
 
+// TD-2026-07-17A-021: surround wraps by touching only the boundary lines (no
+// whole-selection materialization). Verify the inner selection endpoints and a
+// single atomic undo for a multi-line selection that ends mid-line.
+void TestSurroundBoundaryWrapInnerSelectionAndUndo() {
+  {
+    // Multi-line selection ending mid-line: opener on the first line, closer at
+    // the mid-line end column, middle untouched, inner selection preserved.
+    TextViewport viewport;
+    viewport.LoadContent("aaaa\nbbbb\ncccc\n", "/tmp/surround-boundary.cpp");
+    viewport.SetLanguageContractView(MakeCStyleContractView());
+    viewport.MoveCursorTo(0, 1);
+    viewport.MoveCursorTo(2, 2, /*extend_selection=*/true);
+    viewport.InsertCharacter('(');
+    Expect(viewport.lines()[0] == "a(aaa", "opener inserted at the selection start column");
+    Expect(viewport.lines()[1] == "bbbb", "an interior line stays untouched");
+    Expect(viewport.lines()[2] == "cc)cc", "closer inserted at the selection end column");
+    Expect(viewport.has_selection(), "the inner selection is preserved");
+    Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 2,
+           "the caret sits at the end of the inner content on the last line");
+
+    Expect(viewport.Undo(), "surround records exactly one undo step");
+    Expect(viewport.lines()[0] == "aaaa" && viewport.lines()[1] == "bbbb" &&
+               viewport.lines()[2] == "cccc",
+           "a single undo restores the whole selection exactly");
+    Expect(viewport.Redo() && viewport.lines()[0] == "a(aaa" && viewport.lines()[2] == "cc)cc",
+           "redo reapplies the boundary wrap");
+  }
+  {
+    // Single-line selection: both delimiters land on the same line and the caret
+    // ends past the inner text.
+    TextViewport viewport;
+    viewport.LoadContent("xhellox\n", "/tmp/surround-single.cpp");
+    viewport.SetLanguageContractView(MakeCStyleContractView());
+    viewport.MoveCursorTo(0, 1);
+    viewport.MoveCursorTo(0, 6, /*extend_selection=*/true);
+    viewport.InsertCharacter('"');
+    Expect(viewport.lines()[0] == "x\"hello\"x",
+           "single-line surround wraps only the selected span");
+    Expect(viewport.cursor_column() == 7, "caret sits just past the inner content");
+    Expect(viewport.Undo() && viewport.lines()[0] == "xhellox",
+           "single-line surround undoes atomically");
+  }
+}
+
 void TestSurroundDisabledFallsBackToLiteralInsert() {
   TextViewport viewport;
   auto view = MakeCStyleContractView();
@@ -1184,6 +1272,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingMoveLineDownKeepsWholeLineSelection);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDownMultiCaretSingleUndoStep",
           TestShapingMoveLineDownMultiCaretSingleUndoStep);
+  AddTest(tests, "EditorEssentials/Shaping/PreservesRangedSecondaryCaretAnchors",
+          TestShapingPreservesRangedSecondaryCaretAnchors);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDownRedoPreservesMultiCaret",
           TestShapingMoveLineDownRedoPreservesMultiCaret);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineUpMultiCaretSingleUndoStep",
@@ -1272,6 +1362,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestSurroundMultiLineSelection);
   AddTest(tests, "EditorEssentials/Surround/MultiCaretMultiLineSelections",
           TestMultiCaretSurroundMultiLineSelections);
+  AddTest(tests, "EditorEssentials/Surround/BoundaryWrapInnerSelectionAndUndo",
+          TestSurroundBoundaryWrapInnerSelectionAndUndo);
   AddTest(tests, "EditorEssentials/Surround/DisabledFallsBackLiteral",
           TestSurroundDisabledFallsBackToLiteralInsert);
   AddTest(tests, "EditorEssentials/SmartIndent/AfterOpenBrace",

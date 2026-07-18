@@ -162,6 +162,16 @@ class TextViewport {
                     const std::vector<std::string>& replacement,
                     bool record_undo = true);
   std::size_t ReplaceAll(std::string_view needle, std::string_view replacement);
+  // Apply a precomputed, ascending-sorted set of single-line match ranges as one
+  // grouped Replace-All edit, WITHOUT re-scanning/re-folding the document. Each
+  // range must be confined to one line, non-empty, in range, sorted ascending by
+  // (line, column), and non-overlapping (exactly what FindLiteralSearchMatches
+  // produces). Returns the number of ranges applied, or std::nullopt when the
+  // caller's ranges fail validation (stale/inconsistent), in which case the
+  // document is left untouched and the caller can fall back to ReplaceAll.
+  // (TD-2026-07-17A-028.)
+  std::optional<std::size_t> ReplaceAllRanges(const std::vector<SelectionRange>& matches,
+                                              std::string_view replacement);
 
   const std::filesystem::path& path() const { return document_->path; }
   // Cached normalized key for the per-file presentation stores. Pass this to the
@@ -295,6 +305,12 @@ class TextViewport {
   bool dirty() const { return document_->dirty; }
   bool is_placeholder() const { return document_->placeholder; }
   std::vector<TextPosition> secondary_carets() const;
+  // Full secondary carets, each carrying its selection anchor (empty for a plain
+  // column caret). Shaping actions (move/indent line) use this so a ranged Ctrl-D
+  // secondary selection survives the transform instead of collapsing to a bare
+  // caret, and so line-range resolution covers lines spanned only by an anchor
+  // (A-120). secondary_carets() (positions only) stays for plain-caret callers.
+  std::vector<TextViewportUndoHistory::SecondaryCaret> secondary_caret_ranges() const;
   // Render-path accessor: returns a view into a cached vector that mirrors
   // `secondary_carets_`. The cache is rebuilt only when the positions
   // actually differ (size mismatch or any element changed), so steady-state
@@ -491,6 +507,14 @@ class TextViewport {
   std::string TextInRange(const SelectionRange& range) const;
   bool ApplyRangeEdit(const SelectionRange& range, std::string_view replacement, bool record_undo,
                       CoalesceHint hint = CoalesceHint{});
+  // Wrap `norm` (normalized, validated) by prepending `open` to its first line at
+  // `norm.start.column` and appending `close` to its last line at `norm.end.column`,
+  // touching only the boundary lines. Avoids materializing the whole selected text
+  // and the open+inner+close transient the generic range-replace path builds
+  // (A-021). `open`/`close` must not contain a line break. Records one undo entry.
+  bool SurroundRangeBoundaries(const SelectionRange& norm,
+                               std::string_view open,
+                               std::string_view close);
   bool ApplyLineEdit(std::size_t start_line,
                      std::size_t end_line,
                      const std::vector<std::string>& replacement,
