@@ -486,6 +486,10 @@
       std::function<bool(const std::filesystem::path&)> opener) {
     shell.file_manager_opener_ = std::move(opener);
   }
+  static bool RevealPathInFileExplorer(WorkspaceShell& shell,
+                                       const std::filesystem::path& directory) {
+    return shell.RevealPathInFileExplorer(directory);
+  }
   static void SetProjectOpenDialogLauncher(
       WorkspaceShell& shell,
       std::function<bool(WorkspaceShell&, const std::filesystem::path&)> launcher) {

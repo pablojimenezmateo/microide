@@ -1406,6 +1406,36 @@ void TestWorkspaceShellTreeContextMenuShowsInFileExplorerContainingDir() {
              .c_str());
 }
 
+// TD-2026-07-17-061: the file-explorer reveal validates its path synchronously
+// (so an obviously-bad target still reports failure at once, driving the error
+// toast) and dispatches only the actual xdg-open subprocess off the shell thread.
+// An empty or missing path must fail fast without spawning anything.
+void TestWorkspaceShellRevealInFileExplorerValidatesPathSynchronously() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "a.txt", "a\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+
+  Expect(!WorkspaceShellTestAccess::RevealPathInFileExplorer(shell, {}),
+         "an empty reveal path should fail synchronously");
+  Expect(!WorkspaceShellTestAccess::RevealPathInFileExplorer(shell, root / "does-not-exist"),
+         "a missing reveal path should fail synchronously without dispatching a subprocess");
+
+  // An injected opener (the deterministic seam) still short-circuits the async
+  // dispatch and returns its own result.
+  bool opened = false;
+  WorkspaceShellTestAccess::SetFileManagerOpener(
+      shell, [&](const std::filesystem::path&) {
+        opened = true;
+        return true;
+      });
+  Expect(WorkspaceShellTestAccess::RevealPathInFileExplorer(shell, root),
+         "a valid reveal with an injected opener should report success");
+  Expect(opened, "the injected opener should have been invoked");
+}
+
 void TestWorkspaceShellTabContextActionsCloseAdjacentTabs() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2498,6 +2528,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectTabContextMenuCopiesProjectRoot);
   AddTest(tests, "WorkspaceShell/TabContextActionsCloseAdjacentTabs",
           TestWorkspaceShellTabContextActionsCloseAdjacentTabs);
+  AddTest(tests, "WorkspaceShell/RevealInFileExplorerValidatesPathSynchronously",
+          TestWorkspaceShellRevealInFileExplorerValidatesPathSynchronously);
   AddTest(tests, "WorkspaceShell/TreeContextMenuShowsInFileExplorerContainingDir",
           TestWorkspaceShellTreeContextMenuShowsInFileExplorerContainingDir);
 #if MICROIDE_HAS_SDL3_TTF

@@ -90,7 +90,7 @@ they land.
    compare/merge model build (047/19), LSP `WorkspaceEdit` apply (011/18), project
    replace-all (21), git patch serialize (38),
    exclude-glob watcher rebuild (080), file-index batch coalescing (086), LSP shutdown
-   lifecycle (091), file-manager reveal (061), search worker pool (055), save-participant /
+   lifecycle (091), search worker pool (055), save-participant /
    `process.run_async` worker capacity (016/017). **014 (POSIX terminal write deadline)
    RESOLVED 2026-07-18** — non-blocking buffered PTY writes drained off the reader thread.
    *Speed is the #1 project priority, so this cluster is the highest-value backlog.*
@@ -2197,9 +2197,10 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 **Async / off-thread refactors** (move blocking work off the shell/UI thread):
 
 > **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** Every item in this subsection (047, 055,
-> 061, 080, 086, 091, 016/017, 075) is a multi-file async redesign —
-> (**014 RESOLVED 2026-07-18** — POSIX terminal write is now non-blocking; **081/082 RESOLVED
-> 2026-07-18** — forced full rescan runs off the shell thread; see their entries below.)
+> 080, 086, 091, 016/017, 075) is a multi-file async redesign —
+> (**014, 061, 081/082 RESOLVED 2026-07-18** — POSIX terminal write is non-blocking; the
+> file-manager reveal subprocess and the forced full rescan run off the shell thread; see
+> their entries below.)
 > moving synchronous work onto `ProjectBackgroundExecutor`/a worker lane with
 > generation/token gating and an SDL-wake completion, then reconciling the callers that
 > today depend on a synchronous return. Each is a focused, individually-reviewed pass with
@@ -2245,10 +2246,16 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 - **055 — project search spawns/joins per-run helper threads.** Worker count is
   capped and catastrophic-regex is bounded (034, fixed); reuse a bounded pool with
   finer-grained cancellation.
-- **061 — file-manager reveal can block the UI up to 10s.** Common path (xdg-open
-  forks) is fast; only a wedged launcher hits the bounded timeout. Needs an async
-  host-integration service with SDL-event completion (the reveal returns a
-  success bool that drives an error message).
+- **[RESOLVED 2026-07-18] 061 — file-manager reveal can block the UI up to 10s.**
+  `WorkspaceShell::RevealPathInFileExplorer` now validates the path cheaply on the shell
+  thread (empty/missing → immediate `false`, which still drives the "Unable to open file
+  explorer" toast) and dispatches only the `xdg-open` subprocess to
+  `project_background_executor_`. A wedged file manager can no longer park the UI thread
+  for the bounded timeout (and this satisfies the "no shell-thread RunSubprocess"
+  invariant). A rare post-validation launch failure is dropped rather than toasted (a
+  main-thread hop for a marginal case). The `file_manager_opener_` injection seam stays
+  synchronous for tests. Regression:
+  `WorkspaceShell/RevealInFileExplorerValidatesPathSynchronously`.
 - **[RESOLVED 2026-07-18] 081 / 082 — forced project refresh + change-batch stat run on the shell thread.**
   The whole-tree rescan + per-file `is_directory`/`file_size`/`last_write_time` stat is
   now split into a pure `FileIndex::ScanFiles(root, follow, excludes)` (touches only its

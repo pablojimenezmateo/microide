@@ -1534,7 +1534,7 @@
   bool TerminalCellSelected(std::size_t row, std::size_t column) const;
   bool OpenExternalUrl(std::string_view url) const;
   void OpenExternalUrlPrompt(std::string url);
-  bool RevealPathInFileExplorer(const std::filesystem::path& directory) const;
+  bool RevealPathInFileExplorer(const std::filesystem::path& directory);
   void ResizeTerminalToPanel(const SDL_FRect& panel_rect);
   bool OpenUntitledTab();
   bool OpenFileInNewTab(const std::filesystem::path& path);

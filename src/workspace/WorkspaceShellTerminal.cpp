@@ -347,14 +347,26 @@ bool WorkspaceShell::OpenExternalUrl(std::string_view url) const {
   return platform::OpenUrl(url).ok;
 }
 
-bool WorkspaceShell::RevealPathInFileExplorer(const std::filesystem::path& directory) const {
+bool WorkspaceShell::RevealPathInFileExplorer(const std::filesystem::path& directory) {
   if (directory.empty()) {
     return false;
   }
   if (file_manager_opener_) {
     return file_manager_opener_(directory);
   }
-  return platform::OpenPathInFileManager(directory).ok;
+  // Validate the path cheaply on the shell thread so an obviously-bad reveal still
+  // reports synchronously, then dispatch the actual xdg-open subprocess to the
+  // background executor: xdg-open normally forks and returns at once, but a wedged
+  // file manager would otherwise park the UI thread for the whole timeout
+  // (TD-2026-07-17-061). A rare post-validation launch failure is dropped rather
+  // than surfaced — a toast would need a main-thread hop for a marginal case.
+  std::error_code error;
+  if (!std::filesystem::exists(directory, error) || error) {
+    return false;
+  }
+  const std::filesystem::path target = directory;
+  project_background_executor_.Post([target]() { platform::OpenPathInFileManager(target); });
+  return true;
 }
 
 void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
