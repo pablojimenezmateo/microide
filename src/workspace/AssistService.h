@@ -193,6 +193,12 @@ class AssistService {
     std::vector<plugin::PluginHost::LocationResult> plugin_locations;
     std::vector<LspClient::Location> lsp_locations;
     bool acted = false;
+    // Per-surface request generation (navigation vs references — see the
+    // *_request_generation_ counters). A callback carries the generation it was
+    // dispatched under and drops its result when a newer same-surface request (e.g.
+    // a second Go-To-Definition at a different caret in the same file before the
+    // first response lands) has bumped the counter. TD-2026-07-17A-030.
+    std::uint64_t generation = 0;
   };
   // Signature help is a single caret-anchored popup, so the two sources are
   // *chosen* between (LSP-primary, like navigation) rather than unioned. Each
@@ -207,6 +213,7 @@ class AssistService {
     std::string plugin_signature;
     std::string plugin_documentation;
     bool acted = false;
+    std::uint64_t generation = 0;  // see signature_request_generation_ (TD-2026-07-17A-030)
   };
 
   // Transform a source's raw results into the shared overlay item type.
@@ -284,6 +291,12 @@ class AssistService {
   // overwrite or apply against newer state. (TD-2026-07-16-65.)
   std::uint64_t completion_request_generation_ = 0;
   std::uint64_t code_action_request_generation_ = 0;
+  // Cursor-jump navigation (definition / type-def / impl / declaration): one
+  // counter, since the user only ever jumps once — any new navigation supersedes a
+  // pending one. References and signature help are independent surfaces.
+  std::uint64_t navigation_request_generation_ = 0;
+  std::uint64_t references_request_generation_ = 0;
+  std::uint64_t signature_request_generation_ = 0;
   // workspace/symbol has no active-file cursor to anchor a staleness check on (it is
   // project-wide), so a slower response for an OLDER query could otherwise clear the
   // channel and render its results over the newer query's. Gate it on a generation

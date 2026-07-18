@@ -585,6 +585,66 @@ void TestPhase5WorkspaceSymbolDropsSupersededResponse() {
          "the current workspace-symbol response should render its result");
 }
 
+// TD-2026-07-17A-030: a same-file assist request invoked twice before the first
+// response lands must drop the OLDER response via a per-surface request generation.
+// Signature help is the observable surface here (LSP stub captures callbacks so the
+// test delivers them out of order); the same generation guard covers definition /
+// navigation / references.
+void TestPhase5SignatureHelpDropsSupersededResponse() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project = temp_dir.path() / "project";
+  const std::filesystem::path file = project / "main.py";
+  WriteFile(file, "value = 1\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "fixture project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  stub->EnableTestStubMode();
+  std::vector<workspace::LspClient::SignatureHelpCallback> captured;
+  stub->SetTestSignatureHelpHandler(
+      [&captured](std::string /*uri*/, workspace::LspClient::Position /*pos*/,
+                  workspace::LspClient::SignatureHelpCallback cb) {
+        captured.push_back(std::move(cb));
+      });
+  WorkspaceShellTestAccess::LspManagerForTesting(shell).InstallTestClientForTesting(
+      "python", std::move(stub));
+
+  const auto make_help = [](std::string label) {
+    workspace::LspClient::SignatureHelp help;
+    workspace::LspClient::SignatureInformation info;
+    info.label = std::move(label);
+    help.signatures.push_back(std::move(info));
+    return help;
+  };
+
+  // Fire two signature-help requests; drain so the stub captures each callback.
+  Expect(WorkspaceShellTestAccess::ShowSignatureHelp(shell), "first signature help dispatches");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(WorkspaceShellTestAccess::ShowSignatureHelp(shell), "second signature help dispatches");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(captured.size() == 2, "both signature-help requests capture a callback");
+
+  // Deliver the OLDER response: it is superseded and must be dropped (no popup, or
+  // at least not the older signature).
+  captured[0](make_help("OLD_SIG"));
+  {
+    const auto popup = WorkspaceShellTestAccess::SignatureHelpPopup(shell);
+    Expect(!popup.has_value() || popup->signature != "OLD_SIG",
+           "a superseded signature-help response must not open its popup");
+  }
+
+  // Deliver the NEWER response: it is current and shows.
+  captured[1](make_help("NEW_SIG"));
+  {
+    const auto popup = WorkspaceShellTestAccess::SignatureHelpPopup(shell);
+    Expect(popup.has_value() && popup->signature == "NEW_SIG",
+           "the current signature-help response opens its popup");
+  }
+}
+
 void TestPhase5LspMergeBuffersPublishDiagnosticsAndBufferHooks() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -871,6 +931,8 @@ void RegisterPhase5Tests(std::vector<TestCase>& tests) {
           TestPhase5DeferredTabHydrationCompletesBeforeDidOpenDiagnostics);
   AddTest(tests, "Phase5.WorkspaceSymbolDropsSupersededResponse",
           TestPhase5WorkspaceSymbolDropsSupersededResponse);
+  AddTest(tests, "Phase5.SignatureHelpDropsSupersededResponse",
+          TestPhase5SignatureHelpDropsSupersededResponse);
 }
 
 }  // namespace microide::tests

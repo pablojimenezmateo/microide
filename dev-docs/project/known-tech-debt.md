@@ -1062,8 +1062,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   async request is even queued. Add a small context-diagnostic budget, prefer the nearest/highest
   severity diagnostics when truncating, and surface truncation only as request context loss rather
   than as a UI-blocking payload.
-- **TD-2026-07-17A-057 — LSP code-action overlays materialize every inline WorkspaceEdit
-  upfront.** `LspClient::RequestCodeActionAsync` accepts up to 5,000 returned code actions, and
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-057 — LSP code-action overlays materialize every inline WorkspaceEdit
+  upfront.** Fixed: `AssistService::TransformLspCodeActions` materializes inline WorkspaceEdits under
+  a SHARED aggregate budget across all actions (50000 edits / 16 MiB) — past the budget an action's
+  inline fix is not materialized and `CodeActionSessionItem::edits_truncated` is set (the row still
+  shows; its inline fix is disabled), so a server returning many large-but-capped fixes can't force
+  the overlay to hold the sum of every action's edit payload. The transform is now a testable public
+  static. Regression: `AssistService/CodeActionEditsShareAggregateBudget`.
+  `LspClient::RequestCodeActionAsync` accepts up to 5,000 returned code actions, and
   `ParseWorkspaceEdit` caps each action's edit payload independently at 10,000 files / 200,000
   edits. `AssistService::TransformLspCodeActions` then converts every action's inline
   `WorkspaceEdit` into owned `CodeActionEdit` rows and stores those vectors in

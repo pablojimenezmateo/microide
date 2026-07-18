@@ -818,6 +818,7 @@ bool AssistService::GoToLspDefinition(std::string* error_message) {
   const std::size_t request_column = viewport->cursor_column();
 
   auto merge = std::make_shared<NavigationMerge>();
+  merge->generation = ++navigation_request_generation_;
 
   LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
   merge->sources.lsp_authoritative = client != nullptr;
@@ -856,9 +857,11 @@ void AssistService::ResolveDefinitionNavigation(const std::shared_ptr<Navigation
   if (merge->acted) {
     return;
   }
-  if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
-    // The buffer switched since the request; abandon without navigating a
-    // different file or emitting a spurious "no definition" message.
+  if (merge->generation != navigation_request_generation_ ||
+      ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+    // The buffer switched, or a newer navigation superseded this one, since the
+    // request; abandon without navigating a different file/caret or emitting a
+    // spurious "no definition" message.
     return;
   }
   const assist_merge::NavChoice choice = assist_merge::ChooseNavigation(
@@ -922,10 +925,12 @@ bool AssistService::GoToLspNavigation(LspNavigationKind kind, std::string* error
   const char* empty_message = kind == LspNavigationKind::TypeDefinition ? "No type definition found"
                               : kind == LspNavigationKind::Implementation ? "No implementation found"
                                                                           : "No declaration found";
-  auto on_result = [this, request_path, encoding, empty_message](
+  const std::uint64_t request_generation = ++navigation_request_generation_;
+  auto on_result = [this, request_path, encoding, empty_message, request_generation](
                        std::optional<std::vector<LspClient::Location>> locations) {
     operations_.finish_tracked_lsp_request();
-    if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+    if (request_generation != navigation_request_generation_ ||
+        ResultIsStale(operations_.active_editable_viewport(), request_path)) {
       return;
     }
     if (!locations.has_value() || locations->empty()) {
@@ -979,6 +984,7 @@ bool AssistService::FindLspReferences(std::string* error_message) {
   const std::size_t request_column = viewport->cursor_column();
 
   auto merge = std::make_shared<NavigationMerge>();
+  merge->generation = ++references_request_generation_;
 
   LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
   merge->sources.lsp_authoritative = client != nullptr;
@@ -1019,7 +1025,8 @@ void AssistService::PublishReferenceMerge(const std::shared_ptr<NavigationMerge>
     return;  // render exactly once, after both sources resolve
   }
   merge->acted = true;
-  if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+  if (merge->generation != references_request_generation_ ||
+      ResultIsStale(operations_.active_editable_viewport(), request_path)) {
     return;
   }
 
@@ -1455,6 +1462,7 @@ bool AssistService::ShowSignatureHelp(std::string* error_message) {
   const std::size_t request_column = viewport->cursor_column();
 
   auto merge = std::make_shared<SignatureHelpMerge>();
+  merge->generation = ++signature_request_generation_;
 
   LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
   merge->sources.lsp_authoritative = client != nullptr;
@@ -1503,8 +1511,9 @@ void AssistService::ResolveSignatureHelp(const std::shared_ptr<SignatureHelpMerg
   if (merge->acted) {
     return;
   }
-  if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
-    return;  // buffer switched; don't anchor a popup on a different file
+  if (merge->generation != signature_request_generation_ ||
+      ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+    return;  // buffer switched or a newer signature request superseded this one
   }
   const assist_merge::NavChoice choice = assist_merge::ChooseNavigation(
       merge->sources.lsp_authoritative, merge->sources.lsp_pending, merge->lsp_has,
