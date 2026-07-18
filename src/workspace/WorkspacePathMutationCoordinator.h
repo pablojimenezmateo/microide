@@ -70,10 +70,29 @@ class PathMutationCoordinator {
     std::size_t tab_index = 0;
   };
 
+  // Outcome of retargeting a single compare/merge tab against a path rename.
+  enum class SpecialTabRetargetOutcome {
+    Unaffected,  // Not a compare/merge tab, or its paths don't touch the rename.
+    Retargeted,  // Rebuilt/redirected in place at the new path.
+    MustClose,   // Its content no longer resolves at the new path; close the tab.
+  };
+
   std::vector<DirtyPathTarget> DirtyPathTargetsForPath(const std::filesystem::path& path) const;
   std::vector<std::size_t> DirtyTabIndicesForPath(const std::filesystem::path& path) const;
   std::vector<std::size_t> AffectedCompareTabIndices(const std::filesystem::path& path) const;
   std::vector<std::size_t> AffectedMergeTabIndices(const std::filesystem::path& path) const;
+  // Pure path predicates shared by the focused-group scan and the all-groups close/retarget
+  // passes so compare/merge tabs match identically wherever they live.
+  static bool CompareTabAffectedByPath(const TabEntry& tab,
+                                       const std::filesystem::path& normalized_path);
+  static bool MergeTabAffectedByPath(const TabEntry& tab,
+                                     const std::filesystem::path& normalized_path);
+  // Retarget one compare/merge tab in place (or report it must be closed) for a rename.
+  // Group-agnostic so it runs against the focused group and every background split alike.
+  SpecialTabRetargetOutcome RetargetSpecialTabForRename(TabEntry& tab,
+                                                        const std::filesystem::path& old_path,
+                                                        const std::filesystem::path& new_path,
+                                                        bool preserve_unsaved_state);
   bool ResolveDirtyTabsForPath(const std::filesystem::path& path,
                                DirtyPromptState::Kind prompt_kind,
                                DirtyPathResolution resolution);

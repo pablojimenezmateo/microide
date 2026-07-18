@@ -77,16 +77,28 @@ std::vector<std::size_t> PathMutationCoordinator::DirtyTabIndicesForPath(
   return indices;
 }
 
+bool PathMutationCoordinator::CompareTabAffectedByPath(
+    const TabEntry& tab, const std::filesystem::path& normalized_path) {
+  return tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+         PathEqualsOrWithin(tab.compare->path.lexically_normal(), normalized_path);
+}
+
+bool PathMutationCoordinator::MergeTabAffectedByPath(
+    const TabEntry& tab, const std::filesystem::path& normalized_path) {
+  return tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
+         (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), normalized_path) ||
+          PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), normalized_path) ||
+          PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), normalized_path) ||
+          PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), normalized_path));
+}
+
 std::vector<std::size_t> PathMutationCoordinator::AffectedCompareTabIndices(
     const std::filesystem::path& path) const {
   std::vector<std::size_t> indices;
+  const std::filesystem::path normalized_path = path.lexically_normal();
   const auto& state = CurrentProjectState();
   for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
-    const TabEntry& tab = state.focused_group().open_tabs[i];
-    if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value()) {
-      continue;
-    }
-    if (PathEqualsOrWithin(tab.compare->path.lexically_normal(), path.lexically_normal())) {
+    if (CompareTabAffectedByPath(state.focused_group().open_tabs[i], normalized_path)) {
       indices.push_back(i);
     }
   }
@@ -96,16 +108,10 @@ std::vector<std::size_t> PathMutationCoordinator::AffectedCompareTabIndices(
 std::vector<std::size_t> PathMutationCoordinator::AffectedMergeTabIndices(
     const std::filesystem::path& path) const {
   std::vector<std::size_t> indices;
+  const std::filesystem::path normalized_path = path.lexically_normal();
   const auto& state = CurrentProjectState();
   for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
-    const TabEntry& tab = state.focused_group().open_tabs[i];
-    if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
-      continue;
-    }
-    if (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), path.lexically_normal()) ||
-        PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), path.lexically_normal()) ||
-        PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), path.lexically_normal()) ||
-        PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), path.lexically_normal())) {
+    if (MergeTabAffectedByPath(state.focused_group().open_tabs[i], normalized_path)) {
       indices.push_back(i);
     }
   }

@@ -1092,11 +1092,158 @@ void TestWorkspaceShellDeleteClosesTabInAllEditorGroups() {
   }
 }
 
+// Regression (TD-2026-07-17A-036): a compare tab living in a BACKGROUND split group must
+// be retargeted on a folder rename, not left to "self-heal" on the old/deleted path.
+void TestWorkspaceShellRenameRetargetsBackgroundCompareTab() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "compare.txt";
+  const std::filesystem::path scratch = root / "scratch.txt";
+  WriteFile(source, "zero\none\ntwo\n");
+  WriteFile(scratch, "scratch\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+  WriteFile(source, "zero\none changed\ntwo changed\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  // Editor tab in group 0; split focuses the new group 1; open the comparison there so it
+  // ends up in the eventual BACKGROUND group after we refocus group 0.
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, scratch);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split should create a second group");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "two groups after split");
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open in the focused (soon background) group");
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell),
+         "the comparison should be the active tab in group 1");
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus back to group 0");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0, "group 0 should be focused");
+
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, root / "src", "renamed-src");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  const std::filesystem::path renamed = (root / "renamed-src" / "compare.txt").lexically_normal();
+  const std::filesystem::path stale = (root / "src" / "compare.txt").lexically_normal();
+  Expect(std::filesystem::is_regular_file(renamed), "rename should create the destination path");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "both groups survive the rename");
+  const auto group1_paths = WorkspaceShellTestAccess::GroupTabPaths(shell, 1);
+  Expect(std::any_of(group1_paths.begin(), group1_paths.end(),
+                     [&](const auto& p) { return p == renamed; }),
+         "the background compare tab must retarget to the renamed path");
+  Expect(std::none_of(group1_paths.begin(), group1_paths.end(),
+                      [&](const auto& p) { return p == stale; }),
+         "no background compare tab may keep the old pre-rename path");
+}
+
+// Regression (TD-2026-07-17A-036): a merge tab living in a BACKGROUND split group must be
+// retargeted on rename of its output path, mirroring the compare case above.
+void TestWorkspaceShellRenameRetargetsBackgroundMergeTab() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  const std::filesystem::path scratch = root / "scratch.txt";
+  WriteFile(base, "alpha\none\ntwo\n");
+  WriteFile(incoming, "incoming\none\ntwo\n");
+  WriteFile(current, "current\none\ntwo\n");
+  WriteFile(output, "alpha\none\ntwo\n");
+  WriteFile(scratch, "scratch\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, scratch);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split should create a second group");
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open in the focused (soon background) group");
+  Expect(WorkspaceShellTestAccess::ActiveTabIsMerge(shell),
+         "the merge should be the active tab in group 1");
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus back to group 0");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0, "group 0 should be focused");
+
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, output, "resolved.txt");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+  if (WorkspaceShellTestAccess::DirtyPromptVisible(shell)) {
+    WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
+  }
+
+  const std::filesystem::path renamed = (root / "resolved.txt").lexically_normal();
+  Expect(std::filesystem::is_regular_file(renamed), "rename should create the merge output path");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "both groups survive the rename");
+  const auto group1_paths = WorkspaceShellTestAccess::GroupTabPaths(shell, 1);
+  Expect(std::any_of(group1_paths.begin(), group1_paths.end(),
+                     [&](const auto& p) { return p == renamed; }),
+         "the background merge tab must retarget its output path on rename");
+  Expect(std::none_of(group1_paths.begin(), group1_paths.end(),
+                      [&](const auto& p) { return p == output.lexically_normal(); }),
+         "no background merge tab may keep the old pre-rename output path");
+}
+
+// Regression (TD-2026-07-17A-036): deleting a folder must close compare AND merge tabs that
+// live in a BACKGROUND split group, not just the focused group.
+void TestWorkspaceShellDeleteClosesBackgroundCompareAndMergeTabs() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path work = root / "work";
+  const std::filesystem::path compare_file = work / "compare.txt";
+  const std::filesystem::path base = work / "base.txt";
+  const std::filesystem::path incoming = work / "incoming.txt";
+  const std::filesystem::path current = work / "current.txt";
+  const std::filesystem::path output = work / "result.txt";
+  const std::filesystem::path scratch = root / "scratch.txt";
+  WriteFile(compare_file, "zero\none\n");
+  WriteFile(base, "alpha\none\n");
+  WriteFile(incoming, "incoming\none\n");
+  WriteFile(current, "current\none\n");
+  WriteFile(output, "alpha\none\n");
+  WriteFile(scratch, "scratch\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+  WriteFile(compare_file, "zero\none changed\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, scratch);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split should create a second group");
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open in the focused (soon background) group");
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, compare_file, "HEAD", "HEAD"),
+         "working-tree comparison should open in the focused (soon background) group");
+  Expect(WorkspaceShellTestAccess::GroupTabCount(shell, 1) == 3,
+         "background group should hold scratch + merge + compare");
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus back to group 0");
+
+  WorkspaceShellTestAccess::PrepareDeletePrompt(shell, work);
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+  if (WorkspaceShellTestAccess::DirtyPromptVisible(shell)) {
+    WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 1);
+  }
+
+  Expect(!std::filesystem::exists(work), "delete should remove the work folder");
+  // Only the unrelated scratch editor tab may survive in the background group.
+  const auto group1_paths = WorkspaceShellTestAccess::GroupTabPaths(shell, 1);
+  Expect(group1_paths.size() == 1 && group1_paths.front() == scratch.lexically_normal(),
+         "delete must close the background compare and merge tabs, leaving only scratch");
+}
+
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/RenameRetargetsAllEditorGroups",
           TestWorkspaceShellRenameRetargetsAllEditorGroups);
   AddTest(tests, "WorkspaceShell/DeleteClosesTabInAllEditorGroups",
           TestWorkspaceShellDeleteClosesTabInAllEditorGroups);
+  AddTest(tests, "WorkspaceShell/RenameRetargetsBackgroundCompareTab",
+          TestWorkspaceShellRenameRetargetsBackgroundCompareTab);
+  AddTest(tests, "WorkspaceShell/RenameRetargetsBackgroundMergeTab",
+          TestWorkspaceShellRenameRetargetsBackgroundMergeTab);
+  AddTest(tests, "WorkspaceShell/DeleteClosesBackgroundCompareAndMergeTabs",
+          TestWorkspaceShellDeleteClosesBackgroundCompareAndMergeTabs);
   AddTest(tests, "WorkspaceShell/ClosingNonActiveDirtyTabDoesNotStrandFocus",
           TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus);
   AddTest(tests, "WorkspaceShell/RenamePromptSavesDirtyTabs",

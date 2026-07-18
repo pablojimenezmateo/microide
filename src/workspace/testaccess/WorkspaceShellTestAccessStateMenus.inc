@@ -134,6 +134,7 @@
     return shell.context_.interaction_state.tab_slide;
   }
   static bool ActiveTabIsCompare(const WorkspaceShell& shell) { return shell.ActiveTabIsCompare(); }
+  static bool ActiveTabIsMerge(const WorkspaceShell& shell) { return shell.ActiveTabIsMerge(); }
   static std::size_t ActiveTerminalTabIndex(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.active_terminal_tab_index;
   }

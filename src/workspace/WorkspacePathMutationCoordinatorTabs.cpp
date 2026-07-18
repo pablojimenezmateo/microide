@@ -11,6 +11,132 @@
 
 namespace microide::workspace {
 
+PathMutationCoordinator::SpecialTabRetargetOutcome
+PathMutationCoordinator::RetargetSpecialTabForRename(TabEntry& tab,
+                                                     const std::filesystem::path& old_path,
+                                                     const std::filesystem::path& new_path,
+                                                     bool preserve_unsaved_state) {
+  auto& state = CurrentProjectState();
+
+  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+      PathEqualsOrWithin(tab.compare->path.lexically_normal(), old_path)) {
+    const std::filesystem::path updated_path =
+        util::ReplacePathPrefix(tab.compare->path, old_path, new_path);
+    if (preserve_unsaved_state && tab.compare->right_editable &&
+        tab.compare->right_viewport.dirty()) {
+      tab.compare->path = updated_path.lexically_normal();
+      if (tab.compare->right_ref == "WORKTREE" &&
+          PathEqualsOrWithin(tab.compare->right_path.lexically_normal(), old_path)) {
+        tab.compare->right_path =
+            util::ReplacePathPrefix(tab.compare->right_path, old_path, new_path).lexically_normal();
+        tab.compare->right_viewport.SetPath(tab.compare->right_path);
+      }
+      tab.compare->title = "compare: " + tab.compare->path.filename().string();
+      // Keep selection and syntax-derived state aligned after retargeting a dirty compare tab.
+      auto rebuilt = operations_.build_compare_tab_entry(tab.compare->path, *tab.compare);
+      if (rebuilt.has_value() && rebuilt->compare.has_value()) {
+        rebuilt->compare->right_viewport = tab.compare->right_viewport;
+        rebuilt->compare->right_editable = tab.compare->right_editable;
+        rebuilt->compare->right_view_active = tab.compare->right_view_active;
+        rebuilt->compare->persistable = tab.compare->persistable;
+        tab = std::move(*rebuilt);
+      }
+      tab.path = tab.compare->path;
+      tab.title = tab.compare->title;
+      return SpecialTabRetargetOutcome::Retargeted;
+    }
+    CompareTabState updated_compare = *tab.compare;
+    updated_compare.path = updated_path.lexically_normal();
+    if (updated_compare.right_ref == "WORKTREE" &&
+        PathEqualsOrWithin(updated_compare.right_path.lexically_normal(), old_path)) {
+      updated_compare.right_path =
+          util::ReplacePathPrefix(updated_compare.right_path, old_path, new_path).lexically_normal();
+    }
+    auto rebuilt = operations_.build_compare_tab_entry(updated_path, updated_compare);
+    if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
+      return SpecialTabRetargetOutcome::MustClose;
+    }
+    tab = std::move(*rebuilt);
+    return SpecialTabRetargetOutcome::Retargeted;
+  }
+
+  if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
+    return SpecialTabRetargetOutcome::Unaffected;
+  }
+
+  auto update_merge_path = [&](const std::filesystem::path& path) {
+    return PathEqualsOrWithin(path.lexically_normal(), old_path)
+               ? util::ReplacePathPrefix(path, old_path, new_path).lexically_normal()
+               : path.lexically_normal();
+  };
+  if (!PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), old_path) &&
+      !PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), old_path) &&
+      !PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), old_path) &&
+      !PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), old_path)) {
+    return SpecialTabRetargetOutcome::Unaffected;
+  }
+
+  const std::filesystem::path updated_base = update_merge_path(tab.merge->base_path);
+  const std::filesystem::path updated_incoming = update_merge_path(tab.merge->incoming_path);
+  const std::filesystem::path updated_current = update_merge_path(tab.merge->current_path);
+  const std::filesystem::path updated_output = update_merge_path(tab.merge->output_path);
+
+  if (!preserve_unsaved_state) {
+    auto rebuilt =
+        operations_.build_merge_tab_entry(updated_base, updated_incoming, updated_current, updated_output);
+    if (!rebuilt.has_value() || !rebuilt->merge.has_value()) {
+      return SpecialTabRetargetOutcome::MustClose;
+    }
+    auto& rebuilt_merge = rebuilt->merge.value();
+    rebuilt_merge.selected_hunk =
+        rebuilt_merge.conflicts.empty()
+            ? 0
+            : std::min(tab.merge->selected_hunk, rebuilt_merge.conflicts.size() - 1);
+    rebuilt_merge.scroll_row = tab.merge->scroll_row;
+    rebuilt_merge.horizontal_scroll = tab.merge->horizontal_scroll;
+    rebuilt_merge.left_divider_fraction = tab.merge->left_divider_fraction;
+    rebuilt_merge.right_divider_fraction = tab.merge->right_divider_fraction;
+    rebuilt_merge.persistable = tab.merge->persistable;
+    rebuilt_merge.result_viewport.SetScrollLine(
+        static_cast<std::size_t>(std::max(0, rebuilt_merge.scroll_row)));
+    rebuilt_merge.result_viewport.SetHorizontalScroll(rebuilt_merge.horizontal_scroll);
+    rebuilt_merge.scroll_row = static_cast<int>(rebuilt_merge.result_viewport.scroll_line());
+    rebuilt_merge.horizontal_scroll = rebuilt_merge.result_viewport.horizontal_scroll();
+    tab = std::move(*rebuilt);
+    return SpecialTabRetargetOutcome::Retargeted;
+  }
+
+  tab.merge->base_path = updated_base;
+  tab.merge->incoming_path = updated_incoming;
+  tab.merge->current_path = updated_current;
+  tab.merge->output_path = updated_output;
+  tab.merge->title = "merge: " + updated_output.filename().string();
+  tab.merge->incoming_label = RelativePathLabel(state.root, updated_incoming);
+  tab.merge->result_label = RelativePathLabel(state.root, updated_output);
+  tab.merge->current_label = RelativePathLabel(state.root, updated_current);
+  tab.merge->result_viewport.SetPath(updated_output);
+  tab.merge->incoming_initial_syntax_state =
+      editor::SyntaxHighlighter::InitialState(updated_output, tab.merge->model.incoming_lines);
+  tab.merge->current_initial_syntax_state =
+      editor::SyntaxHighlighter::InitialState(updated_output, tab.merge->model.current_lines);
+  tab.merge->incoming_current_syntax_state = tab.merge->incoming_initial_syntax_state;
+  tab.merge->current_current_syntax_state = tab.merge->current_initial_syntax_state;
+  tab.merge->incoming_syntax_rows_tokenized = 0;
+  tab.merge->current_syntax_rows_tokenized = 0;
+  std::fill(tab.merge->incoming_tokens.begin(), tab.merge->incoming_tokens.end(),
+            std::vector<editor::SyntaxTokenKind>{});
+  std::fill(tab.merge->current_tokens.begin(), tab.merge->current_tokens.end(),
+            std::vector<editor::SyntaxTokenKind>{});
+  tab.merge->result_viewport.SetScrollLine(
+      static_cast<std::size_t>(std::max(0, tab.merge->scroll_row)));
+  tab.merge->result_viewport.SetHorizontalScroll(tab.merge->horizontal_scroll);
+  tab.merge->scroll_row = static_cast<int>(tab.merge->result_viewport.scroll_line());
+  tab.merge->horizontal_scroll = tab.merge->result_viewport.horizontal_scroll();
+  tab.path = updated_output;
+  tab.title = tab.merge->title;
+  return SpecialTabRetargetOutcome::Retargeted;
+}
+
 void PathMutationCoordinator::RetargetOpenTabsForRename(
     const std::filesystem::path& old_path,
     const std::filesystem::path& new_path,
@@ -97,139 +223,32 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       continue;
     }
 
-    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
-        PathEqualsOrWithin(tab.compare->path.lexically_normal(), old_path)) {
-      const std::filesystem::path updated_path =
-          util::ReplacePathPrefix(tab.compare->path, old_path, new_path);
-      if (preserve_unsaved_state && tab.compare->right_editable &&
-          tab.compare->right_viewport.dirty()) {
-        tab.compare->path = updated_path.lexically_normal();
-        if (tab.compare->right_ref == "WORKTREE" &&
-            PathEqualsOrWithin(tab.compare->right_path.lexically_normal(), old_path)) {
-          tab.compare->right_path =
-              util::ReplacePathPrefix(tab.compare->right_path, old_path, new_path).lexically_normal();
-          tab.compare->right_viewport.SetPath(tab.compare->right_path);
-        }
-        tab.compare->title = "compare: " + tab.compare->path.filename().string();
-        // Keep selection and syntax-derived state aligned after retargeting a dirty compare tab.
-        auto rebuilt = operations_.build_compare_tab_entry(tab.compare->path, *tab.compare);
-        if (rebuilt.has_value() && rebuilt->compare.has_value()) {
-          rebuilt->compare->right_viewport = tab.compare->right_viewport;
-          rebuilt->compare->right_editable = tab.compare->right_editable;
-          rebuilt->compare->right_view_active = tab.compare->right_view_active;
-          rebuilt->compare->persistable = tab.compare->persistable;
-          tab = std::move(*rebuilt);
-        }
-        tab.path = tab.compare->path;
-        tab.title = tab.compare->title;
-        continue;
-      }
-      CompareTabState updated_compare = *tab.compare;
-      updated_compare.path = updated_path.lexically_normal();
-      if (updated_compare.right_ref == "WORKTREE" &&
-          PathEqualsOrWithin(updated_compare.right_path.lexically_normal(), old_path)) {
-        updated_compare.right_path =
-            util::ReplacePathPrefix(updated_compare.right_path, old_path, new_path).lexically_normal();
-      }
-      auto rebuilt = operations_.build_compare_tab_entry(updated_path, updated_compare);
-      if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
-        special_tabs_to_close.push_back(i);
-        continue;
-      }
-      tab = std::move(*rebuilt);
-      continue;
+    // Compare/merge tabs retarget in place (or are closed when their content no longer
+    // resolves at the new path) via the shared group-agnostic helper.
+    if (RetargetSpecialTabForRename(tab, old_path, new_path, preserve_unsaved_state) ==
+        SpecialTabRetargetOutcome::MustClose) {
+      special_tabs_to_close.push_back(i);
     }
-
-    if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
-      continue;
-    }
-
-    auto update_merge_path = [&](const std::filesystem::path& path) {
-      return PathEqualsOrWithin(path.lexically_normal(), old_path)
-                 ? util::ReplacePathPrefix(path, old_path, new_path).lexically_normal()
-                 : path.lexically_normal();
-    };
-    if (!PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), old_path) &&
-        !PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), old_path) &&
-        !PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), old_path) &&
-        !PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), old_path)) {
-      continue;
-    }
-
-    const std::filesystem::path updated_base = update_merge_path(tab.merge->base_path);
-    const std::filesystem::path updated_incoming = update_merge_path(tab.merge->incoming_path);
-    const std::filesystem::path updated_current = update_merge_path(tab.merge->current_path);
-    const std::filesystem::path updated_output = update_merge_path(tab.merge->output_path);
-
-    if (!preserve_unsaved_state) {
-      auto rebuilt =
-          operations_.build_merge_tab_entry(updated_base, updated_incoming, updated_current, updated_output);
-      if (!rebuilt.has_value() || !rebuilt->merge.has_value()) {
-        special_tabs_to_close.push_back(i);
-        continue;
-      }
-      auto& rebuilt_merge = rebuilt->merge.value();
-      rebuilt_merge.selected_hunk =
-          rebuilt_merge.conflicts.empty()
-              ? 0
-              : std::min(tab.merge->selected_hunk, rebuilt_merge.conflicts.size() - 1);
-      rebuilt_merge.scroll_row = tab.merge->scroll_row;
-      rebuilt_merge.horizontal_scroll = tab.merge->horizontal_scroll;
-      rebuilt_merge.left_divider_fraction = tab.merge->left_divider_fraction;
-      rebuilt_merge.right_divider_fraction = tab.merge->right_divider_fraction;
-      rebuilt_merge.persistable = tab.merge->persistable;
-      rebuilt_merge.result_viewport.SetScrollLine(
-          static_cast<std::size_t>(std::max(0, rebuilt_merge.scroll_row)));
-      rebuilt_merge.result_viewport.SetHorizontalScroll(rebuilt_merge.horizontal_scroll);
-      rebuilt_merge.scroll_row = static_cast<int>(rebuilt_merge.result_viewport.scroll_line());
-      rebuilt_merge.horizontal_scroll = rebuilt_merge.result_viewport.horizontal_scroll();
-      tab = std::move(*rebuilt);
-      continue;
-    }
-
-    tab.merge->base_path = updated_base;
-    tab.merge->incoming_path = updated_incoming;
-    tab.merge->current_path = updated_current;
-    tab.merge->output_path = updated_output;
-    tab.merge->title = "merge: " + updated_output.filename().string();
-    tab.merge->incoming_label = RelativePathLabel(state.root, updated_incoming);
-    tab.merge->result_label = RelativePathLabel(state.root, updated_output);
-    tab.merge->current_label = RelativePathLabel(state.root, updated_current);
-    tab.merge->result_viewport.SetPath(updated_output);
-    tab.merge->incoming_initial_syntax_state =
-        editor::SyntaxHighlighter::InitialState(updated_output, tab.merge->model.incoming_lines);
-    tab.merge->current_initial_syntax_state =
-        editor::SyntaxHighlighter::InitialState(updated_output, tab.merge->model.current_lines);
-    tab.merge->incoming_current_syntax_state = tab.merge->incoming_initial_syntax_state;
-    tab.merge->current_current_syntax_state = tab.merge->current_initial_syntax_state;
-    tab.merge->incoming_syntax_rows_tokenized = 0;
-    tab.merge->current_syntax_rows_tokenized = 0;
-    std::fill(tab.merge->incoming_tokens.begin(), tab.merge->incoming_tokens.end(),
-              std::vector<editor::SyntaxTokenKind>{});
-    std::fill(tab.merge->current_tokens.begin(), tab.merge->current_tokens.end(),
-              std::vector<editor::SyntaxTokenKind>{});
-    tab.merge->result_viewport.SetScrollLine(
-        static_cast<std::size_t>(std::max(0, tab.merge->scroll_row)));
-    tab.merge->result_viewport.SetHorizontalScroll(tab.merge->horizontal_scroll);
-    tab.merge->scroll_row = static_cast<int>(tab.merge->result_viewport.scroll_line());
-    tab.merge->horizontal_scroll = tab.merge->result_viewport.horizontal_scroll();
-    tab.path = updated_output;
-    tab.title = tab.merge->title;
   }
 
-  // Retarget matching editor tabs in the NON-focused split groups too — BEFORE the
-  // focused close below, so a focused-group collapse (dirty-reopen-fail) that promotes a
-  // background group to focused does not skip it here. A split view of the renamed file
-  // otherwise keeps a stale path, and — now that autosave/save-all flush dirty tabs
-  // across every group — would write the buffer back to the OLD path, resurrecting the
-  // pre-rename file. SetPath preserves any unsaved edits and just redirects the write
-  // target. (Compare/merge chrome in a background group is display-only and self-heals on
-  // the next refresh, so only editor tabs are handled.)
-  for (std::size_t gi = 0; gi < state.editor_groups.size(); ++gi) {
-    if (gi == state.focused_group_index) {
+  // Retarget matching tabs in the NON-focused split groups too — BEFORE the focused close
+  // below, so a focused-group collapse (dirty-reopen-fail) that promotes a background group
+  // to focused does not skip it here. A split view of the renamed file otherwise keeps a
+  // stale path, and — now that autosave/save-all flush dirty tabs across every group —
+  // would write the buffer back to the OLD path, resurrecting the pre-rename file. SetPath
+  // preserves any unsaved edits and just redirects the write target. Compare/merge tabs in
+  // a background group are retargeted the same way (a rebuild failure closes them), rather
+  // than left to "self-heal", so a background comparison never strands on the old/deleted
+  // path (TD-2026-07-17A-036). Iterate groups back-to-front so a compare/merge rebuild
+  // failure that empties and collapses a group cannot invalidate a lower group index.
+  for (std::size_t gi = state.editor_groups.size(); gi-- > 0;) {
+    if (gi == state.focused_group_index || gi >= state.editor_groups.size()) {
       continue;
     }
-    for (TabEntry& tab : state.editor_groups[gi].open_tabs) {
+    std::vector<std::size_t> group_tabs_to_close;
+    auto& group_tabs = state.editor_groups[gi].open_tabs;
+    for (std::size_t i = 0; i < group_tabs.size(); ++i) {
+      TabEntry& tab = group_tabs[i];
       if (tab.kind == TabEntry::Kind::Editor && !tab.editor_state.has_value() &&
           tab.deferred_handle.has_value()) {
         // Deferred split-view tab: retarget its deferred-open path so a later
@@ -243,6 +262,11 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
         continue;
       }
       if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+        // Compare/merge background tab: retarget in place or close on rebuild failure.
+        if (RetargetSpecialTabForRename(tab, old_path, new_path, preserve_unsaved_state) ==
+            SpecialTabRetargetOutcome::MustClose) {
+          group_tabs_to_close.push_back(i);
+        }
         continue;
       }
       auto& editor_state = *tab.editor_state;
@@ -295,6 +319,13 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       editor_state.restored_horizontal_scroll = editor_state.viewport.horizontal_scroll();
       tab.path = updated_path;
       tab.title = updated_path.filename().string();
+    }
+    // Close any background compare/merge tabs whose content no longer resolves. Descending
+    // order keeps earlier indices valid; if this empties the group it collapses, which the
+    // back-to-front outer loop tolerates.
+    std::sort(group_tabs_to_close.rbegin(), group_tabs_to_close.rend());
+    for (std::size_t index : group_tabs_to_close) {
+      editor_tabs_.CloseGroupTab(gi, index);
     }
   }
 
@@ -359,7 +390,9 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
   // focused close means a focused-group collapse cannot promote a still-affected
   // background group to focused and skip it. `focused_group_index` can shift as a
   // background group collapses, so re-read it and iterate the survivors from the back.
-  // Compare/merge tabs in a background group are left to self-heal.
+  // Compare/merge tabs in a background group are closed here too (mirroring the focused
+  // group), so a delete never strands a background comparison on the defunct path
+  // (TD-2026-07-17A-036).
   for (std::size_t gi = state.editor_groups.size(); gi-- > 0;) {
     if (gi == state.focused_group_index || gi >= state.editor_groups.size()) {
       continue;
@@ -369,6 +402,10 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
     for (std::size_t i = 0; i < tabs.size(); ++i) {
       const TabEntry& tab = tabs[i];
       if (tab.kind != TabEntry::Kind::Editor) {
+        if (CompareTabAffectedByPath(tab, normalized_path) ||
+            MergeTabAffectedByPath(tab, normalized_path)) {
+          group_indices.push_back(i);
+        }
         continue;
       }
       std::filesystem::path current_path;
