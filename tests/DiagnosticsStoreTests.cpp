@@ -327,9 +327,41 @@ void TestDiagnosticsStoreFlagsTruncatedFiles() {
          "with no capped file remaining the store must report no truncation");
 }
 
+// TD-2026-07-17A-064: each owner is capped at 10000, but the merged multi-owner view
+// had no aggregate cap, so several LSP/plugin owners could multiply the per-visible-row
+// diagnostic scan/underline cost for one file. Publishing three fully-capped owners for
+// the same file must produce a merged list bounded by the aggregate cap, flagged
+// truncated.
+void TestDiagnosticsStoreCapsMergedMultiOwnerCount() {
+  DiagnosticsStore store;
+  const std::filesystem::path path = "/tmp/project/multi.cpp";
+
+  const auto publish_owner = [&](const char* owner) {
+    std::vector<Diagnostic> flood;
+    flood.reserve(10000);
+    for (std::size_t i = 0; i < 10000; ++i) {
+      flood.push_back(MakeDiagnostic(i, 0, i, 1, DiagnosticSeverity::Warning, "x"));
+    }
+    Expect(store.ReplaceForOwnerFile(owner, path, std::move(flood)),
+           "each owner's capped diagnostic batch should publish");
+  };
+  publish_owner("lsp-a");
+  publish_owner("lsp-b");
+  publish_owner("plugin-c");  // 3 * 10000 = 30000 merged before the aggregate cap
+
+  const auto* merged = store.FindByPath(path);
+  Expect(merged != nullptr, "the merged file view should exist");
+  Expect(merged->size() <= 20000,
+         "the merged multi-owner list must be bounded by the aggregate per-file cap");
+  Expect(store.IsPathTruncated(path),
+         "an aggregate-capped merged view must be flagged truncated");
+}
+
 }  // namespace
 
 void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "DiagnosticsStore/CapsMergedMultiOwnerCount",
+          TestDiagnosticsStoreCapsMergedMultiOwnerCount);
   AddTest(tests, "DiagnosticsStore/CapsPerFileCount", TestDiagnosticsStoreCapsPerFileCount);
   AddTest(tests, "DiagnosticsStore/FlagsTruncatedFiles",
           TestDiagnosticsStoreFlagsTruncatedFiles);

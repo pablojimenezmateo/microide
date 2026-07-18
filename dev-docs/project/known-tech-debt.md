@@ -128,10 +128,10 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test) —
 >    **focus pass 2/9 IN PROGRESS 2026-07-18**:
->    018, 029, 038, 039, 043, 044, 046, 056, 057, 064, 070,
+>    018, 029, 038, 039, 043, 044, 046, 056, 057, 070,
 >    071, 072, 073, 074, 095, 096, 097, 098, 099, 105, 107, 116, 118.
 >    *(020, 090, 101, 037, 042 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets; control-socket complete-line cap + aggregate inbound-byte budget.)*
->    *(040, 068, 106, 119, 121 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; terminal pending-input byte cap; project.files_exclude rule/byte cap; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
+>    *(040, 064, 068, 106, 119, 121 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; project.files_exclude rule/byte cap; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
@@ -825,8 +825,16 @@ speed-path items first, then the correctness/lifecycle cleanups.
   O(all_comments + all_threads) work for each first-seen URI. Build/update indexes at mutation time
   or use a non-inserting lookup for marker-free URIs, with an explicit eviction/reset strategy for
   empty cached misses.
-- **TD-2026-07-17A-064 — merged diagnostics have no aggregate per-file cap for render
-  paths.** `DiagnosticsStore::ReplaceForOwnerFile` caps one owner/file at 10,000 diagnostics, but
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-064 — merged diagnostics have no aggregate per-file cap for render
+  paths.** Fixed: `DiagnosticsStore::RebuildPath` caps the merged multi-owner list at
+  `kMaxMergedDiagnosticsPerFile` (20,000) AFTER sorting, so the highest-severity /
+  earliest-position diagnostics survive and several owners can no longer multiply the
+  per-visible-row scan/underline cost for one file. The aggregate drop sets `merged.truncated`
+  (feeding `HasTruncatedFile()`/`IsPathTruncated`), while the badge summary is computed from the
+  full pre-truncation list so counts stay accurate and `original_count` still reports the true
+  total. Regression: `DiagnosticsStore/CapsMergedMultiOwnerCount` (three fully-capped owners for
+  one file ⇒ merged ≤ 20k + truncated).
+  `DiagnosticsStore::ReplaceForOwnerFile` caps one owner/file at 10,000 diagnostics, but
   `RebuildPath` concatenates every owner contributing to the path into `merged.diagnostics` without
   a shared cap. `EditorViewRenderer`, compare render, and merge render then call
   `HighestDiagnosticSeverityForLine` / `AppendDiagnosticUnderlines` against that merged vector for

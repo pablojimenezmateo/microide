@@ -191,7 +191,19 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
   }
 
   SortDiagnostics(&merged.diagnostics);
+  // Badge counts reflect the true merged total (pre-truncation) so the summary stays
+  // accurate even when the render-scanned list is capped below.
   merged.summary = SummarizeDiagnostics(merged.diagnostics);
+  // TD-2026-07-17A-064: each owner is capped (kMaxDiagnosticsPerOwnerFile) but the
+  // merged multi-owner view had no aggregate cap, so several LSP/plugin owners could
+  // multiply the per-visible-row diagnostic scan/underline cost for one file. Cap the
+  // merged list AFTER sorting so the highest-severity (then earliest-position)
+  // diagnostics survive, and flag the aggregate drop as truncation too.
+  constexpr std::size_t kMaxMergedDiagnosticsPerFile = 20000;
+  if (merged.diagnostics.size() > kMaxMergedDiagnosticsPerFile) {
+    merged.diagnostics.resize(kMaxMergedDiagnosticsPerFile);
+    merged.truncated = true;
+  }
   auto existing = merged_by_path_.find(path_key);
   if (existing == merged_by_path_.end()) {
     AddSummary(merged.summary);
