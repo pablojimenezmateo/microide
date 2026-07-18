@@ -152,6 +152,50 @@ void TestShapingMoveLineDownKeepsWholeLineSelection() {
          "the selection follows the moved block (now lines 1..2, exclusive end at line 3)");
 }
 
+// TD-2026-07-17A-120: shaping actions must not drop a ranged secondary caret's
+// selection anchor, and line-range resolution must cover lines spanned only by
+// such an anchor.
+void TestShapingPreservesRangedSecondaryCaretAnchors() {
+  using microide::editor::SelectionRange;
+  using microide::editor::TextPosition;
+
+  {
+    // A ranged secondary caret (anchor on a different line than its cursor) must
+    // keep its anchor across a line move, not collapse to a bare caret.
+    TextViewport viewport;
+    viewport.LoadContent("aaa\nbbb\nccc\nddd", "/tmp/shaping-anchor-move.txt");
+    viewport.MoveCursorTo(0, 1);
+    viewport.AddSecondaryCaretWithRange(SelectionRange{TextPosition{2, 0}, TextPosition{2, 3}});
+    Expect(microide::editor::MoveLineDown(viewport), "MoveLineDown should succeed");
+    const auto ranges = viewport.secondary_caret_ranges();
+    Expect(ranges.size() == 1, "the ranged secondary caret survives the move");
+    Expect(ranges[0].position == TextPosition{3, 3},
+           "the secondary caret's cursor follows the moved block (+1 line)");
+    Expect(ranges[0].selection_anchor.has_value(),
+           "the secondary caret's selection anchor is preserved, not dropped");
+    Expect(ranges[0].selection_anchor.value() == TextPosition{3, 0},
+           "the preserved anchor shifts with the moved block too");
+  }
+
+  {
+    // ResolveLineRange must include a line spanned only by a secondary caret's
+    // anchor. Primary caret has no selection on line 3; a ranged secondary caret
+    // spans lines 0..1 (anchor on line 0, cursor on line 1). Indent must reach
+    // line 0 — with the old positions-only resolution it was missed.
+    TextViewport viewport;
+    viewport.LoadContent("aa\nbb\ncc\ndd", "/tmp/shaping-anchor-indent.txt");
+    viewport.SetSoftTabs(true);
+    viewport.SetIndentWidth(2);
+    viewport.MoveCursorTo(3, 0);
+    viewport.AddSecondaryCaretWithRange(SelectionRange{TextPosition{0, 0}, TextPosition{1, 1}});
+    Expect(microide::editor::IndentSelection(viewport), "IndentSelection should succeed");
+    Expect(viewport.lines()[0] == "  aa",
+           "the line covered only by the secondary anchor must be indented (A-120)");
+    Expect(viewport.lines()[1] == "  bb", "the secondary caret's own line is indented");
+    Expect(viewport.lines()[3] == "  dd", "the primary caret line is indented");
+  }
+}
+
 void TestShapingMoveLineDownMultiCaretSingleUndoStep() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\nd", "/tmp/sample.txt");
@@ -1228,6 +1272,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingMoveLineDownKeepsWholeLineSelection);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDownMultiCaretSingleUndoStep",
           TestShapingMoveLineDownMultiCaretSingleUndoStep);
+  AddTest(tests, "EditorEssentials/Shaping/PreservesRangedSecondaryCaretAnchors",
+          TestShapingPreservesRangedSecondaryCaretAnchors);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDownRedoPreservesMultiCaret",
           TestShapingMoveLineDownRedoPreservesMultiCaret);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineUpMultiCaretSingleUndoStep",

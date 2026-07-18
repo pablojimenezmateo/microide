@@ -305,6 +305,12 @@ class TextViewport {
   bool dirty() const { return document_->dirty; }
   bool is_placeholder() const { return document_->placeholder; }
   std::vector<TextPosition> secondary_carets() const;
+  // Full secondary carets, each carrying its selection anchor (empty for a plain
+  // column caret). Shaping actions (move/indent line) use this so a ranged Ctrl-D
+  // secondary selection survives the transform instead of collapsing to a bare
+  // caret, and so line-range resolution covers lines spanned only by an anchor
+  // (A-120). secondary_carets() (positions only) stays for plain-caret callers.
+  std::vector<TextViewportUndoHistory::SecondaryCaret> secondary_caret_ranges() const;
   // Render-path accessor: returns a view into a cached vector that mirrors
   // `secondary_carets_`. The cache is rebuilt only when the positions
   // actually differ (size mismatch or any element changed), so steady-state

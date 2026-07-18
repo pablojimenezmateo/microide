@@ -369,6 +369,10 @@ std::vector<TextPosition> TextViewport::secondary_carets() const {
   return carets;
 }
 
+std::vector<TextViewportUndoHistory::SecondaryCaret> TextViewport::secondary_caret_ranges() const {
+  return secondary_carets_;
+}
+
 std::span<const TextPosition> TextViewport::secondary_caret_positions() const {
   // Quick reject: matching sizes + identical elements means the cache is current and we can
   // hand out the existing view without touching the heap.
