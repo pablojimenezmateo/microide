@@ -364,6 +364,59 @@ void TestWorkspaceNextLiteralMatchAfterSeedWrapOnce() {
   }
 }
 
+// TD-2026-07-17A-031: "Add Cursor at All Matches" collects a ranged caret at
+// every occurrence except the seed, folding each line once (case-insensitive)
+// and capping the installed carets.
+void TestWorkspaceAddCursorMatchRanges() {
+  using microide::workspace::CollectAddCursorMatchRanges;
+  using microide::editor::TextBuffer;
+
+  {
+    // Dense single-line match set, case-sensitive: seed at column 0 is skipped,
+    // every later occurrence is collected as a ranged caret.
+    const TextBuffer buffer(std::vector<std::string>{"aa aa aa"});
+    const auto scan = CollectAddCursorMatchRanges(buffer, /*seed_line=*/0, /*seed_column=*/0,
+                                                  "aa", /*case_sensitive=*/true);
+    Expect(!scan.truncated, "small match set is not truncated");
+    Expect(scan.ranges.size() == 2, "seed occurrence is excluded; two others remain");
+    Expect(scan.ranges[0].start.column == 3 && scan.ranges[0].end.column == 5,
+           "first collected caret covers the second occurrence");
+    Expect(scan.ranges[1].start.column == 6 && scan.ranges[1].end.column == 8,
+           "second collected caret covers the third occurrence");
+  }
+
+  {
+    // Case-insensitive: mixed-case occurrences all match; folded byte offsets
+    // are valid columns because the fold is length-preserving.
+    const TextBuffer buffer(std::vector<std::string>{"Foo foo", "FOO"});
+    const auto scan = CollectAddCursorMatchRanges(buffer, /*seed_line=*/0, /*seed_column=*/0,
+                                                  "foo", /*case_sensitive=*/false);
+    Expect(scan.ranges.size() == 2, "the seed on line 0 col 0 is skipped; two matches remain");
+    Expect(scan.ranges[0].start.line == 0 && scan.ranges[0].start.column == 4,
+           "the second same-line occurrence is collected");
+    Expect(scan.ranges[1].start.line == 1 && scan.ranges[1].start.column == 0,
+           "the next-line occurrence is collected");
+  }
+
+  {
+    // Case-sensitive must not match a different-cased occurrence.
+    const TextBuffer buffer(std::vector<std::string>{"foo FOO"});
+    const auto scan = CollectAddCursorMatchRanges(buffer, /*seed_line=*/0, /*seed_column=*/0,
+                                                  "foo", /*case_sensitive=*/true);
+    Expect(scan.ranges.empty(), "case-sensitive scan skips FOO and the seeded foo");
+  }
+
+  {
+    // Cap: a match set larger than max_matches truncates and stops at the cap.
+    const TextBuffer buffer(std::vector<std::string>{"x x x x x x x x"});  // 8 occurrences
+    const auto scan = CollectAddCursorMatchRanges(buffer, /*seed_line=*/0, /*seed_column=*/0,
+                                                  "x", /*case_sensitive=*/true,
+                                                  /*max_matches=*/3);
+    Expect(scan.truncated, "exceeding the cap sets the truncation flag");
+    Expect(scan.ranges.size() == 3, "no more than max_matches carets are collected");
+  }
+}
+
 void TestWorkspaceSharedProjectSearchLineMapHelpers() {
   const std::vector<microide::project::ProjectSearchResult> results = {
       {.relative_path = std::filesystem::path("src/a.cpp"),
@@ -502,6 +555,8 @@ void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceNextLiteralMatchAfterSeedWrapOnce);
   AddTest(tests, "WorkspaceTextSearch/IncrementalLiteralSearch",
           TestWorkspaceIncrementalLiteralSearch);
+  AddTest(tests, "WorkspaceTextSearch/AddCursorMatchRanges",
+          TestWorkspaceAddCursorMatchRanges);
   AddTest(tests, "WorkspaceProjectSearchPresentation/LineMapHelpers",
           TestWorkspaceSharedProjectSearchLineMapHelpers);
 }

@@ -504,6 +504,8 @@ class WorkspaceActionContext {
   // Returns false when no sink is wired, the id is unknown, or the value is
   // invalid for the setting's type. Backs the `set-setting` command.
   bool SetSettingValue(std::string_view id, std::string value);
+  // Post a transient host notification toast. No-op when no sink is wired.
+  void Notify(NotificationService::Tone tone, std::string message);
 
  private:
   // Mark layout dirty and request a full-window repaint after a live config
