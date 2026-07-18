@@ -35,6 +35,22 @@ void MainThreadMailbox::PostWithoutWake(Action action) {
   queued_.store(static_cast<int>(actions_.size()), std::memory_order_release);
 }
 
+void MainThreadMailbox::PostLatest(std::string key, Action action) {
+  {
+    std::lock_guard lock(mutex_);
+    if (const auto it = keyed_index_.find(key);
+        it != keyed_index_.end() && it->second < actions_.size()) {
+      // Replace the superseded closure in place (its captured payload is dropped).
+      actions_[it->second] = std::move(action);
+    } else {
+      keyed_index_[std::move(key)] = actions_.size();
+      actions_.push_back(std::move(action));
+      queued_.store(static_cast<int>(actions_.size()), std::memory_order_release);
+    }
+  }
+  PushWake();
+}
+
 bool MainThreadMailbox::PushWakeEvent(Uint32 wake) const {
   SDL_Event event{};
   event.type = wake;
@@ -80,6 +96,7 @@ int MainThreadMailbox::Drain() {
   {
     std::lock_guard lock(mutex_);
     actions.swap(actions_);
+    keyed_index_.clear();
     queued_.store(0, std::memory_order_release);
   }
   // The drain satisfies whatever wake was owed.
@@ -95,6 +112,7 @@ int MainThreadMailbox::Drain() {
 void MainThreadMailbox::Clear() {
   std::lock_guard lock(mutex_);
   actions_.clear();
+  keyed_index_.clear();
   queued_.store(0, std::memory_order_release);
   wake_delivery_failed_.store(false, std::memory_order_release);
 }

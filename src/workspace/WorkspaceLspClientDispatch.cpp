@@ -210,7 +210,14 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
         cb = diagnostics_callback;
       }
       if (cb) {
-        main_mailbox.Post(
+        // publishDiagnostics fully replaces a file's diagnostics, so only the
+        // latest per URI matters. Coalesce by URI (TD-2026-07-17A-018): a chatty
+        // server re-publishing the same file between UI drains drops the superseded
+        // diagnostics closures (and their vectors) instead of stacking them. Build
+        // the key before moving `uri` into the closure (argument order is unspecified).
+        std::string coalesce_key = "diag:" + uri;
+        main_mailbox.PostLatest(
+            std::move(coalesce_key),
             [cb = std::move(cb), u = std::move(uri), ds = std::move(diags)]() mutable {
               cb(std::move(u), std::move(ds));
             });

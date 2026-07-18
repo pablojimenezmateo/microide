@@ -1804,8 +1804,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   `title + "\x1f" + command` key per item. Keep the ranked append semantics, but use a hash set (or a
   sorted/interned key table) once the combined source size crosses a small threshold and cap the final
   visible overlay size independently of provider harvest caps.
-- **TD-2026-07-17A-115 — runtime syntax regex match-data cache is keyed by stale regex object
-  addresses.** `RuntimeSyntaxRegistry::ReusableMatchData` keeps a thread-local
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-115 — runtime syntax regex match-data cache is keyed by stale regex object
+  addresses.** Fixed: `ReusableMatchData` clears its thread-local address-keyed cache whenever the
+  registry revision advances (a per-thread `cached_revision` guard), so no match-data block outlives
+  the pattern it was built for and an address reused by a new pattern after a reload can't inherit a
+  stale, wrong-sized block. `MutableRegistryRevision` is now `std::atomic` so the highlight-worker
+  invalidation read is well-defined against the main-thread post-reload increment. Regression:
+  `RuntimeSyntaxSkip/MatchDataCacheInvalidatesOnReload`.
+  `RuntimeSyntaxRegistry::ReusableMatchData` keeps a thread-local
   `unordered_map<const CompiledRegex*, RegexMatchData>` and never clears it. Plugin syntax reload
   replaces `MutableRegistry()` with a freshly built registry, invalidating the old `CompiledRegex`
   object addresses while their match-data entries remain in every thread that highlighted syntax.

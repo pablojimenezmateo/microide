@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace microide::util {
@@ -40,6 +42,15 @@ class MainThreadMailbox {
   // Enqueue without waking. For batch sites that push many actions and then wake
   // once via PushWake() so the UI loop sees a single event for the whole batch.
   void PostWithoutWake(Action action);
+
+  // Enqueue a REPLACEABLE action coalesced by `key`: if an action with the same
+  // key is still queued (not yet drained), replace it in place with this one (the
+  // superseded closure — and whatever payload it captured — is dropped). Used for
+  // event classes where only the latest matters per key (e.g. LSP publishDiagnostics
+  // per URI, which fully replaces a file's diagnostics), so a chatty server/plugin
+  // cannot enqueue many stale capped closures between UI drains. Wakes the loop.
+  // TD-2026-07-17A-018.
+  void PostLatest(std::string key, Action action);
 
   // Wake the UI loop without enqueuing. For nudging the loop to re-poll state
   // that is not delivered as a mailbox action (e.g. a worker-thread exit).
@@ -82,6 +93,10 @@ class MainThreadMailbox {
 
   std::mutex mutex_;
   std::vector<Action> actions_;
+  // Coalescing index for PostLatest: key -> position in actions_. Stable until the
+  // next Drain()/Clear() (actions are only replaced in place, never erased
+  // mid-stream, so recorded indices never shift). Cleared alongside actions_.
+  std::unordered_map<std::string, std::size_t> keyed_index_;
   std::atomic<int> queued_{0};
   std::atomic<Uint32> wake_event_type_{0};
   mutable std::atomic<bool> wake_delivery_failed_{false};
