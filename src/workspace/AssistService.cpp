@@ -655,11 +655,20 @@ std::vector<CodeActionSessionItem> AssistService::TransformPluginCodeActions(
 }
 
 std::vector<CodeActionSessionItem> AssistService::TransformLspCodeActions(
-    const std::optional<std::vector<LspClient::CodeAction>>& actions) const {
+    const std::optional<std::vector<LspClient::CodeAction>>& actions) {
   std::vector<CodeActionSessionItem> result;
   if (!actions.has_value()) {
     return result;
   }
+  // Shared aggregate budget across ALL actions so a server returning many large
+  // (but individually capped) inline WorkspaceEdits cannot force the overlay to hold
+  // the sum of every action's edit payload before the user selects one. Past the
+  // budget, an action's inline fix is not materialized (edits_truncated set).
+  // TD-2026-07-17A-057.
+  constexpr std::size_t kMaxAggregateEdits = 50000;
+  constexpr std::size_t kMaxAggregateEditBytes = 16u * 1024 * 1024;  // 16 MiB
+  std::size_t total_edits = 0;
+  std::size_t total_edit_bytes = 0;
   result.reserve(actions->size());
   for (const auto& action : *actions) {
     std::vector<std::string> arguments;
@@ -668,8 +677,12 @@ std::vector<CodeActionSessionItem> AssistService::TransformLspCodeActions(
       arguments.push_back(JsonValueToArgumentString(argument));
     }
     std::vector<CodeActionEdit> edits;
+    bool edits_truncated = false;
     if (action.has_edit) {
       for (const auto& [uri, text_edits] : action.edit.changes) {
+        if (edits_truncated) {
+          break;
+        }
         const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
         if (!path.has_value()) {
           // An undecodable / non-local / malformed URI must never fall back to
@@ -678,6 +691,16 @@ std::vector<CodeActionSessionItem> AssistService::TransformLspCodeActions(
           continue;
         }
         for (const auto& [lsp_range, new_text] : text_edits) {
+          if (total_edits >= kMaxAggregateEdits ||
+              total_edit_bytes + new_text.size() > kMaxAggregateEditBytes) {
+            // Budget exhausted: drop this action's (partial) edits so the overlay
+            // never holds a half-applied fix, and mark it disabled.
+            edits.clear();
+            edits_truncated = true;
+            break;
+          }
+          ++total_edits;
+          total_edit_bytes += new_text.size();
           edits.push_back(CodeActionEdit{
               .path = *path,
               // Clamp negative positions to 0, matching the rename/formatting paths
@@ -701,6 +724,7 @@ std::vector<CodeActionSessionItem> AssistService::TransformLspCodeActions(
         .command = action.command,
         .arguments = std::move(arguments),
         .edits = std::move(edits),
+        .edits_truncated = edits_truncated,
     });
   }
   return result;

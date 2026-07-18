@@ -259,6 +259,10 @@ struct CodeActionSessionItem {
   // When non-empty the action is applied directly as buffer edits (no command
   // dispatch). This is how clangd delivers quickfixes like "remove #include X".
   std::vector<CodeActionEdit> edits;
+  // True when this action's inline WorkspaceEdit was NOT materialized because the
+  // overlay's shared aggregate edit/byte budget was exhausted — the action is shown
+  // but its inline fix is disabled (no edits to apply). TD-2026-07-17A-057.
+  bool edits_truncated = false;
 };
 
 struct CodeActionSessionState {

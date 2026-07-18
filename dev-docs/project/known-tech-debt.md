@@ -750,8 +750,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   `std::string`, then joined the rows into a transcript. A long-running command with large
   output could make an assistant/control request copy tens of thousands of retained terminal
   rows and allocate a second full transcript.
-- **TD-2026-07-17A-038 — cold-start control specs can flood breakpoint state and DAP
-  payloads under the byte cap.** `Application` caps `--control-spec` reads at 1 MiB, but
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-038 — cold-start control specs can flood breakpoint state and DAP
+  payloads under the byte cap.** Fixed: `ParseControlSpec` caps every section
+  (breakpoints/functionBreakpoints/settings/open/commands) at `kMaxControlSpecSectionEntries`
+  (10000); exceeding the cap is a hard parse error that rejects the whole spec with a clear
+  message, so a compact authored spec can no longer enqueue an unbounded synchronous
+  command/JSONL/DAP workload at startup under the 1 MiB byte cap. Regression:
+  `ControlSpec/ParseRejectsOversizedSections`.
+  `Application` caps `--control-spec` reads at 1 MiB, but
   `ParseControlSpec` still pushes every `breakpoints`, `functionBreakpoints`, `settings`,
   `open`, and `commands` array entry without product-level count caps. `ApplyControlSpec`
   translates those vectors into synchronous command-line executions and per-command JSONL

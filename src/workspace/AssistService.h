@@ -95,6 +95,15 @@ class AssistService {
   static bool ResultIsStale(const editor::TextViewport* active_editable,
                             const std::filesystem::path& request_path);
 
+  // Convert LSP code actions into overlay session items, materializing each
+  // action's inline WorkspaceEdit under a SHARED aggregate edit/byte budget so a
+  // server returning many large (but individually capped) fixes cannot make the
+  // overlay hold the sum of every action's edit payload before the user selects
+  // one. Past the budget an action's inline fix is dropped (edits_truncated set).
+  // Static + free of member state so the budget is unit-testable. TD-2026-07-17A-057.
+  static std::vector<CodeActionSessionItem> TransformLspCodeActions(
+      const std::optional<std::vector<LspClient::CodeAction>>& actions);
+
   bool EditorSnippetsSettingEnabled() const;
   bool ShowCompletionOverlay(std::string* error_message = nullptr);
   bool ApplySelectedCompletion();
@@ -208,8 +217,6 @@ class AssistService {
       lsp_encoding::PositionEncoding encoding) const;
   std::vector<CodeActionSessionItem> TransformPluginCodeActions(
       const std::vector<plugin::PluginHost::CodeActionCandidate>& items) const;
-  std::vector<CodeActionSessionItem> TransformLspCodeActions(
-      const std::optional<std::vector<LspClient::CodeAction>>& actions) const;
 
   // Merge both sources into the (already-open) overlay session. Called on each
   // source's arrival; publishes the ranked union so results appear as soon as

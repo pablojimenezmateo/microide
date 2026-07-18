@@ -103,6 +103,38 @@ void RegisterAssistServiceTests(std::vector<TestCase>& tests) {
                      }
                    }});
 
+  // TD-2026-07-17A-057: the code-action overlay materializes every action's inline
+  // WorkspaceEdit under a SHARED aggregate byte/edit budget. A server returning many
+  // large-but-capped fixes cannot make the overlay hold the sum of all edit
+  // payloads — past the budget an action's inline fix is dropped (edits_truncated).
+  tests.push_back({"AssistService/CodeActionEditsShareAggregateBudget", [] {
+                     using microide::workspace::LspClient;
+                     const auto make_action = [](std::string title, std::size_t text_bytes) {
+                       LspClient::CodeAction action;
+                       action.title = std::move(title);
+                       action.has_edit = true;
+                       LspClient::Range range{};
+                       action.edit.changes["file:///tmp/a.cpp"] = {
+                           {range, std::string(text_bytes, 'x')}};
+                       return action;
+                     };
+                     // 16 MiB budget: two ~10 MiB edits — the first fits, the second
+                     // overflows the aggregate and is dropped.
+                     const std::size_t big = 10u * 1024 * 1024;
+                     std::vector<LspClient::CodeAction> actions;
+                     actions.push_back(make_action("first", big));
+                     actions.push_back(make_action("second", big));
+
+                     const auto items = AssistService::TransformLspCodeActions(actions);
+                     Expect(items.size() == 2, "both action rows are still present (metadata kept)");
+                     Expect(items[0].title == "first" && !items[0].edits.empty() &&
+                                !items[0].edits_truncated,
+                            "the first action's inline edit fits within the budget");
+                     Expect(items[1].title == "second" && items[1].edits.empty() &&
+                                items[1].edits_truncated,
+                            "the second action's inline edit is dropped (over aggregate budget)");
+                   }});
+
   // ChooseNavigation: single-result nav prefers the authoritative source, waits
   // for it while pending, and only consults the other once it resolves empty.
   using assist_merge::ChooseNavigation;
