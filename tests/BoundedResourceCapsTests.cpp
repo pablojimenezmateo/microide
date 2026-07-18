@@ -4,8 +4,12 @@
 
 #include "TestSupport.h"
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
+#include "workspace/DapProtocol.h"
+#include "workspace/DebugValueTree.h"
 #include "workspace/SettingFlags.h"
 
 namespace microide::tests {
@@ -13,6 +17,58 @@ namespace {
 
 using workspace::kMaxExcludeGlobsRules;
 using workspace::ParseExcludeGlobs;
+
+// TD-2026-07-17A-040: DebugValueTree bounds each child fetch (kChildPageSize) but had
+// no aggregate loaded-node ceiling, so a huge (or hostile/garbage) container paged in
+// over repeated "show more" clicks could grow the tree without bound. A single
+// enormous page must now stop attaching at kMaxLoadedNodes and surface a terminal
+// truncated row.
+void TestDebugValueTreeAggregateNodeBudget() {
+  workspace::DebugValueTree tree;
+  constexpr int kScopeRef = 100;
+  tree.AddRoot("Locals", "", "", kScopeRef, /*is_scope=*/true);
+  tree.Rebuild();
+  tree.ToggleRow(0);  // expand the scope so its children flatten into rows
+
+  std::vector<workspace::dap_protocol::DapVariable> variables;
+  const std::size_t requested = workspace::DebugValueTree::kMaxLoadedNodes + 500;
+  variables.reserve(requested);
+  for (std::size_t i = 0; i < requested; ++i) {
+    workspace::dap_protocol::DapVariable variable;
+    variable.name = "v";  // uniqueness is irrelevant to the node-count budget
+    variable.value = "0";
+    variables.push_back(std::move(variable));
+  }
+  tree.ApplyVariables(kScopeRef, variables, /*start=*/0);
+
+  Expect(tree.Truncated(), "exceeding kMaxLoadedNodes must set the truncated flag");
+  // root + attached children (< requested) + one terminal truncated row.
+  Expect(tree.Rows().size() <= workspace::DebugValueTree::kMaxLoadedNodes + 2,
+         "the flattened row list must stay within the aggregate node budget");
+  Expect(tree.Rows().size() < requested,
+         "the tree must have dropped children rather than attaching them all");
+  const workspace::DebugVariableRowView& last = tree.Rows().back();
+  Expect(last.is_placeholder && last.kind == workspace::DebugValueKind::Error,
+         "a terminal, non-selectable truncated row must mark the dropped values");
+}
+
+void TestDebugValueTreeSmallContainerIsNotTruncated() {
+  workspace::DebugValueTree tree;
+  constexpr int kScopeRef = 7;
+  tree.AddRoot("Locals", "", "", kScopeRef, /*is_scope=*/true);
+  tree.Rebuild();
+  tree.ToggleRow(0);
+  std::vector<workspace::dap_protocol::DapVariable> variables;
+  for (int i = 0; i < 8; ++i) {
+    workspace::dap_protocol::DapVariable variable;
+    variable.name = "x" + std::to_string(i);
+    variable.value = "0";
+    variables.push_back(std::move(variable));
+  }
+  tree.ApplyVariables(kScopeRef, variables, /*start=*/0);
+  Expect(!tree.Truncated(), "an in-budget container must not be flagged truncated");
+  Expect(tree.Rows().size() == 9, "root + 8 children, no terminal truncated row");
+}
 
 // TD-2026-07-17A-106: `project.files_exclude` had no parsed-rule count or byte
 // budget, so a persisted/pasted setting could create an unbounded rule vector that
@@ -71,6 +127,10 @@ void RegisterBoundedResourceCapsTests(std::vector<TestCase>& tests) {
           TestExcludeGlobsByteBudgetIsCapped);
   AddTest(tests, "BoundedResourceCaps/ExcludeGlobsNormalInputIsNotFlaggedTruncated",
           TestExcludeGlobsNormalInputIsNotFlaggedTruncated);
+  AddTest(tests, "BoundedResourceCaps/DebugValueTreeAggregateNodeBudget",
+          TestDebugValueTreeAggregateNodeBudget);
+  AddTest(tests, "BoundedResourceCaps/DebugValueTreeSmallContainerIsNotTruncated",
+          TestDebugValueTreeSmallContainerIsNotTruncated);
 }
 
 }  // namespace microide::tests

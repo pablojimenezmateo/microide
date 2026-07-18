@@ -19,6 +19,9 @@ constexpr std::string_view kPendingChildrenLabel = "loading…";
 constexpr std::string_view kChildrenErrorLabel = "<unavailable>";
 // Clickable affordance to fetch the next bounded page of a large container.
 constexpr std::string_view kShowMoreLabel = "show more…";
+// Terminal row appended when the aggregate loaded-node budget (kMaxLoadedNodes) has
+// dropped children: signals the model is intentionally incomplete (TD-2026-07-17A-040).
+constexpr std::string_view kTruncatedLabel = "…(too many values — truncated)";
 
 bool LooksNumeric(std::string_view value) {
   std::size_t i = 0;
@@ -98,6 +101,7 @@ void DebugValueTree::Clear() {
   reference_to_node_.clear();
   roots_.clear();
   rows_.clear();
+  truncated_ = false;
   // next_id_ is intentionally NOT reset: node ids stay globally monotonic for the
   // life of the tree so a stale async response (a setVariable/variables reply
   // issued against a previous stop/frame) can never alias a freshly-created node
@@ -116,6 +120,7 @@ void DebugValueTree::ClearRoots() {
   nodes_.clear();
   reference_to_node_.clear();
   roots_.clear();
+  truncated_ = false;
   // next_id_ stays monotonic across rebuilds — see Clear().
   editing_node_.reset();
 }
@@ -350,7 +355,16 @@ std::vector<DebugValueTree::ChildFetch> DebugValueTree::ApplyVariables(
   const int parent_total = parent->total_count;
   std::vector<std::uint32_t> new_child_ids;
   new_child_ids.reserve(variables.size());
+  bool hit_node_budget = false;
   for (const dap_protocol::DapVariable& variable : variables) {
+    // TD-2026-07-17A-040: aggregate loaded-node budget. Repeated paging across many
+    // containers can grow the tree past kMaxLoadedNodes even though each page is
+    // bounded; stop attaching once the budget is hit and flag truncation.
+    if (nodes_.size() >= kMaxLoadedNodes) {
+      truncated_ = true;
+      hit_node_budget = true;
+      break;
+    }
     Node node;
     node.name = variable.name;
     node.value = variable.value;
@@ -395,6 +409,11 @@ std::vector<DebugValueTree::ChildFetch> DebugValueTree::ApplyVariables(
   // persist forever for an over-reporting adapter that answers the page with an
   // empty success rather than an error (which MarkChildrenError would have cleared).
   if (start > 0 && variables.empty()) {
+    parent->more_available = false;
+  }
+  // Budget-truncated page: stop offering more of this node so the "show more…"
+  // affordance does not persist for children we deliberately refused to attach.
+  if (hit_node_budget) {
     parent->more_available = false;
   }
   // Restore any of these children the user had expanded before this stop.
@@ -512,6 +531,16 @@ void DebugValueTree::Rebuild() {
   rows_.clear();
   for (const std::uint32_t root : roots_) {
     FlattenInto(root, 0);
+  }
+  // TD-2026-07-17A-040: a single terminal, non-selectable row makes the aggregate
+  // node-budget truncation visible instead of silently dropping values.
+  if (truncated_) {
+    DebugVariableRowView truncated_row;
+    truncated_row.display_name = std::string(kTruncatedLabel);
+    truncated_row.kind = DebugValueKind::Error;
+    truncated_row.depth = 0;
+    truncated_row.is_placeholder = true;
+    rows_.push_back(std::move(truncated_row));
   }
   if (selected_row_ >= rows_.size()) {
     selected_row_ = rows_.empty() ? 0 : rows_.size() - 1;

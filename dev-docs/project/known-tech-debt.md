@@ -126,10 +126,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >
 > 1. **Off-UI-thread / async** (Standing #1): **fully RESOLVED 2026-07-18** — 005 (`TaskExecutor` latest-only keyed submit + blame coalescing), 024 (`util::ReadFileLineWindow` bounded reference-snippet reader + live-buffer reuse), 033 (tab-activation LSP hydration deferred to post-present drain + tightened lint), 108 (plugin syntax fingerprint/load moved to the plugin worker; only the registry swap stays main-thread, generation-guarded).
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
->    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test):
->    018, 029, 038, 039, 040, 041, 043, 044, 046, 056, 057, 064, 068, 070,
->    071, 072, 073, 074, 095, 096, 097, 098, 099, 105, 106, 107, 116, 118, 119, 121.
+>    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test) —
+>    **focus pass 2/9 IN PROGRESS 2026-07-18**:
+>    018, 029, 038, 039, 043, 044, 046, 056, 057, 064, 068, 070,
+>    071, 072, 073, 074, 095, 096, 097, 098, 099, 105, 107, 116, 118, 119, 121.
 >    *(020, 090, 101, 037, 042 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets; control-socket complete-line cap + aggregate inbound-byte budget.)*
+>    *(040, 106 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; project.files_exclude rule/byte cap.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
@@ -570,7 +572,16 @@ speed-path items first, then the correctness/lifecycle cleanups.
   very large atomic writes through the host helper. Add explicit read/write byte ceilings
   to the filesystem API, surface a normal plugin error when exceeded, and prefer a bounded
   line/range read API for future plugin workloads that only need snippets.
-- **TD-2026-07-17A-040 — debug variable paging has no aggregate loaded-node cap.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-040 — debug variable paging has no aggregate loaded-node cap.**
+  Fixed: `DebugValueTree` now enforces an aggregate `kMaxLoadedNodes` (100k) budget across
+  the whole tree. `ApplyVariables` stops attaching children once `nodes_.size()` reaches the
+  ceiling, sets a `Truncated()` flag, and clears `more_available` for the budget-truncated
+  node so the "show more…" affordance does not persist; `Rebuild` appends one terminal,
+  non-selectable "…(too many values — truncated)" row (`DebugValueKind::Error`,
+  `is_placeholder`). The flag resets on `Clear`/`ClearRoots`. The per-request page-size guard
+  is unchanged. Regression: `BoundedResourceCaps/DebugValueTreeAggregateNodeBudget`
+  (a single >100k-child page drops children + surfaces the terminal row) and
+  `DebugValueTreeSmallContainerIsNotTruncated`.
   `DebugValueTree` limits each `variables` request to `kChildPageSize` and caps render
   recursion depth, but `ApplyVariables` appends every returned page into `nodes_`,
   `children`, and the flat `rows_` list with no total per-tree/per-node ceiling. A huge
@@ -1198,7 +1209,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   scan a very large string and retain up to 4,096 large cache keys. Add a measurement byte budget and a
   separate "clipped width" contract for UI labels, avoid caching over-budget strings, and make callers
   truncate/cap untrusted text before width measurement.
-- **TD-2026-07-17A-106 — `project.files_exclude` has no parsed-rule count or byte budget.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-106 — `project.files_exclude` has no parsed-rule count or byte budget.**
+  Fixed: `ParseExcludeGlobs` now scans at most `kMaxExcludeGlobsBytes` (256 KiB) of the raw
+  setting text and keeps at most `kMaxExcludeGlobsRules` (4096) parsed globs, setting an
+  optional `*truncated` flag when either cap trims input. A persisted/pasted setting can no
+  longer build an unbounded rule vector that is copied into `DirectoryTree`/`FileIndex`/the
+  native watcher and scanned per traversal predicate. Regression:
+  `BoundedResourceCaps/ExcludeGlobs{RuleCountIsCapped,ByteBudgetIsCapped,NormalInputIsNotFlaggedTruncated}`.
   `.gitignore` loading skips files above 4 MiB, but the user setting path goes through
   `ParseExcludeGlobs` and accepts every newline/comma-separated entry in the setting string. Live
   settings changes then copy the resulting vector into `DirectoryTree`, `FileIndex`, and

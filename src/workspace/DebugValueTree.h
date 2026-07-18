@@ -82,6 +82,17 @@ class DebugValueTree {
   // gdb allocate without bound and freeze the host.
   static constexpr int kChildPageSize = 200;
 
+  // TD-2026-07-17A-040: the page-size guard bounds a single request, but repeated
+  // "show more" paging across many containers can still append pages into the tree
+  // without a total ceiling. This is the aggregate loaded-node budget across the
+  // whole tree; once crossed, ApplyVariables stops attaching new children, sets the
+  // truncated flag, and Rebuild appends one terminal "truncated" row. Far beyond any
+  // human-inspectable amount (≈500 fully paged containers) yet bounds memory.
+  static constexpr std::size_t kMaxLoadedNodes = 100000;
+
+  // True once the aggregate node budget forced ApplyVariables to drop children.
+  bool Truncated() const { return truncated_; }
+
   // Name of the root scope auto-expanded once per session (open by default). Empty
   // (the default) disables it; the Variables model sets "Locals". The shared tree is
   // otherwise scope-agnostic, so the Watch panel never auto-expands.
@@ -230,6 +241,10 @@ class DebugValueTree {
   // respected, and a new session reopens it.
   std::string default_expanded_scope_;
   bool pending_default_expansion_ = true;
+  // Set when the aggregate loaded-node budget (kMaxLoadedNodes) forced ApplyVariables
+  // to stop attaching children; Rebuild then emits a terminal "truncated" row. Reset
+  // whenever the tree's roots are dropped so a fresh stop starts clean.
+  bool truncated_ = false;
   std::vector<DebugVariableRowView> rows_;
   std::uint32_t next_id_ = 1;
   std::size_t selected_row_ = 0;
