@@ -63,6 +63,10 @@ class LspService {
   };
 
   LspService() = default;
+  // Blocks (bounded) on any still-retiring clients — app teardown only. Moving the
+  // block here (instead of the per-project ~LspManager) is the point of the
+  // host-owned retirement pool: project switches no longer stall (TD-2026-07-17-091).
+  ~LspService();
 
   void Configure(WorkspaceContext& context, CompletionRegistry& completion_registry,
                  CodeActionRegistry& code_action_registry, Operations operations);
@@ -91,6 +95,15 @@ class LspService {
   const LspManager& CurrentLspManager() const;
   LspManager& EnsureProjectLspManager(ProjectWorkspaceState& state);
   void ConsumeLspCallbacks();
+
+  // Begin async shutdown of the CURRENT project's LSP servers and move the retiring
+  // clients into the host-owned pool, so a following project-state teardown never
+  // blocks the shell thread on their shutdown handshake. The pool drains each frame
+  // via ConsumeLspCallbacks and only blocks (bounded) at app teardown (~LspService).
+  void RetireCurrentProjectServers();
+
+  // Tests: number of clients still draining in the host-owned retirement pool.
+  std::size_t RetiringClientCountForTesting() const { return retiring_clients_.size(); }
 
   // Semantic tone of the active server's status, derived from typed readiness
   // state rather than substring-matching the label. `Idle` = calm/ready/off,
@@ -302,6 +315,14 @@ class LspService {
     bool semantic = false;
   };
   std::optional<FeatureEnablement> last_feature_enablement_;
+
+  // Host-owned graveyard of clients whose servers are shutting down. Outlives every
+  // per-project LspManager, so a project switch hands its retiring clients here and
+  // is not blocked by their shutdown handshake. Drained (non-blocking reap of
+  // completed clients) each frame by DrainRetiringClients (TD-2026-07-17-091).
+  std::vector<std::unique_ptr<LspClient>> retiring_clients_;
+  void RetireClients(std::vector<std::unique_ptr<LspClient>> clients);
+  void DrainRetiringClients();
 };
 
 }  // namespace microide::workspace

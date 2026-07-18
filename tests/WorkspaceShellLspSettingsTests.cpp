@@ -177,9 +177,52 @@ void TestMenuReadDoesNotStartLspServer() {
          "reading the menu must not even attempt to spawn the server");
 }
 
+// TD-2026-07-17-091: retiring an LSP server hands the client to a host-owned pool
+// (which outlives per-project state) instead of blocking the shell thread on the
+// shutdown handshake. Retire clears the project manager's servers, and the pool
+// drains asynchronously via ConsumeLspCallbacks.
+void TestLspServerRetirementRoutesThroughHostPool() {
+  TemporaryDirectory temp;
+  const std::filesystem::path project = temp.path() / "proj";
+  const std::filesystem::path file = project / "main.py";
+  WriteFile(file, "value = 1\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "fixture project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  stub->EnableTestStubMode();
+  WorkspaceShellTestAccess::LspManagerForTesting(shell).InstallTestClientForTesting(
+      "python", std::move(stub));
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell).HasServer("python"),
+         "stub server should be registered");
+
+  WorkspaceShellTestAccess::RetireCurrentProjectLspServers(shell);
+
+  // Retire moved the client out of the (still-live) project manager without blocking.
+  Expect(!WorkspaceShellTestAccess::LspManagerForTesting(shell).HasServer("python"),
+         "retire should clear the project manager's servers");
+
+  // The client now drains from the host-owned pool over frames. Pump callbacks until
+  // the pool empties (bounded, no sleeps — the stub's shutdown thread completes fast).
+  bool drained = false;
+  for (int i = 0; i < 2000; ++i) {
+    if (WorkspaceShellTestAccess::LspRetiringClientCount(shell) == 0) {
+      drained = true;
+      break;
+    }
+    WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  }
+  Expect(drained, "the host-owned retirement pool should drain the retiring client");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellLspSettingsTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShellLspSettings/ServerRetirementRoutesThroughHostPool",
+          TestLspServerRetirementRoutesThroughHostPool);
   AddTest(tests, "WorkspaceShellLspSettings/ActionGatingRespectsToggles",
           TestLspActionGatingRespectsToggles);
   AddTest(tests, "WorkspaceShellLspSettings/MenuItemsHideWhenDisabled",

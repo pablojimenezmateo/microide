@@ -57,6 +57,13 @@ class LspManager {
   // Begin background shutdown for all active servers without blocking the caller.
   void BeginShutdownAll();
 
+  // Begin background shutdown for all active servers AND hand every retiring client
+  // (both the just-begun ones and any already retiring) to the caller. Used so a
+  // per-project manager can be destroyed without its ~LspManager blocking on
+  // WaitForShutdown: a host-owned pool that outlives the project drains them async
+  // instead (TD-2026-07-17-091).
+  std::vector<std::unique_ptr<LspClient>> BeginShutdownAllAndTakeClients();
+
   // Stop all servers and wait for active and retiring processes to exit.
   void ShutdownAll();
 

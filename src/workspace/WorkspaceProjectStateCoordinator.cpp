@@ -289,7 +289,10 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   last_applied_project_change_generation_ = 0;
   MakeMenuCoordinator().CloseTreeContextMenu();
   ClearEditorBlame();
-  CurrentLspManager().BeginShutdownAll();
+  // Hand the retiring LSP clients to the host-owned pool BEFORE the project state
+  // (and its LspManager) is destroyed, so ~LspManager does not block the shell thread
+  // on their shutdown handshake (TD-2026-07-17-091).
+  lsp_service_.RetireCurrentProjectServers();
 
   ResetCurrentProjectStateStorage();
 

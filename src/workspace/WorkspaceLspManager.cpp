@@ -221,6 +221,16 @@ void LspManager::BeginShutdownAll() {
   CollectRetiredClients();
 }
 
+std::vector<std::unique_ptr<LspClient>> LspManager::BeginShutdownAllAndTakeClients() {
+  BeginShutdownAll();
+  // BeginShutdownAll left every client in retiring_clients_ (and reaped the already-
+  // complete ones). Hand the rest to the caller so this manager can be destroyed
+  // without ~LspManager -> ShutdownAll blocking on their WaitForShutdown.
+  std::vector<std::unique_ptr<LspClient>> taken = std::move(retiring_clients_);
+  retiring_clients_.clear();
+  return taken;
+}
+
 void LspManager::ShutdownAll() {
   BeginShutdownAll();
   for (auto& client : retiring_clients_) {

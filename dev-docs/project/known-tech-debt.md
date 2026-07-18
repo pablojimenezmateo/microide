@@ -89,8 +89,8 @@ they land.
 1. **Async / off-thread hardening** — move blocking work off the shell/UI thread:
    compare/merge model build (047/19), LSP `WorkspaceEdit` apply (011/18), project
    replace-all (21), git patch serialize (38),
-   exclude-glob watcher rebuild (080), file-index batch coalescing (086), LSP shutdown
-   lifecycle (091), search worker pool (055), save-participant /
+   exclude-glob watcher rebuild (080), file-index batch coalescing (086),
+   search worker pool (055), save-participant /
    `process.run_async` worker capacity (016/017). **014 (POSIX terminal write deadline)
    RESOLVED 2026-07-18** — non-blocking buffered PTY writes drained off the reader thread.
    *Speed is the #1 project priority, so this cluster is the highest-value backlog.*
@@ -2197,7 +2197,7 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 **Async / off-thread refactors** (move blocking work off the shell/UI thread):
 
 > **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** Every item in this subsection (047, 055,
-> 080, 086, 091, 016/017, 075) is a multi-file async redesign —
+> 080, 086, 016/017, 075) is a multi-file async redesign —
 > (**014, 061, 081/082 RESOLVED 2026-07-18** — POSIX terminal write is non-blocking; the
 > file-manager reveal subprocess and the forced full rescan run off the shell thread; see
 > their entries below.)
@@ -2279,9 +2279,18 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 - **086 — file-index watcher buffers unbounded incremental batches before the
   initial scan lands.** Replace the pending-vector with a capped path-keyed
   coalescer / rescan-after-baseline flag.
-- **091 — LSP shutdown can synchronously block project reset / app teardown.**
-  Preserve retiring clients in a host-owned lifecycle service that outlives
-  project-state replacement. Pairs with debug teardown (026).
+- **[RESOLVED 2026-07-18] 091 — LSP shutdown can synchronously block project reset / app teardown.**
+  Retiring LSP clients now go to a host-owned pool on `LspService` (which outlives every
+  per-project `LspManager`) instead of blocking in the per-project `~LspManager`. New
+  `LspManager::BeginShutdownAllAndTakeClients()` begins async shutdown and hands the
+  retiring clients out; `LspService::RetireCurrentProjectServers()` (called from
+  `ResetProjectScopedState` before the project state is destroyed, and from the
+  master-switch-off path) moves them into `LspService::retiring_clients_`. The pool drains
+  non-blocking each frame in `ConsumeLspCallbacks` → `DrainRetiringClients` (pump mailbox,
+  reap on `IsShutdownComplete`); the only remaining (bounded, ~3s/client) block is in
+  `~LspService` at app teardown. Project switches no longer stall on the LSP shutdown
+  handshake. Regression: `WorkspaceShellLspSettings/ServerRetirementRoutesThroughHostPool`.
+  (The DAP teardown analogue 026 is tracked separately.)
 - **016 / 017 — save-participant + `process.run_async` can occupy plugin worker
   capacity.** Cancellation/generation ownership + a dedicated process worker pool
   returning handles to Lua.

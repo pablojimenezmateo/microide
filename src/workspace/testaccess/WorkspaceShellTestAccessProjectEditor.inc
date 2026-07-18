@@ -138,6 +138,12 @@
   static workspace::LspManager& LspManagerForTesting(WorkspaceShell& shell) {
     return shell.CurrentLspManager();
   }
+  static void RetireCurrentProjectLspServers(WorkspaceShell& shell) {
+    shell.lsp_service_.RetireCurrentProjectServers();
+  }
+  static std::size_t LspRetiringClientCount(const WorkspaceShell& shell) {
+    return shell.lsp_service_.RetiringClientCountForTesting();
+  }
   static bool ActiveEditorHasSelection(const WorkspaceShell& shell) {
     const editor::TextViewport* viewport = shell.ActiveEditorViewport();
     return viewport != nullptr && viewport->selection_range().has_value();

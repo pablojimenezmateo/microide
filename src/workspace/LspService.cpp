@@ -201,7 +201,9 @@ void LspService::ReconcileFeatureSettings() {
     // LspClientForViewport once the master is turned back on. Act only on entry.
     if (prev.master) {
       if (state.lsp_manager != nullptr) {
-        state.lsp_manager->ShutdownAll();
+        // Retire into the host pool instead of a blocking ShutdownAll — flipping the
+        // master switch off must not stall the shell thread (TD-2026-07-17-091).
+        RetireClients(state.lsp_manager->BeginShutdownAllAndTakeClients());
       }
       semantic_token_generation_.clear();
       bool changed = state.diagnostics_store.ClearOwner("lsp");
@@ -1268,6 +1270,59 @@ bool LspService::ApplyServerWorkspaceEdit(LspClient::WorkspaceEdit edit) {
   return open_result.applied_any || disk.files_written > 0;
 }
 
-void LspService::ConsumeLspCallbacks() { CurrentLspManager().DrainCallbacks(); }
+void LspService::ConsumeLspCallbacks() {
+  CurrentLspManager().DrainCallbacks();
+  DrainRetiringClients();
+}
+
+LspService::~LspService() {
+  // App teardown: block (bounded per client, ~3s worst case) on any client still
+  // finishing its shutdown handshake. This is the only place the block remains —
+  // project switches route retiring clients here and drain them asynchronously.
+  for (auto& client : retiring_clients_) {
+    if (client != nullptr) {
+      client->Shutdown();
+    }
+  }
+  retiring_clients_.clear();
+}
+
+void LspService::RetireClients(std::vector<std::unique_ptr<LspClient>> clients) {
+  for (auto& client : clients) {
+    if (client != nullptr) {
+      retiring_clients_.push_back(std::move(client));
+    }
+  }
+  // Reap any client that already finished shutting down so the pool stays small.
+  DrainRetiringClients();
+}
+
+void LspService::RetireCurrentProjectServers() {
+  ProjectWorkspaceState& state = CurrentProjectState();
+  if (state.lsp_manager != nullptr) {
+    RetireClients(state.lsp_manager->BeginShutdownAllAndTakeClients());
+  }
+}
+
+void LspService::DrainRetiringClients() {
+  auto write_it = retiring_clients_.begin();
+  for (auto read_it = retiring_clients_.begin(); read_it != retiring_clients_.end(); ++read_it) {
+    if (*read_it == nullptr) {
+      continue;
+    }
+    // Pump the client's mailbox so its shutdown handshake makes progress, then reap
+    // it once complete (Shutdown() returns immediately for an already-complete client).
+    (*read_it)->DrainCallbacks();
+    if ((*read_it)->IsShutdownComplete()) {
+      (*read_it)->Shutdown();
+      continue;
+    }
+    if (write_it != read_it) {
+      *write_it = std::move(*read_it);
+    }
+    ++write_it;
+  }
+  retiring_clients_.erase(write_it, retiring_clients_.end());
+}
 
 }  // namespace microide::workspace
