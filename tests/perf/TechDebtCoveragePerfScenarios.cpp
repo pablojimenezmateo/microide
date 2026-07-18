@@ -26,6 +26,10 @@
 #include <utility>
 #include <vector>
 
+#include "compare/BranchReviewStateService.h"
+#include "compare/BranchReviewStateTypes.h"
+#include "compare/CompareModel.h"
+#include "compare/CompareReviewTypes.h"
 #include "editor/SnippetEngine.h"
 #include "editor/TextViewport.h"
 #include "editor/TextViewportInternal.h"
@@ -34,9 +38,11 @@
 #include "util/TextFileIO.h"
 #include "workspace/AssistProviderMerge.h"
 #include "workspace/SettingsOverlayService.h"
+#include "workspace/CompareTabReview.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceReviewComments.h"
 #include "workspace/WorkspaceSettingsRegistry.h"
+#include "workspace/WorkspaceTabState.h"
 
 namespace microide::tests::perf {
 namespace {
@@ -160,7 +166,7 @@ void RunPluginStatusItemUpdate(ScenarioContext& context) {
   std::unordered_map<std::string, std::size_t> index;
 
   context.Measure("status_registry.apply_update", [&]() {
-    for (int iter = 0; iter < 8; ++iter) {
+    for (int iter = 0; iter < 40; ++iter) {
       for (int i = 0; i < kItems; ++i) {
         plugin::registry_interop::StatusItemUpdate update;
         // Scatter the target so a linear-scan regression pays the full walk.
@@ -437,22 +443,102 @@ void RunUserConfigRecordDecode(ScenarioContext& context) {
   });
 }
 
+// ---- 062: ApplyBranchReviewPresentationMarkers per-hunk memo ---------------
+//
+// In branch-review mode every visible compare row gets a review marker/note
+// resolved from the branch-review state. Hunk status is constant per hunk but a
+// large diff has many rows per hunk, so the fix memoizes (marker, has_note) per
+// hunk index -- each hunk's HunkStatus/HasNote scan (over the target's reviewed-
+// hunk list) runs once instead of once per row. This benches a diff with many
+// rows across many hunks against a review service holding a large reviewed-hunk
+// list, so each status scan is non-trivial: O(hunks * list) with the memo,
+// O(rows * list) without.
+void RunBranchReviewPresentationMarkers(ScenarioContext& context) {
+  // Two texts differing every 8th line: ~50 hunks over ~400 rows. Kept small
+  // because a single marker pass over the diff is inherently allocation-heavy
+  // per row (each row recomposes its display summary); the memo's win is the
+  // rows/hunks ratio, which this scale still exercises.
+  std::string left;
+  std::string right;
+  constexpr int kLines = 400;
+  for (int i = 0; i < kLines; ++i) {
+    const std::string n = std::to_string(i);
+    left += "line " + n + " original content token here\n";
+    if (i % 8 == 0) {
+      right += "line " + n + " MODIFIED content token here\n";
+    } else {
+      right += "line " + n + " original content token here\n";
+    }
+  }
+
+  workspace::CompareTabState tab;
+  tab.path = "src/reviewed_file.cpp";
+  tab.review_mode = compare::CompareReviewMode::Branch;
+  tab.branch_target.repository_root = "/repo";
+  tab.branch_target.base_commit = "aaaaaaaaaaaa";
+  tab.branch_target.head_commit = "bbbbbbbbbbbb";
+  tab.branch_target.merge_base_commit = "cccccccccccc";
+  tab.branch_target.snapshot_generation = 1;
+  tab.model = compare::BuildCompareModel(left, right);
+  workspace::RefreshCompareTabPresentation(tab);
+
+  // Populate the review service with a large reviewed-hunk list + notes so each
+  // HunkStatus / HasNote resolution does a real scan (bounded by the per-target
+  // hunk cap). The identities need not match the model's hunks -- a miss scans
+  // the whole list, which is the worst case the memo is protecting.
+  compare::BranchReviewStateService service;
+  for (int i = 0; i < 200; ++i) {
+    compare::BranchReviewHunkIdentity identity;
+    identity.path = "src/reviewed_file.cpp";
+    identity.old_start = i * 3;
+    identity.old_count = 2;
+    identity.new_start = i * 3;
+    identity.new_count = 3;
+    identity.content_hash = static_cast<std::uint64_t>(i) * 2654435761u;
+    service.MarkHunkReviewed(tab.branch_target, identity);
+  }
+  for (int i = 0; i < 40; ++i) {
+    compare::BranchReviewHunkIdentity identity;
+    identity.path = "src/reviewed_file.cpp";
+    identity.old_start = i * 5;
+    identity.new_start = i * 5;
+    identity.new_count = 1;
+    service.SetNote(tab.branch_target, compare::BranchReviewNoteScope::Hunk,
+                    "src/reviewed_file.cpp", identity, "needs another look");
+  }
+
+  context.Measure("branch_review.presentation_markers", [&]() {
+    for (int iter = 0; iter < 12; ++iter) {
+      workspace::ApplyBranchReviewPresentationMarkers(tab, service);
+      volatile std::size_t sink = tab.presentation.rows.size();
+      (void)sink;
+    }
+  });
+}
+
 // ---- Registration ----------------------------------------------------------
 //
-// These are short-to-mid pure-unit micro-benchmarks (5-55 ms) whose ALLOCATION
-// counts are exactly deterministic run-to-run but whose WALL times carry the
-// software-render / xvfb scheduler jitter this reference runner exhibits on sub-
-// 50 ms work (observed p50 wall swings of ~15-20% under background load, with
-// identical allocations). The same tolerance percent gates both wall and
-// allocations, so these widen the wall envelope (p50 25% / p95 45% / max 90%)
-// while leaving the deterministic allocation gate more than tight enough to
-// catch what these scenarios exist to catch: an accidental return to O(n^2),
-// which blows both metrics up by hundreds of percent. A genuine constant-factor
-// wall regression is caught precisely by the interleaved tools/perf-compare.py
-// current-vs-main run, where shared machine load cancels out.
-constexpr double kTdCoverageTolP50 = 25.0;
-constexpr double kTdCoverageTolP95 = 45.0;
-constexpr double kTdCoverageTolMax = 90.0;
+// These are short-to-mid pure-unit micro-benchmarks (20-55 ms). Their ALLOCATION
+// counts are exactly deterministic run-to-run -- the true complexity oracle --
+// so those envelopes stay tight (10/20/50%): a return to O(n^2) blows the
+// allocation count up by hundreds to thousands of percent and is caught
+// precisely. Their WALL times, by contrast, carry the software-render / xvfb
+// scheduler jitter this shared reference runner exhibits on sub-50 ms work: the
+// median swings up to ~2x with ambient machine load and the 10-sample p95/max
+// tail is dominated by single context-switch outliers. Gating wall on the tight
+// allocation percent would false-trip constantly, so the wall envelopes are
+// widened (p50 75% / p95 250% / max 400%, in the spirit of the
+// editor_moby_dick_workout precedent) -- still far below an O(n^2) blowup, and a
+// genuine constant-factor wall regression is caught precisely by the interleaved
+// tools/perf-compare.py current-vs-main run, where shared machine load cancels.
+// Wall and allocation tolerances are decoupled per baseline (see Baseline.h), so
+// the loose wall envelope never blinds the tight allocation complexity gate.
+constexpr double kTdCoverageTolP50 = 75.0;
+constexpr double kTdCoverageTolP95 = 250.0;
+constexpr double kTdCoverageTolMax = 400.0;
+constexpr double kTdCoverageAllocP50 = 10.0;
+constexpr double kTdCoverageAllocP95 = 20.0;
+constexpr double kTdCoverageAllocMax = 50.0;
 
 const ScenarioRegistration g_perf_assist_ranked_union_merge({Scenario{
     .name = "assist_ranked_union_merge",
@@ -461,6 +547,9 @@ const ScenarioRegistration g_perf_assist_ranked_union_merge({Scenario{
     .tolerance_p50_percent = kTdCoverageTolP50,
     .tolerance_p95_percent = kTdCoverageTolP95,
     .tolerance_max_percent = kTdCoverageTolMax,
+    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
+    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
+    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
     .run = RunAssistRankedUnionMerge,
 }});
 const ScenarioRegistration g_perf_review_comments_registry_lookup({Scenario{
@@ -470,6 +559,9 @@ const ScenarioRegistration g_perf_review_comments_registry_lookup({Scenario{
     .tolerance_p50_percent = kTdCoverageTolP50,
     .tolerance_p95_percent = kTdCoverageTolP95,
     .tolerance_max_percent = kTdCoverageTolMax,
+    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
+    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
+    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
     .run = RunReviewCommentsRegistryLookup,
 }});
 #if MICROIDE_HAS_LUA_PLUGINS
@@ -480,6 +572,9 @@ const ScenarioRegistration g_perf_plugin_status_item_update({Scenario{
     .tolerance_p50_percent = kTdCoverageTolP50,
     .tolerance_p95_percent = kTdCoverageTolP95,
     .tolerance_max_percent = kTdCoverageTolMax,
+    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
+    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
+    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
     .run = RunPluginStatusItemUpdate,
 }});
 #endif
@@ -490,6 +585,9 @@ const ScenarioRegistration g_perf_settings_rows_rebuild({Scenario{
     .tolerance_p50_percent = kTdCoverageTolP50,
     .tolerance_p95_percent = kTdCoverageTolP95,
     .tolerance_max_percent = kTdCoverageTolMax,
+    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
+    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
+    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
     .run = RunSettingsRowsRebuild,
 }});
 const ScenarioRegistration g_perf_reference_snippet_file_window({Scenario{
@@ -499,6 +597,9 @@ const ScenarioRegistration g_perf_reference_snippet_file_window({Scenario{
     .tolerance_p50_percent = kTdCoverageTolP50,
     .tolerance_p95_percent = kTdCoverageTolP95,
     .tolerance_max_percent = kTdCoverageTolMax,
+    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
+    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
+    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
     .run = RunReferenceSnippetFileWindow,
 }});
 const ScenarioRegistration g_perf_multi_caret_remap_burst({Scenario{
@@ -508,6 +609,9 @@ const ScenarioRegistration g_perf_multi_caret_remap_burst({Scenario{
     .tolerance_p50_percent = kTdCoverageTolP50,
     .tolerance_p95_percent = kTdCoverageTolP95,
     .tolerance_max_percent = kTdCoverageTolMax,
+    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
+    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
+    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
     .run = RunMultiCaretRemapBurst,
 }});
 const ScenarioRegistration g_perf_snippet_many_mirror_edit({Scenario{
@@ -517,6 +621,9 @@ const ScenarioRegistration g_perf_snippet_many_mirror_edit({Scenario{
     .tolerance_p50_percent = kTdCoverageTolP50,
     .tolerance_p95_percent = kTdCoverageTolP95,
     .tolerance_max_percent = kTdCoverageTolMax,
+    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
+    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
+    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
     .run = RunSnippetManyMirrorEdit,
 }});
 const ScenarioRegistration g_perf_user_config_record_decode({Scenario{
@@ -526,7 +633,22 @@ const ScenarioRegistration g_perf_user_config_record_decode({Scenario{
     .tolerance_p50_percent = kTdCoverageTolP50,
     .tolerance_p95_percent = kTdCoverageTolP95,
     .tolerance_max_percent = kTdCoverageTolMax,
+    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
+    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
+    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
     .run = RunUserConfigRecordDecode,
+}});
+const ScenarioRegistration g_perf_branch_review_presentation_markers({Scenario{
+    .name = "branch_review_presentation_markers",
+    .smoke = true,
+    .baseline_gated = true,
+    .tolerance_p50_percent = kTdCoverageTolP50,
+    .tolerance_p95_percent = kTdCoverageTolP95,
+    .tolerance_max_percent = kTdCoverageTolMax,
+    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
+    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
+    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
+    .run = RunBranchReviewPresentationMarkers,
 }});
 
 }  // namespace
