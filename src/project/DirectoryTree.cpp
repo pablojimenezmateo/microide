@@ -78,12 +78,27 @@ void DirectoryTree::PruneDeletedDirectoryKeys() {
   prune(manually_collapsed_paths_);
 }
 
+void DirectoryTree::MaybePruneDeletedDirectoryKeys() {
+  // While the remembered set is small the sweep is trivial, so keep pruning every refresh
+  // (a deleted-then-recreated dir then renders collapsed immediately). Once the set grows
+  // past that — a large session restore or heavy manual expansion — sweep only at a bounded
+  // interval so a refresh no longer pays an O(history) stat sweep for one changed row.
+  static constexpr std::size_t kImmediatePruneKeyCount = 64;
+  static constexpr std::size_t kKeyPruneInterval = 32;
+  const std::size_t remembered = expanded_paths_.size() + manually_collapsed_paths_.size();
+  if (remembered > kImmediatePruneKeyCount && ++refreshes_since_key_prune_ < kKeyPruneInterval) {
+    return;
+  }
+  refreshes_since_key_prune_ = 0;
+  PruneDeletedDirectoryKeys();
+}
+
 void DirectoryTree::Refresh() {
   util::PerformanceTrace::Scope perf_scope("DirectoryTree::Refresh");
   if (root_.empty()) {
     return;
   }
-  PruneDeletedDirectoryKeys();
+  MaybePruneDeletedDirectoryKeys();
   RebuildEntries(false);
 }
 

@@ -3,6 +3,7 @@
 #include "project/DirectoryTree.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -270,9 +271,66 @@ void TestDirectoryTreePrunesDeletedDirectoryKeysOnRefresh() {
          "an existing expanded directory must survive refresh (no over-pruning)");
 }
 
+// The stale-key sweep stats every remembered expand/collapse key, so once the set is large
+// (a big session restore or heavy manual expansion) it must NOT run on every refresh — a
+// single changed row should not pay an O(history) syscall sweep. Amortize: a deleted dir's
+// key lingers briefly (harmless — the dir is simply not enumerated) and is reclaimed by a
+// later bounded-interval sweep, so the set still stays bounded across a session
+// (TD-2026-07-17A-088).
+void TestDirectoryTreeAmortizesDeletedKeyPruneForLargeSets() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  // Build a remembered set well past the immediate-prune threshold so the amortized path
+  // engages: 80 expanded top-level directories.
+  constexpr int kDirCount = 80;
+  std::vector<std::filesystem::path> dirs;
+  for (int i = 0; i < kDirCount; ++i) {
+    char name[8];
+    std::snprintf(name, sizeof(name), "d%03d", i);
+    const std::filesystem::path dir = root / name;
+    WriteFile(dir / "child.txt", "x\n");
+    dirs.push_back(dir);
+  }
+
+  DirectoryTree tree;
+  Expect(tree.SetRoot(root), "directory tree should open fixture root");
+  for (const auto& dir : dirs) {
+    Expect(tree.SelectPathIfVisible(dir), "each directory should be visible");
+    tree.ExpandSelection();
+  }
+
+  const auto has = [](const std::vector<std::string>& keys, const std::string& key) {
+    return std::find(keys.begin(), keys.end(), key) != keys.end();
+  };
+  Expect(tree.ExpandedRelativePaths().size() > 64,
+         "the remembered expansion set should exceed the immediate-prune threshold");
+  Expect(has(tree.ExpandedRelativePaths(), "d005"), "d005 should be recorded expanded");
+
+  std::error_code error;
+  std::filesystem::remove_all(root / "d005", error);
+
+  // A single refresh must NOT sweep the whole large set: the deleted key still lingers.
+  tree.Refresh();
+  Expect(has(tree.ExpandedRelativePaths(), "d005"),
+         "with a large set, one refresh must not pay the full O(history) stale-key sweep");
+  Expect(FindEntry(tree, root / "d005") == nullptr,
+         "the deleted directory must still be gone from the visible tree (walk-driven)");
+
+  // The bounded-interval backstop eventually reclaims the stale key so the set stays bounded.
+  for (int i = 0; i < 40; ++i) {
+    tree.Refresh();
+  }
+  Expect(!has(tree.ExpandedRelativePaths(), "d005"),
+         "the interval sweep must eventually prune the deleted directory's key");
+  Expect(has(tree.ExpandedRelativePaths(), "d007"),
+         "surviving directories keep their expansion state across the sweep (no over-prune)");
+}
+
 void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DirectoryTree/PrunesDeletedDirectoryKeysOnRefresh",
           TestDirectoryTreePrunesDeletedDirectoryKeysOnRefresh);
+  AddTest(tests, "DirectoryTree/AmortizesDeletedKeyPruneForLargeSets",
+          TestDirectoryTreeAmortizesDeletedKeyPruneForLargeSets);
   AddTest(tests, "DirectoryTree/RestoreRejectsOutsideRootExpansionKeys",
           TestDirectoryTreeRestoreRejectsOutsideRootExpansionKeys);
   AddTest(tests, "DirectoryTree/TracksIgnoredStatusIndependentlyFromVisibility",

@@ -97,6 +97,14 @@ class DirectoryTree {
   // renders collapsed (like VSCode) rather than pre-expanded. Called from the
   // fs-resync entry point (Refresh) only.
   void PruneDeletedDirectoryKeys();
+  // Refresh runs on the UI thread and can fire on many events (save, git refresh,
+  // external change). The full PruneDeletedDirectoryKeys sweep stats every remembered
+  // expand/collapse key — O(session history), not O(visible/changed rows) — so after a
+  // large session restore or lots of manual expansion it dominates refresh cost. Stale
+  // keys are harmless to rendering (a deleted dir is simply never enumerated), so amortize:
+  // sweep every refresh only while the set is small, and otherwise at a bounded interval
+  // (TD-2026-07-17A-088).
+  void MaybePruneDeletedDirectoryKeys();
   static std::string NormalizePathKey(const std::filesystem::path& path);
 
   std::filesystem::path root_;
@@ -107,6 +115,8 @@ class DirectoryTree {
   std::unordered_map<std::string, GitFileStatus> git_statuses_;
   std::unordered_set<std::string> expanded_paths_;
   std::unordered_set<std::string> manually_collapsed_paths_;
+  // Refreshes elapsed since the last full stale-key sweep (see MaybePruneDeletedDirectoryKeys).
+  std::size_t refreshes_since_key_prune_ = 0;
   std::size_t selected_index_ = 0;
 };
 
