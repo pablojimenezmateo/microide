@@ -207,9 +207,40 @@ void TestManyInterpolationsTerminateWithStringClosed() {
          "the leading open quote must be highlighted as string");
 }
 
+// TD-2026-07-17A-115: the thread-local regex match-data cache is keyed by
+// CompiledRegex address. A reload destroys the old patterns and can reuse their
+// addresses for new, differently-shaped patterns, so the cache must be cleared
+// when the registry revision advances. Assert the revision advances on reload and
+// that highlighting stays correct across reloads (running under ASAN, a stale,
+// under-sized match-data reuse would trip an out-of-bounds ovector read).
+void TestMatchDataCacheInvalidatesOnReload() {
+  using microide::editor::runtime_syntax::RegistryRevision;
+
+  const std::size_t rev0 = RegistryRevision();
+  ReloadDefinitions({ScopedGoldGrammar::MakeGoldDefinition()});
+  const std::size_t rev1 = RegistryRevision();
+  Expect(rev1 != rev0, "reloading definitions must advance the registry revision");
+
+  // Populate the per-thread match-data cache for the gold grammar's patterns.
+  Expect(RenderKinds("\"a\\\"b\"") == "SSSSSS", "gold grammar highlights the string");
+
+  // Reload a distinct grammar (new CompiledRegex objects, possibly reusing the old
+  // addresses). The revision advances again, so the next highlight must rebuild
+  // match data rather than reuse a stale block.
+  ReloadDefinitions({ScopedGoldGrammar::MakeGoldDefinition()});
+  const std::size_t rev2 = RegistryRevision();
+  Expect(rev2 != rev1, "a second reload must advance the revision again");
+  Expect(RenderKinds("\"a\\\"b\"") == "SSSSSS",
+         "highlighting stays correct after the reload (no stale match-data reuse)");
+
+  ReloadDefinitions({});  // restore built-in-only registry
+}
+
 }  // namespace
 
 void RegisterRuntimeSyntaxSkipTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RuntimeSyntaxSkip/MatchDataCacheInvalidatesOnReload",
+          TestMatchDataCacheInvalidatesOnReload);
   AddTest(tests, "RuntimeSyntaxSkip/MasksEscapedQuoteInsideString",
           TestSkipMasksEscapedQuoteInsideString);
   AddTest(tests, "RuntimeSyntaxSkip/MasksEscapedBackslashSoNextQuoteCloses",

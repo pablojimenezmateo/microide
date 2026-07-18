@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <mutex>
@@ -61,7 +62,19 @@ void FindAllRegex(std::string_view text,
                   bool at_line_start = true);
 
 util::RegexMatchData& ReusableMatchData(const CompiledRegex& pattern) {
+  // Keyed by CompiledRegex address, but a syntax reload replaces MutableRegistry()
+  // and destroys the old CompiledRegex objects — the allocator can then hand a new,
+  // differently-shaped pattern the same address, so a stale match-data block sized
+  // for the old pattern would be reused. Clear the per-thread cache whenever the
+  // registry revision advances so no entry outlives the pattern it was built for.
+  // TD-2026-07-17A-115.
   thread_local std::unordered_map<const CompiledRegex*, util::RegexMatchData> match_data_by_pattern;
+  thread_local std::size_t cached_revision = 0;
+  const std::size_t revision = RegistryRevision();
+  if (revision != cached_revision) {
+    match_data_by_pattern.clear();
+    cached_revision = revision;
+  }
   auto [it, inserted] = match_data_by_pattern.try_emplace(&pattern);
   if (inserted || !it->second.valid()) {
     it->second = pattern.CreateMatchData();
@@ -635,8 +648,11 @@ Registry& MutableRegistry() {
   return registry;
 }
 
-std::size_t& MutableRegistryRevision() {
-  static std::size_t revision = 1;
+// Atomic so the syntax-highlight cache-invalidation read (ReusableMatchData, which
+// can run on the background prefetch worker) is well-defined against the main
+// thread's post-reload increment.
+std::atomic<std::size_t>& MutableRegistryRevision() {
+  static std::atomic<std::size_t> revision{1};
   return revision;
 }
 
@@ -1181,7 +1197,7 @@ void EnsureInitialized() {
 }
 
 std::size_t RegistryRevision() {
-  return MutableRegistryRevision();
+  return MutableRegistryRevision().load(std::memory_order_acquire);
 }
 
 SyntaxState DetectState(const std::filesystem::path& path, LineSpan lines) {

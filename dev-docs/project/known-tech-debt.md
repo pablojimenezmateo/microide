@@ -1837,7 +1837,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   including shutdown and initialize response gates. The existing out-of-range checks prevent wraparound,
   but not fractional aliasing. Keep the compatibility path for exact-integral doubles (`5.0`) only by
   checking finiteness and `std::trunc(value) == value` before narrowing; otherwise ignore the response.
-- **TD-2026-07-17A-118 — texture-create failure markers are not covered by the raster failure FIFO.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-118 — texture-create failure markers are not covered by the raster failure FIFO.**
+  Fixed: the bounded-FIFO policy is extracted into `RetainBoundedFailureMarker` and applied when
+  `SDL_CreateTexture` retries are exhausted, so a permanent texture-create failure folds into the
+  same `failed_hash_order_` budget as decode failures — a plugin publishing many distinct
+  valid-but-uncreatable rasters can no longer grow `in_flight_or_failed_`/`texture_create_failures_`
+  without bound. An injectable `SetTextureFactoryForTesting` seam makes the failure path testable
+  without a live GPU. Regression: `SurfaceTextureCache/TextureCreateFailureFoldsIntoBoundedFifo`.
   `SurfaceTextureCache` bounds permanent decode-failure markers with `failed_hash_order_`, but
   `SDL_CreateTexture` failures use a separate `texture_create_failures_` map and then leave the hash in
   `in_flight_or_failed_` once the bounded retry count is exhausted. A plugin can publish many distinct
