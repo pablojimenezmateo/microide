@@ -110,12 +110,57 @@ void TestPendingDecodedBytesAreBounded() {
   executor.Shutdown();
 }
 
+// TD-2026-07-17A-118: a raster whose bytes decode fine but whose texture the
+// renderer cannot create (dimensions the decoder accepts but the GPU rejects)
+// must, once its bounded retries are exhausted, fold into the SAME bounded
+// failure FIFO as decode failures — otherwise its hash lingers in
+// in_flight_or_failed_ / texture_create_failures_ outside every budget.
+void TestTextureCreateFailureFoldsIntoBoundedFifo() {
+  ProjectBackgroundExecutor executor;
+  SurfaceTextureCache cache(executor);
+  // Force every texture creation to fail, without a live GPU.
+  cache.SetTextureFactoryForTesting(
+      [](SDL_Renderer*, int, int) -> SDL_Texture* { return nullptr; });
+  // A non-null bogus renderer so Upload proceeds past its renderer==nullptr guard;
+  // the injected factory never dereferences it.
+  SDL_Renderer* const fake_renderer = reinterpret_cast<SDL_Renderer*>(0x1);
+
+  // 2x2 RGBA8 = 16 bytes: a valid decode that reaches texture creation.
+  constexpr int kW = 2;
+  constexpr int kH = 2;
+  const std::size_t kImageBytes = static_cast<std::size_t>(kW) * kH * 4;
+  const std::uint64_t hash = 42;
+
+  // A texture-create failure below the retry cap drops the marker (so a later
+  // request re-decodes). Re-request + drain until the retries are exhausted and the
+  // hash becomes a permanent failure recorded in the bounded FIFO.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (cache.failed_hash_count() == 0 &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::vector<std::byte> rgba(kImageBytes, std::byte{0x40});
+    cache.Request(hash, SurfaceTextureCache::RasterFormat::Rgba8, std::move(rgba), kW, kH);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    cache.Upload(fake_renderer);
+  }
+
+  Expect(cache.failed_hash_count() == 1,
+         "a permanent texture-create failure must be recorded in the bounded failure FIFO");
+  // And it stays bounded: further distinct un-creatable rasters do not grow it
+  // past the cap (shares the decode-failure eviction path).
+  Expect(cache.failed_hash_count() <= 1024,
+         "the folded texture-create failures stay under kMaxFailedHashes");
+
+  executor.Shutdown();
+}
+
 }  // namespace
 
 void RegisterSurfaceTextureCacheTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SurfaceTextureCache/FailedHashSetIsBounded", TestFailedHashSetIsBounded);
   AddTest(tests, "SurfaceTextureCache/PendingDecodedBytesAreBounded",
           TestPendingDecodedBytesAreBounded);
+  AddTest(tests, "SurfaceTextureCache/TextureCreateFailureFoldsIntoBoundedFifo",
+          TestTextureCreateFailureFoldsIntoBoundedFifo);
 }
 
 }  // namespace microide::tests

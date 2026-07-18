@@ -124,18 +124,8 @@ void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
       // Permanent failure: same content hash → correct never to retry. Keep the
       // marker to short-circuit re-requests, but bound the retained-failure set so
       // a plugin streaming distinct invalid hashes cannot grow it without limit
-      // (TD-2026-07-17-043). Evict the oldest failure once over the cap.
-      failed_hash_order_.push_back(decoded.hash);
-      while (failed_hash_order_.size() > kMaxFailedHashes) {
-        const std::uint64_t oldest = failed_hash_order_.front();
-        failed_hash_order_.pop_front();
-        // Only forget it if it is still a failure marker (not resurrected as a live
-        // entry or re-requested in-flight since).
-        if (entries_.find(oldest) == entries_.end()) {
-          in_flight_or_failed_.erase(oldest);
-          texture_create_failures_.erase(oldest);
-        }
-      }
+      // (TD-2026-07-17-043).
+      RetainBoundedFailureMarker(decoded.hash);
       continue;
     }
     if (renderer == nullptr) {
@@ -147,9 +137,11 @@ void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
       continue;
     }
 
-    SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
-                                             SDL_TEXTUREACCESS_STATIC, decoded.width,
-                                             decoded.height);
+    SDL_Texture* texture =
+        texture_factory_for_testing_
+            ? texture_factory_for_testing_(renderer, decoded.width, decoded.height)
+            : SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
+                                decoded.width, decoded.height);
     if (texture == nullptr) {
       // The bytes decoded fine; only texture creation failed. Treat a bounded
       // number of failures as transient (a renderer re-create / momentary VRAM
@@ -159,6 +151,14 @@ void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
       constexpr int kMaxTextureCreateRetries = 3;
       if (++texture_create_failures_[decoded.hash] < kMaxTextureCreateRetries) {
         in_flight_or_failed_.erase(pending);
+      } else {
+        // Retries exhausted: this is now a permanent failure marker. Fold it into
+        // the same bounded FIFO as decode failures so a plugin publishing many
+        // distinct valid-but-uncreatable rasters (dimensions the decoder accepts
+        // but the renderer rejects) cannot retain unbounded in_flight_or_failed_ /
+        // texture_create_failures_ entries outside the VRAM budget and decode-failure
+        // FIFO (TD-2026-07-17A-118).
+        RetainBoundedFailureMarker(decoded.hash);
       }
       continue;
     }
@@ -196,6 +196,24 @@ const SurfaceTextureCache::Entry* SurfaceTextureCache::Lookup(std::uint64_t hash
     pos->second = lru_.begin();
   }
   return &it->second;
+}
+
+void SurfaceTextureCache::RetainBoundedFailureMarker(std::uint64_t hash) {
+  // Keep the marker in in_flight_or_failed_ to short-circuit re-requests, but bound
+  // the retained-failure set with an insertion-order FIFO: once it exceeds
+  // kMaxFailedHashes the oldest failure is forgotten (a later identical request may
+  // re-decode once, which is fine — the set stays bounded).
+  failed_hash_order_.push_back(hash);
+  while (failed_hash_order_.size() > kMaxFailedHashes) {
+    const std::uint64_t oldest = failed_hash_order_.front();
+    failed_hash_order_.pop_front();
+    // Only forget it if it is still a failure marker (not resurrected as a live
+    // entry or re-requested in-flight since).
+    if (entries_.find(oldest) == entries_.end()) {
+      in_flight_or_failed_.erase(oldest);
+      texture_create_failures_.erase(oldest);
+    }
+  }
 }
 
 void SurfaceTextureCache::EvictToBudget() {

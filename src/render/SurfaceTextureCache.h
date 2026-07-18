@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <list>
 #include <memory>
 #include <mutex>
@@ -84,6 +85,15 @@ class SurfaceTextureCache {
   // (TD-2026-07-17-043).
   std::size_t failed_hash_count() const { return failed_hash_order_.size(); }
 
+  // Test seam: override the SDL texture creator so a test can deterministically
+  // force SDL_CreateTexture-style failures (e.g. dimensions the decoder accepts but
+  // the renderer rejects) without a live GPU. Returns nullptr to simulate failure.
+  // Unset in production (SDL_CreateTexture is used). TD-2026-07-17A-118.
+  using TextureFactoryForTesting = std::function<SDL_Texture*(SDL_Renderer*, int, int)>;
+  void SetTextureFactoryForTesting(TextureFactoryForTesting factory) {
+    texture_factory_for_testing_ = std::move(factory);
+  }
+
   // A decoded RGBA8 image waiting for shell-thread upload. Public so the
   // off-thread decode helpers can construct it.
   struct Decoded {
@@ -116,6 +126,11 @@ class SurfaceTextureCache {
   };
 
   void EvictToBudget();
+  // Record `hash` as a permanent failure marker under the bounded FIFO policy:
+  // push it onto failed_hash_order_ and evict the oldest markers past
+  // kMaxFailedHashes. Shared by decode failures and permanent texture-create
+  // failures so neither set can grow without a budget (TD-2026-07-17A-118).
+  void RetainBoundedFailureMarker(std::uint64_t hash);
 
   project::ProjectBackgroundExecutor& executor_;
   std::shared_ptr<DecodeSink> sink_;
@@ -142,6 +157,7 @@ class SurfaceTextureCache {
   // genuinely un-creatable texture (e.g. dimensions past the GPU max) must stop
   // re-decoding after a bounded number of attempts.
   std::unordered_map<std::uint64_t, int> texture_create_failures_;
+  TextureFactoryForTesting texture_factory_for_testing_;
 };
 
 }  // namespace microide::render

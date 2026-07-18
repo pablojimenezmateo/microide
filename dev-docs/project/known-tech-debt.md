@@ -1699,8 +1699,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   matcher-copy cost and making every file-watcher/scanner predicate scan a large rule vector. Cap the raw
   setting bytes and parsed rule count, drop/flag truncated excludes, and share the normalized rule set
   instead of copying it into each consumer.
-- **TD-2026-07-17A-107 — file-index watcher buffers pre-initial incremental batches without a
-  queue budget.** `FileIndexWatcher::SetCallback` preserves ordering by storing every non-initial
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-107 — file-index watcher buffers pre-initial incremental batches without a
+  queue budget.** Fixed: `FileIndexWatcher::DispatchState` now tracks aggregate pre-initial
+  change/batch counters and caps the buffer at `kMaxPendingChanges` (200k) / `kMaxPendingBatches`
+  (4096). Past either budget, further pre-initial batches are dropped newest-first and
+  `pending_overflow` records it, while the earlier buffered deltas still replay after the
+  wholesale-replace baseline — so churn during a slow initial scan can no longer retain unbounded
+  path batches. Regression: `FileIndexWatcher/BoundsPreInitialBatchFlood`.
+  `FileIndexWatcher::SetCallback` preserves ordering by storing every non-initial
   `IndexUpdateBatch` in `DispatchState::pending` until the initial full-scan batch is delivered.
   Individual scans are entry-budgeted, but the pending batch vector has no count, byte, or
   coalescing budget, so a slow initial scan on a large tree plus rapid create/delete churn can
