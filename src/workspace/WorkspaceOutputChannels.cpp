@@ -115,6 +115,32 @@ WorkspaceOutputChannels::ParsedEntry BuildParsedEntry(
 
 }  // namespace
 
+void WorkspaceOutputChannels::TouchChannel(Channel& channel) {
+  channel.last_touch = ++touch_counter_;
+}
+
+void WorkspaceOutputChannels::EvictLeastRecentlyUsedChannelIfNeeded(std::string_view keep_id) {
+  if (channels_.size() <= kMaxOutputChannels) {
+    return;
+  }
+  // Evict the least-recently-touched channel other than the one just created/appended, so
+  // the active/most-recent-failed consoles survive (TD-2026-07-17A-116).
+  auto victim = channels_.end();
+  for (auto it = channels_.begin(); it != channels_.end(); ++it) {
+    if (it->first == keep_id) {
+      continue;
+    }
+    if (victim == channels_.end() || it->second.last_touch < victim->second.last_touch) {
+      victim = it;
+    }
+  }
+  if (victim != channels_.end()) {
+    channels_.erase(victim);
+    ++evicted_channel_count_;
+    MarkDirty();
+  }
+}
+
 void WorkspaceOutputChannels::EnsureChannel(std::string_view id, std::string_view label) {
   if (id.empty()) {
     return;
@@ -123,6 +149,7 @@ void WorkspaceOutputChannels::EnsureChannel(std::string_view id, std::string_vie
   Channel channel;
   channel.label = std::string(label);
   auto [it, inserted] = channels_.try_emplace(std::string(id), std::move(channel));
+  TouchChannel(it->second);
   // Only invalidate channel *metadata* views when the channel set or a label actually
   // changed. A chatty stream calls EnsureChannel on every AppendLine; marking dirty
   // unconditionally forced the bottom-panel/tab computation to rebuild the whole
@@ -130,6 +157,7 @@ void WorkspaceOutputChannels::EnsureChannel(std::string_view id, std::string_vie
   // (TD-2026-07-17A-085). Entry-content revisions are tracked separately by AppendLine.
   if (inserted) {
     MarkDirty();
+    EvictLeastRecentlyUsedChannelIfNeeded(id);
   } else if (it->second.label != label) {
     it->second.label = std::string(label);
     MarkDirty();

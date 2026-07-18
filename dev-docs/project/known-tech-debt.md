@@ -129,9 +129,9 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test) —
 >    **focus pass 2/9 IN PROGRESS 2026-07-18**:
 >    018, 038, 043, 044, 046, 056, 057, 070,
->    071, 072, 073, 074, 095, 097, 099, 107, 116, 118.
+>    071, 072, 073, 074, 095, 097, 099, 107, 118.
 >    *(020, 090, 101, 037, 042 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets; control-socket complete-line cap + aggregate inbound-byte budget.)*
->    *(029, 039, 040, 064, 068, 096, 098, 105, 106, 119, 121 RESOLVED 2026-07-18 — buffer-search match cap; plugin filesystem read/write byte ceilings; debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; debug-output control-event byte cap; DAP pre-initialize event-flood cap; text-measurement byte budget + no-cache-oversized; project.files_exclude rule/byte cap; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
+>    *(029, 039, 040, 064, 068, 096, 098, 105, 106, 116, 119, 121 RESOLVED 2026-07-18 — buffer-search match cap; plugin filesystem read/write byte ceilings; debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; debug-output control-event byte cap; DAP pre-initialize event-flood cap; text-measurement byte budget + no-cache-oversized; project.files_exclude rule/byte cap; output-channel global count cap + LRU eviction; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
@@ -1378,8 +1378,16 @@ speed-path items first, then the correctness/lifecycle cleanups.
   a new regex object inherit match data that was sized from an unrelated old pattern. Key the cache by
   registry revision plus stable rule id, clear it on `RegistryRevision()` changes, or replace it with a
   bounded per-call/per-thread scratch block that is recreated when the compiled pattern changes.
-- **TD-2026-07-17A-116 — output channels have per-channel caps but no global channel or retained-byte
-  budget.** `WorkspaceOutputChannels::AppendLine` limits each channel to 100,000 entries / 16 MiB of
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-116 — output channels have per-channel caps but no global channel or retained-byte
+  budget.** Fixed: `WorkspaceOutputChannels` now caps the live channel *set* at
+  `kMaxOutputChannels` (64). Each channel carries an LRU `last_touch` stamp bumped on
+  `EnsureChannel`/`AppendLine`; creating a channel past the cap evicts the least-recently-touched
+  OTHER channel (preserving active and most-recent-failed consoles) and bumps a
+  `EvictedChannelCount()` telemetry counter. Repeated failing/launch-rejected debug sessions can
+  no longer accumulate many 16 MiB `debug.console.<id>` channels without bound. Regression:
+  `BoundedResourceCaps/OutputChannelCountIsCappedWithLru` (>cap channels ⇒ set stays at the cap,
+  newest survive, oldest evicted).
+  `WorkspaceOutputChannels::AppendLine` limits each channel to 100,000 entries / 16 MiB of
   visible line text, but the `channels_` map itself is unbounded and there is no aggregate retained-byte
   accounting across channels, parsed entries, and highlighted snippet caches. Cleanly terminated debug
   sessions remove their console channel, but failed/crashed/launch-rejected sessions intentionally keep

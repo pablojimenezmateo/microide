@@ -14,6 +14,7 @@
 #include "workspace/DebugValueTree.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceActionServices.h"
+#include "workspace/WorkspaceOutputChannels.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::tests {
@@ -192,6 +193,29 @@ void TestBufferSearchSmallResultIsNotTruncated() {
   Expect(!truncated, "an in-budget result must not be flagged truncated");
 }
 
+// TD-2026-07-17A-116: each output channel is per-channel byte/entry capped, but the
+// channel *set* was unbounded — repeated failing debug launches keep a unique
+// debug.console.<id> channel and could accumulate many 16 MiB consoles. The live channel
+// count is now capped with LRU eviction that preserves the most recently active channels.
+void TestOutputChannelCountIsCappedWithLru() {
+  workspace::WorkspaceOutputChannels channels;
+  const std::size_t cap = workspace::WorkspaceOutputChannels::kMaxOutputChannels;
+  const std::size_t total = cap + 10;
+  for (std::size_t i = 0; i < total; ++i) {
+    const std::string id = "debug.console." + std::to_string(i);
+    channels.AppendLine(id, id, "output line");
+  }
+  Expect(channels.Channels().size() == cap,
+         "the live output-channel set must be capped");
+  Expect(channels.EvictedChannelCount() == total - cap,
+         "the over-cap channels must have been evicted");
+  // The most recently created channels survive; the oldest are evicted (LRU).
+  Expect(channels.Entries("debug.console." + std::to_string(total - 1)) != nullptr,
+         "the most recently touched channel must survive eviction");
+  Expect(channels.Entries("debug.console.0") == nullptr,
+         "the least recently touched channel must be evicted");
+}
+
 void TestExcludeGlobsNormalInputIsNotFlaggedTruncated() {
   bool truncated = true;
   const std::vector<std::string> globs =
@@ -223,6 +247,8 @@ void RegisterBoundedResourceCapsTests(std::vector<TestCase>& tests) {
           TestBufferSearchMatchesAreCapped);
   AddTest(tests, "BoundedResourceCaps/BufferSearchSmallResultIsNotTruncated",
           TestBufferSearchSmallResultIsNotTruncated);
+  AddTest(tests, "BoundedResourceCaps/OutputChannelCountIsCappedWithLru",
+          TestOutputChannelCountIsCappedWithLru);
 }
 
 }  // namespace microide::tests
