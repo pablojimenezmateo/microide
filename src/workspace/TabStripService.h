@@ -190,11 +190,29 @@ class TabStripService {
       std::size_t total_count) const;
   bool ScrollTabIndex(int& scroll_index, int direction, std::size_t total) const;
 
+  // Memoizes BuildBottomPanelTabs output. Many callers rebuild the bottom-panel
+  // tab-model list per frame / mouse event (render, hit-test, overflow, scroll,
+  // BottomPanelTabIsTerminal, chrome), each constructing terminal/output/plugin
+  // tab models from scratch and scanning channel info O(tab_count*channel_count).
+  // The fingerprint is a content hash of every input that shapes the model list
+  // (terminal launch labels, resolved output ids + all channel id/labels, plugin
+  // preview surface owner/id/titles, panel content/channel). Repeated same-state
+  // calls skip the whole rebuild + nested channel scan and return the cached list.
+  struct BottomPanelTabsCache {
+    std::uint64_t fingerprint = 0;
+    std::vector<BottomPanelTabModel> tabs;
+    bool valid = false;
+  };
+  std::uint64_t ComputeBottomPanelTabsFingerprint(
+      const ProjectWorkspaceState& state,
+      std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const;
+
   // One cache slot per editor group (max 2). Both groups render every frame, so a
   // single shared slot would thrash; indexing by group keeps each hot.
   static constexpr std::size_t kMaxEditorGroups = 2;
   mutable std::array<TabStripGeometryCache, kMaxEditorGroups> editor_tab_geometry_cache_;
   mutable std::array<VisibleEditorTabsCache, kMaxEditorGroups> visible_editor_tabs_cache_;
+  mutable BottomPanelTabsCache bottom_panel_tabs_cache_;
 };
 
 }  // namespace microide::workspace

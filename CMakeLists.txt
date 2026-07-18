@@ -838,6 +838,7 @@ add_executable(microide_tests
   tests/PersistedRecordIoTests.cpp
   tests/PersistedStateRecordTests.cpp
   tests/DebugPaneTests.cpp
+  tests/TabStripServiceTests.cpp
   tests/EditorGroupStateTests.cpp
   tests/RowDecorationBuilderTests.cpp
   tests/RuntimeSyntaxSkipTests.cpp

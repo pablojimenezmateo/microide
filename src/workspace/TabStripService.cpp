@@ -26,6 +26,30 @@ float OverflowStripReserveForHiddenCount(std::size_t hidden_count) {
   return hidden_count > 0 ? OverflowButtonWidthForHiddenCount(hidden_count) + 12.0f : 0.0f;
 }
 
+// FNV-1a mixers used to fingerprint the bottom-panel tab-model inputs. Content
+// hashing (not a monotonic revision) keeps the cache correct without threading a
+// bump through every terminal/output/plugin mutation site; a same-state repaint
+// hits, any label/id/count/order change misses.
+constexpr std::uint64_t kFnvOffset = 1469598103934665603ULL;
+constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+
+std::uint64_t HashMix(std::uint64_t hash, std::uint64_t value) {
+  for (int shift = 0; shift < 64; shift += 8) {
+    hash ^= (value >> shift) & 0xFFULL;
+    hash *= kFnvPrime;
+  }
+  return hash;
+}
+
+std::uint64_t HashMix(std::uint64_t hash, std::string_view text) {
+  hash = HashMix(hash, text.size());
+  for (const char ch : text) {
+    hash ^= static_cast<unsigned char>(ch);
+    hash *= kFnvPrime;
+  }
+  return hash;
+}
+
 }  // namespace
 
 std::string TabStripService::BuildProjectBadgeText(std::string_view label) const {
@@ -389,9 +413,58 @@ bool TabStripService::ScrollEditorTabStrip(EditorGroup& group, std::size_t group
   return false;
 }
 
+std::uint64_t TabStripService::ComputeBottomPanelTabsFingerprint(
+    const ProjectWorkspaceState& state,
+    std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const {
+  std::uint64_t hash = kFnvOffset;
+  // Terminals: presence + launch label (the only per-terminal input that shapes
+  // the tab model). A label copy per terminal is unavoidable, but far cheaper than
+  // constructing the full model list + nested channel scan on every caller.
+  hash = HashMix(hash, state.terminal_tabs.size());
+  for (const auto& terminal_tab : state.terminal_tabs) {
+    if (terminal_tab == nullptr) {
+      hash = HashMix(hash, std::uint64_t{0});
+      continue;
+    }
+    hash = HashMix(hash, std::uint64_t{1});
+    hash = HashMix(hash, std::string_view{terminal_tab->session.LaunchLabel()});
+  }
+  // Output: the augmentation inputs plus the resolved open ids and the full channel
+  // id/label table. The per-tab label is a deterministic function of (open ids,
+  // channels), so hashing both inputs independently (linear, no nesting) is enough.
+  hash = HashMix(hash, static_cast<std::uint64_t>(state.panel.content));
+  hash = HashMix(hash, std::string_view{state.panel.output.channel_id});
+  hash = HashMix(hash, state.panel.output.open_channel_ids.size());
+  for (const std::string& id : state.panel.output.open_channel_ids) {
+    hash = HashMix(hash, std::string_view{id});
+  }
+  hash = HashMix(hash, channels.size());
+  for (const auto& channel : channels) {
+    hash = HashMix(hash, std::string_view{channel.id});
+    hash = HashMix(hash, std::string_view{channel.label});
+  }
+  // Plugin preview surfaces: owner/id/title in the store's stable order.
+  if (const auto* pres = state.plugin_presentation_if_present()) {
+    for (const editor::SurfaceRef& ref : pres->surfaces.PreviewSurfaces()) {
+      if (ref.content == nullptr || ref.content->preview != editor::SurfacePreviewSlot::Bottom) {
+        continue;
+      }
+      hash = HashMix(hash, std::string_view{ref.owner});
+      hash = HashMix(hash, std::string_view{ref.surface_id});
+      hash = HashMix(hash, std::string_view{ref.content->title});
+    }
+  }
+  return hash;
+}
+
 std::vector<BottomPanelTabModel> TabStripService::BuildBottomPanelTabs(
     const ProjectWorkspaceState& state,
     std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const {
+  const std::uint64_t fingerprint = ComputeBottomPanelTabsFingerprint(state, channels);
+  if (bottom_panel_tabs_cache_.valid && bottom_panel_tabs_cache_.fingerprint == fingerprint) {
+    return bottom_panel_tabs_cache_.tabs;
+  }
+
   std::vector<BottomPanelTabModel> tabs;
   tabs.reserve(state.terminal_tabs.size() + state.panel.output.open_channel_ids.size() + 1);
 
@@ -462,6 +535,9 @@ std::vector<BottomPanelTabModel> TabStripService::BuildBottomPanelTabs(
     }
   }
 
+  bottom_panel_tabs_cache_.fingerprint = fingerprint;
+  bottom_panel_tabs_cache_.tabs = tabs;
+  bottom_panel_tabs_cache_.valid = true;
   return tabs;
 }
 
