@@ -783,8 +783,16 @@ speed-path items first, then the correctness/lifecycle cleanups.
   publish many distinct near-cap rasters faster than the project executor drains them and
   retain large encoded payloads plus in-flight markers. Add an in-flight encoded-byte/job
   budget with explicit backpressure/drop semantics before posting to the executor.
-- **TD-2026-07-17A-044 — raw plugin rasters are cached by bytes only, ignoring format and
-  declared dimensions.** `PluginSurfaceInterop::ReadRaster` computes `HashBytes(bytes)` for
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-044 — raw plugin rasters are cached by bytes only, ignoring format and
+  declared dimensions.** Fixed: the raster cache key moved to a testable
+  `surface_interop::ComputeRasterContentHash(bytes, is_rgba, width, height)`. For raw `rgba8` bytes it
+  folds the declared width/height (and a raw/encoded discriminator) into the FNV key, so two raw
+  rasters with identical bytes but different geometry (e.g. 4×4 vs 2×8) now get distinct
+  `content_hash`es and cannot reuse each other's decoded texture at the wrong extent. Encoded
+  (png/jpeg) bytes fully determine the image, so their key stays bytes-only (no fragmentation across
+  declared display sizes), and the discriminator keeps raw from ever aliasing encoded. Regression:
+  `PluginSurface/RasterContentHashKeyIncludesDimensionsForRaw`.
+  `PluginSurfaceInterop::ReadRaster` computes `HashBytes(bytes)` for
   both encoded PNG/JPEG and raw `rgba8` payloads, while raw RGBA interpretation also depends
   on the plugin-declared width and height. `SurfaceTextureCache::Request` then suppresses any
   later request with the same hash, and render looks up only `raster.content_hash`. The same

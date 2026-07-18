@@ -18,6 +18,7 @@
 #include "TestSupport.h"
 
 #include "plugin/PluginHost.h"
+#include "plugin/PluginSurfaceInterop.h"
 
 #include <cmath>
 #include <filesystem>
@@ -388,6 +389,38 @@ void TestPluginSurfaceCoverageEmptyWithoutPlugins() {
   Expect(host.ContributedScmProviders().empty(), "no scm providers without a plugin");
 }
 
+// Regression (TD-2026-07-17A-044): a raw rgba8 raster's cache key must fold in the
+// declared dimensions (the same byte string is a valid 4x4 or 2x8 image), so two raw
+// rasters with identical bytes but different geometry get distinct content hashes and
+// don't alias the same decoded texture. Encoded bytes fully determine the image, so
+// their key stays bytes-only; a raw/encoded discriminator keeps the two apart.
+void TestRasterContentHashKeyIncludesDimensionsForRaw() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  using microide::plugin::surface_interop::ComputeRasterContentHash;
+  const std::string bytes(64, '\x7f');
+
+  // Raw rgba8: identical bytes, different geometry -> distinct keys.
+  const std::uint64_t raw_4x4 = ComputeRasterContentHash(bytes, /*is_rgba=*/true, 4, 4);
+  const std::uint64_t raw_2x8 = ComputeRasterContentHash(bytes, /*is_rgba=*/true, 2, 8);
+  const std::uint64_t raw_4x4_again = ComputeRasterContentHash(bytes, /*is_rgba=*/true, 4, 4);
+  Expect(raw_4x4 != raw_2x8,
+         "raw rgba8 rasters with identical bytes but different dimensions differ");
+  Expect(raw_4x4 == raw_4x4_again, "the raw raster key is stable for identical bytes+dimensions");
+
+  // Encoded: bytes fully determine the image, so dimensions do not fragment the key.
+  const std::uint64_t enc_a = ComputeRasterContentHash(bytes, /*is_rgba=*/false, 4, 4);
+  const std::uint64_t enc_b = ComputeRasterContentHash(bytes, /*is_rgba=*/false, 2, 8);
+  Expect(enc_a == enc_b, "encoded rasters key on bytes only (dimensions come from the bytes)");
+
+  // A raw raster never aliases an encoded one with the same bytes.
+  Expect(raw_4x4 != enc_a, "raw and encoded rasters with identical bytes have distinct keys");
+
+  // Never the "no raster" sentinel.
+  Expect(raw_4x4 != 0 && enc_a != 0, "the content hash is never the 0 sentinel");
+}
+
 }  // namespace
 
 void RegisterPluginSurfaceCoverageTests(std::vector<TestCase>& tests) {
@@ -395,6 +428,8 @@ void RegisterPluginSurfaceCoverageTests(std::vector<TestCase>& tests) {
           TestPluginSurfaceCoverageRegistersEverySurface);
   AddTest(tests, "PluginSurface/EmptyWithoutPlugins",
           TestPluginSurfaceCoverageEmptyWithoutPlugins);
+  AddTest(tests, "PluginSurface/RasterContentHashKeyIncludesDimensionsForRaw",
+          TestRasterContentHashKeyIncludesDimensionsForRaw);
 }
 
 }  // namespace microide::tests

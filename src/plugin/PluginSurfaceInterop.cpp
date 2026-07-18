@@ -156,13 +156,14 @@ bool ReadDisplayList(lua_State* state, int dl_index, render::PluginDisplayList* 
   return true;
 }
 
-std::uint64_t HashBytes(const std::string& bytes) {
-  std::uint64_t h = 0xcbf29ce484222325ULL;
-  for (unsigned char c : bytes) {
-    h ^= static_cast<std::uint64_t>(c);
+// FNV-1a fold of an integer into an existing hash (little-endian byte order).
+std::uint64_t MixHashValue(std::uint64_t h, std::uint64_t value) {
+  for (int i = 0; i < 8; ++i) {
+    h ^= (value & 0xffULL);
     h *= 0x100000001b3ULL;
+    value >>= 8;
   }
-  return h == 0 ? 1 : h;  // 0 is the cache's "no raster" sentinel
+  return h == 0 ? 1 : h;
 }
 
 // Parse a `raster` body, fill the handle + intrinsic size, and dispatch the bytes
@@ -205,7 +206,9 @@ bool ReadRaster(lua_State* state, int raster_index, editor::SurfaceContent* cont
   };
   const int width = read_dimension("width");
   const int height = read_dimension("height");
-  const std::uint64_t hash = HashBytes(bytes);
+  // Key raw rasters by bytes + format + dimensions (see ComputeRasterContentHash);
+  // encoded bytes stay bytes-only.
+  const std::uint64_t hash = ComputeRasterContentHash(bytes, is_rgba, width, height);
 
   editor::RasterHandle handle;
   handle.content_hash = hash;
@@ -314,6 +317,28 @@ bool ReadAnchor(lua_State* state, int spec_index,
 }
 
 }  // namespace
+
+std::uint64_t ComputeRasterContentHash(std::string_view bytes, bool is_rgba, int width,
+                                       int height) {
+  std::uint64_t hash = 0xcbf29ce484222325ULL;
+  for (unsigned char c : bytes) {
+    hash ^= static_cast<std::uint64_t>(c);
+    hash *= 0x100000001b3ULL;
+  }
+  if (hash == 0) {
+    hash = 1;  // 0 is the cache's "no raster" sentinel
+  }
+  // Fold a raw/encoded discriminator so a raw raster never aliases an encoded one;
+  // for raw rgba8 also fold the declared dimensions (identical bytes at different
+  // geometry are different images). Encoded bytes fully determine the image, so no
+  // dimensions are mixed in — avoiding cache fragmentation across display sizes.
+  hash = MixHashValue(hash, is_rgba ? 1ULL : 0ULL);
+  if (is_rgba) {
+    hash = MixHashValue(hash, static_cast<std::uint64_t>(width));
+    hash = MixHashValue(hash, static_cast<std::uint64_t>(height));
+  }
+  return hash;
+}
 
 bool PublishSurface(lua_State* state, std::string_view plugin_id,
                     const std::filesystem::path& current_project_root,
