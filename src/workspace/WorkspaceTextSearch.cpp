@@ -224,8 +224,12 @@ namespace {
 template <typename LineAt>
 std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_count,
                                                            LineAt&& line_at,
-                                                           std::string_view query) {
+                                                           std::string_view query,
+                                                           bool* truncated) {
   std::vector<editor::SelectionRange> matches;
+  if (truncated != nullptr) {
+    *truncated = false;
+  }
   if (query.empty()) {
     return matches;
   }
@@ -236,6 +240,15 @@ std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_coun
     util::Utf8CaseFoldInto(line_at(line_index), lowered_line);
     std::size_t offset = lowered_line.find(lowered_query);
     while (offset != std::string::npos) {
+      // TD-2026-07-17A-029: cap the retained match set so a one-character query in a
+      // huge minified buffer cannot allocate millions of ranges. Navigation re-scans
+      // via FindNextLiteralMatchAfterSeedWrapOnce, so it stays correct past the cap.
+      if (matches.size() >= kMaxBufferSearchMatches) {
+        if (truncated != nullptr) {
+          *truncated = true;
+        }
+        return matches;
+      }
       matches.push_back(editor::SelectionRange{
           .start = editor::TextPosition{line_index, offset},
           .end = editor::TextPosition{line_index, offset + lowered_query.size()},
@@ -254,16 +267,18 @@ std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_coun
 
 std::vector<editor::SelectionRange> FindLiteralSearchMatches(
     const std::vector<std::string>& lines,
-    std::string_view query) {
+    std::string_view query,
+    bool* truncated) {
   return FindLiteralMatchesImpl(
-      lines.size(), [&](std::size_t i) -> std::string_view { return lines[i]; }, query);
+      lines.size(), [&](std::size_t i) -> std::string_view { return lines[i]; }, query, truncated);
 }
 
 std::vector<editor::SelectionRange> FindLiteralSearchMatches(
     const editor::TextBuffer& buffer,
-    std::string_view query) {
+    std::string_view query,
+    bool* truncated) {
   return FindLiteralMatchesImpl(
-      buffer.LineCount(), [&](std::size_t i) { return buffer.LineView(i); }, query);
+      buffer.LineCount(), [&](std::size_t i) { return buffer.LineView(i); }, query, truncated);
 }
 
 bool QueryExtendsCaseInsensitive(std::string_view prefix, std::string_view query) {
@@ -280,8 +295,15 @@ bool QueryExtendsCaseInsensitive(std::string_view prefix, std::string_view query
 std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
     const editor::TextBuffer& buffer,
     std::string_view query,
-    const std::vector<editor::SelectionRange>& previous) {
+    const std::vector<editor::SelectionRange>& previous,
+    bool* truncated) {
   std::vector<editor::SelectionRange> matches;
+  if (truncated != nullptr) {
+    // `previous` is already a capped set (it fed back from FindLiteralSearchMatches),
+    // and the refined subset is never larger — so refine can only preserve, never
+    // introduce, truncation. Carry the prior state forward via the cap guard below.
+    *truncated = false;
+  }
   if (query.empty()) {
     return matches;
   }
@@ -318,6 +340,12 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
     util::Utf8CaseFoldInto(text.substr(column, needle), folded_slice);
     const bool still_matches = folded_slice == lowered_query;
     if (still_matches) {
+      if (matches.size() >= kMaxBufferSearchMatches) {
+        if (truncated != nullptr) {
+          *truncated = true;
+        }
+        return matches;
+      }
       matches.push_back(editor::SelectionRange{
           .start = editor::TextPosition{line, column},
           .end = editor::TextPosition{line, column + needle},

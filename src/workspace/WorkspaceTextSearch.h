@@ -23,9 +23,19 @@ std::size_t ReplaceLiteralMatchesInText(std::string& content,
                                         std::string_view query,
                                         std::string_view replacement,
                                         bool case_sensitive);
+// TD-2026-07-17A-029: the stored buffer-search match set is scanned in full by the
+// editor overview ruler and reassigned on the shell path per query update, so a
+// one-character query in a large minified/generated buffer could allocate millions of
+// ranges and make every keystroke scale with match count. Cap the retained match set;
+// next/previous navigation is unaffected because it re-scans via
+// FindNextLiteralMatchAfterSeedWrapOnce rather than reading this vector. When the cap
+// trims matches, `*truncated` (when provided) is set.
+inline constexpr std::size_t kMaxBufferSearchMatches = 100000;
+
 std::vector<editor::SelectionRange> FindLiteralSearchMatches(
     const std::vector<std::string>& lines,
-    std::string_view query);
+    std::string_view query,
+    bool* truncated = nullptr);
 
 // Same all-occurrences case-insensitive search, but scanned directly over the
 // buffer's zero-copy `LineView` accessor -- no whole-document snapshot vector is
@@ -33,7 +43,8 @@ std::vector<editor::SelectionRange> FindLiteralSearchMatches(
 // that does not extend the previous one).
 std::vector<editor::SelectionRange> FindLiteralSearchMatches(
     const editor::TextBuffer& buffer,
-    std::string_view query);
+    std::string_view query,
+    bool* truncated = nullptr);
 
 // Find-as-you-type fast path. `previous` must be the complete match set for some
 // query that `query` extends (see `QueryExtendsCaseInsensitive`), taken over the
@@ -45,7 +56,8 @@ std::vector<editor::SelectionRange> FindLiteralSearchMatches(
 std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
     const editor::TextBuffer& buffer,
     std::string_view query,
-    const std::vector<editor::SelectionRange>& previous);
+    const std::vector<editor::SelectionRange>& previous,
+    bool* truncated = nullptr);
 
 // True when `query` equals `prefix` followed by zero or more characters, compared
 // case-insensitively (ASCII) -- i.e. `query` is `prefix` with more typed onto the

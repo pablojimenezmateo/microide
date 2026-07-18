@@ -14,6 +14,7 @@
 #include "workspace/DebugValueTree.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceActionServices.h"
+#include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::tests {
 namespace {
@@ -168,6 +169,29 @@ void TestClipboardExportClampBoundedAndUtf8Safe() {
          "the clamped payload stays near the budget, not the full input");
 }
 
+// TD-2026-07-17A-029: the stored buffer-search match set had no cap, so a one-character
+// query in a large minified buffer could allocate millions of ranges and make each query
+// update scale with match count. The retained set is now capped with a truncated flag;
+// navigation is unaffected (it re-scans independently).
+void TestBufferSearchMatchesAreCapped() {
+  // One long line of 'a' with more single-char matches than the cap.
+  std::vector<std::string> lines;
+  lines.emplace_back(workspace::kMaxBufferSearchMatches + 250, 'a');
+  bool truncated = false;
+  const auto matches = workspace::FindLiteralSearchMatches(lines, "a", &truncated);
+  Expect(matches.size() == workspace::kMaxBufferSearchMatches,
+         "the retained buffer-search match set must be capped");
+  Expect(truncated, "hitting the match cap must set the truncated flag");
+}
+
+void TestBufferSearchSmallResultIsNotTruncated() {
+  std::vector<std::string> lines = {"alpha beta alpha", "gamma alpha"};
+  bool truncated = true;
+  const auto matches = workspace::FindLiteralSearchMatches(lines, "alpha", &truncated);
+  Expect(matches.size() == 3, "all in-budget matches are returned");
+  Expect(!truncated, "an in-budget result must not be flagged truncated");
+}
+
 void TestExcludeGlobsNormalInputIsNotFlaggedTruncated() {
   bool truncated = true;
   const std::vector<std::string> globs =
@@ -195,6 +219,10 @@ void RegisterBoundedResourceCapsTests(std::vector<TestCase>& tests) {
           TestProcessAllowlistEntryByteBudget);
   AddTest(tests, "BoundedResourceCaps/ClipboardExportClampBoundedAndUtf8Safe",
           TestClipboardExportClampBoundedAndUtf8Safe);
+  AddTest(tests, "BoundedResourceCaps/BufferSearchMatchesAreCapped",
+          TestBufferSearchMatchesAreCapped);
+  AddTest(tests, "BoundedResourceCaps/BufferSearchSmallResultIsNotTruncated",
+          TestBufferSearchSmallResultIsNotTruncated);
 }
 
 }  // namespace microide::tests

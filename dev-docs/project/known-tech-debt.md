@@ -128,10 +128,10 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test) —
 >    **focus pass 2/9 IN PROGRESS 2026-07-18**:
->    018, 029, 038, 039, 043, 044, 046, 056, 057, 070,
+>    018, 038, 039, 043, 044, 046, 056, 057, 070,
 >    071, 072, 073, 074, 095, 097, 099, 107, 116, 118.
 >    *(020, 090, 101, 037, 042 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets; control-socket complete-line cap + aggregate inbound-byte budget.)*
->    *(040, 064, 068, 096, 098, 105, 106, 119, 121 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; debug-output control-event byte cap; DAP pre-initialize event-flood cap; text-measurement byte budget + no-cache-oversized; project.files_exclude rule/byte cap; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
+>    *(029, 040, 064, 068, 096, 098, 105, 106, 119, 121 RESOLVED 2026-07-18 — buffer-search match cap; debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; debug-output control-event byte cap; DAP pre-initialize event-flood cap; text-measurement byte budget + no-cache-oversized; project.files_exclude rule/byte cap; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
@@ -433,7 +433,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   the visible search result set is fresh. Thread a content-revision-checked match list
   into a range-based replace-all primitive that applies matches in descending order and
   builds one grouped undo entry without rescanning the document.
-- **TD-2026-07-17A-029 — in-buffer search stores every literal match without a cap.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-029 — in-buffer search stores every literal match without a cap.**
+  Fixed: `FindLiteralSearchMatches` (both overloads, via the shared `FindLiteralMatchesImpl`)
+  and `RefineLiteralSearchMatches` cap the retained match set at `kMaxBufferSearchMatches`
+  (100,000) and set an optional `*truncated` flag when the cap trims matches, so a
+  one-character query in a large minified/generated buffer can no longer allocate millions of
+  ranges or make each query update scale with match count. Next/previous navigation is
+  unaffected — it re-scans via `FindNextLiteralMatchAfterSeedWrapOnce` rather than reading the
+  stored vector. Regression: `BoundedResourceCaps/BufferSearch{MatchesAreCapped,
+  SmallResultIsNotTruncated}`.
   `FindLiteralSearchMatches` and `RefineLiteralSearchMatches` push every
   `SelectionRange` into `BufferSearchState::matches`; `RefreshBufferSearch` assigns that
   vector on the shell path, and the editor overview ruler then walks the whole vector to
