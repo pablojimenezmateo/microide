@@ -23,7 +23,10 @@ buffer-search match set; Add-Cursor-at-All-Matches fold-once + caret cap; commit
 content-revision cache; ranged secondary-caret anchor preservation in shaping actions), with
 015/016 (LSP bulk-sync before/after-snapshot refactor) and 022 (soft-wrap `TextLayoutCache`
 piece/range rewrite) DEFERRED as multi-file/data-structure changes needing their own
-integration/layout verification. **004** (folding refresh from the render frame) stays deferred: the fold scan
+integration/layout verification; and **focus pass 9/9 (search / traversal, 2026-07-18)** =
+055 RESOLVED (ignore matchers are parent-linked shared layers — each directory holds only its
+own rules instead of copying the full inherited rule set across every visited directory).
+**004** (folding refresh from the render frame) stays deferred: the fold scan
 depends on the render-loop `SetViewportSize`, so moving it to prep needs the editor-pane
 metrics computed in prep too, and the refresh is already fingerprint-gated to a no-op on
 settled frames — it wants its own change with fold-render before/after verification.
@@ -201,7 +204,9 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 8. **Path/containment correctness (small, but cross-group)**: 036
 >    (retarget background compare/merge tabs on rename/delete across all groups), 088.
 >    *(010, 089, 111 RESOLVED 2026-07-17A — `util::RelativePathWithin`; restored-tree-key containment.)*
-> 9. **Search / traversal**: 055 (parent-linked ignore layers).
+> 9. **Search / traversal**: **focus pass 9/9 LANDED 2026-07-18** — 055 RESOLVED (ignore
+>    matchers are now parent-linked shared layers; each directory holds only its own rules
+>    instead of copying the full inherited rule set). Cluster complete.
 >    *(065 RESOLVED 2026-07-17A — split cheap `HasLastTerminalCommand` predicate from the transcript builder.)*
 > 3b. **Coordinate/cross-boundary rewrites carved out of cluster 3** — **ALL RESOLVED 2026-07-18**.
 >    Each was more than a drop-in index (a delta-accumulator or an invalidation signal on a
@@ -896,7 +901,16 @@ speed-path items first, then the correctness/lifecycle cleanups.
   commands or plugin/test access) each typed character pays O(carets²) remap work before the
   grouped undo entry is finalized. Compute final positions from prefix/suffix edit deltas in one
   pass, or keep a Fenwick-style line/column delta accumulator so each caret is remapped once.
-- **TD-2026-07-17A-055 — traversal filters copy the full ignore-rule set per directory.**
+- **[RESOLVED 2026-07-18 — focus pass 9/9] TD-2026-07-17A-055 — traversal filters copy the full ignore-rule set per directory.**
+  Fixed: `IgnoreMatcher` now carries a `std::shared_ptr<const IgnoreMatcher> parent_` layer and
+  holds only its OWN directory's rules; `IgnoredNormalized` evaluates the inherited chain first,
+  then local rules — provably equivalent to the old flattened ancestor-first last-match-wins list
+  (a child's rules apply strictly after its ancestors', so layer-crossing negations still work).
+  `IgnoreMatcher::MakeChild` builds a child linked to a parent with no rule copy;
+  `ProjectTraversalFilter`, `ProjectFileScanner::CollectFiles`, and `DirectoryTree::AppendDirectory`
+  hold matchers via `shared_ptr` so a descendant references the ancestor chain instead of copying it.
+  Regression: `IgnoreMatcher/ParentLinkedLayersMatchFlattened` (3-level chain, byte-identical to the
+  flattened matcher, including a layer-crossing negation).
   `ProjectTraversalFilter::MatcherForParentDirectory` builds a child matcher with
   `IgnoreMatcher matcher = parent_matcher`, then loads that directory's `.gitignore` and caches the
   whole copy in `directory_matchers_`. `ProjectFileScanner::CollectFiles` and
