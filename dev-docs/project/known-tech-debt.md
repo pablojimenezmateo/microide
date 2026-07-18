@@ -129,9 +129,9 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test) —
 >    **focus pass 2/9 IN PROGRESS 2026-07-18**:
 >    018, 029, 038, 039, 043, 044, 046, 056, 057, 070,
->    071, 072, 073, 074, 095, 096, 097, 099, 107, 116, 118.
+>    071, 072, 073, 074, 095, 097, 099, 107, 116, 118.
 >    *(020, 090, 101, 037, 042 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets; control-socket complete-line cap + aggregate inbound-byte budget.)*
->    *(040, 064, 068, 098, 105, 106, 119, 121 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; DAP pre-initialize event-flood cap; text-measurement byte budget + no-cache-oversized; project.files_exclude rule/byte cap; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
+>    *(040, 064, 068, 096, 098, 105, 106, 119, 121 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; debug-output control-event byte cap; DAP pre-initialize event-flood cap; text-measurement byte budget + no-cache-oversized; project.files_exclude rule/byte cap; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
@@ -1134,7 +1134,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   breakpoints/tabs/projects, or launch configs with large argument bodies can therefore allocate and
   serialize a multi-megabyte response on the UI path only to be dropped later by the write-buffer cap.
   Add per-query item/byte budgets and truncated result metadata before JSON construction/serialization.
-- **TD-2026-07-17A-096 — debug output control events bypass the console line cap.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-096 — debug output control events bypass the console line cap.**
+  Fixed: `ControlChannelService::OnDebugOutput` byte-caps the emitted text at
+  `kMaxDebugOutputEventBytes` (64 KiB) on a UTF-8 codepoint boundary with a marker + a
+  `truncated` flag before building the JSON event, so a DAP output event that stays within the
+  protocol body cap can no longer force a large JSON allocation/escape pass and per-client
+  write-buffer attempt (the IDE console side already caps line fan-out at 100k lines). Regression:
+  extended `ControlChannelService/StdoutMirrorEmitsWithoutConnections` (a 1 MiB output event
+  mirrors one line whose text is capped ≪ 128 KiB and carries `truncated:true`).
   `WorkspaceShell::AppendDebugConsoleOutput` caps one DAP output event at 100k appended output-channel
   lines, but the debug-service operation immediately calls
   `control_channel_service_.OnDebugOutput(output.category, output.output)` with the original raw

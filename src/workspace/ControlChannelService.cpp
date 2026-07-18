@@ -17,6 +17,7 @@
 #include "platform/AppDirectories.h"
 #include "platform/RuntimePaths.h"
 #include "util/Parse.h"
+#include "util/StringUtil.h"
 #include "workspace/ControlProtocol.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/DebugViewModel.h"
@@ -711,7 +712,24 @@ void ControlChannelService::OnDebugOutput(const std::string& category, const std
   util::JsonObject event;
   event["event"] = util::JsonValue(std::string("output"));
   event["category"] = util::JsonValue(category);
-  event["text"] = util::JsonValue(text);
+  // TD-2026-07-17A-096: the IDE console side caps line fan-out at 100k lines, but the
+  // raw output string was copied whole into this JSON event, so a DAP output event that
+  // stays within the protocol body cap could still force a large JSON allocation/escape
+  // pass and per-client write-buffer attempt. Byte-cap the emitted text on a UTF-8
+  // boundary with a truncation marker/flag.
+  constexpr std::size_t kMaxDebugOutputEventBytes = 64u * 1024;  // 64 KiB
+  if (text.size() <= kMaxDebugOutputEventBytes) {
+    event["text"] = util::JsonValue(text);
+  } else {
+    std::size_t fit = kMaxDebugOutputEventBytes;
+    while (fit > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(text[fit]))) {
+      --fit;
+    }
+    std::string truncated(text, 0, fit);
+    truncated += "…[truncated]";
+    event["text"] = util::JsonValue(std::move(truncated));
+    event["truncated"] = util::JsonValue(true);
+  }
   EmitEvent(util::JsonValue(std::move(event)));
 }
 

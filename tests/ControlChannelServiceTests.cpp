@@ -573,6 +573,19 @@ void TestStdoutMirrorEmitsWithoutConnections() {
   Expect((*terminated)["sessionId"].AsInt() == 1, "terminated event carries the real session id");
   Expect((*terminated)["reason"].AsString() == "debug adapter exited unexpectedly",
          "a non-clean end carries its reason so observers can distinguish a crash");
+
+  // TD-2026-07-17A-096: an oversized DAP output event must be byte-capped before the JSON
+  // event is built/serialized, with a truncation marker/flag, so it cannot force a large
+  // allocation/escape pass and per-client write-buffer attempt on the control channel.
+  emitted.clear();
+  service.OnDebugOutput("stdout", std::string(1u * 1024 * 1024, 'z'));  // 1 MiB
+  Expect(emitted.size() == 1, "an oversized output event still mirrors exactly one line");
+  const auto capped = util::ParseJson(emitted[0]);
+  Expect(capped.has_value(), "the capped output event must be valid JSON");
+  Expect((*capped)["text"].AsString().size() < 128u * 1024,
+         "the emitted text must be byte-capped well below the raw 1 MiB");
+  Expect((*capped)["truncated"].AsBool(false),
+         "a truncated output event must carry the truncated flag");
 }
 
 // Regression: the resolved `stopped` event must carry the populated execution view
