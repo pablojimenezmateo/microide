@@ -682,6 +682,11 @@
   void ResetProjectScopedState(bool show_welcome);
   bool StartFileIndexWatcherForCurrentProject();
   void StopFileIndexWatcher();
+  // Off-thread forced full rescan (TD-2026-07-17-081/082): scan on the background
+  // executor, apply the sorted result on the main thread via file_index_refresh_mailbox_.
+  void RequestFileIndexRefresh();
+  void ApplyForcedFileIndexRefresh(const std::filesystem::path& root,
+                                   std::vector<project::ProjectFile> files);
   void SetWelcomePlaceholder();
   bool InitializeCurrentProject(const std::filesystem::path& project_root,
                                 bool restore_persistence,
@@ -1994,6 +1999,12 @@
   std::unique_ptr<platform::FileIndexWatcher> file_index_watcher_;
   std::atomic<std::uint64_t> file_index_watcher_generation_{0};
   std::atomic<bool> file_index_has_pending_changes_{false};
+  // Forced full-rescan (manual sidebar refresh / exclude-glob edit) runs the whole-
+  // tree scan + per-file stat on project_background_executor_ and marshals the sorted
+  // result back here (wake reuses project_file_event_type_, drained in
+  // ReloadProjectIfFilesChanged). The apply drops a scan whose project was switched
+  // away (root mismatch). Keeps TD-2026-07-17-081/082 off the shell thread.
+  util::MainThreadMailbox file_index_refresh_mailbox_;
   std::atomic<bool> file_index_initial_build_in_flight_{false};
   std::atomic<bool> project_file_event_pending_{false};
   WorkspacePluginRuntime plugin_runtime_;

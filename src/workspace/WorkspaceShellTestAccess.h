@@ -21,6 +21,7 @@
 #include <chrono>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <mutex>
 #include <stdexcept>
 #include <string>

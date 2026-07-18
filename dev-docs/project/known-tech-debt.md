@@ -88,7 +88,7 @@ they land.
 
 1. **Async / off-thread hardening** — move blocking work off the shell/UI thread:
    compare/merge model build (047/19), LSP `WorkspaceEdit` apply (011/18), project
-   replace-all (21), forced refresh + per-file stat (081/082), git patch serialize (38),
+   replace-all (21), git patch serialize (38),
    exclude-glob watcher rebuild (080), file-index batch coalescing (086), LSP shutdown
    lifecycle (091), file-manager reveal (061), search worker pool (055), save-participant /
    `process.run_async` worker capacity (016/017). **014 (POSIX terminal write deadline)
@@ -2197,8 +2197,9 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 **Async / off-thread refactors** (move blocking work off the shell/UI thread):
 
 > **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** Every item in this subsection (047, 055,
-> 061, 081/082, 080, 086, 091, 016/017, 075) is a multi-file async redesign —
-> (**014 RESOLVED 2026-07-18** — POSIX terminal write is now non-blocking; see its entry below.)
+> 061, 080, 086, 091, 016/017, 075) is a multi-file async redesign —
+> (**014 RESOLVED 2026-07-18** — POSIX terminal write is now non-blocking; **081/082 RESOLVED
+> 2026-07-18** — forced full rescan runs off the shell thread; see their entries below.)
 > moving synchronous work onto `ProjectBackgroundExecutor`/a worker lane with
 > generation/token gating and an SDL-wake completion, then reconciling the callers that
 > today depend on a synchronous return. Each is a focused, individually-reviewed pass with
@@ -2248,9 +2249,22 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   forks) is fast; only a wedged launcher hits the bounded timeout. Needs an async
   host-integration service with SDL-event completion (the reveal returns a
   success bool that drives an error message).
-- **081 / 082 — forced project refresh + change-batch stat run on the shell thread.**
-  Route forced refresh and per-file metadata stat through the background executor
-  with a generation/token SDL-wake result; land together.
+- **[RESOLVED 2026-07-18] 081 / 082 — forced project refresh + change-batch stat run on the shell thread.**
+  The whole-tree rescan + per-file `is_directory`/`file_size`/`last_write_time` stat is
+  now split into a pure `FileIndex::ScanFiles(root, follow, excludes)` (touches only its
+  arguments) and a main-thread `FileIndex::ReplaceScannedFiles(...)`. The forced refresh
+  (`WorkspaceShell::RequestFileIndexRefresh`, wired from the sidebar refresh action and the
+  settings exclude-glob/follow-symlink edits) captures the scan inputs by value, runs the
+  scan on `project_background_executor_` (`PostLatest("file-index-refresh")` so a burst only
+  runs the newest queued scan), and marshals the sorted result back through a new
+  `file_index_refresh_mailbox_` (wake + drain reuse the existing `project_file_event_type_`
+  path in `ReloadProjectIfFilesChanged`). The apply drops a scan whose project was switched
+  away (root mismatch — the background task never dereferences the live index, so a switch
+  that Cancels the executor + Resets the index can't dangle). Finder/search invalidation
+  moved into the apply. Regression:
+  `WorkspaceShell/ForcedFileIndexRefreshRunsOffThreadAndPicksUpNewFiles` (drives the async
+  path via a barrier-post seam, no sleeps). The synchronous `FileIndex::Refresh()` stays for
+  `SetRoot(ScanNow)` / tests.
 - **080 — live exclude-glob changes don't rebuild the native watch set.**
   `SetExcludeGlobs` updates the filter but not `SetRoots`; needs a
   `ReconfigureFilter` that rebuilds the prepared native backend with a config

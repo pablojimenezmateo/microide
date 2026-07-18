@@ -933,6 +933,9 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
 
 bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::ReloadProjectIfFilesChanged");
+  // Apply any completed off-thread forced rescan (TD-2026-07-17-081/082) first; its
+  // wake reuses this event, and the apply invalidates the finder/search below.
+  file_index_refresh_mailbox_.Drain();
   project_file_event_pending_.store(false, std::memory_order_release);
   const bool index_metadata_pending =
       file_index_has_pending_changes_.exchange(false, std::memory_order_acq_rel);

@@ -410,8 +410,9 @@ void WorkspaceShell::ApplyLiveSettings() {
     context_.current_project_state.directory_tree.SetFollowOutOfRootSymlinks(follow);
     context_.current_project_state.file_index.SetFollowOutOfRootSymlinks(follow);
     context_.current_project_state.directory_tree.Refresh();
-    context_.current_project_state.file_index.Refresh();
-    context_.current_project_state.file_finder.InvalidateIndexCache();
+    // Whole-tree file-index rescan runs off the shell thread; the finder/search
+    // invalidation happens when it applies (TD-2026-07-17-081/082).
+    RequestFileIndexRefresh();
     RequestSidebarRedraw();
   }
   // Editing the exclude globs changes what the tree grays and what the finder/index
@@ -424,8 +425,9 @@ void WorkspaceShell::ApplyLiveSettings() {
     context_.current_project_state.file_index.SetExcludeGlobs(globs);
     project_file_monitor_.SetExcludeGlobs(globs);
     context_.current_project_state.directory_tree.Refresh();
-    context_.current_project_state.file_index.Refresh();
-    context_.current_project_state.file_finder.InvalidateIndexCache();
+    // Whole-tree file-index rescan runs off the shell thread; the finder/search
+    // invalidation happens when it applies (TD-2026-07-17-081/082).
+    RequestFileIndexRefresh();
     // Re-arm the native FileIndexWatcher too: its traversal filter is constructed at
     // Watch() time from the exclude globs and is not mutated by SetExcludeGlobs alone, so
     // without a restart a now-excluded subtree's live events could reinsert paths into

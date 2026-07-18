@@ -232,10 +232,18 @@ void SidebarCoordinator::RestorePrevious() {
 void SidebarCoordinator::RefreshProjectFiles() {
   state_.directory_tree.Refresh();
   RevealSelectedTreeLine();
-  state_.file_index.Refresh();
-  state_.file_finder.InvalidateIndexCache();
-  if (state_.overlay.visible && state_.overlay.mode == OverlayMode::FileFinder) {
-    state_.file_finder.Refresh();
+  // Run the whole-tree file-index rescan + per-file stat off the shell thread; the
+  // finder/search invalidation + redraw fire when the scan result applies on the
+  // main thread (TD-2026-07-17-081/082). Fall back to a synchronous rescan only if
+  // the shell did not wire the async operation.
+  if (operations_.request_file_index_refresh) {
+    operations_.request_file_index_refresh();
+  } else {
+    state_.file_index.Refresh();
+    state_.file_finder.InvalidateIndexCache();
+    if (state_.overlay.visible && state_.overlay.mode == OverlayMode::FileFinder) {
+      state_.file_finder.Refresh();
+    }
   }
   RefreshGit();
   RefreshProblems();
@@ -270,6 +278,7 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                 return consumed;
               },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
+          .request_file_index_refresh = [this]() { RequestFileIndexRefresh(); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
           .query_lsp_document_symbols =

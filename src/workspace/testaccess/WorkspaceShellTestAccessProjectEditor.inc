@@ -41,6 +41,22 @@
     PerfRunGitSidebarRefreshSync(shell);
   }
 
+  // Drive the off-thread forced rescan (TD-2026-07-17-081/082) to completion: post
+  // the scan, wait for the background worker to run it, then drain the mailbox so the
+  // result applies on this (main) thread. Deterministic — no sleeps.
+  static void ForceFileIndexRefreshAndDrain(WorkspaceShell& shell) {
+    shell.RequestFileIndexRefresh();
+    // Wait for the queued scan to RUN (not cancel it): a trailing barrier task runs
+    // after the scan on the serial worker, so its completion means the scan's
+    // mailbox.Post has already happened. (Executor::Drain() would cancel the still-
+    // queued scan instead of running it.)
+    std::promise<void> ran;
+    std::future<void> ran_future = ran.get_future();
+    shell.project_background_executor_.Post([&ran]() { ran.set_value(); });
+    ran_future.wait();
+    shell.file_index_refresh_mailbox_.Drain();
+  }
+
   static void OpenSingleEditorTab(WorkspaceShell& shell, const std::filesystem::path& path) {
     editor::TextViewport opened_view;
     if (!opened_view.OpenFile(path)) {

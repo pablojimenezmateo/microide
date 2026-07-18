@@ -167,6 +167,31 @@ void TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection() {
          "selected project should open the README startup file");
 }
 
+// TD-2026-07-17-081/082: the forced full rescan (manual refresh / exclude edit)
+// runs its whole-tree scan + per-file stat off the shell thread and applies the
+// result back on the main thread. Adding a file on disk and forcing a refresh must
+// surface it in the index without a synchronous shell-thread scan.
+void TestWorkspaceShellForcedFileIndexRefreshRunsOffThreadAndPicksUpNewFiles() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "a.txt", "a\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::FileIndexContainsPath(shell, "a.txt"),
+         "initial scan should list the existing file");
+  Expect(!WorkspaceShellTestAccess::FileIndexContainsPath(shell, "b.txt"),
+         "index should not list a file that does not exist yet");
+
+  WriteFile(root / "b.txt", "b\n");
+  WorkspaceShellTestAccess::ForceFileIndexRefreshAndDrain(shell);
+
+  Expect(WorkspaceShellTestAccess::FileIndexContainsPath(shell, "b.txt"),
+         "off-thread forced rescan should pick up the newly-created file");
+  Expect(WorkspaceShellTestAccess::FileIndexContainsPath(shell, "a.txt"),
+         "off-thread forced rescan should retain still-present files");
+}
+
 void TestWorkspaceShellProjectOpenCommandUsesNativePickerAtActiveProjectRoot() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "current-project";
@@ -4140,6 +4165,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSplitContextMenuAvailabilityAndTreeOpen);
   AddTest(tests, "WorkspaceShell/RevealInFileTreeFromTabMenu",
           TestWorkspaceShellRevealInFileTreeFromTabMenu);
+  AddTest(tests, "WorkspaceShell/ForcedFileIndexRefreshRunsOffThreadAndPicksUpNewFiles",
+          TestWorkspaceShellForcedFileIndexRefreshRunsOffThreadAndPicksUpNewFiles);
 }
 
 }  // namespace microide::tests

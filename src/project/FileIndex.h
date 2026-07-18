@@ -57,6 +57,18 @@ class FileIndex {
                RootPopulationMode population_mode = RootPopulationMode::ScanNow);
   void Reset();
   void Refresh();
+  // Pure full-tree scan + per-file stat, split out so a forced refresh can run it
+  // on a background thread (it touches no FileIndex state — only its arguments):
+  // the shell captures root/follow/excludes by value, scans off the UI thread, and
+  // hands the sorted result to ReplaceScannedFiles() back on the main thread. This
+  // keeps the whole-project `is_directory`/`file_size`/`last_write_time` sweep
+  // (TD-2026-07-17-081/082) off the shell thread on manual refresh / exclude edits.
+  static std::vector<ProjectFile> ScanFiles(const std::filesystem::path& root,
+                                            bool follow_out_of_root_symlinks,
+                                            const std::vector<std::string>& exclude_globs);
+  // Commits a pre-scanned (already sorted) file list produced by ScanFiles(),
+  // replacing the current contents. Runs on the owning (main) thread.
+  void ReplaceScannedFiles(std::vector<ProjectFile> files);
   // Mirrors the `project.follow_out_of_root_symlinks` user setting; consulted by
   // the full rescan in Refresh(). Default false keeps the out-of-root containment
   // guard active.

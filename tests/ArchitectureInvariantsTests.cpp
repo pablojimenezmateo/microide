@@ -189,8 +189,12 @@ void TestArchitectureFileSizes() {
              // 1693: net +1 for TD-2026-07-17A-004 folding-refresh hoist: replaced the render-only
              // EnsureGroupFoldingModelFresh with RefreshEditorFoldingModels (once-per-frame prep)
              // + the non-mutating GroupFoldingModelPtr the render TU reads.
+             // 1697: +4 for TD-2026-07-17-081/082 off-thread forced rescan:
+             // file_index_refresh_mailbox_ + RequestFileIndexRefresh()/ApplyForcedFileIndexRefresh()
+             // decls, so the whole-tree scan + per-file stat runs off the shell thread on manual
+             // refresh / exclude edits and applies via the mailbox.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1693);
+                                                     1697);
            });
 
   AssertRuleResultsPass(results);

@@ -148,6 +148,55 @@ void WorkspaceShell::StopFileIndexWatcher() {
   }
 }
 
+void WorkspaceShell::RequestFileIndexRefresh() {
+  const std::filesystem::path root = context_.current_project_state.root;
+  if (root.empty()) {
+    return;
+  }
+  // Capture the scan inputs by value so the background task never dereferences
+  // the FileIndex (which a project switch may destroy while the scan is in
+  // flight); ScanFiles touches only its arguments.
+  const bool follow = context_.current_project_state.file_index.FollowOutOfRootSymlinks();
+  std::vector<std::string> excludes =
+      ParseExcludeGlobs(GetSettingValue("project.files_exclude").value_or(std::string()));
+  // PostLatest by a fixed key so a burst of refresh requests only runs the newest
+  // queued scan (an in-flight one still finishes; its result is simply superseded).
+  project_background_executor_.PostLatest(
+      "file-index-refresh",
+      [this, root, follow, excludes = std::move(excludes)]() {
+        std::vector<project::ProjectFile> files =
+            project::FileIndex::ScanFiles(root, follow, excludes);
+        file_index_refresh_mailbox_.Post(
+            [this, root, files = std::move(files)]() mutable {
+              ApplyForcedFileIndexRefresh(root, std::move(files));
+            });
+      });
+}
+
+void WorkspaceShell::ApplyForcedFileIndexRefresh(const std::filesystem::path& root,
+                                                 std::vector<project::ProjectFile> files) {
+  // Drop a scan whose project has since been switched away — the current index
+  // now belongs to a different project (or was reset), so applying an old root's
+  // file list would corrupt it. Mirrors the generation guard on other async paths.
+  if (root != context_.current_project_state.root) {
+    return;
+  }
+  context_.current_project_state.file_index.ReplaceScannedFiles(std::move(files));
+  context_.current_project_state.file_finder.InvalidateIndexCache();
+  // A changed file set makes cached project-search results stale; drop the cache
+  // marker so re-opening Search re-runs, and refresh live if Search/Finder is open.
+  context_.current_project_state.overlay.workflow.project_search.searched_query.clear();
+  if (ActiveSidebarMode() == SidebarMode::Search &&
+      !context_.current_project_state.overlay.workflow.project_search.query.text().empty()) {
+    RefreshProjectSearch();
+  }
+  if (context_.current_project_state.overlay.visible &&
+      context_.current_project_state.overlay.mode == OverlayMode::FileFinder) {
+    context_.current_project_state.file_finder.Refresh();
+  }
+  RequestWindowRedraw();
+}
+
 bool WorkspaceShell::ConfigureProjectState(ProjectWorkspaceState& state,
                                            const std::filesystem::path& project_root) {
   std::error_code error;

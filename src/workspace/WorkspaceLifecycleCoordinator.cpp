@@ -215,6 +215,8 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   if (project_file_event_type_ == static_cast<Uint32>(-1)) {
     project_file_event_type_ = 0;
   }
+  // Off-thread forced-rescan results wake and drain on the same project-file path.
+  file_index_refresh_mailbox_.SetWakeEventType(project_file_event_type_);
   // Run the project file monitor's recursive tree walks off the shell thread, so a
   // large project never stalls the UI while polling for external changes.
   project_file_monitor_.SetBackgroundPoster(

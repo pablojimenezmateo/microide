@@ -141,34 +141,26 @@ void FileIndex::Reset() {
   include_hidden_cache_ = {};
 }
 
-void FileIndex::Refresh() {
-  std::filesystem::path root;
-  {
-    std::shared_lock lock(files_mutex_);
-    root = root_;
-  }
-
-  std::vector<std::string> excludes;
-  {
-    std::shared_lock lock(files_mutex_);
-    excludes = exclude_globs_;
-  }
-
+std::vector<ProjectFile> FileIndex::ScanFiles(const std::filesystem::path& root,
+                                              bool follow_out_of_root_symlinks,
+                                              const std::vector<std::string>& exclude_globs) {
   std::vector<ProjectFile> rebuilt;
   if (!root.empty()) {
-    const auto scanned = CollectProjectFiles(
-        root, ProjectFileScanMode::IncludeHidden,
-        follow_out_of_root_symlinks_.load(std::memory_order_relaxed), excludes);
+    const auto scanned = CollectProjectFiles(root, ProjectFileScanMode::IncludeHidden,
+                                             follow_out_of_root_symlinks, exclude_globs);
     rebuilt.reserve(scanned.size());
     for (const auto& relative_path : scanned) {
       rebuilt.push_back(BuildProjectFile(root, relative_path));
     }
   }
   std::sort(rebuilt.begin(), rebuilt.end(), LessProjectFile);
+  return rebuilt;
+}
 
+void FileIndex::ReplaceScannedFiles(std::vector<ProjectFile> files) {
   {
     std::unique_lock lock(files_mutex_);
-    files_ = std::move(rebuilt);
+    files_ = std::move(files);
     // A full rescan replaces the file list; the watcher-batch truncation flag no
     // longer describes this content. CollectProjectFiles does not currently report
     // budget exhaustion, so clear the stale flag rather than leave a prior root's
@@ -179,6 +171,19 @@ void FileIndex::Refresh() {
     include_hidden_cache_.needs_refresh = true;
   }
   EnsureFresh(ProjectFileScanMode::ExcludeHidden);
+}
+
+void FileIndex::Refresh() {
+  std::filesystem::path root;
+  std::vector<std::string> excludes;
+  bool follow = false;
+  {
+    std::shared_lock lock(files_mutex_);
+    root = root_;
+    excludes = exclude_globs_;
+    follow = follow_out_of_root_symlinks_.load(std::memory_order_relaxed);
+  }
+  ReplaceScannedFiles(ScanFiles(root, follow, excludes));
 }
 
 bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,

@@ -31,6 +31,10 @@ class SidebarCoordinator {
     std::function<void()> request_git_refresh;
     std::function<bool(GitSidebarState::RefreshSnapshot*)> consume_git_refresh_snapshot;
     std::function<void()> refresh_project_search;
+    // Off-thread forced full rescan (TD-2026-07-17-081/082): the whole-tree scan +
+    // per-file stat runs on the shell's background executor; the finder/search
+    // invalidation happens when the result applies on the main thread.
+    std::function<void()> request_file_index_refresh;
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<editor::TextViewport*()> active_editor_viewport;
     // LSP documentSymbol fallback for the outline: when the plugin provider yields no
