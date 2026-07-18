@@ -166,6 +166,7 @@ bool LspClient::DidOpen(std::string uri, std::string language_id, std::string te
   // thread stopped / shutdown rejected the frame, so later version-gated
   // diagnostics would be checked against a document the server never opened.
   // `uri` is captured by value so it stays valid for the post-enqueue commit.
+  const std::size_t approx_bytes = text.size();
   const bool queued = impl_->SendMessageBuilderAfterInitialize(
       [impl = impl_, uri, language_id = std::move(language_id),
        text = std::move(text)]() mutable {
@@ -179,7 +180,8 @@ bool LspClient::DidOpen(std::string uri, std::string language_id, std::string te
         params["textDocument"] = JsonValue(std::move(text_doc));
         return impl->SerializeMessage(
             impl->MakeNotification("textDocument/didOpen", JsonValue(std::move(params))));
-      });
+      },
+      approx_bytes);
   if (queued) {
     std::lock_guard lock(impl_->mutex);
     impl_->document_versions[uri] = 1;
@@ -223,7 +225,8 @@ bool LspClient::DidChange(const std::string& uri, const std::string& text) {
         params["contentChanges"] = JsonValue(std::move(changes));
         return impl->SerializeMessage(
             impl->MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
-      });
+      },
+      text.size());
   if (queued) {
     std::lock_guard lock(impl_->mutex);
     impl_->document_versions[uri] = std::max(impl_->document_versions[uri], version);
@@ -264,7 +267,8 @@ bool LspClient::DidChangeIncremental(const std::string& uri,
         params["contentChanges"] = JsonValue(std::move(changes));
         return impl->SerializeMessage(
             impl->MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
-      });
+      },
+      new_text.size());
   if (queued) {
     std::lock_guard lock(impl_->mutex);
     impl_->document_versions[uri] = std::max(impl_->document_versions[uri], version);
@@ -325,6 +329,11 @@ bool LspClient::IsShuttingDown() const {
 bool LspClient::IsShutdownComplete() const {
   return impl_->shutdown_started.load(std::memory_order_acquire) &&
          impl_->shutdown_complete.load(std::memory_order_acquire);
+}
+
+void LspClient::SetMaxQueuedBytesForTesting(std::size_t bytes) {
+  std::lock_guard lock(impl_->send_mutex);
+  impl_->max_queued_bytes_ = bytes;
 }
 
 void LspClient::EnableTestStubMode() {

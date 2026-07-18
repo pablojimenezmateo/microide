@@ -337,6 +337,9 @@ class LspClient {
 
   // Unit tests: pretend a connected server without starting a subprocess.
   void EnableTestStubMode();
+  // Lower the aggregate outbound byte budget so a test can exercise the byte cap
+  // without ~512 MiB of queued payload. TD-2026-07-17A-071.
+  void SetMaxQueuedBytesForTesting(std::size_t bytes);
   void DisableTestStubMode();
   void SetTestDocumentSymbolHandler(
       std::function<void(std::string uri, DocumentSymbolCallback cb)> handler);

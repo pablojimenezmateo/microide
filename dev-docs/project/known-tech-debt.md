@@ -1669,7 +1669,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   buffers and can stall the shell before clipboard write or background `git apply` dispatch. Add a
   patch byte budget/streaming writer, avoid the intermediate `body_lines` storage when possible, and
   surface a truncated/too-large status instead of building arbitrarily large patch text.
-- **TD-2026-07-17A-100 — event handling drains the whole SDL queue before a pending redraw.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-100 — event handling drains the whole SDL queue before a pending redraw.**
+  Fixed: the inner `do { HandleEvent } while (SDL_PollEvent)` now enforces an event-drain count
+  budget (`app::ShouldYieldEventDrain` / `kMaxEventsPerDrain` = 512 in `EventDrainBudget.h`) — once a
+  redraw is pending, it yields to render after the budget and defers the remaining queued events to
+  the next loop iteration. A sustained keyboard/window/plugin/control-wake flood can no longer keep
+  accumulating dirty rects past one frame. SDL events are discrete (no multi-event atomic sequence
+  spans PollEvent), so breaking mid-queue preserves per-event ordering. Regression:
+  `Application/EventDrainBudgetYieldsOnlyWithPendingRedraw`.
   `Application::Run` renders only at the top of the outer loop. After any event requests a redraw, the
   inner `do { ... } while (SDL_PollEvent(&event))` continues processing every queued SDL event before
   returning to the render step. Consecutive mouse-motion events are coalesced, but keyboard input,

@@ -84,6 +84,10 @@ inline bool DapResponseSeqInRange(const util::JsonValue& seq_value, int* out) {
 // queued protocol messages or grow until the IDE OOMs. Refused requests fail cleanly
 // via the send-failure path; the timeout sweep clears anything already pending.
 constexpr std::size_t kMaxQueuedMessages = 50000;
+// Aggregate approximate byte budget for queued outbound payloads (the count cap
+// above does not bound retained BYTES — large evaluate/setExpression/source-content
+// bodies capture their text by value until sent). TD-2026-07-17A-071.
+constexpr std::size_t kMaxQueuedBytes = 512u * 1024 * 1024;  // 512 MiB
 
 // Debug adapters are external, possibly-buggy or hostile processes. Bound a
 // single decoded message body and, with slack, the whole read-accumulation
@@ -204,6 +208,9 @@ struct DapClient::Impl {
 
   std::deque<QueuedMessage> deferred_messages;
   std::deque<QueuedMessage> outbound_messages;
+  // Aggregate approximate bytes across deferred + outbound queues, guarded by
+  // send_mutex (TD-2026-07-17A-071).
+  std::size_t outbound_queued_bytes_ = 0;
   // One-shot guard so the wedged-adapter overflow warning logs once, not per message.
   bool outbound_overflow_logged_ = false;
   int next_seq = 1;
@@ -255,6 +262,14 @@ struct DapClient::Impl {
     if (batch.empty()) {
       return;
     }
+    {
+      std::size_t drained_bytes = 0;
+      for (const QueuedMessage& queued : batch) {
+        drained_bytes += queued.approx_bytes;
+      }
+      std::lock_guard lock(send_mutex);
+      outbound_queued_bytes_ -= std::min(outbound_queued_bytes_, drained_bytes);
+    }
     std::lock_guard wlock(write_mutex);
     for (QueuedMessage& queued : batch) {
       if (!proc.Write(std::move(queued).TakeSerialized())) {
@@ -304,7 +319,8 @@ struct DapClient::Impl {
         [this, m = std::move(msg)]() mutable { return SerializeMessage(m); });
   }
 
-  bool SendMessageBuilderAfterInitialize(std::function<std::string()> build_serialized) {
+  bool SendMessageBuilderAfterInitialize(std::function<std::string()> build_serialized,
+                                         std::size_t approx_bytes = 0) {
     if (shutting_down.load(std::memory_order_acquire)) {
       return false;
     }
@@ -314,19 +330,23 @@ struct DapClient::Impl {
     }
     // OOM backstop: a wedged adapter that has stopped reading stdin. Refuse rather
     // than grow without bound or corrupt the protocol by dropping mid-stream messages.
-    if (deferred_messages.size() + outbound_messages.size() >= kMaxQueuedMessages) {
+    // Bound BOTH the message count and the aggregate charged bytes (TD-2026-07-17A-071).
+    if (deferred_messages.size() + outbound_messages.size() >= kMaxQueuedMessages ||
+        outbound_queued_bytes_ + approx_bytes > kMaxQueuedBytes) {
       if (!outbound_overflow_logged_) {
         outbound_overflow_logged_ = true;
         std::fprintf(stderr,
-                     "[dap] outbound queue exceeded %zu messages; adapter appears wedged, "
-                     "refusing further messages\n",
-                     kMaxQueuedMessages);
+                     "[dap] outbound queue exceeded %zu messages / %zu bytes; adapter appears "
+                     "wedged, refusing further messages\n",
+                     kMaxQueuedMessages, kMaxQueuedBytes);
       }
       return false;
     }
     if (!initialized.load(std::memory_order_acquire)) {
+      outbound_queued_bytes_ += approx_bytes;
       deferred_messages.push_back(QueuedMessage{.serialized = {},
-                                                .build_serialized = std::move(build_serialized)});
+                                                .build_serialized = std::move(build_serialized),
+                                                .approx_bytes = approx_bytes});
       return true;
     }
     if (test_stub_mode.load(std::memory_order_acquire)) {
@@ -339,8 +359,10 @@ struct DapClient::Impl {
     if (stop_io.load(std::memory_order_acquire) || !proc.IsRunning()) {
       return false;
     }
+    outbound_queued_bytes_ += approx_bytes;
     outbound_messages.push_back(QueuedMessage{.serialized = {},
-                                              .build_serialized = std::move(build_serialized)});
+                                              .build_serialized = std::move(build_serialized),
+                                              .approx_bytes = approx_bytes});
     Wake();
     return true;
   }
@@ -349,6 +371,7 @@ struct DapClient::Impl {
     std::lock_guard lock(send_mutex);
     deferred_messages.clear();
     outbound_messages.clear();
+    outbound_queued_bytes_ = 0;
   }
 
   void ResetProtocolState() {

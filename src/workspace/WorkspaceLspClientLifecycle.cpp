@@ -424,6 +424,9 @@ void LspClient::Impl::DoInitializeBlocking() {
     if (!sent_initialized) {
       SetLastError("failed to send initialized notification to language server");
       deferred_messages.clear();
+      // Pre-init, all queued messages live in deferred_messages (outbound is empty),
+      // so dropping them releases the whole charged byte budget. (TD-2026-07-17A-071)
+      outbound_queued_bytes_ = 0;
       initialized_send_failed = true;
     } else {
       initialized.store(true, std::memory_order_release);

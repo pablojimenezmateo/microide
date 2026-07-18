@@ -137,6 +137,12 @@ struct LspClient::Impl {
   std::unordered_map<std::string, int> document_versions;
   std::deque<QueuedMessage> deferred_messages;
   std::deque<QueuedMessage> outbound_messages;
+  // Aggregate approximate bytes across deferred_messages + outbound_messages, guarded
+  // by send_mutex. Charged at enqueue, released when a batch drains / the queues are
+  // cleared. Bounds retained payload under the message-count cap (TD-2026-07-17A-071).
+  std::size_t outbound_queued_bytes_ = 0;
+  // Effective byte budget (kMaxQueuedBytes in production; lowered in tests).
+  std::size_t max_queued_bytes_ = kMaxQueuedBytes;
   // One-shot guard so the wedged-server overflow warning logs once, not per message.
   bool outbound_overflow_logged_ = false;
   int next_id = 1;
@@ -240,14 +246,17 @@ struct LspClient::Impl {
   }
 
   // Queue a message for the I/O thread (deferred until initialized). Refuses on a
-  // wedged/dead server rather than growing unbounded. Defined in
-  // WorkspaceLspClientTransport.cpp.
-  bool SendMessageBuilderAfterInitialize(std::function<std::string()> build_serialized);
+  // wedged/dead server rather than growing unbounded. `approx_bytes` is the payload's
+  // approximate size, charged against the aggregate outbound byte budget (0 for small
+  // control frames). Defined in WorkspaceLspClientTransport.cpp.
+  bool SendMessageBuilderAfterInitialize(std::function<std::string()> build_serialized,
+                                         std::size_t approx_bytes = 0);
 
   void ClearDeferredMessages() {
     std::lock_guard lock(send_mutex);
     deferred_messages.clear();
     outbound_messages.clear();
+    outbound_queued_bytes_ = 0;
   }
 
   void ResetProtocolState() {

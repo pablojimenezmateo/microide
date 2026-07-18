@@ -28,6 +28,14 @@ inline constexpr std::chrono::milliseconds kLspRequestTimeout{30000};
 // the send-failure path; the timeout sweep clears anything already pending.
 inline constexpr std::size_t kMaxQueuedMessages = 50000;
 
+// Aggregate approximate byte budget for queued outbound payloads. The message-count
+// cap above does not bound retained BYTES: DidOpen / full DidChange / paste-sized
+// DidChangeIncremental capture their document/change text by value until the I/O
+// thread serializes and writes them, so a wedged server could retain many large
+// full-sync messages while still under the 50k-message cap. Charge each message's
+// approximate payload size at enqueue and refuse past this budget. TD-2026-07-17A-071.
+inline constexpr std::size_t kMaxQueuedBytes = 512u * 1024 * 1024;  // 512 MiB
+
 // Language servers are external, possibly-buggy or hostile processes. Bound a
 // single decoded message body and, with slack, the whole read-accumulation
 // buffer. Without this, a server can declare a near-INT_MAX Content-Length, or

@@ -26,6 +26,15 @@ void LspClient::Impl::DrainOutbound() {
   if (batch.empty()) {
     return;
   }
+  // Release the drained batch's charged bytes (the swap emptied outbound_messages).
+  {
+    std::size_t drained_bytes = 0;
+    for (const QueuedMessage& queued : batch) {
+      drained_bytes += queued.approx_bytes;
+    }
+    std::lock_guard lock(send_mutex);
+    outbound_queued_bytes_ -= std::min(outbound_queued_bytes_, drained_bytes);
+  }
   std::lock_guard wlock(write_mutex);
   for (QueuedMessage& queued : batch) {
     if (!proc.Write(std::move(queued).TakeSerialized())) {
@@ -61,7 +70,7 @@ bool LspClient::Impl::SendMessageImmediate(const util::JsonValue& msg, bool allo
 }
 
 bool LspClient::Impl::SendMessageBuilderAfterInitialize(
-    std::function<std::string()> build_serialized) {
+    std::function<std::string()> build_serialized, std::size_t approx_bytes) {
   if (shutting_down.load(std::memory_order_acquire)) {
     return false;
   }
@@ -70,21 +79,25 @@ bool LspClient::Impl::SendMessageBuilderAfterInitialize(
     return false;
   }
   // OOM backstop: a wedged server that has stopped reading stdin. Refuse rather
-  // than grow without bound or corrupt sync by dropping mid-stream messages.
-  if (deferred_messages.size() + outbound_messages.size() >= kMaxQueuedMessages) {
+  // than grow without bound or corrupt sync by dropping mid-stream messages. Bound
+  // BOTH the message count and the aggregate charged bytes.
+  if (deferred_messages.size() + outbound_messages.size() >= kMaxQueuedMessages ||
+      outbound_queued_bytes_ + approx_bytes > max_queued_bytes_) {
     if (!outbound_overflow_logged_) {
       outbound_overflow_logged_ = true;
       std::fprintf(stderr,
-                   "[lsp] outbound queue exceeded %zu messages; server appears wedged, "
-                   "refusing further messages\n",
-                   kMaxQueuedMessages);
+                   "[lsp] outbound queue exceeded %zu messages / %zu bytes; server appears "
+                   "wedged, refusing further messages\n",
+                   kMaxQueuedMessages, max_queued_bytes_);
     }
     return false;
   }
   if (!initialized.load(std::memory_order_acquire)) {
+    outbound_queued_bytes_ += approx_bytes;
     deferred_messages.push_back(QueuedMessage{
         .serialized = {},
         .build_serialized = std::move(build_serialized),
+        .approx_bytes = approx_bytes,
     });
     return true;
   }
@@ -98,9 +111,11 @@ bool LspClient::Impl::SendMessageBuilderAfterInitialize(
   if (stop_io.load(std::memory_order_acquire) || !proc.IsRunning()) {
     return false;
   }
+  outbound_queued_bytes_ += approx_bytes;
   outbound_messages.push_back(QueuedMessage{
       .serialized = {},
       .build_serialized = std::move(build_serialized),
+      .approx_bytes = approx_bytes,
   });
   Wake();
   return true;

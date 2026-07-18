@@ -834,6 +834,27 @@ void TestFileUriEncodesSpecialCharsAndRoundTrips() {
          "non-ASCII paths must round-trip through the file URI");
 }
 
+// The outbound queue is bounded by aggregate payload BYTES, not just message count:
+// a not-yet-initialized client queues DidOpen text into deferred_messages (charged),
+// and once the aggregate byte budget is exceeded further sends are refused.
+// TD-2026-07-17A-071.
+void TestWorkspaceLspClientOutboundByteBudgetRefusesOversized() {
+  LspClient client;  // not started: stays pre-init, so DidOpen queues into deferred (charged)
+  client.SetMaxQueuedBytesForTesting(1000);
+  const std::string text(600, 'x');
+  Expect(client.DidOpen("file:///a", "python", text),
+         "the first didOpen (600 bytes) fits within the 1000-byte budget");
+  Expect(!client.DidOpen("file:///b", "python", text),
+         "a second didOpen (1200 total) exceeds the aggregate byte budget and is refused");
+  // A refused message is not charged, so a smaller message that still fits the
+  // remaining budget is accepted (the cap tracks available space, not a latch).
+  Expect(client.DidOpen("file:///c", "python", std::string(300, 'y')),
+         "a 300-byte message still fits the remaining budget (600 + 300 <= 1000)");
+  // ...but one that would exceed the remaining space is refused.
+  Expect(!client.DidOpen("file:///d", "python", std::string(300, 'z')),
+         "a further 300-byte message (900 + 300 > 1000) is refused");
+}
+
 }  // namespace
 
 // A single server response whose declared Content-Length exceeds the 64 MiB cap
@@ -1860,6 +1881,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientAcceptsFloatEchoedResponseId);
   AddTest(tests, "WorkspaceLspClient/DidChangePreservesOrderAndPayload",
           TestWorkspaceLspClientDidChangePreservesOrderAndPayload);
+  AddTest(tests, "WorkspaceLspClient/OutboundByteBudgetRefusesOversized",
+          TestWorkspaceLspClientOutboundByteBudgetRefusesOversized);
   AddTest(tests, "WorkspaceLspClient/CompletionParsesJsonResult",
           TestWorkspaceLspClientCompletionParsesJsonResult);
   AddTest(tests, "WorkspaceLspClient/FileUriEncodesSpecialCharsAndRoundTrips",
