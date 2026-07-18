@@ -30,10 +30,12 @@ retargeted/closed across every editor group via the group-agnostic
 `RetargetSpecialTabForRename` helper plus shared affected-tab predicates, no longer left to
 "self-heal" on the old/deleted path; the directory-tree stale-key stat sweep is amortized so
 a UI refresh no longer pays an O(session-history) `is_directory` sweep for one changed row).
-**004** (folding refresh from the render frame) stays deferred: the fold scan
-depends on the render-loop `SetViewportSize`, so moving it to prep needs the editor-pane
-metrics computed in prep too, and the refresh is already fingerprint-gated to a no-op on
-settled frames — it wants its own change with fold-render before/after verification.
+and **focus pass 9/9 (folding-refresh hoist, 2026-07-18)** = 004 RESOLVED (folding freshness
+runs once in `PrepareFrameOnce::RefreshEditorFoldingModels`, not per pane on every
+partial-redraw `RenderClip`; render reads the resolved model via the non-mutating
+`GroupFoldingModelPtr`). The prep pass consumes the viewport's prior-frame
+`visible_lines()`, so sub-budget files resolve fully and larger files extend the
+progressive scan one frame later on resize — the same lag scrolling already accepts.
 
 **Perf-regression coverage for the burndown rewrites (2026-07-18).** Many of the cluster-1/2/3/3b
 rewrites are correctness-preserving-but-perf-sensitive (O(n²)→indexed), yet had no perf scenario
@@ -254,7 +256,23 @@ speed-path items first, then the correctness/lifecycle cleanups.
   vector-of-strings materialization. `TextBuffer` already exposes `LineSpan`; add a
   `DetectIndent(LineSpan)` overload and keep the perf scenario
   `editor_indent_detect_open` allocation-stable.
-- **TD-2026-07-17A-004 — folding refresh still runs from the render frame.**
+- **[RESOLVED 2026-07-18 — focus pass 9/9] TD-2026-07-17A-004 — folding refresh still runs from the render frame.**
+  Fixed: folding freshness moved into `PrepareFrameOnce` via
+  `WorkspaceShell::RefreshEditorFoldingModels()`, which resolves every editor group's
+  active tab exactly once per prepared frame (fingerprint-gated no-op on settled frames;
+  folds/expands on the live `editor.fold.enabled` setting, subsuming the former render-path
+  fold-disabled clear). The render TUs (`WorkspaceShellRenderFrame.cpp`) now read the
+  already-resolved model through the non-mutating `GroupFoldingModelPtr` and do no fold
+  state mutation inside `RenderClip` — previously the per-pane `EnsureGroupFoldingModelFresh`
+  (now deleted) re-ran the scan + `DetectFiletype` + `ResolveView` on every dirty-rect
+  partial redraw. Freshness consumes the viewport's stored `visible_lines()` from the prior
+  frame; sub-2000-line files resolve fully regardless of visible range, and larger files
+  extend the progressive scan one frame later on resize/first-paint (the same progressive
+  behavior scrolling already relies on). Regression:
+  `WorkspaceShell/FoldingRefreshRunsOncePerPreparedFrame` asserts the new
+  `frame.refresh_editor_folding_models_calls` counter stays at 1 across five retained
+  partial `RenderPrepared` redraws off one prepared frame and the fold range is resolved
+  before render.
   `WorkspaceShellRenderFrame.cpp` calls `EnsureGroupFoldingModelFresh` while rendering
   each editor pane, before building the editor view model. The scan is budgeted, but it
   still mutates model state and can spend part of the render frame doing prep work.
