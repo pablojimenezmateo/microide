@@ -24,7 +24,13 @@ events gate on the interest mask and coalesce latest-only per buffer; Lua scalar
 reject embedded NULs via `ToHostString`; the tool downloader reuses the strict
 `PathFromFileUri` decode; plugin process env keys are validated (no empty/`=`/NUL) with a
 platform backstop; Lua `loadfile`/`dofile` are removed; and the subprocess sandbox roots
-follow the declared fs.read/fs.write levels). **004** (folding refresh from the render frame) stays deferred: the fold scan
+follow the declared fs.read/fs.write levels); and **focus pass 8/9 (path/containment
+correctness, cross-group, 2026-07-18)** = 036/088 RESOLVED (background compare/merge tabs are
+retargeted/closed across every editor group via the group-agnostic
+`RetargetSpecialTabForRename` helper plus shared affected-tab predicates, no longer left to
+"self-heal" on the old/deleted path; the directory-tree stale-key stat sweep is amortized so
+a UI refresh no longer pays an O(session-history) `is_directory` sweep for one changed row).
+**004** (folding refresh from the render frame) stays deferred: the fold scan
 depends on the render-loop `SetViewportSize`, so moving it to prep needs the editor-pane
 metrics computed in prep too, and the refresh is already fingerprint-gated to a no-op on
 settled frames — it wants its own change with fold-render before/after verification.
@@ -191,8 +197,11 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    success open/close, per-request generations, decode-before-cap, event-drain budget, regex
 >    match-data cache keyed by revision, symlinked-state-file writes, terminal-tab reap grace):
 >    030, 050, 052, 082, 083, 086, 100, 115, 127, 130. *(001, 034, 059 RESOLVED 2026-07-17A.)*
-> 8. **Path/containment correctness (small, but cross-group)**: 036
->    (retarget background compare/merge tabs on rename/delete across all groups), 088.
+> 8. **Path/containment correctness (small, but cross-group)** — **focus pass 8/9 LANDED
+>    2026-07-18** — 036, 088 RESOLVED (background compare/merge tabs retarget/close across
+>    every editor group via a group-agnostic `RetargetSpecialTabForRename` + shared affected-tab
+>    predicates; the directory-tree stale-key stat sweep is amortized so a refresh no longer
+>    pays an O(session-history) syscall sweep).
 >    *(010, 089, 111 RESOLVED 2026-07-17A — `util::RelativePathWithin`; restored-tree-key containment.)*
 > 9. **Search / traversal**: 055 (parent-linked ignore layers).
 >    *(065 RESOLVED 2026-07-17A — split cheap `HasLastTerminalCommand` predicate from the transcript builder.)*
@@ -632,16 +641,26 @@ speed-path items first, then the correctness/lifecycle cleanups.
   materializes every line even when it only returns the current line or a small enclosing
   fold. Use `LineSpan`/`LineView` plus a range join helper, and have fold expansion consult
   the folding model without requiring a full vector.
-- **TD-2026-07-17A-036 — background compare/merge tabs are not retargeted or closed on
-  path mutation.** `RetargetOpenTabsForRename` rebuilds compare/merge tabs only while
-  iterating `state.focused_group().open_tabs`; its non-focused pass handles editor tabs
-  only and explicitly leaves compare/merge chrome to "self-heal". `CloseOpenTabsForPath`
-  has the same shape: it closes affected editor tabs in every group, but
-  `AffectedCompareTabIndices` and `AffectedMergeTabIndices` scan only the focused group.
+- **[RESOLVED 2026-07-18 — focus pass 8/9] TD-2026-07-17A-036 — background compare/merge tabs are not retargeted or closed on
+  path mutation.** Fixed: the focused-group compare/merge retarget body is now the
+  group-agnostic `PathMutationCoordinator::RetargetSpecialTabForRename` (returning
+  Unaffected/Retargeted/MustClose), and `RetargetOpenTabsForRename` runs it across every
+  editor group — the background loop closes any `MustClose` compare/merge tab via
+  `CloseGroupTab`, iterating groups back-to-front so a rebuild-failure collapse cannot
+  invalidate a lower group index. `CloseOpenTabsForPath`'s background loop now also collects
+  compare/merge tabs through the shared `CompareTabAffectedByPath` / `MergeTabAffectedByPath`
+  predicates (which `AffectedCompareTabIndices` / `AffectedMergeTabIndices` now reuse for the
+  focused group). So a rename/delete of a file/folder with an affected comparison in a
+  background split no longer strands it on the old/deleted path. Regression:
+  `WorkspaceShell/{RenameRetargetsBackgroundCompareTab, RenameRetargetsBackgroundMergeTab,
+  DeleteClosesBackgroundCompareAndMergeTabs}`.
+  `RetargetOpenTabsForRename` rebuilt compare/merge tabs only while
+  iterating `state.focused_group().open_tabs`; its non-focused pass handled editor tabs
+  only and explicitly left compare/merge chrome to "self-heal". `CloseOpenTabsForPath`
+  had the same shape: it closed affected editor tabs in every group, but
+  `AffectedCompareTabIndices` and `AffectedMergeTabIndices` scanned only the focused group.
   Renaming or deleting a file/folder with an affected compare or merge tab in a background
-  split can therefore leave a stale tab pointing at the old or deleted path. Retarget/close
-  compare and merge tabs across every editor group using `(group_index, tab_index)` targets,
-  mirroring the dirty-path scan.
+  split could therefore leave a stale tab pointing at the old or deleted path.
 - **[RESOLVED 2026-07-17A] TD-2026-07-17A-037 — last-terminal-command capture can copy the whole post-command
   scrollback.** Fixed: `LastTerminalCommandText` now caps the snapshot to
   `kDefaultLastTerminalCommandMaxLines` (20k) of the most-recent-command output — keeping
@@ -1287,14 +1306,22 @@ speed-path items first, then the correctness/lifecycle cleanups.
   accepted and silently moved to the start of the line instead of failing closed like malformed
   `apply_edits` entries. This is a correctness bug in the plugin edit surface and can also trigger
   needless host-thread cursor/selection churn from bad provider code.
-- **TD-2026-07-17A-088 — tree refresh stats every remembered expansion/collapse key.**
-  `DirectoryTree::Refresh` calls `PruneDeletedDirectoryKeys`, which performs
+- **[RESOLVED 2026-07-18 — focus pass 8/9] TD-2026-07-17A-088 — tree refresh stats every remembered expansion/collapse key.**
+  Fixed: `DirectoryTree::Refresh` now calls `MaybePruneDeletedDirectoryKeys`, which keeps the
+  full `PruneDeletedDirectoryKeys` sweep every refresh only while the remembered set is small
+  (≤64 keys — the sweep is trivial and a deleted-then-recreated dir still renders collapsed
+  immediately), and otherwise runs it at a bounded interval (every 32 refreshes). Stale keys
+  are harmless to rendering — the directory walk never enumerates a deleted dir — so normal
+  refresh cost now tracks visible/changed rows, while the interval backstop still keeps the
+  key sets bounded across a session. Regression:
+  `DirectoryTree/AmortizesDeletedKeyPruneForLargeSets` (large set: one refresh does not sweep,
+  the interval eventually reclaims the key, survivors keep their state); the existing
+  small-set `DirectoryTree/PrunesDeletedDirectoryKeysOnRefresh` still covers immediate pruning.
+  `DirectoryTree::Refresh` called `PruneDeletedDirectoryKeys`, which performed
   `std::filesystem::is_directory` for every key in both `expanded_paths_` and
-  `manually_collapsed_paths_` before rebuilding visible rows. After a user expands or collapses many
-  directories, or restores a large capped session path list, every sidebar/tree refresh pays a
-  synchronous filesystem-probe sweep on the UI path even if only one file changed. Prune lazily from
-  watcher delete events or amortize the cleanup across refreshes so normal refresh cost depends on
-  visible/changed rows, not the full remembered history.
+  `manually_collapsed_paths_` before rebuilding visible rows. After a user expanded or collapsed many
+  directories, or restored a large capped session path list, every sidebar/tree refresh paid a
+  synchronous filesystem-probe sweep on the UI path even if only one file changed.
 - **[RESOLVED 2026-07-17A] TD-2026-07-17A-089 — restored tree expansion keys are capped but not root-contained.**
   Fixed: `DirectoryTree::RestoreExpansionState` validates each restored expanded/collapsed
   relative through `util::PathEqualsOrWithin(root_ / relative, root_)` before inserting, so
