@@ -422,6 +422,14 @@
   static bool ProjectSearchRunning(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.running;
   }
+  // Grouped sidebar line map (file-header -1 rows interleaved with result indices),
+  // served from the revision-keyed cache on ProjectSearchState.
+  static std::vector<int> ProjectSearchLineMap(const WorkspaceShell& shell) {
+    return shell.BuildProjectSearchLineMap();
+  }
+  static std::uint64_t ProjectSearchResultsRevision(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.project_search.results_revision;
+  }
   // Whether the background search worker has finished, peeked without consuming
   // its pending results (see ProjectSearchService::WorkerFinished). Lets the perf
   // harness wait for genuine completion, then drain exactly once for determinism.

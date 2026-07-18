@@ -21,6 +21,7 @@ void WorkspaceShell::RefreshProjectSearch() {
   // re-armed in ConsumeProjectSearchUpdates once this run reports `finished`.
   context_.current_project_state.overlay.workflow.project_search.searched_query.clear();
   context_.current_project_state.overlay.workflow.project_search.results.clear();
+  ++context_.current_project_state.overlay.workflow.project_search.results_revision;
   context_.current_project_state.overlay.workflow.project_search.selected_index = 0;
   context_.current_project_state.overlay.workflow.project_search.truncated = false;
   context_.current_project_state.overlay.workflow.project_search.error.clear();
@@ -99,6 +100,8 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
               }
               return lhs.column < rhs.column;
             });
+  // Results just changed (appended + re-sorted); invalidate the cached line map.
+  ++search.results_revision;
 
   if (had_selection) {
     for (std::size_t i = 0; i < shell_results.size(); ++i) {
@@ -588,7 +591,17 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
 }
 
 std::vector<int> WorkspaceShell::BuildProjectSearchLineMap() const {
-  return BuildProjectSearchResultLineMap(context_.current_project_state.overlay.workflow.project_search.results);
+  const auto& search = context_.current_project_state.overlay.workflow.project_search;
+  // Rebuild only when `results` actually changed (revision mismatch), so a
+  // hover/scroll/keystroke repaint reuses the prior grouped line map instead of
+  // re-walking every result and re-copying the group-boundary paths.
+  if (!search.cached_line_map_valid ||
+      search.cached_line_map_revision != search.results_revision) {
+    search.cached_line_map = BuildProjectSearchResultLineMap(search.results);
+    search.cached_line_map_revision = search.results_revision;
+    search.cached_line_map_valid = true;
+  }
+  return search.cached_line_map;
 }
 
 int WorkspaceShell::ProjectSearchLineForResult(std::size_t index) const {

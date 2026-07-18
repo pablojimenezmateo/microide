@@ -134,6 +134,7 @@ void WorkspaceShell::OpenProjectSearch() {
   }
   context_.current_project_state.overlay.workflow.project_search.query.SetText("");
   context_.current_project_state.overlay.workflow.project_search.results.clear();
+  ++context_.current_project_state.overlay.workflow.project_search.results_revision;
   context_.current_project_state.overlay.workflow.project_search.selected_index = 0;
   context_.current_project_state.overlay.workflow.project_search.replace_text.SetText("");
   ResetOverlayScroll();

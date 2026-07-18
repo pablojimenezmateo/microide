@@ -158,6 +158,41 @@ void TestWorkspaceShellProjectSearchRerunClearsTruncation() {
          "rerunning project search should publish only the new query results");
 }
 
+// TD-2026-07-17A-084/026: the grouped project-search line map is cached on
+// ProjectSearchState keyed by a results revision, so render/hit-test/navigation
+// share one build. A rerun that replaces the results must bump the revision and
+// rebuild the map instead of serving the stale grouping.
+void TestWorkspaceShellProjectSearchLineMapCacheInvalidatesOnRerun() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "a.txt", "alpha\nalpha\n");
+  WriteFile(root / "b.txt", "alpha\n");
+  WriteFile(root / "only.txt", "omega\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+
+  // 3 matches across 2 files => 2 file-header rows + 3 result rows = 5 lines.
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 3,
+         "alpha search finds three matches");
+  const auto map_before = WorkspaceShellTestAccess::ProjectSearchLineMap(shell);
+  Expect(map_before.size() == 5, "line map groups three results under two file headers");
+  const std::uint64_t revision_before =
+      WorkspaceShellTestAccess::ProjectSearchResultsRevision(shell);
+
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "omega", false);
+  WaitForProjectSearch(shell);
+
+  Expect(WorkspaceShellTestAccess::ProjectSearchResultsRevision(shell) != revision_before,
+         "rerunning the search bumps the results revision");
+  const auto map_after = WorkspaceShellTestAccess::ProjectSearchLineMap(shell);
+  // 1 match in 1 file => 1 header + 1 result = 2 lines. A stale cache would still
+  // report the 5-line alpha grouping.
+  Expect(map_after.size() == 2, "line map rebuilds for the new result set, not served stale");
+}
+
 void TestWorkspaceShellProjectSearchStreamsWhileRunning() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -518,6 +553,8 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSearchCaseModeCycleReruns);
   AddTest(tests, "WorkspaceShell/ProjectSearchRerunClearsTruncation",
           TestWorkspaceShellProjectSearchRerunClearsTruncation);
+  AddTest(tests, "WorkspaceShell/ProjectSearchLineMapCacheInvalidatesOnRerun",
+          TestWorkspaceShellProjectSearchLineMapCacheInvalidatesOnRerun);
   AddTest(tests, "WorkspaceShell/ProjectSearchStreamsWhileRunning",
           TestWorkspaceShellProjectSearchStreamsWhileRunning);
   AddTest(tests, "WorkspaceShell/ProjectSearchSidebarClickOpensResult",

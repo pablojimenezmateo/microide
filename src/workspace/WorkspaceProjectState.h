@@ -134,6 +134,17 @@ struct ProjectSearchState {
   ProjectSearchEditField edit_field = ProjectSearchEditField::Query;
   editor::SingleLineEditor replace_text;
   std::vector<project::ProjectSearchResult> results;
+  // Monotonic revision of `results`, bumped by every mutation (clear on a new run /
+  // overlay close, append+sort in ConsumeProjectSearchUpdates). The grouped sidebar
+  // line map (file-header rows interleaved with result indices) is a pure function
+  // of `results`, so caching it against this revision lets render, hit-testing, and
+  // keyboard navigation share one build instead of each walking every result,
+  // copying filesystem paths for the group boundaries, and allocating a fresh
+  // vector per frame / keystroke. See BuildProjectSearchLineMap.
+  std::uint64_t results_revision = 0;
+  mutable std::vector<int> cached_line_map;
+  mutable std::uint64_t cached_line_map_revision = 0;
+  mutable bool cached_line_map_valid = false;
   // Query text whose search has fully completed and whose `results` are cached.
   // Empty until a search finishes. Lets the search sidebar reuse results when
   // the user leaves and returns to the panel instead of re-running every time.
