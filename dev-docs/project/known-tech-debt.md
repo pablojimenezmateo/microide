@@ -128,10 +128,10 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test) —
 >    **focus pass 2/9 IN PROGRESS 2026-07-18**:
->    018, 038, 039, 043, 044, 046, 056, 057, 070,
+>    018, 038, 043, 044, 046, 056, 057, 070,
 >    071, 072, 073, 074, 095, 097, 099, 107, 116, 118.
 >    *(020, 090, 101, 037, 042 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets; control-socket complete-line cap + aggregate inbound-byte budget.)*
->    *(029, 040, 064, 068, 096, 098, 105, 106, 119, 121 RESOLVED 2026-07-18 — buffer-search match cap; debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; debug-output control-event byte cap; DAP pre-initialize event-flood cap; text-measurement byte budget + no-cache-oversized; project.files_exclude rule/byte cap; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
+>    *(029, 039, 040, 064, 068, 096, 098, 105, 106, 119, 121 RESOLVED 2026-07-18 — buffer-search match cap; plugin filesystem read/write byte ceilings; debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; debug-output control-event byte cap; DAP pre-initialize event-flood cap; text-measurement byte budget + no-cache-oversized; project.files_exclude rule/byte cap; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
@@ -571,7 +571,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   though DAP response parsing is capped at 10,000 entries. Add per-section spec limits and
   store/DAP send caps with explicit truncation/error reporting so a compact authored spec
   cannot stall startup or generate oversized adapter messages.
-- **TD-2026-07-17A-039 — plugin filesystem helpers have no byte caps.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-039 — plugin filesystem helpers have no byte caps.**
+  Fixed: `LuaFilesReadText` refuses (returns nil) before the whole-file allocation when
+  `std::filesystem::file_size` exceeds `kMaxPluginFileReadBytes` (16 MiB); `LuaFilesWriteText`
+  rejects (returns false) an over-`kMaxPluginFileWriteBytes` (16 MiB) write before resolving
+  containment or copying into the host. Over-budget calls fail soft (nil/false), matching the
+  existing denied/unreadable contract, so a plugin with project/data filesystem capability can
+  no longer duplicate a very large file in host memory or push a very large atomic write.
+  Regression: `PluginHost/FilesystemByteCaps` (small read/write succeed; a >16 MiB on-disk
+  read returns nil; a >16 MiB write returns false and creates no file).
   `LuaFilesReadText` resolves containment, then calls `util::ReadTextFile(*path)` and
   pushes the whole result into Lua with `lua_pushlstring`; `LuaFilesWriteText` accepts the
   whole Lua string and writes it atomically with no per-call size limit. A plugin with

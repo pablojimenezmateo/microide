@@ -3091,6 +3091,63 @@ return ide.plugin({
   Expect(has_message("data-read:scratch"), "reading back from the data dir should return the content");
 }
 
+// TD-2026-07-17A-039: the plugin filesystem helpers gained explicit byte ceilings so a
+// capable plugin cannot duplicate a very large file in host memory (read) or push a very
+// large atomic write (write). Normal small reads/writes still work; over-budget calls fail
+// soft (nil / false) without creating the file.
+void TestPluginHostFilesystemByteCaps() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "small.txt", "hello");
+  // A file just over the 16 MiB plugin read budget.
+  WriteFile(project_root / "big.txt", std::string(17u * 1024 * 1024, 'a'));
+
+  WritePluginInit(
+      global_plugins, "fs-caps",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "fs.caps",
+  capabilities = { fs = { read = "project", write = "project" } },
+  setup = function(ctx)
+    ctx.commands.add("fs.caps.run", function(ctx, args)
+      ctx.log("read-small:" .. tostring(ctx.files.read_text("small.txt")))
+      ctx.log("read-big-nil:" .. tostring(ctx.files.read_text("big.txt") == nil))
+      ctx.log("write-small:" .. tostring(ctx.files.write_text("out_small.txt", "ok")))
+      local huge = string.rep("a", 17 * 1024 * 1024)
+      ctx.log("write-big:" .. tostring(ctx.files.write_text("out_big.txt", huge)))
+    end)
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "fs-caps plugin should load");
+  std::string error;
+  Expect(host.ExecuteCommand("fs.caps.run", {}, &error), "fs caps command should run");
+
+  const auto has_message = [&](std::string_view needle) {
+    for (const std::string& message : host.Messages()) {
+      if (message.find(needle) != std::string::npos) {
+        return true;
+      }
+    }
+    return false;
+  };
+  Expect(has_message("read-small:hello"), "a small file reads back its content");
+  Expect(has_message("read-big-nil:true"), "an over-budget file read returns nil");
+  Expect(has_message("write-small:true"), "a small write succeeds");
+  Expect(has_message("write-big:false"), "an over-budget write is refused");
+  Expect(!std::filesystem::exists(project_root / "out_big.txt"),
+         "a refused over-budget write must not create the file");
+}
+
 // A contributed language server should carry a resolved kernel-confinement descriptor: enabled,
 // with the project root among its write roots, and network blocked unless the plugin declared it.
 // This locks the registration-time wiring that threads the sandbox down to AsyncSubprocess::Start.
@@ -3849,6 +3906,7 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostLanguageServerSandboxResolved);
   AddTest(tests, "PluginHost/ProcessAndContributionCapabilities",
           TestPluginHostProcessAndContributionCapabilities);
+  AddTest(tests, "PluginHost/FilesystemByteCaps", TestPluginHostFilesystemByteCaps);
   AddTest(tests, "PluginHost/LoadsPluginsAndDispatchesLifecycle",
           TestPluginHostLoadsPluginsAndDispatchesLifecycle);
   AddTest(tests, "PluginHost/CapsRecordedLogHistory", TestPluginHostCapsRecordedLogHistory);
