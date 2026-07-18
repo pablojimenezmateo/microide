@@ -89,7 +89,7 @@ they land.
 1. **Async / off-thread hardening** — move blocking work off the shell/UI thread:
    compare/merge model build (047/19), LSP `WorkspaceEdit` apply (011/18), project
    replace-all (21), git patch serialize (38),
-   exclude-glob watcher rebuild (080), file-index batch coalescing (086),
+   file-index batch coalescing (086),
    search worker pool (055), save-participant /
    `process.run_async` worker capacity (016/017). **014 (POSIX terminal write deadline)
    RESOLVED 2026-07-18** — non-blocking buffered PTY writes drained off the reader thread.
@@ -2197,7 +2197,7 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 **Async / off-thread refactors** (move blocking work off the shell/UI thread):
 
 > **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** Every item in this subsection (047, 055,
-> 080, 086, 016/017, 075) is a multi-file async redesign —
+> 086, 016/017, 075) is a multi-file async redesign —
 > (**014, 061, 081/082 RESOLVED 2026-07-18** — POSIX terminal write is non-blocking; the
 > file-manager reveal subprocess and the forced full rescan run off the shell thread; see
 > their entries below.)
@@ -2272,10 +2272,15 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   `WorkspaceShell/ForcedFileIndexRefreshRunsOffThreadAndPicksUpNewFiles` (drives the async
   path via a barrier-post seam, no sleeps). The synchronous `FileIndex::Refresh()` stays for
   `SetRoot(ScanNow)` / tests.
-- **080 — live exclude-glob changes don't rebuild the native watch set.**
-  `SetExcludeGlobs` updates the filter but not `SetRoots`; needs a
-  `ReconfigureFilter` that rebuilds the prepared native backend with a config
-  generation. Native-backend work; pairs with 036/081.
+- **[RESOLVED — already satisfied in-tree 2026-07-18] 080 — live exclude-glob changes don't rebuild the native watch set.**
+  This is a duplicate of the already-fixed **TD-2026-07-16-40**: the settings overlay's
+  `project.files_exclude` change handler calls `StartFileIndexWatcherForCurrentProject()`,
+  which constructs a fresh `FileIndexWatcher`, seeds it with the current globs
+  (`SetExcludeGlobs`) and re-`Watch`es — rebuilding the prepared native backend under a new
+  `file_index_watcher_generation_`. The only `file_index_watcher_->SetExcludeGlobs` call site
+  is inside that restart (never a mutate-in-place-without-rewatch path). The watcher honoring
+  the globs at Watch time is covered by `FileIndexWatcher/HonorsUserExcludeGlobs`. No code
+  change needed.
 - **086 — file-index watcher buffers unbounded incremental batches before the
   initial scan lands.** Replace the pending-vector with a capped path-keyed
   coalescer / rescan-after-baseline flag.
