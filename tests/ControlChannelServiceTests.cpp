@@ -212,6 +212,78 @@ void TestQueryAndCommandOverSocket() {
   std::filesystem::remove_all(runtime, ec);
 }
 
+// A single control query must not materialize an unbounded JSON array on the UI
+// path. A debug-state response with a huge call stack is capped at
+// kMaxControlQueryEntries frames and flagged `framesTruncated`. TD-2026-07-17A-095.
+void TestQueryResponseIsBounded() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-bound-test-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  std::filesystem::create_directories(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  const std::size_t cap = microide::workspace::ControlChannelService::kMaxControlQueryEntries;
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = "/tmp/proj";
+  auto& exec = context.current_project_state.debug_execution;
+  exec.stopped = true;
+  exec.frames.resize(cap + 5);  // more frames than a single query may return
+  for (auto& frame : exec.frames) {
+    frame.SetSource("/tmp/proj/a.cpp");
+    frame.line = 0;
+    frame.display_primary = "f";
+  }
+
+  microide::workspace::ControlChannelService service;
+  service.Configure(context, microide::workspace::ControlChannelService::Operations{});
+  service.SetWakeEventType(0);
+  Expect(service.Start("/tmp/proj"), "control service should start");
+
+  const std::string socket_path =
+      (runtime / "microide" / (std::to_string(::getpid()) + ".sock")).string();
+  int fd = -1;
+  const auto connect_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (fd < 0 && std::chrono::steady_clock::now() < connect_deadline) {
+    fd = ConnectUnix(socket_path);
+    if (fd < 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  Expect(fd >= 0, "client should connect to the control socket");
+
+  // Drain locally with a generous buffer/deadline: the capped response is still a
+  // few hundred KiB, and the shared ExchangeLine helper's 3s deadline / 2 KiB reads
+  // are too tight for that under sanitizers.
+  const std::string request = std::string(R"({"id":1,"query":"debug-state"})") + "\n";
+  ::send(fd, request.data(), request.size(), 0);
+  std::string response;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  while (std::chrono::steady_clock::now() < deadline &&
+         response.find('\n') == std::string::npos) {
+    service.ConsumeControlCallbacks();
+    std::vector<char> buffer(65536);
+    const ssize_t count = ::recv(fd, buffer.data(), buffer.size(), MSG_DONTWAIT);
+    if (count > 0) {
+      response.append(buffer.data(), static_cast<std::size_t>(count));
+    } else {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  }
+  const auto json = util::ParseJson(response);
+  Expect(json.has_value(), "debug-state response should be JSON");
+  const util::JsonValue& result = (*json)["result"];
+  Expect(result["frames"].AsArray().size() == cap,
+         "the call-stack array must be capped at kMaxControlQueryEntries");
+  Expect(result["framesTruncated"].AsBool(),
+         "a truncated call stack should be flagged in the response");
+
+  ::close(fd);
+  service.Stop();
+  std::filesystem::remove_all(runtime, ec);
+}
+
 void WriteDescriptor(const std::filesystem::path& dir, int pid) {
   std::error_code ec;
   std::filesystem::create_directories(dir, ec);
@@ -520,6 +592,7 @@ void TestDebugCommandAutoEnablesDebugger() {
 #else
 
 void TestQueryAndCommandOverSocket() {}
+void TestQueryResponseIsBounded() {}
 void TestControlListFiltersDeadPids() {}
 void TestLaunchConfigsAndAdaptersOverSocket() {}
 void TestSocketSelfHealsAfterExternalDeletion() {}
@@ -661,6 +734,8 @@ void TestStopBeganEmitsImmediatePendingEvent() {
 void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlChannelService/QueryAndCommandOverSocket",
           TestQueryAndCommandOverSocket);
+  AddTest(tests, "ControlChannelService/QueryResponseIsBounded",
+          TestQueryResponseIsBounded);
   AddTest(tests, "ControlChannelService/ControlListFiltersDeadPids",
           TestControlListFiltersDeadPids);
   AddTest(tests, "ControlChannelService/LaunchConfigsAndAdaptersOverSocket",

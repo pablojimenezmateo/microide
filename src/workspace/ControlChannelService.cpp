@@ -438,6 +438,10 @@ util::JsonValue ControlChannelService::BuildDebugState() const {
   object["threadId"] = util::JsonValue(static_cast<std::int64_t>(exec.thread_id));
   util::JsonArray frames;
   for (const DebugStackFrameView& frame : exec.frames) {
+    if (frames.size() >= kMaxControlQueryEntries) {
+      object["framesTruncated"] = util::JsonValue(true);
+      break;
+    }
     util::JsonObject frame_object;
     frame_object["file"] = util::JsonValue(frame.source_path.generic_string());
     frame_object["line"] = util::JsonValue(static_cast<std::int64_t>(frame.line + 1));
@@ -460,11 +464,21 @@ util::JsonValue ControlChannelService::BuildBreakpoints() const {
   }
   const std::vector<editor::BreakpointStore::FileBreakpoints> snapshot =
       context_->current_project_state.breakpoint_store.SnapshotAll();
+  // Cap by aggregate breakpoint count (not just file count) so one huge file can't
+  // dominate the response.
+  std::size_t emitted = 0;
   for (const editor::BreakpointStore::FileBreakpoints& file : snapshot) {
+    if (emitted >= kMaxControlQueryEntries) {
+      break;
+    }
     util::JsonObject file_object;
     file_object["file"] = util::JsonValue(file.path.generic_string());
     util::JsonArray breakpoints;
     for (const editor::Breakpoint& breakpoint : file.breakpoints) {
+      if (emitted >= kMaxControlQueryEntries) {
+        break;
+      }
+      ++emitted;
       util::JsonObject breakpoint_object;
       breakpoint_object["line"] = util::JsonValue(static_cast<std::int64_t>(breakpoint.line + 1));
       breakpoint_object["enabled"] = util::JsonValue(breakpoint.enabled);
@@ -493,6 +507,9 @@ util::JsonValue ControlChannelService::BuildFunctionBreakpoints() const {
   }
   for (const editor::FunctionBreakpoint& fn :
        context_->current_project_state.function_breakpoint_store.All()) {
+    if (breakpoints.size() >= kMaxControlQueryEntries) {
+      break;
+    }
     util::JsonObject object;
     object["name"] = util::JsonValue(fn.name);
     object["enabled"] = util::JsonValue(fn.enabled);
@@ -546,6 +563,9 @@ util::JsonValue ControlChannelService::BuildTabs() const {
   for (std::size_t g = 0; g < state.editor_groups.size(); ++g) {
     const EditorGroup& group = state.editor_groups[g];
     for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
+      if (tabs.size() >= kMaxControlQueryEntries) {
+        return util::JsonValue(std::move(tabs));
+      }
       const TabEntry& tab = group.open_tabs[i];
       util::JsonObject tab_object;
       tab_object["group"] = util::JsonValue(static_cast<std::int64_t>(g));
@@ -589,6 +609,9 @@ util::JsonValue ControlChannelService::BuildLaunchConfigs() const {
   }
   const ProjectWorkspaceState& state = context_->current_project_state;
   for (std::size_t i = 0; i < state.launch_configs.size(); ++i) {
+    if (configs.size() >= kMaxControlQueryEntries) {
+      break;
+    }
     const LaunchConfig& config = state.launch_configs[i];
     util::JsonObject object;
     object["name"] = util::JsonValue(config.name);

@@ -70,6 +70,15 @@ class ControlChannelService {
     std::function<void()> ensure_debugger_enabled;
   };
 
+  // A single accepted control query (`debug-state`, `breakpoints`, `tabs`,
+  // `projects`, `launch-configs`, ...) is answered on the main thread by building a
+  // full JSON array/object before serialization. The socket layer caps request
+  // lines, inbound bytes, connections, and write buffers, but nothing caps how much
+  // workspace/debug state a single query materializes. Bound every query array at
+  // this item budget so a huge stack, breakpoint set, or tab list can't allocate and
+  // serialize a multi-megabyte response on the UI path. TD-2026-07-17A-095.
+  static constexpr std::size_t kMaxControlQueryEntries = 10000;
+
   ControlChannelService() = default;
   ~ControlChannelService();
   ControlChannelService(const ControlChannelService&) = delete;

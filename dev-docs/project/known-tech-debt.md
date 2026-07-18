@@ -786,7 +786,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
   an aggregate loaded-child/node budget with a terminal "truncated" row so hostile or
   accidentally massive debuggee containers cannot grow the variables/watch model without
   bound.
-- **TD-2026-07-17A-041 — batch review commands can open tens of thousands of tabs.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-041 — batch review commands can open tens of thousands of tabs.**
+  Fixed: `ReviewSessionCoordinator::RunReviewSession` caps newly-opened tabs at
+  `kMaxReviewSessionOpenTabs` (200) — past the cap it stops calling `open_one` (no further
+  compare/merge model builds) and `BuildReviewSummary` appends "N more not opened (review
+  cap reached)" so the command/control outcome reports truncation. Regression:
+  `ReviewSession/CommitCapsOpenedTabs`.
   The git collection helpers cap changed-file/ref lists at `kMaxGitCollectionEntries`
   (50,000), but `ReviewSessionCoordinator::RunReviewSession` treats the entire target
   vector as actionable: it computes a plan, closes stale clean tabs, then calls `open_one`
