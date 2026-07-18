@@ -515,11 +515,19 @@ bool ParseSaveParticipantRegistration(lua_State* state,
     }
     return false;
   }
-  const char* id = lua_tostring(state, 1);
+  // NUL-reject the id (TD-2026-07-17A-080): a truncated id collides with another save
+  // participant of the same plugin.
+  std::optional<std::string> id = lua_interop::ToHostString(state, 1);
+  if (!id) {
+    if (error_message != nullptr) {
+      *error_message = "save participant registration requires a NUL-free string id";
+    }
+    return false;
+  }
   lua_pushvalue(state, 2);
   const int function_ref = luaL_ref(state, LUA_REGISTRYINDEX);
   out->contributed = PluginHost::ContributedSaveParticipant{
-      .id = plugin_id + "." + std::string(id),
+      .id = plugin_id + "." + *id,
       .plugin_id = plugin_id,
   };
   out->runtime = runtime_types::SaveParticipantRuntime{

@@ -32,6 +32,17 @@ namespace {
 // legitimate git/tool output an IDE consumes.
 constexpr std::size_t kMaxCaptureBytes = 128ull * 1024 * 1024;
 
+// A usable environment-variable name: non-empty and free of '=' and NUL. A name
+// containing '=' would be split by the child (or the environ scan) at the first '=',
+// turning e.g. "LD_PRELOAD=x" into an effective LD_PRELOAD entry; a NUL truncates the
+// C-string. Callers validate untrusted overrides at their own boundary
+// (TD-2026-07-17A-126); this is the platform-level backstop so no env builder emits a
+// malformed entry regardless of source.
+bool IsValidEnvironmentName(const std::string& name) {
+  return !name.empty() && name.find('=') == std::string::npos &&
+         name.find('\0') == std::string::npos;
+}
+
 #if defined(__unix__) || defined(__APPLE__)
 
 class UniqueFd {
@@ -290,7 +301,7 @@ void BuildChildEnvironment(const std::vector<SubprocessEnvironmentOverride>& ove
     storage.emplace_back(*entry);
   }
   for (const auto& override_entry : overrides) {
-    if (override_entry.name.empty()) {
+    if (!IsValidEnvironmentName(override_entry.name)) {
       continue;
     }
     const std::string prefix = override_entry.name + "=";
@@ -438,7 +449,7 @@ std::wstring BuildEnvironmentBlock(
   };
 
   for (const auto& override_entry : overrides) {
-    if (override_entry.name.empty()) {
+    if (!IsValidEnvironmentName(override_entry.name)) {
       continue;
     }
     const std::wstring wide_name = ToWide(override_entry.name);

@@ -628,11 +628,17 @@
                                                              error_message)) {
             return false;
           }
-          const char* id = lua_tostring(state, 1);
-          const char* label = lua_tostring(state, 2);
+          // NUL-reject the id so a truncated "a\0b" cannot collide with another provider
+          // id (TD-2026-07-17A-080).
+          std::optional<std::string> id = lua_interop::ToHostString(state, 1);
+          std::optional<std::string> label = lua_interop::ToHostString(state, 2);
+          if (!id || !label) {
+            *error_message = "register_scm_provider(id, label) requires NUL-free strings";
+            return false;
+          }
           host->scm_providers.push_back(PluginHost::ContributedScmProvider{
-              .id = plugin->id + "." + id,
-              .label = label,
+              .id = plugin->id + "." + *id,
+              .label = *label,
               .plugin_id = plugin->id,
           });
           return true;
@@ -673,11 +679,16 @@
                                                              error_message)) {
             return false;
           }
-          const char* id = lua_tostring(state, 1);
-          const char* label = lua_tostring(state, 2);
+          // NUL-reject the id (TD-2026-07-17A-080); see the scm shorthand above.
+          std::optional<std::string> id = lua_interop::ToHostString(state, 1);
+          std::optional<std::string> label = lua_interop::ToHostString(state, 2);
+          if (!id || !label) {
+            *error_message = "register_auth_provider(id, label) requires NUL-free strings";
+            return false;
+          }
           host->auth_providers.push_back(PluginHost::ContributedAuthProvider{
-              .id = plugin->id + "." + id,
-              .label = label,
+              .id = plugin->id + "." + *id,
+              .label = *label,
               .plugin_id = plugin->id,
           });
           return true;

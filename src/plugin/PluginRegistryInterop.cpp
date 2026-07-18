@@ -140,7 +140,9 @@ bool RegisterSidebar(lua_State* state,
     lua_pop(state, 1);
     return false;
   }
-  const std::string id = lua_tostring(state, -1);
+  // NUL-reject: a truncated id would pass IsValidIdentifier on its prefix and could
+  // collide with another sidebar (TD-2026-07-17A-080).
+  const std::string id = lua_interop::ToHostString(state, -1).value_or(std::string{});
   lua_pop(state, 1);
   if (!IsValidIdentifier(id)) {
     if (error_message != nullptr) {
@@ -254,7 +256,8 @@ bool RegisterHoverProvider(lua_State* state,
     lua_pop(state, 1);
     return false;
   }
-  const std::string id = lua_tostring(state, -1);
+  // NUL-reject the hover provider id (TD-2026-07-17A-080); see sidebar id above.
+  const std::string id = lua_interop::ToHostString(state, -1).value_or(std::string{});
   lua_pop(state, 1);
   if (!IsValidIdentifier(id)) {
     if (error_message != nullptr) {

@@ -60,8 +60,14 @@ const char* ParseProcessRunArgs(lua_State* state,
       lua_pop(state, 1);
       return "process argv entries must be strings";
     }
-    out->argv.emplace_back(lua_tostring(state, -1));
+    // NUL-reject each argv entry (TD-2026-07-17A-080): truncating "ls\0; rm -rf" at the
+    // NUL would launch the child with only the prefix while validation saw the same.
+    std::optional<std::string> arg = lua_interop::ToHostString(state, -1);
     lua_pop(state, 1);
+    if (!arg) {
+      return "process argv entries must be NUL-free strings";
+    }
+    out->argv.push_back(std::move(*arg));
   }
 
   out->cwd = current_project_root;
@@ -71,8 +77,14 @@ const char* ParseProcessRunArgs(lua_State* state,
     }
     lua_interop::GetFieldProtected(state, 2, "cwd");
     if (lua_isstring(state, -1)) {
-      out->cwd =
-          ResolveRuntimePath(current_project_root, std::filesystem::path(lua_tostring(state, -1)));
+      // NUL-reject the cwd (TD-2026-07-17A-080): a truncated path could pass containment
+      // as its prefix yet resolve to a different directory in the OS C-string call.
+      std::optional<std::string> cwd_text = lua_interop::ToHostString(state, -1);
+      if (!cwd_text) {
+        lua_pop(state, 1);
+        return "process cwd must be a NUL-free string";
+      }
+      out->cwd = ResolveRuntimePath(current_project_root, std::filesystem::path(*cwd_text));
     }
     lua_pop(state, 1);
 
@@ -122,7 +134,23 @@ const char* ParseProcessRunArgs(lua_State* state,
         }
 
         platform::SubprocessEnvironmentOverride override_entry;
-        override_entry.name = lua_tostring(state, -2);
+        // The key is a verified LUA_TSTRING (checked above), so lua_tolstring does NOT
+        // convert in place and cannot corrupt the running lua_next. Read it length-
+        // preserving and validate it as a real environment-variable name
+        // (TD-2026-07-17A-080/126): reject an empty name, an embedded NUL, and an '='.
+        // A key like "LD_PRELOAD=x" would otherwise be split by the child at the first
+        // '=' into an effective LD_PRELOAD entry rather than a harmless invalid key.
+        {
+          std::size_t name_len = 0;
+          const char* name_ptr = lua_tolstring(state, -2, &name_len);
+          override_entry.name.assign(name_ptr, name_len);
+        }
+        if (override_entry.name.empty() ||
+            override_entry.name.find('\0') != std::string::npos ||
+            override_entry.name.find('=') != std::string::npos) {
+          lua_pop(state, 2);
+          return "process env keys must be non-empty and contain no '=' or NUL byte";
+        }
         if (lua_isstring(state, -1)) {
           size_t length = 0;
           const char* text = lua_tolstring(state, -1, &length);
@@ -180,21 +208,33 @@ bool CwdContained(const PluginFsContext& fs, const std::filesystem::path& cwd) {
   return ContainPath(std::span(roots), cwd).has_value();
 }
 
-// Builds the kernel-confinement descriptor for a plugin-spawned child: writes are limited to the
-// project root and the plugin data dir, and IPv4/IPv6 sockets are blocked unless the plugin
-// declared the network capability. The wider system stays readable/executable so the tool can run.
+// Builds the kernel-confinement descriptor for a plugin-spawned child. The child's
+// filesystem reach is tied to the plugin's DECLARED fs.read / fs.write levels
+// (TD-2026-07-17A-129): process.exec grants the ability to spawn, not an implicit
+// project/data read+write override. A plugin declaring fs = { read = "none", write =
+// "none" } gets a child with no project/data roots (only the system read/exec + scratch
+// roots the platform layer always adds), so an allowed helper cannot read or modify
+// project files. The root selection mirrors ctx.files.* AllowedRoots: project_root at
+// kProjectScoped+, the plugin data dir only at kProjectAndData. IPv4/IPv6 sockets are
+// blocked unless the plugin declared the network capability.
 platform::SubprocessSandbox MakeSandbox(const PluginFsContext& fs) {
   platform::SubprocessSandbox sandbox;
   sandbox.enabled = true;
   sandbox.allow_network = fs.caps.network;
-  if (!fs.project_root.empty()) {
-    sandbox.read_roots.push_back(fs.project_root);
-    sandbox.write_roots.push_back(fs.project_root);
-  }
-  if (!fs.data_dir.empty()) {
-    sandbox.read_roots.push_back(fs.data_dir);
-    sandbox.write_roots.push_back(fs.data_dir);
-  }
+  const auto add_roots_for_level = [&fs](FsAccess level,
+                                         std::vector<std::filesystem::path>& roots) {
+    if (level == FsAccess::kNone) {
+      return;
+    }
+    if (!fs.project_root.empty()) {
+      roots.push_back(fs.project_root);
+    }
+    if (level == FsAccess::kProjectAndData && !fs.data_dir.empty()) {
+      roots.push_back(fs.data_dir);
+    }
+  };
+  add_roots_for_level(fs.caps.fs_read, sandbox.read_roots);
+  add_roots_for_level(fs.caps.fs_write, sandbox.write_roots);
   return sandbox;
 }
 

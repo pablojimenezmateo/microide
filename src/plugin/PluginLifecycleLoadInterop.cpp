@@ -240,7 +240,13 @@ bool LoadPluginDescriptor(runtime_types::PluginInstance* plugin, std::string* er
     lua_pop(plugin->state, 2);
     return false;
   }
-  plugin->id = lua_tostring(plugin->state, -1);
+  // NUL-reject the id (TD-2026-07-17A-080): a truncated "valid\0evil" would otherwise
+  // pass IsValidIdentifier as "valid" and could collide with a distinct plugin's id.
+  if (auto host = lua_interop::ToHostString(plugin->state, -1)) {
+    plugin->id = std::move(*host);
+  } else {
+    plugin->id.clear();
+  }
   lua_pop(plugin->state, 1);
   if (!IsValidIdentifier(plugin->id)) {
     if (error_message != nullptr) {
