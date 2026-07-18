@@ -451,7 +451,17 @@ speed-path items first, then the correctness/lifecycle cleanups.
   snippet text, and measures prefix/code segments inside the render loop. Parsed output
   rows should carry their resolved reference path and pre-truncated/highlighted display
   runs from the output/view-model layer, leaving render to draw spans.
-- **TD-2026-07-17A-018 — `MainThreadMailbox` is unbounded for event floods.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-018 — `MainThreadMailbox` is unbounded for event floods.**
+  Fixed: `MainThreadMailbox` gained `PostLatest(key, action)` — a replaceable event coalesces by
+  key, replacing the superseded closure (and its captured payload) in place so only the latest per
+  key survives to the next drain, keyed via a `keyed_index_` map cleared on Drain/Clear. LSP
+  `publishDiagnostics` now posts via `PostLatest("diag:" + uri)` — the latest publish fully replaces
+  a file's diagnostics, so a chatty server re-publishing the same file between drains drops the
+  superseded batches (and their `vector<Diagnostic>`s) instead of stacking them. Non-keyed
+  Post/PostWithoutWake are unchanged, so results that must not be dropped (LSP replies, commit
+  results) still queue FIFO; other replaceable classes (plugin decorations) can adopt `PostLatest`
+  incrementally, while output/progress are non-replaceable/synchronous respectively. Regression:
+  `MainThreadMailbox/PostLatestCoalescesByKey`.
   `MainThreadMailbox::PostWithoutWake` pushes into an unrestricted `std::vector<Action>`.
   LSP diagnostics/applyEdit responses and DAP events post parsed payload closures into
   this mailbox, and `PluginThread::PostToMain` uses the same primitive for deferred

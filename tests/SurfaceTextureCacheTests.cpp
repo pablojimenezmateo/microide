@@ -3,6 +3,7 @@
 #include "project/ProjectBackgroundExecutor.h"
 #include "render/SurfaceTextureCache.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -110,6 +111,61 @@ void TestPendingDecodedBytesAreBounded() {
   executor.Shutdown();
 }
 
+// TD-2026-07-17A-043: encoded bytes captured by queued/in-flight decode tasks
+// must be bounded. Stall the (serial) executor so decode tasks pile up, then
+// flood distinct rasters and prove the in-flight encoded budget both caps the
+// retained bytes and drops requests past the budget.
+void TestInFlightEncodedBytesAreBounded() {
+  ProjectBackgroundExecutor executor;
+  constexpr std::size_t kEncodedBudget = 1u * 1024 * 1024;  // 1 MiB
+  SurfaceTextureCache cache(executor, SurfaceTextureCache::kDefaultVramBudgetBytes,
+                            SurfaceTextureCache::kMaxPendingDecodedBytes, kEncodedBudget);
+
+  // Block the single worker so no decode completes (and releases its encoded bytes)
+  // while we flood requests.
+  std::atomic<bool> release{false};
+  executor.Post([&release]() {
+    while (!release.load(std::memory_order_acquire)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  });
+
+  constexpr std::size_t kRasterBytes = 256u * 1024;  // 256 KiB each
+  constexpr std::size_t kRequests = 50;              // 50 * 256 KiB = 12.5 MiB >> budget
+  for (std::size_t i = 0; i < kRequests; ++i) {
+    // Png-format garbage: the decode fails, but encoded bytes are charged at Request
+    // regardless of decode outcome (they are captured by the queued task).
+    std::vector<std::byte> bytes(kRasterBytes, std::byte{0x7F});
+    cache.Request(static_cast<std::uint64_t>(i + 1), SurfaceTextureCache::RasterFormat::Png,
+                  std::move(bytes), 0, 0);
+    Expect(cache.in_flight_encoded_bytes() <= kEncodedBudget,
+           "in-flight encoded bytes must never exceed the budget");
+  }
+  // Only floor(budget / raster) requests can be charged; the rest are dropped.
+  Expect(cache.in_flight_encoded_bytes() <= kEncodedBudget,
+         "the in-flight encoded budget bounds the retained encoded payload");
+  Expect(cache.in_flight_encoded_bytes() > 0,
+         "some requests were charged (the worker is stalled, nothing drained)");
+
+  // Release the worker and drain: every charged decode completes and releases its
+  // encoded bytes, so the in-flight total returns to zero.
+  release.store(true, std::memory_order_release);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (cache.in_flight_encoded_bytes() != 0 &&
+         std::chrono::steady_clock::now() < deadline) {
+    cache.Upload(nullptr);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  Expect(cache.in_flight_encoded_bytes() == 0,
+         "after the worker drains, all encoded reservations are released");
+  // Far fewer than kRequests were ever charged (backpressure dropped the excess):
+  // ~budget/raster distinct rasters decoded (and failed), not all 50.
+  Expect(cache.failed_hash_count() < kRequests,
+         "backpressure dropped requests past the encoded budget (not all decoded)");
+
+  executor.Shutdown();
+}
+
 // TD-2026-07-17A-118: a raster whose bytes decode fine but whose texture the
 // renderer cannot create (dimensions the decoder accepts but the GPU rejects)
 // must, once its bounded retries are exhausted, fold into the SAME bounded
@@ -161,6 +217,8 @@ void RegisterSurfaceTextureCacheTests(std::vector<TestCase>& tests) {
           TestPendingDecodedBytesAreBounded);
   AddTest(tests, "SurfaceTextureCache/TextureCreateFailureFoldsIntoBoundedFifo",
           TestTextureCreateFailureFoldsIntoBoundedFifo);
+  AddTest(tests, "SurfaceTextureCache/InFlightEncodedBytesAreBounded",
+          TestInFlightEncodedBytesAreBounded);
 }
 
 }  // namespace microide::tests

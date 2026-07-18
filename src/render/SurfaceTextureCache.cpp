@@ -47,11 +47,13 @@ SurfaceTextureCache::Decoded WrapRgba8(std::uint64_t hash, std::vector<std::byte
 
 SurfaceTextureCache::SurfaceTextureCache(project::ProjectBackgroundExecutor& executor,
                                          std::size_t vram_budget_bytes,
-                                         std::size_t pending_decoded_budget_bytes)
+                                         std::size_t pending_decoded_budget_bytes,
+                                         std::size_t in_flight_encoded_budget_bytes)
     : executor_(executor),
       sink_(std::make_shared<DecodeSink>()),
       vram_budget_bytes_(vram_budget_bytes) {
   sink_->budget_bytes = pending_decoded_budget_bytes;
+  sink_->encoded_budget_bytes = in_flight_encoded_budget_bytes;
 }
 
 SurfaceTextureCache::~SurfaceTextureCache() { Clear(); }
@@ -65,17 +67,33 @@ void SurfaceTextureCache::Request(std::uint64_t hash, RasterFormat format,
       in_flight_or_failed_.find(hash) != in_flight_or_failed_.end()) {
     return;  // already cached, decoding, or known-bad
   }
+
+  // Charge the encoded bytes against the in-flight budget before posting. Over
+  // budget, drop the request outright (no in-flight marker, no post) as
+  // backpressure so a burst of distinct near-cap rasters cannot retain unbounded
+  // encoded payloads on the executor queue (TD-2026-07-17A-043). A later Request
+  // re-decodes once the backlog drains.
+  const std::size_t encoded_size = bytes.size();
+  {
+    std::lock_guard<std::mutex> lock(sink_->mutex);
+    if (encoded_size > sink_->encoded_budget_bytes - sink_->in_flight_encoded_bytes) {
+      return;
+    }
+    sink_->in_flight_encoded_bytes += encoded_size;
+  }
   in_flight_or_failed_.emplace(hash, true);
 
   // The worker captures a copy of the sink shared_ptr and the bytes by value, and
   // never touches `this`, so the cache can outlive-or-predecease the task safely.
   std::shared_ptr<DecodeSink> sink = sink_;
   executor_.Post([sink = std::move(sink), hash, format, bytes = std::move(bytes), declared_w,
-                  declared_h]() mutable {
+                  declared_h, encoded_size]() mutable {
     Decoded decoded = format == RasterFormat::Png
                           ? DecodeEncoded(hash, bytes)
                           : WrapRgba8(hash, std::move(bytes), declared_w, declared_h);
     std::lock_guard<std::mutex> lock(sink->mutex);
+    // The encoded bytes have been consumed by the decode; release the reservation.
+    sink->in_flight_encoded_bytes -= encoded_size;
     // TD-2026-07-17-092: bound the pre-upload decoded-buffer backlog. If this valid
     // decode would push pending host memory over budget, drop its RGBA and hand
     // Upload a lightweight "over budget" marker so the in-flight marker is released
@@ -181,6 +199,11 @@ void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
 std::size_t SurfaceTextureCache::pending_decoded_bytes() const {
   std::lock_guard<std::mutex> lock(sink_->mutex);
   return sink_->pending_bytes;
+}
+
+std::size_t SurfaceTextureCache::in_flight_encoded_bytes() const {
+  std::lock_guard<std::mutex> lock(sink_->mutex);
+  return sink_->in_flight_encoded_bytes;
 }
 
 const SurfaceTextureCache::Entry* SurfaceTextureCache::Lookup(std::uint64_t hash) {

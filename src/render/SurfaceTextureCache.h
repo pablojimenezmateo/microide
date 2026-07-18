@@ -44,10 +44,14 @@ class SurfaceTextureCache {
   // the shell uploads them can stack 256 MiB buffers behind the sink mutex and spike
   // process memory before LRU eviction can help (TD-2026-07-17-092).
   static constexpr std::size_t kMaxPendingDecodedBytes = 256u * 1024 * 1024;
+  // Aggregate budget for ENCODED bytes captured by queued/in-flight decode tasks.
+  // Distinct from the post-decode RGBA budget above (TD-2026-07-17A-043).
+  static constexpr std::size_t kMaxInFlightEncodedBytes = 128u * 1024 * 1024;
 
   explicit SurfaceTextureCache(project::ProjectBackgroundExecutor& executor,
                                std::size_t vram_budget_bytes = kDefaultVramBudgetBytes,
-                               std::size_t pending_decoded_budget_bytes = kMaxPendingDecodedBytes);
+                               std::size_t pending_decoded_budget_bytes = kMaxPendingDecodedBytes,
+                               std::size_t in_flight_encoded_budget_bytes = kMaxInFlightEncodedBytes);
   ~SurfaceTextureCache();
 
   SurfaceTextureCache(const SurfaceTextureCache&) = delete;
@@ -114,6 +118,10 @@ class SurfaceTextureCache {
   // Upload drains the sink). Never exceeds the pending-decoded budget.
   std::size_t pending_decoded_bytes() const;
 
+  // Diagnostic: aggregate encoded bytes charged to queued/in-flight decode tasks
+  // (0 once all posted decodes have completed). Bounded by kMaxInFlightEncodedBytes.
+  std::size_t in_flight_encoded_bytes() const;
+
  private:
   // Cross-thread handoff. Held by shared_ptr so worker tasks never touch `this`.
   struct DecodeSink {
@@ -123,6 +131,14 @@ class SurfaceTextureCache {
     std::size_t pending_bytes = 0;
     // Host-memory budget for `ready` (set at construction; tests use a small value).
     std::size_t budget_bytes = kMaxPendingDecodedBytes;
+    // Aggregate ENCODED bytes captured by decode tasks that are queued or in flight
+    // (charged at Request, released when the worker finishes decoding). The
+    // pending_bytes budget above only bounds POST-decode RGBA, so without this a
+    // plugin publishing many distinct near-cap rasters faster than the executor
+    // drains them retains large encoded payloads plus in-flight markers
+    // (TD-2026-07-17A-043). Guarded by `mutex`.
+    std::size_t in_flight_encoded_bytes = 0;
+    std::size_t encoded_budget_bytes = kMaxInFlightEncodedBytes;
   };
 
   void EvictToBudget();
