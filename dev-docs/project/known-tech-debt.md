@@ -7,10 +7,11 @@ dispositioned every item in the "Cross-subsystem bug/perf audit addendum" sectio
 39 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
 clusters or marked platform-only — see the burndown blockquote under that heading.
 Scheduled focused passes have since landed: **focus pass 1/9 (async)** = 005/024/033/108;
-**focus pass 2/9 (bounded resources, partial)**; and **focus pass 3/9 (quadratic → indexed
-lookup/dedupe, 2026-07-18)** = 051/053/058/061/062/063/066/067/081/102/114 RESOLVED, with
-054/060/076 carved into the new **focus pass 3b/9** cluster (delicate coordinate/cross-boundary
-rewrites — see the burndown blockquote).
+**focus pass 2/9 (bounded resources, partial)**; **focus pass 3/9 (quadratic → indexed
+lookup/dedupe, 2026-07-18)** = 051/053/058/061/062/063/066/067/081/102/114 RESOLVED; and
+**focus pass 3b/9 (coordinate/cross-boundary rewrites, 2026-07-18)** = 054/060/076 RESOLVED
+(batched multi-caret result remap, batched snippet mirror shifts, and a revisioned shared
+plugin-settings snapshot).
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
 Keep current priorities summarized first; deep-audit backlogs may be longer when they are intended
@@ -139,9 +140,8 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    *(029, 039, 040, 064, 068, 096, 098, 105, 106, 116, 119, 121 RESOLVED 2026-07-18 — buffer-search match cap; plugin filesystem read/write byte ceilings; debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; debug-output control-event byte cap; DAP pre-initialize event-flood cap; text-measurement byte budget + no-cache-oversized; project.files_exclude rule/byte cap; output-channel global count cap + LRU eviction; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): **focus pass 3/9 LANDED 2026-07-18** — 051, 053, 058, 061, 062, 063, 066, 067, 081,
->    102, 114 RESOLVED (see the RESOLVED-this-pass list below). Remaining: 054, 060, 076 (moved to
->    the new **focus pass 3b/9** cluster below — each needs a delicate coordinate/cross-boundary
->    rewrite, not a drop-in index).
+>    102, 114 RESOLVED (see the RESOLVED-this-pass list below). 054, 060, 076 moved to
+>    **focus pass 3b/9** below and now **all RESOLVED 2026-07-18**.
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
 > 4. **Render-TU / view-model hoist + frame-prep** (Standing #2): 004, 007, 008, 014, 017,
 >    023, 026, 027, 069, 079, 084, 103. *(006, 019 RESOLVED 2026-07-17A — allocation-free filter; per-category row index.)*
@@ -160,27 +160,25 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    *(010, 089, 111 RESOLVED 2026-07-17A — `util::RelativePathWithin`; restored-tree-key containment.)*
 > 9. **Search / traversal**: 055 (parent-linked ignore layers).
 >    *(065 RESOLVED 2026-07-17A — split cheap `HasLastTerminalCommand` predicate from the transcript builder.)*
-> 3b. **Coordinate/cross-boundary rewrites carved out of cluster 3** (each is more than a drop-in
->    index — it needs a delta-accumulator or an invalidation signal, and touches a
->    correctness-sensitive path, so it wants its own reviewed change + targeted tests): 054, 060,
->    076. These were deliberately NOT bundled into focus pass 3/9 (which landed the 11 self-
->    contained index/dedupe wins) because a subtle error corrupts edits (054/060) or serves stale
->    settings (076). Details:
->    - **054** — multi-caret result-caret remap is O(carets²): each applied edit re-remaps every
->      already-produced `ResultCaret`. Needs a one-pass prefix/suffix delta (Fenwick-style)
->      accumulator so each caret is remapped once. Single-line-only fast path simplifies it, but the
->      shared-line column interactions must be reproduced exactly.
->    - **060** — snippet mirror edits call `ShiftPlaceholdersAtOrAfter` (scans all tab stops + all
->      recorded placeholder ranges) once per mirror ⇒ O(active_mirrors * total_placeholders) per
->      typed byte/backspace/delete. All interactions are single-line (the fast path bails on
->      newlines), so a per-line insertion-column table + a single post-loop shift pass is provably
->      equivalent; must cover `SnippetTryInsertText`/`Backspace`/`DeleteForward`/`ApplyChoiceForTab`.
->    - **076** — `PluginHost::Impl::CaptureSnapshot` re-copies every contributed setting value into
->      each per-callback snapshot (cursor/selection/hover/completion), so cost scales with total
->      setting count even for plugins that read none. The snapshot pre-resolves on the UI thread for
->      thread-safety, so a safe fix needs a revisioned/shared immutable settings snapshot plus a
->      settings-change invalidation signal from the shell (a new cross-boundary hook) — not just an
->      index. Do NOT cache without the invalidation signal (stale-read correctness regression).
+> 3b. **Coordinate/cross-boundary rewrites carved out of cluster 3** — **ALL RESOLVED 2026-07-18**.
+>    Each was more than a drop-in index (a delta-accumulator or an invalidation signal on a
+>    correctness-sensitive path), so it got its own reviewed change + targeted tests:
+>    - **054 [RESOLVED]** — multi-caret result-caret remap was O(carets²). Now a batched one-pass
+>      accumulator (`detail::ResolveMultiCaretRemapSites`): single-line-removed edits fold to an
+>      additive line delta + same-line column delta with a per-line newline reset (O(carets)); multi-
+>      line removed ranges / anchors keep the exact O(carets²) remap, so results stay byte-identical.
+>      Regression: `EditorMultiCaret/ManySameLineInsertRemapsEveryCaret`, `.../ManyPairInsert...`.
+>    - **060 [RESOLVED]** — snippet mirror edits called `ShiftPlaceholdersAtOrAfter` once per mirror
+>      (⇒ O(active_mirrors * total_placeholders)). Replaced by `ApplyBatchedMirrorShifts`: one
+>      per-line prefix-sum pass folds every mirror's delta into all recorded ranges, order-independent
+>      and provably equal to the incremental result. Covers
+>      `SnippetTryInsertText`/`Backspace`/`DeleteForward`/`ApplyChoiceForTab`. Regression:
+>      `EditorSnippet/ManyMirrorBatchedShift`.
+>    - **076 [RESOLVED]** — `CaptureSnapshot` re-copied every contributed setting value per snapshot.
+>      Now a revisioned shared immutable settings block: reused until `SettingsStore::Revision()` (new
+>      `Callbacks::settings_revision` hook) or the contributed specs (`status_view_revision`) change;
+>      disabled (never stale) when the hook is absent. Regression:
+>      `SettingsRegistry/SnapshotCacheInvalidation`.
 >
 > **WON'T-DO here — platform-only (Windows `RunSubprocess`; no Windows host to build/verify):**
 > 104, 133, 134. Keep as intake for a Windows subprocess-hardening pass.
@@ -780,7 +778,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   control-spec apply therefore does O(n²) string comparisons before the debugger is ready, even
   though names are supposed to be unique. Deduplicate with a temporary hash set or make the store
   maintain an index keyed by function name.
-- **TD-2026-07-17A-054 — multi-caret edit application remaps result carets quadratically.**
+- **[RESOLVED 2026-07-18 — focus pass 3b/9] TD-2026-07-17A-054 — multi-caret edit application remaps result carets quadratically.**
+  Fixed: `TextViewport::ApplyMultiCaretEdit` and `TryMultiCaretPairInsert` now record each caret's
+  landed position + edit footprint (ascending caret order) and fold the lower-edit deltas in one
+  batched pass (`detail::ResolveMultiCaretRemapSites`). When every edit removed a single-line range
+  and no site carries a selection anchor, the net effect is a pure additive line delta plus a
+  same-line column delta with a per-line newline reset — one O(carets) forward accumulator; multi-
+  line removed ranges / anchors fall back to the exact O(carets²) remap, so results stay byte-
+  identical. Regression: `EditorMultiCaret/ManySameLineInsertRemapsEveryCaret`,
+  `.../ManyPairInsertRemapsEveryCaret`.
   `TextViewport::ApplyMultiCaretEdit` walks sorted carets high-to-low, applies each planned edit,
   then remaps every `ResultCaret` already produced through the just-applied replacement.
   `TryMultiCaretPairInsert` repeats the same shape with its `recorded` vector. This is correct for
@@ -846,7 +852,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   put oversized third-and-later groups in the record and make startup decode large tab/buffer
   payloads that are immediately discarded. Check the group count before decoding the payload, and
   skip or fail closed on over-cap groups without materializing their nested tabs.
-- **TD-2026-07-17A-060 — snippet mirror edits shift every placeholder range per mirror.**
+- **[RESOLVED 2026-07-18 — focus pass 3b/9] TD-2026-07-17A-060 — snippet mirror edits shift every placeholder range per mirror.**
+  Fixed: `SnippetTryInsertText`/`SnippetTryBackspace`/`SnippetTryDeleteForward`/`ApplyChoiceForTab`
+  apply their mirror edits high-to-low (unchanged) and record one `AppliedMirrorEdit` per mirror,
+  then fold all column shifts into every recorded range in a single batched pass
+  (`ApplyBatchedMirrorShifts`). Mirror regions of one tab are disjoint and stay ordered under the
+  shifts, so each endpoint's total shift is an order-independent per-line prefix sum of same-line
+  edit deltas at/left of its start — reproducing the incremental result exactly. O(mirrors +
+  placeholders) per keystroke. Regression: `EditorSnippet/ManyMirrorBatchedShift`.
   Snippet parsing caps occurrences at 4,096, but linked editing is still quadratic inside that
   budget. `SnippetTryInsertText`, `SnippetTryBackspace`, `SnippetTryDeleteForward`, and
   `ApplyChoiceForTab` sort the current tab's mirror ranges, apply one replacement per mirror, and
@@ -1038,7 +1051,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   the git precheck costs already tracked in A-045/A-061. Cache the body text/revision on the workflow
   state, pass a `LineSpan`/string_view-like body source into prechecks where possible, and debounce or
   coalesce persisted-draft writes separately from synchronous draft validation.
-- **TD-2026-07-17A-076 — every plugin worker snapshot re-reads all contributed settings.**
+- **[RESOLVED 2026-07-18 — focus pass 3b/9] TD-2026-07-17A-076 — every plugin worker snapshot re-reads all contributed settings.**
+  Fixed: the resolved settings are now a shared immutable block (`ResolvedPluginSettings` via
+  `shared_ptr`) cached on the host `Impl`. `CaptureSnapshot` reuses it until the host settings
+  revision advances (`SettingsStore::Revision()`, exposed via the new `Callbacks::settings_revision`
+  hook — bumped at the store's single write chokepoint on any mutation/reset/layer-bind) or the
+  contributed specs change (`status_view_revision`, bumped on plugin reload). Matching revision ⇒
+  capture is a shared-pointer copy, not an O(settings) re-resolve + copy. Without the hook wired the
+  cache is disabled (never stale). Regression: `SettingsRegistry/SnapshotCacheInvalidation` pins
+  both cache reuse and revision-bump invalidation.
   `PluginHost::Impl::CaptureSnapshot` walks `published_.settings` and calls the host `get_setting`
   callback for each spec, copying every present value into the per-call `PluginHostSnapshot`. That
   helper is invoked for high-frequency paths such as `OnBufferChange`, `OnCursorMove`,
