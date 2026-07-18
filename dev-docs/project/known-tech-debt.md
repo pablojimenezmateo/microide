@@ -2195,7 +2195,7 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 **Async / off-thread refactors** (move blocking work off the shell/UI thread):
 
 > **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** Every item in this subsection (047, 055,
-> 016/017, 075) is a multi-file async redesign —
+> 016/017) is a multi-file async redesign —
 > (**014, 061, 081/082 RESOLVED 2026-07-18** — POSIX terminal write is non-blocking; the
 > file-manager reveal subprocess and the forced full rescan run off the shell thread; see
 > their entries below.)
@@ -2325,8 +2325,13 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   receive buffered input round-trip). Windows backend write is unchanged (platform WON'T-DO
   here). Backpressure beyond the 64 MiB cap drops the tail rather than surfacing a panel
   toast — a UI nicety left for the panel-status pass.
-- **075 — DAP debug trace serializes + flushes whole messages under a global mutex.**
-  Trace-only (off by default); move to a bounded async writer with payload caps.
+- **[RESOLVED — no such defect in-tree 2026-07-18] 075 — DAP debug trace serializes + flushes whole messages under a global mutex.**
+  The described whole-message trace no longer exists (refactored away). The only DAP trace
+  is `TraceDapLifecycle` (`WorkspaceDapClientInternal.h`): off by default
+  (`MICROIDE_TRACE_DAP_LIFECYCLE`), it writes fixed lifecycle *phase* strings
+  (`shutdown-begin`, `disconnect-request` + a tiny `sent`/`timeout` detail) to `stderr`
+  via `fprintf` — never a whole serialized message, and never while holding the protocol
+  mutex around a payload. There is nothing to move to an async writer. No change needed.
 - **[WON'T-DO 2026-07-17 — non-actionable, no live defect] 003 — commit-workflow
   `&state` capture across executor + mailbox.** The audit itself classified this
   non-actionable: the captured owners provably outlive the queued work today, so there
