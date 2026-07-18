@@ -505,8 +505,7 @@
     }
   };
   mutable PluginHoverCache plugin_hover_cache_;
-  void KickOffPluginHover(const std::filesystem::path& path, std::size_t line,
-                          std::size_t column);
+  void KickOffPluginHover(const std::filesystem::path& path, std::size_t line, std::size_t column);
   // LSP hover fallback: when the plugin provider yields no hover for the cached
   // cell, query the language server and populate the same cache from its contents.
   // Leaves the cell in Pending until the async result lands (then Resolved/Failed).
@@ -1318,14 +1317,10 @@
   std::filesystem::path ConfigStatePath() const;
   std::filesystem::path UserConfigPath() const;
   std::filesystem::path ProjectStateDirectory() const;
-  void ApplyEditorPreferences(editor::TextViewport& viewport) const;
-  // Cheap per-viewport setters (tab size, indent, soft tabs/wrap, save
-  // normalization). No filetype detection or contract build.
-  void ApplyEditorRuntimePreferences(editor::TextViewport& viewport) const;
-  // The expensive per-viewport work: bounded head-scan filetype detection plus a
-  // language-contract build. Split out so live-settings can skip it across all tabs
-  // unless a contract-affecting toggle changed (TD-2026-07-17A-103).
-  void ApplyEditorLanguageContract(editor::TextViewport& viewport) const;
+  // include_language_contract=false applies only the cheap per-viewport setters (tab
+  // size, indent, soft tabs/wrap, save normalization) and skips the expensive
+  // bounded-head-scan filetype detection + language-contract build (TD-2026-07-17A-103).
+  void ApplyEditorPreferences(editor::TextViewport& viewport, bool include_contract = true) const;
   void ApplyDetectedIndentOnOpen(editor::TextViewport& viewport) const;
   // refresh_language_contracts=false skips the O(tabs) filetype-detect + contract
   // rebuild, applying only the cheap runtime setters. Full callers (project
@@ -1759,22 +1754,8 @@
   // instead of filling a finder-sized modal.
   SDL_FRect ComputeCenteredMenuOverlayRect(const SDL_FRect& editor_area) const;
   std::string BreadcrumbLabel() const;
-  // Memoizes BreadcrumbLabel across paints: the label is a path-derived string
-  // (relative-path normalize + generic_string + concatenation) rebuilt every chrome
-  // frame otherwise. Cached against the inputs that shape it (active surface mode,
-  // root, path, secondary labels), so a repaint that changed none reuses the string
-  // instead of re-resolving the path (TD-2026-07-17A-023). Comparison reads the
-  // inputs without allocating; only a genuine change pays the rebuild + one copy.
-  struct BreadcrumbLabelCache {
-    bool valid = false;
-    int mode = 0;  // 0 editor, 1 compare, 2 merge
-    bool placeholder = false;
-    std::filesystem::path root;
-    std::filesystem::path path;
-    std::string left_label;
-    std::string right_label;
-    std::string label;
-  };
+  // Cross-paint memo for BreadcrumbLabel (BreadcrumbLabelCache is namespace-scoped in
+  // WorkspaceShell.h to keep this file within its size budget); TD-2026-07-17A-023.
   mutable BreadcrumbLabelCache breadcrumb_label_cache_;
   std::string ProjectLabel() const;
   std::string ProjectLabelForRoot(const std::filesystem::path& root) const;

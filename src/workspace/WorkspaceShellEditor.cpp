@@ -55,11 +55,13 @@ void WorkspaceShell::ApplyDetectedIndentOnOpen(editor::TextViewport& viewport) c
       viewport, [this](std::string_view id) { return GetSettingValue(id); });
 }
 
-void WorkspaceShell::ApplyEditorRuntimePreferences(editor::TextViewport& viewport) const {
+void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
+                                            bool include_contract) const {
   const auto setting_enabled = [this](std::string_view id, bool default_value) {
     return SettingFlagEnabled(GetSettingValue(id), default_value);
   };
 
+  // Cheap per-viewport setters, always applied.
   viewport.SetTabSize(context_.current_project_state.editor_preferences.tab_size);
   viewport.SetIndentWidth(context_.current_project_state.editor_preferences.indent_width);
   viewport.SetSoftTabs(context_.current_project_state.editor_preferences.soft_tabs);
@@ -77,16 +79,13 @@ void WorkspaceShell::ApplyEditorRuntimePreferences(editor::TextViewport& viewpor
     save_ending = util::LineEnding::CRLF;
   }
   viewport.SetSaveLineEnding(save_ending);
-}
 
-void WorkspaceShell::ApplyEditorLanguageContract(editor::TextViewport& viewport) const {
-  const auto setting_enabled = [this](std::string_view id, bool default_value) {
-    return SettingFlagEnabled(GetSettingValue(id), default_value);
-  };
   // The expensive per-tab work: a bounded head-scan filetype detection plus a
-  // language-contract build. Only re-run when a contract-affecting toggle
-  // (auto-close / surround / smart-indent) actually changed — see the family split
-  // in ApplyLiveSettings (TD-2026-07-17A-103).
+  // language-contract build. Skipped when no contract-affecting toggle changed — see
+  // the family split in ApplyLiveSettings (TD-2026-07-17A-103).
+  if (!include_contract) {
+    return;
+  }
   const std::string language_id =
       editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
   viewport.SetLanguageContractView(BuildEditorLanguageContractView(
@@ -95,11 +94,6 @@ void WorkspaceShell::ApplyEditorLanguageContract(editor::TextViewport& viewport)
       setting_enabled("editor.brackets.auto_close.enabled", true),
       setting_enabled("editor.brackets.surround.enabled", true),
       setting_enabled("editor.indent.smart.enabled", true)));
-}
-
-void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) const {
-  ApplyEditorRuntimePreferences(viewport);
-  ApplyEditorLanguageContract(viewport);
 }
 
 void WorkspaceShell::ApplyEditorPreferencesToAllTabs(bool refresh_language_contracts) {
@@ -128,19 +122,13 @@ void WorkspaceShell::ApplyEditorPreferencesToAllTabs(bool refresh_language_contr
   // rebuild is skipped when no contract-affecting toggle changed. A project with
   // thousands of restored tabs no longer rebuilds every tab's contract for a
   // font-size / save-flag / wrap checkbox change (TD-2026-07-17A-103).
-  const auto apply_to = [&](editor::TextViewport& viewport) {
-    ApplyEditorRuntimePreferences(viewport);
-    if (refresh_language_contracts) {
-      ApplyEditorLanguageContract(viewport);
-    }
-  };
   for (auto& group : context_.current_project_state.editor_groups) {
-    apply_to(group.welcome_surface.viewport);
+    ApplyEditorPreferences(group.welcome_surface.viewport, refresh_language_contracts);
     for (auto& tab : group.open_tabs) {
       if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
         continue;
       }
-      apply_to(tab.editor_state->viewport);
+      ApplyEditorPreferences(tab.editor_state->viewport, refresh_language_contracts);
     }
   }
 }
