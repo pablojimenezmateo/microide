@@ -89,8 +89,9 @@ they land.
 1. **Async / off-thread hardening** — move blocking work off the shell/UI thread:
    compare/merge model build (047/19), project
    save-participant /
-   `process.run_async` worker capacity (016/017). **014 (POSIX terminal write deadline)
-   RESOLVED 2026-07-18** — non-blocking buffered PTY writes drained off the reader thread.
+   **014 (POSIX terminal write deadline) RESOLVED 2026-07-18** — non-blocking buffered PTY
+   writes drained off the reader thread. **016/017 (plugin-worker capacity) WON'T-DO** —
+   gracefully bounded today; the fix is a plugin-API contract change (see its entry).
    *Speed is the #1 project priority, so this cluster is the highest-value backlog.*
 2. **Render view-model build-out** — overlay view model owns state, no live pointers in
    render TUs (084/26); + the residual commit-body sizing/scroll-clamp move-to-prep from 083.
@@ -2195,7 +2196,7 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 **Async / off-thread refactors** (move blocking work off the shell/UI thread):
 
 > **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** Every item in this subsection (047, 055,
-> 016/017) is a multi-file async redesign —
+> and the rest) is a multi-file async redesign —
 > (**014, 061, 081/082 RESOLVED 2026-07-18** — POSIX terminal write is non-blocking; the
 > file-manager reveal subprocess and the forced full rescan run off the shell thread; see
 > their entries below.)
@@ -2305,9 +2306,23 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   `~LspService` at app teardown. Project switches no longer stall on the LSP shutdown
   handshake. Regression: `WorkspaceShellLspSettings/ServerRetirementRoutesThroughHostPool`.
   (The DAP teardown analogue 026 is tracked separately.)
-- **016 / 017 — save-participant + `process.run_async` can occupy plugin worker
-  capacity.** Cancellation/generation ownership + a dedicated process worker pool
-  returning handles to Lua.
+- **[WON'T-DO in the burndown — plugin-API feature, gracefully bounded today] 016 / 017 — save-participant + `process.run_async` can occupy plugin worker
+  capacity.** The UI is never affected: both run on the plugin worker, off the shell
+  thread. The only contention is *worker capacity* — a plugin's `process.run_async`
+  (explicitly the path for "genuinely long" subprocesses) holds the single worker while
+  its subprocess runs, so a concurrent save-participant / provider query waits. That is
+  already bounded and graceful: save-participants `PostFront` (priority over speculative
+  queries) and run under a `save_participant_deadline_`, so a starved save proceeds with
+  the untransformed buffer and the formatter re-applies on the next save; queries coalesce
+  latest-only. The proposed fix — a dedicated process worker pool returning *handles* to
+  Lua — is not a drop-in: freeing the worker during the subprocess requires making
+  `run_async` truly asynchronous (return a handle, run the subprocess off-worker, post the
+  callback back later), which changes the documented `run_async` contract (today the
+  callback runs synchronously before it returns) and adds Lua-callback lifetime across
+  async + plugin-teardown + the hard `luaL_error`-must-not-longjmp-over-C++-locals
+  invariant. That is a deliberate plugin-API expansion (host-owned narrow seam), best
+  designed on the plugin track with its own review + fixtures — not a perf/correctness bug
+  to bundle here. Revisit if a real plugin workload shows worker starvation in practice.
 - **[RESOLVED 2026-07-18] 014 — POSIX terminal write can block without a deadline.**
   `PosixTerminalBackend::Write` no longer does a blocking `write()` loop on the PTY
   master from the calling (UI/reader) thread. The master fd is now `O_NONBLOCK`, and
