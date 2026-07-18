@@ -133,6 +133,16 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > test this pass), **DEFERRED** (folded into a focused-pass cluster below), or **WON'T-DO
 > here** (platform-only, cannot build/verify on this Linux host).
 >
+> **Cluster 2 (bounded resources) + cluster 7 (protocol/session lifecycle) burndown, 2026-07-18.**
+> Landed the remaining bounded-resource + lifecycle items one commit each (full 24-shard suite +
+> ASAN + UBSAN + TSAN all GREEN): **018, 038, 043, 057, 071, 095, 097, 099, 107, 118** (cluster 2)
+> and **030, 082, 083, 100, 115, 130** (cluster 7), plus **041** (batch-review open cap). Only
+> **074** (serial-work-queue depth/dedupe) remains from cluster 2 — DEFERRED as a data-structure
+> pass (O(1) dedup can't bolt onto the deque; a drop policy is unsafe for critical jobs). The only
+> other still-open addendum items are the multi-file/data-structure DEFERRALS **015/016** (LSP
+> bulk-sync before/after-snapshot refactor), **022** (soft-wrap `TextLayoutCache` piece/range
+> rewrite), **004** (folding refresh from prep) and the platform WON'T-DO **104/133/134** (Windows).
+>
 > **RESOLVED this pass (39 fixed + 1 already-satisfied; each with a regression test):**
 > - **001** — passive menu measurement (`ComputePopupMenuRect`, `MenuItemLabel`, `IsMenuItemEnabled`) reads LSP readiness with `ensure_started=false`, so opening/hovering a menu never spawns a server; servers still start on explicit LSP actions via `GetServer`.
 > - **011** — plugin-command menu enablement uses `PluginHost::HasCommand` (O(log n), allocation-free) instead of a linear `std::find` + per-item `std::string` materialization.
@@ -178,9 +188,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 1. **Off-UI-thread / async** (Standing #1): **fully RESOLVED 2026-07-18** — 005 (`TaskExecutor` latest-only keyed submit + blame coalescing), 024 (`util::ReadFileLineWindow` bounded reference-snippet reader + live-buffer reuse), 033 (tab-activation LSP hydration deferred to post-present drain + tightened lint), 108 (plugin syntax fingerprint/load moved to the plugin worker; only the registry swap stays main-thread, generation-guarded).
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test) —
->    **focus pass 2/9 IN PROGRESS 2026-07-18**:
->    018, 038, 043, 044, 046, 056, 057, 070,
->    071, 072, 073, 074, 095, 097, 099, 107, 118.
+>    **focus pass 2/9 all-but-one RESOLVED 2026-07-18**. Remaining: **074 DEFERRED**
+>    (serial-work-queue depth/dedupe — data-structure pass, see its entry). RESOLVED this pass:
+>    018 (main-thread mailbox coalescing), 038 (control-spec section caps), 043 (raster in-flight
+>    encoded-byte budget), 057 (code-action inline-edit aggregate budget), 071 (LSP/DAP outbound
+>    retained-byte budget), 095 (control query item budget), 097 (merge-save hunk-choice cap), 099
+>    (patch generation byte budget + single buffer), 107 (file-index pre-initial batch buffer bound),
+>    118 (texture-create failure FIFO). (044, 046, 056, 070, 072, 073 RESOLVED earlier.)
 >    *(020, 090, 101, 037, 042 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets; control-socket complete-line cap + aggregate inbound-byte budget.)*
 >    *(029, 039, 040, 064, 068, 096, 098, 105, 106, 116, 119, 121 RESOLVED 2026-07-18 — buffer-search match cap; plugin filesystem read/write byte ceilings; debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; debug-output control-event byte cap; DAP pre-initialize event-flood cap; text-measurement byte budget + no-cache-oversized; project.files_exclude rule/byte cap; output-channel global count cap + LRU eviction; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
@@ -217,7 +231,10 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 7. **Protocol / session lifecycle & decode-order** (LSP/DAP/persistence pass — commit-after-
 >    success open/close, per-request generations, decode-before-cap, event-drain budget, regex
 >    match-data cache keyed by revision, symlinked-state-file writes, terminal-tab reap grace):
->    030, 050, 052, 082, 083, 086, 100, 115, 127, 130. *(001, 034, 059 RESOLVED 2026-07-17A.)*
+>    **cluster complete 2026-07-18.** RESOLVED this pass: 030 (per-surface assist request
+>    generations), 082 (session-restore tab cap), 083 (session-save dirty-buffer budget), 100
+>    (event-drain budget), 115 (regex match-data cache keyed by revision), 130 (exited-terminal-tab
+>    retention). (050, 052, 086, 127 RESOLVED earlier; 001, 034, 059 RESOLVED 2026-07-17A.)
 > 8. **Path/containment correctness (small, but cross-group)** — **focus pass 8/9 LANDED
 >    2026-07-18** — 036, 088 RESOLVED (background compare/merge tabs retarget/close across
 >    every editor group via a group-agnostic `RetargetSpecialTabForRename` + shared affected-tab
@@ -1277,8 +1294,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   intended memory cap by retaining duplicated code text and highlight metadata. Include parsed-entry
   owned bytes in the channel budget or make parsed entries hold views/offsets into `entries` and
   rebuild highlight results from bounded visible rows.
-- **TD-2026-07-17A-071 — LSP/DAP outbound queues are capped by message count, not retained
-  bytes.** `SendMessageBuilderAfterInitialize` refuses after `kMaxQueuedMessages` queued builders, but
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-071 — LSP/DAP outbound queues are capped by message count, not retained
+  bytes.** Fixed: both clients now track aggregate approximate queued payload bytes
+  (`outbound_queued_bytes_`, charged at enqueue via a new `StdioQueuedMessage::approx_bytes`,
+  released when a batch drains / the queues clear) and refuse past `kMaxQueuedBytes` (512 MiB) in
+  addition to the message-count cap. Document-sync LSP sends (DidOpen / DidChange /
+  DidChangeIncremental) pass their text size; the change is mirrored in the DAP client, which shares
+  the `StdioQueuedMessage` transport shape. A wedged server can no longer retain many large full-sync
+  messages under the count cap. Regression: `WorkspaceLspClient/OutboundByteBudgetRefusesOversized`.
+  `SendMessageBuilderAfterInitialize` refuses after `kMaxQueuedMessages` queued builders, but
   the queued builders can capture large payloads. LSP `DidOpen`, full-document `DidChange`, and
   incremental `DidChangeIncremental` all capture document/change text by value until the I/O thread
   serializes and writes them; the DAP path shares the same `StdioQueuedMessage` queue shape. A wedged
