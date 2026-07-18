@@ -420,7 +420,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
     float summary_y = GitSidebarActionRowRect(layout.sidebar).y +
                       GitSidebarActionRowRect(layout.sidebar).h + 10.0f;
-    if (sidebar_vm.git_sidebar.has_value()) {
+    if (sidebar_vm.git_sidebar != nullptr) {
       const GitSidebarViewModel& git_vm = *sidebar_vm.git_sidebar;
       const float text_width = layout.sidebar.w - kSidebarInset * 2.0f;
       // Must match the constants in WorkspaceShellSidebar.cpp so the file list starts
@@ -567,7 +567,10 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
     // Reuse the rows already flattened during PrepareFrameOnce instead of
     // rebuilding the git view model + line specs a second time this frame.
-    const std::vector<GitSidebarLine>& lines = sidebar_vm.git_sidebar_lines;
+    static const std::vector<GitSidebarLine> kEmptyGitSidebarLines;
+    const std::vector<GitSidebarLine>& lines = sidebar_vm.git_sidebar_lines != nullptr
+                                                   ? *sidebar_vm.git_sidebar_lines
+                                                   : kEmptyGitSidebarLines;
     const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
     const int scroll_row = list_layout.scroll_row;
     project_state.sidebar.scroll_row = scroll_row;
@@ -577,7 +580,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     // nested section/row scan performed for every rendered row. entry_index is
     // validated < entries.size() below, so the table is sized to match.
     std::vector<const GitSidebarRowViewModel*> row_vm_by_entry;
-    if (sidebar_vm.git_sidebar.has_value()) {
+    if (sidebar_vm.git_sidebar != nullptr) {
       row_vm_by_entry.assign(project_state.sidebar.git.entries.size(), nullptr);
       for (const GitSidebarSectionViewModel& section : sidebar_vm.git_sidebar->sections) {
         for (const GitSidebarRowViewModel& candidate : section.rows) {

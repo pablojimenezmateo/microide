@@ -102,11 +102,17 @@ struct SidebarSurfaceViewModel {
   // Prebuilt project-search status/hint line (empty unless mode == Search).
   // Points into a builder-owned thread-local cache; consume within the frame.
   std::string_view project_search_status_text;
-  std::optional<GitSidebarViewModel> git_sidebar;
-  // Flattened, render-ready git sidebar rows built once here (per frame) so the
-  // render TU, hit-testing, and selection all consume one list instead of each
-  // rebuilding the git view model from scratch. Empty unless `git_sidebar` is set.
-  std::vector<GitSidebarLine> git_sidebar_lines;
+  // Points into the frame-owned `CachedGitSidebarPresentation` memo (thread-local,
+  // stable until the next mutating build on this thread — which cannot happen between
+  // prep and render of one frame). Null unless the git sidebar is visible. Held as a
+  // pointer, not an owned copy, so a hover/caret-blink/progress repaint that changed
+  // no git state is genuinely allocation-free instead of deep-copying the whole VM +
+  // flattened row list each frame.
+  const GitSidebarViewModel* git_sidebar = nullptr;
+  // Flattened, render-ready git sidebar rows built once (per state change) so the
+  // render TU, hit-testing, and selection all consume one list. Points into the same
+  // cached presentation as `git_sidebar`; null unless `git_sidebar` is set.
+  const std::vector<GitSidebarLine>* git_sidebar_lines = nullptr;
   ProjectWorkspaceState* project_state = nullptr;
 };
 
