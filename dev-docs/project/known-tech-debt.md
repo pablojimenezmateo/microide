@@ -17,7 +17,13 @@ edit-control value/caret precompute; git-row display-label precompute; exists-va
 recents cache; resolved output-reference path cache; breadcrumb-label memo; project-search
 line-map cache; terminal URL-hover snapshot reuse; git-sidebar spans-into-cache VM;
 one-build settings keep-visible; revisioned bottom-panel tab-model cache; preference-family
-split apply). **004** (folding refresh from the render frame) stays deferred: the fold scan
+split apply); and **focus pass 6/9 (editor/save allocation & edit primitives, 2026-07-18)** =
+021/028/031/075/120 RESOLVED (boundary-only surround wrap; range-based Replace-All reusing the
+buffer-search match set; Add-Cursor-at-All-Matches fold-once + caret cap; commit-body
+content-revision cache; ranged secondary-caret anchor preservation in shaping actions), with
+015/016 (LSP bulk-sync before/after-snapshot refactor) and 022 (soft-wrap `TextLayoutCache`
+piece/range rewrite) DEFERRED as multi-file/data-structure changes needing their own
+integration/layout verification. **004** (folding refresh from the render frame) stays deferred: the fold scan
 depends on the render-loop `SetViewportSize`, so moving it to prep needs the editor-pane
 metrics computed in prep too, and the refresh is already fingerprint-gated to a no-op on
 settled frames — it wants its own change with fold-render before/after verification.
@@ -176,8 +182,18 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    gating, NUL handling, `loadfile`/`dofile` sandbox, subprocess sandbox roots, env-key
 >    validation; needs security-focused fixtures): 047, 048, 049, 077, 078, 080, 109, 126, 128, 129.
 > 6. **Editor/save allocation & edit primitives** (edit-engine pass — streaming serializers,
->    range-wrap/replace primitives that avoid whole-buffer transients): 015, 016, 021,
->    022, 028, 031, 075, 120. *(009, 013, 035 RESOLVED 2026-07-17A — `util::ScanConflictMarkers`; clean-save streaming; no-selection context copy via LineSpan.)*
+>    range-wrap/replace primitives that avoid whole-buffer transients): **focus pass 6/9
+>    LANDED 2026-07-18** — 021, 028, 031, 075, 120 RESOLVED (commit-body content-revision cache;
+>    range-based Replace-All reusing the buffer-search match set; Add-Cursor-at-All-Matches
+>    fold-once + caret cap; boundary-only surround wrap; ranged secondary-caret anchor
+>    preservation in shaping actions). **015/016 DEFERRED** — both refactor the LSP bulk-sync
+>    path (`SyncLspForBufferChange` / `ShiftLspDiagnosticsForBulkChange` /
+>    `RequestActiveEditableChangeRedraw` all take before/after snapshot vectors, shared with the
+>    reload and keystroke paths); deriving after-geometry from the live viewport + streaming the
+>    didChange payload ripples across those call sites and needs LSP diagnostic-shift integration
+>    verification — its own reviewed change. **022 DEFERRED** — `TextLayoutCache` suffix-linear
+>    edit updates need a piece/range offset structure (a data-structure rewrite with soft-wrap
+>    layout before/after verification), not a drop-in. *(009, 013, 035 RESOLVED 2026-07-17A — `util::ScanConflictMarkers`; clean-save streaming; no-selection context copy via LineSpan.)*
 > 7. **Protocol / session lifecycle & decode-order** (LSP/DAP/persistence pass — commit-after-
 >    success open/close, per-request generations, decode-before-cap, event-drain budget, regex
 >    match-data cache keyed by revision, symlinked-state-file writes, terminal-tab reap grace):
@@ -429,7 +445,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   errors can therefore grow host memory even though the panel history is bounded. Apply
   the same retained-byte policy to the host vectors or remove the production duplicate
   and keep a bounded test/debug view.
-- **TD-2026-07-17A-021 — surround-selection edits duplicate large selections before editing.**
+- **[RESOLVED 2026-07-18 — focus pass 6/9] TD-2026-07-17A-021 — surround-selection edits duplicate large selections before editing.**
+  Fixed for the single-selection path: `TextViewport::SurroundRangeBoundaries` wraps by
+  prepending `open` to the selection's first line and appending `close` to its last line
+  (interior lines copied verbatim only for the single undo entry, as the range path already
+  did), so no whole-selection `inner` string nor `open+inner+close` transient is built. Inner-
+  selection endpoints are derived from range arithmetic; line-break delimiters (never produced —
+  openers are single chars) fall back to the generic replace path. The multi-caret surround
+  path stays on the generic replace (coupled to the batched result-caret remap; bounded by the
+  caret cap). Regression: `EditorEssentials/Surround/BoundaryWrapInnerSelectionAndUndo`.
   `TextViewport::TrySurroundInsert` and the multi-caret selection path call
   `detail::TextBetweenLines` to materialize the selected text, build
   `open + inner + close`, then pass that single replacement string to
@@ -515,7 +539,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   `visible_lines_snapshot` when the hover's visible range matches (falling back to a fresh
   snapshot only otherwise), so hovering no longer re-snapshots the visible line range per
   move. Regression: `WorkspaceShellTerminal/UrlHoverUsesRenderedSnapshot`.
-- **TD-2026-07-17A-028 — buffer Replace All discards the already-computed match list.**
+- **[RESOLVED 2026-07-18 — focus pass 6/9] TD-2026-07-17A-028 — buffer Replace All discards the already-computed match list.**
+  Fixed: `TextViewport::ReplaceAllRanges` applies a precomputed, validated (single-line,
+  non-empty, ascending, non-overlapping) match set as one grouped range edit — byte-identical to
+  the scanning `ReplaceAll` (same before/after span + history entry) — returning `nullopt` on any
+  inconsistency. `ReplaceAllBufferSearchMatches` reuses `buffer_search.matches` (the same
+  case-insensitive fold set `ReplaceAll` would find) when it is fresh (same viewport + content
+  revision + query) and complete (below the retained-match cap), avoiding the second
+  full-document scan + fold; it falls back to `ReplaceAll` otherwise. Regression:
+  `TextViewport/ReplaceAllRangesMatchesScanningReplaceAll`.
   `WorkspaceShell::ReplaceAllBufferSearchMatches` has
   `buffer_search.matches` for the active query/content revision, but it calls
   `TextViewport::ReplaceAll(query, replacement)`, which scans every line again, UTF-8
@@ -551,8 +583,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   signature popup for the wrong cursor. Add per-kind generations (or a request token with
   path, cursor, and content revision) and drop callbacks that are not the latest logical
   request for that assist surface.
-- **TD-2026-07-17A-031 — Add Cursor at All Matches is uncapped and refolds hot lines per
-  match.** `WorkspaceEditActionExecutor` handles `AddCursorAtAllMatches` by scanning every
+- **[RESOLVED 2026-07-18 — focus pass 6/9] TD-2026-07-17A-031 — Add Cursor at All Matches is uncapped and refolds hot lines per
+  match.** Fixed: `CollectAddCursorMatchRanges` (WorkspaceTextSearch) folds each line ONCE and
+  the needle once (length-preserving fold ⇒ folded byte offsets stay valid columns), skips the
+  seeded span, and caps installed carets at `kMaxAddCursorAtAllMatches` (10000) with a truncation
+  flag; the executor posts a warning toast when truncated via a new
+  `WorkspaceActionContext::Notify` wrapper. Regression:
+  `WorkspaceTextSearch/AddCursorMatchRanges`.
+  `WorkspaceEditActionExecutor` handles `AddCursorAtAllMatches` by scanning every
   `TextBuffer` line, pushing every non-seed match into a `std::vector<SelectionRange>`, then
   installing the whole vector through `SetSecondaryCaretsWithRanges`. In case-insensitive
   mode, the inner loop calls `FindLiteralNeedleInLine` for each match, and that helper
@@ -1110,7 +1148,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
   `PostLatest` submissions O(queue_depth). Add an approximate queue-depth/retained-byte policy per
   queue owner and maintain a key index (or per-key replace slot) so high-frequency latest-only traffic
   stays O(1) instead of degrading under the backlog it is supposed to collapse.
-- **TD-2026-07-17A-075 — commit draft edits serialize the whole body on every refresh/persist.**
+- **[RESOLVED 2026-07-18 — focus pass 6/9] TD-2026-07-17A-075 — commit draft edits serialize the whole body on every refresh/persist.**
+  Fixed: `CommitWorkflowState::BodyText()` memoizes the serialized body against the body
+  viewport's `content_revision` (bumped on every content edit), so a precheck +
+  persisted-draft build on the same keystroke reuses the cached string instead of
+  re-snapshotting/concatenating the whole body twice. All call sites route through it.
+  Regression: `CommitWorkflow/BodyTextCachesUntilContentEdit`.
   `CommitWorkflowBodyText` calls `viewport.lines().Snapshot()` and concatenates every line into a new
   string. `CommitWorkflowService::RefreshDerivedState` calls it for every `OnDraftEdited` precheck, and
   the same edit path can then call the persisted-draft callback, whose `BuildPersistedDraft` serializes
@@ -1610,7 +1653,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   it again into the system/primary clipboard. Add a shared clipboard-export byte budget with a truncation
   marker or stream chunks through the clipboard backend where the platform API allows it; cut should only
   delete after the bounded clipboard write succeeds.
-- **TD-2026-07-17A-120 — shaping actions drop secondary selection anchors.**
+- **[RESOLVED 2026-07-18 — focus pass 6/9] TD-2026-07-17A-120 — shaping actions drop secondary selection anchors.**
+  Fixed: `TextViewport::secondary_caret_ranges()` exposes the full `SecondaryCaret` list (with
+  anchors). `ShapingActions::ResolveLineRange` now covers each secondary caret's anchor line too,
+  and the move/indent snapshot+restore carries full ranges, restoring through
+  `SetSecondaryCaretsWithRanges` (an empty range = bare caret, so plain column-caret sets are
+  unchanged). Toggle Line Comment / Move Line / Indent-Outdent / Sort Lines no longer collapse
+  ranged secondary selections nor miss anchor-only lines. Regression:
+  `EditorEssentials/Shaping/PreservesRangedSecondaryCaretAnchors`.
   `SetSecondaryCaretsWithRanges` preserves per-caret anchors so Ctrl-D style multi-caret selections can be
   copied or replaced, but `ShapingActions` routes through position-only APIs. `ResolveLineRange` expands
   the affected range from `secondary_caret_positions()` only, and the move/indent restore helpers snapshot
