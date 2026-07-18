@@ -1774,6 +1774,64 @@ void TestWorkspaceShellAutoCloseToggleUpdatesViewportContract() {
          "second toggle should re-enable auto-close in the active viewport contract");
 }
 
+// TD-2026-07-17A-103: live preference application splits by setting family — the
+// O(tabs) filetype-detect + contract rebuild is skipped unless a contract-affecting
+// toggle changed. A contract-affecting toggle (auto-close) must still refresh EVERY
+// open tab's contract, not just the active one.
+void TestWorkspaceShellAutoCloseToggleUpdatesAllTabContracts() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path first = root / "first.cpp";
+  const std::filesystem::path second = root / "second.cpp";
+  WriteFile(first, "int a() { return 0; }\n");
+  WriteFile(second, "int b() { return 1; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, first);
+  WorkspaceShellTestAccess::OpenFile(shell, second);  // second is now active
+
+  Expect(WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 0)
+             .language_contract_view()
+             .auto_close_enabled,
+         "background tab starts with auto-close enabled");
+
+  Expect(ExecuteCommand(shell, "toggle-editor-auto-close"),
+         "toggle-editor-auto-close should execute");
+
+  // The active tab updates (contract-affecting change routed through ApplyLiveSettings)...
+  Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).language_contract_view().auto_close_enabled,
+         "active tab contract reflects the auto-close toggle");
+  // ...and so does the background tab: the contract rebuild is still applied to all tabs.
+  Expect(!WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 0)
+              .language_contract_view()
+              .auto_close_enabled,
+         "background tab contract is also refreshed by the all-tabs contract rebuild");
+}
+
+// A non-contract preference change (tab size) still applies its cheap runtime setter
+// to every open tab even though the language-contract rebuild is skipped.
+void TestWorkspaceShellTabSizeChangeAppliesToAllTabsWithoutContractRebuild() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path first = root / "first.cpp";
+  const std::filesystem::path second = root / "second.cpp";
+  WriteFile(first, "int a() { return 0; }\n");
+  WriteFile(second, "int b() { return 1; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, first);
+  WorkspaceShellTestAccess::OpenFile(shell, second);
+
+  Expect(ExecuteCommand(shell, "tab-size 7"), "tab-size command should update the preference");
+
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).tab_size() == 7,
+         "active tab picks up the new tab size");
+  Expect(WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 0).tab_size() == 7,
+         "background tab also picks up the new tab size via the runtime-setter pass");
+}
+
 void TestWorkspaceShellTabKeyIndentsMultiLineSelection() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3976,6 +4034,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCommandTabSizeStaysVisibleAfterRestart);
   AddTest(tests, "WorkspaceShell/AutoCloseToggleUpdatesViewportContract",
           TestWorkspaceShellAutoCloseToggleUpdatesViewportContract);
+  AddTest(tests, "WorkspaceShell/AutoCloseToggleUpdatesAllTabContracts",
+          TestWorkspaceShellAutoCloseToggleUpdatesAllTabContracts);
+  AddTest(tests, "WorkspaceShell/TabSizeChangeAppliesToAllTabsWithoutContractRebuild",
+          TestWorkspaceShellTabSizeChangeAppliesToAllTabsWithoutContractRebuild);
   AddTest(tests, "WorkspaceShell/TabKeyIndentsMultiLineSelection",
           TestWorkspaceShellTabKeyIndentsMultiLineSelection);
   AddTest(tests, "WorkspaceShell/TabKeyOnSingleLineInsertsTabCharacter",

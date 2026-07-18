@@ -71,6 +71,15 @@
     return *shell.ActiveEditorViewport();
   }
 
+  // Editor viewport of a specific tab in the focused group (not necessarily the
+  // active one), for asserting all-tab preference application.
+  static editor::TextViewport& FocusedGroupTabEditor(WorkspaceShell& shell,
+                                                     std::size_t tab_index) {
+    return shell.context_.current_project_state.focused_group()
+        .open_tabs[tab_index]
+        .editor_state->viewport;
+  }
+
   static void SamplePluginEditorEvents(WorkspaceShell& shell) {
     shell.SamplePluginEditorEvents();
   }

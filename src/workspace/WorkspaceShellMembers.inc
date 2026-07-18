@@ -1319,8 +1319,18 @@
   std::filesystem::path UserConfigPath() const;
   std::filesystem::path ProjectStateDirectory() const;
   void ApplyEditorPreferences(editor::TextViewport& viewport) const;
+  // Cheap per-viewport setters (tab size, indent, soft tabs/wrap, save
+  // normalization). No filetype detection or contract build.
+  void ApplyEditorRuntimePreferences(editor::TextViewport& viewport) const;
+  // The expensive per-viewport work: bounded head-scan filetype detection plus a
+  // language-contract build. Split out so live-settings can skip it across all tabs
+  // unless a contract-affecting toggle changed (TD-2026-07-17A-103).
+  void ApplyEditorLanguageContract(editor::TextViewport& viewport) const;
   void ApplyDetectedIndentOnOpen(editor::TextViewport& viewport) const;
-  void ApplyEditorPreferencesToAllTabs();
+  // refresh_language_contracts=false skips the O(tabs) filetype-detect + contract
+  // rebuild, applying only the cheap runtime setters. Full callers (project
+  // activation, session restore, init) keep the default true.
+  void ApplyEditorPreferencesToAllTabs(bool refresh_language_contracts = true);
   // Refresh the active editor tab's `editor::FoldingModel` from the active
   // viewport, the resolved language contract, and the current `editor.fold.enabled`
   // setting. Returns the (now-fresh) model pointer or nullptr when no editor

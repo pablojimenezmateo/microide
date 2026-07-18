@@ -465,9 +465,19 @@ void WorkspaceShell::ApplyLiveSettings() {
       last_live_settings_editor_snapshot_->save_ensure_final_newline ==
           snapshot.save_ensure_final_newline;
   if (!snapshot_matches) {
+    // Only the bracket/indent toggles feed the per-tab language contract; the rest
+    // (font/tab size, wrap, save flags) are cheap setters. Skip the O(tabs)
+    // filetype-detect + contract rebuild unless a contract-affecting toggle actually
+    // changed, so a font-size / save-flag / wrap change on a project with thousands
+    // of restored tabs no longer rebuilds every tab's contract (TD-2026-07-17A-103).
+    const bool contract_affecting_changed =
+        !last_live_settings_editor_snapshot_.has_value() ||
+        last_live_settings_editor_snapshot_->auto_close_enabled != snapshot.auto_close_enabled ||
+        last_live_settings_editor_snapshot_->surround_enabled != snapshot.surround_enabled ||
+        last_live_settings_editor_snapshot_->smart_indent_enabled != snapshot.smart_indent_enabled;
     // Keep per-tab editor runtime knobs (save normalization and language-pair
     // toggles) aligned with effective settings after relevant settings change.
-    ApplyEditorPreferencesToAllTabs();
+    ApplyEditorPreferencesToAllTabs(contract_affecting_changed);
     last_live_settings_editor_snapshot_ = snapshot;
   }
 

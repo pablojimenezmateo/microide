@@ -55,7 +55,7 @@ void WorkspaceShell::ApplyDetectedIndentOnOpen(editor::TextViewport& viewport) c
       viewport, [this](std::string_view id) { return GetSettingValue(id); });
 }
 
-void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) const {
+void WorkspaceShell::ApplyEditorRuntimePreferences(editor::TextViewport& viewport) const {
   const auto setting_enabled = [this](std::string_view id, bool default_value) {
     return SettingFlagEnabled(GetSettingValue(id), default_value);
   };
@@ -77,7 +77,16 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) cons
     save_ending = util::LineEnding::CRLF;
   }
   viewport.SetSaveLineEnding(save_ending);
+}
 
+void WorkspaceShell::ApplyEditorLanguageContract(editor::TextViewport& viewport) const {
+  const auto setting_enabled = [this](std::string_view id, bool default_value) {
+    return SettingFlagEnabled(GetSettingValue(id), default_value);
+  };
+  // The expensive per-tab work: a bounded head-scan filetype detection plus a
+  // language-contract build. Only re-run when a contract-affecting toggle
+  // (auto-close / surround / smart-indent) actually changed — see the family split
+  // in ApplyLiveSettings (TD-2026-07-17A-103).
   const std::string language_id =
       editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
   viewport.SetLanguageContractView(BuildEditorLanguageContractView(
@@ -88,7 +97,12 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) cons
       setting_enabled("editor.indent.smart.enabled", true)));
 }
 
-void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
+void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) const {
+  ApplyEditorRuntimePreferences(viewport);
+  ApplyEditorLanguageContract(viewport);
+}
+
+void WorkspaceShell::ApplyEditorPreferencesToAllTabs(bool refresh_language_contracts) {
   util::AddPerformanceCounter(util::PerfCounterId::FrameApplyEditorPreferencesAllTabsCalls);
   // Font size is a project preference but the text renderer is shared across all
   // projects, so push the active project's value here -- this hook fires on
@@ -109,13 +123,24 @@ void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
   // so a split's non-focused pane would otherwise keep the stale config and render/behave
   // differently once clicked into. Mirrors the all-groups walks in ReloadCleanOpenBuffers
   // and RetargetOpenTabsForRename.
+  // Split by setting family: the cheap runtime setters (tab size, wrap, save
+  // normalization) always apply, but the O(tabs) filetype-detect + language-contract
+  // rebuild is skipped when no contract-affecting toggle changed. A project with
+  // thousands of restored tabs no longer rebuilds every tab's contract for a
+  // font-size / save-flag / wrap checkbox change (TD-2026-07-17A-103).
+  const auto apply_to = [&](editor::TextViewport& viewport) {
+    ApplyEditorRuntimePreferences(viewport);
+    if (refresh_language_contracts) {
+      ApplyEditorLanguageContract(viewport);
+    }
+  };
   for (auto& group : context_.current_project_state.editor_groups) {
-    ApplyEditorPreferences(group.welcome_surface.viewport);
+    apply_to(group.welcome_surface.viewport);
     for (auto& tab : group.open_tabs) {
       if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
         continue;
       }
-      ApplyEditorPreferences(tab.editor_state->viewport);
+      apply_to(tab.editor_state->viewport);
     }
   }
 }
