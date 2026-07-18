@@ -1910,7 +1910,16 @@ speed-path items first, then the correctness/lifecycle cleanups.
   shaped like `LD_PRELOAD=...` can create an `LD_PRELOAD` entry rather than a harmless invalid key. Reject
   empty names, embedded NULs, and `=` in env keys at the plugin/process boundary (and preferably in the
   platform subprocess API) before building POSIX envp or Windows environment blocks.
-- **TD-2026-07-17A-127 — persisted-record writes replace symlinked state files with regular files.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-127 — persisted-record writes replace symlinked state files with regular files.**
+  Fixed: `ResolveSymlinkTarget` (the manual read_symlink walk that already backs editor text saves)
+  is now exported from `util/TextFileIO.h`, and `PersistedRecordWriter::WriteFile` resolves `path` to
+  its symlink target up front and rotates every temp/backup/rename against that target. Saving through
+  a symlinked config/session file now updates the link's target and preserves the link, instead of
+  POSIX-renaming the link node to `.bak` and publishing a fresh regular file at the link path.
+  Dangling links resolve to their intended (not-yet-existing) target; a non-symlink/unreadable-link/
+  cycle falls back to the original path (prior behavior). Regression:
+  `PersistedRecordIo/WriterPreservesSymlinkedTarget` (write through a link keeps it a symlink, lands
+  on the target, and rotates the backup beside the target — not the link).
   `PersistedRecordWriter::WriteFile` decides that a destination exists with
   `std::filesystem::exists(path)`, which follows a symlink target, but then rotates the destination by
   calling `RenameReplacing(path, backup_path)`. POSIX rename moves the symlink node itself, not its

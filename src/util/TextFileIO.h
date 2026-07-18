@@ -28,6 +28,13 @@ inline constexpr std::uintmax_t kMaxSearchFileBytes = 32ull * 1024 * 1024;
 std::optional<std::string> ReadTextFile(const std::filesystem::path& path);
 bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text);
 
+// Resolve a symlink chain to the real file an atomic temp+rename should target, so a
+// write preserves the link instead of replacing it with a fresh regular file. Follows
+// the chain manually (read_symlink + lexical resolution) so a dangling link resolves
+// to its intended (not-yet-existing) target; falls back to `path` for a non-symlink,
+// an unreadable link, or a cycle. Shared by the text-save and persisted-record writers.
+std::filesystem::path ResolveSymlinkTarget(const std::filesystem::path& path);
+
 // Reads the 1-based inclusive line range [first_line, last_line] from a text file
 // WITHOUT materializing the whole file. Streams bytes in bounded chunks, counting
 // newlines, retaining only the bytes of in-range lines, and stops as soon as

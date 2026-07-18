@@ -430,7 +430,48 @@ void TestPersistedRecordReaderRejectsNonRegularPath() {
 #endif
 }
 
+// TD-2026-07-17A-127: writing a persisted-state record through a symlinked path must
+// update the link's target and preserve the link, not rotate the link node to `.bak`
+// and publish a fresh regular file at the link path (which breaks user-managed
+// config/session symlinks).
+void TestPersistedRecordWriterPreservesSymlinkedTarget() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path target = temp_dir.path() / "real" / "session.bin";
+  const std::filesystem::path link_path = temp_dir.path() / "link" / "session.bin";
+  std::error_code ec;
+  std::filesystem::create_directories(target.parent_path(), ec);
+  std::filesystem::create_directories(link_path.parent_path(), ec);
+
+  PersistedRecordWriterError write_error = PersistedRecordWriterError::None;
+  Expect(PersistedRecordWriter::WriteFile(target, BytesFromText("v1"), 1u, &write_error),
+         "seed the real target file");
+  std::filesystem::create_symlink(target, link_path, ec);
+  Expect(!ec, "symlink creation should succeed");
+  Expect(std::filesystem::is_symlink(std::filesystem::symlink_status(link_path)),
+         "the link path is a symlink before the write");
+
+  // Write THROUGH the symlink.
+  Expect(PersistedRecordWriter::WriteFile(link_path, BytesFromText("v2"), 2u, &write_error),
+         "writing through the symlink should succeed");
+
+  Expect(std::filesystem::is_symlink(std::filesystem::symlink_status(link_path)),
+         "writing through a symlink must preserve the link, not replace it with a regular file");
+  Expect(TextFromBytes(ReadRecordOrFail(link_path, "read via link").body) == "v2",
+         "the write lands on the symlink target (readable through the link)");
+  Expect(TextFromBytes(ReadRecordOrFail(target, "read target").body) == "v2",
+         "the real target holds the new content");
+  Expect(std::filesystem::exists(PersistedRecordWriter::BackupPathFor(target)),
+         "the backup is rotated beside the real target");
+  Expect(!std::filesystem::exists(PersistedRecordWriter::BackupPathFor(link_path)),
+         "no backup or regular file is created at the link path");
+}
+
 void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PersistedRecordIo/WriterPreservesSymlinkedTarget",
+          TestPersistedRecordWriterPreservesSymlinkedTarget);
   AddTest(tests, "PersistedRecordIo/ReaderRejectsNonRegularPath",
           TestPersistedRecordReaderRejectsNonRegularPath);
   AddTest(tests, "PersistedRecordIo/ReaderRejectsLargeBadMagicOnHeader",

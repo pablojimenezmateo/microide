@@ -2,6 +2,7 @@
 
 #include "persistence/PersistedRecord.h"
 #include "util/DurableFile.h"
+#include "util/TextFileIO.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -43,7 +44,14 @@ bool PersistedRecordWriter::WriteFile(const std::filesystem::path& path,
     return false;
   }
 
-  const std::filesystem::path parent = path.parent_path();
+  // Rotate through the symlink's target, not the link node. POSIX rename moves the
+  // link node itself, so backing up + replacing `path` when it is a symlink would move
+  // the user's config/session symlink to `.bak` and publish a fresh regular file at the
+  // link path. Resolving here lands every temp/backup/rename on the real target and
+  // preserves the link (same fix already applied to editor text saves, TD-2026-07-17A-127).
+  const std::filesystem::path target = util::ResolveSymlinkTarget(path);
+
+  const std::filesystem::path parent = target.parent_path();
   if (!parent.empty()) {
     std::error_code mkdir_error;
     std::filesystem::create_directories(parent, mkdir_error);
@@ -59,8 +67,8 @@ bool PersistedRecordWriter::WriteFile(const std::filesystem::path& path,
     return false;
   }
 
-  const std::filesystem::path temp_path = util::UniqueTemporaryPath(path);
-  const std::filesystem::path backup_path = BackupPathFor(path);
+  const std::filesystem::path temp_path = util::UniqueTemporaryPath(target);
+  const std::filesystem::path backup_path = BackupPathFor(target);
   std::error_code fs_error;
   std::filesystem::remove(temp_path, fs_error);
   fs_error.clear();
@@ -71,20 +79,20 @@ bool PersistedRecordWriter::WriteFile(const std::filesystem::path& path,
     return false;
   }
 
-  const bool destination_exists = FileExists(path);
+  const bool destination_exists = FileExists(target);
   if (destination_exists) {
     std::filesystem::remove(backup_path, fs_error);
     fs_error.clear();
-    if (!RenameReplacing(path, backup_path)) {
+    if (!RenameReplacing(target, backup_path)) {
       std::filesystem::remove(temp_path, fs_error);
       SetError(error, PersistedRecordWriterError::BackupFailed);
       return false;
     }
   }
 
-  if (!RenameReplacing(temp_path, path)) {
-    if (destination_exists && !FileExists(path) && FileExists(backup_path)) {
-      RenameReplacing(backup_path, path);
+  if (!RenameReplacing(temp_path, target)) {
+    if (destination_exists && !FileExists(target) && FileExists(backup_path)) {
+      RenameReplacing(backup_path, target);
     }
     std::filesystem::remove(temp_path, fs_error);
     SetError(error, PersistedRecordWriterError::RenameFailed);

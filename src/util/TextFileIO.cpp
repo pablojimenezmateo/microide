@@ -296,8 +296,6 @@ FileSignature StatFileSignature(const std::filesystem::path& path) {
   return signature;
 }
 
-namespace {
-
 // If `path` is a symlink, resolve it to the real file we should overwrite. An atomic
 // temp+rename against the link path itself replaces the *link* with a regular file and
 // never touches the intended target; resolving here means the rename lands on the target
@@ -336,8 +334,6 @@ std::filesystem::path ResolveSymlinkTarget(const std::filesystem::path& path) {
   }
   return path;  // loop guard tripped: keep the link node rather than chase a cycle
 }
-
-}  // namespace
 
 bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text) {
   if (path.empty()) {
