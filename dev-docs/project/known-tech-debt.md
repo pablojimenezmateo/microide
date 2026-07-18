@@ -1160,8 +1160,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   under the 50,000-message cap. Track approximate queued payload bytes per client, reserve/charge known
   text payloads before enqueue, and fail/coalesce replaceable document-sync messages before memory
   pressure outruns the count backstop.
-- **TD-2026-07-17A-072 — LSP outline adaptation can build and flatten 100k rows on the UI
-  callback path.** `lsp_protocol::ParseDocumentSymbols` allows up to `kMaxLspSymbolNodes` (100,000)
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-072 — LSP outline adaptation can build and flatten 100k rows on the UI
+  callback path.** Fixed: `AdaptLspDocumentSymbol` now threads a `budget` (presentation cap
+  `kMaxOutlineSymbolNodes` = 5000) across the recursive tree adaptation, and the request callback stops
+  adapting top-level symbols once the budget is exhausted, appending a single non-navigable "…
+  (outline truncated)" marker node that flows through the existing flatten path. The protocol parser's
+  100k transport backstop is unchanged, but the main-thread callback no longer adapts+flattens (string
+  copies, column mapping, row allocation) an unbounded valid response. Regression:
+  `WorkspaceShell/OutlineCapsLargeLspResult` (a 6000-symbol response yields 5000 rows + marker).
+  `lsp_protocol::ParseDocumentSymbols` allows up to `kMaxLspSymbolNodes` (100,000)
   nodes, then `WorkspaceShell::QueryLspDocumentSymbolsForOutline` recursively adapts every parsed
   `LspClient::DocumentSymbol` into a plugin-shaped `DocumentSymbolNode`, mapping each node's LSP
   character offset through the active viewport. `SidebarCoordinator::ApplyLspOutlineResult` then

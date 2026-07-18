@@ -1492,6 +1492,78 @@ return ide.plugin({
          "LSP outline row should carry 1-based line/column from the selection range");
 }
 
+// Regression (TD-2026-07-17A-072): a large-but-valid documentSymbol response must
+// not adapt+flatten unboundedly on the main-thread callback. The outline is capped
+// at a presentation budget (5000 nodes) with a non-navigable truncation marker,
+// instead of building 100k rows the protocol parser would still accept.
+void TestWorkspaceShellOutlineCapsLargeLspResult() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "value = 1\n");
+
+  WritePluginInit(
+      plugins_root, "pylsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "pylsp.server", language_id = "python", command = { "py-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "outline cap fixture should open the project");
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  stub_raw->SetTestDocumentSymbolHandler(
+      [](std::string uri, workspace::LspClient::DocumentSymbolCallback cb) {
+        (void)uri;
+        // 6000 flat top-level symbols: over the 5000-node presentation budget.
+        std::vector<workspace::LspClient::DocumentSymbol> symbols;
+        symbols.reserve(6000);
+        for (int i = 0; i < 6000; ++i) {
+          workspace::LspClient::DocumentSymbol symbol;
+          symbol.name = "sym" + std::to_string(i);
+          symbol.kind = 12;  // Function
+          symbol.selection_range.start = {0, 0};
+          symbols.push_back(std::move(symbol));
+        }
+        cb(std::move(symbols));
+      });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
+         "fixture should attach a stub python client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, py_file);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-show outline"),
+         "sidebar-show should accept the built-in outline view");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+
+  const auto& items = WorkspaceShellTestAccess::PluginSidebarItems(shell);
+  // 5000 adapted symbol rows + one truncation marker row.
+  Expect(items.size() == 5001,
+         "the outline is capped at the 5000-node budget plus a truncation marker");
+  Expect(items.back().label == "… (outline truncated)",
+         "the capped outline ends with a non-navigable truncation marker");
+  Expect(items.back().line == 0,
+         "the truncation marker does not navigate anywhere");
+}
+
 // Regression: hovering resolves through the language server when no plugin hover
 // provider answers. The LSP hover `contents` (MarkupContent here) fills the same
 // hover cache the popup renders.
@@ -4700,6 +4772,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellOutlineSidebarFromDocumentSymbols);
   AddTest(tests, "WorkspaceShell/OutlineSidebarFromLspFallback",
           TestWorkspaceShellOutlineSidebarFromLspFallback);
+  AddTest(tests, "WorkspaceShell/OutlineCapsLargeLspResult",
+          TestWorkspaceShellOutlineCapsLargeLspResult);
   AddTest(tests, "WorkspaceShell/HoverFromLspFallback", TestWorkspaceShellHoverFromLspFallback);
   AddTest(tests, "WorkspaceShell/FormatDocumentAppliesLspEdits",
           TestWorkspaceShellFormatDocumentAppliesLspEdits);

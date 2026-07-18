@@ -134,13 +134,22 @@ std::string_view LspSymbolKindName(int kind) {
   }
 }
 
+// Presentation cap on adapted outline nodes. The protocol parser tolerates up to
+// kMaxLspSymbolNodes (100k) as a transport backstop, but the outline sidebar only
+// needs a human-navigable count; adapting AND flattening 100k nodes on the
+// main-thread request callback would spend a long frame allocating strings, mapping
+// columns, and building rows. Stop adapting past this budget and surface a marker.
+constexpr std::size_t kMaxOutlineSymbolNodes = 5000;
+
 // Adapt an LSP DocumentSymbol tree onto the plugin DocumentSymbolNode tree the
 // outline flatten path consumes. `line`/`column` become 1-based, and the column is
 // mapped from the server's position encoding to an editor byte column so the
-// outline navigates to the right spot on non-ASCII lines.
+// outline navigates to the right spot on non-ASCII lines. `budget` bounds the total
+// adapted node count across the whole (recursive) tree; the caller consumes one for
+// this node before calling, and recursion stops adding children once it hits 0.
 plugin::PluginHost::DocumentSymbolNode AdaptLspDocumentSymbol(
     const LspClient::DocumentSymbol& symbol, const editor::TextViewport& viewport,
-    lsp_encoding::PositionEncoding encoding) {
+    lsp_encoding::PositionEncoding encoding, std::size_t& budget) {
   const std::size_t line = static_cast<std::size_t>(std::max(0, symbol.selection_range.start.line));
   plugin::PluginHost::DocumentSymbolNode node;
   node.name = symbol.name;
@@ -149,9 +158,13 @@ plugin::PluginHost::DocumentSymbolNode AdaptLspDocumentSymbol(
   node.line = line + 1;
   node.column =
       LspPositionToByteColumn(viewport, line, symbol.selection_range.start.character, encoding) + 1;
-  node.children.reserve(symbol.children.size());
+  node.children.reserve(std::min<std::size_t>(symbol.children.size(), budget));
   for (const auto& child : symbol.children) {
-    node.children.push_back(AdaptLspDocumentSymbol(child, viewport, encoding));
+    if (budget == 0) {
+      break;
+    }
+    --budget;
+    node.children.push_back(AdaptLspDocumentSymbol(child, viewport, encoding, budget));
   }
   return node;
 }
@@ -195,9 +208,24 @@ void WorkspaceShell::QueryLspDocumentSymbolsForOutline(const editor::TextViewpor
         }
         std::vector<plugin::PluginHost::DocumentSymbolNode> nodes;
         if (symbols.has_value()) {
-          nodes.reserve(symbols->size());
+          std::size_t budget = kMaxOutlineSymbolNodes;
+          nodes.reserve(std::min<std::size_t>(symbols->size(), budget));
+          bool truncated = false;
           for (const auto& symbol : *symbols) {
-            nodes.push_back(AdaptLspDocumentSymbol(symbol, *current, encoding));
+            if (budget == 0) {
+              truncated = true;
+              break;
+            }
+            --budget;
+            nodes.push_back(AdaptLspDocumentSymbol(symbol, *current, encoding, budget));
+          }
+          if (truncated) {
+            // Surface a non-navigable marker row through the normal flatten path so
+            // the user knows the outline was capped rather than silently missing tail
+            // symbols. line/column stay 0 (unmapped) so it does not jump anywhere.
+            plugin::PluginHost::DocumentSymbolNode marker;
+            marker.name = "… (outline truncated)";
+            nodes.push_back(std::move(marker));
           }
         }
         apply(request_path, plugin_error, std::move(nodes));
