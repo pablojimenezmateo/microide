@@ -4,7 +4,7 @@ Reviewed on 2026-07-17. A follow-on deferred-backlog full sweep is in progress
 (see "Fixed in the 2026-07-13 deferred-backlog full sweep" below); closed tranche
 entries have been pruned as they land. The **2026-07-17A addendum burndown** then
 dispositioned every item in the "Cross-subsystem bug/perf audit addendum" section:
-36 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
+37 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
 clusters or marked platform-only — see the burndown blockquote under that heading.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
@@ -82,7 +82,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > test this pass), **DEFERRED** (folded into a focused-pass cluster below), or **WON'T-DO
 > here** (platform-only, cannot build/verify on this Linux host).
 >
-> **RESOLVED this pass (36 fixed + 1 already-satisfied; each with a regression test):**
+> **RESOLVED this pass (37 fixed + 1 already-satisfied; each with a regression test):**
 > - **001** — passive menu measurement (`ComputePopupMenuRect`, `MenuItemLabel`, `IsMenuItemEnabled`) reads LSP readiness with `ensure_started=false`, so opening/hovering a menu never spawns a server; servers still start on explicit LSP actions via `GetServer`.
 > - **011** — plugin-command menu enablement uses `PluginHost::HasCommand` (O(log n), allocation-free) instead of a linear `std::find` + per-item `std::string` materialization.
 > - **012** — command-line completion takes the plugin command-name vector by reference (no whole-registry copy per open/keystroke).
@@ -98,6 +98,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > - **059** — project-session decode skips over-cap editor groups BEFORE decoding their nested tab/buffer payloads (decode-before-cap).
 > - **101** — notification toasts are byte-capped at ingress on a UTF-8 boundary with a `truncated` flag (no oversized-toast string copies/measurement in redraw).
 > - **090** — terminal selection copy takes a byte budget (8 MiB default); a huge drag truncates on a UTF-8 boundary with a marker instead of copying an unbounded transcript.
+> - **037** — Copy-Last-Command capture caps the snapshot to a bounded head window (20k lines) and joins under an 8 MiB byte budget via `BuildLastTerminalCommandTranscript`, appending a `\n[output truncated]` marker (UTF-8 boundary) when line- or byte-capped, instead of copying the whole post-command scrollback twice.
 > - **003** — `DetectIndent(LineSpan)` overload; file open reads the live buffer zero-copy (no `Snapshot()`).
 > - **006** — settings query filter routes through allocation-free `util::ContainsCaseInsensitiveAscii` (no per-row lowercase of query/label/detail on every keystroke).
 > - **009** — merge validation scans a zero-copy `LineSpan` once via `util::ScanConflictMarkers` (no `Snapshot()`, no whole-document serialize, no second snapshot for the marker line).
@@ -124,9 +125,9 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 1. **Off-UI-thread / async** (Standing #1): 005, 024, 033, 108.
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test):
->    018, 029, 037, 038, 039, 040, 041, 042, 043, 044, 046, 056, 057, 064, 068, 070,
+>    018, 029, 038, 039, 040, 041, 042, 043, 044, 046, 056, 057, 064, 068, 070,
 >    071, 072, 073, 074, 095, 096, 097, 098, 099, 105, 106, 107, 116, 118, 119, 121.
->    *(020, 090, 101 RESOLVED 2026-07-17A — plugin log/error history cap.)*
+>    *(020, 090, 101, 037 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): 045, 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
 >    *(011, 012, 032 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices.)*
@@ -494,13 +495,24 @@ speed-path items first, then the correctness/lifecycle cleanups.
   split can therefore leave a stale tab pointing at the old or deleted path. Retarget/close
   compare and merge tabs across every editor group using `(group_index, tab_index)` targets,
   mirroring the dirty-path scan.
-- **TD-2026-07-17A-037 — last-terminal-command capture can copy the whole post-command
-  scrollback.** `LastTerminalCommandText` calls `SnapshotLineRange(last_command_start_row,
-  line_count - last_command_start_row)`, converts every copied `TerminalLine` to a
-  `std::string`, then joins the rows into a transcript. A long-running command with large
-  output can make an assistant/control request copy tens of thousands of retained terminal
-  rows and allocate a second full transcript. Keep a bounded command-output ring/window or
-  stream rows directly with a byte/line cap and a truncation marker.
+- **[RESOLVED 2026-07-17A] TD-2026-07-17A-037 — last-terminal-command capture can copy the whole post-command
+  scrollback.** Fixed: `LastTerminalCommandText` now caps the snapshot to
+  `kDefaultLastTerminalCommandMaxLines` (20k) of the most-recent-command output — keeping
+  the head and setting a `source_truncated` flag when later rows are dropped — and delegates
+  transcript assembly to the new pure helper `BuildLastTerminalCommandTranscript`
+  (`WorkspaceTerminalSelection.*`). The helper strips the trailing redrawn-prompt/blank rows
+  (same heuristic as before, so the non-truncated path is byte-identical), joins the surviving
+  rows under `kDefaultLastTerminalCommandMaxBytes` (8 MiB), and appends a
+  `\n[output truncated]` marker on a UTF-8 boundary when either the byte budget is hit or the
+  snapshot was line-capped. This mirrors the 090 terminal-selection byte-budget pattern.
+  Regression: `WorkspaceShared/LastCommandTranscript` (baseline strip, line-cap marker,
+  byte-budget truncation, UTF-8-boundary back-off, empty-fallback) plus the unchanged
+  end-to-end `WorkspaceShell/CopyLastTerminalCommandIncludesOutput`.
+  `LastTerminalCommandText` called `SnapshotLineRange(last_command_start_row,
+  line_count - last_command_start_row)`, converted every copied `TerminalLine` to a
+  `std::string`, then joined the rows into a transcript. A long-running command with large
+  output could make an assistant/control request copy tens of thousands of retained terminal
+  rows and allocate a second full transcript.
 - **TD-2026-07-17A-038 — cold-start control specs can flood breakpoint state and DAP
   payloads under the byte cap.** `Application` caps `--control-spec` reads at 1 MiB, but
   `ParseControlSpec` still pushes every `breakpoints`, `functionBreakpoints`, `settings`,

@@ -79,6 +79,64 @@ std::string ExtractTerminalSelectionText(const std::vector<terminal::TerminalLin
   return text;
 }
 
+std::string BuildLastTerminalCommandTranscript(
+    const std::vector<std::string>& rows,
+    std::string_view trimmed_prompt_prefix,
+    std::string_view invocation_first_line,
+    bool source_truncated,
+    std::size_t max_bytes) {
+  std::size_t end_row = rows.size();
+  while (end_row > 0 && rows[end_row - 1].empty()) {
+    --end_row;
+  }
+  if (end_row == 0) {
+    return {};
+  }
+
+  // Drop the trailing prompt row the shell redraws after the command finishes: either a
+  // literal re-print of the captured prompt prefix, or (in echo-off/partial-redraw
+  // shells) a leading fragment of the invocation itself.
+  const std::string& last_line = rows[end_row - 1];
+  if ((!trimmed_prompt_prefix.empty() &&
+       (last_line == trimmed_prompt_prefix || last_line.starts_with(trimmed_prompt_prefix))) ||
+      (!last_line.empty() && invocation_first_line.size() > last_line.size() &&
+       invocation_first_line.starts_with(last_line))) {
+    --end_row;
+    while (end_row > 0 && rows[end_row - 1].empty()) {
+      --end_row;
+    }
+  }
+  if (end_row == 0) {
+    return {};
+  }
+
+  std::string transcript;
+  for (std::size_t row = 0; row < end_row; ++row) {
+    if (!transcript.empty()) {
+      transcript.push_back('\n');
+    }
+    transcript += rows[row];
+    // Cap the joined bytes so a command with a huge captured output can't materialize an
+    // unbounded transcript on the UI thread (TD-2026-07-17A-037). Truncate on a UTF-8
+    // boundary and report truncation rather than clipping mid-codepoint.
+    if (transcript.size() >= max_bytes) {
+      std::size_t cut = std::min(transcript.size(), max_bytes);
+      while (cut > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(transcript[cut]))) {
+        --cut;
+      }
+      transcript.resize(cut);
+      transcript += "\n[output truncated]";
+      return transcript;
+    }
+  }
+  // Rows were dropped upstream to honor the snapshot line cap: mark the tail as truncated
+  // even though the retained bytes fit the budget.
+  if (source_truncated) {
+    transcript += "\n[output truncated]";
+  }
+  return transcript;
+}
+
 bool TerminalSelectionContainsCell(const TerminalSelectionBounds& selection,
                                    std::size_t row,
                                    std::size_t column) {

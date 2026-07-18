@@ -9,6 +9,7 @@ namespace microide::tests {
 namespace {
 
 using microide::workspace::BottomPanelVisibleRowsForHeight;
+using microide::workspace::BuildLastTerminalCommandTranscript;
 using microide::workspace::ClampScrollRowToContent;
 using microide::workspace::ExtractTerminalSelectionText;
 using microide::workspace::NormalizeTerminalSelection;
@@ -119,6 +120,87 @@ void TestWorkspaceSharedTerminalSelectionCopyByteBudget() {
          "a selection within the budget is copied verbatim without a marker");
 }
 
+void TestWorkspaceSharedLastCommandTranscript() {
+  // Baseline: trailing blank rows and the redrawn prompt row are stripped; the surviving
+  // command + output is joined with no marker when nothing is truncated.
+  {
+    const std::vector<std::string> rows = {
+        "user@host:~/repo$ ll", "file-a.txt", "file-b.txt", "user@host:~/repo$ ", ""};
+    const std::string transcript = BuildLastTerminalCommandTranscript(
+        rows, /*trimmed_prompt_prefix=*/"user@host:~/repo$",
+        /*invocation_first_line=*/"ll", /*source_truncated=*/false);
+    Expect(transcript == "user@host:~/repo$ ll\nfile-a.txt\nfile-b.txt",
+           "the transcript keeps the command + output and drops the redrawn prompt row");
+  }
+
+  // A source-truncated snapshot (caller dropped later rows for the line cap) always ends
+  // with the output-truncated marker even though the retained bytes fit the budget.
+  {
+    const std::vector<std::string> rows = {"$ build", "step-1", "step-2"};
+    const std::string transcript = BuildLastTerminalCommandTranscript(
+        rows, /*trimmed_prompt_prefix=*/"$", /*invocation_first_line=*/"build",
+        /*source_truncated=*/true);
+    Expect(transcript == "$ build\nstep-1\nstep-2\n[output truncated]",
+           "a line-capped snapshot appends the output-truncated marker");
+  }
+
+  // A byte budget smaller than the joined output truncates the transcript and appends the
+  // marker; a generous budget returns the text verbatim.
+  {
+    std::vector<std::string> rows;
+    for (int i = 0; i < 40; ++i) {
+      rows.push_back("output-row-" + std::to_string(i) + "-payload");
+    }
+    const std::string full = BuildLastTerminalCommandTranscript(
+        rows, /*trimmed_prompt_prefix=*/"", /*invocation_first_line=*/"",
+        /*source_truncated=*/false);
+    const std::string marker = "\n[output truncated]";
+    const std::string capped = BuildLastTerminalCommandTranscript(
+        rows, /*trimmed_prompt_prefix=*/"", /*invocation_first_line=*/"",
+        /*source_truncated=*/false, /*max_bytes=*/48);
+    Expect(capped.size() < full.size(), "a small byte budget truncates the transcript");
+    Expect(capped.size() <= 48 + marker.size(),
+           "the truncated transcript is bounded by the byte budget plus the marker");
+    Expect(capped.size() >= marker.size() &&
+               capped.compare(capped.size() - marker.size(), marker.size(), marker) == 0,
+           "a byte-truncated transcript ends with the output-truncated marker");
+    const std::string small = BuildLastTerminalCommandTranscript(
+        rows, /*trimmed_prompt_prefix=*/"", /*invocation_first_line=*/"",
+        /*source_truncated=*/false, /*max_bytes=*/1u << 20);
+    Expect(small == full && small.find("[output truncated]") == std::string::npos,
+           "a transcript within the budget is returned verbatim without a marker");
+  }
+
+  // The byte cut lands on a UTF-8 boundary: no trailing continuation-byte fragment.
+  {
+    // "héllo" repeated: 'é' is a two-byte UTF-8 sequence (0xC3 0xA9).
+    const std::vector<std::string> rows = {"h\xC3\xA9llo-h\xC3\xA9llo-h\xC3\xA9llo"};
+    // A budget of 2 lands the cut inside the 'é' two-byte sequence (byte index 2 is a
+    // continuation byte), forcing the boundary back-off to drop the whole sequence.
+    const std::string capped = BuildLastTerminalCommandTranscript(
+        rows, /*trimmed_prompt_prefix=*/"", /*invocation_first_line=*/"",
+        /*source_truncated=*/false, /*max_bytes=*/2);
+    const std::string marker = "\n[output truncated]";
+    Expect(capped.size() >= marker.size(), "a truncated multibyte transcript still emits the marker");
+    const std::string body = capped.substr(0, capped.size() - marker.size());
+    Expect(body == "h", "the byte cut backs off past the split multibyte sequence to a UTF-8 boundary");
+    // A valid UTF-8 prefix never ends in a continuation byte (0x80-0xBF).
+    Expect(body.empty() ||
+               (static_cast<unsigned char>(body.back()) & 0xC0) != 0x80,
+           "the truncated body ends on a UTF-8 boundary");
+  }
+
+  // Nothing survives the prompt/blank stripping: the helper returns empty so the caller
+  // can fall back to the raw invocation.
+  {
+    const std::vector<std::string> rows = {"$ ", ""};
+    const std::string transcript = BuildLastTerminalCommandTranscript(
+        rows, /*trimmed_prompt_prefix=*/"$", /*invocation_first_line=*/"anything",
+        /*source_truncated=*/false);
+    Expect(transcript.empty(), "an all-prompt/blank snapshot yields an empty transcript");
+  }
+}
+
 void TestWorkspaceSharedTerminalMouseHelpers() {
   Expect(TerminalMouseButtonFromSdl(SDL_BUTTON_LEFT) ==
              microide::terminal::TerminalSession::MouseButton::Left,
@@ -142,6 +224,8 @@ void RegisterWorkspaceShellSharedTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedTerminalSelectionHelpers);
   AddTest(tests, "WorkspaceShared/TerminalSelectionCopyByteBudget",
           TestWorkspaceSharedTerminalSelectionCopyByteBudget);
+  AddTest(tests, "WorkspaceShared/LastCommandTranscript",
+          TestWorkspaceSharedLastCommandTranscript);
   AddTest(tests, "WorkspaceShared/TerminalMouseHelpers", TestWorkspaceSharedTerminalMouseHelpers);
 }
 

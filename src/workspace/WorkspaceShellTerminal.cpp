@@ -469,8 +469,16 @@ std::optional<std::string> WorkspaceShell::LastTerminalCommandText() const {
   if (terminal_tab->last_command_start_row >= line_count) {
     return terminal_tab->last_command_invocation;
   }
-  const auto lines = terminal_tab->session.SnapshotLineRange(
-      terminal_tab->last_command_start_row, line_count - terminal_tab->last_command_start_row);
+  // Cap the snapshot to a bounded window of the most-recent-command output. A
+  // long-running command can retain output up to the full scrollback cap, so copying
+  // every retained row (and then joining a second full transcript) would let the invoke
+  // path allocate unboundedly on the UI thread (TD-2026-07-17A-037). Keep the head of the
+  // output and mark the tail truncated.
+  const std::size_t available = line_count - terminal_tab->last_command_start_row;
+  const std::size_t capped_lines = std::min(available, kDefaultLastTerminalCommandMaxLines);
+  const bool source_truncated = available > capped_lines;
+  const auto lines =
+      terminal_tab->session.SnapshotLineRange(terminal_tab->last_command_start_row, capped_lines);
   if (lines.empty()) {
     return terminal_tab->last_command_invocation;
   }
@@ -481,38 +489,9 @@ std::optional<std::string> WorkspaceShell::LastTerminalCommandText() const {
     rows.push_back(TerminalLineText(line));
   }
 
-  std::size_t end_row = rows.size();
-  while (end_row > 0 && rows[end_row - 1].empty()) {
-    --end_row;
-  }
-  if (end_row == 0) {
-    return terminal_tab->last_command_invocation;
-  }
-
-  const std::string prompt_prefix = TrimTrailingTerminalBlanks(terminal_tab->last_command_prompt_prefix);
-  const std::string invocation_first_line = FirstLine(terminal_tab->last_command_invocation);
-  const std::string& last_line = rows[end_row - 1];
-  if ((!prompt_prefix.empty() &&
-       (last_line == prompt_prefix || last_line.starts_with(prompt_prefix))) ||
-      (!last_line.empty() && invocation_first_line.size() > last_line.size() &&
-       invocation_first_line.starts_with(last_line))) {
-    --end_row;
-    while (end_row > 0 && rows[end_row - 1].empty()) {
-      --end_row;
-    }
-  }
-
-  if (end_row == 0) {
-    return terminal_tab->last_command_invocation;
-  }
-
-  std::string transcript;
-  for (std::size_t row = 0; row < end_row; ++row) {
-    if (!transcript.empty()) {
-      transcript.push_back('\n');
-    }
-    transcript += rows[row];
-  }
+  std::string transcript = BuildLastTerminalCommandTranscript(
+      rows, TrimTrailingTerminalBlanks(terminal_tab->last_command_prompt_prefix),
+      FirstLine(terminal_tab->last_command_invocation), source_truncated);
 
   return transcript.empty() ? std::optional<std::string>(terminal_tab->last_command_invocation)
                             : std::optional<std::string>(std::move(transcript));
