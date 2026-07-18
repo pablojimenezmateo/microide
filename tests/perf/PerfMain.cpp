@@ -1429,12 +1429,24 @@ int main(int argc, char** argv) {
                   << '\n';
         return 1;
       }
+      // A negative allocation tolerance means "inherit the matching wall
+      // tolerance" -- resolve it here so the written baseline always carries an
+      // explicit value.
+      const auto resolve_alloc = [](double alloc_tol, double wall_tol) {
+        return alloc_tol >= 0.0 ? alloc_tol : wall_tol;
+      };
       BaselineRecord record{
           .scenario_name = scenario.name,
           .metrics = aggregate->metrics,
           .tolerances = {.p50_percent = scenario.tolerance_p50_percent,
                          .p95_percent = scenario.tolerance_p95_percent,
-                         .max_percent = scenario.tolerance_max_percent},
+                         .max_percent = scenario.tolerance_max_percent,
+                         .alloc_p50_percent = resolve_alloc(scenario.tolerance_alloc_p50_percent,
+                                                            scenario.tolerance_p50_percent),
+                         .alloc_p95_percent = resolve_alloc(scenario.tolerance_alloc_p95_percent,
+                                                            scenario.tolerance_p95_percent),
+                         .alloc_max_percent = resolve_alloc(scenario.tolerance_alloc_max_percent,
+                                                            scenario.tolerance_max_percent)},
       };
       if (!SaveBaseline(baseline_path, record)) {
         std::cerr << "failed to save baseline: " << baseline_path << '\n';

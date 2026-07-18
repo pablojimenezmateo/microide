@@ -61,6 +61,15 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
   record.tolerances.p50_percent = tolerances["p50_percent"].AsDouble(10.0);
   record.tolerances.p95_percent = tolerances["p95_percent"].AsDouble(20.0);
   record.tolerances.max_percent = tolerances["max_percent"].AsDouble(50.0);
+  // Allocation envelopes default to the wall envelopes when absent, so a baseline
+  // written before wall/alloc tolerances were decoupled behaves exactly as before
+  // (both metrics gated on the same percent).
+  record.tolerances.alloc_p50_percent =
+      tolerances["alloc_p50_percent"].AsDouble(record.tolerances.p50_percent);
+  record.tolerances.alloc_p95_percent =
+      tolerances["alloc_p95_percent"].AsDouble(record.tolerances.p95_percent);
+  record.tolerances.alloc_max_percent =
+      tolerances["alloc_max_percent"].AsDouble(record.tolerances.max_percent);
   return record;
 }
 
@@ -79,6 +88,9 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
       {"p50_percent", baseline.tolerances.p50_percent},
       {"p95_percent", baseline.tolerances.p95_percent},
       {"max_percent", baseline.tolerances.max_percent},
+      {"alloc_p50_percent", baseline.tolerances.alloc_p50_percent},
+      {"alloc_p95_percent", baseline.tolerances.alloc_p95_percent},
+      {"alloc_max_percent", baseline.tolerances.alloc_max_percent},
   };
   std::ofstream out(path);
   if (!out) {
@@ -98,11 +110,11 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
   AddMetric(&result, "max_wall_ms", baseline.metrics.max_wall_ms, aggregate.metrics.max_wall_ms,
             baseline.tolerances.max_percent);
   AddMetric(&result, "p50_allocations", baseline.metrics.p50_allocations,
-            aggregate.metrics.p50_allocations, baseline.tolerances.p50_percent);
+            aggregate.metrics.p50_allocations, baseline.tolerances.alloc_p50_percent);
   AddMetric(&result, "p95_allocations", baseline.metrics.p95_allocations,
-            aggregate.metrics.p95_allocations, baseline.tolerances.p95_percent);
+            aggregate.metrics.p95_allocations, baseline.tolerances.alloc_p95_percent);
   AddMetric(&result, "max_allocations", baseline.metrics.max_allocations,
-            aggregate.metrics.max_allocations, baseline.tolerances.max_percent);
+            aggregate.metrics.max_allocations, baseline.tolerances.alloc_max_percent);
   return result;
 }
 

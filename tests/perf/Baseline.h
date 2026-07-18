@@ -10,9 +10,19 @@
 namespace microide::tests::perf {
 
 struct Tolerances {
+  // Wall-time envelopes. Wall carries machine scheduler jitter (context switches,
+  // shared-runner load), so these are sometimes widened per scenario.
   double p50_percent = 10.0;
   double p95_percent = 20.0;
   double max_percent = 50.0;
+  // Allocation-count envelopes. Allocation counts are deterministic run-to-run,
+  // so they are the true complexity oracle and can stay tight even when the wall
+  // envelopes are widened for jitter. LoadBaseline defaults these to the wall
+  // values when a baseline omits them, so pre-decoupling baselines keep their
+  // exact prior behavior (both metrics gated on the same percent).
+  double alloc_p50_percent = 10.0;
+  double alloc_p95_percent = 20.0;
+  double alloc_max_percent = 50.0;
 };
 
 struct BaselineRecord {

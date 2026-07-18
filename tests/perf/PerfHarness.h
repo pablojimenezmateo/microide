@@ -179,6 +179,15 @@ struct Scenario {
   double tolerance_p50_percent = 10.0;
   double tolerance_p95_percent = 20.0;
   double tolerance_max_percent = 50.0;
+  // Allocation-metric tolerances, written into the baseline alongside the wall
+  // tolerances above. Allocation counts are deterministic run-to-run, so a
+  // scenario that widens its wall envelopes for machine jitter can keep these
+  // tight to preserve a precise complexity gate. A negative value means "inherit
+  // the matching wall tolerance" (the default), so a scenario that does not set
+  // these behaves exactly as before decoupling: both metrics on the same percent.
+  double tolerance_alloc_p50_percent = -1.0;
+  double tolerance_alloc_p95_percent = -1.0;
+  double tolerance_alloc_max_percent = -1.0;
   std::function<void(ScenarioContext&)> run;
 };
 
