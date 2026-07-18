@@ -129,9 +129,9 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test) —
 >    **focus pass 2/9 IN PROGRESS 2026-07-18**:
 >    018, 029, 038, 039, 043, 044, 046, 056, 057, 064, 068, 070,
->    071, 072, 073, 074, 095, 096, 097, 098, 099, 105, 107, 116, 118, 119, 121.
+>    071, 072, 073, 074, 095, 096, 097, 098, 099, 105, 107, 116, 118, 119.
 >    *(020, 090, 101, 037, 042 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets; control-socket complete-line cap + aggregate inbound-byte budget.)*
->    *(040, 106 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; project.files_exclude rule/byte cap.)*
+>    *(040, 106, 121 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; project.files_exclude rule/byte cap; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
@@ -1365,7 +1365,16 @@ speed-path items first, then the correctness/lifecycle cleanups.
   Sort Lines can silently collapse ranged secondary selections into bare carets and can miss lines covered
   only by a secondary anchor. Expose a read/restore API for full `SecondaryCaret` ranges, include anchor
   endpoints in line-range resolution, and keep the existing position-only path for plain column carets.
-- **TD-2026-07-17A-121 — plugin process allowlists bypass shared string-array byte caps.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-121 — plugin process allowlists bypass shared string-array byte caps.**
+  Fixed: `ParseCapabilities` now reads each `capabilities.process.allow` entry length-bearing
+  (`lua_tolstring`) and gates it through the pure `ProcessAllowlistEntryAccepted` predicate
+  (`PluginLifecycleLoadInterop.h`, defined outside the Lua guard so it is unit-testable),
+  which mirrors the shared string-array budgets: 64 KiB per entry, 8 MiB aggregate, and
+  embedded-NUL rejection. Over-budget / NUL-bearing entries are *dropped* (not truncated,
+  and not fail-closed to an empty allowlist — an empty allowlist means "allow any binary",
+  so emptying a populated field would widen the capability). The 4096-entry cap is retained.
+  Regression: `BoundedResourceCaps/ProcessAllowlistEntryByteBudget` (per-item cap boundary,
+  aggregate-budget boundary, NUL rejection, normal entry accepted).
   `ParseCapabilities` caps `capabilities.process.allow` at 4096 entries, but reads each entry with
   `lua_tostring` directly into `process_allowlist`. That path does not use `ReadStringArrayField`, so it
   misses the 64 KiB per-item and 8 MiB aggregate byte budgets added for other plugin string arrays, and

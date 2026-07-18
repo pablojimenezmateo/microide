@@ -6,8 +6,10 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include "plugin/PluginLifecycleLoadInterop.h"
 #include "workspace/DapProtocol.h"
 #include "workspace/DebugValueTree.h"
 #include "workspace/SettingFlags.h"
@@ -108,6 +110,35 @@ void TestExcludeGlobsByteBudgetIsCapped() {
          "retained exclude text must never exceed the byte budget");
 }
 
+// TD-2026-07-17A-121: capabilities.process.allow read each entry via the C-string
+// lua_tostring — no per-item/aggregate byte cap and truncation at embedded NUL — so a
+// manifest with a few enormous allowlist strings could inflate host RSS during load.
+// The acceptance predicate now mirrors the shared string-array byte budgets.
+void TestProcessAllowlistEntryByteBudget() {
+  namespace ll = plugin::lifecycle_load_interop;
+  // A normal executable name is accepted.
+  Expect(ll::ProcessAllowlistEntryAccepted("eslint", 0),
+         "a normal allowlist entry must be accepted");
+  // An entry exactly at the per-item cap is accepted; one byte over is rejected.
+  const std::string at_cap(ll::kMaxProcessAllowItemBytes, 'a');
+  const std::string over_cap(ll::kMaxProcessAllowItemBytes + 1, 'a');
+  Expect(ll::ProcessAllowlistEntryAccepted(at_cap, 0),
+         "an entry at the per-item byte cap must be accepted");
+  Expect(!ll::ProcessAllowlistEntryAccepted(over_cap, 0),
+         "an entry over the per-item byte cap must be rejected");
+  // Embedded NUL is rejected (would be silently truncated by the C-string path).
+  Expect(!ll::ProcessAllowlistEntryAccepted(std::string_view("tru\0e", 5), 0),
+         "an entry with an embedded NUL must be rejected, not truncated");
+  // Aggregate budget: an otherwise-fine entry that would overflow the remaining
+  // aggregate budget is rejected.
+  Expect(!ll::ProcessAllowlistEntryAccepted(
+             "x", ll::kMaxProcessAllowAggregateBytes),
+         "an entry that would exceed the aggregate byte budget must be rejected");
+  Expect(ll::ProcessAllowlistEntryAccepted(
+             "x", ll::kMaxProcessAllowAggregateBytes - 1),
+         "an entry that exactly fits the remaining aggregate budget is accepted");
+}
+
 void TestExcludeGlobsNormalInputIsNotFlaggedTruncated() {
   bool truncated = true;
   const std::vector<std::string> globs =
@@ -131,6 +162,8 @@ void RegisterBoundedResourceCapsTests(std::vector<TestCase>& tests) {
           TestDebugValueTreeAggregateNodeBudget);
   AddTest(tests, "BoundedResourceCaps/DebugValueTreeSmallContainerIsNotTruncated",
           TestDebugValueTreeSmallContainerIsNotTruncated);
+  AddTest(tests, "BoundedResourceCaps/ProcessAllowlistEntryByteBudget",
+          TestProcessAllowlistEntryByteBudget);
 }
 
 }  // namespace microide::tests

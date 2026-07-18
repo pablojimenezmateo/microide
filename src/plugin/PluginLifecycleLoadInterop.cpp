@@ -1,5 +1,25 @@
 #include "plugin/PluginLifecycleLoadInterop.h"
 
+#include <string_view>
+
+namespace microide::plugin::lifecycle_load_interop {
+
+bool ProcessAllowlistEntryAccepted(std::string_view entry, std::size_t accepted_bytes) {
+  // Real executable names/paths never carry an embedded NUL; the C-string reader would
+  // truncate one silently, so reject rather than truncate (TD-2026-07-17A-121).
+  if (entry.find('\0') != std::string_view::npos) {
+    return false;
+  }
+  if (entry.size() > kMaxProcessAllowItemBytes) {
+    return false;
+  }
+  // `accepted_bytes` only ever accumulates already-accepted (in-budget) entries, so it
+  // never exceeds the aggregate cap and this subtraction cannot underflow.
+  return entry.size() <= kMaxProcessAllowAggregateBytes - accepted_bytes;
+}
+
+}  // namespace microide::plugin::lifecycle_load_interop
+
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include <system_error>
@@ -76,14 +96,27 @@ bool ParseCapabilities(lua_State* state,
     if (lua_istable(state, -1)) {
       // Clamp against a sparse-border lua_rawlen even though this parses the plugin's
       // own manifest at load; matches the hardened harvest loops elsewhere.
-      constexpr lua_Integer kMaxProcessAllowEntries = 4096;
       const lua_Integer raw_count = static_cast<lua_Integer>(lua_rawlen(state, -1));
       const lua_Integer count =
-          raw_count < kMaxProcessAllowEntries ? raw_count : kMaxProcessAllowEntries;
+          raw_count < static_cast<lua_Integer>(kMaxProcessAllowEntries)
+              ? raw_count
+              : static_cast<lua_Integer>(kMaxProcessAllowEntries);
+      // TD-2026-07-17A-121: mirror the shared string-array byte budgets here instead of
+      // copying each entry blindly through the C-string `lua_tostring` (no per-item or
+      // aggregate cap, and truncation at embedded NUL). A length-bearing read plus the
+      // acceptance predicate drops over-budget / NUL-bearing entries — keeping the rest —
+      // so a manifest with a few enormous allowlist strings cannot inflate host RSS.
+      std::size_t accepted_bytes = 0;
       for (lua_Integer i = 1; i <= count; ++i) {
         lua_rawgeti(state, -1, i);
         if (lua_isstring(state, -1)) {
-          out->process_allowlist.emplace_back(lua_tostring(state, -1));
+          std::size_t item_length = 0;
+          const char* item = lua_tolstring(state, -1, &item_length);
+          const std::string_view entry(item, item_length);
+          if (ProcessAllowlistEntryAccepted(entry, accepted_bytes)) {
+            accepted_bytes += item_length;
+            out->process_allowlist.emplace_back(entry);
+          }
         }
         lua_pop(state, 1);
       }
