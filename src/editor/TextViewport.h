@@ -501,6 +501,14 @@ class TextViewport {
   std::string TextInRange(const SelectionRange& range) const;
   bool ApplyRangeEdit(const SelectionRange& range, std::string_view replacement, bool record_undo,
                       CoalesceHint hint = CoalesceHint{});
+  // Wrap `norm` (normalized, validated) by prepending `open` to its first line at
+  // `norm.start.column` and appending `close` to its last line at `norm.end.column`,
+  // touching only the boundary lines. Avoids materializing the whole selected text
+  // and the open+inner+close transient the generic range-replace path builds
+  // (A-021). `open`/`close` must not contain a line break. Records one undo entry.
+  bool SurroundRangeBoundaries(const SelectionRange& norm,
+                               std::string_view open,
+                               std::string_view close);
   bool ApplyLineEdit(std::size_t start_line,
                      std::size_t end_line,
                      const std::vector<std::string>& replacement,

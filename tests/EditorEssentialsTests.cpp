@@ -912,6 +912,50 @@ void TestMultiCaretSurroundMultiLineSelections() {
          "undo should restore every multi-line surround atomically");
 }
 
+// TD-2026-07-17A-021: surround wraps by touching only the boundary lines (no
+// whole-selection materialization). Verify the inner selection endpoints and a
+// single atomic undo for a multi-line selection that ends mid-line.
+void TestSurroundBoundaryWrapInnerSelectionAndUndo() {
+  {
+    // Multi-line selection ending mid-line: opener on the first line, closer at
+    // the mid-line end column, middle untouched, inner selection preserved.
+    TextViewport viewport;
+    viewport.LoadContent("aaaa\nbbbb\ncccc\n", "/tmp/surround-boundary.cpp");
+    viewport.SetLanguageContractView(MakeCStyleContractView());
+    viewport.MoveCursorTo(0, 1);
+    viewport.MoveCursorTo(2, 2, /*extend_selection=*/true);
+    viewport.InsertCharacter('(');
+    Expect(viewport.lines()[0] == "a(aaa", "opener inserted at the selection start column");
+    Expect(viewport.lines()[1] == "bbbb", "an interior line stays untouched");
+    Expect(viewport.lines()[2] == "cc)cc", "closer inserted at the selection end column");
+    Expect(viewport.has_selection(), "the inner selection is preserved");
+    Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 2,
+           "the caret sits at the end of the inner content on the last line");
+
+    Expect(viewport.Undo(), "surround records exactly one undo step");
+    Expect(viewport.lines()[0] == "aaaa" && viewport.lines()[1] == "bbbb" &&
+               viewport.lines()[2] == "cccc",
+           "a single undo restores the whole selection exactly");
+    Expect(viewport.Redo() && viewport.lines()[0] == "a(aaa" && viewport.lines()[2] == "cc)cc",
+           "redo reapplies the boundary wrap");
+  }
+  {
+    // Single-line selection: both delimiters land on the same line and the caret
+    // ends past the inner text.
+    TextViewport viewport;
+    viewport.LoadContent("xhellox\n", "/tmp/surround-single.cpp");
+    viewport.SetLanguageContractView(MakeCStyleContractView());
+    viewport.MoveCursorTo(0, 1);
+    viewport.MoveCursorTo(0, 6, /*extend_selection=*/true);
+    viewport.InsertCharacter('"');
+    Expect(viewport.lines()[0] == "x\"hello\"x",
+           "single-line surround wraps only the selected span");
+    Expect(viewport.cursor_column() == 7, "caret sits just past the inner content");
+    Expect(viewport.Undo() && viewport.lines()[0] == "xhellox",
+           "single-line surround undoes atomically");
+  }
+}
+
 void TestSurroundDisabledFallsBackToLiteralInsert() {
   TextViewport viewport;
   auto view = MakeCStyleContractView();
@@ -1272,6 +1316,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestSurroundMultiLineSelection);
   AddTest(tests, "EditorEssentials/Surround/MultiCaretMultiLineSelections",
           TestMultiCaretSurroundMultiLineSelections);
+  AddTest(tests, "EditorEssentials/Surround/BoundaryWrapInnerSelectionAndUndo",
+          TestSurroundBoundaryWrapInnerSelectionAndUndo);
   AddTest(tests, "EditorEssentials/Surround/DisabledFallsBackLiteral",
           TestSurroundDisabledFallsBackToLiteralInsert);
   AddTest(tests, "EditorEssentials/SmartIndent/AfterOpenBrace",

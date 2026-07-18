@@ -442,6 +442,57 @@ std::optional<std::size_t> TextViewport::ReplaceAllRanges(
   return replacements;
 }
 
+bool TextViewport::SurroundRangeBoundaries(const SelectionRange& norm,
+                                           std::string_view open,
+                                           std::string_view close) {
+  if (norm.start.line >= document_->lines.size() || norm.end.line >= document_->lines.size() ||
+      norm.start.line > norm.end.line) {
+    return false;
+  }
+
+  const ViewState before_state = CaptureViewState();
+  const std::size_t first = norm.start.line;
+  const std::size_t last = norm.end.line;
+  const std::size_t span = last - first + 1;
+  std::vector<std::string> before_lines;
+  std::vector<std::string> after_lines;
+  before_lines.reserve(span);
+  after_lines.reserve(span);
+
+  for (std::size_t line_index = first; line_index <= last; ++line_index) {
+    std::string original(document_->lines.LineView(line_index));
+    std::string modified = original;
+    if (line_index == first && line_index == last) {
+      // Single-line selection: insert `close` at the higher column first so the
+      // `open` insertion at the lower column does not shift `close`'s position.
+      modified.insert(norm.end.column, close.data(), close.size());
+      modified.insert(norm.start.column, open.data(), open.size());
+    } else if (line_index == first) {
+      modified.insert(norm.start.column, open.data(), open.size());
+    } else if (line_index == last) {
+      modified.insert(norm.end.column, close.data(), close.size());
+    }
+    before_lines.push_back(std::move(original));
+    after_lines.push_back(std::move(modified));
+  }
+
+  document_->lines.ReplaceLineRange(first, span, after_lines);
+  document_->dirty = true;
+  undo_history_.ClearRedo();
+  RefreshEncoding();
+  InvalidateLayoutCaches();
+  EnsureCursorVisible();
+  const ViewState after_state = CaptureViewState();
+  PushHistoryEntry(HistoryEntry{
+      .start_line = first,
+      .before_lines = std::move(before_lines),
+      .after_lines = std::move(after_lines),
+      .before_state = before_state,
+      .after_state = after_state,
+  });
+  return true;
+}
+
 bool TextViewport::DeleteSelection() {
   const auto range = selection_range();
   if (!range.has_value()) {
