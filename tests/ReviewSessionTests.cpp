@@ -1,7 +1,9 @@
 #include "TestSupport.h"
 
+#include "workspace/ReviewSessionCoordinator.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -145,9 +147,42 @@ void TestReviewConflictsOpensMergeTabsPerConflict() {
          "rerunning review-conflicts reuses the existing merge tab (no duplicates)");
 }
 
+// A review verb against a very large changed-file set must not open one tab per
+// file: it caps at kMaxReviewSessionOpenTabs and reports the remainder as
+// truncated instead of stalling the shell building thousands of compare models.
+// TD-2026-07-17A-041.
+void TestReviewCommitCapsOpenedTabs() {
+  using microide::workspace::ReviewSessionCoordinator;
+  const std::size_t cap = ReviewSessionCoordinator::kMaxReviewSessionOpenTabs;
+  const std::size_t file_count = cap + 5;
+
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  WriteFile(repo_path / "seed.txt", "seed\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "base", "base commit");
+
+  for (std::size_t i = 0; i < file_count; ++i) {
+    WriteFile(repo_path / ("f" + std::to_string(i) + ".txt"), "content\n");
+  }
+  CommitAll(repo_path, "bulk", "bulk add");
+
+  WorkspaceShell shell;
+  TestAccess::SetProjectRoot(shell, repo_path);
+
+  Expect(TestAccess::ExecuteCommandLine(shell, "review-commit"),
+         "review-commit should succeed even for a huge changed-file set");
+  Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == cap,
+         "review opens at most kMaxReviewSessionOpenTabs compare tabs");
+  Expect(TestAccess::CommandFeedbackText(shell).find("not opened") != std::string::npos,
+         "the review summary reports the un-opened remainder as truncated");
+}
+
 }  // namespace
 
 void RegisterReviewSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ReviewSession/CommitCapsOpenedTabs",
+          TestReviewCommitCapsOpenedTabs);
   AddTest(tests, "ReviewSession/CommitOpensCompareTabsPerChangedFile",
           TestReviewCommitOpensCompareTabsPerChangedFile);
   AddTest(tests, "ReviewSession/BranchOpensAndCleansCompareTabs",

@@ -1966,8 +1966,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   subprocess sandbox roots to the declared fs read/write levels (or introduce an explicit
   process-file-access capability) so `process.exec` does not implicitly override `fs = "none"`.
 
-- **TD-2026-07-17A-130 — exited terminal tabs are reaped before users can inspect the exit
-  marker/output.** `TerminalSession::EmitProcessExitMarkerLocked` appends a visible
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-130 — exited terminal tabs are reaped before users can inspect the exit
+  marker/output.** Fixed: the auto-reap (`ReapExitedTerminalTabs`) is removed from the
+  terminal wake loop, so a tab whose session exits is retained until the user closes it
+  (mirrors VS Code task-terminal exit behavior) — the `[process exited]` marker and prior
+  output stay inspectable instead of vanishing in the same update that recorded them.
+  Regression: `WorkspaceShell/ExitedTerminalTabIsRetained`.
+  `TerminalSession::EmitProcessExitMarkerLocked` appends a visible
   `[process exited]` marker and preserves prior output (`src/terminal/TerminalSessionOutput.cpp:51-70`),
   and tests assert the marker survives malformed and clean output streams
   (`tests/WorkspaceShellTerminalTests.cpp:1092-1116`). But the workspace update loop calls

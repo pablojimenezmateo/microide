@@ -1,5 +1,7 @@
 #include "workspace/ReviewSessionCoordinator.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <utility>
@@ -27,6 +29,7 @@ std::string DisplayPath(const std::filesystem::path& path, const std::filesystem
 std::string BuildReviewSummary(std::string_view verb,
                                const ReviewTabPlan& plan,
                                const std::vector<std::filesystem::path>& opened,
+                               std::size_t not_opened,
                                std::string_view empty_message,
                                const std::filesystem::path& root) {
   std::string message(verb);
@@ -40,6 +43,9 @@ std::string BuildReviewSummary(std::string_view verb,
   message += ", closed " + std::to_string(plan.to_close.size());
   if (!plan.kept_dirty.empty()) {
     message += ", kept " + std::to_string(plan.kept_dirty.size()) + " dirty";
+  }
+  if (not_opened > 0) {
+    message += ", " + std::to_string(not_opened) + " more not opened (review cap reached)";
   }
 
   bool first = true;
@@ -96,17 +102,30 @@ ReviewOpenOutcome ReviewSessionCoordinator::RunReviewSession(
     operations_.request_close_tabs(plan.to_close);
   }
 
+  // Cap the number of tabs a single review opens: past the cap, stop building
+  // compare/merge models entirely and report the remainder as truncated instead of
+  // spending the shell thread opening thousands of tabs. Only the *attempts* count
+  // toward the cap, so a run that fails to open a few files still reaches the ceiling.
   std::vector<std::filesystem::path> opened;
-  opened.reserve(plan.to_open.size());
+  const std::size_t open_budget =
+      std::min(plan.to_open.size(), kMaxReviewSessionOpenTabs);
+  opened.reserve(open_budget);
+  std::size_t attempted = 0;
   for (const std::filesystem::path& path : plan.to_open) {
+    if (attempted >= kMaxReviewSessionOpenTabs) {
+      break;
+    }
+    ++attempted;
     if (open_one(path)) {
       opened.push_back(path);
     }
   }
+  const std::size_t not_opened = plan.to_open.size() - attempted;
 
   ReviewOpenOutcome outcome;
   outcome.ok = true;
-  outcome.message = BuildReviewSummary(verb, plan, opened, empty_message, state_.root);
+  outcome.message =
+      BuildReviewSummary(verb, plan, opened, not_opened, empty_message, state_.root);
   return outcome;
 }
 

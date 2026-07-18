@@ -32,6 +32,14 @@ class ReviewSessionCoordinator {
                            CompareMergeService compare_merge,
                            Operations operations);
 
+  // A batch review verb opens one compare/merge tab (with a full diff/model build)
+  // per newly-actionable file. The git collection helpers only cap at
+  // kMaxGitCollectionEntries (50,000) as a defensive parse ceiling, which is far too
+  // large to treat as a UI workload — opening thousands of tabs synchronously would
+  // stall the shell. Cap the number of tabs a single review session opens and report
+  // the remainder as truncated. TD-2026-07-17A-041.
+  static constexpr std::size_t kMaxReviewSessionOpenTabs = 200;
+
   ReviewOpenOutcome OpenConflictReview();
   ReviewOpenOutcome OpenBranchReview(const std::string& ref);
   ReviewOpenOutcome OpenCommitReview(const std::string& ref);
