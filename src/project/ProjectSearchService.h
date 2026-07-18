@@ -100,6 +100,14 @@ class ProjectSearchService {
   // instead of snapshotting a racing mid-search state.
   bool WorkerFinished() const { return worker_finished_.load(std::memory_order_acquire); }
 
+  // Block until the search worker task has fully joined (no queued or in-flight
+  // work), not merely signaled `finished`. Unlike WorkerFinished()/running, this
+  // guarantees every file the worker read has completed AND is visible (the
+  // executor's mutex provides the release/acquire barrier), which deterministic
+  // read-count assertions rely on: a finished-but-not-yet-joined worker can
+  // otherwise land a trailing counted read after the test has reset its counter.
+  void WaitForWorkersIdle() { task_executor_.WaitForIdle(); }
+
  private:
   struct SearchCompletion {
     std::string error;

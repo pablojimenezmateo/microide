@@ -436,6 +436,13 @@
   static bool ProjectSearchWorkerFinished(const WorkspaceShell& shell) {
     return shell.project_search_runtime_.WorkerFinished();
   }
+  // Block until the search worker task has fully joined (not merely signaled
+  // finished). Tests that assert on the process-global text-search read counter
+  // call this before reading the counter so a trailing not-yet-joined worker
+  // read cannot land after a counter reset. See ProjectSearchService::WaitForWorkersIdle.
+  static void WaitForProjectSearchWorkersIdle(WorkspaceShell& shell) {
+    shell.project_search_runtime_.WaitForWorkersIdle();
+  }
   static bool GitSidebarRefreshing(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.git.refreshing;
   }
