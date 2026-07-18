@@ -124,7 +124,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > matrix; folded into the Standing backlog above where a matching cluster exists). Union of the
 > numbers below covers every remaining addendum item:
 >
-> 1. **Off-UI-thread / async** (Standing #1): 005, 024, 033, 108.
+> 1. **Off-UI-thread / async** (Standing #1): 024, 033, 108. *(005 RESOLVED 2026-07-18 — `TaskExecutor` latest-only keyed submit; blame coalesces queued work by file.)*
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test):
 >    018, 029, 038, 039, 040, 041, 043, 044, 046, 056, 057, 064, 068, 070,
@@ -186,7 +186,17 @@ speed-path items first, then the correctness/lifecycle cleanups.
   still mutates model state and can spend part of the render frame doing prep work.
   Move folding freshness into the once-per-frame preparation/view-model phase and have
   render consume the already-resolved model.
-- **TD-2026-07-17A-005 — git blame request coalescing leaves stale executor work queued.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-005 — git blame request coalescing leaves stale executor work queued.**
+  Fixed: `TaskExecutor` gained a latest-only `Submit(coalesce_key, task)` overload that,
+  before enqueuing, cancels and erases any *queued* (not-yet-started) task previously
+  submitted with the same non-empty key. `GitBlameService::Request` now submits keyed by
+  `file_key`, so a superseding blame request for the same file drops the obsolete queued
+  lambdas (not just their bookkeeping) instead of leaving them to wake the single blame
+  worker only to early-out on the staleness check. An already-running task is left alone
+  (its own `RequestStillCurrent` check handles it). Regression:
+  `TaskExecutor/CoalescesQueuedTasksByKey` (blocks the worker, queues two superseded
+  keyed tasks + the latest + a different key, asserts only the latest and the other key
+  run).
   `GitBlameService::Request` removes prior pending metadata for the same file before
   inserting the new request, but it still submits a new lambda to the generic
   `TaskExecutor`; the executor's `pending_` deque is unbounded and not keyed. Rapid

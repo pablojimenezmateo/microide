@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -43,6 +44,14 @@ class TaskExecutor {
   TaskExecutor& operator=(const TaskExecutor&) = delete;
 
   void Submit(Task task);
+  // Latest-only submit: before enqueuing, cancel and drop any *queued* (not yet
+  // started) task previously submitted with the same non-empty `coalesce_key`.
+  // Lets a caller that supersedes per-subject work (e.g. git blame re-requesting
+  // the same file while scrolling) actually drop the obsolete queued lambdas
+  // instead of leaving them to wake a worker only to discover they are stale. An
+  // already-running task with the same key is left alone (the task's own
+  // staleness check handles it); an empty key coalesces nothing.
+  void Submit(std::string coalesce_key, Task task);
   void CancelAll();
   void WaitForIdle();
 
@@ -50,6 +59,7 @@ class TaskExecutor {
   struct TaskEntry {
     Task task;
     std::shared_ptr<CancellationToken::State> state;
+    std::string coalesce_key;
   };
 
   void WorkerMain(std::size_t slot);

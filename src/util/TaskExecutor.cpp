@@ -29,7 +29,9 @@ TaskExecutor::~TaskExecutor() {
   }
 }
 
-void TaskExecutor::Submit(Task task) {
+void TaskExecutor::Submit(Task task) { Submit(std::string{}, std::move(task)); }
+
+void TaskExecutor::Submit(std::string coalesce_key, Task task) {
   if (!task) return;
   auto state = std::make_shared<CancellationToken::State>();
   {
@@ -38,7 +40,23 @@ void TaskExecutor::Submit(Task task) {
       state->cancelled.store(true);
       return;
     }
-    pending_.push_back(TaskEntry{.task = std::move(task), .state = std::move(state)});
+    if (!coalesce_key.empty()) {
+      // Drop still-queued work for the same subject: cancel its token (so a racing
+      // reader sees it obsolete) and remove it from the deque so the worker never
+      // wakes for it. Only queued entries live in pending_; an entry already
+      // popped into an active slot is intentionally untouched.
+      for (auto it = pending_.begin(); it != pending_.end();) {
+        if (it->coalesce_key == coalesce_key) {
+          if (it->state != nullptr) it->state->cancelled.store(true);
+          it = pending_.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    }
+    pending_.push_back(TaskEntry{.task = std::move(task),
+                                 .state = std::move(state),
+                                 .coalesce_key = std::move(coalesce_key)});
   }
   cv_.notify_one();
 }

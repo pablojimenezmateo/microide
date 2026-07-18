@@ -363,7 +363,14 @@ struct GitBlameService::Impl {
       pending_request_files.emplace(request_key, file_key);
     }
 
+    // Coalesce by file: RemovePendingRequestsForFileLocked already dropped the
+    // superseded requests' bookkeeping, but their executor lambdas were still
+    // queued and would wake the single blame worker just to early-out on the
+    // staleness check. Keying the submit by file_key drops that obsolete queued
+    // work too, so rapid scrolling across a large file no longer accretes a deque
+    // of stale blame tasks ahead of the latest window.
     executor.Submit(
+        pending_request.file_key,
         [this, pending_request](const util::CancellationToken& token) {
           ProcessQueuedRequest(pending_request, token);
         });
