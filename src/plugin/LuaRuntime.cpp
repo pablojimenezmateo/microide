@@ -74,6 +74,17 @@ std::unique_ptr<LuaRuntime> LuaRuntime::Create(std::string* error_message) {
   luaL_requiref(runtime->state_, LUA_LOADLIBNAME, luaopen_package, 1);
   lua_pop(runtime->state_, 1);
 
+  // Remove the base library's file loaders (TD-2026-07-17A-128): global `loadfile` and
+  // `dofile` open and execute a file straight off the filesystem, bypassing the plugin's
+  // declared fs.read capability and the host-owned `ctx.files.*` containment resolver. A
+  // plugin declaring `fs = { read = "none" }` could otherwise `dofile("../outside.lua")`.
+  // Plugin descriptors are loaded host-side via luaL_loadfile, so nothing in-VM needs
+  // these; `load` (string/reader chunks only, no filesystem) is left intact.
+  lua_pushnil(runtime->state_);
+  lua_setglobal(runtime->state_, "loadfile");
+  lua_pushnil(runtime->state_);
+  lua_setglobal(runtime->state_, "dofile");
+
   // Stash the owning runtime in the per-state extra space so the watchdog hook
   // (a plain C callback that only receives lua_State*) can reach the deadline.
   *static_cast<LuaRuntime**>(lua_getextraspace(runtime->state_)) = runtime.get();
