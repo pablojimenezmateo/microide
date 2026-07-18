@@ -883,7 +883,17 @@ speed-path items first, then the correctness/lifecycle cleanups.
   breakpoints can therefore spend millions of comparisons on every adapter verification response.
   Use the sorted line vector with `lower_bound`, or build a temporary line/name index once per
   response, and keep the current stale-response tolerance by matching only still-present rows.
-- **TD-2026-07-17A-052 — control-socket write flushing erases from the front of a string.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-052 — control-socket write flushing erases from the front of a string.**
+  Fixed: `Connection` now carries a `write_offset` (index of the first unsent byte). `FlushConnection`
+  advances the offset over partial sends instead of `erase(0, written)`; the consumed prefix is
+  reclaimed lazily by `CompactWriteBuffer` only when it exceeds `kWriteCompactThreshold` (64 KiB) or a
+  majority of the buffer, and the buffer is cleared+reset the moment it fully drains. Append sites
+  (`SendLine`/`Broadcast`) now cap on *pending* bytes (`size - offset`) and compact before appending so
+  a steady broadcast doesn't accumulate dead prefix. The empty-iff-not-pending invariant is preserved,
+  so the POLLOUT/write-pending checks are unchanged. A slow reader draining a chatty broadcast now
+  costs O(bytes) total rather than O(bytes × sends) in memmoves. Regression:
+  `ControlSocketServer/LargeMultiLineBroadcastDeliveredInOrder` (a ~1.6 MiB 100-line broadcast, far
+  larger than one socket send buffer, arrives intact and in order).
   `ControlSocketServer::FlushConnection` sends from `conn.write_buf.data()`, then calls
   `conn.write_buf.erase(0, written)` after each successful partial write. The write buffer is
   capped, but a slow client receiving a chatty debug/control broadcast can still force repeated

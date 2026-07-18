@@ -121,6 +121,11 @@ constexpr std::size_t kMaxConnections = 128;
 // returns EAGAIN. At the cap we shed the connection, mirroring the read side.
 constexpr std::size_t kMaxWriteBufferBytes = 8u << 20;
 
+// Threshold above which a fully-consumed write-buffer prefix is reclaimed with a
+// single erase during a partial-send stall, rather than left in place. Below it
+// the dead prefix is small enough that skipping the memmove is the better trade.
+constexpr std::size_t kWriteCompactThreshold = 64u << 10;
+
 void SetNonBlocking(int fd) {
   const int flags = ::fcntl(fd, F_GETFL, 0);
   if (flags >= 0) {
@@ -137,6 +142,16 @@ struct ControlSocketServer::Impl {
     std::string read_buf;
     std::mutex out_mutex;
     std::string write_buf;  // bytes pending write (already framed with '\n')
+    // Index of the first not-yet-sent byte in write_buf. Partial sends advance
+    // this instead of erasing from the front (which memmoves the whole pending
+    // remainder on every send). The consumed prefix [0, write_offset) is
+    // reclaimed lazily by CompactWriteBuffer only when it grows large or the
+    // buffer fully drains, so a slow reader receiving a chatty broadcast costs
+    // O(bytes) total rather than O(bytes * sends). Guarded by out_mutex.
+    // INVARIANT (relied on by the POLLOUT/write-pending checks below): outside
+    // FlushConnection, write_buf is non-empty iff write_offset < write_buf.size()
+    // — FlushConnection clears the buffer the moment it is fully drained.
+    std::size_t write_offset = 0;
 
     // Requests accepted from this connection that have not yet been answered.
     // Incremented on the I/O thread when a complete request line is queued
@@ -233,20 +248,45 @@ struct ControlSocketServer::Impl {
 
   // Best-effort non-blocking flush of a connection's pending writes. Runs on the
   // I/O thread. Returns false when the peer is gone.
+  // Reclaim the already-sent prefix [0, write_offset) from write_buf. Must be
+  // called under conn.out_mutex. Compacts only when the consumed prefix is large
+  // (absolute threshold or a majority of the buffer) so the common partial send
+  // stays O(1) instead of paying an O(pending) memmove every time.
+  static void CompactWriteBuffer(Connection& conn) {
+    if (conn.write_offset == 0) {
+      return;
+    }
+    if (conn.write_offset >= conn.write_buf.size()) {
+      conn.write_buf.clear();
+      conn.write_offset = 0;
+      return;
+    }
+    if (conn.write_offset >= kWriteCompactThreshold ||
+        conn.write_offset * 2 >= conn.write_buf.size()) {
+      conn.write_buf.erase(0, conn.write_offset);
+      conn.write_offset = 0;
+    }
+  }
+
   bool FlushConnection(Connection& conn) {
     std::lock_guard<std::mutex> lock(conn.out_mutex);
-    while (!conn.write_buf.empty()) {
+    while (conn.write_offset < conn.write_buf.size()) {
       const ssize_t written =
-          ::send(conn.fd, conn.write_buf.data(), conn.write_buf.size(), MSG_NOSIGNAL);
+          ::send(conn.fd, conn.write_buf.data() + conn.write_offset,
+                 conn.write_buf.size() - conn.write_offset, MSG_NOSIGNAL);
       if (written > 0) {
-        conn.write_buf.erase(0, static_cast<std::size_t>(written));
+        conn.write_offset += static_cast<std::size_t>(written);
         continue;
       }
       if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-        return true;  // retry on next POLLOUT
+        CompactWriteBuffer(conn);  // reclaim consumed bytes while awaiting POLLOUT
+        return true;               // retry on next POLLOUT
       }
       return false;  // hard error / closed
     }
+    // Fully drained: restore the empty-iff-not-pending invariant.
+    conn.write_buf.clear();
+    conn.write_offset = 0;
     return true;
   }
 
@@ -596,11 +636,15 @@ void ControlSocketServer::SendLine(std::uint64_t connection_id, const std::strin
   }
   {
     std::lock_guard<std::mutex> lock(conn->out_mutex);
-    if (conn->write_buf.size() + line.size() + 1 > kMaxWriteBufferBytes) {
+    const std::size_t pending = conn->write_buf.size() - conn->write_offset;
+    if (pending + line.size() + 1 > kMaxWriteBufferBytes) {
       // Reader is stalled; shed rather than grow host memory without bound. Drop
       // this reply and flag the connection for reap on the I/O thread.
       conn->write_overflow.store(true, std::memory_order_release);
     } else {
+      // Drop the already-sent prefix before appending so write_buf tracks the
+      // pending bytes and does not accumulate dead prefix under steady traffic.
+      Impl::CompactWriteBuffer(*conn);
       conn->write_buf.append(line);
       conn->write_buf.push_back('\n');
     }
@@ -622,12 +666,14 @@ void ControlSocketServer::Broadcast(const std::string& line) {
   }
   for (const std::shared_ptr<Impl::Connection>& conn : snapshot) {
     std::lock_guard<std::mutex> lock(conn->out_mutex);
-    if (conn->write_buf.size() + line.size() + 1 > kMaxWriteBufferBytes) {
+    const std::size_t pending = conn->write_buf.size() - conn->write_offset;
+    if (pending + line.size() + 1 > kMaxWriteBufferBytes) {
       // Slow/stalled reader: drop the event and flag for reap rather than grow
       // host memory. A chatty debug session must not OOM the host on one client.
       conn->write_overflow.store(true, std::memory_order_release);
       continue;
     }
+    Impl::CompactWriteBuffer(*conn);
     conn->write_buf.append(line);
     conn->write_buf.push_back('\n');
   }

@@ -402,6 +402,81 @@ void TestIdleConnectionFloodIsCapped() {
   server.Stop();
 }
 
+// Regression (TD-2026-07-17A-052): the write path advances a read offset over
+// partial sends and compacts the consumed prefix lazily, instead of erasing from
+// the front of write_buf on every send. A large multi-line broadcast (well over a
+// single socket send-buffer, forcing repeated EAGAIN/offset advances and prefix
+// compactions) must still be delivered intact, in order, with no lost, dropped,
+// or duplicated bytes.
+void TestLargeMultiLineBroadcastDeliveredInOrder() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
+  ControlSocketServer server;
+  Expect(server.Start(socket_path), "server should start");
+
+  const int client = ConnectUnix(socket_path);
+  Expect(client >= 0, "client should connect");
+  Expect(WaitForConnectionCount(server, 1, 2s), "server should accept the connection");
+
+  // 100 lines x ~16 KiB = ~1.6 MiB, far larger than a single socket send buffer,
+  // so FlushConnection must loop with the offset across many EAGAIN cycles. Each
+  // line is unique so reordering/duplication/loss is detectable.
+  constexpr int kLineCount = 100;
+  constexpr std::size_t kPadBytes = 16u << 10;
+  std::vector<std::string> expected;
+  expected.reserve(kLineCount);
+  for (int i = 0; i < kLineCount; ++i) {
+    std::string line = "evt-" + std::to_string(i) + ":";
+    line.append(kPadBytes, static_cast<char>('a' + (i % 26)));
+    expected.push_back(line);
+    server.Broadcast(line);
+  }
+
+  // Read exactly kLineCount newline-framed lines, preserving any bytes recv()
+  // pulls past a newline (ReadLine drops them, so it cannot be looped here).
+  std::vector<std::string> got;
+  std::string buf;
+  const auto deadline = std::chrono::steady_clock::now() + 10s;
+  while (static_cast<int>(got.size()) < kLineCount &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::size_t newline = buf.find('\n');
+    while (newline != std::string::npos && static_cast<int>(got.size()) < kLineCount) {
+      got.push_back(buf.substr(0, newline));
+      buf.erase(0, newline + 1);
+      newline = buf.find('\n');
+    }
+    if (static_cast<int>(got.size()) >= kLineCount) {
+      break;
+    }
+    pollfd p{client, POLLIN, 0};
+    if (::poll(&p, 1, 25) <= 0) {
+      continue;
+    }
+    char chunk[4096];
+    const ssize_t count = ::recv(client, chunk, sizeof(chunk), 0);
+    if (count > 0) {
+      buf.append(chunk, static_cast<std::size_t>(count));
+    } else if (count == 0) {
+      break;  // EOF
+    }
+  }
+
+  Expect(static_cast<int>(got.size()) == kLineCount,
+         "every broadcast line should be delivered");
+  bool all_match = got.size() == expected.size();
+  for (std::size_t i = 0; i < got.size() && i < expected.size(); ++i) {
+    if (got[i] != expected[i]) {
+      all_match = false;
+      break;
+    }
+  }
+  Expect(all_match, "broadcast lines should arrive intact and in order");
+
+  ::close(client);
+  Expect(WaitForConnectionCount(server, 0, 2s), "closing the client should reap the connection");
+  server.Stop();
+}
+
 #endif  // POSIX
 
 }  // namespace
@@ -428,6 +503,8 @@ void RegisterControlSocketServerTests(std::vector<TestCase>& tests) {
           TestInboundQueueFloodIsShed);
   AddTest(tests, "ControlSocketServer/IdleConnectionFloodIsCapped",
           TestIdleConnectionFloodIsCapped);
+  AddTest(tests, "ControlSocketServer/LargeMultiLineBroadcastDeliveredInOrder",
+          TestLargeMultiLineBroadcastDeliveredInOrder);
 #else
   (void)tests;
 #endif
