@@ -1342,6 +1342,28 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
         break;
     }
 
+    // Precompute the value string + caret the render TU draws, so painting the
+    // settings overlay never constructs "(default)", truncates the value to the box,
+    // or measures a caret prefix per frame (TD-2026-07-17A-007). The truncation width
+    // matches the render TU's `value_rect.w - 12` for all three drawn kinds.
+    if (control.kind == SettingsControlKind::Segmented ||
+        control.kind == SettingsControlKind::Stepper ||
+        control.kind == SettingsControlKind::TextEdit) {
+      if (control.kind == SettingsControlKind::TextEdit && control.display_value.empty() &&
+          !control.editing) {
+        control.shown_value = "(default)";
+        control.value_is_placeholder = true;
+      } else {
+        control.shown_value =
+            text_renderer.TruncateToWidth(control.display_value, control.value_rect.w - 12.0f);
+      }
+      if (control.editing) {
+        const std::size_t caret = std::min(control.edit_caret, control.display_value.size());
+        // display_value is a string_view, so this substr allocates nothing.
+        control.caret_offset_x = text_renderer.MeasureWidth(control.display_value.substr(0, caret));
+      }
+    }
+
     if (row.resettable) {
       rvm.reset_rect =
           MakeRect(leftmost - kSettingsControlGap - kSettingsResetW, cy, kSettingsResetW, kSettingsBtnH);

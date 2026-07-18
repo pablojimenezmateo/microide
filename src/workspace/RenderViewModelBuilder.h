@@ -201,6 +201,16 @@ struct SettingsControlViewModel {
   std::string_view display_value;  // Stepper/Segmented value text (or live edit text)
   bool editing = false;            // TextEdit: the inline value editor is active
   std::size_t edit_caret = 0;      // TextEdit: caret byte offset into display_value
+  // Pre-truncated value string the render TU draws for Segmented/Stepper/TextEdit,
+  // or the "(default)" placeholder for an empty non-editing TextEdit. Built once here
+  // so render consumes a ready field instead of constructing "(default)" and
+  // truncating display_value to the value box on every paint (TD-2026-07-17A-007).
+  // Empty for kinds that draw display_value directly (None).
+  std::string shown_value;
+  bool value_is_placeholder = false;  // shown_value is the dim "(default)" placeholder
+  // Caret x offset (pixels from the value-text start) when `editing`; measured once
+  // in the builder so render draws the caret without measuring a substr per frame.
+  float caret_offset_x = 0.0f;
   // Hit rects; a rect with w == 0 is absent.
   SDL_FRect checkbox_rect{};
   SDL_FRect dec_rect{};

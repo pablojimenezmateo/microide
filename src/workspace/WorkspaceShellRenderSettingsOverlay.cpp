@@ -342,9 +342,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
         DrawFilledRect(renderer, control.value_rect, theme_.chrome_background);
         DrawRect(renderer, control.value_rect, theme_.border);
         DrawCenteredTextOn(text_renderer_, renderer, control.value_rect, theme_.accent,
-                           theme_.chrome_background,
-                           text_renderer_.TruncateToWidth(control.display_value,
-                                                          control.value_rect.w - 12.0f));
+                           theme_.chrome_background, control.shown_value);
         break;
       case SettingsControlKind::Stepper:
         DrawRect(renderer, control.dec_rect, theme_.border);
@@ -352,9 +350,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
         DrawFilledRect(renderer, control.value_rect, theme_.chrome_background);
         DrawRect(renderer, control.value_rect, theme_.border);
         DrawCenteredTextOn(text_renderer_, renderer, control.value_rect, theme_.accent,
-                           theme_.chrome_background,
-                           text_renderer_.TruncateToWidth(control.display_value,
-                                                          control.value_rect.w - 12.0f));
+                           theme_.chrome_background, control.shown_value);
         DrawRect(renderer, control.inc_rect, theme_.border);
         DrawStepperArrow(renderer, control.inc_rect, false, theme_.text_primary);
         break;
@@ -364,25 +360,16 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
                  control.editing ? theme_.accent : theme_.border);
         const float text_x = control.value_rect.x + 6.0f;
         const float text_y = control.value_rect.y + (control.value_rect.h - line_height) * 0.5f;
-        const float avail = control.value_rect.w - 12.0f;
-        // TruncateToWidth returns an owned std::string; bind it to a std::string
-        // (not a std::string_view) so the value survives to the DrawStringOn below.
-        // A view here would dangle the moment the temporary is destroyed, painting
-        // freed heap — visible as corrupted text that shifts as redraws churn memory.
-        const std::string shown =
-            control.display_value.empty() && !control.editing
-                ? std::string("(default)")
-                : text_renderer_.TruncateToWidth(control.display_value, avail);
+        // shown_value + placeholder flag + caret offset are precomputed in the view
+        // model (TD-2026-07-17A-007), so render neither builds "(default)" nor
+        // truncates/measures per paint.
         const SDL_Color text_color =
-            control.display_value.empty() && !control.editing ? theme_.text_disabled
-                                                              : theme_.text_primary;
+            control.value_is_placeholder ? theme_.text_disabled : theme_.text_primary;
         text_renderer_.DrawStringOn(renderer, text_x, text_y, text_color,
-                                    theme_.chrome_background, shown);
+                                    theme_.chrome_background, control.shown_value);
         if (control.editing) {
-          // Static caret bar at the editor caret offset (measured in the render TU).
-          const std::size_t caret = std::min(control.edit_caret, control.display_value.size());
-          const float caret_x =
-              text_x + text_renderer_.MeasureWidth(control.display_value.substr(0, caret));
+          // Static caret bar at the editor caret offset (measured in the builder).
+          const float caret_x = text_x + control.caret_offset_x;
           const SDL_FRect caret_rect =
               MakeRect(std::min(caret_x, control.value_rect.x + control.value_rect.w - 2.0f),
                        control.value_rect.y + 3.0f, 1.5f, control.value_rect.h - 6.0f);

@@ -533,6 +533,56 @@ void TestSettingsOverlayFontPickerBuildsScrollbarOnOverflow() {
          "a mid-list window reports families both above and below");
 }
 
+// TD-2026-07-17A-007: the render TU consumes precomputed control fields — the
+// truncated/placeholder value string and the caret offset — instead of building
+// "(default)" and truncating/measuring per paint.
+void TestSettingsOverlayControlValueIsPrecomputed() {
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+  TextRenderer text_renderer;
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
+                                    LayoutModeInputs{}, true);
+
+  SettingsOverlayService service;
+  service.OpenSettings();
+
+  SettingsOverlayRow empty_text_row;
+  empty_text_row.id = "editor.font_family";
+  empty_text_row.label = "Font Family";
+  empty_text_row.control_kind = microide::workspace::SettingsControlKind::TextEdit;
+  empty_text_row.editable = true;
+
+  SettingsOverlayRow segmented_row;
+  segmented_row.id = "editor.line_endings";
+  segmented_row.label = "Line Endings";
+  segmented_row.value = "lf";
+  segmented_row.value_display = "LF";
+  segmented_row.control_kind = microide::workspace::SettingsControlKind::Segmented;
+
+  service.RebuildSettingsRows({}, {}, {}, {empty_text_row, segmented_row});
+  service.SetSelectedCategory(0);
+
+  const auto vm = builder.BuildSettingsOverlay(layout, service, text_renderer);
+  const SettingsRowViewModel* text_vm = nullptr;
+  const SettingsRowViewModel* seg_vm = nullptr;
+  for (const SettingsRowViewModel& row : vm.rows) {
+    if (row.id == "editor.font_family") {
+      text_vm = &row;
+    } else if (row.id == "editor.line_endings") {
+      seg_vm = &row;
+    }
+  }
+  Expect(text_vm != nullptr && seg_vm != nullptr, "both settings rows should be built");
+  Expect(text_vm->control.value_is_placeholder,
+         "an empty non-editing TextEdit reports the default placeholder");
+  Expect(text_vm->control.shown_value == "(default)",
+         "the placeholder string is precomputed in the view model");
+  Expect(!seg_vm->control.value_is_placeholder,
+         "a segmented control with a value is not a placeholder");
+  Expect(seg_vm->control.shown_value == "LF",
+         "the segmented value is precomputed (fits, so untruncated)");
+}
+
 // The left-rail category list can hold more sections than fit the pane height (this
 // is what previously clipped the last-derived "LSP" category off-screen). The builder
 // must expose a category scroll model — a positive max scroll, a left-rail scrollbar,
@@ -756,6 +806,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestSettingsOverlaySectionHeaderAndSubsections);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFontPickerBuildsScrollbarOnOverflow",
           TestSettingsOverlayFontPickerBuildsScrollbarOnOverflow);
+  AddTest(tests, "RenderViewModelBuilder/SettingsOverlayControlValueIsPrecomputed",
+          TestSettingsOverlayControlValueIsPrecomputed);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayWrapsLongDescriptions",
           TestSettingsOverlayWrapsLongDescriptions);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewIsRegistrySourcedWithRecents",
