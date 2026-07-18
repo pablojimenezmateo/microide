@@ -229,6 +229,10 @@ struct SettingsRowViewModel {
   std::string_view scope_help;    // hover tooltip explaining the scope chip
   bool scope_is_project = false;  // true when a per-project override is active
   int row_in_category = 0;
+  // Scroll-independent total vertical advance of this row (row height plus any
+  // reserved sub-header strip above it). Lets keyboard keep-visible compute the
+  // scroll target directly from a single build (TD-2026-07-17A-079).
+  float advance_height = 0.0f;
   bool selected = false;
   bool resettable = false;
 };

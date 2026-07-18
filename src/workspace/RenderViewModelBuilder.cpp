@@ -1424,6 +1424,10 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     rvm.row_rect.h = row_h;
     // The row advances by its own height plus any reserved sub-header strip above it;
     // row_rect stays the clickable setting row (excludes the sub-header line).
+    // advance_height is the scroll-independent per-row advance, exposed so keyboard
+    // keep-visible can compute the scroll target in one pass instead of rebuilding
+    // the whole overlay per candidate scroll step (TD-2026-07-17A-079).
+    rvm.advance_height = row_h + subheader_h;
     heights.push_back(row_h + subheader_h);
     natural_y += row_h + subheader_h;
     vm.rows.push_back(std::move(rvm));

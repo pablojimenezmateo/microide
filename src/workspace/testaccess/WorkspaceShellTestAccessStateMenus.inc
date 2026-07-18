@@ -651,6 +651,39 @@
   static void SetSettingsOverlayCategory(WorkspaceShell& shell, int category) {
     shell.settings_overlay_service_.SetSelectedCategory(category);
   }
+  static void SetSettingsOverlaySelectedRow(WorkspaceShell& shell, int row) {
+    shell.settings_overlay_service_.SetSelectedRow(row);
+  }
+  static void SetSettingsOverlayScrollRow(WorkspaceShell& shell, int row) {
+    shell.settings_overlay_service_.SetScrollRow(row);
+  }
+  static std::size_t SettingsOverlayRowCountInSelectedCategory(const WorkspaceShell& shell) {
+    return shell.settings_overlay_service_.RowCountInSelectedCategory();
+  }
+  static void EnsureSettingsSelectionVisible(WorkspaceShell& shell) {
+    shell.EnsureSettingsSelectionVisible();
+  }
+  // Builds the settings overlay view model once and reports whether the selected
+  // row is fully within the right pane (bottom not clipped). Used to assert the
+  // keyboard keep-visible scroll target.
+  static bool SettingsOverlaySelectedRowFullyVisible(WorkspaceShell& shell) {
+    const auto layout = shell.CurrentWorkspaceLayout();
+    if (!layout.has_value()) {
+      return false;
+    }
+    const SettingsOverlayViewModel vm =
+        RenderViewModelBuilder(shell.context_)
+            .BuildSettingsOverlay(*layout, shell.settings_overlay_service_, shell.text_renderer_);
+    const int selected = shell.settings_overlay_service_.SelectedRow();
+    const float pane_bottom = vm.right_pane_rect.y + vm.right_pane_rect.h;
+    for (const SettingsRowViewModel& row : vm.rows) {
+      if (row.row_in_category == selected) {
+        return row.row_rect.y >= vm.right_pane_rect.y - 0.5f &&
+               row.row_rect.y + row.row_rect.h <= pane_bottom + 0.5f;
+      }
+    }
+    return false;
+  }
   static void SetSettingsOverlayQueryAndRefresh(WorkspaceShell& shell, std::string query) {
     shell.settings_overlay_service_.SetQuery(std::move(query));
     shell.RefreshSettingsOverlayCatalog();

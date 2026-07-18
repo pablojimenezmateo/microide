@@ -2291,6 +2291,45 @@ void TestWorkspaceShellTabSwitchDefersLspHydration() {
          "the post-present drain must consume the scheduled LSP hydration");
 }
 
+// TD-2026-07-17A-079: keyboard keep-visible computes the scroll target from a
+// single overlay build (per-row advance heights) instead of rebuilding the whole
+// overlay up to 513 times per keystroke. Selecting the last row must still scroll it
+// fully into view; selecting the first row must scroll back to the top.
+void TestWorkspaceShellSettingsKeepSelectionVisibleScrollsToRow() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "file.txt", "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  // A short canvas so the settings pane holds only a few rows and a bottom selection
+  // is guaranteed to start off-screen at scroll 0.
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 420);
+  WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
+  WorkspaceShellTestAccess::SetSettingsOverlayCategory(shell, 0);
+
+  const std::size_t rows =
+      WorkspaceShellTestAccess::SettingsOverlayRowCountInSelectedCategory(shell);
+  Expect(rows > 1, "the first settings category should have multiple rows");
+
+  const int last_row = static_cast<int>(rows) - 1;
+  WorkspaceShellTestAccess::SetSettingsOverlaySelectedRow(shell, last_row);
+  WorkspaceShellTestAccess::SetSettingsOverlayScrollRow(shell, 0);
+  WorkspaceShellTestAccess::EnsureSettingsSelectionVisible(shell);
+  Expect(WorkspaceShellTestAccess::SettingsOverlayScrollRow(shell) > 0,
+         "keeping the last row visible must scroll down from the top");
+  Expect(WorkspaceShellTestAccess::SettingsOverlaySelectedRowFullyVisible(shell),
+         "the selected last row must be fully within the settings pane after keep-visible");
+
+  // Selecting the first row scrolls back to the top.
+  WorkspaceShellTestAccess::SetSettingsOverlaySelectedRow(shell, 0);
+  WorkspaceShellTestAccess::EnsureSettingsSelectionVisible(shell);
+  Expect(WorkspaceShellTestAccess::SettingsOverlayScrollRow(shell) == 0,
+         "selecting the first row scrolls the settings pane to the top");
+  Expect(WorkspaceShellTestAccess::SettingsOverlaySelectedRowFullyVisible(shell),
+         "the first row is fully visible at the top of the pane");
+}
+
 }  // namespace
 
 // Regression: a left-click in a horizontally-scrolled (non-soft-wrapped) editor must
@@ -2338,6 +2377,8 @@ void TestWorkspaceShellEditorClickHonorsHorizontalScroll() {
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TabSwitchDefersLspHydration",
           TestWorkspaceShellTabSwitchDefersLspHydration);
+  AddTest(tests, "WorkspaceShell/SettingsKeepSelectionVisibleScrollsToRow",
+          TestWorkspaceShellSettingsKeepSelectionVisibleScrollsToRow);
   AddTest(tests, "WorkspaceShell/EditorClickHonorsHorizontalScroll",
           TestWorkspaceShellEditorClickHonorsHorizontalScroll);
   AddTest(tests, "WorkspaceShell/ColorschemeChangeRequestsRepaint",

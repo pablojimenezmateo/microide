@@ -754,29 +754,42 @@ void WorkspaceShell::EnsureSettingsSelectionVisible() {
   if (selected < settings_overlay_service_.ScrollRow()) {
     settings_overlay_service_.SetScrollRow(selected);
   }
-  // Rows are variable-height, so step the scroll down until the selected row's
-  // bottom is inside the pane. The builder positions every row exactly, so each
-  // check is precise; the loop is bounded and runs only on keyboard navigation.
-  for (int guard = 0; guard <= 512; ++guard) {
-    const SettingsOverlayViewModel vm = RenderViewModelBuilder(context_).BuildSettingsOverlay(
-        *layout_state, settings_overlay_service_, text_renderer_);
-    const float pane_bottom = vm.right_pane_rect.y + vm.right_pane_rect.h;
-    const SettingsRowViewModel* row = nullptr;
-    for (const SettingsRowViewModel& candidate : vm.rows) {
-      if (candidate.row_in_category == selected) {
-        row = &candidate;
-        break;
-      }
-    }
-    if (row == nullptr) {
+  // Rows are variable-height. Rather than rebuild the whole overlay view model once
+  // per candidate scroll step (previously up to 513 full rebuilds per keystroke),
+  // build it once and compute the scroll target directly from the per-row advance
+  // heights: find the smallest first-row index whose cumulative height from there to
+  // the selected row still fits the pane (trailing-fit from the selection).
+  // TD-2026-07-17A-079.
+  const SettingsOverlayViewModel vm = RenderViewModelBuilder(context_).BuildSettingsOverlay(
+      *layout_state, settings_overlay_service_, text_renderer_);
+  std::size_t selected_index = vm.rows.size();
+  for (std::size_t i = 0; i < vm.rows.size(); ++i) {
+    if (vm.rows[i].row_in_category == selected) {
+      selected_index = i;
       break;
     }
-    const bool below = row->row_rect.y + row->row_rect.h > pane_bottom + 0.5f;
-    if (!below || vm.scroll_row >= vm.max_scroll) {
-      break;
-    }
-    settings_overlay_service_.SetScrollRow(vm.scroll_row + 1);
   }
+  if (selected_index == vm.rows.size()) {
+    return;
+  }
+  const float pane_h = vm.right_pane_rect.h;
+  // Accumulate row advances upward from the selection until the pane no longer fits;
+  // the last index that still fit is the minimal scroll that keeps the selection's
+  // bottom visible.
+  float acc = 0.0f;
+  int target_scroll = static_cast<int>(selected_index);
+  for (int i = static_cast<int>(selected_index); i >= 0; --i) {
+    acc += vm.rows[static_cast<std::size_t>(i)].advance_height;
+    if (acc > pane_h) {
+      break;
+    }
+    target_scroll = i;
+  }
+  // The old loop only ever scrolled down (SetScrollRow(scroll + 1) until visible), so
+  // never reduce below the current scroll here; the scroll-up-above case was handled
+  // above. Clamp to the valid range.
+  const int scroll = std::clamp(std::max(vm.scroll_row, target_scroll), 0, vm.max_scroll);
+  settings_overlay_service_.SetScrollRow(scroll);
 }
 
 void WorkspaceShell::OpenSettingsOverlay() {
