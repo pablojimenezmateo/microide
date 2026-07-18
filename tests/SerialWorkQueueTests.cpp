@@ -287,6 +287,133 @@ void TestDrainQuiescesButKeepsWorkerUsable() {
          "the worker is still usable after Drain (not permanently stopped)");
 }
 
+// TD-2026-07-17A-074: PostLatest dedup is now O(1) via a key->node index rather
+// than a full-queue scan+erase. This pins the observable contract the index must
+// preserve: distinct keys each keep their own latest, and the survivor per key is
+// the last-posted closure, with plain FIFO Post()s enqueued between two same-key
+// PostLatest calls still running in order (append-at-tail, not replace-in-place).
+void TestPostLatestKeyedDedupIsPerKeyAndOrdered() {
+  SerialWorkQueue queue(SerialWorkQueue::StartMode::kEager);
+  std::mutex mutex;
+  std::atomic<bool> release{false};
+  std::vector<std::string> order;
+
+  queue.Post([&release]() {
+    while (!release.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  });
+  // Interleave two dedup keys and a plain Post. Only the latest per key survives;
+  // the plain Post enqueued before the second "a" must still run before it.
+  queue.PostLatest("a", [&mutex, &order]() {
+    std::lock_guard lock(mutex);
+    order.push_back("a1");
+  });
+  queue.PostLatest("b", [&mutex, &order]() {
+    std::lock_guard lock(mutex);
+    order.push_back("b1");
+  });
+  queue.Post([&mutex, &order]() {
+    std::lock_guard lock(mutex);
+    order.push_back("plain");
+  });
+  queue.PostLatest("a", [&mutex, &order]() {
+    std::lock_guard lock(mutex);
+    order.push_back("a2");
+  });
+  release.store(true);
+
+  Expect(WaitFor([&mutex, &order]() {
+           std::lock_guard lock(mutex);
+           return order.size() == 3;
+         }),
+         "one job per key plus the plain job run");
+  std::lock_guard lock(mutex);
+  // b1 (posted first, never superseded) runs first; the plain Post keeps its slot
+  // ahead of the re-appended a2; a1 was dropped by the second "a".
+  Expect(order[0] == "b1", "the un-superseded key keeps its original position");
+  Expect(order[1] == "plain", "a plain Post stays ahead of a later same-key PostLatest");
+  Expect(order[2] == "a2", "a superseded key re-appends its latest at the tail");
+}
+
+// The depth budget sheds only jobs a caller marks kDroppable, and sheds the
+// OLDEST droppable job first, so admitting new work holds the queue near max_depth
+// without ever losing a critical (default) job. Hooks stay balanced across sheds.
+void TestDepthBudgetShedsOldestDroppableOnly() {
+  std::atomic<int> enqueued{0};
+  std::atomic<int> completed{0};
+  SerialWorkQueue::Hooks hooks{
+      .on_enqueue = [&enqueued]() { enqueued.fetch_add(1); },
+      .on_complete = [&completed]() { completed.fetch_add(1); },
+  };
+  SerialWorkQueue queue(SerialWorkQueue::StartMode::kEager, std::move(hooks),
+                        SerialWorkQueue::Limits{3});
+  std::mutex mutex;
+  std::atomic<bool> gate_started{false};
+  std::atomic<bool> release{false};
+  std::vector<int> ran;
+
+  // In-flight gate so everything else piles up behind it (depth counts only queued
+  // jobs; the gate is dequeued and running, not queued). Wait until it is genuinely
+  // running so the queued-depth arithmetic below is deterministic.
+  queue.Post([&gate_started, &release]() {
+    gate_started.store(true);
+    while (!release.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  });
+  Expect(WaitFor([&gate_started]() { return gate_started.load(); }),
+         "gate job is in-flight before the budget fills");
+  // Fill to budget with droppable jobs 0,1,2, then admit two more droppable (3,4):
+  // each admit at capacity sheds the oldest droppable, so 0 and 1 are shed.
+  for (int i = 0; i < 5; ++i) {
+    queue.Post([&mutex, &ran, i]() {
+      std::lock_guard lock(mutex);
+      ran.push_back(i);
+    }, SerialWorkQueue::Shedding::kDroppable);
+  }
+  // A critical job admitted at capacity sheds the oldest droppable (2), never
+  // itself, so it must run.
+  std::atomic<bool> critical_ran{false};
+  queue.Post([&critical_ran]() { critical_ran.store(true); },
+             SerialWorkQueue::Shedding::kCritical);
+
+  release.store(true);
+  Expect(WaitFor([&critical_ran]() { return critical_ran.load(); }),
+         "a critical job is never shed and runs");
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+  std::lock_guard lock(mutex);
+  // Survivors are the newest droppables 3 and 4 (0,1 shed by 3,4; 2 shed by the
+  // critical job). Oldest-first shedding keeps the latest speculative work.
+  Expect(ran.size() == 2, "the depth budget shed the older droppable jobs");
+  Expect(ran[0] == 3 && ran[1] == 4, "shedding drops the OLDEST droppable jobs first");
+  Expect(enqueued.load() == completed.load(),
+         "on_complete fires once per admitted job even when shed under the budget");
+}
+
+// A queue saturated with CRITICAL jobs exceeds max_depth rather than dropping any:
+// losing a critical job (a WorkspaceEdit apply / save participant) is a
+// correctness bug, so the budget is best-effort against critical work.
+void TestDepthBudgetNeverShedsCriticalWork() {
+  SerialWorkQueue queue(SerialWorkQueue::StartMode::kEager, {}, SerialWorkQueue::Limits{2});
+  std::mutex mutex;
+  std::atomic<bool> release{false};
+  std::atomic<int> ran{0};
+
+  queue.Post([&release]() {
+    while (!release.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  });
+  for (int i = 0; i < 6; ++i) {
+    queue.Post([&ran]() { ran.fetch_add(1); });  // critical (default)
+  }
+  release.store(true);
+  Expect(WaitFor([&ran]() { return ran.load() == 6; }),
+         "every critical job runs even past the depth budget");
+}
+
 }  // namespace
 
 void RegisterSerialWorkQueueTests(std::vector<TestCase>& tests) {
@@ -304,6 +431,12 @@ void RegisterSerialWorkQueueTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SerialWorkQueue/ThrowingJobDoesNotKillWorker", TestThrowingJobDoesNotKillWorker);
   AddTest(tests, "SerialWorkQueue/DrainQuiescesButKeepsWorkerUsable",
           TestDrainQuiescesButKeepsWorkerUsable);
+  AddTest(tests, "SerialWorkQueue/PostLatestKeyedDedupIsPerKeyAndOrdered",
+          TestPostLatestKeyedDedupIsPerKeyAndOrdered);
+  AddTest(tests, "SerialWorkQueue/DepthBudgetShedsOldestDroppableOnly",
+          TestDepthBudgetShedsOldestDroppableOnly);
+  AddTest(tests, "SerialWorkQueue/DepthBudgetNeverShedsCriticalWork",
+          TestDepthBudgetNeverShedsCriticalWork);
 }
 
 }  // namespace microide::tests

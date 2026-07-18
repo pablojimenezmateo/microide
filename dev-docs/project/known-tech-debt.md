@@ -136,9 +136,10 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > **Cluster 2 (bounded resources) + cluster 7 (protocol/session lifecycle) burndown, 2026-07-18.**
 > Landed the remaining bounded-resource + lifecycle items one commit each (full 24-shard suite +
 > ASAN + UBSAN + TSAN all GREEN): **018, 038, 043, 057, 071, 095, 097, 099, 107, 118** (cluster 2)
-> and **030, 082, 083, 100, 115, 130** (cluster 7), plus **041** (batch-review open cap). Only
-> **074** (serial-work-queue depth/dedupe) remains from cluster 2 — DEFERRED as a data-structure
-> pass (O(1) dedup can't bolt onto the deque; a drop policy is unsafe for critical jobs). The only
+> and **030, 082, 083, 100, 115, 130** (cluster 7), plus **041** (batch-review open cap).
+> **074** (serial-work-queue depth/dedupe) is now **RESOLVED 2026-07-18** as its own data-structure
+> pass (`std::list` + key->node index ⇒ O(1) `PostLatest`; opt-in `max_depth` budget that only sheds
+> caller-marked droppable jobs, never critical ones). The only
 > other still-open addendum items are the multi-file/data-structure DEFERRALS **015/016** (LSP
 > bulk-sync before/after-snapshot refactor), **022** (soft-wrap `TextLayoutCache` piece/range
 > rewrite), **004** (folding refresh from prep) and the platform WON'T-DO **104/133/134** (Windows).
@@ -188,8 +189,8 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 1. **Off-UI-thread / async** (Standing #1): **fully RESOLVED 2026-07-18** — 005 (`TaskExecutor` latest-only keyed submit + blame coalescing), 024 (`util::ReadFileLineWindow` bounded reference-snippet reader + live-buffer reuse), 033 (tab-activation LSP hydration deferred to post-present drain + tightened lint), 108 (plugin syntax fingerprint/load moved to the plugin worker; only the registry swap stays main-thread, generation-guarded).
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test) —
->    **focus pass 2/9 all-but-one RESOLVED 2026-07-18**. Remaining: **074 DEFERRED**
->    (serial-work-queue depth/dedupe — data-structure pass, see its entry). RESOLVED this pass:
+>    **focus pass 2/9 fully RESOLVED 2026-07-18** (074 — serial-work-queue depth/dedupe — landed
+>    as its own data-structure pass; see its entry). RESOLVED this pass:
 >    018 (main-thread mailbox coalescing), 038 (control-spec section caps), 043 (raster in-flight
 >    encoded-byte budget), 057 (code-action inline-edit aggregate budget), 071 (LSP/DAP outbound
 >    retained-byte budget), 095 (control query item budget), 097 (merge-save hunk-choice cap), 099
@@ -1344,26 +1345,26 @@ speed-path items first, then the correctness/lifecycle cleanups.
   repeated runs grow retained history and make `TestResults(id)` scan ever more stale rows. Keep a
   `test_id -> item_index` map for O(1) discovery upserts/bulk replace, and either cap per-test history
   or store latest results separately from an explicit bounded history surface.
-- **[DEFERRED — data-structure pass] TD-2026-07-17A-074 — shared serial work queues have no queue-depth budget and dedupe is linear.**
-  Analyzed 2026-07-18 and deferred as a dedicated pass, not a drop-in: (1) a depth-budget that
-  *drops* jobs is unsafe here — this queue backs plugin-worker traffic and the project background
-  executor, where a dropped non-keyed job (e.g. a WorkspaceEdit apply, a save participant) is a
-  correctness loss, so a drop policy needs per-caller opt-in classification. (2) O(1) `PostLatest`
-  dedup can't be a `std::deque` + key-map bolt-on: erasing a superseded job from the middle of a
-  deque is O(n) regardless of how fast it's found, and a mark-cancelled-instead-of-erase scheme
-  interacts subtly with the existing `Cancel()`/`Drain()`/`Shutdown()` "mark all cancelled, drain
-  later" semantics (a keyed job can be cancelled-but-queued, breaking a naive per-key live-set),
-  so correct amortized-O(1) needs an intrusive list + tombstone compaction with its own TSAN
-  verification. Not worth destabilizing a load-bearing concurrency primitive for a latent,
-  practically-bounded cost; scheduled as its own reviewed change.
-  `util::SerialWorkQueue::Post`/`PostFront` admit every job, and `PostLatest` dedupes by scanning and
-  erasing the whole `queue_` under `mutex_` before pushing the replacement. That is fine for a few
-  requests, but the same queue implementation backs plugin worker traffic and the project background
-  executor: a burst of distinct keyed queries, commands that intentionally use no dedup key, or multiple
-  subsystems posting while one slow job runs can retain unbounded closures and make subsequent
-  `PostLatest` submissions O(queue_depth). Add an approximate queue-depth/retained-byte policy per
-  queue owner and maintain a key index (or per-key replace slot) so high-frequency latest-only traffic
-  stays O(1) instead of degrading under the backlog it is supposed to collapse.
+- **[RESOLVED 2026-07-18 — data-structure pass] TD-2026-07-17A-074 — shared serial work queues have no queue-depth budget and dedupe is linear.**
+  Fixed: `util::SerialWorkQueue` now backs its FIFO with a `std::list<Job>` (stable iterators,
+  O(1) erase-given-iterator) plus a `std::unordered_map<key, node-iterator>` index, so `PostLatest`
+  finds and drops the superseded same-key job in O(1) via `try_emplace` instead of scanning +
+  erasing the whole queue. The replacement is still appended at the TAIL (not replaced in place),
+  preserving the ordering contract item 078 relies on — a plain `Post` enqueued between two same-key
+  `PostLatest` calls stays ahead of the later one. The index is kept in lockstep with the queue on
+  every mutating path: superseded/popped nodes leave it (worker-pop uses an iterator-identity check
+  so a re-mapped key after a `Cancel` survives), and `Cancel`/`Drain`/`Shutdown` clear it (every
+  queued node became cancelled, so none is a live dedup target). Backpressure is now available as an
+  opt-in `Limits::max_depth` budget with a per-job `Shedding{kCritical,kDroppable}` classification:
+  when at budget, admitting any job first sheds the OLDEST *droppable* queued job, and a critical job
+  (the default) is NEVER shed — a dropped WorkspaceEdit apply / save participant would be a
+  correctness loss, so the budget is best-effort against critical work. Defaults (`max_depth == 0`,
+  `kCritical`) reproduce the previous behavior exactly, so no production caller changed. Hooks stay
+  balanced (`on_complete` fires once per admitted job) across dedup-drops and sheds. Regressions:
+  `SerialWorkQueue/PostLatestKeyedDedupIsPerKeyAndOrdered`,
+  `SerialWorkQueue/DepthBudgetShedsOldestDroppableOnly`,
+  `SerialWorkQueue/DepthBudgetNeverShedsCriticalWork` (plus the existing hook-balance / FIFO /
+  collapse coverage still green under the new structure).
 - **[RESOLVED 2026-07-18 — focus pass 6/9] TD-2026-07-17A-075 — commit draft edits serialize the whole body on every refresh/persist.**
   Fixed: `CommitWorkflowState::BodyText()` memoizes the serialized body against the body
   viewport's `content_revision` (bumped on every content edit), so a precheck +

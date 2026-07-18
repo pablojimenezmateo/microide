@@ -1,6 +1,5 @@
 #include "util/SerialWorkQueue.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <exception>
@@ -9,7 +8,8 @@
 
 namespace microide::util {
 
-SerialWorkQueue::SerialWorkQueue(StartMode start_mode, Hooks hooks) : hooks_(std::move(hooks)) {
+SerialWorkQueue::SerialWorkQueue(StartMode start_mode, Hooks hooks, Limits limits)
+    : hooks_(std::move(hooks)), limits_(limits) {
   if (start_mode == StartMode::kEager) {
     EnsureStarted();
   }
@@ -30,7 +30,38 @@ void SerialWorkQueue::EnsureStartedLocked() {
   started_.store(true, std::memory_order_release);
 }
 
-void SerialWorkQueue::Post(std::function<void()> task) {
+void SerialWorkQueue::EraseQueuedLocked(JobIter it) {
+  if (!it->key.empty()) {
+    // Only drop the index entry when it still names THIS node — a later PostLatest
+    // (e.g. after a Cancel cleared the index) may have re-pointed the key at a
+    // newer node that must survive.
+    if (const auto mit = keyed_index_.find(it->key);
+        mit != keyed_index_.end() && mit->second == it) {
+      keyed_index_.erase(mit);
+    }
+  }
+  queue_.erase(it);
+  if (hooks_.on_complete) {
+    hooks_.on_complete();
+  }
+}
+
+void SerialWorkQueue::ShedIfOverBudgetLocked() {
+  if (limits_.max_depth == 0 || queue_.size() < limits_.max_depth) {
+    return;
+  }
+  // Shed the oldest droppable, still-live job. Critical jobs are never shed, so a
+  // queue saturated with critical work simply exceeds the budget rather than
+  // losing correctness-bearing work.
+  for (auto it = queue_.begin(); it != queue_.end(); ++it) {
+    if (it->droppable && !it->cancelled) {
+      EraseQueuedLocked(it);
+      return;
+    }
+  }
+}
+
+void SerialWorkQueue::Post(std::function<void()> task, Shedding shedding) {
   {
     std::lock_guard lock(mutex_);
     if (stop_) {
@@ -40,10 +71,12 @@ void SerialWorkQueue::Post(std::function<void()> task) {
     // a caller can default-construct + Post without a separate EnsureStarted() and
     // still have the job run (rather than sit forever in an unstarted queue).
     EnsureStartedLocked();
+    ShedIfOverBudgetLocked();
     if (hooks_.on_enqueue) {
       hooks_.on_enqueue();
     }
-    queue_.push_back(Job{.key = {}, .task = std::move(task), .cancelled = false});
+    queue_.push_back(
+        Job{.key = {}, .task = std::move(task), .droppable = shedding == Shedding::kDroppable});
   }
   cv_.notify_one();
 }
@@ -55,38 +88,40 @@ void SerialWorkQueue::PostFront(std::function<void()> task) {
       return;
     }
     EnsureStartedLocked();
+    ShedIfOverBudgetLocked();
     if (hooks_.on_enqueue) {
       hooks_.on_enqueue();
     }
-    queue_.push_front(Job{.key = {}, .task = std::move(task), .cancelled = false});
+    queue_.push_front(Job{.key = {}, .task = std::move(task)});
   }
   cv_.notify_one();
 }
 
-void SerialWorkQueue::PostLatest(std::string key, std::function<void()> task) {
+void SerialWorkQueue::PostLatest(std::string key, std::function<void()> task, Shedding shedding) {
   {
     std::lock_guard lock(mutex_);
     if (stop_) {
       return;
     }
     EnsureStartedLocked();
-    // Drop superseded (queued, not cancelled, same key) jobs and balance their
-    // enqueue hooks so the in-flight accounting stays exact.
-    const std::size_t before = queue_.size();
-    queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
-                                [&key](const Job& job) {
-                                  return !job.cancelled && job.key == key;
-                                }),
-                 queue_.end());
-    if (hooks_.on_complete) {
-      for (std::size_t i = before - queue_.size(); i > 0; --i) {
+    // O(1) dedup: find (or reserve) the key's slot. If a live job with this key is
+    // already queued, drop it (balancing its on_complete) so only the latest work
+    // for this key runs; the replacement is appended at the tail below.
+    auto [map_it, inserted] = keyed_index_.try_emplace(key);
+    if (!inserted) {
+      queue_.erase(map_it->second);
+      if (hooks_.on_complete) {
         hooks_.on_complete();
       }
     }
+    ShedIfOverBudgetLocked();
     if (hooks_.on_enqueue) {
       hooks_.on_enqueue();
     }
-    queue_.push_back(Job{.key = std::move(key), .task = std::move(task), .cancelled = false});
+    queue_.push_back(Job{.key = std::move(key),
+                         .task = std::move(task),
+                         .droppable = shedding == Shedding::kDroppable});
+    map_it->second = std::prev(queue_.end());
   }
   cv_.notify_one();
 }
@@ -96,6 +131,8 @@ void SerialWorkQueue::Cancel() {
   for (auto& job : queue_) {
     job.cancelled = true;
   }
+  // Every queued node is now cancelled, so none is a live dedup target.
+  ClearKeyIndexLocked();
 }
 
 void SerialWorkQueue::Drain() {
@@ -113,11 +150,13 @@ void SerialWorkQueue::Drain() {
         }
       }
       queue_.clear();
+      ClearKeyIndexLocked();
       return;
     }
     for (auto& job : queue_) {
       job.cancelled = true;
     }
+    ClearKeyIndexLocked();
     // Trailing, non-cancelled barrier: it runs after the current in-flight job and
     // all the now-skipped queued jobs, so its completion means the worker is idle.
     if (hooks_.on_enqueue) {
@@ -141,6 +180,7 @@ void SerialWorkQueue::Shutdown(std::chrono::milliseconds deadline) {
     for (auto& job : queue_) {
       job.cancelled = true;
     }
+    ClearKeyIndexLocked();
     stop_ = true;
   }
   cv_.notify_all();
@@ -159,6 +199,7 @@ void SerialWorkQueue::Shutdown(std::chrono::milliseconds deadline) {
       hooks_.on_complete();
     }
     queue_.clear();
+    ClearKeyIndexLocked();
   }
 }
 
@@ -174,7 +215,16 @@ void SerialWorkQueue::WorkerMain() {
       if (queue_.empty()) {
         continue;
       }
-      job = std::move(queue_.front());
+      // Drop the front node's key-index entry before popping it (only if the index
+      // still names this exact node — see EraseQueuedLocked's identity check).
+      const JobIter front = queue_.begin();
+      if (!front->key.empty()) {
+        if (const auto mit = keyed_index_.find(front->key);
+            mit != keyed_index_.end() && mit->second == front) {
+          keyed_index_.erase(mit);
+        }
+      }
+      job = std::move(*front);
       queue_.pop_front();
     }
     if (job.task && (!job.cancelled || job.run_even_if_cancelled)) {
