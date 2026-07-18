@@ -88,7 +88,6 @@ they land.
 
 1. **Async / off-thread hardening** — move blocking work off the shell/UI thread:
    compare/merge model build (047/19), LSP `WorkspaceEdit` apply (011/18), project
-   replace-all (21),
    save-participant /
    `process.run_async` worker capacity (016/017). **014 (POSIX terminal write deadline)
    RESOLVED 2026-07-18** — non-blocking buffered PTY writes drained off the reader thread.
@@ -2582,9 +2581,25 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
 - **TD-2026-07-16-19 — compare/merge/review open paths run git blob reads
   synchronously on the workspace thread.** Dedicated async pass. Overlaps
   **TD-2026-07-17-047**.
-- **TD-2026-07-16-21 — replace-all in project performs bulk file I/O synchronously on
-  the shell thread.** The pre-loop path-vector copy was removed
-  (**TD-2026-07-17-094**, fixed). **[PARTIAL 2026-07-17 — candidate-set reduction]**
+- **[RESOLVED 2026-07-18] TD-2026-07-16-21 / TD-2026-07-17-021 — replace-all in project performs bulk file I/O synchronously on
+  the shell thread.** The whole read/replace/buffer/atomic-write pass now runs on
+  `project_background_executor_`: `ReplaceAllProjectSearchMatches` gathers the target file
+  set (fast-path matched paths or the catalog snapshot, materialized by value) and a
+  main-thread snapshot of open-dirty file paths, then `PostLatest("project-replace-all")`
+  dispatches the pure `RunProjectReplace` worker (read → `ReplaceLiteralMatchesInText` →
+  buffer with the dirty-refusal + aggregate-cap aborts → atomic write). The
+  `ProjectReplaceOutcome` is marshalled back through `project_replace_mailbox_` (wake+drain
+  on `project_file_event_type_` / `ReloadProjectIfFilesChanged`) and applied on the main
+  thread by `ApplyProjectReplaceOutcome` (reload CLEAN tabs — a tab that went dirty
+  mid-flight keeps its edits — rebuild the index metadata batch, refresh tree/finder/git,
+  restart the search, report partial-write/abort status). Generation + root guards drop a
+  stale apply after a project switch or a newer replace. New regression:
+  `WorkspaceShell/ReplaceAllBlocksOnDirtyOpenFile`; the existing
+  `ReplaceAllReadsOnlyMatchedFiles` / `ReplaceAllFallsBackWhenResultsTruncated` /
+  `ReplaceAllAbortsWithFeedbackPastAggregateCap` now exercise the async path via a
+  barrier-drain seam. Shell member cap 1697→1700.
+  **[superseded history — PARTIAL 2026-07-17 — candidate-set reduction]** The pre-loop
+  path-vector copy was removed (**TD-2026-07-17-094**, fixed).
   Replace-all no longer re-reads and re-scans *every* file in the project to
   rediscover the match set: when the just-completed search's cached results provably
   cover all matches (finished, query unchanged, and neither truncated nor capped —
@@ -2599,8 +2614,7 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
   `WorkspaceShell/ReplaceAllReadsOnlyMatchedFiles` (fast path reads only the matched
   subset, via a control-refresh read-count subtraction) and
   `WorkspaceShell/ReplaceAllFallsBackWhenResultsTruncated` (>cap matches still all
-  rewritten). The full move to a cancellable background preflight/commit workflow
-  (off-thread writes with generation gating) remains deferred.
+  rewritten). The full off-thread move is the RESOLVED work described above.
 - **TD-2026-07-16-22 — plugin extension surfaces still expose raw `lua_State*` despite
   the LuaRuntime boundary spec.** Won't-do pending a dedicated plugin-API refactor;
   same Lua-safety family as **TD-2026-07-17-020/058**.

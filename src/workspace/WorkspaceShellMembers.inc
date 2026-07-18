@@ -1299,6 +1299,9 @@
   void CycleProjectSearchCaseMode();
   void ToggleProjectSearchHiddenFiles();
   void ReplaceAllProjectSearchMatches();
+  // Main-thread reconciliation of a completed off-thread replace-all (reload clean
+  // tabs, refresh index/tree/finder, report status). Generation/root-guarded.
+  void ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome);
   std::vector<int> BuildProjectSearchLineMap() const;
   int ProjectSearchLineForResult(std::size_t index) const;
   void MoveBufferSearchSelection(int delta);
@@ -2005,6 +2008,13 @@
   // ReloadProjectIfFilesChanged). The apply drops a scan whose project was switched
   // away (root mismatch). Keeps TD-2026-07-17-081/082 off the shell thread.
   util::MainThreadMailbox file_index_refresh_mailbox_;
+  // Off-thread project-wide replace-all (TD-2026-07-17-021 / TD-2026-07-16-21): the
+  // read/replace/buffer/atomic-write phases run on project_background_executor_; the
+  // outcome is applied on the main thread via this mailbox (wake + drain reuse
+  // project_file_event_type_ / ReloadProjectIfFilesChanged). The generation supersedes
+  // a stale apply after a newer replace, and the apply is dropped on a project switch.
+  util::MainThreadMailbox project_replace_mailbox_;
+  std::uint64_t project_replace_generation_ = 0;
   std::atomic<bool> file_index_initial_build_in_flight_{false};
   std::atomic<bool> project_file_event_pending_{false};
   WorkspacePluginRuntime plugin_runtime_;

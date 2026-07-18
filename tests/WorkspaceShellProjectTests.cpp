@@ -3499,6 +3499,41 @@ void TestWorkspaceShellReplaceAllAbortsWithFeedbackPastAggregateCap() {
          "an aborted replace-all must not have written any file");
 }
 
+// TD-2026-07-17-021: the off-thread replace-all still refuses to overwrite a file
+// that is open with unsaved edits — the dirty set is snapshotted on the main thread
+// before dispatch, and the background job aborts (no writes) when an affected file
+// is in it, surfacing a precise "save open changes" error on the main-thread apply.
+void TestWorkspaceShellReplaceAllBlocksOnDirtyOpenFile() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "needle\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "replace-all dirty-block fixture should open the project");
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("notes.txt"), true,
+                              std::chrono::milliseconds(1000)),
+         "replace-all dirty-block fixture should wait for file index initialization");
+
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "replace-all dirty-block fixture should complete search");
+
+  // Open the matched file and leave an unsaved edit in it.
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "precondition: the open matched file is dirty");
+
+  WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
+
+  Expect(!WorkspaceShellTestAccess::ProjectSearchError(shell).empty(),
+         "replace-all must surface an error when an affected file has unsaved edits");
+  Expect(ReadFile(source) == "needle\n",
+         "replace-all blocked by a dirty open file must not write that file");
+}
+
 // TD-2026-07-16-21 / TD-2026-07-17-021: replace-all used to re-read and re-scan
 // EVERY file in the project to rediscover the match set the just-completed search
 // already knew. When the cached results provably cover all matches, it must touch
@@ -3982,6 +4017,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch);
   AddTest(tests, "WorkspaceShell/ReplaceAllAbortsWithFeedbackPastAggregateCap",
           TestWorkspaceShellReplaceAllAbortsWithFeedbackPastAggregateCap);
+  AddTest(tests, "WorkspaceShell/ReplaceAllBlocksOnDirtyOpenFile",
+          TestWorkspaceShellReplaceAllBlocksOnDirtyOpenFile);
   AddTest(tests, "WorkspaceShell/ReplaceAllReadsOnlyMatchedFiles",
           TestWorkspaceShellReplaceAllReadsOnlyMatchedFiles);
   AddTest(tests, "WorkspaceShell/ReplaceAllFallsBackWhenResultsTruncated",

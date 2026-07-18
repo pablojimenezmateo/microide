@@ -280,6 +280,16 @@
   }
   static void ReplaceAllProjectSearchMatches(WorkspaceShell& shell) {
     shell.ReplaceAllProjectSearchMatches();
+    // Replace-all now runs the read/replace/atomic-write off the shell thread
+    // (TD-2026-07-17-021). Drive it to completion deterministically: barrier the
+    // background job (a trailing Post runs after it on the serial worker), then drain
+    // the mailbox so the outcome applies on this (main) thread. A no-op dispatch
+    // (nothing posted) simply leaves the mailbox empty.
+    std::promise<void> ran;
+    std::future<void> ran_future = ran.get_future();
+    shell.project_background_executor_.Post([&ran]() { ran.set_value(); });
+    ran_future.wait();
+    shell.project_replace_mailbox_.Drain();
   }
   static void SetReplaceAllAggregateCapBytes(WorkspaceShell& shell, std::size_t cap) {
     shell.replace_all_aggregate_cap_bytes_ = cap;

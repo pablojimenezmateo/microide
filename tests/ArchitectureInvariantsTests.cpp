@@ -193,8 +193,11 @@ void TestArchitectureFileSizes() {
              // file_index_refresh_mailbox_ + RequestFileIndexRefresh()/ApplyForcedFileIndexRefresh()
              // decls, so the whole-tree scan + per-file stat runs off the shell thread on manual
              // refresh / exclude edits and applies via the mailbox.
+             // 1700: +3 for TD-2026-07-17-021 off-thread project replace-all:
+             // project_replace_mailbox_ + project_replace_generation_ + ApplyProjectReplaceOutcome()
+             // decl, so the bulk read/replace/atomic-write runs off the shell thread.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1697);
+                                                     1700);
            });
 
   AssertRuleResultsPass(results);

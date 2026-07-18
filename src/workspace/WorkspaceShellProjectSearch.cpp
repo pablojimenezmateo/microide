@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <unordered_set>
 #include <vector>
 
 #include "workspace/WorkspaceProjectSearchPresentation.h"
@@ -14,6 +15,84 @@
 namespace microide::workspace {
 
 using project::kMaxProjectSearchResults;
+
+namespace {
+
+// Pure read/replace/buffer + atomic-write pass for a project-wide replace-all, run
+// on the background executor (touches only its arguments + the filesystem, never
+// shell state). Buffers every modified file's new content before committing any
+// write so an aggregate-cap or open-dirty-file abort leaves the tree untouched
+// (matching the old synchronous behaviour). TD-2026-07-17-021 / TD-2026-07-16-21.
+ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
+                                        const std::vector<std::filesystem::path>& files,
+                                        const std::unordered_set<std::string>& dirty_open,
+                                        const std::string& query,
+                                        const std::string& replace_text, bool case_sensitive,
+                                        std::size_t aggregate_cap_bytes) {
+  ProjectReplaceOutcome outcome;
+  struct Buffered {
+    std::filesystem::path relative_path;
+    std::filesystem::path absolute_path;
+    std::string content;
+    std::size_t replacements = 0;
+  };
+  std::vector<Buffered> pending;
+  std::size_t aggregate_bytes = 0;
+
+  for (const auto& relative_path : files) {
+    const std::filesystem::path absolute_path = (root / relative_path).lexically_normal();
+    std::string content;
+    // Same read cap as the finder/search: a file too large to search shows no
+    // matches, so replace-all must not silently rewrite it either.
+    if (!util::ReadFileForTextSearch(absolute_path, content)) {
+      continue;
+    }
+    const std::size_t replacements =
+        ReplaceLiteralMatchesInText(content, query, replace_text, case_sensitive);
+    if (replacements == 0) {
+      continue;
+    }
+    // Refuse to overwrite a file open with unsaved edits (snapshot taken on the main
+    // thread before dispatch). Abort the whole operation — no writes — as before.
+    if (dirty_open.count(absolute_path.string()) != 0) {
+      outcome.status = ProjectReplaceOutcome::Status::BlockedByDirty;
+      outcome.blocked_relative_path = relative_path.generic_string();
+      return outcome;
+    }
+    aggregate_bytes += content.size();
+    if (aggregate_bytes > aggregate_cap_bytes) {
+      outcome.status = ProjectReplaceOutcome::Status::CapExceeded;
+      return outcome;
+    }
+    pending.push_back(Buffered{.relative_path = relative_path,
+                               .absolute_path = absolute_path,
+                               .content = std::move(content),
+                               .replacements = replacements});
+  }
+
+  if (pending.empty()) {
+    outcome.status = ProjectReplaceOutcome::Status::NothingToDo;
+    return outcome;
+  }
+
+  outcome.status = ProjectReplaceOutcome::Status::Applied;
+  outcome.written.reserve(pending.size());
+  for (auto& buffered : pending) {
+    // Atomic temp-file + rename: a failed write leaves the original intact. Keep
+    // going and collect failures rather than leaving a partial half-applied set.
+    if (!util::WriteTextFileAtomically(buffered.absolute_path, buffered.content)) {
+      ++outcome.failed_write_count;
+      continue;
+    }
+    outcome.written.push_back(ProjectReplaceOutcome::WrittenFile{
+        .relative_path = std::move(buffered.relative_path),
+        .absolute_path = std::move(buffered.absolute_path),
+        .replacements = buffered.replacements});
+  }
+  return outcome;
+}
+
+}  // namespace
 
 void WorkspaceShell::RefreshProjectSearch() {
   StopProjectSearch();
@@ -350,165 +429,115 @@ void WorkspaceShell::ToggleProjectSearchHiddenFiles() {
 }
 
 void WorkspaceShell::ReplaceAllProjectSearchMatches() {
-  if (context_.current_project_state.overlay.workflow.project_search.query.text().empty()) {
+  ProjectSearchState& ps = context_.current_project_state.overlay.workflow.project_search;
+  if (ps.query.text().empty() || !ProjectSearchCanReplaceAll()) {
     return;
   }
-
-  if (!ProjectSearchCanReplaceAll()) {
-    return;
-  }
-
   // Clear any prior abort/search error so it does not linger past a fresh run.
-  context_.current_project_state.overlay.workflow.project_search.error.clear();
+  ps.error.clear();
 
-  const bool case_sensitive = ProjectSearchReplaceCaseSensitive();
-  struct PendingProjectReplace {
-    std::filesystem::path relative_path;
-    std::filesystem::path absolute_path;
-    std::string content;
-    std::size_t replacements = 0;
-  };
-
-  std::vector<PendingProjectReplace> pending;
-
-  // Replace-all validates all target files (no dirty open tab) before committing
-  // any write, so it must buffer the modified contents. Bound that aggregate: a
-  // project with many large matching files would otherwise hold multiple GB of
-  // new content at once -> OOM. Above the ceiling we abort the whole operation
-  // (no writes), consistent with the other pre-commit abort paths here.
-  const std::size_t kMaxAggregateReplaceBytes = replace_all_aggregate_cap_bytes_;
-  std::size_t aggregate_bytes = 0;
-
-  // Fast path: when the just-completed search's cached results provably cover every
-  // matching file, replace-all only needs to touch those files. Every other project
-  // file contains zero matches of the current query, so `ReplaceLiteralMatchesInText`
-  // would return 0 and skip it anyway -- re-reading and re-scanning the whole project
-  // (potentially thousands of files) to rediscover the same subset is pure wasted I/O
-  // on the shell thread. Eligibility requires the results to be authoritative and
-  // complete: the search finished (`!running`), still describes the current query
-  // (`searched_query == query`), and was neither truncated nor capped (the worker
-  // flags `truncated` on any cap hit, and the consumer stops storing at
-  // `kMaxProjectSearchResults`, so a capped set silently omits whole files). Outside
-  // that window the cached results are an incomplete subset, so fall back to the
-  // authoritative whole-project scan below.
-  const ProjectSearchState& search_state =
-      context_.current_project_state.overlay.workflow.project_search;
-  const bool results_cover_all_matches =
-      !search_state.running && !search_state.truncated &&
-      search_state.results.size() < kMaxProjectSearchResults &&
-      search_state.searched_query == search_state.query.text();
-
-  std::vector<std::filesystem::path> matched_relative_paths;
-  if (results_cover_all_matches) {
-    // results are sorted by (file_index, line, column), so all matches for one file
-    // are adjacent; collapse to one relative path per file (results hold one entry
-    // per match).
-    matched_relative_paths.reserve(search_state.results.size());
-    for (const auto& result : search_state.results) {
-      if (matched_relative_paths.empty() ||
-          matched_relative_paths.back() != result.relative_path) {
-        matched_relative_paths.push_back(result.relative_path);
-      }
-    }
-  }
-
-  // TD-2026-07-17-094: use the shared-pointer snapshot rather than SnapshotPaths(),
-  // which deep-copies the entire catalog path vector on the shell thread before the
-  // per-file read/replace/write loop even starts. On large projects that copy alone
-  // froze the UI; SnapshotPathsWithVersion() hands back a SharedPathList (shared with
-  // the index cache) that we iterate without copying. Only materialized on the
-  // whole-project fallback -- the fast path above never scans the full catalog.
-  project::FilePathSnapshot path_snapshot;
-  if (!results_cover_all_matches) {
-    path_snapshot = context_.current_project_state.file_index.SnapshotPathsWithVersion(
-        search_state.options.show_hidden ? project::ProjectFileScanMode::IncludeHidden
-                                         : project::ProjectFileScanMode::ExcludeHidden);
-  }
-  static const std::vector<std::filesystem::path> kEmptyPaths;
-  const std::vector<std::filesystem::path>& files =
-      results_cover_all_matches ? matched_relative_paths
-      : path_snapshot.files     ? *path_snapshot.files
-                                : kEmptyPaths;
-  for (const auto& relative_path : files) {
-    const std::filesystem::path absolute_path = context_.current_project_state.root / relative_path;
-    const std::filesystem::path normalized_absolute = absolute_path.lexically_normal();
-
-    std::string updated_content;
-    // Uses the same search cap as the finder (default kMaxSearchFileBytes): a file
-    // too large to search shows no matches, so replace-all must not silently rewrite
-    // it either. Keeping both on one cap keeps replace scope aligned with results.
-    if (!util::ReadFileForTextSearch(absolute_path, updated_content)) {
-      continue;
-    }
-
-    const std::size_t replacements = ReplaceLiteralMatchesInText(
-        updated_content, context_.current_project_state.overlay.workflow.project_search.query.text(),
-        context_.current_project_state.overlay.workflow.project_search.replace_text.text(), case_sensitive);
-    if (replacements == 0) {
-      continue;
-    }
-
-    // Scan EVERY editor group, not just the focused split: a file open dirty in the
-    // other split must still block replace-all, otherwise replace-all would write a
-    // new copy to disk underneath that split's unsaved edits. On a blocker, surface
-    // a precise error (naming the file) rather than a bare silent return.
-    bool blocked_by_dirty = false;
-    for (const EditorGroup& group : context_.current_project_state.editor_groups) {
-      for (const TabEntry& tab : group.open_tabs) {
-        if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
-            tab.path.lexically_normal() == normalized_absolute &&
-            tab.editor_state->viewport.dirty()) {
-          blocked_by_dirty = true;
-          break;
-        }
-      }
-      if (blocked_by_dirty) {
-        break;
-      }
-    }
-    if (blocked_by_dirty) {
-      context_.current_project_state.overlay.workflow.project_search.error =
-          "Replace-all aborted: save open changes to " + relative_path.generic_string() + " first.";
-      RequestSidebarRedraw();
-      return;
-    }
-    aggregate_bytes += updated_content.size();
-    if (aggregate_bytes > kMaxAggregateReplaceBytes) {
-      // Too much modified content to buffer safely: abort without writing any
-      // file rather than risk exhausting memory mid-operation. Surface it so the
-      // user does not believe the replacement silently succeeded.
-      context_.current_project_state.overlay.workflow.project_search.error =
-          "Replace-all aborted: too much content to modify at once.";
-      RequestSidebarRedraw();
-      return;
-    }
-    pending.push_back(PendingProjectReplace{
-        .relative_path = relative_path,
-        .absolute_path = normalized_absolute,
-        .content = std::move(updated_content),
-        .replacements = replacements,
-    });
-  }
-
-  if (pending.empty()) {
+  const std::filesystem::path root = context_.current_project_state.root;
+  if (root.empty()) {
     return;
   }
 
-  std::size_t failed_write_count = 0;
-  for (const auto& change : pending) {
-    // Atomic temp-file + rename, never an in-place truncating write: a failed write
-    // (disk full, I/O error) must leave the original file intact rather than emptied
-    // or half-written. On failure keep going and collect it — a bare early return
-    // here left earlier files already overwritten, the current file corrupt, no error
-    // surfaced, and the search state unrefreshed.
-    if (!util::WriteTextFileAtomically(change.absolute_path, change.content)) {
-      ++failed_write_count;
-      continue;
+  // Determine the target file set on the main thread. Fast path: when the just-
+  // completed search's cached results provably cover every matching file, only those
+  // files can contain a match, so touch just them (see TD-2026-07-16-21's candidate-
+  // set reduction). Eligibility requires an authoritative, complete result set:
+  // finished (!running), same query, and neither truncated nor capped. Otherwise fall
+  // back to the whole indexed catalog. Materialize a value the background job owns.
+  const bool results_cover_all_matches =
+      !ps.running && !ps.truncated && ps.results.size() < kMaxProjectSearchResults &&
+      ps.searched_query == ps.query.text();
+  std::vector<std::filesystem::path> files;
+  if (results_cover_all_matches) {
+    files.reserve(ps.results.size());
+    for (const auto& result : ps.results) {
+      if (files.empty() || files.back() != result.relative_path) {
+        files.push_back(result.relative_path);
+      }
     }
+  } else {
+    const project::FilePathSnapshot snapshot =
+        context_.current_project_state.file_index.SnapshotPathsWithVersion(
+            ps.options.show_hidden ? project::ProjectFileScanMode::IncludeHidden
+                                   : project::ProjectFileScanMode::ExcludeHidden);
+    if (snapshot.files) {
+      files = *snapshot.files;  // copy out: the shared cache pointer must not cross threads
+    }
+  }
+  if (files.empty()) {
+    return;
+  }
 
-    // Refresh every clean open view of the rewritten file across ALL editor groups,
-    // not just the focused split: a file open clean in the other split must not keep
-    // rendering the pre-replace buffer after the on-disk write.
+  // Snapshot the open dirty files (absolute, normalized) so the background can refuse
+  // to overwrite unsaved edits without reading editor state off-thread. Scans EVERY
+  // editor group, not just the focused split.
+  std::unordered_set<std::string> dirty_open;
+  for (const EditorGroup& group : context_.current_project_state.editor_groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+          tab.editor_state->viewport.dirty()) {
+        dirty_open.insert(tab.path.lexically_normal().string());
+      }
+    }
+  }
+
+  const std::string query = ps.query.text();
+  const std::string replace_text = ps.replace_text.text();
+  const bool case_sensitive = ProjectSearchReplaceCaseSensitive();
+  const std::size_t aggregate_cap = replace_all_aggregate_cap_bytes_;
+  const std::uint64_t generation = ++project_replace_generation_;
+
+  // Run the read/replace/buffer/atomic-write off the shell thread; apply the outcome
+  // (reload clean tabs, refresh index/tree/finder, status) back on the main thread.
+  // PostLatest so a burst of replace-all clicks only runs the newest queued job.
+  project_background_executor_.PostLatest(
+      "project-replace-all",
+      [this, files = std::move(files), dirty_open = std::move(dirty_open), query, replace_text,
+       case_sensitive, root, aggregate_cap, generation]() mutable {
+        ProjectReplaceOutcome outcome = RunProjectReplace(root, files, dirty_open, query,
+                                                          replace_text, case_sensitive, aggregate_cap);
+        outcome.project_root = root;
+        outcome.generation = generation;
+        project_replace_mailbox_.Post([this, outcome = std::move(outcome)]() mutable {
+          ApplyProjectReplaceOutcome(std::move(outcome));
+        });
+      });
+}
+
+void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
+  // Drop a stale apply: the project was switched away, or a newer replace-all
+  // superseded this one. The on-disk writes already happened; only the UI
+  // reconciliation is gated (a newer run will reconcile its own writes).
+  if (outcome.generation != project_replace_generation_ ||
+      outcome.project_root != context_.current_project_state.root) {
+    return;
+  }
+
+  ProjectSearchState& ps = context_.current_project_state.overlay.workflow.project_search;
+  switch (outcome.status) {
+    case ProjectReplaceOutcome::Status::NothingToDo:
+      return;
+    case ProjectReplaceOutcome::Status::BlockedByDirty:
+      ps.error =
+          "Replace-all aborted: save open changes to " + outcome.blocked_relative_path + " first.";
+      RequestSidebarRedraw();
+      return;
+    case ProjectReplaceOutcome::Status::CapExceeded:
+      ps.error = "Replace-all aborted: too much content to modify at once.";
+      RequestSidebarRedraw();
+      return;
+    case ProjectReplaceOutcome::Status::Applied:
+      break;
+  }
+
+  for (const auto& change : outcome.written) {
+    // Refresh every clean open view of the rewritten file across ALL editor groups.
+    // A tab that became dirty AFTER the pre-dispatch snapshot is left alone (its
+    // buffer keeps the user's unsaved edits; the on-disk replace is overridden when
+    // they next save) rather than clobbered by a reload.
     for (std::size_t group_index = 0;
          group_index < context_.current_project_state.editor_groups.size(); ++group_index) {
       EditorGroup& group = context_.current_project_state.editor_groups[group_index];
@@ -522,6 +551,9 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
         auto& editor_state = *tab.editor_state;
         if (EditorViewPath(editor_state) != change.absolute_path) {
           continue;
+        }
+        if (editor_state.viewport.dirty()) {
+          continue;  // became dirty mid-flight: keep the user's edits
         }
 
         editor::TextViewport reopened_view;
@@ -546,8 +578,8 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
 
   platform::IndexUpdateBatch metadata_updates;
   metadata_updates.is_initial = false;
-  metadata_updates.changes.reserve(pending.size());
-  for (const auto& change : pending) {
+  metadata_updates.changes.reserve(outcome.written.size());
+  for (const auto& change : outcome.written) {
     std::error_code status_error;
     const auto status = std::filesystem::status(change.absolute_path, status_error);
     if (status_error || !std::filesystem::is_regular_file(status)) {
@@ -578,14 +610,11 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   }
   RequestAutomaticGitSidebarRefresh();
   RefreshProjectSearch();
-  if (failed_write_count > 0) {
-    // Surface a precise partial-apply result: some files were rewritten, some were
-    // not. The successfully written files above are already reflected in the index /
-    // reopened tabs; this tells the user the operation did not fully complete.
-    context_.current_project_state.overlay.workflow.project_search.error =
-        "Replace-all wrote " + std::to_string(pending.size() - failed_write_count) + " of " +
-        std::to_string(pending.size()) + " files; " + std::to_string(failed_write_count) +
-        " could not be written.";
+  if (outcome.failed_write_count > 0) {
+    const std::size_t attempted = outcome.written.size() + outcome.failed_write_count;
+    ps.error = "Replace-all wrote " + std::to_string(outcome.written.size()) + " of " +
+               std::to_string(attempted) + " files; " + std::to_string(outcome.failed_write_count) +
+               " could not be written.";
     RequestSidebarRedraw();
   }
 }
