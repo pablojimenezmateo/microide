@@ -79,6 +79,7 @@ coverage and a clear owner.
 | Idle and long soak | `idle_soak_30s`, `long_soak_8h`, `switch_and_idle` | wake-up count, wall time, allocation counts | event loop, scheduled wake handling, watchers |
 | Debugger / DAP | `debug_value_tree_expand_large`, `debug_value_tree_rebuild`, `debug_value_tree_paging`, `dap_protocol_encode_decode`, `debug_breakpoints_model_rebuild`, `debug_pane_hittest_geometry`, `debug_session_stop_to_variables` | p50/p95/max wall time, allocation counts | `DebugValueTree`, `DapProtocol`, `DebugBreakpointsModel`, debug pane geometry, `DebugService`/`DebugSession` |
 | LSP / language server | `lsp_semantic_tokens_decode`, `lsp_publish_diagnostics_parse`, `lsp_document_symbols_parse`, `lsp_message_framing` | p50/p95/max wall time, allocation counts | `lsp_protocol` decode helpers, `LspMessageFramer` transport framing |
+| Tech-debt hot-path coverage | `assist_ranked_union_merge`, `review_comments_registry_lookup`, `plugin_status_item_update`, `settings_rows_rebuild`, `reference_snippet_file_window`, `multi_caret_remap_burst`, `snippet_many_mirror_edit`, `user_config_record_decode`, `branch_review_presentation_markers` | p50/p95/max wall time, allocation counts (tight, decoupled from wall) | the TD-2026-07-17A rewritten hot paths — `assist_merge::RankedUnion`, `ReviewCommentsRegistry`, `registry_interop::ApplyStatusItemUpdate`, `SettingsOverlayService::RebuildSettingsRows`, `util::ReadFileLineWindow`, `detail::ResolveMultiCaretRemapSites`, snippet mirror shifts, user-config decode, `ApplyBranchReviewPresentationMarkers` |
 
 When a hotspot class has no deterministic coverage, add a scenario + baseline in the same change
 before closing the performance pass.
@@ -114,6 +115,36 @@ surface). The completion-item decode path is not yet covered here because it is 
 `WorkspaceLspClientRequests.cpp` rather than a shared `lsp_protocol` helper; extract it before adding
 a scenario.
 
+### Tech-debt hot-path coverage scenarios
+
+Live in `tests/perf/TechDebtCoveragePerfScenarios.cpp`. The TD-2026-07-17A burndown rewrote a set
+of correctness-preserving-but-perf-sensitive hot paths (mostly O(n²) → indexed/hashed lookups, plus
+the coordinate/cross-boundary rewrites), but several of those functions had no scenario exercising
+them at scale, so `tools/perf-compare.py` could not have caught an accidental return to quadratic
+behavior. These nine pure-unit micro-benchmarks each drive one rewritten hot path at a scale where
+its complexity dominates, and are **gated** (`smoke = true, baseline_gated = true`) with committed
+reference-runner baselines.
+
+They lean on **decoupled wall vs allocation tolerances** (see below): the allocation counts are
+exactly deterministic run-to-run (the real complexity oracle, gated tight at 10/20/50%), while the
+wall envelopes are widened (75/250/400%) to absorb the software-render/xvfb scheduler jitter this
+shared runner shows on sub-50 ms work. A return to O(n²) still blows the allocation gate by
+hundreds-plus percent; a constant-factor wall regression is caught precisely by the interleaved
+`perf-compare.py` current-vs-main run, where machine load cancels.
+
+### Wall vs allocation tolerances
+
+Each baseline carries two independent tolerance sets: `p50/p95/max_percent` for the wall metrics and
+`alloc_p50/p95/max_percent` for the allocation metrics (`tests/perf/baselines/*.json`). A scenario
+sets them via `tolerance_*_percent` and `tolerance_alloc_*_percent` on its `Scenario` (a negative
+allocation tolerance means "inherit the matching wall tolerance", the default). This lets a
+jitter-prone micro-benchmark keep a tight, deterministic allocation gate while widening only its wall
+envelope, instead of trading one against the other. Baselines written before the split omit the
+allocation keys; `LoadBaseline` defaults them to the wall values, so their behavior is unchanged. A
+full (non-smoke) run prints a per-scenario `[perf] PASS/FAIL` line and, on failure, each blown metric
+with baseline vs measured, the delta percent, and the tolerance it exceeded — so a tripped gate names
+the offending metric instead of surfacing only an exit code.
+
 Promotion path ("advisory first, promote later"): once a deterministic scenario's numbers are
 stable, set `baseline_gated = true` (and `smoke = true` to gate CI) and capture its baseline on
 the reference runner with `--update-baseline`. Pure-unit scenarios are the promotion candidates;
@@ -137,6 +168,21 @@ described honestly in README / roadmap text until they are closed:
   (sidebar refresh, diff open/navigation/staging, merge open/navigation/accept/edit-scroll, commit
   open, external refresh). Stage/discard and every compare/merge interaction pattern are still not
   fully covered.
+- the TD-2026-07-17A hot-path coverage set (above) closed the biggest algorithmic gaps, but a few
+  of that burndown's rewritten paths are still **not** perf-gated, by deliberate triage — each is
+  either threaded (the process-global allocation counter is non-deterministic there) or needs a
+  heavy integration harness, and each already has correctness-test coverage. Left open, with the
+  reason:
+  - **TD-2026-07-17A-005** (`TaskExecutor` keyed coalescing / blame) and **-108** (plugin syntax
+    reload on the worker) run off-thread; a deterministic single-thread perf gate is not meaningful
+    for them. **-033** (LSP `didOpen` post-present hydration deferral) likewise depends on the live
+    shell frame loop.
+  - **TD-2026-07-17A-066** (`WorkspaceShell::ApplyLspWorkspaceEdit` bucket-index map) needs a live
+    shell with many open buffers and writes edits to disk; its quadratic is bounded by the
+    edit-count cap and covered by the `ApplyLspWorkspaceEdit` unit tests.
+  - **TD-2026-07-17A-076** (plugin settings-snapshot revisioned cache) only pays off under repeated
+    snapshot capture with unchanged settings via a real Lua plugin; the cache-hit wall delta is a
+    weak signal and its correctness is pinned by `SettingsRegistry/SnapshotCacheInvalidation`.
 
 Do not paper over these gaps with broad wording like "memory is benchmarked" or "diff/merge is
 fully covered." Say exactly which scenarios exist.

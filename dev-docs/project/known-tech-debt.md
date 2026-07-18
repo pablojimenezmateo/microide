@@ -13,6 +13,18 @@ lookup/dedupe, 2026-07-18)** = 051/053/058/061/062/063/066/067/081/102/114 RESOL
 (batched multi-caret result remap, batched snippet mirror shifts, and a revisioned shared
 plugin-settings snapshot).
 
+**Perf-regression coverage for the burndown rewrites (2026-07-18).** Many of the cluster-1/2/3/3b
+rewrites are correctness-preserving-but-perf-sensitive (O(n²)→indexed), yet had no perf scenario
+exercising them at scale — so a `tools/perf-compare.py` run vs `main` could not have caught an
+accidental return to quadratic behavior. Added nine gated pure-unit micro-benchmarks in
+`tests/perf/TechDebtCoveragePerfScenarios.cpp` covering 114/063/081/102(019)/024/054/060/058/062,
+plus a harness change decoupling wall vs allocation baseline tolerances (allocations are the
+deterministic complexity oracle, gated tight; wall widened for runner jitter) and per-scenario
+PASS/FAIL verdict printing on the gated run. Existing scenarios already cover 051/053 (breakpoints),
+061 (commit), 067 (git sidebar). Still not perf-gated by deliberate triage (threaded or
+integration-heavy, correctness-tested): 005/108/033 (off-thread), 066 (shell WorkspaceEdit apply),
+076 (Lua snapshot cache) — see `dev-docs/performance/perf-harness.md` § Known Coverage Gaps.
+
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
 Keep current priorities summarized first; deep-audit backlogs may be longer when they are intended
 as intake for later agents. Closed debt does not live here — it is archived (see below).
