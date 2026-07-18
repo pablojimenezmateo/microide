@@ -162,6 +162,19 @@ class TextLayoutCache {
   std::size_t wrapped_row_layout_build_count_for_debug() const {
     return wrapped_row_layout_build_count_;
   }
+  // Number of incremental edits that took the O(edit-size) in-place fast path
+  // (no suffix rows shifted, no offset table rebuilt) versus the O(suffix)
+  // splice path. Used by the large-buffer edit perf regression to prove that a
+  // common single-line edit does not walk the rest of the document.
+  std::size_t wrapped_row_incremental_inplace_count_for_debug() const {
+    return wrapped_row_incremental_inplace_count_;
+  }
+  std::size_t wrapped_row_incremental_splice_count_for_debug() const {
+    return wrapped_row_incremental_splice_count_;
+  }
+  std::size_t visual_column_incremental_inplace_count_for_debug() const {
+    return visual_column_incremental_inplace_count_;
+  }
 #endif
 
  private:
@@ -227,6 +240,9 @@ class TextLayoutCache {
   mutable bool wrapped_row_layouts_fold_no_wrap_ = false;
 #ifndef NDEBUG
   mutable std::size_t wrapped_row_layout_build_count_ = 0;
+  mutable std::size_t wrapped_row_incremental_inplace_count_ = 0;
+  mutable std::size_t wrapped_row_incremental_splice_count_ = 0;
+  mutable std::size_t visual_column_incremental_inplace_count_ = 0;
 #endif
 
   // Visual-column width cache

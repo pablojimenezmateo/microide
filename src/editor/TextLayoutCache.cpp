@@ -288,13 +288,42 @@ bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
 
   const std::ptrdiff_t line_delta =
       static_cast<std::ptrdiff_t>(inserted_count) - static_cast<std::ptrdiff_t>(removed_count);
+  const std::size_t removed_rows = removed_rows_end - first_row;
+
+  // In-place fast path: the edit changed neither the logical-line count
+  // (line_delta == 0) nor the wrapped-row count of the affected region
+  // (removed_rows == new_rows.size()). This is the dominant keystroke — typing
+  // or deleting inside a line that still wraps to the same rows. The prefix
+  // rows, every suffix row's line_index, and the prefix/suffix of the
+  // line->row offset table are all unchanged, so overwrite only the affected
+  // rows (and the affected lines' own offsets, which may redistribute among
+  // themselves) and touch nothing in the O(document) suffix.
+  if (line_delta == 0 && new_rows.size() == removed_rows) {
+    std::copy(new_rows.begin(), new_rows.end(),
+              wrapped_row_layouts_.begin() + static_cast<std::ptrdiff_t>(first_row));
+    for (std::size_t i = 0; i < inserted_count; ++i) {
+      wrapped_line_row_offsets_[start_line + i] = first_row + inserted_offsets[i];
+    }
+    wrapped_row_layouts_content_revision_ = content_revision;
+#ifndef NDEBUG
+    ++wrapped_row_incremental_inplace_count_;
+#endif
+    return true;
+  }
 
   // Splice rows in place: shift the trailing rows' line_index by line_delta,
   // then replace [first_row, removed_rows_end) with the freshly wrapped rows.
-  for (std::size_t r = removed_rows_end; r < total_rows; ++r) {
-    wrapped_row_layouts_[r].line_index = static_cast<std::size_t>(
-        static_cast<std::ptrdiff_t>(wrapped_row_layouts_[r].line_index) + line_delta);
+  // The line_index shift is a pure no-op when line_delta == 0 (an in-line edit
+  // that only changed the wrap-row count), so skip that O(suffix) scalar pass.
+  if (line_delta != 0) {
+    for (std::size_t r = removed_rows_end; r < total_rows; ++r) {
+      wrapped_row_layouts_[r].line_index = static_cast<std::size_t>(
+          static_cast<std::ptrdiff_t>(wrapped_row_layouts_[r].line_index) + line_delta);
+    }
   }
+#ifndef NDEBUG
+  ++wrapped_row_incremental_splice_count_;
+#endif
   wrapped_row_layouts_.erase(
       wrapped_row_layouts_.begin() + static_cast<std::ptrdiff_t>(first_row),
       wrapped_row_layouts_.begin() + static_cast<std::ptrdiff_t>(removed_rows_end));
@@ -445,12 +474,27 @@ void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
   const std::size_t clamped_start = std::min(start_line, cached_visual_line_columns_.size());
   const std::size_t erase_end =
       std::min(clamped_start + removed_count, cached_visual_line_columns_.size());
-  cached_visual_line_columns_.erase(
-      cached_visual_line_columns_.begin() + static_cast<std::ptrdiff_t>(clamped_start),
-      cached_visual_line_columns_.begin() + static_cast<std::ptrdiff_t>(erase_end));
-  cached_visual_line_columns_.insert(
-      cached_visual_line_columns_.begin() + static_cast<std::ptrdiff_t>(clamped_start),
-      inserted_columns.begin(), inserted_columns.end());
+  if (removed_count == inserted_columns.size() &&
+      erase_end == clamped_start + removed_count) {
+    // In-place fast path: the edit did not change the logical-line count, so no
+    // suffix line's width entry moves. Overwrite the affected entries directly
+    // instead of an erase+insert that memmoves the O(suffix) tail twice. This
+    // is the dominant keystroke (an in-line edit), matching the wrapped-row
+    // cache's in-place path.
+    for (std::size_t i = 0; i < inserted_columns.size(); ++i) {
+      cached_visual_line_columns_[clamped_start + i] = inserted_columns[i];
+    }
+#ifndef NDEBUG
+    ++visual_column_incremental_inplace_count_;
+#endif
+  } else {
+    cached_visual_line_columns_.erase(
+        cached_visual_line_columns_.begin() + static_cast<std::ptrdiff_t>(clamped_start),
+        cached_visual_line_columns_.begin() + static_cast<std::ptrdiff_t>(erase_end));
+    cached_visual_line_columns_.insert(
+        cached_visual_line_columns_.begin() + static_cast<std::ptrdiff_t>(clamped_start),
+        inserted_columns.begin(), inserted_columns.end());
+  }
 
   const bool max_line_erased =
       cached_max_visual_columns_line_index_.has_value() &&

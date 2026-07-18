@@ -1456,6 +1456,122 @@ void TestTextViewportSoftWrapEditUpdatesWrapIncrementally() {
          "a content edit under soft wrap must update the wrapped table in place, "
          "not trigger a full O(document) rebuild");
 }
+
+// TD-2026-07-17A-022: a common single-line edit near the top of a large
+// soft-wrapped buffer must not walk the rest of the document. When the edit
+// preserves the affected line's wrap-row count and the logical-line count, the
+// incremental update takes the O(edit-size) in-place fast path: it overwrites
+// only the edited line's rows and its own offset, and touches none of the
+// O(document) suffix (no row line_index shift, no offset-table rebuild, no
+// visual-column erase/insert memmove).
+void TestTextViewportSoftWrapLargeBufferInlineEditIsInPlace() {
+  TextViewport viewport;
+  std::string content;
+  content.reserve(4000 * 4);
+  for (int i = 0; i < 4000; ++i) {
+    content += "abc\n";  // each a single wrapped row; slack under wrap width
+  }
+  viewport.LoadContent(content, "/tmp/soft-wrap-large-inline.txt");
+  viewport.SetViewportSize(20, 12);
+  viewport.SetSoftWrap(true);
+  const int rows_before = viewport.VisualRowCount();  // force the initial build
+  (void)viewport.max_visual_columns();  // warm the per-line visual-column cache
+
+  const std::size_t builds = viewport.WrappedRowLayoutBuildCountForDebug();
+  const std::size_t inplace_before = viewport.WrappedRowIncrementalInplaceCountForDebug();
+  const std::size_t splice_before = viewport.WrappedRowIncrementalSpliceCountForDebug();
+  const std::size_t vcol_before = viewport.VisualColumnIncrementalInplaceCountForDebug();
+
+  // Insert one char near the top (line 1): "abc" -> "abZc" stays a single row,
+  // so neither the wrap-row count nor the logical-line count changes. (Line 0 is
+  // avoided only because a content edit at line 0 deliberately drops the whole
+  // visible-line + visual-column cache in InvalidateDerivedCaches; the
+  // wrapped-row table — the expensive one — still updates in place there too.)
+  viewport.MoveCursorTo(1, 2);
+  viewport.InsertText("Z");
+  (void)viewport.VisualRowCount();
+  (void)viewport.max_visual_columns();  // exercise the maintained width cache
+
+  Expect(viewport.WrappedRowLayoutBuildCountForDebug() == builds,
+         "an in-line edit under soft wrap must not trigger a full O(document) rebuild");
+  Expect(viewport.WrappedRowIncrementalInplaceCountForDebug() == inplace_before + 1,
+         "an in-line edit preserving line/row counts must take the in-place fast path");
+  Expect(viewport.WrappedRowIncrementalSpliceCountForDebug() == splice_before,
+         "the in-place fast path must not fall through to the O(suffix) splice");
+  Expect(viewport.VisualColumnIncrementalInplaceCountForDebug() == vcol_before + 1,
+         "the visual-column cache must also update the edited line in place");
+
+  // The edited row and a deep-suffix row must both still resolve correctly.
+  Expect(viewport.WrappedVisualRowLayout(1).line_index == 1,
+         "the edited line stays at visual row 1");
+  Expect(viewport.WrappedVisualRowLayout(3999).line_index == 3999,
+         "the far-suffix line keeps its untouched mapping");
+  Expect(viewport.VisualRowCount() == rows_before,
+         "an in-line edit must not change the visual row count");
+}
+
+// Correctness companion: incremental splice/fast-path updates over a soft-wrapped
+// buffer with genuinely multi-row lines must stay identical to a fresh full
+// build after a mix of in-line edits, newline splits, and merges.
+void TestTextViewportSoftWrapIncrementalEditsMatchFreshBuild() {
+  const char* kSeed =
+      "the quick brown fox jumps over the lazy dog\n"
+      "pack my box with five dozen liquor jugs today\n"
+      "sphinx of black quartz judge my vow right now\n"
+      "how vexingly quick daft zebras jump around here\n"
+      "the five boxing wizards jump quickly at dawn\n";
+  TextViewport viewport;
+  viewport.LoadContent(kSeed, "/tmp/soft-wrap-incremental-match.txt");
+  viewport.SetViewportSize(20, 12);
+  viewport.SetSoftWrap(true);
+  (void)viewport.VisualRowCount();
+
+  // In-line insert (in-place or splice depending on whether the row count shifts).
+  viewport.MoveCursorTo(0, 4);
+  viewport.InsertText("VERYLONGTOKEN");
+  // Delete a char (in-line).
+  viewport.MoveCursorTo(1, 3);
+  viewport.Backspace();
+  // Split a line (line_delta > 0 -> splice with a positive line_index shift).
+  viewport.MoveCursorTo(2, 10);
+  viewport.InsertNewline();
+  // Merge two lines (line_delta < 0 -> splice with a negative line_index shift).
+  viewport.MoveCursorTo(4, 0);
+  viewport.Backspace();
+  (void)viewport.VisualRowCount();
+
+  // Reconstruct the post-edit content and build a fresh viewport from it. The
+  // buffer's trailing empty line already stands for the final newline, so join
+  // the lines WITHOUT a trailing newline to reproduce identical content.
+  const std::vector<std::string> snapshot = viewport.lines().Snapshot();
+  std::string rebuilt;
+  for (std::size_t i = 0; i < snapshot.size(); ++i) {
+    rebuilt += snapshot[i];
+    if (i + 1 < snapshot.size()) {
+      rebuilt += '\n';
+    }
+  }
+  TextViewport fresh;
+  fresh.LoadContent(rebuilt, "/tmp/soft-wrap-fresh.txt");
+  fresh.SetViewportSize(20, 12);
+  fresh.SetSoftWrap(true);
+  (void)fresh.VisualRowCount();
+
+  // Sanity: at least one edit exercised each incremental path.
+  Expect(viewport.WrappedRowIncrementalInplaceCountForDebug() >= 1 &&
+             viewport.WrappedRowIncrementalSpliceCountForDebug() >= 1,
+         "the edit mix must exercise both the in-place fast path and the splice path");
+  Expect(viewport.VisualRowCount() == fresh.VisualRowCount(),
+         "incremental edits must yield the same visual row count as a fresh build");
+  const int rows = fresh.VisualRowCount();
+  for (int r = 0; r < rows; ++r) {
+    const auto a = viewport.WrappedVisualRowLayout(static_cast<std::size_t>(r));
+    const auto b = fresh.WrappedVisualRowLayout(static_cast<std::size_t>(r));
+    Expect(a.line_index == b.line_index && a.visual_start == b.visual_start &&
+               a.visual_end == b.visual_end && a.indent == b.indent,
+           "each incremental wrapped row must match the fresh-build row exactly");
+  }
+}
 #endif
 
 FoldingModel::ComputeOptions DefaultFoldOptions() {
@@ -3438,6 +3554,10 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
 #ifndef NDEBUG
   AddTest(tests, "TextViewport/SoftWrapEditUpdatesWrapIncrementally",
           TestTextViewportSoftWrapEditUpdatesWrapIncrementally);
+  AddTest(tests, "TextViewport/SoftWrapLargeBufferInlineEditIsInPlace",
+          TestTextViewportSoftWrapLargeBufferInlineEditIsInPlace);
+  AddTest(tests, "TextViewport/SoftWrapIncrementalEditsMatchFreshBuild",
+          TestTextViewportSoftWrapIncrementalEditsMatchFreshBuild);
 #endif
   AddTest(tests, "TextViewport/CollapsedFoldHidesBodyRows",
           TestTextViewportCollapsedFoldHidesBodyRows);

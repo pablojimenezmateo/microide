@@ -650,6 +650,15 @@ class TextViewport {
   std::size_t WrappedRowLayoutBuildCountForDebug() const {
     return layout_cache_.wrapped_row_layout_build_count_for_debug();
   }
+  std::size_t WrappedRowIncrementalInplaceCountForDebug() const {
+    return layout_cache_.wrapped_row_incremental_inplace_count_for_debug();
+  }
+  std::size_t WrappedRowIncrementalSpliceCountForDebug() const {
+    return layout_cache_.wrapped_row_incremental_splice_count_for_debug();
+  }
+  std::size_t VisualColumnIncrementalInplaceCountForDebug() const {
+    return layout_cache_.visual_column_incremental_inplace_count_for_debug();
+  }
 #endif
 };
 

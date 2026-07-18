@@ -28,9 +28,8 @@ follow the declared fs.read/fs.write levels); and **focus pass 6/9 (editor/save 
 edit primitives, 2026-07-18)** = 021/028/031/075/120 RESOLVED (boundary-only surround wrap;
 range-based Replace-All reusing the buffer-search match set; Add-Cursor-at-All-Matches
 fold-once + caret cap; commit-body content-revision cache; ranged secondary-caret anchor
-preservation in shaping actions), with 015/016 (LSP bulk-sync before/after-snapshot refactor)
-and 022 (soft-wrap `TextLayoutCache` piece/range rewrite) DEFERRED as multi-file/data-structure
-changes needing their own integration/layout verification; and **focus pass 8/9 (path/containment
+preservation in shaping actions), with 015/016 (LSP bulk-sync compact-delta) and 022 (soft-wrap
+`TextLayoutCache` in-place edit fast path) RESOLVED 2026-07-18; and **focus pass 8/9 (path/containment
 correctness, cross-group, 2026-07-18)** = 036/088 RESOLVED (background compare/merge tabs are
 retargeted/closed across every editor group via the group-agnostic
 `RetargetSpecialTabForRename` helper plus shared affected-tab predicates, no longer left to
@@ -139,10 +138,10 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > and **030, 082, 083, 100, 115, 130** (cluster 7), plus **041** (batch-review open cap).
 > **074** (serial-work-queue depth/dedupe) is now **RESOLVED 2026-07-18** as its own data-structure
 > pass (`std::list` + key->node index ⇒ O(1) `PostLatest`; opt-in `max_depth` budget that only sheds
-> caller-marked droppable jobs, never critical ones). The only
-> other still-open addendum items are the data-structure DEFERRAL **022** (soft-wrap
-> `TextLayoutCache` piece/range rewrite) and the platform WON'T-DO **104/133/134** (Windows).
-> (**004** folding-refresh hoist and **015/016** LSP bulk-sync are now RESOLVED — see their entries.)
+> caller-marked droppable jobs, never critical ones). The only remaining still-open addendum items are
+> the platform WON'T-DO **104/133/134** (Windows).
+> (**004** folding-refresh hoist, **015/016** LSP bulk-sync, and **022** soft-wrap edit fast path are
+> now RESOLVED — see their entries.)
 >
 > **RESOLVED this pass (39 fixed + 1 already-satisfied; each with a regression test):**
 > - **001** — passive menu measurement (`ComputePopupMenuRect`, `MenuItemLabel`, `IsMenuItemEnabled`) reads LSP readiness with `ensure_started=false`, so opening/hovering a menu never spawns a server; servers still start on explicit LSP actions via `GetServer`.
@@ -225,9 +224,10 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    `RequestActiveEditableChangeRedraw` all take before/after snapshot vectors, shared with the
 >    reload and keystroke paths); deriving after-geometry from the live viewport + streaming the
 >    didChange payload ripples across those call sites and needs LSP diagnostic-shift integration
->    verification — its own reviewed change. **022 DEFERRED** — `TextLayoutCache` suffix-linear
->    edit updates need a piece/range offset structure (a data-structure rewrite with soft-wrap
->    layout before/after verification), not a drop-in. *(009, 013, 035 RESOLVED 2026-07-17A — `util::ScanConflictMarkers`; clean-save streaming; no-selection context copy via LineSpan.)*
+>    verification — its own reviewed change (both since RESOLVED 2026-07-18). **022 DEFERRED at the
+>    time, RESOLVED 2026-07-18** — the suffix-linear `TextLayoutCache` edit updates got an in-place
+>    O(edit) fast path for the common keystroke instead of the full piece/range rewrite; see its
+>    entry. *(009, 013, 035 RESOLVED 2026-07-17A — `util::ScanConflictMarkers`; clean-save streaming; no-selection context copy via LineSpan.)*
 > 7. **Protocol / session lifecycle & decode-order** (LSP/DAP/persistence pass — commit-after-
 >    success open/close, per-request generations, decode-before-cap, event-drain budget, regex
 >    match-data cache keyed by revision, symlinked-state-file writes, terminal-tab reap grace):
@@ -538,15 +538,35 @@ speed-path items first, then the correctness/lifecycle cleanups.
   strings/vectors before the actual edit. Add an edit primitive that wraps the selected
   range by changing only the boundary lines while reusing the existing affected-line
   undo capture.
-- **TD-2026-07-17A-022 — soft-wrap edit cache updates are still suffix-linear.**
-  `TextLayoutCache::UpdateWrappedRowsAfterEdit` advertises edit-size cost, but it shifts
-  every trailing `WrappedRow::line_index`, erases/inserts in the middle of
-  `wrapped_row_layouts_`, and rebuilds a fresh `wrapped_line_row_offsets_` vector across
-  prefix, inserted range, and suffix. `UpdateVisualColumnCacheAfterEdit` similarly
-  erases/inserts in the middle of `cached_visual_line_columns_`. Typing near the top of
-  a large soft-wrapped or max-column-cached file still pays O(suffix rows/lines) per
-  edit. Store row offsets as a piece/range structure or lazily apply suffix deltas so the
-  common single-line edit does not walk the rest of the document.
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-022 — soft-wrap edit cache updates were suffix-linear.**
+  The common keystroke now takes an O(edit-size) in-place fast path.
+  `UpdateWrappedRowsAfterEdit` detects when an edit changes neither the logical-line
+  count (`line_delta == 0`) nor the affected region's wrap-row count
+  (`new_rows.size() == removed_rows`) — the dominant in-line edit — and overwrites only
+  the edited line's rows (`std::copy` in place) plus its own offset entries, touching
+  none of the O(document) suffix: no trailing `WrappedRow::line_index` shift, no
+  `wrapped_line_row_offsets_` rebuild. When the row count *does* change (a wrap-boundary
+  crossing or newline) the general splice still runs, but the trailing `line_index` shift
+  loop is now guarded on `line_delta != 0`, so an in-line edit that only gains/loses a
+  wrapped row no longer walks the suffix to add zero. `UpdateVisualColumnCacheAfterEdit`
+  likewise overwrites the affected `cached_visual_line_columns_` entries in place when the
+  logical-line count is unchanged (`removed_count == inserted_count`) instead of an
+  erase+insert that memmoves the suffix tail twice. So typing near the top of a large
+  soft-wrapped file no longer pays O(suffix rows/lines) per keystroke. (One corner is
+  unchanged: a content edit at logical line 0 still drops the visible-line LRU + the
+  visual-column width cache wholesale in `InvalidateDerivedCaches`'s `safe_start == 0`
+  branch, so a line-0 keystroke re-derives `MaxVisualColumns` on next access — the
+  expensive wrapped-row table still updates in place there. The width cache is one
+  `size_t`/line, and the visible-line LRU is bounded at 256 entries, so this is a bounded
+  secondary cost, not the O(document) wrapped-row rebuild.) Regressions:
+  `TextViewport/SoftWrapLargeBufferInlineEditIsInPlace` (a single-char edit near the top
+  of a 4000-line soft-wrapped buffer takes the in-place path — no rebuild, no splice, no
+  visual-column memmove) and `TextViewport/SoftWrapIncrementalEditsMatchFreshBuild` (a
+  mix of in-line edits, newline splits, and merges over multi-row wrapped lines stays
+  byte-identical to a fresh full build). A full piece/range structure for the rows vector
+  itself (to make the rarer row-count-changing splice sub-linear too) remains possible but
+  was not needed: the contiguous-vector memmove is fast and only pays on the uncommon
+  wrap-shape change, while the common keystroke is now genuinely O(edit).
 - **[RESOLVED 2026-07-18 — focus pass 4/9] TD-2026-07-17A-023 — chrome rendering still rebuilds labels/tooltips during paint.**
   Fixed for the breadcrumb: `BreadcrumbLabel()` is memoized against the inputs that shape it
   (active surface mode, root, path, secondary labels), resolved by reference so a cache hit
