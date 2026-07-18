@@ -374,22 +374,15 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
       : new_range_count == 0 ? PrecedingSideLine(model, start_row, true)
                              : FirstPatchLineNumber(model, start_row, end_row, true);
 
-  // A `+` line is new content destined for the post-image (right) side; a context
-  // (` `) or `-` line must byte-match the pre-image (left) side. Re-emit each
-  // line's carriage return from its own side's terminator so a CRLF file stages
-  // and discards cleanly. A no-newline final line has no trailing `\r`.
-  std::ostringstream body;
-  for (const PatchBodyLine& line : body_lines) {
-    const bool side_crlf = line.prefix == '+' ? model.right_uses_crlf : model.left_uses_crlf;
-    AppendPatchLine(body, line.prefix, line.text, side_crlf && !line.no_newline_after);
-    if (line.no_newline_after) {
-      body << kNoNewlineMarker;
-    }
-  }
   const std::string path = relative_path.generic_string();
   const std::string a_path = QuoteGitHeaderPath("a/", path);
   const std::string b_path = QuoteGitHeaderPath("b/", path);
 
+  // Stream the header then the body into a single buffer (no intermediate
+  // full-patch-sized `body` copy), and enforce a byte budget so a whole-file or
+  // huge-selection patch copy/stage cannot allocate an arbitrarily large string on
+  // the UI/apply path — over budget returns nullopt (surfaced as "no patch").
+  // TD-2026-07-17A-099.
   std::ostringstream stream;
   stream << "diff --git " << a_path << ' ' << b_path << '\n';
   if (is_new_file) {
@@ -406,7 +399,22 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
   }
   stream << "@@ -" << old_range_start << ',' << old_range_count << " +" << new_range_start << ','
          << new_range_count << " @@\n";
-  stream << body.str();
+
+  // A `+` line is new content destined for the post-image (right) side; a context
+  // (` `) or `-` line must byte-match the pre-image (left) side. Re-emit each
+  // line's carriage return from its own side's terminator so a CRLF file stages
+  // and discards cleanly. A no-newline final line has no trailing `\r`.
+  for (const PatchBodyLine& line : body_lines) {
+    const bool side_crlf = line.prefix == '+' ? model.right_uses_crlf : model.left_uses_crlf;
+    AppendPatchLine(stream, line.prefix, line.text, side_crlf && !line.no_newline_after);
+    if (line.no_newline_after) {
+      stream << kNoNewlineMarker;
+    }
+    if (options.max_patch_bytes != 0 &&
+        static_cast<std::size_t>(stream.tellp()) > options.max_patch_bytes) {
+      return std::nullopt;
+    }
+  }
   return stream.str();
 }
 

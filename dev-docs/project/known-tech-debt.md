@@ -1562,7 +1562,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   cap while still forcing a large JSON allocation/escape pass and per-client write-buffer attempt even
   when the IDE console would have truncated line fan-out. Apply a byte budget/truncation marker at the
   debug-output event boundary before both output-channel append and control-channel emission.
-- **TD-2026-07-17A-097 — merge session save writes one choice record per hunk.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-097 — merge session save writes one choice record per hunk.**
+  Fixed via the item's Option 2: `BuildPersistedMergeTabState` caps the persisted choice
+  vector at the reader's `kMaxSessionMergeHunkChoices` (200k) budget, so a huge generated
+  conflict tab never builds a record set the reader would reject. Choices stay positional and
+  verbatim — a default-skip encoding keyed on `bootstrap_choice` was found unsafe (the restore
+  model rebuild does not reproduce the save-time inferred choice per hunk, so an empty label
+  would change the restored result). Regression:
+  `WorkspaceShell/RestoreSessionRoundTripsMultiHunkMergeChoices`.
   `PersistenceCoordinator::BuildPersistedMergeTabState` reserves `model.hunks.size()` and stores a
   string label for every hunk in `merge_hunk_choices`, then `EncodeEditorTab` writes each as its own
   `MergeHunkChoice` record. Restore caps decoded choices at 200k, but the live merge model has no

@@ -45,6 +45,28 @@ void TestPatchGeneratorProducesUnifiedDiff() {
   Expect(patch->find("+beta") != std::string::npos, "patch should include added line");
 }
 
+// Patch generation enforces a byte budget: an oversized patch returns nullopt
+// (surfaced as "no patch") instead of allocating an arbitrarily large string,
+// while a normal patch is unaffected by the default budget. TD-2026-07-17A-099.
+void TestPatchGeneratorEnforcesByteBudget() {
+  std::string right = "alpha\n";
+  for (int i = 0; i < 500; ++i) {
+    right += "added line " + std::to_string(i) + "\n";
+  }
+  const CompareModel model = BuildCompareModel("alpha\n", right);
+  Expect(!model.hunks.empty(), "compare model should contain a hunk");
+
+  microide::project::PatchGenerationOptions tiny;
+  tiny.max_patch_bytes = 128;  // far smaller than the ~500-line patch body
+  Expect(!GenerateComparePatch(model, "file.txt", 0, tiny).has_value(),
+         "an over-budget patch should be refused (nullopt)");
+
+  microide::project::PatchGenerationOptions generous;
+  generous.max_patch_bytes = 64u * 1024 * 1024;
+  Expect(GenerateComparePatch(model, "file.txt", 0, generous).has_value(),
+         "the same patch generates within a generous budget");
+}
+
 void TestPatchGeneratorSelectedLinesIncludeContext() {
   CompareModel model = BuildCompareModel("one\n", "one\ntwo\nthree\n");
   Expect(model.rows.size() >= 2, "expected multiple compare rows");
@@ -1066,6 +1088,7 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
   tests.push_back({"PatchApply/DeleteTrailingLeavesMissingFinalNewline",
                    TestPatchStageDeleteTrailingLeavesMissingFinalNewline});
   tests.push_back({"PatchApply/UnifiedDiff", TestPatchGeneratorProducesUnifiedDiff});
+  tests.push_back({"PatchApply/GeneratorByteBudget", TestPatchGeneratorEnforcesByteBudget});
   tests.push_back({"PatchApply/SelectedLines", TestPatchGeneratorSelectedLinesIncludeContext});
   tests.push_back({"PatchApply/StageHunk", TestPatchStageHunkInRepository});
   tests.push_back({"PatchApply/OneSidedPhantomTrailingLine",
