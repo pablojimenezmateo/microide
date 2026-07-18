@@ -435,6 +435,15 @@ void GitRepositoryService::RunRefreshSynchronouslyForTesting(
     current_state_.refreshing = true;
   }
 
+  // The outgoing-base memo (below) is lock-free only because BuildSidebarSnapshot is
+  // confined to the single background-executor worker. This synchronous test path runs
+  // BuildSidebarSnapshot on the CALLING thread, so it would race a still-in-flight
+  // async refresh's BuildSidebarSnapshot on the worker. Drain the executor first (with
+  // mutex_ NOT held — the worker takes mutex_ to finish) so no worker job is touching
+  // the memo/current_state_ while we build synchronously. The follow-up state was
+  // cleared under the lock above, so a completing worker won't re-post a job.
+  background_executor_.Drain();
+
   const project::GitRepositoryState repository_state = BuildRepositoryState(request);
   {
     std::lock_guard lock(mutex_);

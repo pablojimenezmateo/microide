@@ -102,11 +102,13 @@ class GitRepositoryService {
   std::filesystem::path active_project_root_;
   RepositoryStateProviderForTesting repository_state_provider_for_testing_;
 
-  // Outgoing-base memo (see ResolveOutgoingBaseCached). Confined to the refresh
-  // thread via BuildSidebarSnapshot, so it needs no separate lock. The key
-  // includes head_oid, so any HEAD movement (commit/checkout/reset/merge) or
-  // branch/upstream/root/choice change re-resolves; a file-edit status refresh
-  // hits the cache.
+  // Outgoing-base memo (see ResolveOutgoingBaseCached). Confined to a single thread
+  // via BuildSidebarSnapshot, so it needs no separate lock: production refreshes run
+  // it only on the serial background-executor worker, and the synchronous test seam
+  // (RunRefreshSynchronouslyForTesting) drains that worker before building on the
+  // calling thread, so the two never touch the memo concurrently. The key includes
+  // head_oid, so any HEAD movement (commit/checkout/reset/merge) or branch/upstream/
+  // root/choice change re-resolves; a file-edit status refresh hits the cache.
   struct OutgoingBaseCacheKey {
     std::filesystem::path root;
     OutgoingBaseChoice::Kind choice_kind = OutgoingBaseChoice::Kind::Auto;

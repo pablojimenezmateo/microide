@@ -32,6 +32,12 @@ class ProjectBackgroundExecutor {
   // in-flight task.
   void Cancel() { queue_.Cancel(); }
 
+  // Block until the worker is idle without stopping it: cancel queued tasks, then
+  // wait for the currently in-flight task (if any) to finish. On return the worker
+  // is quiescent but still accepts new tasks. Must be called from a non-worker
+  // thread. See util::SerialWorkQueue::Drain.
+  void Drain() { queue_.Drain(); }
+
   // Cancel + shut down the worker thread, waiting up to deadline.
   void Shutdown(std::chrono::milliseconds deadline = std::chrono::milliseconds(2000)) {
     queue_.Shutdown(deadline);
