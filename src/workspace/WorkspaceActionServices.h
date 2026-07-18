@@ -29,6 +29,24 @@ enum class ProjectOpenPickerResult {
   Unavailable,
 };
 
+// TD-2026-07-17A-119: shared clipboard-export byte budget. A huge explicit selection (or
+// many multi-caret selections) must not allocate and duplicate a large fraction of a big
+// file into both clipboards on the shell thread. Copies over this budget are truncated on
+// a UTF-8 boundary with a marker; a cut over this budget is refused (never delete data
+// that could not be captured).
+inline constexpr std::size_t kMaxClipboardExportBytes = 64u * 1024 * 1024;  // 64 MiB
+
+struct ClipboardExportResult {
+  std::string text;
+  bool truncated = false;
+};
+
+// Clamp `text` to `budget` bytes on a UTF-8 codepoint boundary, appending a truncation
+// marker when it does not fit. Exposed (with an injectable budget) so the truncation
+// logic is unit-testable without materializing a 64 MiB buffer.
+[[nodiscard]] ClipboardExportResult ClampClipboardExport(
+    std::string_view text, std::size_t budget = kMaxClipboardExportBytes);
+
 class WorkspaceActionContext {
  public:
   struct Operations {

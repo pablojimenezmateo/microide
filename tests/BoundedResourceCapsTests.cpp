@@ -13,6 +13,7 @@
 #include "workspace/DapProtocol.h"
 #include "workspace/DebugValueTree.h"
 #include "workspace/SettingFlags.h"
+#include "workspace/WorkspaceActionServices.h"
 
 namespace microide::tests {
 namespace {
@@ -139,6 +140,34 @@ void TestProcessAllowlistEntryByteBudget() {
          "an entry that exactly fits the remaining aggregate budget is accepted");
 }
 
+// TD-2026-07-17A-119: editor copy/cut materialized unbounded selected text and duplicated
+// it into both clipboards. The shared clamp bounds the export on a UTF-8 boundary with a
+// marker; cut refuses over-budget rather than deleting data it could not capture.
+void TestClipboardExportClampBoundedAndUtf8Safe() {
+  // Under budget: passthrough, no marker, not truncated.
+  const workspace::ClipboardExportResult small =
+      workspace::ClampClipboardExport("hello", 64);
+  Expect(small.text == "hello" && !small.truncated,
+         "an in-budget export is returned verbatim");
+
+  // Over budget with multi-byte 'é' (0xC3 0xA9): the cut must land on a codepoint
+  // boundary — budget 5 sits mid-'é' at byte 4, so it backs off to byte 4.
+  std::string wide;
+  for (int i = 0; i < 8; ++i) {
+    wide += "\xC3\xA9";  // 'é' — 16 bytes total
+  }
+  const workspace::ClipboardExportResult clamped =
+      workspace::ClampClipboardExport(wide, 5);
+  Expect(clamped.truncated, "an over-budget export must be flagged truncated");
+  // 4 bytes of payload (two whole 'é') then the marker; never a split codepoint.
+  Expect(clamped.text.rfind("\xC3\xA9\xC3\xA9", 0) == 0,
+         "truncation backs off to a UTF-8 codepoint boundary");
+  Expect(clamped.text.find("truncated") != std::string::npos,
+         "a truncated export carries a marker");
+  Expect(clamped.text.size() < wide.size() + 32,
+         "the clamped payload stays near the budget, not the full input");
+}
+
 void TestExcludeGlobsNormalInputIsNotFlaggedTruncated() {
   bool truncated = true;
   const std::vector<std::string> globs =
@@ -164,6 +193,8 @@ void RegisterBoundedResourceCapsTests(std::vector<TestCase>& tests) {
           TestDebugValueTreeSmallContainerIsNotTruncated);
   AddTest(tests, "BoundedResourceCaps/ProcessAllowlistEntryByteBudget",
           TestProcessAllowlistEntryByteBudget);
+  AddTest(tests, "BoundedResourceCaps/ClipboardExportClampBoundedAndUtf8Safe",
+          TestClipboardExportClampBoundedAndUtf8Safe);
 }
 
 }  // namespace microide::tests

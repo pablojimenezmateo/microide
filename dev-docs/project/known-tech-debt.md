@@ -129,9 +129,9 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test) —
 >    **focus pass 2/9 IN PROGRESS 2026-07-18**:
 >    018, 029, 038, 039, 043, 044, 046, 056, 057, 064, 070,
->    071, 072, 073, 074, 095, 096, 097, 098, 099, 105, 107, 116, 118, 119.
+>    071, 072, 073, 074, 095, 096, 097, 098, 099, 105, 107, 116, 118.
 >    *(020, 090, 101, 037, 042 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets; control-socket complete-line cap + aggregate inbound-byte budget.)*
->    *(040, 068, 106, 121 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; terminal pending-input byte cap; project.files_exclude rule/byte cap; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
+>    *(040, 068, 106, 119, 121 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; terminal pending-input byte cap; project.files_exclude rule/byte cap; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
@@ -1356,7 +1356,16 @@ speed-path items first, then the correctness/lifecycle cleanups.
   renderer), and those hashes/counters are retained outside both the VRAM budget and the decode-failure
   FIFO. Fold permanent texture-create failures into the same bounded failure marker policy, or add a
   separate FIFO/byte-count budget for `texture_create_failures_` plus its `in_flight_or_failed_` entries.
-- **TD-2026-07-17A-119 — editor copy/cut materializes unbounded selected text before clipboard write.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-119 — editor copy/cut materializes unbounded selected text before clipboard write.**
+  Fixed: a shared `ClampClipboardExport` (`kMaxClipboardExportBytes` = 64 MiB) bounds every
+  clipboard/primary-selection export. `WorkspaceActionContext::WriteClipboardText`/
+  `WritePrimarySelectionText` are zero-copy under budget and only materialize a UTF-8-boundary
+  clamped copy (with a truncation marker + a warning toast) over budget, so a huge copy can no
+  longer duplicate a large fraction of a big file into both clipboards. `CutSelection` refuses
+  an over-budget cut outright (notify + no delete) instead of truncating the copy and deleting
+  data it never captured. The clamp takes an injectable budget so its UTF-8 truncation logic is
+  unit-testable without a 64 MiB buffer. Regression:
+  `BoundedResourceCaps/ClipboardExportClampBoundedAndUtf8Safe`.
   `WorkspaceActionContext::CopySelectionText` and `CutSelection` call `TextViewport::SelectedText`,
   `MultiCaretSelectedText`, or `CurrentLineTextForClipboard`; those paths reserve and append the entire
   selected span before `WriteClipboardText` is attempted. A huge explicit selection, or many multi-caret

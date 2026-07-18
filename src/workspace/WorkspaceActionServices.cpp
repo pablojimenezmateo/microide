@@ -18,6 +18,22 @@
 
 namespace microide::workspace {
 
+ClipboardExportResult ClampClipboardExport(std::string_view text, std::size_t budget) {
+  if (text.size() <= budget) {
+    return {std::string(text), false};
+  }
+  std::size_t fit = budget;
+  while (fit > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(text[fit]))) {
+    --fit;
+  }
+  ClipboardExportResult result;
+  result.text.reserve(fit + 24);
+  result.text.assign(text.substr(0, fit));
+  result.text += "\n…[clipboard truncated]";
+  result.truncated = true;
+  return result;
+}
+
 WorkspaceActionContext::WorkspaceActionContext(ProjectCatalogState& project_catalog,
                                                ProjectWorkspaceState& current_project_state,
                                                float& ui_scale,
@@ -220,11 +236,25 @@ void WorkspaceActionContext::OpenDeletePathPrompt(const std::filesystem::path& p
 }
 
 bool WorkspaceActionContext::WriteClipboardText(std::string_view text) const {
-  return operations_.write_clipboard_text(text);
+  // Zero-copy for the common in-budget case; only an over-budget export materializes a
+  // clamped copy (TD-2026-07-17A-119).
+  if (text.size() <= kMaxClipboardExportBytes) {
+    return operations_.write_clipboard_text(text);
+  }
+  const ClipboardExportResult clamped = ClampClipboardExport(text);
+  if (operations_.notify) {
+    operations_.notify(NotificationService::Tone::Warning,
+                       "Copied text truncated (too large for clipboard)");
+  }
+  return operations_.write_clipboard_text(clamped.text);
 }
 
 bool WorkspaceActionContext::WritePrimarySelectionText(std::string_view text) const {
-  return operations_.write_primary_selection_text(text);
+  if (text.size() <= kMaxClipboardExportBytes) {
+    return operations_.write_primary_selection_text(text);
+  }
+  const ClipboardExportResult clamped = ClampClipboardExport(text);
+  return operations_.write_primary_selection_text(clamped.text);
 }
 
 bool WorkspaceActionContext::RevealPathInFileExplorer(
@@ -833,6 +863,16 @@ void WorkspaceActionContext::CutSelection() {
         multi_text.has_value()
             ? *multi_text
             : (has_selection ? viewport->SelectedText() : viewport->CurrentLineTextForClipboard());
+    // TD-2026-07-17A-119: never delete a selection we cannot fully capture to the
+    // clipboard — truncating the copy and then deleting the whole selection would lose
+    // data. Refuse an over-budget cut (leave the buffer intact) and notify.
+    if (text.size() > kMaxClipboardExportBytes) {
+      if (operations_.notify) {
+        operations_.notify(NotificationService::Tone::Warning,
+                           "Selection too large to cut");
+      }
+      return;
+    }
     if (!text.empty() && operations_.write_clipboard_text(text)) {
       operations_.write_primary_selection_text(text);
       const std::size_t cursor_before_line = viewport->cursor_line();
