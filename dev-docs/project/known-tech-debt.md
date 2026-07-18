@@ -88,7 +88,7 @@ they land.
 
 1. **Async / off-thread hardening** — move blocking work off the shell/UI thread:
    compare/merge model build (047/19), LSP `WorkspaceEdit` apply (011/18), project
-   replace-all (21), git patch serialize (38),
+   replace-all (21),
    search worker pool (055), save-participant /
    `process.run_async` worker capacity (016/017). **014 (POSIX terminal write deadline)
    RESOLVED 2026-07-18** — non-blocking buffered PTY writes drained off the reader thread.
@@ -2617,8 +2617,17 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
   Coverage: `TextViewport/LastAppliedEditLineSpanMatchesWholeLineDiff` (mid-line insert,
   end-of-line newline pure-insertion, line-join backspace, undo/redo reverse/forward,
   multi-caret empty). `run-checks.sh tests` (3/3, perf incl.) green; ASAN batched.
-- **TD-2026-07-16-38 — stage/unstage/discard serialize unified patches synchronously
-  on the UI path.** Dedicated async pass. Overlaps **TD-2026-07-17-082**.
+- **[RESOLVED — already adequately addressed 2026-07-18] TD-2026-07-16-38 — stage/unstage/discard serialize unified patches synchronously
+  on the UI path.** The expensive part — the `git apply` subprocess — already runs off the
+  UI thread: `PatchApplyService::DispatchApply` `Post`s `project::ApplyPatchRequest` to
+  `background_executor_` with repository-generation gating. The only remaining synchronous
+  work is `BuildPatchForRequest`, which serializes **only the selected hunk / line range**
+  (`GenerateComparePatch`/`GenerateComparePatchForRows`), not the whole diff — the
+  whole-diff copy this item worried about was already eliminated (the request deliberately
+  leaves `.model` empty; see the comment at `BuildRequest`). Moving that bounded, acted-on
+  serialize off-thread would require copying the entire live `CompareModel` to the worker —
+  strictly more UI-thread work than it saves — so it is left synchronous by design
+  (speed-first). No change needed.
 - **TD-2026-07-16-39 — encoded raster surfaces publish layout dimensions before decode
   knows the real image size.** Dedicated cross-layer pass; related to the raster
   budget work (**TD-2026-07-17-043/092**, fixed).
