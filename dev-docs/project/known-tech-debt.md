@@ -87,7 +87,7 @@ they land.
 **Worth doing — schedule these (each = one focused pass):**
 
 1. **Async / off-thread hardening** — move blocking work off the shell/UI thread:
-   compare/merge model build (047/19), LSP `WorkspaceEdit` apply (011/18), project
+   compare/merge model build (047/19), project
    save-participant /
    `process.run_async` worker capacity (016/017). **014 (POSIX terminal write deadline)
    RESOLVED 2026-07-18** — non-blocking buffered PTY writes drained off the reader thread.
@@ -2442,7 +2442,9 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 > Deferred to a dedicated LSP-completeness change (pairs with the async 091 shutdown work).
 
 - **011 — `WorkspaceEdit` resource ops (create/delete/rename) + version-aware edits**
-  with atomic/rollback-safe staging. Same item as **TD-2026-07-16-18**.
+  with atomic/rollback-safe staging. (The *async apply* facet — load/save closed files
+  off-thread — is RESOLVED under **TD-2026-07-16-18**; this remaining facet is the net-new
+  resource-operation FEATURE support, not a perf/correctness bug.)
 - **012 — replace empty-success-shaped LSP timeouts with explicit result variants**
   (success / empty_success / timeout / cancelled / protocol_error).
 
@@ -2572,7 +2574,7 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
 
 > **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** All remaining open items in this section are
 > multi-file dedicated passes, and all overlap a 2026-07-17 subsection already dispositioned
-> above: 18→011 (LSP WorkspaceEdit async), 19→047 (compare/merge git blob async), 21→094-fixed
+> above: 18→011 (LSP WorkspaceEdit async — RESOLVED, see TD-2026-07-16-18), 19→047 (compare/merge git blob async), 21→094-fixed
 > +cancellable-replace-all async, 22→020/058 (whole-plugin `lua_State*` boundary refactor),
 > 26→084 (render-TU project-state pointers), 38→082 (git patch serialize async), 39→raster
 > decode/layout ordering (raster budget 043/092 already fixed), 60/61 (bottom-panel plugin
@@ -2580,9 +2582,24 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
 > dedicated passes as their 2026-07-17 counterparts. The one whole-buffer-copy hot path in
 > this set (31, merge tracking) was fixed here.
 
-- **TD-2026-07-16-18 — server-pushed LSP `WorkspaceEdit` can synchronously load and
-  save thousands of files on the main thread.** Dedicated async pass. Same item as
-  **TD-2026-07-17-011**.
+- **[RESOLVED 2026-07-18] TD-2026-07-16-18 — server-pushed LSP `WorkspaceEdit` can synchronously load and
+  save thousands of files on the main thread.** `LspService::ApplyServerWorkspaceEdit`
+  now applies open-buffer edits synchronously (they must, for undo coherence) but
+  dispatches the CLOSED-file load/edit/save off the shell thread. Split into
+  `PrepareClosedFileBuckets` (main thread: group by path, drop open paths, resolve each
+  file's position encoding via path-only `DetectFiletype` + `FindStartedServer` — the
+  background applier must not touch the shared syntax registry / LSP manager) and the pure
+  static `RunClosedFileEdits` (per-file scratch-viewport load → map → apply
+  highest-first → atomic save), which the shell runs on `project_background_executor_` via
+  the new `run_closed_file_edits_async` operation. The file-index watcher reflects the
+  on-disk changes. The `workspace/applyEdit` response is now VSCode-style *acceptance*
+  (reports failure only for a rejected open-buffer group, not for a background closed-file
+  write — atomic writes leave a file intact on failure and a later request re-syncs). The
+  synchronous `ApplyLspEditsToClosedFilesOnDisk` wrapper stays for the user-initiated
+  rename path. Covered by the existing (now barrier-drained)
+  `WorkspaceShell/ServerApplyEdit{EditsOpenAndClosedFiles,RejectsOutOfRangeClosedFileEdit}`.
+  (The distinct **TD-2026-07-17-011** resource-ops/version-aware-edits FEATURE facet — see
+  the LSP-completeness subsection — is separate and remains.)
 - **TD-2026-07-16-19 — compare/merge/review open paths run git blob reads
   synchronously on the workspace thread.** Dedicated async pass. Overlaps
   **TD-2026-07-17-047**.

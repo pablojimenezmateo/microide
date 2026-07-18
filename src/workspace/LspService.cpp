@@ -1057,69 +1057,70 @@ void LspService::SyncLspForActiveEditableLastChange() {
   }
 }
 
-LspService::DiskEditResult LspService::ApplyLspEditsToClosedFilesOnDisk(
+std::vector<LspClosedFileEditBucket> LspService::PrepareClosedFileBuckets(
     const std::vector<CodeActionEdit>& edits,
     const std::function<bool(const std::filesystem::path&)>& is_open) {
-  DiskEditResult result;
-
-  // Group edits by normalized target path. An empty path targets the active
-  // buffer (always open); paths the caller edits in place are skipped so undo
-  // stays coherent for the buffers the user has on screen.
-  std::vector<std::pair<std::filesystem::path,
-                        std::vector<std::pair<editor::SelectionRange, std::string>>>>
-      by_path;
-  // Map normalized path -> slot so grouping is O(1) per edit rather than a linear
-  // scan (O(edits * touched_files) otherwise for a large multi-file rename).
+  std::vector<LspClosedFileEditBucket> buckets;
+  // Map normalized path -> slot so grouping is O(1) per edit (O(edits * files)
+  // otherwise for a large multi-file rename).
   std::unordered_map<std::string, std::size_t> bucket_index;
-  const auto bucket_for = [&](const std::filesystem::path& normalized)
-      -> std::vector<std::pair<editor::SelectionRange, std::string>>& {
+  const auto bucket_for = [&](const std::filesystem::path& normalized) -> LspClosedFileEditBucket& {
     const auto it = bucket_index.find(normalized.generic_string());
     if (it != bucket_index.end()) {
-      return by_path[it->second].second;
+      return buckets[it->second];
     }
-    bucket_index.emplace(normalized.generic_string(), by_path.size());
-    by_path.emplace_back(normalized,
-                         std::vector<std::pair<editor::SelectionRange, std::string>>{});
-    return by_path.back().second;
+    bucket_index.emplace(normalized.generic_string(), buckets.size());
+    buckets.push_back(LspClosedFileEditBucket{.path = normalized, .edits = {}, .encoding = {}});
+    return buckets.back();
   };
   for (const CodeActionEdit& edit : edits) {
     if (edit.path.empty()) {
-      continue;
+      continue;  // empty path targets the (always-open) active buffer
     }
     const std::filesystem::path normalized = edit.path.lexically_normal();
     if (is_open && is_open(normalized)) {
-      continue;
+      continue;  // edited in place by the open-buffer applier; keep undo coherent
     }
-    bucket_for(normalized).emplace_back(edit.range, edit.new_text);
+    bucket_for(normalized).edits.emplace_back(edit.range, edit.new_text);
   }
+  // Resolve each file's server position encoding HERE, on the main thread: the
+  // background applier must not touch the shared runtime syntax registry
+  // (lock-free-main-reader invariant) or the LSP manager. Path-only filetype
+  // detection is a slight behaviour change from the old content-based detection for
+  // extensionless files, which now default to UTF-8 unless a server matches the
+  // path — negligible for real source files. FindStartedServer never spawns a server.
+  for (LspClosedFileEditBucket& bucket : buckets) {
+    const std::string language_id = editor::runtime_syntax::DetectFiletype(bucket.path);
+    LspClient* client = CurrentLspManager().FindStartedServer(language_id);
+    bucket.encoding = client != nullptr ? LspEncodingForClient(*client)
+                                        : lsp_encoding::PositionEncoding::Utf8;
+  }
+  return buckets;
+}
 
-  for (auto& [path, file_edits] : by_path) {
-    if (file_edits.empty()) {
+LspService::DiskEditResult LspService::RunClosedFileEdits(
+    const std::vector<LspClosedFileEditBucket>& buckets) {
+  DiskEditResult result;
+  for (const LspClosedFileEditBucket& bucket : buckets) {
+    if (bucket.edits.empty()) {
       continue;
     }
-    // Load into a scratch viewport so line-ending / BOM / encoding detection and
-    // the atomic, permission-preserving save path are reused verbatim. This
-    // viewport is never registered as a tab.
+    // Load into a scratch viewport so line-ending / BOM / encoding detection and the
+    // atomic, permission-preserving save path are reused verbatim. Private to this
+    // call, so safe on a background thread; never registered as a tab.
     editor::TextViewport scratch;
-    if (!scratch.OpenFile(path)) {
+    if (!scratch.OpenFile(bucket.path)) {
       result.any_failed = true;
       continue;
     }
-    // Resolve the server's position encoding for this file's language (the same
-    // running server produced the WorkspaceEdit, so its encoding governs the
-    // `character` offsets). FindStartedServer avoids spawning a server just to
-    // rename a closed file; default to UTF-8 when none is running.
-    const std::string language_id = DetectViewportLanguageId(scratch);
-    LspClient* client = CurrentLspManager().FindStartedServer(language_id);
-    const lsp_encoding::PositionEncoding encoding =
-        client != nullptr ? LspEncodingForClient(*client) : lsp_encoding::PositionEncoding::Utf8;
+    const lsp_encoding::PositionEncoding encoding = bucket.encoding;
 
     // Map 0-based LSP coordinates to editor byte columns. A line beyond EOF is a
     // hard reject (a buggy/hostile server must not silently mutate the last line
     // instead of the line it named), except the LSP end-of-document sentinel
     // `{line == line_count, character == 0}`, which maps to the end of the last
-    // line. A `character` past the line end stays a soft clamp (LSP servers
-    // routinely address one past the last column). `*ok` is set false on reject.
+    // line. A `character` past the line end stays a soft clamp. `*ok` is set false
+    // on reject.
     const auto map_position = [&](editor::TextPosition pos, bool* ok) -> editor::TextPosition {
       *ok = true;
       const std::size_t line_count = scratch.line_count();
@@ -1139,6 +1140,9 @@ LspService::DiskEditResult LspService::ApplyLspEditsToClosedFilesOnDisk(
           std::string_view(scratch.lines()[pos.line]), pos.column, encoding);
       return pos;
     };
+
+    // Copy the bucket's edits so their ranges can be mapped in place (bucket is const).
+    std::vector<std::pair<editor::SelectionRange, std::string>> file_edits = bucket.edits;
     bool file_out_of_range = false;
     for (auto& [range, text] : file_edits) {
       bool start_ok = true;
@@ -1157,8 +1161,7 @@ LspService::DiskEditResult LspService::ApplyLspEditsToClosedFilesOnDisk(
       continue;
     }
     // Apply highest-position-first (later array entry first on ties) so earlier
-    // ranges stay valid as later ones apply — identical ordering to the open-buffer
-    // path. No undo is recorded: the scratch buffer is written and discarded.
+    // ranges stay valid as later ones apply. No undo is recorded: scratch is discarded.
     std::vector<std::size_t> apply_order(file_edits.size());
     for (std::size_t i = 0; i < apply_order.size(); ++i) {
       apply_order[i] = i;
@@ -1174,11 +1177,8 @@ LspService::DiskEditResult LspService::ApplyLspEditsToClosedFilesOnDisk(
       }
       return lhs > rhs;
     });
-    // Reject overlapping edits: applying two intersecting ranges (even
-    // highest-first) double-edits shared bytes in an order-dependent way. In this
-    // descending order consecutive entries run higher-start -> lower-start; the
-    // lower-start edit overlaps the higher one when its end passes the higher
-    // edit's start. Touching endpoints (adjacent edits) are allowed.
+    // Reject overlapping edits: applying two intersecting ranges double-edits shared
+    // bytes in an order-dependent way. Touching endpoints (adjacent edits) are allowed.
     bool overlapping = false;
     for (std::size_t i = 1; i < apply_order.size() && !overlapping; ++i) {
       const editor::SelectionRange hi =
@@ -1203,6 +1203,15 @@ LspService::DiskEditResult LspService::ApplyLspEditsToClosedFilesOnDisk(
     result.edits_applied += file_edits.size();
   }
   return result;
+}
+
+LspService::DiskEditResult LspService::ApplyLspEditsToClosedFilesOnDisk(
+    const std::vector<CodeActionEdit>& edits,
+    const std::function<bool(const std::filesystem::path&)>& is_open) {
+  // Synchronous wrapper kept for the user-initiated rename path (which reports a
+  // file count in its feedback). The server-initiated path dispatches
+  // RunClosedFileEdits off-thread instead (see ApplyServerWorkspaceEdit).
+  return RunClosedFileEdits(PrepareClosedFileBuckets(edits, is_open));
 }
 
 bool LspService::IsPathOpenInProject(const std::filesystem::path& normalized) const {
@@ -1255,19 +1264,33 @@ bool LspService::ApplyServerWorkspaceEdit(LspClient::WorkspaceEdit edit) {
   if (operations_.apply_workspace_edit_to_open_buffers) {
     open_result = operations_.apply_workspace_edit_to_open_buffers(flat);
   }
-  const DiskEditResult disk = ApplyLspEditsToClosedFilesOnDisk(
+  // A server rename can push edits to thousands of CLOSED files. Load/apply/save
+  // them off the shell thread (TD-2026-07-17-011 / TD-2026-07-16-18): prepare the
+  // per-file buckets + encodings on the main thread, then dispatch the heavy
+  // load/edit/save to the background executor. The file-index watcher reflects the
+  // on-disk changes; a write failure self-heals (atomic writes leave the file
+  // intact and a later request re-syncs) — so unlike the synchronous open-buffer
+  // path we cannot gate the applyEdit response on the disk result.
+  std::vector<LspClosedFileEditBucket> buckets = PrepareClosedFileBuckets(
       flat, [this](const std::filesystem::path& normalized) {
         return IsPathOpenInProject(normalized);
       });
-  // Report `applied: false` whenever ANY target that survived parsing/containment
-  // failed to apply — a beyond-EOF/overlapping open-buffer group, or a closed-file
-  // failure (bad open, out-of-range edit, save error). Conflating a partial apply
-  // with full success would let a rename/refactor server update its index as if
-  // every file changed while the workspace is only half-rewritten. (TD-2026-07-16-43.)
-  if (open_result.any_rejected || disk.any_failed) {
+  const bool had_closed_edits = !buckets.empty();
+  if (had_closed_edits) {
+    if (operations_.run_closed_file_edits_async) {
+      operations_.run_closed_file_edits_async(std::move(buckets));
+    } else {
+      RunClosedFileEdits(buckets);  // headless fallback: synchronous
+    }
+  }
+  // Acceptance response: report `applied: false` only when an OPEN-buffer group the
+  // user can see was rejected (beyond-EOF / overlap). The closed-file writes were
+  // accepted for background application (VSCode-style — it does not block the
+  // applyEdit response on disk completion).
+  if (open_result.any_rejected) {
     return false;
   }
-  return open_result.applied_any || disk.files_written > 0;
+  return open_result.applied_any || had_closed_edits;
 }
 
 void LspService::ConsumeLspCallbacks() {

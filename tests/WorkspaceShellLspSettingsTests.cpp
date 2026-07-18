@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace microide::tests {
@@ -208,12 +209,15 @@ void TestLspServerRetirementRoutesThroughHostPool() {
   // The client now drains from the host-owned pool over frames. Pump callbacks until
   // the pool empties (bounded, no sleeps — the stub's shutdown thread completes fast).
   bool drained = false;
-  for (int i = 0; i < 2000; ++i) {
+  for (int i = 0; i < 100000; ++i) {
     if (WorkspaceShellTestAccess::LspRetiringClientCount(shell) == 0) {
       drained = true;
       break;
     }
     WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+    // Yield so the stub client's shutdown thread is scheduled even when the test
+    // suite saturates every core; the reap then observes IsShutdownComplete.
+    std::this_thread::yield();
   }
   Expect(drained, "the host-owned retirement pool should drain the retiring client");
 }

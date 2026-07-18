@@ -44,6 +44,15 @@
   // Drive the off-thread forced rescan (TD-2026-07-17-081/082) to completion: post
   // the scan, wait for the background worker to run it, then drain the mailbox so the
   // result applies on this (main) thread. Deterministic — no sleeps.
+  // Wait for all currently-queued project background work to run (a trailing barrier
+  // task runs after everything already posted on the serial worker). No sleeps.
+  static void DrainProjectBackgroundExecutor(WorkspaceShell& shell) {
+    std::promise<void> ran;
+    std::future<void> ran_future = ran.get_future();
+    shell.project_background_executor_.Post([&ran]() { ran.set_value(); });
+    ran_future.wait();
+  }
+
   static void ForceFileIndexRefreshAndDrain(WorkspaceShell& shell) {
     shell.RequestFileIndexRefresh();
     // Wait for the queued scan to RUN (not cancel it): a trailing barrier task runs

@@ -40,6 +40,17 @@ struct OpenBufferEditResult {
   bool any_rejected = false;
 };
 
+// A closed-file target for a server-initiated WorkspaceEdit: the file's ranged
+// edits plus the server's negotiated position encoding for mapping them. Prepared
+// on the main thread (path/encoding resolution needs the shared syntax registry +
+// LSP manager); RunClosedFileEdits then loads/applies/saves it off the shell thread
+// (TD-2026-07-17-011 / TD-2026-07-16-18).
+struct LspClosedFileEditBucket {
+  std::filesystem::path path;
+  std::vector<std::pair<editor::SelectionRange, std::string>> edits;
+  lsp_encoding::PositionEncoding encoding = lsp_encoding::PositionEncoding::Utf8;
+};
+
 class LspService {
  public:
   struct Operations {
@@ -56,6 +67,12 @@ class LspService {
     // failure instead of conflating it with full success.
     std::function<OpenBufferEditResult(const std::vector<CodeActionEdit>&)>
         apply_workspace_edit_to_open_buffers;
+    // Run the closed-file disk edits of a SERVER-INITIATED WorkspaceEdit off the
+    // shell thread (a server rename can touch thousands of closed files). Bound to a
+    // shell background-executor dispatch that calls LspService::RunClosedFileEdits;
+    // the on-disk changes are picked up by the file-index watcher. Null in headless
+    // setups, where LspService falls back to a synchronous apply (TD-2026-07-17-011).
+    std::function<void(std::vector<LspClosedFileEditBucket>)> run_closed_file_edits_async;
     // Resolve a setting value (project-over-user) for LSP feature gating: the lsp.*
     // toggles plus inlay-hint gating (editor.inlay_hints.enabled). Bound to
     // WorkspaceShell::GetSettingValue; null in headless setups (treated as "on").
@@ -205,7 +222,19 @@ class LspService {
       const std::vector<CodeActionEdit>& edits,
       const std::function<bool(const std::filesystem::path&)>& is_open);
 
+  // Load/apply/save each prepared closed-file bucket (highest-position-first, atomic
+  // save). Pure — touches only its arguments + the filesystem (each file via a
+  // private scratch viewport), so it is safe to run on a background thread. Static.
+  static DiskEditResult RunClosedFileEdits(const std::vector<LspClosedFileEditBucket>& buckets);
+
  private:
+  // Group `edits` by closed-file path (dropping open paths + the active buffer) and
+  // resolve each file's server position encoding on the main thread (path-only
+  // filetype detection + started-server lookup — both touch shared state that must
+  // stay main-thread). The heavy load/apply/save is deferred to RunClosedFileEdits.
+  std::vector<LspClosedFileEditBucket> PrepareClosedFileBuckets(
+      const std::vector<CodeActionEdit>& edits,
+      const std::function<bool(const std::filesystem::path&)>& is_open);
   // Apply a server-initiated WorkspaceEdit on the main thread: open buffers in
   // place (via the Operations hook), closed files silently on disk. Returns true
   // when at least one edit was applied. Bound as the LspClient apply-edit handler.

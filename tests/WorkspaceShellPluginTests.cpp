@@ -2222,6 +2222,9 @@ return ide.plugin({
   stub_raw->SimulateServerRequestForTesting("workspace/applyEdit", std::move(*params),
                                             util::JsonValue(static_cast<std::int64_t>(1)));
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  // The closed-file disk edits now run off the shell thread (TD-2026-07-17-011);
+  // wait for the background write before asserting the on-disk result.
+  WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(shell);
 
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "bbb",
          "the open buffer should be edited in place by the server-pushed edit");
@@ -2289,6 +2292,7 @@ return ide.plugin({
   stub_raw->SimulateServerRequestForTesting("workspace/applyEdit", std::move(*params),
                                             util::JsonValue(static_cast<std::int64_t>(1)));
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(shell);
 
   Expect(ReadFile(closed_md) == "aaa\n",
          "an out-of-range (beyond-EOF) edit must not be clamped onto the last line and written");
