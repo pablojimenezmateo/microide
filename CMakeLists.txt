@@ -803,6 +803,7 @@ add_executable(microide_tests
   tests/GenerationTests.cpp
   tests/ProjectBackgroundExecutorTests.cpp
   tests/RenderViewModelBuilderTests.cpp
+  tests/TerminalBackendTests.cpp
   tests/TerminalSessionTests.cpp
   tests/ThemeTests.cpp
   tests/TestMain.cpp

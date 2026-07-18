@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -165,13 +167,23 @@ class PosixTerminalBackend final : public TerminalBackend {
 
     close(slave_fd);
 
-    // Self-pipe used to wake the reader's poll() on shutdown without closing
-    // master_fd out from under it (closing an fd another thread is polling is
-    // a data race and risks fd-number reuse).
+    // Make the master non-blocking so Write() never parks the calling (UI or
+    // reader) thread inside write(): a child that stops draining its stdin (a
+    // pager paused on a huge paste, a frozen program) would otherwise fill the
+    // PTY input buffer and block whoever writes to it — historically the shell
+    // thread on paste/keystroke, freezing the whole app. Reads stay gated by
+    // poll(POLLIN) so a non-blocking read only yields the already-ready bytes.
+    (void)fcntl(master_fd, F_SETFL, fcntl(master_fd, F_GETFL, 0) | O_NONBLOCK);
+
+    // Self-pipe used to wake the reader's poll() on shutdown (and now to nudge
+    // it to drain freshly-buffered output) without closing master_fd out from
+    // under it (closing an fd another thread is polling is a data race and risks
+    // fd-number reuse). O_NONBLOCK on both ends so a wake never blocks the
+    // producer and the reader can drain all pending wake bytes without parking.
     // CLOEXEC both wake-pipe ends: they must not leak into subprocesses forked
     // by other threads while the terminal is live (same hazard as the PTY fds).
     int wake_pipe[2] = {-1, -1};
-    if (pipe2(wake_pipe, O_CLOEXEC) != 0) {
+    if (pipe2(wake_pipe, O_CLOEXEC | O_NONBLOCK) != 0) {
       close(master_fd);
       RequestTerminalChildShutdown(child_pid);
       return TerminalStartResult{
@@ -186,7 +198,7 @@ class PosixTerminalBackend final : public TerminalBackend {
     callbacks_ = std::move(callbacks);
     master_fd_.store(master_fd, std::memory_order_release);
     wake_read_fd_ = wake_pipe[0];
-    wake_write_fd_ = wake_pipe[1];
+    wake_write_fd_.store(wake_pipe[1], std::memory_order_release);
     child_pid_ = child_pid;
     running_ = true;
     stop_requested_ = false;
@@ -205,7 +217,7 @@ class PosixTerminalBackend final : public TerminalBackend {
   void Stop() override {
     const int master_fd = master_fd_.exchange(-1, std::memory_order_acq_rel);
     const int child_pid = child_pid_;
-    const int wake_write_fd = wake_write_fd_;
+    const int wake_write_fd = wake_write_fd_.load(std::memory_order_acquire);
     const int wake_read_fd = wake_read_fd_;
     stop_requested_.store(true, std::memory_order_release);
     child_pid_ = -1;
@@ -236,7 +248,15 @@ class PosixTerminalBackend final : public TerminalBackend {
       close(wake_write_fd);
     }
     wake_read_fd_ = -1;
-    wake_write_fd_ = -1;
+    wake_write_fd_.store(-1, std::memory_order_release);
+
+    // The reader has joined and the master is closed, so no thread can touch the
+    // write buffer anymore; drop any input the stopped child never drained.
+    {
+      std::lock_guard<std::mutex> lock(write_mutex_);
+      pending_write_.clear();
+      pending_write_offset_ = 0;
+    }
 
     running_.store(false, std::memory_order_release);
     stop_requested_.store(false, std::memory_order_release);
@@ -255,23 +275,31 @@ class PosixTerminalBackend final : public TerminalBackend {
   }
 
   void Write(std::string_view bytes) override {
-    const int master_fd = master_fd_.load(std::memory_order_acquire);
-    if (master_fd < 0 || bytes.empty()) {
+    if (master_fd_.load(std::memory_order_acquire) < 0 || bytes.empty()) {
       return;
     }
 
-    std::size_t offset = 0;
-    while (offset < bytes.size()) {
-      const ssize_t written =
-          write(master_fd, bytes.data() + static_cast<std::ptrdiff_t>(offset), bytes.size() - offset);
-      if (written < 0) {
-        if (errno == EINTR) {
-          continue;
-        }
-        break;
+    // Never write to the PTY here: buffer the bytes and let the reader thread
+    // (the sole writer, so output bytes never interleave) drain them when the
+    // master reports POLLOUT. This keeps every caller — the UI thread on
+    // keystroke/paste, the reader thread on a query reply — off the blocking
+    // write() path entirely. Bound the buffer so a permanently-stuck child can
+    // not grow it without limit; align the cap with the session paste cap so a
+    // legitimate large paste to a draining child is never truncated (only a
+    // child that refuses to read past 64 MiB drops the tail).
+    {
+      std::lock_guard<std::mutex> lock(write_mutex_);
+      const std::size_t live = pending_write_.size() - pending_write_offset_;
+      const std::size_t room = live >= kMaxPendingWriteBytes ? 0 : kMaxPendingWriteBytes - live;
+      if (room == 0) {
+        return;
       }
-      offset += static_cast<std::size_t>(written);
+      if (bytes.size() > room) {
+        bytes = bytes.substr(0, room);
+      }
+      pending_write_.append(bytes);
     }
+    WakeReader();
   }
 
   bool running() const override { return running_.load(std::memory_order_acquire); }
@@ -280,12 +308,19 @@ class PosixTerminalBackend final : public TerminalBackend {
   void ReaderMain(int master_fd, int wake_fd, int child_pid) {
     std::array<char, 4096> buffer{};
     while (!stop_requested_.load(std::memory_order_acquire)) {
+      bool has_pending_write = false;
+      {
+        std::lock_guard<std::mutex> lock(write_mutex_);
+        has_pending_write = pending_write_offset_ < pending_write_.size();
+      }
       std::array<pollfd, 2> pfds{
-          pollfd{.fd = master_fd, .events = POLLIN | POLLHUP, .revents = 0},
+          pollfd{.fd = master_fd,
+                 .events = static_cast<short>(POLLIN | POLLHUP | (has_pending_write ? POLLOUT : 0)),
+                 .revents = 0},
           pollfd{.fd = wake_fd, .events = POLLIN, .revents = 0},
       };
-      // No timeout: the wake pipe interrupts the poll on shutdown, so the
-      // reader never busy-polls while idle.
+      // No timeout: the wake pipe interrupts the poll on shutdown (and whenever
+      // a producer buffers output), so the reader never busy-polls while idle.
       const int ready = poll(pfds.data(), 2, -1);
       if (ready < 0) {
         if (errno == EINTR) {
@@ -296,16 +331,29 @@ class PosixTerminalBackend final : public TerminalBackend {
       if (ready == 0) {
         continue;
       }
-      // Shutdown signalled via the self-pipe: stop before touching master_fd.
+      // Wake pipe readable: drain every pending wake byte (the pipe is
+      // non-blocking, so the drain loop ends on EAGAIN), then re-check for
+      // shutdown. A wake means either Stop() (stop_requested_ set) or a
+      // producer appended output to drain via POLLOUT below.
       if ((pfds[1].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
-        break;
+        std::array<char, 256> drain{};
+        while (read(wake_fd, drain.data(), drain.size()) > 0) {
+        }
+        if (stop_requested_.load(std::memory_order_acquire)) {
+          break;
+        }
       }
       if ((pfds[0].revents & (POLLERR | POLLNVAL)) != 0) {
         break;
       }
+      // Flush buffered input to the child while the master accepts writes.
+      if ((pfds[0].revents & POLLOUT) != 0) {
+        DrainPendingWrite(master_fd);
+      }
       if ((pfds[0].revents & (POLLIN | POLLHUP)) == 0) {
         continue;
       }
+      const bool hangup = (pfds[0].revents & POLLHUP) != 0;
       const ssize_t count = read(master_fd, buffer.data(), buffer.size());
       if (count > 0) {
         if (callbacks_.on_output) {
@@ -314,6 +362,15 @@ class PosixTerminalBackend final : public TerminalBackend {
         continue;
       }
       if (count < 0 && errno == EINTR) {
+        continue;
+      }
+      if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        // Non-blocking master with nothing ready: a spurious POLLIN, or a
+        // hangup whose buffered data is already drained. Break on hangup so we
+        // do not spin re-polling a POLLHUP that never yields more bytes.
+        if (hangup) {
+          break;
+        }
         continue;
       }
       break;
@@ -352,14 +409,74 @@ class PosixTerminalBackend final : public TerminalBackend {
     }
   }
 
+  // Non-blocking, best-effort nudge so a producer thread's Write() wakes the
+  // reader's poll() to drain the freshly-buffered output. A full wake pipe
+  // (EAGAIN) already has a byte pending, so the reader will still wake.
+  void WakeReader() {
+    const int fd = wake_write_fd_.load(std::memory_order_acquire);
+    if (fd < 0) {
+      return;
+    }
+    const char byte = 1;
+    ssize_t result = 0;
+    do {
+      result = write(fd, &byte, 1);
+    } while (result < 0 && errno == EINTR);
+  }
+
+  // Runs only on the reader thread (the sole writer to master_fd, so buffered
+  // input bytes never interleave with each other). The master is non-blocking,
+  // so each write() returns immediately: a partial write leaves the remainder
+  // for the next POLLOUT.
+  void DrainPendingWrite(int master_fd) {
+    std::lock_guard<std::mutex> lock(write_mutex_);
+    while (pending_write_offset_ < pending_write_.size()) {
+      const char* data = pending_write_.data() + static_cast<std::ptrdiff_t>(pending_write_offset_);
+      const std::size_t length = pending_write_.size() - pending_write_offset_;
+      const ssize_t written = write(master_fd, data, length);
+      if (written > 0) {
+        pending_write_offset_ += static_cast<std::size_t>(written);
+        continue;
+      }
+      if (written < 0 && errno == EINTR) {
+        continue;
+      }
+      if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        break;  // master full; the next POLLOUT resumes the drain
+      }
+      // Hard write error (child gone / EIO): drop the buffer so the reader can
+      // not spin re-arming POLLOUT on a dead master.
+      pending_write_.clear();
+      pending_write_offset_ = 0;
+      return;
+    }
+    if (pending_write_offset_ >= pending_write_.size()) {
+      pending_write_.clear();
+      pending_write_offset_ = 0;
+    } else if (pending_write_offset_ >= (std::size_t{1} << 16)) {
+      // Reclaim the consumed prefix once it grows past 64 KiB so a slow-draining
+      // child does not keep an ever-growing already-sent head in memory.
+      pending_write_.erase(0, pending_write_offset_);
+      pending_write_offset_ = 0;
+    }
+  }
+
+  // Aligned with the session-level paste cap so a legitimate large paste to a
+  // draining child is buffered in full; only a child that refuses to read this
+  // much drops the tail.
+  static constexpr std::size_t kMaxPendingWriteBytes = 64u << 20;
+
   TerminalBackendCallbacks callbacks_;
   std::thread reader_thread_;
   std::atomic<int> master_fd_{-1};
   int wake_read_fd_ = -1;
-  int wake_write_fd_ = -1;
+  std::atomic<int> wake_write_fd_{-1};
   int child_pid_ = -1;
   std::atomic<bool> running_{false};
   std::atomic<bool> stop_requested_{false};
+  std::mutex write_mutex_;
+  std::string pending_write_;
+  std::size_t pending_write_offset_ = 0;
 };
 
 #elif defined(_WIN32)

@@ -91,7 +91,8 @@ they land.
    replace-all (21), forced refresh + per-file stat (081/082), git patch serialize (38),
    exclude-glob watcher rebuild (080), file-index batch coalescing (086), LSP shutdown
    lifecycle (091), file-manager reveal (061), search worker pool (055), save-participant /
-   `process.run_async` worker capacity (016/017), POSIX terminal write deadline (014).
+   `process.run_async` worker capacity (016/017). **014 (POSIX terminal write deadline)
+   RESOLVED 2026-07-18** — non-blocking buffered PTY writes drained off the reader thread.
    *Speed is the #1 project priority, so this cluster is the highest-value backlog.*
 2. **Render view-model build-out** — overlay view model owns state, no live pointers in
    render TUs (084/26); + the residual commit-body sizing/scroll-clamp move-to-prep from 083.
@@ -2196,7 +2197,8 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 **Async / off-thread refactors** (move blocking work off the shell/UI thread):
 
 > **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** Every item in this subsection (047, 055,
-> 061, 081/082, 080, 086, 091, 016/017, 014, 075) is a multi-file async redesign —
+> 061, 081/082, 080, 086, 091, 016/017, 075) is a multi-file async redesign —
+> (**014 RESOLVED 2026-07-18** — POSIX terminal write is now non-blocking; see its entry below.)
 > moving synchronous work onto `ProjectBackgroundExecutor`/a worker lane with
 > generation/token gating and an SDL-wake completion, then reconciling the callers that
 > today depend on a synchronous return. Each is a focused, individually-reviewed pass with
@@ -2262,8 +2264,23 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 - **016 / 017 — save-participant + `process.run_async` can occupy plugin worker
   capacity.** Cancellation/generation ownership + a dedicated process worker pool
   returning handles to Lua.
-- **014 — POSIX terminal write can block without a deadline.** Route PTY writes
-  through a nonblocking bounded writer queue with backpressure surfaced to the panel.
+- **[RESOLVED 2026-07-18] 014 — POSIX terminal write can block without a deadline.**
+  `PosixTerminalBackend::Write` no longer does a blocking `write()` loop on the PTY
+  master from the calling (UI/reader) thread. The master fd is now `O_NONBLOCK`, and
+  `Write` only appends to a bounded (`kMaxPendingWriteBytes` = 64 MiB, aligned with the
+  session paste cap) `pending_write_` buffer under `write_mutex_`, then nudges the reader
+  via the (now `O_NONBLOCK`) self-pipe. The reader thread — the *sole* writer to the
+  master, so buffered bytes never interleave — arms `POLLOUT` whenever the buffer is
+  non-empty and drains it via `DrainPendingWrite` (non-blocking writes, partial-write
+  resume on the next `POLLOUT`, prefix reclaim past 64 KiB, drop-on-hard-error). The
+  reader now also drains the wake pipe and re-checks `stop_requested_`, and reads tolerate
+  `EAGAIN` (breaking only on a hangup with no more data). A child that stops reading its
+  stdin can no longer park whoever writes to the terminal. Regressions:
+  `TerminalBackend/{WriteDoesNotBlockOnStuckChild,BufferedWriteReachesDrainingChild}`
+  (real PTY: a `sleep`-stuck child must not block a 4 MiB write; a `cat` child must still
+  receive buffered input round-trip). Windows backend write is unchanged (platform WON'T-DO
+  here). Backpressure beyond the 64 MiB cap drops the tail rather than surfacing a panel
+  toast — a UI nicety left for the panel-status pass.
 - **075 — DAP debug trace serializes + flushes whole messages under a global mutex.**
   Trace-only (off by default); move to a bounded async writer with payload caps.
 - **[WON'T-DO 2026-07-17 — non-actionable, no live defect] 003 — commit-workflow
