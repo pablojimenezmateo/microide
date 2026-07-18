@@ -206,8 +206,12 @@ struct PluginHost::Impl {
   std::shared_ptr<const ResolvedPluginSettings> ResolveSettingsSnapshot() const;
 
   // Dispatch a plugin call onto the worker. Detached = fire-and-forget (events);
-  // Blocking = bounded synchronous round-trip preserving the synchronous API.
-  void RunOnWorkerDetached(PluginHostSnapshot snapshot, std::function<void()> fn);
+  // Blocking = bounded synchronous round-trip preserving the synchronous API. A
+  // non-empty `coalesce_key` posts latest-only: a newer job with the same key drops the
+  // superseded queued one (used for cursor/selection events, TD-2026-07-17A-078). An
+  // empty key posts FIFO (ordered delivery for buffer_change/open/save/close).
+  void RunOnWorkerDetached(PluginHostSnapshot snapshot, std::function<void()> fn,
+                           std::string coalesce_key = {});
 
   // Outcome of a deadline-bounded save-participant round-trip. `text` holds the
   // (possibly transformed) buffer when the worker finished in time; on timeout

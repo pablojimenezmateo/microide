@@ -65,16 +65,26 @@ std::shared_ptr<const ResolvedPluginSettings> PluginHost::Impl::ResolveSettingsS
   return immutable;
 }
 
-void PluginHost::Impl::RunOnWorkerDetached(PluginHostSnapshot snapshot, std::function<void()> fn) {
+void PluginHost::Impl::RunOnWorkerDetached(PluginHostSnapshot snapshot, std::function<void()> fn,
+                                           std::string coalesce_key) {
   if (worker_ == nullptr) {
     // No worker wired: run inline with exclusive access (legacy behavior).
     ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true, fn);
     return;
   }
   worker_->EnsureStarted();
-  worker_->Post([this, snapshot = std::move(snapshot), fn = std::move(fn)]() mutable {
+  auto task = [this, snapshot = std::move(snapshot), fn = std::move(fn)]() mutable {
     ExecuteWithContext(&snapshot, /*direct=*/false, /*allow_registration=*/false, fn);
-  });
+  };
+  // Latest-only when keyed: a superseding cursor/selection event drops the older queued
+  // job for the same buffer so a slow plugin observes the latest state, not a backlog
+  // (TD-2026-07-17A-078). Keyed jobs still append at the tail, so a preceding FIFO
+  // buffer_change stays ahead of a later coalesced cursor move.
+  if (coalesce_key.empty()) {
+    worker_->Post(std::move(task));
+  } else {
+    worker_->PostLatest(std::move(coalesce_key), std::move(task));
+  }
 }
 
 }  // namespace microide::plugin

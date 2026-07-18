@@ -159,7 +159,11 @@ PluginHost::EditorEventInterest PluginHost::EditorEventInterests() const {
 void PluginHost::OnBufferChange(const std::filesystem::path& path,
                                 std::size_t start_line,
                                 std::size_t end_line) {
-  if (!impl_->enabled() || path.empty()) {
+  // Gate on the published interest bit BEFORE CaptureSnapshot + worker post
+  // (TD-2026-07-17A-077): with no plugin subscribed to buffer_change, every keystroke
+  // would otherwise snapshot the active buffer and wake the worker only to no-op.
+  if (!impl_->enabled() || path.empty() ||
+      !impl_->published_.editor_event_interests.buffer_change) {
     return;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
@@ -186,10 +190,15 @@ void PluginHost::OnBufferChange(const std::filesystem::path& path,
 void PluginHost::OnCursorMove(const std::filesystem::path& path,
                               std::size_t line,
                               std::size_t column) {
-  if (!impl_->enabled() || path.empty()) {
+  // Gate on the interest bit before any snapshot/worker cost (TD-2026-07-17A-077).
+  if (!impl_->enabled() || path.empty() ||
+      !impl_->published_.editor_event_interests.cursor_move) {
     return;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
+  // Latest-only per buffer (TD-2026-07-17A-078): a fast caret sweep must not queue
+  // hundreds of stale positions behind a slow plugin callback; each new move drops the
+  // superseded queued job for the same buffer so the plugin observes the latest caret.
   impl_->RunOnWorkerDetached(impl_->CaptureSnapshot(),
                              [impl = impl_.get(), path, line, column]() {
     for (auto& plugin : impl->plugins) {
@@ -203,7 +212,7 @@ void PluginHost::OnCursorMove(const std::filesystem::path& path,
             lua_setfield(state, -2, "col");
           });
     }
-  });
+  }, "evt:cursor_move:" + path.generic_string());
 #else
   (void)line;
   (void)column;
@@ -216,10 +225,14 @@ void PluginHost::OnSelectionChange(const std::filesystem::path& path,
                                    std::size_t start_column,
                                    std::size_t end_line,
                                    std::size_t end_column) {
-  if (!impl_->enabled() || path.empty()) {
+  // Gate on the interest bit before any snapshot/worker cost (TD-2026-07-17A-077).
+  if (!impl_->enabled() || path.empty() ||
+      !impl_->published_.editor_event_interests.selection_change) {
     return;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
+  // Latest-only per buffer (TD-2026-07-17A-078): a selection drag emits a move per frame;
+  // coalesce to the latest so a slow plugin never processes a backlog of stale ranges.
   impl_->RunOnWorkerDetached(
       impl_->CaptureSnapshot(),
       [impl = impl_.get(), path, has_selection, start_line, start_column, end_line, end_column]() {
@@ -242,7 +255,8 @@ void PluginHost::OnSelectionChange(const std::filesystem::path& path,
                 lua_setfield(state, -2, "end_col");
               });
         }
-      });
+      },
+      "evt:selection_change:" + path.generic_string());
 #else
   (void)has_selection;
   (void)start_line;
