@@ -89,7 +89,7 @@ they land.
 1. **Async / off-thread hardening** — move blocking work off the shell/UI thread:
    compare/merge model build (047/19), LSP `WorkspaceEdit` apply (011/18), project
    replace-all (21),
-   search worker pool (055), save-participant /
+   save-participant /
    `process.run_async` worker capacity (016/017). **014 (POSIX terminal write deadline)
    RESOLVED 2026-07-18** — non-blocking buffered PTY writes drained off the reader thread.
    *Speed is the #1 project priority, so this cluster is the highest-value backlog.*
@@ -2242,9 +2242,16 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   save, external-change reconciliation, the synchronous `bool` return every save trigger
   depends on) and is disproportionate risk for a bounded, opt-out, explicit-save-only
   stall. Revisit only if a concrete slow-formatter complaint materializes.
-- **055 — project search spawns/joins per-run helper threads.** Worker count is
-  capped and catastrophic-regex is bounded (034, fixed); reuse a bounded pool with
-  finer-grained cancellation.
+- **[WON'T-DO — measurement-backed, off-UI-thread, net-negative] 055 — project search spawns/joins per-run helper threads.**
+  The spawn/join happens on the **background** search task (already off the UI thread via
+  `task_executor_`), never on the shell/render thread, so it has zero UI-responsiveness
+  impact. Per run it spawns `worker_count-1` (≤7) threads — a few hundred µs — against a
+  whole-project read + regex scan that costs ms to seconds: <0.1% overhead. A persistent
+  variable-width pool (`worker_count = min(clamp(hw,1,8), total_files)` varies with project
+  size) would add condition-variable coordination, idle-thread memory, and shutdown-lifetime
+  risk for no measurable speed gain on a non-UI path — net-negative against the speed-first,
+  low-complexity ethos. Worker count is capped and catastrophic-regex is bounded (034). Left
+  as-is by design; revisit only if a profile ever shows search-thread churn as a real cost.
 - **[RESOLVED 2026-07-18] 061 — file-manager reveal can block the UI up to 10s.**
   `WorkspaceShell::RevealPathInFileExplorer` now validates the path cheaply on the shell
   thread (empty/missing → immediate `false`, which still drives the "Unable to open file
