@@ -2256,6 +2256,41 @@ void TestColorschemeChangeRequestsRepaint() {
          "toggle-theme should switch away from the light theme");
 }
 
+// TD-2026-07-17A-033: switching to an already-open editor tab must SCHEDULE the
+// LSP hydration (didOpen + semantic tokens + inlay hints), not run it inline —
+// activation stays non-blocking and the buffer serialization happens after the
+// tab-switch frame is presented. The pending flag is set by Activate and cleared
+// by the post-present drain (OnFramePresented -> ConsumeDeferredBufferOpen).
+void TestWorkspaceShellTabSwitchDefersLspHydration() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path left = root / "alpha.cpp";
+  const std::filesystem::path right = root / "beta.cpp";
+  WriteFile(left, "int alpha() { return 1; }\n");
+  WriteFile(right, "int beta() { return 2; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  // Two editor tabs; the fixture leaves tab 0 active without going through the
+  // deferred activation path, so nothing is pending to begin with.
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, left);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, right);
+  WorkspaceShellTestAccess::OnFramePresented(shell);
+  Expect(!WorkspaceShellTestAccess::HasPendingLspBufferOpen(shell),
+         "opening editor files should not leave LSP hydration pending");
+
+  // Switching to the other tab (a real 0 -> 1 activation) must SCHEDULE hydration,
+  // leaving the pending flag set instead of hydrating inline during Activate.
+  WorkspaceShellTestAccess::ActivateTab(shell, 1);
+  Expect(WorkspaceShellTestAccess::HasPendingLspBufferOpen(shell),
+         "activating a different tab must schedule (not synchronously run) LSP hydration");
+
+  // The post-present drain runs the deferred hydration and clears the flag.
+  WorkspaceShellTestAccess::OnFramePresented(shell);
+  Expect(!WorkspaceShellTestAccess::HasPendingLspBufferOpen(shell),
+         "the post-present drain must consume the scheduled LSP hydration");
+}
+
 }  // namespace
 
 // Regression: a left-click in a horizontally-scrolled (non-soft-wrapped) editor must
@@ -2301,6 +2336,8 @@ void TestWorkspaceShellEditorClickHonorsHorizontalScroll() {
 }
 
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/TabSwitchDefersLspHydration",
+          TestWorkspaceShellTabSwitchDefersLspHydration);
   AddTest(tests, "WorkspaceShell/EditorClickHonorsHorizontalScroll",
           TestWorkspaceShellEditorClickHonorsHorizontalScroll);
   AddTest(tests, "WorkspaceShell/ColorschemeChangeRequestsRepaint",

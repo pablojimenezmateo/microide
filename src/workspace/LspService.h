@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -109,6 +110,17 @@ class LspService {
   void BeginTrackedLspRequest();
   void FinishTrackedLspRequest();
   void ExpireTrackedLspRequestIfNeeded();
+
+  // Deferred hydration for a newly-activated editor document. `ScheduleBufferOpen`
+  // records the path (latest wins) without touching the LSP client;
+  // `ConsumeDeferredBufferOpen` runs the actual didOpen + semantic-token/inlay-hint
+  // requests, but only if the recorded path is still the active editable buffer
+  // (a rapid second switch supersedes it). The host drains this after the
+  // tab-switch frame is presented so a large file's hydration never blocks the tab
+  // becoming visible (TD-2026-07-17A-033). Returns true when hydration ran.
+  void ScheduleBufferOpen(const std::filesystem::path& path);
+  bool ConsumeDeferredBufferOpen();
+  bool HasPendingBufferOpen() const { return pending_buffer_open_.has_value(); }
 
   // Document lifecycle / synchronization.
   LspClient* LspClientForViewport(const editor::TextViewport& viewport, std::string* language_id);
@@ -254,6 +266,11 @@ class LspService {
   const render::Theme* theme_ = nullptr;
   Operations operations_{};
   Uint32 wake_event_type_ = 0;
+
+  // Path of an editor document whose LSP hydration was scheduled by tab activation
+  // and not yet run. Drained post-frame by ConsumeDeferredBufferOpen so the didOpen
+  // + token/inlay requests do not block the tab switch (TD-2026-07-17A-033).
+  std::optional<std::filesystem::path> pending_buffer_open_;
 
   // Per-URI monotonic generation for semantic-token requests. Bumped on every
   // request; the response closure captures its value and PublishLspSemanticTokens

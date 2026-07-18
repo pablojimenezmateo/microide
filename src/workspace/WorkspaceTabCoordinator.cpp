@@ -377,10 +377,13 @@ void TabCoordinator::Activate(std::size_t index) {
   // session-restore case (a file already open at startup, activated without ever
   // going through OpenFileInNewTab) and plain tab switches — without it, a
   // restored file's LSP stayed at "Starting..." with no diagnostics/semantic
-  // colors until an edit or go-to-definition. Idempotent, so switches are cheap.
+  // colors until an edit or go-to-definition. SCHEDULED, not run inline: the
+  // hydration (didOpen + semantic tokens + inlay hints, which serializes the whole
+  // buffer) runs after the tab-switch frame is presented, so switching to a large
+  // file never blocks the tab becoming visible. Idempotent, so switches are cheap.
   if (tab.kind == TabEntry::Kind::Editor && !active_vp_path.empty() &&
-      operations_.notify_lsp_buffer_open) {
-    operations_.notify_lsp_buffer_open(active_vp_path);
+      operations_.schedule_lsp_buffer_open) {
+    operations_.schedule_lsp_buffer_open(active_vp_path);
   }
   operations_.request_active_tab_redraw(tab.kind == TabEntry::Kind::Editor &&
                                         !active_vp_path.empty());

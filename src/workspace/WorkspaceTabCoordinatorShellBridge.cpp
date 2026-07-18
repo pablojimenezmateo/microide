@@ -62,8 +62,14 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
               [this](const std::filesystem::path& path) { NotifyPluginBufferSave(path); },
           .notify_plugin_buffer_open =
               [this](const std::filesystem::path& path) { NotifyPluginBufferOpen(path); },
-          .notify_lsp_buffer_open =
-              [this](const std::filesystem::path& path) { NotifyLspBufferOpen(path); },
+          .schedule_lsp_buffer_open =
+              [this](const std::filesystem::path& path) {
+                // Record the hydration and request a frame; the actual didOpen +
+                // token/inlay work runs post-present in OnFramePresented so a large
+                // buffer's hydration never blocks the tab switch (TD-2026-07-17A-033).
+                lsp_service_.ScheduleBufferOpen(path);
+                RequestWindowRedraw();
+              },
           .notify_lsp_buffer_close =
               [this](const std::filesystem::path& path) { NotifyLspBufferClose(path); },
           .notify_lsp_buffer_reloaded =

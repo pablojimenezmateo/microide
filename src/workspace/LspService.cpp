@@ -519,6 +519,39 @@ void LspService::EnsureLspDocumentOpen(const editor::TextViewport& viewport, Lsp
   RequestLspInlayHints(viewport, client);
 }
 
+void LspService::ScheduleBufferOpen(const std::filesystem::path& path) {
+  std::filesystem::path normalized = path.lexically_normal();
+  if (normalized.empty()) {
+    return;
+  }
+  // Latest activation wins: a rapid A->B->C switch only hydrates C.
+  pending_buffer_open_ = std::move(normalized);
+}
+
+bool LspService::ConsumeDeferredBufferOpen() {
+  if (!pending_buffer_open_.has_value()) {
+    return false;
+  }
+  const std::filesystem::path path = std::move(*pending_buffer_open_);
+  pending_buffer_open_.reset();
+  // Resolve against the CURRENT active buffer: if the user switched away again
+  // before this drained, the scheduled hydration is obsolete and dropped (the new
+  // tab scheduled its own). Mirrors WorkspaceShell::NotifyLspBufferOpen exactly,
+  // just deferred past the tab-switch frame.
+  editor::TextViewport* viewport =
+      operations_.active_editable_viewport ? operations_.active_editable_viewport() : nullptr;
+  if (viewport == nullptr || viewport->path().lexically_normal() != path) {
+    return false;
+  }
+  std::string language_id;
+  LspClient* client = LspClientForViewport(*viewport, &language_id);
+  if (client == nullptr) {
+    return false;
+  }
+  EnsureLspDocumentOpen(*viewport, *client, language_id);
+  return true;
+}
+
 void LspService::PublishLspDiagnostics(ProjectWorkspaceState& state, std::string uri,
                                        lsp_encoding::PositionEncoding encoding,
                                        std::vector<LspClient::Diagnostic> diagnostics) {

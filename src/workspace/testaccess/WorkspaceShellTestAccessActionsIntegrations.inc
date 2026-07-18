@@ -6,6 +6,12 @@
     return *shell.context_.project_catalog.entries.at(index);
   }
   static void ConsumeLspCallbacks(WorkspaceShell& shell) { shell.ConsumeLspCallbacks(); }
+  // TD-2026-07-17A-033: tab activation must SCHEDULE LSP hydration, not run it
+  // inline. True between the activation and the post-present drain
+  // (OnFramePresented -> LspService::ConsumeDeferredBufferOpen).
+  static bool HasPendingLspBufferOpen(const WorkspaceShell& shell) {
+    return shell.lsp_service_.HasPendingBufferOpen();
+  }
   // Drive the LSP hover fallback for a cell (1-based line/column) directly, drain
   // the async result, and return the resolved hover content ("" if it failed).
   static std::string ResolveLspHoverForTesting(WorkspaceShell& shell,

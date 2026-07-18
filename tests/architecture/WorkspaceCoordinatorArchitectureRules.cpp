@@ -74,8 +74,13 @@ RuleResult CheckLspDidOpenIsNonBlocking(const std::filesystem::path& repo_root) 
   }
 
   const std::string activate_body = text.substr(body_start + 1, body_end - body_start - 1);
+  // Also catch the injected `notify_lsp_buffer_open` callback: it used to bypass this
+  // lint (the operation is snake_case while the pattern only matched the PascalCase
+  // shell method), so activation could still synchronously hydrate the server through
+  // it (TD-2026-07-17A-033). The async form is `schedule_lsp_buffer_open`, which is
+  // deliberately NOT matched.
   const std::regex sync_lsp_dispatch_pattern(
-      R"(\b(DidOpen|DidChange|DidChangeIncremental|EnsureLspDocumentOpen|NotifyLspBufferOpen)\s*\()");
+      R"(\b(DidOpen|DidChange|DidChangeIncremental|EnsureLspDocumentOpen|NotifyLspBufferOpen|notify_lsp_buffer_open)\s*\()");
   std::smatch match;
   if (std::regex_search(activate_body, match, sync_lsp_dispatch_pattern)) {
     result.violations.push_back(

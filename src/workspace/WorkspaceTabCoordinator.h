@@ -19,7 +19,14 @@ class TabCoordinator {
     std::function<void(const std::filesystem::path&)> invalidate_editor_blame_path;
     std::function<void(const std::filesystem::path&)> notify_plugin_buffer_save;
     std::function<void(const std::filesystem::path&)> notify_plugin_buffer_open;
-    std::function<void(const std::filesystem::path&)> notify_lsp_buffer_open;
+    // Schedule (do NOT synchronously run) LSP hydration for the newly-active editor
+    // document. Activation must stay non-blocking: the host records the path and runs
+    // the didOpen + semantic-token/inlay-hint requests after the tab-switch frame is
+    // presented (WorkspaceShell::ConsumeDeferredLspBufferOpen), so a large file's
+    // hydration never delays the tab becoming visible. Enforced by the architecture
+    // lint (CheckLspDidOpenIsNonBlocking), which forbids the synchronous forms in
+    // Activate.
+    std::function<void(const std::filesystem::path&)> schedule_lsp_buffer_open;
     std::function<void(const std::filesystem::path&)> notify_lsp_buffer_close;
     // Raised after an on-disk reload replaces an already-open buffer's content, so
     // the LSP server's document mirror is re-synced with a full didChange. The

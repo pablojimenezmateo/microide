@@ -460,6 +460,9 @@ void WorkspaceShell::MaybeRequestTreeGitBadgesAfterFirstPaint() {
 
 void WorkspaceShell::OnFramePresented() {
   MaybeRequestTreeGitBadgesAfterFirstPaint();
+  // Run any LSP hydration deferred by a tab switch now that the tab-switch frame
+  // is on screen (TD-2026-07-17A-033). No-op when nothing was scheduled.
+  lsp_service_.ConsumeDeferredBufferOpen();
 }
 
 void WorkspaceShell::RequestAutomaticGitSidebarRefresh() {

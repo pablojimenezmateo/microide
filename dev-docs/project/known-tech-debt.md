@@ -124,7 +124,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > matrix; folded into the Standing backlog above where a matching cluster exists). Union of the
 > numbers below covers every remaining addendum item:
 >
-> 1. **Off-UI-thread / async** (Standing #1): 033, 108. *(005, 024 RESOLVED 2026-07-18 — `TaskExecutor` latest-only keyed submit + blame coalescing; `util::ReadFileLineWindow` bounded reference-snippet reader + live-buffer reuse.)*
+> 1. **Off-UI-thread / async** (Standing #1): 108. *(005, 024, 033 RESOLVED 2026-07-18 — `TaskExecutor` latest-only keyed submit + blame coalescing; `util::ReadFileLineWindow` bounded reference-snippet reader + live-buffer reuse; tab-activation LSP hydration deferred to post-present drain + tightened lint.)*
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test):
 >    018, 029, 038, 039, 040, 041, 043, 044, 046, 056, 057, 064, 068, 070,
@@ -472,7 +472,21 @@ speed-path items first, then the correctness/lifecycle cleanups.
   share the same surface and can make palette typing scale with command-count * string
   bytes. Keep `items` as the owner and store match indices/spans in `matches`, or cap the
   visible matched rows while retaining a total count for the summary.
-- **TD-2026-07-17A-033 — tab activation still synchronously starts/opens LSP documents.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-033 — tab activation still synchronously starts/opens LSP documents.**
+  Fixed: the `TabCoordinator::Operations` callback is renamed `notify_lsp_buffer_open` →
+  `schedule_lsp_buffer_open`, and `Activate` now only *records* the path (the shell bridge
+  binds it to `LspService::ScheduleBufferOpen` + `RequestWindowRedraw`). The actual didOpen
+  + semantic-token/inlay-hint requests (which serialize the whole viewport) run in
+  `LspService::ConsumeDeferredBufferOpen`, drained from `WorkspaceShell::OnFramePresented`
+  — i.e. AFTER the tab-switch frame is presented — so switching to a large file never
+  blocks the tab becoming visible. The deferred run re-checks the active buffer and drops
+  if a second switch superseded it (latest-wins). The manual plugin-buffer-open path
+  (`NotifyPluginBufferOpen`, deliberate file opens) stays synchronous. The architecture
+  lint (`CheckLspDidOpenIsNonBlocking`) is tightened to also forbid the snake_case
+  `notify_lsp_buffer_open` callback in `Activate` (the async `schedule_lsp_buffer_open` is
+  allowed), closing the bypass. Regression:
+  `WorkspaceShell/TabSwitchDefersLspHydration` (a real 0→1 switch leaves hydration pending;
+  the post-present drain clears it) plus the tightened lint.
   `TabCoordinator::Activate` calls `operations_.notify_lsp_buffer_open(active_vp_path)`,
   the shell bridge wires that to `WorkspaceShell::NotifyLspBufferOpen`, and that path calls
   `LspClientForViewport` plus `EnsureLspDocumentOpen`. `EnsureLspDocumentOpen` serializes
