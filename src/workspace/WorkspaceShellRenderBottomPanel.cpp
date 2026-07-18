@@ -455,17 +455,13 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
               panel_vm.output_channel_id, output_index);
           parsed != nullptr) {
         if (parsed->kind == WorkspaceOutputChannels::ParsedEntry::Kind::ReferencePath) {
-          std::filesystem::path resolved_path = parsed->reference_path;
-          if (resolved_path.is_relative() && !panel_vm.project_root.empty()) {
-            resolved_path = panel_vm.project_root / resolved_path;
-          }
-          current_reference_path = resolved_path.lexically_normal();
+          // Resolved+normalized path is memoized per entry in the output channel layer
+          // (keyed by project root), so this is a cache hit per paint (TD-2026-07-17A-017).
+          current_reference_path = output_channels_.ResolvedReferencePath(
+              panel_vm.output_channel_id, output_index, panel_vm.project_root);
         } else if (parsed->kind == WorkspaceOutputChannels::ParsedEntry::Kind::ContextSnippet) {
-          std::filesystem::path resolved_path = parsed->reference_path;
-          if (resolved_path.is_relative() && !panel_vm.project_root.empty()) {
-            resolved_path = panel_vm.project_root / resolved_path;
-          }
-          current_reference_path = resolved_path.lexically_normal();
+          current_reference_path = output_channels_.ResolvedReferencePath(
+              panel_vm.output_channel_id, output_index, panel_vm.project_root);
 
           const std::string_view visible_prefix =
               text_renderer_.TruncateToWidthEphemeralView(parsed->prefix, panel_layout.text_width);

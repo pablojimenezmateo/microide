@@ -276,6 +276,33 @@ void TestWorkspaceOutputChannelsParseAndCacheContextSnippets() {
          "clearing a channel should drop cached parsed snippet metadata");
 }
 
+// TD-2026-07-17A-017: ResolvedReferencePath resolves a parsed reference against the
+// project root and normalizes it, caching per entry so the output panel render does
+// not re-run lexically_normal() for every visible reference row each paint.
+void TestWorkspaceOutputChannelsResolvedReferencePathCaches() {
+  WorkspaceOutputChannels channels;
+  channels.AppendLine("build", "Build", "src/../src/main.cpp:12:3");
+
+  const std::filesystem::path root_a = "/home/proj";
+  const std::filesystem::path& resolved =
+      channels.ResolvedReferencePath("build", 0, root_a);
+  Expect(resolved == std::filesystem::path("/home/proj/src/main.cpp"),
+         "a relative reference resolves against the project root and normalizes");
+  // Second call with the same root reuses the cached, normalized path object.
+  Expect(&channels.ResolvedReferencePath("build", 0, root_a) == &resolved,
+         "an unchanged root reuses the cached resolved path");
+
+  // A different root re-resolves.
+  const std::filesystem::path& other =
+      channels.ResolvedReferencePath("build", 0, "/other/root");
+  Expect(other == std::filesystem::path("/other/root/src/main.cpp"),
+         "changing the project root re-resolves the reference");
+
+  // A missing entry yields an empty path rather than crashing.
+  Expect(channels.ResolvedReferencePath("build", 99, root_a).empty(),
+         "an out-of-range index resolves to an empty path");
+}
+
 // RemoveChannel drops a channel entirely (Phase 10 debug-console cleanup): the
 // channel disappears from Channels()/Entries() while siblings are untouched.
 // TD-2026-07-17A-085: appending to an existing channel must not invalidate the
@@ -746,6 +773,8 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/AtomicTextWrite", TestWorkspaceSharedAtomicTextWrite);
   AddTest(tests, "WorkspaceShared/OutputChannelsParseAndCacheContextSnippets",
           TestWorkspaceOutputChannelsParseAndCacheContextSnippets);
+  AddTest(tests, "WorkspaceShared/OutputChannelsResolvedReferencePathCaches",
+          TestWorkspaceOutputChannelsResolvedReferencePathCaches);
   AddTest(tests, "WorkspaceShared/OutputChannelsRemoveChannel",
           TestWorkspaceOutputChannelsRemoveChannel);
   AddTest(tests, "WorkspaceShared/OutputChannelsAppendKeepsMetadataCacheStable",

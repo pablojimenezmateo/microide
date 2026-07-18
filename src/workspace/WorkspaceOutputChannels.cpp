@@ -241,6 +241,28 @@ const WorkspaceOutputChannels::ParsedEntry* WorkspaceOutputChannels::ParsedEntry
   return &it->second.parsed_entries[index];
 }
 
+const std::filesystem::path& WorkspaceOutputChannels::ResolvedReferencePath(
+    std::string_view id,
+    std::size_t index,
+    const std::filesystem::path& project_root) const {
+  static const std::filesystem::path kEmpty;
+  const auto it = channels_.find(id);
+  if (it == channels_.end() || index >= it->second.parsed_entries.size()) {
+    return kEmpty;
+  }
+  ParsedEntry& parsed = const_cast<ParsedEntry&>(it->second.parsed_entries[index]);
+  if (!parsed.resolved_reference_valid || parsed.resolved_for_root != project_root) {
+    std::filesystem::path resolved = parsed.reference_path;
+    if (resolved.is_relative() && !project_root.empty()) {
+      resolved = project_root / resolved;
+    }
+    parsed.resolved_reference_path = resolved.lexically_normal();
+    parsed.resolved_for_root = project_root;
+    parsed.resolved_reference_valid = true;
+  }
+  return parsed.resolved_reference_path;
+}
+
 const editor::HighlightedLine* WorkspaceOutputChannels::HighlightedContextSnippet(
     std::string_view id,
     std::size_t index,

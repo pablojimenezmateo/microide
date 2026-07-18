@@ -36,8 +36,21 @@ class WorkspaceOutputChannels {
     std::string code;
     mutable std::filesystem::path highlighted_path;
     mutable std::optional<editor::HighlightedLine> highlighted_code;
+    // Cache of reference_path resolved against a project root and normalized. The
+    // render TU asks for this per visible reference/snippet row every frame, so the
+    // lexically_normal() cost is memoized here keyed by the root it was resolved for
+    // (TD-2026-07-17A-017).
+    mutable std::filesystem::path resolved_reference_path;
+    mutable std::filesystem::path resolved_for_root;
+    mutable bool resolved_reference_valid = false;
   };
   const ParsedEntry* ParsedEntryAt(std::string_view id, std::size_t index) const;
+  // reference_path resolved against project_root (relative -> root/path) and
+  // lexically_normalized, cached per entry so a steady output panel does not
+  // re-resolve/normalize every visible reference/snippet row per paint. Returns an
+  // empty path for a missing entry.
+  const std::filesystem::path& ResolvedReferencePath(
+      std::string_view id, std::size_t index, const std::filesystem::path& project_root) const;
   const editor::HighlightedLine* HighlightedContextSnippet(std::string_view id,
                                                            std::size_t index,
                                                            const std::filesystem::path& resolved_path) const;
