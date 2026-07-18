@@ -70,6 +70,32 @@ void TestLatestTestResultReturnsMostRecent() {
   Expect(controller.LatestTestResult("a") == nullptr, "Clear resets the latest-result index");
 }
 
+// Regression (TD-2026-07-17A-073): the run-result history is a bounded FIFO, but
+// the latest-per-id status survives eviction. Recording far more than the cap must
+// not grow retained storage without bound, and LatestTestResult must still return
+// the newest result for a test whose earlier records have rolled off the history.
+void TestResultHistoryIsBoundedButLatestSurvives() {
+  TestController controller;
+  // Record well past kMaxRetainedResults (10000) all for one id.
+  constexpr int kRuns = 25000;
+  for (int i = 0; i < kRuns; ++i) {
+    controller.RecordTestResult(TestResult{.test_id = "a",
+                                           .state = TestResultState::Passed,
+                                           .duration_ms = i});
+  }
+  // The bounded history caps retained rows even though 25000 were recorded.
+  const auto history = controller.TestResults("a");
+  Expect(history.size() <= 10000,
+         "retained run history is bounded by the FIFO cap, not the number of runs");
+  Expect(!history.empty() && history.back().duration_ms == kRuns - 1,
+         "the most recent runs are the ones retained");
+
+  // The latest-per-id status survives even after early records were evicted.
+  const TestResult* latest = controller.LatestTestResult("a");
+  Expect(latest != nullptr && latest->duration_ms == kRuns - 1,
+         "LatestTestResult returns the newest result despite history eviction");
+}
+
 }  // namespace
 
 void RegisterWorkspaceTestControllerTests(std::vector<TestCase>& tests) {
@@ -79,6 +105,8 @@ void RegisterWorkspaceTestControllerTests(std::vector<TestCase>& tests) {
           TestResultsDoNotAliasAcrossCalls);
   AddTest(tests, "WorkspaceTestController/LatestTestResultReturnsMostRecent",
           TestLatestTestResultReturnsMostRecent);
+  AddTest(tests, "WorkspaceTestController/ResultHistoryIsBoundedButLatestSurvives",
+          TestResultHistoryIsBoundedButLatestSurvives);
 }
 
 }  // namespace microide::tests

@@ -1170,8 +1170,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   converting columns, and allocating outline rows before the next frame. Keep the protocol parser's
   defensive transport cap, but apply a much lower outline presentation cap/truncated marker before
   adaptation/flattening, or adapt directly into a capped flat row vector.
-- **TD-2026-07-17A-073 — test discovery and result storage are vector-backed despite large provider
-  caps.** Plugin test discovery is capped at 20,000 returned cases, but
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-073 — test discovery and result storage are vector-backed despite large provider
+  caps.** Fixed: `TestController` now keeps an `item_index_by_id_` map so `RegisterTestItem`/`FindTestItem`
+  are O(1) (discovery of N unique ids is O(N), not the old O(N²) linear scan per registration). Result
+  storage is split: `results_` is a bounded FIFO `std::deque` (oldest evicted past `kMaxRetainedResults`
+  = 10000) that `TestResults(id)` scans, while `latest_result_by_id_` holds each test's newest result
+  separately — so the sidebar's `LatestTestResult` stays O(1) and survives history eviction, and repeated
+  runs can't grow retained history without bound. Regression:
+  `WorkspaceTestController/ResultHistoryIsBoundedButLatestSurvives`.
+  Plugin test discovery is capped at 20,000 returned cases, but
   `WorkspaceShell::DiscoverTestsForActiveBuffer` feeds each result through
   `TestController::RegisterTestItem`, whose upsert scans `test_items_` linearly even after
   `test_controller_.Clear()`. A normal unique-id discovery therefore becomes O(n²) before the Tests

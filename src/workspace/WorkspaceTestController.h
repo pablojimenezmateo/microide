@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -66,10 +68,22 @@ class TestController {
   void Clear();
 
  private:
+  // Bound on retained run history. Discovery upserts and the sidebar read only the
+  // latest per-id result (kept separately, uncapped-per-id but bounded by test
+  // count), so the full run log is a bounded FIFO: repeated runs can no longer grow
+  // results_ without limit or make TestResults(id) scan ever more stale rows.
+  static constexpr std::size_t kMaxRetainedResults = 10000;
+
   std::vector<TestItem> test_items_;
-  std::vector<TestResult> results_;
-  // test_id -> index into results_ of that test's MOST RECENT result (last-writer-wins).
-  std::unordered_map<std::string, std::size_t> latest_result_index_by_id_;
+  // id -> index into test_items_ for O(1) upsert/lookup (discovery of N unique ids
+  // was O(N^2) with the old linear scan per RegisterTestItem/FindTestItem).
+  std::unordered_map<std::string, std::size_t> item_index_by_id_;
+  // Bounded FIFO of every recorded result (oldest evicted past kMaxRetainedResults).
+  std::deque<TestResult> results_;
+  // id -> that test's MOST RECENT result (last-writer-wins). Held separately from the
+  // bounded history so the sidebar's latest-status lookup stays O(1) and survives
+  // history eviction. Bounded by the number of distinct tests (itself discovery-capped).
+  std::unordered_map<std::string, TestResult> latest_result_by_id_;
 };
 
 }  // namespace microide::workspace
