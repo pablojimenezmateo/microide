@@ -195,10 +195,19 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
     return checks;
   }
 
-  // Reuse the caller's summary when supplied; otherwise run the staged-diff subprocess.
-  const CommitStagedSummary staged_summary =
-      precomputed_summary != nullptr ? *precomputed_summary
-                                     : BuildCommitStagedSummary(repository_state);
+  // Reuse the caller's summary when supplied; otherwise run the staged-diff
+  // subprocess. Hold a *reference* to the caller's summary rather than copying it:
+  // the commit workflow passes the same generation-cached summary on open, warning
+  // ack, and every subject/body keystroke, and a repo with thousands of staged
+  // paths would otherwise deep-copy the whole `files` vector on each edit. Only
+  // materialize an owned summary when this function has to build it itself.
+  CommitStagedSummary owned_summary;
+  const CommitStagedSummary* summary_view = precomputed_summary;
+  if (summary_view == nullptr) {
+    owned_summary = BuildCommitStagedSummary(repository_state);
+    summary_view = &owned_summary;
+  }
+  const CommitStagedSummary& staged_summary = *summary_view;
   if (staged_summary.file_count == 0) {
     checks.push_back(MakeCheck(CommitPreCheckKind::EmptySubject, CommitPreCheckSeverity::Blocking,
                                "Nothing is staged for commit"));

@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <thread>
@@ -190,8 +191,10 @@ void TestPartialStageWarnsForV2SingleModifiedEntry() {
 
 // Regression: RunCommitPreChecks accepts a precomputed staged summary so the
 // commit-workflow refresh does not run the identical `git diff --cached --numstat`
-// subprocess twice per refresh on the shell thread. Passing the summary must produce
-// byte-identical checks to letting the function recompute it internally.
+// subprocess twice per refresh on the shell thread. It also holds the caller's
+// summary by *reference* (no whole-`files`-vector copy per keystroke); passing the
+// summary must still produce byte-identical checks to recomputing it internally,
+// and the reference-viewed `files` must still drive the partial-stage warning.
 void TestRunCommitPreChecksPrecomputedSummaryMatchesRecompute() {
   GitRepositoryState state{
       .repository_root = "/repo",
@@ -217,6 +220,16 @@ void TestRunCommitPreChecksPrecomputedSummaryMatchesRecompute() {
                reused[i].message == recomputed[i].message,
            "precomputed-summary path must yield identical checks");
   }
+  // The partial-stage warning is derived by iterating the precomputed summary's
+  // `files`; assert it fires through the reference view (mm.cpp is staged + worktree
+  // dirty) so a future "simplify back to a by-value copy" can't silently break the
+  // path this test exists to protect.
+  const bool reused_has_partial = std::any_of(
+      reused.begin(), reused.end(), [](const microide::project::CommitPreCheck& check) {
+        return check.kind == microide::project::CommitPreCheckKind::UnstagedLeftovers;
+      });
+  Expect(reused_has_partial,
+         "the reference-viewed precomputed summary must still raise the partial-stage warning");
 }
 
 // Regression: a staged `=======` section divider (banner comment, RST/Markdown

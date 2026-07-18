@@ -22,6 +22,57 @@
 namespace microide::tests {
 namespace {
 
+using microide::platform::ControlRequestLineScan;
+using microide::platform::ScanControlRequestLines;
+
+// Pure, platform-independent: the byte-cap decision must reject a complete
+// over-cap line BEFORE it is copied out — the old ingest substr'd every complete
+// line and only bounded the residual (un-newlined) trailing line, so a hostile
+// peer could queue a multi-megabyte request just by terminating it with '\n'.
+void TestScanControlRequestLinesRejectsOversizeCompleteLine() {
+  // Baseline: complete lines split, CR stripped, incomplete trailing kept.
+  {
+    const ControlRequestLineScan scan = ScanControlRequestLines("a\r\nbb\nccc", 1024);
+    Expect(scan.lines.size() == 2, "two complete lines are produced");
+    Expect(scan.lines[0] == "a", "trailing CR is stripped");
+    Expect(scan.lines[1] == "bb", "second complete line is intact");
+    Expect(scan.consumed_bytes == 6, "consumed covers 'a\\r\\n' + 'bb\\n', not the trailing 'ccc'");
+    Expect(!scan.oversize_line, "no complete line exceeded the cap");
+  }
+  // Empty lines are consumed but not queued.
+  {
+    const ControlRequestLineScan scan = ScanControlRequestLines("\n\nx\n", 1024);
+    Expect(scan.lines.size() == 1 && scan.lines[0] == "x",
+           "blank lines are skipped, only the real line surfaces");
+    Expect(scan.consumed_bytes == 4, "all three newlines are consumed");
+    Expect(!scan.oversize_line, "blank lines never trip the cap");
+  }
+  // A complete newline-terminated line over the cap trips the flag and stops the
+  // scan BEFORE it — earlier valid lines are still returned, the over-cap line is
+  // never materialized, and the caller sheds the connection.
+  {
+    std::string buffer = "ok\n";
+    const std::size_t prefix = buffer.size();
+    buffer.append(std::string(64, 'z'));  // 64-byte complete line...
+    buffer.push_back('\n');
+    const ControlRequestLineScan scan = ScanControlRequestLines(buffer, 8);
+    Expect(scan.oversize_line, "a complete line past the cap is flagged");
+    Expect(scan.lines.size() == 1 && scan.lines[0] == "ok",
+           "valid lines before the over-cap line are still produced");
+    Expect(scan.consumed_bytes == prefix,
+           "the scan stops before the over-cap line (its bytes are not consumed)");
+  }
+  // A boundary line exactly at the cap is accepted; one byte over is rejected.
+  {
+    const ControlRequestLineScan at_cap = ScanControlRequestLines("12345678\n", 8);
+    Expect(!at_cap.oversize_line && at_cap.lines.size() == 1,
+           "a line exactly at the cap is accepted");
+    const ControlRequestLineScan over_cap = ScanControlRequestLines("123456789\n", 8);
+    Expect(over_cap.oversize_line && over_cap.lines.empty(),
+           "a line one byte over the cap is rejected");
+  }
+}
+
 #if defined(__unix__) || defined(__APPLE__)
 
 using microide::platform::ControlInboundMessage;
@@ -286,6 +337,37 @@ void TestInboundQueueFloodIsShed() {
   server.Stop();
 }
 
+// Resilience: a single COMPLETE (newline-terminated) request line larger than
+// the per-request cap must be shed, not copied into the shared queue. Regression
+// for the bug where the cap was only checked against the residual incomplete
+// trailing line, so a >1 MiB line ending in '\n' was queued verbatim. The host
+// (never draining here proves the point is the shed, not the drain) must see the
+// connection reaped and no giant message surface.
+void TestOversizedCompleteLineIsShed() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path socket_path = temp_dir.path() / "control.sock";
+  ControlSocketServer server;
+  Expect(server.Start(socket_path), "server should start");
+
+  const int client = ConnectUnix(socket_path);
+  Expect(client >= 0, "client should connect");
+  Expect(WaitForConnectionCount(server, 1, 2s), "server should accept the connection");
+
+  // ~2 MiB single line TERMINATED with a newline (past the 1 MiB per-request
+  // cap). WriteAll may fail partway as the server sheds us mid-stream — expected.
+  std::string oversize(2u * 1024 * 1024, 'x');
+  oversize.push_back('\n');
+  (void)WriteAll(client, oversize);
+
+  Expect(WaitForConnectionCount(server, 0, 3s),
+         "an oversized complete line must shed the connection, not queue it");
+  Expect(!DrainOne(server, 200ms).has_value(),
+         "the oversized line must never surface as an inbound message");
+
+  ::close(client);
+  server.Stop();
+}
+
 // Resilience: idle local clients that connect and never send data must not grow
 // the server's connection map / poll set without bound.
 void TestIdleConnectionFloodIsCapped() {
@@ -325,9 +407,13 @@ void TestIdleConnectionFloodIsCapped() {
 }  // namespace
 
 void RegisterControlSocketServerTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ControlSocketServer/ScanRejectsOversizeCompleteLine",
+          TestScanControlRequestLinesRejectsOversizeCompleteLine);
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "ControlSocketServer/StartRefusesToDeleteNonSocketFile",
           TestStartRefusesToDeleteNonSocketFile);
+  AddTest(tests, "ControlSocketServer/OversizedCompleteLineIsShed",
+          TestOversizedCompleteLineIsShed);
   AddTest(tests, "ControlSocketServer/HalfClosedClientStillReceivesReply",
           TestHalfClosedClientStillReceivesReply);
   AddTest(tests, "ControlSocketServer/PartialLineAtEofReapsCleanly",

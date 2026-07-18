@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstring>
 #include <mutex>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -26,6 +27,38 @@
 #include <SDL3/SDL.h>
 
 namespace microide::platform {
+
+// Pure line scanner — defined outside the POSIX guard so it compiles (and is
+// unit-tested) on every platform. Rejects a complete over-cap line before it is
+// copied out, closing the hole where only the residual incomplete trailing line
+// was bounded.
+ControlRequestLineScan ScanControlRequestLines(std::string_view buffer,
+                                               std::size_t max_line_bytes) {
+  ControlRequestLineScan scan;
+  std::size_t start = 0;
+  while (true) {
+    const std::size_t newline = buffer.find('\n', start);
+    if (newline == std::string_view::npos) {
+      break;  // only an incomplete trailing line remains; leave it unconsumed.
+    }
+    // Check the raw line length BEFORE materializing the substring so a hostile
+    // multi-megabyte newline-terminated request is never copied into the queue.
+    if (newline - start > max_line_bytes) {
+      scan.oversize_line = true;
+      break;  // stop before this line; caller sheds the connection.
+    }
+    std::string_view line = buffer.substr(start, newline - start);
+    if (!line.empty() && line.back() == '\r') {
+      line.remove_suffix(1);
+    }
+    start = newline + 1;
+    scan.consumed_bytes = start;
+    if (!line.empty()) {
+      scan.lines.emplace_back(line);
+    }
+  }
+  return scan;
+}
 
 #if defined(__unix__) || defined(__APPLE__)
 
@@ -67,6 +100,13 @@ constexpr std::size_t kMaxRequestLineBytes = 1u << 20;
 // host drains them; at the cap we shed the offending connection rather than let
 // the queue grow without limit.
 constexpr std::size_t kMaxInboundQueued = 4096;
+
+// Aggregate byte budget for the shared inbound queue. The count cap above alone
+// permits 4096 near-cap (~1 MiB) lines — gigabytes retained — before it trips.
+// This bounds total queued bytes so a burst of large-but-legal complete lines
+// cannot balloon host memory while the main thread catches up; a connection that
+// would push the queue past this budget is shed like a count-cap flood.
+constexpr std::size_t kMaxInboundQueuedBytes = 16u << 20;  // 16 MiB
 
 // Bound idle connected clients. The control channel is intended for a handful of
 // local tools/watchers, not hundreds of persistent sockets; without a cap, a
@@ -127,6 +167,10 @@ struct ControlSocketServer::Impl {
 
   std::mutex inbound_mutex;
   std::vector<ControlInboundMessage> inbound;
+  // Aggregate bytes of the queued `inbound` line payloads (guarded by
+  // inbound_mutex). Reset to 0 when the main thread swaps the queue out in
+  // TakeInbound. Backs the kMaxInboundQueuedBytes budget.
+  std::size_t inbound_bytes = 0;
 
   void PushWakeEvent() {
     // Checked push: inbound control messages are already queued in shared state, so a
@@ -152,40 +196,39 @@ struct ControlSocketServer::Impl {
 
   // Split the connection's read buffer into complete lines, enqueue each as an
   // inbound message, and request a main-thread wake. Runs on the I/O thread.
-  // Returns false when the shared inbound queue is saturated (the caller sheds
-  // the connection); the buffer is still advanced past the lines it consumed.
+  // Returns false when a complete line exceeds the per-request cap or the shared
+  // inbound queue is saturated (count OR aggregate bytes) — the caller sheds the
+  // connection; the buffer is still advanced past the lines it consumed.
   bool IngestReadBuffer(Connection& conn) {
-    std::size_t start = 0;
+    // Reject over-cap complete lines BEFORE copying them out (the old code
+    // substr'd every complete line and only bounded the residual trailing one).
+    ControlRequestLineScan scan =
+        ScanControlRequestLines(conn.read_buf, kMaxRequestLineBytes);
     bool produced = false;
-    bool queue_overflow = false;
-    while (true) {
-      const std::size_t newline = conn.read_buf.find('\n', start);
-      if (newline == std::string::npos) {
-        break;
-      }
-      std::string line = conn.read_buf.substr(start, newline - start);
-      if (!line.empty() && line.back() == '\r') {
-        line.pop_back();
-      }
-      start = newline + 1;
-      if (!line.empty()) {
-        std::lock_guard<std::mutex> lock(inbound_mutex);
-        if (inbound.size() >= kMaxInboundQueued) {
-          queue_overflow = true;
+    bool overflow = scan.oversize_line;
+    if (!scan.lines.empty()) {
+      std::lock_guard<std::mutex> lock(inbound_mutex);
+      for (std::string& line : scan.lines) {
+        if (inbound.size() >= kMaxInboundQueued ||
+            inbound_bytes + line.size() > kMaxInboundQueuedBytes) {
+          overflow = true;
           break;
         }
         conn.in_flight.fetch_add(1, std::memory_order_release);
+        inbound_bytes += line.size();
         inbound.push_back(ControlInboundMessage{conn.id, std::move(line)});
         produced = true;
       }
     }
-    if (start > 0) {
-      conn.read_buf.erase(0, start);
+    // On overflow the connection is shed regardless, so discarding the whole
+    // consumed prefix (rather than preserving un-queued lines) is harmless.
+    if (scan.consumed_bytes > 0) {
+      conn.read_buf.erase(0, scan.consumed_bytes);
     }
     if (produced) {
       PushWakeEvent();
     }
-    return !queue_overflow;
+    return !overflow;
   }
 
   // Best-effort non-blocking flush of a connection's pending writes. Runs on the
@@ -537,6 +580,7 @@ std::vector<ControlInboundMessage> ControlSocketServer::TakeInbound() {
   std::vector<ControlInboundMessage> taken;
   std::lock_guard<std::mutex> lock(impl_->inbound_mutex);
   taken.swap(impl_->inbound);
+  impl_->inbound_bytes = 0;  // the queue is now empty; reset the byte budget.
   return taken;
 }
 

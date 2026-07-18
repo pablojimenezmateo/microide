@@ -4,7 +4,7 @@ Reviewed on 2026-07-17. A follow-on deferred-backlog full sweep is in progress
 (see "Fixed in the 2026-07-13 deferred-backlog full sweep" below); closed tranche
 entries have been pruned as they land. The **2026-07-17A addendum burndown** then
 dispositioned every item in the "Cross-subsystem bug/perf audit addendum" section:
-37 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
+39 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
 clusters or marked platform-only — see the burndown blockquote under that heading.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
@@ -82,7 +82,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > test this pass), **DEFERRED** (folded into a focused-pass cluster below), or **WON'T-DO
 > here** (platform-only, cannot build/verify on this Linux host).
 >
-> **RESOLVED this pass (37 fixed + 1 already-satisfied; each with a regression test):**
+> **RESOLVED this pass (39 fixed + 1 already-satisfied; each with a regression test):**
 > - **001** — passive menu measurement (`ComputePopupMenuRect`, `MenuItemLabel`, `IsMenuItemEnabled`) reads LSP readiness with `ensure_started=false`, so opening/hovering a menu never spawns a server; servers still start on explicit LSP actions via `GetServer`.
 > - **011** — plugin-command menu enablement uses `PluginHost::HasCommand` (O(log n), allocation-free) instead of a linear `std::find` + per-item `std::string` materialization.
 > - **012** — command-line completion takes the plugin command-name vector by reference (no whole-registry copy per open/keystroke).
@@ -99,6 +99,8 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > - **101** — notification toasts are byte-capped at ingress on a UTF-8 boundary with a `truncated` flag (no oversized-toast string copies/measurement in redraw).
 > - **090** — terminal selection copy takes a byte budget (8 MiB default); a huge drag truncates on a UTF-8 boundary with a marker instead of copying an unbounded transcript.
 > - **037** — Copy-Last-Command capture caps the snapshot to a bounded head window (20k lines) and joins under an 8 MiB byte budget via `BuildLastTerminalCommandTranscript`, appending a `\n[output truncated]` marker (UTF-8 boundary) when line- or byte-capped, instead of copying the whole post-command scrollback twice.
+> - **042** — control-socket ingest rejects a complete over-cap request line BEFORE copying it (pure `ScanControlRequestLines`), not just the residual trailing line, and adds a 16 MiB aggregate inbound-byte budget so near-cap complete-line floods can't retain gigabytes under the message-count cap.
+> - **045** — commit prechecks hold the caller's precomputed staged summary by `const&` (only materializing an owned copy when they must build it), so a repo with thousands of staged paths no longer deep-copies the whole `files` vector on every commit-message keystroke.
 > - **003** — `DetectIndent(LineSpan)` overload; file open reads the live buffer zero-copy (no `Snapshot()`).
 > - **006** — settings query filter routes through allocation-free `util::ContainsCaseInsensitiveAscii` (no per-row lowercase of query/label/detail on every keystroke).
 > - **009** — merge validation scans a zero-copy `LineSpan` once via `util::ScanConflictMarkers` (no `Snapshot()`, no whole-document serialize, no second snapshot for the marker line).
@@ -125,12 +127,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 1. **Off-UI-thread / async** (Standing #1): 005, 024, 033, 108.
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test):
->    018, 029, 038, 039, 040, 041, 042, 043, 044, 046, 056, 057, 064, 068, 070,
+>    018, 029, 038, 039, 040, 041, 043, 044, 046, 056, 057, 064, 068, 070,
 >    071, 072, 073, 074, 095, 096, 097, 098, 099, 105, 106, 107, 116, 118, 119, 121.
->    *(020, 090, 101, 037 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets.)*
+>    *(020, 090, 101, 037, 042 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets; control-socket complete-line cap + aggregate inbound-byte budget.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
->    latent): 045, 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
->    *(011, 012, 032 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices.)*
+>    latent): 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
+>    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
 > 4. **Render-TU / view-model hoist + frame-prep** (Standing #2): 004, 007, 008, 014, 017,
 >    023, 026, 027, 069, 079, 084, 103. *(006, 019 RESOLVED 2026-07-17A — allocation-free filter; per-category row index.)*
 > 5. **Plugin correctness / safety** (plugin-safety pass — fail-open providers, interest-mask
@@ -551,7 +553,18 @@ speed-path items first, then the correctness/lifecycle cleanups.
   diff/model setup for each before returning a summary. Add a much smaller review-session
   open cap, report truncation in the command/control outcome, and offer a paged "next batch"
   flow rather than using the parser's defensive 50k ceiling as a UI workload size.
-- **TD-2026-07-17A-042 — control-socket complete request lines bypass the byte cap.**
+- **[RESOLVED 2026-07-17A] TD-2026-07-17A-042 — control-socket complete request lines bypass the byte cap.**
+  Fixed: extracted the pure, platform-independent `ScanControlRequestLines(buffer, max_line_bytes)`
+  (declared in `ControlSocketServer.h`, defined outside the POSIX guard so it is unit-testable on
+  every platform) which rejects a complete newline-terminated line whose raw length exceeds the cap
+  BEFORE materializing the substring — stopping the scan and flagging `oversize_line` so
+  `IngestReadBuffer` sheds the connection. Added an aggregate `kMaxInboundQueuedBytes` (16 MiB)
+  budget tracked in `inbound_bytes` (reset in `TakeInbound`) so the queue can no longer retain
+  gigabytes from 4096 near-cap complete lines even under the message-count cap. Regression:
+  `ControlSocketServer/ScanRejectsOversizeCompleteLine` (pure: baseline split/CR-strip, blank-line
+  skip, over-cap flag + stop-before, exact-cap boundary) and
+  `ControlSocketServer/OversizedCompleteLineIsShed` (end-to-end: a 2 MiB newline-terminated line
+  sheds the connection and never surfaces as an inbound message).
   `ControlSocketServer::IngestReadBuffer` extracts each complete line with
   `conn.read_buf.substr(start, newline - start)` and queues it before any size check; the
   `kMaxRequestLineBytes` guard runs later only against the residual incomplete trailing
@@ -580,7 +593,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   second surface can reuse a texture decoded with the first surface's dimensions and render
   with the wrong aspect/extent. Include raster format and declared dimensions in the cache key
   for raw images, or make `RasterHandle` carry a full typed key instead of a bytes-only hash.
-- **TD-2026-07-17A-045 — commit prechecks copy the staged-file summary on every draft edit.**
+- **[RESOLVED 2026-07-17A] TD-2026-07-17A-045 — commit prechecks copy the staged-file summary on every draft edit.**
+  Fixed: `RunCommitPreChecks` now holds the caller's precomputed summary by
+  `const CommitStagedSummary&` (via a `summary_view` pointer) instead of copying it into a
+  local `CommitStagedSummary`, and only materializes an owned summary when it has to build one
+  itself (`precomputed_summary == nullptr`). A repo with thousands of staged paths no longer
+  deep-copies the whole `files` vector on open, warning ack, and every subject/body keystroke.
+  Regression: `CommitWorkflow/RunCommitPreChecksPrecomputedSummaryMatchesRecompute` extended to
+  assert the partial-stage warning still fires through the reference-viewed `files` (locking the
+  path against a future revert to a by-value copy).
   `CommitWorkflowService::RefreshDerivedState` caches `state.staged_summary` by repository
   generation, then passes `&state.staged_summary` into `RunCommitPreChecks` on open, warning
   acknowledgement, and every subject/body edit. `RunCommitPreChecks` immediately copies that

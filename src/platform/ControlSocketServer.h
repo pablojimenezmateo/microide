@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace microide::platform {
@@ -15,6 +16,31 @@ struct ControlInboundMessage {
   std::uint64_t connection_id = 0;
   std::string line;  // raw line, newline stripped
 };
+
+// Result of scanning a connection read buffer for complete newline-delimited
+// request lines. Pure, platform-independent, and unit-testable: the byte-cap
+// decision lives here rather than being applied only to the residual trailing
+// line after the complete lines were already copied out.
+struct ControlRequestLineScan {
+  // Complete, non-empty lines (trailing '\n' and any trailing '\r' stripped),
+  // each guaranteed <= max_line_bytes. Scanning stops before the first complete
+  // line that exceeds the cap.
+  std::vector<std::string> lines;
+  // Prefix of the input fully consumed (safe to erase from the front of the read
+  // buffer). Does NOT include a rejected over-cap line — the caller sheds the
+  // connection instead of advancing past it.
+  std::size_t consumed_bytes = 0;
+  // A complete newline-terminated line exceeded max_line_bytes. The caller must
+  // shed the connection: a hostile local peer must not queue an unbounded line
+  // just because it ended it with a newline.
+  bool oversize_line = false;
+};
+
+// Split `buffer` into complete request lines, rejecting any complete line whose
+// raw length exceeds `max_line_bytes` before copying it. Trailing incomplete
+// bytes (no newline yet) are left unconsumed for the next read.
+ControlRequestLineScan ScanControlRequestLines(std::string_view buffer,
+                                               std::size_t max_line_bytes);
 
 // A single-threaded AF_UNIX line server for the control channel. One background
 // I/O thread polls the listen socket plus every client fd; inbound lines are
