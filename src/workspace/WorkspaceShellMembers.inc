@@ -1759,6 +1759,23 @@
   // instead of filling a finder-sized modal.
   SDL_FRect ComputeCenteredMenuOverlayRect(const SDL_FRect& editor_area) const;
   std::string BreadcrumbLabel() const;
+  // Memoizes BreadcrumbLabel across paints: the label is a path-derived string
+  // (relative-path normalize + generic_string + concatenation) rebuilt every chrome
+  // frame otherwise. Cached against the inputs that shape it (active surface mode,
+  // root, path, secondary labels), so a repaint that changed none reuses the string
+  // instead of re-resolving the path (TD-2026-07-17A-023). Comparison reads the
+  // inputs without allocating; only a genuine change pays the rebuild + one copy.
+  struct BreadcrumbLabelCache {
+    bool valid = false;
+    int mode = 0;  // 0 editor, 1 compare, 2 merge
+    bool placeholder = false;
+    std::filesystem::path root;
+    std::filesystem::path path;
+    std::string left_label;
+    std::string right_label;
+    std::string label;
+  };
+  mutable BreadcrumbLabelCache breadcrumb_label_cache_;
   std::string ProjectLabel() const;
   std::string ProjectLabelForRoot(const std::filesystem::path& root) const;
   std::string ProjectTabDisplayTitle(std::size_t index) const;

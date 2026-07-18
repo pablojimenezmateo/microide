@@ -10,26 +10,70 @@
 namespace microide::workspace {
 
 std::string WorkspaceShell::BreadcrumbLabel() const {
+  // Resolve the label inputs (mode, path, secondary labels) by reference so a cache
+  // hit compares without allocating; only a genuine input change rebuilds the string.
+  static const std::filesystem::path kEmptyPath;
+  int mode = 0;
+  bool placeholder = false;
+  const std::filesystem::path* path = &kEmptyPath;
+  std::string_view left;
+  std::string_view right;
   if (ActiveTabIsCompare()) {
     const CompareTabState* compare_tab = ActiveCompareTab();
     if (compare_tab == nullptr) {
       return "compare";
     }
-    return BuildCompareBreadcrumbLabel(context_.current_project_state.root, compare_tab->path, compare_tab->left_label,
-                                       compare_tab->right_label);
-  }
-  if (ActiveTabIsMerge()) {
+    mode = 1;
+    path = &compare_tab->path;
+    left = compare_tab->left_label;
+    right = compare_tab->right_label;
+  } else if (ActiveTabIsMerge()) {
     const MergeTabState* merge_tab = ActiveMergeTab();
     if (merge_tab == nullptr) {
       return "merge";
     }
-    return BuildMergeBreadcrumbLabel(context_.current_project_state.root, merge_tab->output_path,
-                                     merge_tab->incoming_label, merge_tab->current_label);
+    mode = 2;
+    path = &merge_tab->output_path;
+    left = merge_tab->incoming_label;
+    right = merge_tab->current_label;
+  } else {
+    const editor::TextViewport* viewport = ActiveEditorViewport();
+    mode = 0;
+    if (viewport != nullptr) {
+      path = &viewport->path();
+      placeholder = viewport->is_placeholder();
+    }
   }
-  const editor::TextViewport* viewport = ActiveEditorViewport();
-  return BuildEditorBreadcrumbLabel(context_.current_project_state.root, viewport != nullptr ? viewport->path()
-                                                                       : std::filesystem::path{},
-                                    viewport != nullptr && viewport->is_placeholder());
+
+  const std::filesystem::path& root = context_.current_project_state.root;
+  BreadcrumbLabelCache& cache = breadcrumb_label_cache_;
+  if (cache.valid && cache.mode == mode && cache.placeholder == placeholder &&
+      cache.root == root && cache.path == *path && cache.left_label == left &&
+      cache.right_label == right) {
+    return cache.label;
+  }
+
+  std::string label;
+  switch (mode) {
+    case 1:
+      label = BuildCompareBreadcrumbLabel(root, *path, left, right);
+      break;
+    case 2:
+      label = BuildMergeBreadcrumbLabel(root, *path, left, right);
+      break;
+    default:
+      label = BuildEditorBreadcrumbLabel(root, *path, placeholder);
+      break;
+  }
+  cache.valid = true;
+  cache.mode = mode;
+  cache.placeholder = placeholder;
+  cache.root = root;
+  cache.path = *path;
+  cache.left_label = left;
+  cache.right_label = right;
+  cache.label = label;
+  return label;
 }
 
 std::string WorkspaceShell::ProjectLabel() const {

@@ -858,6 +858,35 @@ void TestWorkspaceShellEditorBreadcrumbUsesRelativePathForLargeFixtures() {
          "editor breadcrumbs should no longer append a large-file mode marker");
 }
 
+// TD-2026-07-17A-023: the breadcrumb label is memoized across paints. Switching the
+// active editor tab changes the path input, so the cache must invalidate and report
+// the new file's relative path rather than the stale one.
+void TestWorkspaceShellBreadcrumbCacheInvalidatesOnTabSwitch() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root / "a");
+  std::filesystem::create_directories(root / "b");
+  const std::filesystem::path first = root / "a" / "first.txt";
+  const std::filesystem::path second = root / "b" / "second.txt";
+  WriteFile(first, "one\n");
+  WriteFile(second, "two\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, first);
+  Expect(WorkspaceShellTestAccess::BreadcrumbLabel(shell) == "a/first.txt",
+         "breadcrumb reflects the first opened file");
+
+  // A second call with no change returns the same (cached) label.
+  Expect(WorkspaceShellTestAccess::BreadcrumbLabel(shell) == "a/first.txt",
+         "an unchanged breadcrumb repaint reuses the cached label");
+
+  // Switching tabs changes the path input and must invalidate the cache.
+  WorkspaceShellTestAccess::OpenFile(shell, second);
+  Expect(WorkspaceShellTestAccess::BreadcrumbLabel(shell) == "b/second.txt",
+         "switching the active tab rebuilds the breadcrumb, not served stale");
+}
+
 void TestWorkspaceShellRenamePromptMouseClickPositionsCaret() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1102,6 +1131,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellDeletePromptsForNonFocusedGroupDirtyTab);
   AddTest(tests, "WorkspaceShell/EditorBreadcrumbUsesRelativePathForLargeFixtures",
           TestWorkspaceShellEditorBreadcrumbUsesRelativePathForLargeFixtures);
+  AddTest(tests, "WorkspaceShell/BreadcrumbCacheInvalidatesOnTabSwitch",
+          TestWorkspaceShellBreadcrumbCacheInvalidatesOnTabSwitch);
 #if defined(__linux__) || defined(__APPLE__)
   AddTest(tests, "WorkspaceShell/DeletePromptDiscardsDirtyTabs",
           TestWorkspaceShellDeletePromptDiscardsDirtyTabs);
