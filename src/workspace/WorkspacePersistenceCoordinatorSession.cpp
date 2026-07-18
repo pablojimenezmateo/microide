@@ -17,7 +17,21 @@
 namespace microide::workspace {
 
 namespace {
+
+// Dirty-buffer snapshot byte budget (mirrors the reader's kMaxSessionBufferBytes);
+// process-wide, overridable for tests via SetMaxDirtySnapshotBytesForTesting.
+std::size_t& MaxDirtySnapshotBytesStorage() {
+  static std::size_t bytes = 64u * 1024 * 1024;  // 64 MiB
+  return bytes;
+}
+
+std::size_t MaxDirtySnapshotBytes() { return MaxDirtySnapshotBytesStorage(); }
+
 }  // namespace
+
+void PersistenceCoordinator::SetMaxDirtySnapshotBytesForTesting(std::size_t bytes) {
+  MaxDirtySnapshotBytesStorage() = bytes == 0 ? 64u * 1024 * 1024 : bytes;
+}
 
 std::filesystem::path PersistenceCoordinator::SessionStatePath() const {
   return CurrentProjectState().root.empty() ? std::filesystem::path{}
@@ -714,8 +728,33 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
       editor_state.needs_restore ? editor_state.restored_path.lexically_normal()
                                  : persisted_viewport->path().lexically_normal();
   const bool dirty_snapshot = !editor_state.needs_restore && persisted_viewport->dirty();
-  if ((normalized_path.empty() && !dirty_snapshot) ||
-      (editor_state.needs_restore && !dirty_snapshot && normalized_path.empty())) {
+
+  // Enforce the reader's dirty-buffer budget BEFORE snapshotting. Without this a
+  // huge dirty generated file materializes its whole buffer into a second vector
+  // (Snapshot) and gets encoded into a session file the reader would then reject at
+  // kMaxSessionBufferBytes / kMaxSessionBufferLines. Compute the size from the live
+  // LineSpan (O(lines), no allocation, early-out) and, if over budget, omit the
+  // dirty snapshot — the tab persists as a path-only reference and restores by
+  // reopening from disk (matching the reader's rejection outcome, minus the wasted
+  // snapshot/encode/write). TD-2026-07-17A-083.
+  const std::size_t max_buffer_bytes = MaxDirtySnapshotBytes();
+  constexpr std::size_t kMaxPersistedBufferLines = 4'000'000;  // mirrors reader
+  bool persist_dirty = dirty_snapshot;
+  if (dirty_snapshot) {
+    const editor::LineSpan span = persisted_viewport->lines();
+    if (span.size() > kMaxPersistedBufferLines) {
+      persist_dirty = false;
+    } else {
+      std::size_t total_bytes = 0;
+      for (std::size_t i = 0; i < span.size() && persist_dirty; ++i) {
+        total_bytes += span[i].size() + 1;  // + newline
+        if (total_bytes > max_buffer_bytes) {
+          persist_dirty = false;
+        }
+      }
+    }
+  }
+  if (normalized_path.empty() && !persist_dirty) {
     return std::nullopt;
   }
   const std::size_t cursor_line =
@@ -738,9 +777,10 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
   persisted_tab.cursor_column = cursor_column;
   persisted_tab.scroll_line = scroll_line;
   persisted_tab.horizontal_scroll = horizontal_scroll;
-  persisted_tab.dirty_snapshot = dirty_snapshot;
+  persisted_tab.dirty_snapshot = persist_dirty;
   persisted_tab.line_ending = persisted_viewport->line_ending();
-  persisted_tab.buffer_lines = dirty_snapshot ? persisted_viewport->lines().Snapshot() : std::vector<std::string>{};
+  persisted_tab.buffer_lines =
+      persist_dirty ? persisted_viewport->lines().Snapshot() : std::vector<std::string>{};
   return persisted_tab;
 }
 

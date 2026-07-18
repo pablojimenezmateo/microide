@@ -79,6 +79,11 @@ class PersistenceCoordinator {
   bool RestoreWorkspaceSession();
   void SaveWorkspaceSession() const;
 
+  // Test seam: override the dirty-buffer snapshot byte budget process-wide so a
+  // test can exercise the over-budget omission without a 64 MiB buffer. 0 restores
+  // the production budget. TD-2026-07-17A-083.
+  static void SetMaxDirtySnapshotBytesForTesting(std::size_t bytes);
+
  private:
   std::filesystem::path SessionStatePath() const;
   std::filesystem::path WorkspaceSessionStatePath() const;

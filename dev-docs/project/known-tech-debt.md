@@ -830,7 +830,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   rather than aggregate bytes. Reject over-cap complete lines before `substr`, and add an
   aggregate inbound-byte budget so 4096 near-cap requests cannot retain gigabytes while the
   main thread catches up.
-- **TD-2026-07-17A-043 — plugin raster decode queue has no encoded-byte or in-flight cap.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-043 — plugin raster decode queue has no encoded-byte or in-flight cap.**
+  Fixed: `SurfaceTextureCache::Request` charges each raster's encoded bytes against a
+  `kMaxInFlightEncodedBytes` (128 MiB) aggregate budget (tracked in the cross-thread `DecodeSink`
+  under its mutex) before posting the decode. Over budget, the request is dropped outright as
+  backpressure (no in-flight marker, no post — a later request re-decodes once the backlog drains);
+  the worker releases the reservation when the decode completes. A plugin publishing many distinct
+  near-cap rasters faster than the executor drains them can no longer retain unbounded encoded
+  payloads. Regression: `SurfaceTextureCache/InFlightEncodedBytesAreBounded`.
   `PluginSurfaceInterop::ReadRaster` rejects a single raster above
   `SurfaceTextureCache::kMaxEncodedBytes`, but accepted bytes are copied into a
   `std::string`, copied again into a `std::vector<std::byte>`, and then passed to
@@ -1293,7 +1300,18 @@ speed-path items first, then the correctness/lifecycle cleanups.
   repeated runs grow retained history and make `TestResults(id)` scan ever more stale rows. Keep a
   `test_id -> item_index` map for O(1) discovery upserts/bulk replace, and either cap per-test history
   or store latest results separately from an explicit bounded history surface.
-- **TD-2026-07-17A-074 — shared serial work queues have no queue-depth budget and dedupe is linear.**
+- **[DEFERRED — data-structure pass] TD-2026-07-17A-074 — shared serial work queues have no queue-depth budget and dedupe is linear.**
+  Analyzed 2026-07-18 and deferred as a dedicated pass, not a drop-in: (1) a depth-budget that
+  *drops* jobs is unsafe here — this queue backs plugin-worker traffic and the project background
+  executor, where a dropped non-keyed job (e.g. a WorkspaceEdit apply, a save participant) is a
+  correctness loss, so a drop policy needs per-caller opt-in classification. (2) O(1) `PostLatest`
+  dedup can't be a `std::deque` + key-map bolt-on: erasing a superseded job from the middle of a
+  deque is O(n) regardless of how fast it's found, and a mark-cancelled-instead-of-erase scheme
+  interacts subtly with the existing `Cancel()`/`Drain()`/`Shutdown()` "mark all cancelled, drain
+  later" semantics (a keyed job can be cancelled-but-queued, breaking a naive per-key live-set),
+  so correct amortized-O(1) needs an intrusive list + tombstone compaction with its own TSAN
+  verification. Not worth destabilizing a load-bearing concurrency primitive for a latent,
+  practically-bounded cost; scheduled as its own reviewed change.
   `util::SerialWorkQueue::Post`/`PostFront` admit every job, and `PostLatest` dedupes by scanning and
   erasing the whole `queue_` under `mutex_` before pushing the replacement. That is fine for a few
   requests, but the same queue implementation backs plugin worker traffic and the project background

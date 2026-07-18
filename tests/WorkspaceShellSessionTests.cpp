@@ -3,6 +3,7 @@
 #include "platform/AppDirectories.h"
 #include "persistence/PersistedRecordWriter.h"
 #include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "project/GitCompareService.h"
@@ -19,6 +20,7 @@
 namespace microide::tests {
 namespace {
 
+using microide::workspace::PersistenceCoordinator;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 using microide::compare::MergeChoice;
@@ -1046,6 +1048,58 @@ void TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent() {
          "dirty editor-session restore should preserve the caret location");
   Expect(reopened.scroll_line() == 1,
          "dirty editor-session restore should preserve the scroll position");
+}
+
+// Session save must enforce the reader's dirty-buffer budget BEFORE snapshotting:
+// an over-budget dirty editor tab persists as a path-only reference (no whole-buffer
+// snapshot materialized/written) and restores by reopening from disk.
+// TD-2026-07-17A-083.
+void TestWorkspaceShellSessionSaveOmitsOverBudgetDirtySnapshot() {
+  // Tiny budget so a small dirty edit is "over budget"; restored at scope exit.
+  struct BudgetGuard {
+    BudgetGuard() { PersistenceCoordinator::SetMaxDirtySnapshotBytesForTesting(8); }
+    ~BudgetGuard() { PersistenceCoordinator::SetMaxDirtySnapshotBytesForTesting(0); }
+  } budget_guard;
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha\nbeta\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(1, 0);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "unsaved bigger than budget "),
+         "fixture should accept text input (making the buffer dirty and over budget)");
+  Expect(editor.dirty(), "the buffer is dirty before save");
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  // Change the file on disk so we can tell a path-only restore (disk content) from
+  // a snapshot restore (the unsaved in-memory content).
+  WriteFile(source, "DISK-ALPHA\nDISK-BETA\n");
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "session restore should succeed");
+  // Mirror the real startup path: this hydrates the active tab's deferred viewport.
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+  const auto& reopened = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(reopened.lines()[0] == "DISK-ALPHA",
+         "an over-budget dirty tab restores from disk (the snapshot was omitted)");
+  Expect(!reopened.dirty(),
+         "an over-budget dirty tab restores clean (path-only, no persisted snapshot)");
 }
 
 // A file scrolled (without moving the caret) must reopen at the SAME scroll line.
@@ -2637,6 +2691,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeHorizontalNavigationInvalidatesResultPane);
   AddTest(tests, "WorkspaceShell/MoveMergeSelectionInvalidatesConflictBand",
           TestWorkspaceShellMoveMergeSelectionInvalidatesConflictBand);
+  AddTest(tests, "WorkspaceShell/SessionSaveOmitsOverBudgetDirtySnapshot",
+          TestWorkspaceShellSessionSaveOmitsOverBudgetDirtySnapshot);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesMergeNavigationState",
           TestWorkspaceShellRestoreSessionPreservesMergeNavigationState);
   AddTest(tests, "WorkspaceShell/RestoreSessionRoundTripsMultiHunkMergeChoices",
