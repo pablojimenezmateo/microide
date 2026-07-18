@@ -89,7 +89,6 @@ they land.
 1. **Async / off-thread hardening** — move blocking work off the shell/UI thread:
    compare/merge model build (047/19), LSP `WorkspaceEdit` apply (011/18), project
    replace-all (21), git patch serialize (38),
-   file-index batch coalescing (086),
    search worker pool (055), save-participant /
    `process.run_async` worker capacity (016/017). **014 (POSIX terminal write deadline)
    RESOLVED 2026-07-18** — non-blocking buffered PTY writes drained off the reader thread.
@@ -2197,7 +2196,7 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 **Async / off-thread refactors** (move blocking work off the shell/UI thread):
 
 > **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** Every item in this subsection (047, 055,
-> 086, 016/017, 075) is a multi-file async redesign —
+> 016/017, 075) is a multi-file async redesign —
 > (**014, 061, 081/082 RESOLVED 2026-07-18** — POSIX terminal write is non-blocking; the
 > file-manager reveal subprocess and the forced full rescan run off the shell thread; see
 > their entries below.)
@@ -2281,9 +2280,13 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   is inside that restart (never a mutate-in-place-without-rewatch path). The watcher honoring
   the globs at Watch time is covered by `FileIndexWatcher/HonorsUserExcludeGlobs`. No code
   change needed.
-- **086 — file-index watcher buffers unbounded incremental batches before the
-  initial scan lands.** Replace the pending-vector with a capped path-keyed
-  coalescer / rescan-after-baseline flag.
+- **[RESOLVED — already satisfied in-tree 2026-07-18] 086 — file-index watcher buffers unbounded incremental batches before the
+  initial scan lands.** Resolved by the addendum-107 pass: `FileIndexWatcher::DispatchState`
+  bounds the pre-initial `pending` buffer with `kMaxPendingBatches` (4096) and
+  `kMaxPendingChanges` (200000), dropping newest-first and latching `pending_overflow` once
+  either budget is exceeded, so churn during a slow initial scan can no longer retain
+  unbounded path batches. Covered by `FileIndexWatcher/BoundsPreInitialBatchFlood`. No
+  additional change needed.
 - **[RESOLVED 2026-07-18] 091 — LSP shutdown can synchronously block project reset / app teardown.**
   Retiring LSP clients now go to a host-owned pool on `LspService` (which outlives every
   per-project `LspManager`) instead of blocking in the per-project `~LspManager`. New
