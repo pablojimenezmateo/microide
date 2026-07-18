@@ -1089,6 +1089,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     tests/perf/EditorEssentialsPerfScenarios.cpp
     tests/perf/DebugPerfScenarios.cpp
     tests/perf/LspPerfScenarios.cpp
+    tests/perf/TechDebtCoveragePerfScenarios.cpp
     tests/perf/PerfMain.cpp
   )
 
