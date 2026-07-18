@@ -129,9 +129,9 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test) —
 >    **focus pass 2/9 IN PROGRESS 2026-07-18**:
 >    018, 029, 038, 039, 043, 044, 046, 056, 057, 070,
->    071, 072, 073, 074, 095, 096, 097, 098, 099, 105, 107, 116, 118.
+>    071, 072, 073, 074, 095, 096, 097, 098, 099, 107, 116, 118.
 >    *(020, 090, 101, 037, 042 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets; control-socket complete-line cap + aggregate inbound-byte budget.)*
->    *(040, 064, 068, 106, 119, 121 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; project.files_exclude rule/byte cap; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
+>    *(040, 064, 068, 105, 106, 119, 121 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; text-measurement byte budget + no-cache-oversized; project.files_exclude rule/byte cap; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
@@ -1217,7 +1217,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   `WaitForSingleObject(..., INFINITE)` stuck for unbounded subprocess callers. Mirror the POSIX contract:
   signal truncation from the drain thread, terminate the process on capture overflow, close the pipe
   handles, and return `truncated=true` so callers do not consume partial output as complete.
-- **TD-2026-07-17A-105 — text measurement/cache accepts unbounded strings even though drawing is clipped.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-105 — text measurement/cache accepts unbounded strings even though drawing is clipped.**
+  Fixed: `TextRenderer::MeasureWidth` now bounds measurement at `kMaxMeasureBytes` (8,192,
+  matching the backend's draw-time truncation). An over-budget string is measured as a
+  UTF-8-boundary clipped prefix ("clipped width" — clipped labels never render past it) and
+  is never inserted into `width_cache_`, so a huge status/hover/settings/notification string
+  can no longer shape a large buffer or retain a large cache key. Regression:
+  `TextRenderer/MeasureWidthDoesNotCacheOversizedStrings` (a >8 KiB string produces no cache
+  hit on repeat; a normal string still caches).
   `SdlTtfTextBackend::ResolveEntry` truncates draw-time strings to 8,192 bytes before building a surface,
   but `TextRenderer::MeasureWidth` passes the original string to `backend_->MeasureWidth` and then stores
   the full text as a width-cache key. Any render path that measures before truncating, including status

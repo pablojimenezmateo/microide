@@ -2265,9 +2265,37 @@ void TestTruncateToWidthEphemeralViewIsInvalidatedByNextCall() {
          "the first ephemeral view is invalidated (no longer equals its original content)");
 }
 
+// TD-2026-07-17A-105: MeasureWidth passed the full (possibly untrusted, very large)
+// string to the shaper and cached it as a width-cache key, so a huge label could shape a
+// large buffer and retain a large key. Over-budget strings must be measured as a bounded
+// clipped width and never cached — observable via the cache-hit stat.
+void TestMeasureWidthDoesNotCacheOversizedStrings() {
+  microide::render::TextRenderer renderer;
+
+  // A normal string is cached: the second measure is a cache hit.
+  renderer.ResetCacheStats();
+  const std::string normal(64, 'a');
+  renderer.MeasureWidth(normal);
+  renderer.MeasureWidth(normal);
+  Expect(renderer.CacheStats().width_cache_hits >= 1,
+         "a normal string must be cached (its second measure hits)");
+
+  // An over-budget string (> 8 KiB) must never be cached: repeated measures never hit,
+  // and the returned width is a stable clipped width.
+  renderer.ResetCacheStats();
+  const std::string huge(100000, 'b');
+  const float first = renderer.MeasureWidth(huge);
+  const float second = renderer.MeasureWidth(huge);
+  Expect(renderer.CacheStats().width_cache_hits == 0,
+         "an over-budget string must never be retained in the width cache");
+  Expect(first == second, "clipped-width measurement is deterministic");
+}
+
 }  // namespace
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextRenderer/MeasureWidthDoesNotCacheOversizedStrings",
+          TestMeasureWidthDoesNotCacheOversizedStrings);
   AddTest(tests, "TextRenderer/TruncateToWidthEphemeralViewIsInvalidatedByNextCall",
           TestTruncateToWidthEphemeralViewIsInvalidatedByNextCall);
   AddTest(tests, "TextLayout identifier range at cursor", TestTextLayoutIdentifierRangeAt);

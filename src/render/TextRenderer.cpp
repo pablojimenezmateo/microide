@@ -106,6 +106,25 @@ float TextRenderer::MeasureWidth(std::string_view text) const {
     return 0.0f;
   }
 
+  // TD-2026-07-17A-105: draw-time strings are already truncated to a bounded length by
+  // the backend, but measurement passed the full (possibly untrusted, very large) string
+  // to the shaper AND cached it as a key — so a huge status/hover/settings/notification
+  // string could shape a large buffer and retain a large cache key up to the cache
+  // capacity. For over-budget input, measure only a bounded UTF-8-boundary prefix (a
+  // "clipped width" — clipped labels never render past it anyway) and never cache it.
+  constexpr std::size_t kMaxMeasureBytes = 8192;  // matches the backend's draw truncation
+  if (text.size() > kMaxMeasureBytes) {
+    ++width_cache_queries_;
+    util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheQueries);
+    std::size_t fit = kMaxMeasureBytes;
+    while (fit > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(text[fit]))) {
+      --fit;
+    }
+    const std::string_view clipped = text.substr(0, fit);
+    return backend_ != nullptr ? backend_->MeasureWidth(clipped)
+                               : static_cast<float>(clipped.size()) * 8.0f;
+  }
+
   ++width_cache_queries_;
   util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheQueries);
   const auto cached = width_cache_.find(text);
