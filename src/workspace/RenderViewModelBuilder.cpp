@@ -953,19 +953,16 @@ std::string PathLeafName(const std::filesystem::path& path) {
   return name.empty() ? path.string() : name;
 }
 
-// Build a WelcomeRecent row for each path that still exists on disk, so every row the user
-// sees is actually openable (stale entries would otherwise click into a no-op). The store
-// itself is left intact; a temporarily-unmounted path is just hidden.
+// Build a WelcomeRecent row for each path. Callers pass RecentsService's already
+// exists-validated lists (ExistingRecentProjects/ExistingRecentFilesFor), so this no
+// longer stats each path per paint — the validation is cached against the MRU
+// revision in the service (TD-2026-07-17A-014).
 std::vector<editor::WelcomeRecent> BuildRecentRows(
     std::span<const std::filesystem::path> paths) {
   std::vector<editor::WelcomeRecent> rows;
   rows.reserve(paths.size());
   for (const std::filesystem::path& path : paths) {
     if (path.empty()) {
-      continue;
-    }
-    std::error_code exists_ec;
-    if (!std::filesystem::exists(path, exists_ec)) {
       continue;
     }
     rows.push_back(editor::WelcomeRecent{
@@ -1022,7 +1019,7 @@ editor::WelcomeViewModel RenderViewModelBuilder::BuildWelcomeView(
     vm.recents_heading = "Recent";
     vm.empty_recents_label = "No recent projects yet.";
     vm.open_folder_label = LabelWithChord("Open Folder…", ActionId::ProjectOpen);
-    vm.recent_projects = BuildRecentRows(recents.RecentProjects());
+    vm.recent_projects = BuildRecentRows(recents.ExistingRecentProjects());
     return vm;
   }
 
@@ -1037,9 +1034,8 @@ editor::WelcomeViewModel RenderViewModelBuilder::BuildWelcomeView(
   vm.new_file_label = LabelWithChord("New File", ActionId::Tab);
   vm.open_file_label = LabelWithChord("Open File…", ActionId::Open);
   vm.find_in_project_label = LabelWithChord("Find in Project…", ActionId::ProjectSearch);
-  const std::vector<std::filesystem::path> recent_files =
-      recents.RecentFilesFor(root, editor::kWelcomeRecentFileLimit);
-  vm.recent_files = BuildRecentRows(recent_files);
+  vm.recent_files =
+      BuildRecentRows(recents.ExistingRecentFilesFor(root, editor::kWelcomeRecentFileLimit));
   return vm;
 }
 

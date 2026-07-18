@@ -75,7 +75,38 @@ void TestRecentsFilesDedupeOnReopen() {
 
 }  // namespace
 
+// TD-2026-07-17A-014: ExistingRecentProjects filters to on-disk paths and caches the
+// result against an MRU revision, so the welcome surface never re-stats per paint.
+// The cache must invalidate when the MRU changes.
+void TestRecentsExistingProjectsFilterAndCacheInvalidation() {
+  TemporaryDirectory temp;
+  std::filesystem::create_directories(temp.path() / "one");
+  std::filesystem::create_directories(temp.path() / "two");
+  const std::filesystem::path one = temp.path() / "one";
+  const std::filesystem::path two = temp.path() / "two";
+  const std::filesystem::path missing = temp.path() / "gone";
+
+  RecentsService recents;
+  recents.RecordProjectOpen(one);
+  recents.RecordProjectOpen(missing);  // never created on disk
+
+  const auto& existing = recents.ExistingRecentProjects();
+  Expect(existing.size() == 1 && existing[0] == one,
+         "only on-disk recent projects are surfaced");
+  // Second call returns the same cached vector (same MRU revision).
+  Expect(&recents.ExistingRecentProjects() == &existing,
+         "an unchanged MRU reuses the cached validated list");
+
+  // Recording another project bumps the revision and re-validates.
+  recents.RecordProjectOpen(two);
+  const auto& after = recents.ExistingRecentProjects();
+  Expect(after.size() == 2, "recording a new project invalidates the validated cache");
+  Expect(after[0] == two, "the newest recorded project is first");
+}
+
 void RegisterRecentsServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RecentsService/ExistingProjectsFilterAndCacheInvalidation",
+          TestRecentsExistingProjectsFilterAndCacheInvalidation);
   AddTest(tests, "RecentsService/ProjectsNewestFirstAndDeduped",
           TestRecentsProjectsAreNewestFirstAndDeduped);
   AddTest(tests, "RecentsService/ProjectsBounded", TestRecentsProjectsAreBounded);

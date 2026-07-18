@@ -30,6 +30,7 @@ void RecentsService::Configure(const PersistenceService& persistence) {
       platform::ResolveAppDirectory(platform::UserDirectoryKind::State, "microide");
   storage_path_ = state_root.empty() ? std::filesystem::path{} : state_root / "recents";
   state_ = PersistedMruState{};
+  ++revision_;
   if (!storage_path_.empty()) {
     persistence_->LoadMruState(storage_path_, &state_);
     // Defensively clamp anything an older/corrupt record might have over-grown.
@@ -47,6 +48,7 @@ void RecentsService::RecordProjectOpen(const std::filesystem::path& root) {
     return;
   }
   PromoteToFront(state_.recent_project_roots, root, MaxProjects());
+  ++revision_;
   Save();
 }
 
@@ -63,6 +65,7 @@ void RecentsService::RecordFileOpen(const std::filesystem::path& file,
   if (files.size() > MaxFiles()) {
     files.resize(MaxFiles());
   }
+  ++revision_;
   Save();
 }
 
@@ -82,6 +85,54 @@ std::vector<std::filesystem::path> RecentsService::RecentFilesFor(
     }
   }
   return result;
+}
+
+const std::vector<std::filesystem::path>& RecentsService::ExistingRecentProjects() const {
+  if (!existing_projects_valid_ || existing_projects_revision_ != revision_) {
+    existing_projects_.clear();
+    for (const std::filesystem::path& root : state_.recent_project_roots) {
+      if (root.empty()) {
+        continue;
+      }
+      std::error_code ec;
+      if (std::filesystem::exists(root, ec)) {
+        existing_projects_.push_back(root);
+      }
+    }
+    existing_projects_revision_ = revision_;
+    existing_projects_valid_ = true;
+  }
+  return existing_projects_;
+}
+
+const std::vector<std::filesystem::path>& RecentsService::ExistingRecentFilesFor(
+    const std::filesystem::path& project_root, std::size_t limit) const {
+  if (!existing_files_valid_ || existing_files_revision_ != revision_ ||
+      existing_files_root_ != project_root || existing_files_limit_ != limit) {
+    existing_files_.clear();
+    // Mirror RecentFilesFor's cap-then-filter: take up to `limit` newest entries for
+    // this root, then drop any that no longer exist (so the count matches the prior
+    // BuildRecentRows exists-filter over a capped RecentFilesFor list).
+    std::size_t matched = 0;
+    for (const PersistedRecentFile& entry : state_.recent_files) {
+      if (entry.project_root != project_root) {
+        continue;
+      }
+      if (matched >= limit) {
+        break;
+      }
+      ++matched;
+      std::error_code ec;
+      if (std::filesystem::exists(entry.path, ec)) {
+        existing_files_.push_back(entry.path);
+      }
+    }
+    existing_files_revision_ = revision_;
+    existing_files_root_ = project_root;
+    existing_files_limit_ = limit;
+    existing_files_valid_ = true;
+  }
+  return existing_files_;
 }
 
 void RecentsService::Save() const {
