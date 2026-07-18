@@ -11,7 +11,16 @@ Scheduled focused passes have since landed: **focus pass 1/9 (async)** = 005/024
 lookup/dedupe, 2026-07-18)** = 051/053/058/061/062/063/066/067/081/102/114 RESOLVED; and
 **focus pass 3b/9 (coordinate/cross-boundary rewrites, 2026-07-18)** = 054/060/076 RESOLVED
 (batched multi-caret result remap, batched snippet mirror shifts, and a revisioned shared
-plugin-settings snapshot).
+plugin-settings snapshot); and **focus pass 4/9 (render-TU / view-model hoist +
+frame-prep, 2026-07-18)** = 007/008/014/017/023/026/027/069/079/084/103 RESOLVED (settings
+edit-control value/caret precompute; git-row display-label precompute; exists-validated
+recents cache; resolved output-reference path cache; breadcrumb-label memo; project-search
+line-map cache; terminal URL-hover snapshot reuse; git-sidebar spans-into-cache VM;
+one-build settings keep-visible; revisioned bottom-panel tab-model cache; preference-family
+split apply). **004** (folding refresh from the render frame) stays deferred: the fold scan
+depends on the render-loop `SetViewportSize`, so moving it to prep needs the editor-pane
+metrics computed in prep too, and the refresh is already fingerprint-gated to a no-op on
+settled frames — it wants its own change with fold-render before/after verification.
 
 **Perf-regression coverage for the burndown rewrites (2026-07-18).** Many of the cluster-1/2/3/3b
 rewrites are correctness-preserving-but-perf-sensitive (O(n²)→indexed), yet had no perf scenario
@@ -155,8 +164,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    102, 114 RESOLVED (see the RESOLVED-this-pass list below). 054, 060, 076 moved to
 >    **focus pass 3b/9** below and now **all RESOLVED 2026-07-18**.
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
-> 4. **Render-TU / view-model hoist + frame-prep** (Standing #2): 004, 007, 008, 014, 017,
->    023, 026, 027, 069, 079, 084, 103. *(006, 019 RESOLVED 2026-07-17A — allocation-free filter; per-category row index.)*
+> 4. **Render-TU / view-model hoist + frame-prep** (Standing #2): **focus pass 4/9 LANDED
+>    2026-07-18** — 007, 008, 014, 017, 023, 026, 027, 069, 079, 084, 103 RESOLVED (each with a
+>    regression test; see the RESOLVED markers on the item entries below). **004 DEFERRED** —
+>    folding refresh runs from the render frame and depends on the render-loop
+>    `SetViewportSize`; moving it to prep needs the editor-pane metrics/viewport-size computed
+>    in prep too, and the refresh is already fingerprint-gated to a no-op on settled frames, so
+>    it wants its own reviewed change with fold-render before/after verification.
+>    *(006, 019 RESOLVED 2026-07-17A — allocation-free filter; per-category row index.)*
 > 5. **Plugin correctness / safety** (plugin-safety pass — fail-open providers, interest-mask
 >    gating, NUL handling, `loadfile`/`dofile` sandbox, subprocess sandbox roots, env-key
 >    validation; needs security-focused fixtures): 047, 048, 049, 077, 078, 080, 109, 126, 128, 129.
@@ -255,12 +270,24 @@ speed-path items first, then the correctness/lifecycle cleanups.
   extra plugin rows on each query update. Cache a folded query once per rebuild and
   store folded row search text with the row/view model so filtering is O(bytes) without
   repeated allocation churn.
-- **TD-2026-07-17A-007 — settings overlay render still builds/measures edit-control text.**
+- **[RESOLVED 2026-07-18 — focus pass 4/9] TD-2026-07-17A-007 — settings overlay render still builds/measures edit-control text.**
+  Fixed: `SettingsControlViewModel` carries a precomputed `shown_value` (pre-truncated,
+  or the `(default)` placeholder), a `value_is_placeholder` flag, and a `caret_offset_x`;
+  `WorkspaceShellRenderSettingsOverlay` draws these directly instead of constructing
+  `(default)`, truncating `display_value`, and measuring a caret substr per paint.
+  Regression: `RenderViewModelBuilder/SettingsOverlayControlValueIsPrecomputed`.
   `WorkspaceShellRenderSettingsOverlay.cpp` constructs `"(default)"`, truncates control
   values, and measures `control.display_value.substr(0, caret)` during paint. Push the
   shown value, truncated value, and caret x/byte range into `SettingsOverlayViewModel`
   so the render TU draws precomputed fields.
-- **TD-2026-07-17A-008 — sidebar render assembles per-row labels in the render TU.**
+- **[RESOLVED 2026-07-18 — focus pass 4/9] TD-2026-07-17A-008 — sidebar render assembles per-row labels in the render TU.**
+  Fixed for the git rows: the full render-ready primary text (branch-review `[<marker>] `
+  prefix + leaf) is precomputed as `GitSidebarLine::display_label` in the memoized git
+  presentation build; the render TU draws it directly (no per-row prefix concat or
+  `filename().string()` fallback). Regression:
+  `GitSidebarCommandCenter/EntryDisplayLabelCarriesReviewMarker` + `display_label` in the
+  cached-vs-uncached presentation digest. (The project-search result label already used a
+  reused thread-local buffer — allocation-free after warmup — and was left as-is.)
   `WorkspaceShellRenderSidebar.cpp` builds project-search result labels and git row
   labels during paint (`BuildProjectSearchResultLabel`, `primary_label += ...`,
   `entry.relative_path.filename().string()`). Some buffers are reused, but this is still
@@ -329,7 +356,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
   materializes a vector-of-strings for every clean save before joining the file text.
   Use `SerializeLinesStreaming(LineSpan(document_->lines), ...)` or a file-writer path
   that streams the buffer directly.
-- **TD-2026-07-17A-014 — welcome/empty-editor rendering stats recent paths per paint.**
+- **[RESOLVED 2026-07-18 — focus pass 4/9] TD-2026-07-17A-014 — welcome/empty-editor rendering stats recent paths per paint.**
+  Fixed: `RecentsService::ExistingRecentProjects`/`ExistingRecentFilesFor` filter the MRU to
+  on-disk paths and cache the result against a revision bumped on every MRU mutation, so
+  paint and hover hit-testing reuse the validated list instead of re-statting; `BuildRecentRows`
+  maps pre-validated paths without a `std::filesystem::exists` call. Regression:
+  `RecentsService/ExistingProjectsFilterAndCacheInvalidation`.
   `WorkspaceShellRenderFrame.cpp` calls `RenderViewModelBuilder::BuildWelcomeView` while
   rendering a placeholder editor group, and `BuildRecentRows` runs
   `std::filesystem::exists` for each recent project/file. `ProbeWelcomeSurface` rebuilds
@@ -350,7 +382,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   copies the entire buffer before and after the edit. Keep the multi-edit correctness
   baseline, but represent the pre/post sync as affected ranges plus line-count deltas
   and stream the full didChange payload only when the server actually needs it.
-- **TD-2026-07-17A-017 — output-panel rendering resolves paths and snippet layout during paint.**
+- **[RESOLVED 2026-07-18 — focus pass 4/9] TD-2026-07-17A-017 — output-panel rendering resolves paths and snippet layout during paint.**
+  Fixed: `WorkspaceOutputChannels::ResolvedReferencePath` resolves a parsed entry's
+  reference against the project root and `lexically_normal`izes it, memoized per entry
+  (keyed by the root it was resolved for). `WorkspaceShellRenderBottomPanel` asks the
+  channel layer for the resolved path (a cache hit per paint) instead of doing the path
+  math for every visible reference/snippet row. Regression:
+  `WorkspaceShared/OutputChannelsResolvedReferencePathCaches`.
   `WorkspaceShellRenderBottomPanel.cpp` builds `std::filesystem::path` objects, appends
   relative paths to `panel_vm.project_root`, calls `lexically_normal`, truncates context
   snippet text, and measures prefix/code segments inside the render loop. Parsed output
@@ -409,7 +447,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   a large soft-wrapped or max-column-cached file still pays O(suffix rows/lines) per
   edit. Store row offsets as a piece/range structure or lazily apply suffix deltas so the
   common single-line edit does not walk the rest of the document.
-- **TD-2026-07-17A-023 — chrome rendering still rebuilds labels/tooltips during paint.**
+- **[RESOLVED 2026-07-18 — focus pass 4/9] TD-2026-07-17A-023 — chrome rendering still rebuilds labels/tooltips during paint.**
+  Fixed for the breadcrumb: `BreadcrumbLabel()` is memoized against the inputs that shape it
+  (active surface mode, root, path, secondary labels), resolved by reference so a cache hit
+  compares without allocating; a steady chrome repaint reuses the cached string instead of
+  re-resolving the active path. Regression:
+  `WorkspaceShell/BreadcrumbCacheInvalidatesOnTabSwitch`. (The hovered-tab/status tooltip
+  double-`BuildTooltipLayout` — probe vs draw — only runs while a tab is hovered and is left
+  for a follow-up hover-state cache.)
   `WorkspaceShellRenderChrome.cpp` constructs a `std::string` title, calls
   `BreadcrumbLabel()` every frame before truncation, and recomputes hovered project/tab/
   status tooltip labels plus `BuildTooltipLayout` once for the rect probe and again for
@@ -445,7 +490,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
   named `main`/`master` can make Auto compare against the wrong object despite the branch
   having been verified. Return `refs/heads/main` / `refs/heads/master` for identity and keep
   the short name only as the label, matching the other `GitBranchReference` builders.
-- **TD-2026-07-17A-026 — project-search sidebar rebuilds the full result line map during
+- **[RESOLVED 2026-07-18 — focus pass 4/9] TD-2026-07-17A-026 — project-search sidebar rebuilds the full result line map during
   paint.** `WorkspaceShellRenderSidebar.cpp` calls `BuildProjectSearchLineMap()` every
   search-sidebar frame, and `BuildProjectSearchResultLineMap` walks every stored result,
   copies each new `std::filesystem::path` into `current_path`, and allocates a fresh
@@ -453,8 +498,11 @@ speed-path items first, then the correctness/lifecycle cleanups.
   navigation also builds the map, then calls `ProjectSearchLineForResult`, which builds it
   again and linearly scans it. Store the grouped line map (or file-header row offsets) on
   `ProjectSearchState` when results change, and let render/navigation consume that cached
-  structure.
-- **TD-2026-07-17A-027 — terminal URL hover detection snapshots and lowercases visible
+  structure. **Fixed:** the grouped line map is cached on `ProjectSearchState` keyed by a
+  `results_revision` counter bumped at every results mutation (clears + append/sort);
+  render, hit-testing, and navigation share one build. Regression:
+  `WorkspaceShell/ProjectSearchLineMapCacheInvalidatesOnRerun`.
+- **[RESOLVED 2026-07-18 — focus pass 4/9] TD-2026-07-17A-027 — terminal URL hover detection snapshots and lowercases visible
   rows on cursor updates.** `WorkspaceShellCursor.cpp` calls `TerminalUrlAtPoint` to
   choose the pointer cursor over the terminal panel. That helper recomputes bottom-panel
   layout, snapshots the visible terminal line range, converts the hit line to a string,
@@ -463,6 +511,10 @@ speed-path items first, then the correctness/lifecycle cleanups.
   terminal therefore pays visible-row copies and line allocations even when no click
   happens. Cache URL spans per terminal snapshot generation/visible line, or compute the
   hit-line text/span once in panel prep and share it between cursor and click handling.
+  **Fixed:** `TerminalUrlAtPoint` reuses the render frame's cached
+  `visible_lines_snapshot` when the hover's visible range matches (falling back to a fresh
+  snapshot only otherwise), so hovering no longer re-snapshots the visible line range per
+  move. Regression: `WorkspaceShellTerminal/UrlHoverUsesRenderedSnapshot`.
 - **TD-2026-07-17A-028 — buffer Replace All discards the already-computed match list.**
   `WorkspaceShell::ReplaceAllBufferSearchMatches` has
   `buffer_search.matches` for the active query/content revision, but it calls
@@ -997,7 +1049,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
   command-capture buffer without an aggregate byte limit, independent of the terminal scrollback cap.
   Bound `pending_input` with UTF-8-safe truncation and a "capture disabled/truncated" flag so command
   execution stays possible while copy-last-command metadata cannot retain unbounded text.
-- **TD-2026-07-17A-069 — git-sidebar frame prep deep-copies the cached presentation on every
+- **[RESOLVED 2026-07-18 — focus pass 4/9] TD-2026-07-17A-069 — git-sidebar frame prep deep-copies the cached presentation on every
   repaint.** `RenderViewModelBuilder::BuildSidebarSurface` correctly uses
   `CachedGitSidebarPresentation` to avoid rebuilding the git sidebar tree when state is unchanged,
   but then copies `presentation.view_model` and `presentation.lines` into a fresh
@@ -1005,7 +1057,11 @@ speed-path items first, then the correctness/lifecycle cleanups.
   pays O(rows + labels) vector/string copying on hover, caret blink, progress, or any unrelated
   repaint that includes the sidebar. Make the sidebar view model hold stable spans/pointers into the
   frame-owned cached presentation (or promote the cache entry lifetime to the frame) so cache hits are
-  genuinely allocation-free for rendering.
+  genuinely allocation-free for rendering. **Fixed:** `SidebarSurfaceViewModel::git_sidebar` /
+  `git_sidebar_lines` are now `const*` pointers into the thread-local
+  `CachedGitSidebarPresentation` memo (stable between prep and render of one frame — git
+  state never mutates mid-frame), so a cache-hit repaint copies nothing. Covered by the
+  existing git-sidebar tests.
 - **TD-2026-07-17A-070 — output-channel byte caps ignore parsed-entry duplicate storage.**
   `WorkspaceOutputChannels::AppendLine` truncates and charges each retained line against
   `channel.retained_bytes`, but `BuildParsedEntry` separately copies context-snippet `prefix` and
@@ -1098,7 +1154,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
   after the editor has moved far past it. Use `PostLatest`-style keys per event kind/buffer/plugin (or an
   explicit coalesced editor-event mailbox) so cursor/selection surfaces observe the latest state while
   buffer-change/save/open events that require ordered delivery remain FIFO.
-- **TD-2026-07-17A-079 — settings keyboard navigation can rebuild the whole overlay hundreds of
+- **[RESOLVED 2026-07-18 — focus pass 4/9] TD-2026-07-17A-079 — settings keyboard navigation can rebuild the whole overlay hundreds of
   times.** `WorkspaceShell::EnsureSettingsSelectionVisible` first builds a full
   `SettingsOverlayViewModel` for category visibility, then loops up to 513 times, rebuilding the same
   full view model on each iteration to discover whether the selected variable-height row has scrolled
@@ -1106,7 +1162,11 @@ speed-path items first, then the correctness/lifecycle cleanups.
   holding an arrow key in a plugin-heavy Settings overlay can spend far more work on scroll correction
   than on the actual selection move. Have the builder return the selected row's measured extent in one
   pass, or add a service-side row-height/index helper so the scroll target is computed without repeated
-  full-overlay construction.
+  full-overlay construction. **Fixed:** `SettingsRowViewModel` exposes each row's
+  scroll-independent `advance_height`; `EnsureSettingsSelectionVisible` builds the overlay once
+  and computes the scroll target directly via a trailing-fit accumulation from the selected row
+  (one build per keystroke instead of up to 513). Regression:
+  `WorkspaceShell/SettingsKeepSelectionVisibleScrollsToRow`.
 - **TD-2026-07-17A-080 — Lua scalar string readers truncate embedded NUL bytes.**
   `plugin::lua_interop::ReadOptionalStringField` constructs `std::string(lua_tostring(...))`, and many
   plugin registration/provider paths also assign directly from `lua_tostring`. Lua strings are
@@ -1148,7 +1208,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
   and attempt to write a session file that the reader would later reject. Enforce the same byte/line
   budget before snapshotting, stream dirty snapshots into the record writer, or store an explicit
   "dirty snapshot omitted because too large" state with user-visible recovery semantics.
-- **TD-2026-07-17A-084 — bottom-panel tab models are rebuilt across layout, hit-test,
+- **[RESOLVED 2026-07-18 — focus pass 4/9] TD-2026-07-17A-084 — bottom-panel tab models are rebuilt across layout, hit-test,
   and scroll helpers.** Editor tab geometry has a cache, but `TabStripService::BuildBottomPanelTabs`
   constructs terminal/output/plugin-surface tab models from scratch. `ComputeVisibleBottomPanelTabs`,
   `ComputeBottomPanelTabOverflowControls`, `ScrollBottomPanelTabStrip`,
@@ -1157,7 +1217,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
   and scanning channel info for each open output tab. A workspace with many output channels, terminal
   tabs, or preview surfaces can therefore do repeated O(tab_count * channel_count) string work per frame
   or mouse event. Add a revisioned bottom-panel tab-model cache keyed by terminal/output/plugin-surface
-  revisions and share it across render, hit-test, overflow, and scroll decisions.
+  revisions and share it across render, hit-test, overflow, and scroll decisions. **Fixed:**
+  `BuildBottomPanelTabs` memoizes on a linear (no-nesting) FNV content fingerprint of every
+  shaping input (terminal launch labels, resolved open ids + the full channel id/label table,
+  plugin preview owner/id/titles, panel content/channel); repeated same-state calls skip the
+  rebuild + nested channel scan. Regression:
+  `TabStripService/BottomPanelTabsCache{ReusesOnUnchangedState,InvalidatesOnLabelChange,InvalidatesOnOpenIdChange}`.
 - **[RESOLVED 2026-07-17A] TD-2026-07-17A-085 — appending output dirties channel metadata even when metadata is
   unchanged.** `WorkspaceOutputChannels::AppendLine` calls `EnsureChannel`, and
   `EnsureChannel` always calls `MarkDirty()` after `try_emplace`, even when the channel already existed
@@ -1338,7 +1403,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
   before any rendering. Build temporary id maps for the user/project layers once per rebuild, or expose
   the resolved `SettingsStore` lookup plus explicit layer-membership indexes so overlay rebuild remains
   linear in displayed settings.
-- **TD-2026-07-17A-103 — live editor preference application walks every open tab for unrelated settings.**
+- **[RESOLVED 2026-07-18 — focus pass 4/9] TD-2026-07-17A-103 — live editor preference application walks every open tab for unrelated settings.**
   `WorkspaceShellSettingsOverlay::ApplySettingsOverlayValueChange` calls
   `ApplyEditorPreferencesToAllTabs()` after setting changes, and that helper reapplies tab size,
   wrapping, save behavior, language detection, and language-contract vectors to every welcome surface and
@@ -1346,7 +1411,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   language contracts for all tabs and mark layout/tab geometry dirty. A project with thousands of
   restored tabs can therefore pay an all-tab pass for a single checkbox change. Split preference
   invalidation by setting family, update only the fields affected by the changed id, and defer inactive
-  clean-tab work until hydration/activation where possible.
+  clean-tab work until hydration/activation where possible. **Fixed (family split):**
+  `ApplyEditorPreferences(viewport, include_contract)` always applies the cheap runtime setters
+  but skips the O(tabs) filetype-detect + language-contract rebuild unless a contract-affecting
+  toggle (auto-close / surround / smart-indent) actually changed vs the last live-settings
+  snapshot; full callers (activation/restore/init) keep the default. (The finer "defer inactive
+  clean-tab work until activation" remains available as a further optimization.) Regression:
+  `WorkspaceShell/AutoCloseToggleUpdatesAllTabContracts` +
+  `WorkspaceShell/TabSizeChangeAppliesToAllTabsWithoutContractRebuild`.
 - **TD-2026-07-17A-104 — Windows subprocess capture stops draining without killing the child.**
   The POSIX `RunSubprocess` path sets `result.truncated`, kills the child, and reaps it when stdout or
   stderr reaches `kMaxCaptureBytes`. The Windows `DrainPipeToString` helper instead breaks out when the
