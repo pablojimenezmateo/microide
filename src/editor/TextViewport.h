@@ -162,6 +162,16 @@ class TextViewport {
                     const std::vector<std::string>& replacement,
                     bool record_undo = true);
   std::size_t ReplaceAll(std::string_view needle, std::string_view replacement);
+  // Apply a precomputed, ascending-sorted set of single-line match ranges as one
+  // grouped Replace-All edit, WITHOUT re-scanning/re-folding the document. Each
+  // range must be confined to one line, non-empty, in range, sorted ascending by
+  // (line, column), and non-overlapping (exactly what FindLiteralSearchMatches
+  // produces). Returns the number of ranges applied, or std::nullopt when the
+  // caller's ranges fail validation (stale/inconsistent), in which case the
+  // document is left untouched and the caller can fall back to ReplaceAll.
+  // (TD-2026-07-17A-028.)
+  std::optional<std::size_t> ReplaceAllRanges(const std::vector<SelectionRange>& matches,
+                                              std::string_view replacement);
 
   const std::filesystem::path& path() const { return document_->path; }
   // Cached normalized key for the per-file presentation stores. Pass this to the

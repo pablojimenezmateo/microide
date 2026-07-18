@@ -347,6 +347,101 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   return replacements;
 }
 
+std::optional<std::size_t> TextViewport::ReplaceAllRanges(
+    const std::vector<SelectionRange>& matches, std::string_view replacement) {
+  if (matches.empty() || document_->lines.empty()) {
+    return std::size_t{0};
+  }
+
+  // Validate the caller's ranges before touching the document: single-line,
+  // non-empty, in range, strictly ascending, and non-overlapping. Any violation
+  // means the ranges are stale/inconsistent with the current buffer, so we bail
+  // (nullopt) and leave the document untouched for the caller to rescan.
+  std::size_t prev_line = 0;
+  std::size_t prev_end_column = 0;
+  bool have_prev = false;
+  for (const SelectionRange& match : matches) {
+    if (match.start.line != match.end.line || match.start.line >= document_->lines.size()) {
+      return std::nullopt;
+    }
+    const std::string_view line = document_->lines.LineView(match.start.line);
+    if (match.start.column >= match.end.column || match.end.column > line.size()) {
+      return std::nullopt;
+    }
+    if (have_prev && (match.start.line < prev_line ||
+                      (match.start.line == prev_line && match.start.column < prev_end_column))) {
+      return std::nullopt;
+    }
+    prev_line = match.start.line;
+    prev_end_column = match.end.column;
+    have_prev = true;
+  }
+
+  const ViewState before_state = CaptureViewState();
+  // A replacement carrying a line break splits one source line into several
+  // physical lines, mirroring ReplaceAll.
+  const bool replacement_has_break =
+      replacement.find('\n') != std::string_view::npos ||
+      replacement.find('\r') != std::string_view::npos;
+
+  const std::size_t first_changed_line = matches.front().start.line;
+  const std::size_t last_changed_line = matches.back().start.line;
+  std::vector<std::string> before_changed_lines;
+  std::vector<std::string> after_changed_lines;
+  std::string new_line;
+
+  std::size_t match_index = 0;
+  for (std::size_t line_index = first_changed_line; line_index <= last_changed_line; ++line_index) {
+    std::string current_line(document_->lines.LineView(line_index));
+    if (match_index >= matches.size() || matches[match_index].start.line != line_index) {
+      // Unchanged gap line between changed lines: carry it into both spans so the
+      // before/after ranges stay contiguous for a single ReplaceLineRange.
+      before_changed_lines.push_back(current_line);
+      after_changed_lines.push_back(std::move(current_line));
+      continue;
+    }
+
+    new_line.clear();
+    new_line.reserve(current_line.size());
+    std::size_t copy_from = 0;
+    while (match_index < matches.size() && matches[match_index].start.line == line_index) {
+      const SelectionRange& match = matches[match_index];
+      new_line.append(current_line, copy_from, match.start.column - copy_from);
+      new_line.append(replacement);
+      copy_from = match.end.column;
+      ++match_index;
+    }
+    new_line.append(current_line, copy_from);
+
+    before_changed_lines.push_back(std::move(current_line));
+    if (replacement_has_break) {
+      for (std::string& piece : util::SplitLines(new_line)) {
+        after_changed_lines.push_back(std::move(piece));
+      }
+    } else {
+      after_changed_lines.push_back(new_line);
+    }
+  }
+
+  const std::size_t replacements = matches.size();
+  document_->lines.ReplaceLineRange(first_changed_line, before_changed_lines.size(),
+                                    after_changed_lines);
+  document_->dirty = true;
+  undo_history_.ClearRedo();
+  RefreshEncoding();
+  InvalidateLayoutCaches();
+  EnsureCursorVisible();
+  const ViewState after_state = CaptureViewState();
+  PushHistoryEntry(HistoryEntry{
+      .start_line = first_changed_line,
+      .before_lines = std::move(before_changed_lines),
+      .after_lines = std::move(after_changed_lines),
+      .before_state = before_state,
+      .after_state = after_state,
+  });
+  return replacements;
+}
+
 bool TextViewport::DeleteSelection() {
   const auto range = selection_range();
   if (!range.has_value()) {
