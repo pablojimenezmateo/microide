@@ -17,7 +17,14 @@ edit-control value/caret precompute; git-row display-label precompute; exists-va
 recents cache; resolved output-reference path cache; breadcrumb-label memo; project-search
 line-map cache; terminal URL-hover snapshot reuse; git-sidebar spans-into-cache VM;
 one-build settings keep-visible; revisioned bottom-panel tab-model cache; preference-family
-split apply). **004** (folding refresh from the render frame) stays deferred: the fold scan
+split apply); and **focus pass 5/9 (plugin correctness / safety, 2026-07-18)** =
+047/048/049/077/078/080/109/126/128/129 RESOLVED (provider failures no longer suppress
+healthy provider results, with a shared per-query location ceiling; cursor/selection editor
+events gate on the interest mask and coalesce latest-only per buffer; Lua scalar reads
+reject embedded NULs via `ToHostString`; the tool downloader reuses the strict
+`PathFromFileUri` decode; plugin process env keys are validated (no empty/`=`/NUL) with a
+platform backstop; Lua `loadfile`/`dofile` are removed; and the subprocess sandbox roots
+follow the declared fs.read/fs.write levels). **004** (folding refresh from the render frame) stays deferred: the fold scan
 depends on the render-loop `SetViewportSize`, so moving it to prep needs the editor-pane
 metrics computed in prep too, and the refresh is already fingerprint-gated to a no-op on
 settled frames — it wants its own change with fold-render before/after verification.
@@ -174,7 +181,9 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    *(006, 019 RESOLVED 2026-07-17A — allocation-free filter; per-category row index.)*
 > 5. **Plugin correctness / safety** (plugin-safety pass — fail-open providers, interest-mask
 >    gating, NUL handling, `loadfile`/`dofile` sandbox, subprocess sandbox roots, env-key
->    validation; needs security-focused fixtures): 047, 048, 049, 077, 078, 080, 109, 126, 128, 129.
+>    validation; needs security-focused fixtures): **focus pass 5/9 LANDED 2026-07-18** —
+>    047, 048, 049, 077, 078, 080, 109, 126, 128, 129 ALL RESOLVED (see the RESOLVED markers
+>    on the item entries below).
 > 6. **Editor/save allocation & edit primitives** (edit-engine pass — streaming serializers,
 >    range-wrap/replace primitives that avoid whole-buffer transients): 015, 016, 021,
 >    022, 028, 031, 075, 120. *(009, 013, 035 RESOLVED 2026-07-17A — `util::ScanConflictMarkers`; clean-save streaming; no-selection context copy via LineSpan.)*
@@ -773,16 +782,26 @@ speed-path items first, then the correctness/lifecycle cleanups.
   each provider stayed under its individual table cap. Add a per-query aggregate budget and
   truncated flag before returning to the assist/annotation UI; per-provider caps should be an
   input guard, not the final product workload size.
-- **TD-2026-07-17A-047 — one failing plugin provider suppresses every other provider's
-  results.** `QueryCompletions` and `QueryCodeActions` iterate matching provider runtimes,
+- **[RESOLVED 2026-07-18 — focus pass 5/9] TD-2026-07-17A-047 — one failing plugin provider suppresses every other provider's
+  results.** Fixed: `QueryCompletions`/`QueryCodeActions` now `continue` past a failed
+  provider PCall (keeping every earlier provider's candidates) and record the failure via
+  the bounded shared `lua_interop::AppendProviderFailure`; queries run with
+  allow_registration=false so the runtime vector cannot reallocate across the PCall.
+  Regression: `PluginHost/CompletionProviderFailureKeepsOthers`.
+  `QueryCompletions` and `QueryCodeActions` iterate matching provider runtimes,
   but on the first `PCall` failure they set `error_message` and `return {}` instead of
   keeping earlier results or continuing to later providers. `AssistService` then ignores the
   `provider_error` string in both callbacks, so a single broken completion/code-action plugin
   silently hides all plugin-sourced completions/actions for that language. Treat provider
   failures independently: record/log the failing provider, continue collecting healthy
   providers, and surface a bounded warning without throwing away valid results.
-- **TD-2026-07-17A-048 — plugin navigation/reference providers have the same fail-fast and
-  aggregate-result gaps.** `PluginLanguageProviderQueryInterop::QueryLocations` caps each
+- **[RESOLVED 2026-07-18 — focus pass 5/9] TD-2026-07-17A-048 — plugin navigation/reference providers have the same fail-fast and
+  aggregate-result gaps.** Fixed: `QueryLocations` continues past a failed provider (keeping
+  earlier locations) and enforces a shared per-query `kMaxAggregateLocations` ceiling across
+  all providers; the sibling `QuerySignatureHelp`/`QueryDocumentSymbols` first-wins loops
+  also scan past a failed provider instead of returning empty. Failures record via the shared
+  `AppendProviderFailure`.
+  `PluginLanguageProviderQueryInterop::QueryLocations` caps each
   definition/reference provider at `kMaxLocations`, but appends all matching providers into
   one result vector with no aggregate cap. On the first provider `PCall` failure it sets an
   error and `return {}`, discarding earlier healthy provider locations and skipping later
@@ -790,7 +809,11 @@ speed-path items first, then the correctness/lifecycle cleanups.
   `provider_error`, so the failure is silent and can make navigation/reference output look
   empty. Continue past failed providers, keep valid locations under a shared per-query
   ceiling, and surface/log a bounded provider warning.
-- **TD-2026-07-17A-049 — one failing hover provider blocks later plugin hover providers.**
+- **[RESOLVED 2026-07-18 — focus pass 5/9] TD-2026-07-17A-049 — one failing hover provider blocks later plugin hover providers.**
+  Fixed: `QueryHover` treats a provider error as a failed provider and keeps scanning the
+  ordered fallbacks (resetting the result between providers so a partial write can't leak),
+  returning the first healthy hover; a nil (no-hover) return still cleanly skips to the next.
+  Regression: `PluginHost/HoverProviderFailureFallsThrough`.
   `PluginHoverQueryInterop::QueryHover` walks `hover_provider_order`, but if
   `query_hover_provider` returns false for one provider it immediately returns false instead
   of continuing to later providers. The async `PluginHost::QueryHoverAsync` path passes a
@@ -1137,7 +1160,11 @@ speed-path items first, then the correctness/lifecycle cleanups.
   settings. Publish a revisioned settings snapshot once per setting mutation, or lazily resolve
   `ctx.settings.get(id)` through a narrow host-owned lookup keyed by requested id instead of copying the
   full settings surface into every worker job.
-- **TD-2026-07-17A-077 — high-frequency plugin editor events ignore the published interest mask.**
+- **[RESOLVED 2026-07-18 — focus pass 5/9] TD-2026-07-17A-077 — high-frequency plugin editor events ignore the published interest mask.**
+  Fixed: `OnBufferChange`/`OnCursorMove`/`OnSelectionChange` now gate on the matching
+  published `editor_event_interests` bit before `CaptureSnapshot`/worker post, so with no
+  subscriber they early-out instead of snapshotting + waking the worker per
+  keystroke/caret/drag. Regression: `PluginHost/CursorSelectionInterestGate`.
   `PluginHost::OnBufferOpen` and `OnBufferSave` skip work when
   `published_.editor_event_interests` says no loaded plugin handles the event, but
   `OnBufferChange`, `OnCursorMove`, and `OnSelectionChange` only check `enabled()` and `path.empty()`.
@@ -1146,7 +1173,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
   cost on every keystroke/caret move/selection drag. Gate these three entry points on the matching
   `buffer_change`, `cursor_move`, and `selection_change` interest bits before snapshot capture, and add
   regression coverage that no worker job is posted when no plugin subscribed.
-- **TD-2026-07-17A-078 — cursor/selection plugin events are FIFO rather than latest-only.**
+- **[RESOLVED 2026-07-18 — focus pass 5/9] TD-2026-07-17A-078 — cursor/selection plugin events are FIFO rather than latest-only.**
+  Fixed: `RunOnWorkerDetached` gained a `coalesce_key` overload (PostLatest-backed);
+  `OnCursorMove`/`OnSelectionChange` post keyed per buffer (`evt:cursor_move:<path>` /
+  `evt:selection_change:<path>`), so a superseding event drops the older queued job and the
+  plugin observes the latest state. buffer_change/open/save/close stay FIFO (ordered
+  delivery); a keyed job appends at the tail so a preceding edit stays ahead of a later move.
   Once a plugin subscribes to cursor or selection changes, `PluginHost::OnCursorMove` and
   `OnSelectionChange` use `RunOnWorkerDetached`, which posts every movement as a distinct FIFO job. A
   slow plugin callback or any earlier long-running plugin task can leave hundreds of stale cursor/drag
@@ -1167,7 +1199,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   and computes the scroll target directly via a trailing-fit accumulation from the selected row
   (one build per keystroke instead of up to 513). Regression:
   `WorkspaceShell/SettingsKeepSelectionVisibleScrollsToRow`.
-- **TD-2026-07-17A-080 — Lua scalar string readers truncate embedded NUL bytes.**
+- **[RESOLVED 2026-07-18 — focus pass 5/9] TD-2026-07-17A-080 — Lua scalar string readers truncate embedded NUL bytes.**
+  Fixed: a shared length-preserving `lua_interop::ToHostString` returns nullopt for a value
+  carrying an embedded NUL; `ReadOptionalStringField`/`ReadStringField` and `ReadSidebarItem`
+  route through it, as do the identifier/path/argument direct reads — plugin id,
+  sidebar/hover provider ids, scm/auth shorthand ids, save-participant id, and process
+  argv/cwd. So a `"valid\0evil"` id fails `IsValidIdentifier` (empty), a NUL-bearing label is
+  dropped, and no truncated path/arg reaches a C-string OS call. Display-only strings keep
+  their existing readers (not in the id-collision / path-launch harm model). Regression:
+  `PluginHost/CompletionLabelWithNulIsRejected`.
   `plugin::lua_interop::ReadOptionalStringField` constructs `std::string(lua_tostring(...))`, and many
   plugin registration/provider paths also assign directly from `lua_tostring`. Lua strings are
   length-bearing, so `"foo\0bar"` is a distinct string, but the host collapses it to `"foo"` for ids,
@@ -1493,8 +1533,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   automatic plugin-asset reload. Move syntax fingerprint/load/compile work into the plugin worker or
   a dedicated syntax worker, then publish the built registry snapshot to the main thread with the
   same generation/project-root guard used for reload completions.
-- **TD-2026-07-17A-109 — tool downloader `file://` parsing uses permissive percent decoding and
-  accepts decoded NUL bytes.** `PathFromFileUri` uses `PercentDecodeStrict` and rejects decoded NULs,
+- **[RESOLVED 2026-07-18 — focus pass 5/9] TD-2026-07-17A-109 — tool downloader `file://` parsing uses permissive percent decoding and
+  accepts decoded NUL bytes.** Fixed: `WorkspaceToolDownloader::ResolveToolSourcePath` now
+  reuses the shared strict `PathFromFileUri` (strict percent-decode → whole-URI reject on a
+  malformed escape, decoded-NUL reject, non-local-authority reject, Windows drive handling)
+  instead of its private `util::PercentDecode` path. Regression:
+  `WorkspaceToolDownloader/RejectsMalformedFileUri`.
+  `PathFromFileUri` uses `PercentDecodeStrict` and rejects decoded NULs,
   but `WorkspaceToolDownloader::ResolveToolSourcePath` has a private parser that calls the lax
   `PercentDecode` helper and immediately turns the result into a filesystem path. A plugin-provided
   tool URL such as `file:///tmp/tool%00suffix` or one with malformed `%` escapes is therefore handled
@@ -1668,7 +1713,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   is the same source-class fixed for trashing in `TD-2026-07-17-063`, but the rename path still has the
   target-following precheck. Validate the source node with `symlink_status` (or accept
   `is_symlink(symlink_status)`) and keep the destination collision check/no-overwrite move unchanged.
-- **TD-2026-07-17A-126 — plugin process env keys are not validated as environment names.**
+- **[RESOLVED 2026-07-18 — focus pass 5/9] TD-2026-07-17A-126 — plugin process env keys are not validated as environment names.**
+  Fixed: `ParseProcessRunArgs` reads the (already-verified-string) env key length-preserving
+  and rejects an empty name, an embedded NUL, and an `=` before building the override; a
+  platform-level `IsValidEnvironmentName` backstop applies the same rule in both the POSIX
+  `BuildChildEnvironment` and Windows `BuildEnvironmentBlock`, so no env builder emits a
+  malformed entry regardless of source. Regression:
+  `PluginHost/ProcessEnvKeyWithEqualsRejected`.
   `ParseProcessRunArgs` accepts any Lua string key in `options.env`, and
   `BuildChildEnvironment`/`BuildEnvironmentBlock` construct child entries by concatenating
   `name + "=" + value`. A key containing `=` is not a valid environment variable name, but the child
@@ -1686,8 +1737,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   (including dangling-link targets) or intentionally reject symlinked state paths before rotating, so
   state saves do not silently break user-managed config/session symlinks.
 
-- **TD-2026-07-17A-128 — Lua `loadfile` / `dofile` bypass plugin filesystem
-  capabilities.** `LuaRuntime::Create` opens the Lua base library (`luaopen_base`), which exposes
+- **[RESOLVED 2026-07-18 — focus pass 5/9] TD-2026-07-17A-128 — Lua `loadfile` / `dofile` bypass plugin filesystem
+  capabilities.** Fixed: `LuaRuntime::Create` nils the global `loadfile` and `dofile` after
+  `luaopen_base`, so no in-VM path can open/execute files outside the declared fs scope;
+  plugin descriptors are loaded host-side via `luaL_loadfile`, and `load` (string/reader
+  chunks, no filesystem) stays available. Regression: extended
+  `PluginHost/LuaRuntimeMatchesDocumentedStdlib`.
+  `LuaRuntime::Create` opens the Lua base library (`luaopen_base`), which exposes
   global `loadfile` and `dofile`, before plugin descriptors are parsed
   (`src/plugin/LuaRuntime.cpp:64`). The project/data/none filesystem policy is enforced only in the
   host-owned `ctx.files.*` chokepoints via `ResolveContained`
@@ -1699,8 +1755,14 @@ speed-path items first, then the correctness/lifecycle cleanups.
   scope. Remove or replace the base-library file loaders after `luaopen_base`, or route them through
   the same contained-path resolver used by `ctx.files.read_text`.
 
-- **TD-2026-07-17A-129 — plugin subprocess sandboxes ignore the plugin filesystem
-  capability.** `PluginCapabilities` documents `fs.read`/`fs.write` as the plugin's filesystem reach
+- **[RESOLVED 2026-07-18 — focus pass 5/9] TD-2026-07-17A-129 — plugin subprocess sandboxes ignore the plugin filesystem
+  capability.** Fixed: `MakeSandbox` now derives the child's read/write roots from the
+  declared `fs.read`/`fs.write` levels (project_root at kProjectScoped+, plugin data dir only
+  at kProjectAndData), mirroring `ctx.files.*` `AllowedRoots`. A plugin with `fs = { read =
+  "none", write = "none" }, process = { exec = true }` gets a child with no project/data
+  roots (only the platform's system read/exec + scratch roots), so an allowed helper can no
+  longer read or modify project files. `process.exec` grants spawning, not fs reach.
+  `PluginCapabilities` documents `fs.read`/`fs.write` as the plugin's filesystem reach
   and `process.exec` as a separate process-spawn grant (`src/plugin/PluginCapabilities.h:12-30`), and
   `ctx.files.*` enforces those levels through `ResolveContained`. But `MakeSandbox` unconditionally
   adds the project root and plugin data directory as both read and write roots for every
