@@ -461,9 +461,19 @@ bool PersistenceCoordinator::RestoreSessionState() {
       }
       EditorGroup group;
       std::size_t restored_active = 0;
+      // The decode cap (kMaxSessionTabsPerGroup = 4096) is a defensive parse ceiling,
+      // not a UI workload size. A CRC-valid but oversized session would otherwise make
+      // startup rebuild thousands of tabs — path-probing clean editors and building
+      // full compare/merge models — before the first frame. Cap restored tabs at a
+      // much smaller product limit; the active tab is always restored even past the
+      // cap so focus never strands. TD-2026-07-17A-082.
+      constexpr std::size_t kMaxRestoredTabsPerGroup = 200;
       for (std::size_t i = 0; i < persisted_group.tabs.size(); ++i) {
         const PersistedEditorTabState& persisted_tab = persisted_group.tabs[i];
         const bool is_active = i == persisted_group.active_tab_index;
+        if (group.open_tabs.size() >= kMaxRestoredTabsPerGroup && !is_active) {
+          continue;  // Past the product cap: skip non-active tabs (defensive).
+        }
         const bool should_eager_hydrate = is_active || persisted_tab.dirty_snapshot;
         std::optional<TabEntry> tab = rebuild_tab(persisted_tab, should_eager_hydrate);
         if (!tab.has_value()) {

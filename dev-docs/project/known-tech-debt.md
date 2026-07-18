@@ -624,8 +624,16 @@ speed-path items first, then the correctness/lifecycle cleanups.
   visible editor work. Add a capped/streaming match index with a truncated flag, keep
   next/previous navigation correct around the active match, and feed the overview ruler a
   density-reduced source instead of the full match vector.
-- **TD-2026-07-17A-030 — assist navigation/reference/signature async results lack
-  same-file request generations.** Completion and code-action requests carry monotonic
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-030 — assist navigation/reference/signature async results lack
+  same-file request generations.** Fixed: added per-surface monotonic request generations
+  (`navigation_request_generation_` shared across definition/type-def/impl/declaration since the
+  user only jumps once, `references_request_generation_`, `signature_request_generation_`), carried
+  on the `NavigationMerge`/`SignatureHelpMerge` and checked in each resolve/callback alongside
+  `ResultIsStale` — so a second same-file invocation at a different caret before the first response
+  lands drops the older result (no wrong-caret navigation / references / signature popup). Mirrors
+  the existing completion/code-action/workspace-symbol generation pattern. Regression:
+  `Phase5.SignatureHelpDropsSupersededResponse`.
+  Completion and code-action requests carry monotonic
   generations, but `GoToDefinition`, `GoToLspNavigation`, `FindLspReferences`, and
   `TriggerSignatureHelp` only call `ResultIsStale(active_editable, request_path)`, which
   checks the active file path and ignores the request cursor/revision. If a user invokes

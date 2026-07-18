@@ -1102,6 +1102,50 @@ void TestWorkspaceShellSessionSaveOmitsOverBudgetDirtySnapshot() {
          "an over-budget dirty tab restores clean (path-only, no persisted snapshot)");
 }
 
+// Session restore caps the number of tabs it rebuilds per group at a product limit
+// (far below the 4096 decode ceiling), so a huge saved session can't make startup
+// path-probe / model-build thousands of tabs before the first frame. The active tab
+// is always restored. TD-2026-07-17A-082.
+void TestWorkspaceShellRestoreSessionCapsTabCount() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::size_t tab_count = 205;  // > the 200 per-group restore cap
+  std::vector<std::filesystem::path> files;
+  for (std::size_t i = 0; i < tab_count; ++i) {
+    const std::filesystem::path path = root / ("f" + std::to_string(i) + ".txt");
+    WriteFile(path, "x\n");
+    files.push_back(path);
+  }
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, files.front());
+  for (std::size_t i = 1; i < files.size(); ++i) {
+    Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, files[i]),
+           "tab-cap fixture should open each tab");
+  }
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "restore should succeed for an oversized session");
+  const std::size_t restored_tabs = WorkspaceShellTestAccess::OpenTabs(restored).size();
+  Expect(restored_tabs <= 201,
+         "restore rebuilds at most the per-group cap (+ the active tab)");
+  Expect(restored_tabs < tab_count,
+         "an oversized session restores fewer tabs than were saved (cap engaged)");
+}
+
 // A file scrolled (without moving the caret) must reopen at the SAME scroll line.
 // The 2-space-indented body makes indent-detection change the tab size on open,
 // which runs EnsureCursorVisible -- the operation that used to snap the restored
@@ -2693,6 +2737,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMoveMergeSelectionInvalidatesConflictBand);
   AddTest(tests, "WorkspaceShell/SessionSaveOmitsOverBudgetDirtySnapshot",
           TestWorkspaceShellSessionSaveOmitsOverBudgetDirtySnapshot);
+  AddTest(tests, "WorkspaceShell/RestoreSessionCapsTabCount",
+          TestWorkspaceShellRestoreSessionCapsTabCount);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesMergeNavigationState",
           TestWorkspaceShellRestoreSessionPreservesMergeNavigationState);
   AddTest(tests, "WorkspaceShell/RestoreSessionRoundTripsMultiHunkMergeChoices",
