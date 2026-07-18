@@ -156,6 +156,7 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests);
 void RegisterEditorFoldingTests(std::vector<TestCase>& tests);
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests);
 void RegisterTestRunnerCliTests(std::vector<TestCase>& tests);
+void RegisterBoundedResourceCapsTests(std::vector<TestCase>& tests);
 void RegisterWheelAccumulatorTests(std::vector<TestCase>& tests);
 void RegisterTabStripAnimationTests(std::vector<TestCase>& tests);
 
@@ -371,6 +372,7 @@ int main(int argc, char** argv) {
 
   std::vector<microide::tests::TestCase> tests;
   microide::tests::RegisterTestRunnerCliTests(tests);
+  microide::tests::RegisterBoundedResourceCapsTests(tests);
   microide::tests::RegisterWheelAccumulatorTests(tests);
   microide::tests::RegisterTabStripAnimationTests(tests);
   microide::tests::RegisterAppDirectoriesTests(tests);

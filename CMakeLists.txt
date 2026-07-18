@@ -742,6 +742,7 @@ add_executable(microide_tests
   tests/AppDirectoriesTests.cpp
   tests/AppStartupOptionsTests.cpp
   src/app/AppStartupOptions.cpp
+  tests/BoundedResourceCapsTests.cpp
   tests/ControlSocketServerTests.cpp
   tests/ControlClientTests.cpp
   tests/ControlProtocolTests.cpp
