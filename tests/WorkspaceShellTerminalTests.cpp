@@ -1204,6 +1204,30 @@ void TestWorkspaceShellTerminalExitMarkerDisplaysAfterCleanOutput() {
          "exit marker should display in the normal (no open escape) case");
 }
 
+// An exited terminal tab must remain open (retained) after the session update
+// loop so the `[process exited]` marker and prior output stay inspectable, rather
+// than being reaped in the same update that records the marker. TD-2026-07-17A-130.
+void TestWorkspaceShellExitedTerminalTabIsRetained() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetRunning(session, true);
+  TerminalSessionTestAccess::AppendOutput(session, "hi\r\n");
+
+  // The child process exits: session reports !running() and appends the marker.
+  TerminalSessionTestAccess::EmitProcessExitMarker(session);
+  TerminalSessionTestAccess::SetRunning(session, false);
+
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 1,
+         "exited terminal tab should exist before the update loop runs");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 1,
+         "an exited terminal tab must be retained (not reaped) so output stays inspectable");
+  Expect(TerminalScreenText(session).find("[process exited]") != std::string::npos,
+         "the retained tab still shows the exit marker after the update loop");
+}
+
 // Terminal selection copy must use the same cell-to-text rules as whole-line
 // copy: empty cells render as a single space (so internal spacing survives) and
 // the trailing spacer of a double-width glyph is skipped (so no phantom space is
@@ -1285,6 +1309,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalExitMarkerSurvivesOpenEscape);
   AddTest(tests, "WorkspaceShell/TerminalExitMarkerDisplaysAfterCleanOutput",
           TestWorkspaceShellTerminalExitMarkerDisplaysAfterCleanOutput);
+  AddTest(tests, "WorkspaceShell/ExitedTerminalTabIsRetained",
+          TestWorkspaceShellExitedTerminalTabIsRetained);
   AddTest(tests, "WorkspaceShell/TerminalCtrlShiftVPastesBracketedClipboard",
           TestWorkspaceShellCtrlShiftVPastesBracketedClipboard);
   AddTest(tests, "WorkspaceShell/TerminalShiftInsertPastesRawClipboard",

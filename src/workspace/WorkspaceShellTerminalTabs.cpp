@@ -142,16 +142,6 @@ void WorkspaceShell::CloseTerminalTab(std::size_t index) {
                context_.current_project_state.terminal_tabs.size() - 1);
 }
 
-void WorkspaceShell::ReapExitedTerminalTabs() {
-  for (std::size_t i = 0; i < context_.current_project_state.terminal_tabs.size();) {
-    if (context_.current_project_state.terminal_tabs[i] != nullptr && !context_.current_project_state.terminal_tabs[i]->session.running()) {
-      CloseTerminalTab(i);
-      continue;
-    }
-    ++i;
-  }
-}
-
 void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   const bool panel_visible_before = BottomPanelVisible();
   const std::size_t tab_count_before = context_.current_project_state.terminal_tabs.size();
@@ -190,7 +180,9 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
       }
     }
   }
-  ReapExitedTerminalTabs();
+  // Exited terminal tabs are intentionally retained until the user closes them,
+  // so the `[process exited]` marker and prior command output stay inspectable
+  // (mirrors VS Code's task-terminal exit behavior). TD-2026-07-17A-130.
   SyncTerminalFocusState();
   if (had_terminal_tabs) {
     const bool reloaded = ReloadProjectIfFilesChanged(false);

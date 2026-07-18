@@ -1489,7 +1489,6 @@
   bool MoveActiveOutputTabTo(std::size_t index);
   void CloseTerminalTab(std::size_t index);
   void ConsumeTerminalSessionUpdates();
-  void ReapExitedTerminalTabs();
   bool BottomPanelVisible() const;
   // Whether the project tab strip is laid out this frame. Hidden only when the
   // "chrome.project_tabs.hide_when_single" setting is on and at most one project is

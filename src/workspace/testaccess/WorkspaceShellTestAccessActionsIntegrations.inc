@@ -305,6 +305,9 @@
   static void ConsumeTerminalSessionUpdates(WorkspaceShell& shell) {
     shell.ConsumeTerminalSessionUpdates();
   }
+  static std::size_t TerminalTabCount(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.terminal_tabs.size();
+  }
   static microide::terminal::TerminalSession& ActiveTerminalSession(WorkspaceShell& shell) {
     return shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->session;
   }
