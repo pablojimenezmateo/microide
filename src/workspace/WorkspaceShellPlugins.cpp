@@ -1558,13 +1558,6 @@ std::vector<LspClient::Diagnostic> WorkspaceShell::CollectLspContextDiagnostics(
     return result;
   }
 
-  // Position ordering + range overlap so a cursor sitting on (or a selection
-  // spanning) a diagnostic includes it. Requesting range and diagnostic range are
-  // both 0-based half-open per LSP.
-  const auto before = [](const editor::TextPosition& a, const editor::TextPosition& b) {
-    return a.line < b.line || (a.line == b.line && a.column < b.column);
-  };
-  const editor::SelectionRange want = editor::TextViewport::NormalizeRange(range);
   const auto severity_code = [](editor::DiagnosticSeverity severity) {
     switch (severity) {
       case editor::DiagnosticSeverity::Error:
@@ -1579,13 +1572,16 @@ std::vector<LspClient::Diagnostic> WorkspaceShell::CollectLspContextDiagnostics(
     return 1;
   };
 
-  for (const editor::PublishedDiagnostic& diagnostic : *diagnostics) {
-    const editor::SelectionRange have = editor::TextViewport::NormalizeRange(diagnostic.range);
-    // Overlap unless one range ends strictly before the other begins.
-    const bool disjoint = before(have.end, want.start) || before(want.end, have.start);
-    if (disjoint) {
-      continue;
-    }
+  // Bound the context payload: the merged per-file diagnostic view has no aggregate
+  // owner cap, so select overlapping diagnostics through the capped store helper
+  // before copying/serializing (TD-2026-07-17A-056). 32 is ample context for a code
+  // action; a densely-annotated line no longer materializes a huge request payload.
+  constexpr std::size_t kMaxContextDiagnostics = 32;
+  const editor::SelectionRange want = editor::TextViewport::NormalizeRange(range);
+  const std::vector<editor::PublishedDiagnostic> selected =
+      editor::SelectContextDiagnostics(*diagnostics, want, kMaxContextDiagnostics);
+  result.reserve(selected.size());
+  for (const editor::PublishedDiagnostic& diagnostic : selected) {
     result.push_back(LspClient::Diagnostic{
         .range = LspClient::Range{
             .start = ByteColumnToLspPosition(viewport, diagnostic.range.start.line,

@@ -38,6 +38,40 @@ std::span<const PublishedDiagnostic> FilterDiagnosticsAtLeastSeverity(
   return scratch;
 }
 
+std::vector<PublishedDiagnostic> SelectContextDiagnostics(
+    std::span<const PublishedDiagnostic> in, const SelectionRange& want, std::size_t max_count,
+    bool* truncated) {
+  if (truncated != nullptr) {
+    *truncated = false;
+  }
+  // Order two positions, then a range's start/end, without depending on TextViewport
+  // (keeps this a pure store-level helper).
+  const auto before = [](const TextPosition& a, const TextPosition& b) {
+    return a.line < b.line || (a.line == b.line && a.column < b.column);
+  };
+  const auto normalize = [&](const SelectionRange& r) {
+    return before(r.end, r.start) ? SelectionRange{r.end, r.start} : r;
+  };
+  const SelectionRange w = normalize(want);
+
+  std::vector<PublishedDiagnostic> result;
+  for (const PublishedDiagnostic& diagnostic : in) {
+    const SelectionRange have = normalize(diagnostic.range);
+    // Overlap unless one range ends strictly before the other begins.
+    if (before(have.end, w.start) || before(w.end, have.start)) {
+      continue;
+    }
+    if (result.size() >= max_count) {
+      if (truncated != nullptr) {
+        *truncated = true;
+      }
+      break;
+    }
+    result.push_back(diagnostic);
+  }
+  return result;
+}
+
 namespace {
 
 int SeverityRank(DiagnosticSeverity severity) {

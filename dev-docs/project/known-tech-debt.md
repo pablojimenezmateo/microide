@@ -1014,7 +1014,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   vector across every visited directory, increasing scan memory and making matcher construction
   proportional to directories * inherited rules. Store inherited matchers as parent-linked layers
   (or shared immutable rule blocks plus local additions) so each directory adds only its own rules.
-- **TD-2026-07-17A-056 — code-action requests copy and serialize all overlapping diagnostics.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-056 — code-action requests copy and serialize all overlapping diagnostics.**
+  Fixed: the overlap selection moved to a pure, testable
+  `editor::SelectContextDiagnostics(span, want_range, max_count, *truncated)` in `DiagnosticsStore`,
+  and `WorkspaceShell::CollectLspContextDiagnostics` calls it with a `kMaxContextDiagnostics` (32)
+  budget before copying/encoding. The scan stops once the cap is reached, so a code-action request on
+  a densely-annotated line (the merged per-file diagnostic view has no aggregate owner cap) no longer
+  copies and JSON-serializes a large diagnostic payload before the async request is queued. Regression:
+  `DiagnosticsStore/SelectContextDiagnosticsOverlapAndCap` (overlap correctness, stored order, cap +
+  truncated flag).
   `AssistService::ShowCodeActionsOverlay` asks
   `WorkspaceShell::CollectLspContextDiagnostics` for every diagnostic overlapping the requested
   cursor/selection range before dispatching `textDocument/codeAction`. The collector scans the

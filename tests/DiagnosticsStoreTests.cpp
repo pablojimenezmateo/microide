@@ -265,6 +265,45 @@ void TestDiagnosticsSeverityFilter() {
          "min=error keeps only errors");
 }
 
+// TD-2026-07-17A-056: SelectContextDiagnostics selects diagnostics overlapping a
+// code-action request range, capped so a densely-annotated line cannot materialize
+// a huge context payload before the async request is queued.
+void TestSelectContextDiagnosticsOverlapAndCap() {
+  using microide::editor::PublishedDiagnostic;
+  using microide::editor::SelectContextDiagnostics;
+
+  const auto make = [](std::size_t sl, std::size_t sc, std::size_t el, std::size_t ec,
+                       std::string m) {
+    PublishedDiagnostic d;
+    d.range = SelectionRange{TextPosition{sl, sc}, TextPosition{el, ec}};
+    d.message = std::move(m);
+    return d;
+  };
+
+  std::vector<PublishedDiagnostic> in;
+  in.push_back(make(0, 0, 0, 5, "a"));  // line 0 cols [0,5)
+  in.push_back(make(2, 0, 2, 3, "b"));  // line 2 — disjoint from a line-0 cursor
+  in.push_back(make(0, 3, 0, 8, "c"));  // line 0 cols [3,8)
+
+  // Empty selection (cursor) at line 0 col 4 overlaps "a" and "c" but not "b".
+  const SelectionRange cursor{TextPosition{0, 4}, TextPosition{0, 4}};
+  bool truncated = true;
+  const auto sel = SelectContextDiagnostics(in, cursor, 100, &truncated);
+  Expect(sel.size() == 2 && !truncated, "only overlapping diagnostics are selected, uncapped");
+  Expect(sel[0].message == "a" && sel[1].message == "c",
+         "overlapping diagnostics keep stored order");
+
+  // 50 diagnostics all overlapping the cursor, capped at 8.
+  std::vector<PublishedDiagnostic> many;
+  for (int i = 0; i < 50; ++i) {
+    many.push_back(make(0, 0, 0, 10, "d" + std::to_string(i)));
+  }
+  bool cap_truncated = false;
+  const auto capped = SelectContextDiagnostics(many, cursor, 8, &cap_truncated);
+  Expect(capped.size() == 8 && cap_truncated,
+         "the context-diagnostic set is capped with the truncated flag set");
+}
+
 // A hostile/buggy language server can publish an unbounded number of
 // diagnostics for one file; the per-file list is scanned per visible row per
 // frame, so the store caps how many it retains to keep redraw bounded.
@@ -366,6 +405,8 @@ void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DiagnosticsStore/FlagsTruncatedFiles",
           TestDiagnosticsStoreFlagsTruncatedFiles);
   AddTest(tests, "DiagnosticsStore/SeverityFilter", TestDiagnosticsSeverityFilter);
+  AddTest(tests, "DiagnosticsStore/SelectContextDiagnosticsOverlapAndCap",
+          TestSelectContextDiagnosticsOverlapAndCap);
   AddTest(tests, "DiagnosticsStore/MergesOwnersPerFile", TestDiagnosticsStoreMergesOwnersPerFile);
   AddTest(tests, "DiagnosticsStore/ClearsOwnersIndependently",
           TestDiagnosticsStoreClearsOwnersIndependently);

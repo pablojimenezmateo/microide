@@ -64,6 +64,17 @@ std::span<const PublishedDiagnostic> FilterDiagnosticsAtLeastSeverity(
     std::span<const PublishedDiagnostic> in, DiagnosticSeverity min_severity,
     std::vector<PublishedDiagnostic>& scratch);
 
+// TD-2026-07-17A-056: select diagnostics whose range overlaps `want` (both 0-based
+// half-open) for a code-action context payload, capped at `max_count`. The merged
+// per-file diagnostic view has no aggregate owner cap, so a code-action request over
+// a densely-annotated line could otherwise copy and later JSON-serialize a large
+// diagnostic payload before the async request is even queued. The scan stops once
+// the cap is reached, bounding both the copy and the downstream serialization; when
+// it caps, `*truncated` (when provided) is set. Preserves stored order.
+std::vector<PublishedDiagnostic> SelectContextDiagnostics(
+    std::span<const PublishedDiagnostic> in, const SelectionRange& want, std::size_t max_count,
+    bool* truncated = nullptr);
+
 class DiagnosticsStore {
  public:
   bool ReplaceForOwnerFile(std::string_view owner,
