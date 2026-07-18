@@ -1431,7 +1431,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
   editor tabs are eagerly hydrated. Apply a much smaller product cap for restored tab presentation, keep
   compare/merge tabs deferred like clean editor tabs, and surface a "some tabs were skipped/deferred"
   marker instead of rebuilding every persisted tab synchronously.
-- **TD-2026-07-17A-083 — session save snapshots dirty buffers before any snapshot budget.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-083 — session save snapshots dirty buffers before any snapshot budget.**
+  Fixed: `BuildPersistedEditorTabState` computes the dirty buffer's size from the live `LineSpan`
+  (O(lines), no allocation, early-out) BEFORE snapshotting and, over the reader's 64 MiB / 4M-line
+  budget, omits the snapshot — the tab persists as a path-only reference and restores by reopening
+  from disk (matching the reader's rejection outcome, minus the wasted whole-buffer Snapshot,
+  encode, and doomed write). Regression: `WorkspaceShell/SessionSaveOmitsOverBudgetDirtySnapshot`.
   The decode path caps one persisted dirty buffer at 64 MiB / 4,000,000 lines, but
   `PersistenceCoordinator::BuildPersistedEditorTabState` unconditionally assigns
   `persisted_viewport->lines().Snapshot()` when an editor tab is dirty. `SaveSessionState` calls that for

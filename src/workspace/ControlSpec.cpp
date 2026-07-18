@@ -62,6 +62,11 @@ ControlSpec ParseControlSpec(std::string_view json) {
     // Two accepted forms: an object {"id":"value",...} or an array of [id, value]
     // string pairs (preserves order). Values must be strings.
     const util::JsonValue& settings = (*parsed)["settings"];
+    if ((settings.IsObject() && settings.AsObject().size() > kMaxControlSpecSectionEntries) ||
+        (settings.IsArray() && settings.AsArray().size() > kMaxControlSpecSectionEntries)) {
+      spec.parse_error = "\"settings\" exceeds the per-section entry cap";
+      return spec;
+    }
     if (settings.IsObject()) {
       for (const auto& [id, value] : settings.AsObject()) {
         // Reject an empty setting id to match the array form's `pair[0].empty()`
@@ -97,6 +102,10 @@ ControlSpec ParseControlSpec(std::string_view json) {
     const util::JsonValue& breakpoints = (*parsed)["breakpoints"];
     if (!breakpoints.IsArray()) {
       spec.parse_error = "\"breakpoints\" must be an array";
+      return spec;
+    }
+    if (breakpoints.AsArray().size() > kMaxControlSpecSectionEntries) {
+      spec.parse_error = "\"breakpoints\" exceeds the per-section entry cap";
       return spec;
     }
     for (const util::JsonValue& entry : breakpoints.AsArray()) {
@@ -137,6 +146,10 @@ ControlSpec ParseControlSpec(std::string_view json) {
       spec.parse_error = "\"functionBreakpoints\" must be an array";
       return spec;
     }
+    if (function_breakpoints.AsArray().size() > kMaxControlSpecSectionEntries) {
+      spec.parse_error = "\"functionBreakpoints\" exceeds the per-section entry cap";
+      return spec;
+    }
     for (const util::JsonValue& entry : function_breakpoints.AsArray()) {
       if (!entry.IsObject()) {
         spec.parse_error = "each function breakpoint must be an object";
@@ -166,6 +179,10 @@ ControlSpec ParseControlSpec(std::string_view json) {
       spec.parse_error = "\"open\" must be an array of strings";
       return spec;
     }
+    if (open.AsArray().size() > kMaxControlSpecSectionEntries) {
+      spec.parse_error = "\"open\" exceeds the per-section entry cap";
+      return spec;
+    }
     for (const util::JsonValue& entry : open.AsArray()) {
       if (!entry.IsString() || entry.AsString().empty()) {
         spec.parse_error = "\"open\" entries must be non-empty strings";
@@ -187,6 +204,10 @@ ControlSpec ParseControlSpec(std::string_view json) {
     const util::JsonValue& commands = (*parsed)["commands"];
     if (!commands.IsArray()) {
       spec.parse_error = "\"commands\" must be an array of strings";
+      return spec;
+    }
+    if (commands.AsArray().size() > kMaxControlSpecSectionEntries) {
+      spec.parse_error = "\"commands\" exceeds the per-section entry cap";
       return spec;
     }
     for (const util::JsonValue& entry : commands.AsArray()) {

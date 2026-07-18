@@ -147,9 +147,47 @@ void TestParseSettingsRejectsBadShape() {
          "empty array-form setting id should be rejected");
 }
 
+// A cold-start spec must not enqueue an unbounded startup workload: each section is
+// capped at kMaxControlSpecSectionEntries and exceeding it is a hard parse error.
+// TD-2026-07-17A-038.
+void TestParseRejectsOversizedSections() {
+  using microide::workspace::kMaxControlSpecSectionEntries;
+  const std::size_t over = kMaxControlSpecSectionEntries + 1;
+
+  // Oversized "commands" section.
+  std::string commands = R"({"commands": [)";
+  for (std::size_t i = 0; i < over; ++i) {
+    commands += (i ? ",\"noop\"" : "\"noop\"");
+  }
+  commands += "]}";
+  const ControlSpec commands_spec = ParseControlSpec(commands);
+  Expect(!commands_spec.valid && commands_spec.parse_error.find("commands") != std::string::npos,
+         "an over-cap commands section is rejected");
+
+  // Oversized "breakpoints" section.
+  std::string bps = R"({"breakpoints": [)";
+  for (std::size_t i = 0; i < over; ++i) {
+    bps += (i ? "," : "");
+    bps += R"({"file":"a.c","line":1})";
+  }
+  bps += "]}";
+  const ControlSpec bps_spec = ParseControlSpec(bps);
+  Expect(!bps_spec.valid && bps_spec.parse_error.find("breakpoints") != std::string::npos,
+         "an over-cap breakpoints section is rejected");
+
+  // A section right at the cap still parses.
+  std::string at_cap = R"({"open": [)";
+  for (std::size_t i = 0; i < kMaxControlSpecSectionEntries; ++i) {
+    at_cap += (i ? ",\"f\"" : "\"f\"");
+  }
+  at_cap += "]}";
+  Expect(ParseControlSpec(at_cap).valid, "a section exactly at the cap still parses");
+}
+
 }  // namespace
 
 void RegisterControlSpecTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ControlSpec/ParseRejectsOversizedSections", TestParseRejectsOversizedSections);
   AddTest(tests, "ControlSpec/ParseFullSpec", TestParseFullSpec);
   AddTest(tests, "ControlSpec/ParseRejectsBadInput", TestParseRejectsBadInput);
   AddTest(tests, "ControlSpec/ToCommandsResolvesAndConverts", TestToCommandsResolvesAndConverts);

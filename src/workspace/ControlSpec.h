@@ -48,6 +48,13 @@ struct ControlSpec {
   std::vector<std::string> commands;
 };
 
+// Per-section entry cap for a cold-start `--control-spec` document. Each section
+// translates into synchronous command executions / JSONL `applied` events (and
+// breakpoints into DAP `setBreakpoints` payloads), so a compact authored spec must
+// not be able to enqueue an unbounded workload at startup. Exceeding the cap is a
+// hard parse error (the spec is rejected whole). TD-2026-07-17A-038.
+inline constexpr std::size_t kMaxControlSpecSectionEntries = 10000;
+
 // The recognized top-level spec keys. Shared by the help text / drift guard.
 std::span<const std::string_view> ControlSpecKeys();
 
