@@ -129,9 +129,9 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test) —
 >    **focus pass 2/9 IN PROGRESS 2026-07-18**:
 >    018, 029, 038, 039, 043, 044, 046, 056, 057, 070,
->    071, 072, 073, 074, 095, 096, 097, 098, 099, 107, 116, 118.
+>    071, 072, 073, 074, 095, 096, 097, 099, 107, 116, 118.
 >    *(020, 090, 101, 037, 042 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets; control-socket complete-line cap + aggregate inbound-byte budget.)*
->    *(040, 064, 068, 105, 106, 119, 121 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; text-measurement byte budget + no-cache-oversized; project.files_exclude rule/byte cap; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
+>    *(040, 064, 068, 098, 105, 106, 119, 121 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; DAP pre-initialize event-flood cap; text-measurement byte budget + no-cache-oversized; project.files_exclude rule/byte cap; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
@@ -1151,7 +1151,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   crash-safety or shutdown session save walk and encode every hunk choice even though most choices are
   still the default. Persist only non-default choices keyed by stable hunk identity or enforce a
   save-side cap that matches the restore budget and marks the session state truncated.
-- **TD-2026-07-17A-098 — DAP pre-initialize event buffering is uncapped.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-098 — DAP pre-initialize event buffering is uncapped.**
+  Fixed: `DoInitializeBlocking` now caps the pre-response replay buffer at
+  `kMaxDapEarlyMessages` (10,000). A conforming adapter emits only a handful of events before
+  its initialize response; once the buffer exceeds the cap the client sets a "too many events
+  before initialize response" error, shuts the process down, fails pending requests, and
+  returns without initializing — so a hostile adapter streaming valid small event frames for
+  the whole timeout window can no longer grow `early_messages` without bound. Regression:
+  `WorkspaceDapClient/BoundsPreInitializeEventFlood` (a Python adapter that emits 10,050
+  output events and never answers initialize ⇒ clean init failure, error recorded).
   `WorkspaceDapClientInternal::DoInitializeBlocking` buffers every message that arrives before the
   `initialize` response in `early_messages`, then replays the vector after capabilities are parsed.
   Individual DAP frames and the active read buffer are capped, and the wall-clock initialize timeout

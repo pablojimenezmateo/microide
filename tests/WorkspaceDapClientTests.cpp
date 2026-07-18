@@ -242,6 +242,73 @@ void TestWorkspaceDapClientReportsAdapterThatExitsBeforeInitialize() {
   client.Shutdown();
 }
 
+// TD-2026-07-17A-098: an adapter can stream many valid small event frames before its
+// initialize response; the pre-initialize replay buffer must be bounded so it cannot grow
+// without limit for the whole timeout window. A flooding adapter must fail initialization
+// cleanly rather than accumulating an unbounded backlog.
+void TestWorkspaceDapClientBoundsPreInitializeEventFlood() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "flood_adapter.py";
+  // On the initialize request, emit far more than kMaxDapEarlyMessages (10000) output
+  // events and never send the initialize response. The client must shed the session.
+  WriteFile(server_path, std::string(R"py(import json
+import sys
+
+seq = 0
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    return json.loads(sys.stdin.buffer.read(content_length).decode("utf-8"))
+
+def write_message(message):
+    global seq
+    seq += 1
+    message["seq"] = seq
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+msg = read_message()
+if msg is not None and msg.get("command") == "initialize":
+    for _ in range(10050):
+        write_message({"type": "event", "event": "output",
+                       "body": {"category": "stdout", "output": "x"}})
+# Never send the initialize response; block until the client tears us down.
+while sys.stdin.buffer.readline():
+    pass
+)py"));
+
+  DapClient client;
+  Expect(client.Start({"python3", server_path.string()}, "mock"),
+         "client should launch the flooding adapter");
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (!client.IsInitializing() && !client.LastError().empty()) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(!client.IsInitialized(),
+         "a pre-initialize event flood must not complete initialization");
+  Expect(!client.LastError().empty(),
+         "the client must record an error when the adapter floods pre-initialize events");
+  client.Shutdown();
+}
+
 void TestWorkspaceDapClientShutdownSendsDisconnect() {
 #if !defined(__unix__) && !defined(__APPLE__)
   return;
@@ -522,6 +589,8 @@ void RegisterWorkspaceDapClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceDapClientDispatchesEventsOnMainThread);
   AddTest(tests, "WorkspaceDapClient/ReportsAdapterThatExitsBeforeInitialize",
           TestWorkspaceDapClientReportsAdapterThatExitsBeforeInitialize);
+  AddTest(tests, "WorkspaceDapClient/BoundsPreInitializeEventFlood",
+          TestWorkspaceDapClientBoundsPreInitializeEventFlood);
   AddTest(tests, "WorkspaceDapClient/ShutdownSendsDisconnect",
           TestWorkspaceDapClientShutdownSendsDisconnect);
   AddTest(tests, "WorkspaceDapClient/StubModeAnswersRequestsAndInjectsEvents",

@@ -92,6 +92,12 @@ constexpr std::size_t kMaxQueuedMessages = 50000;
 // cap is rejected; a read buffer past the buffer cap tears the session down.
 constexpr std::size_t kMaxDapMessageBytes = 64ull * 1024 * 1024;
 constexpr std::size_t kMaxDapReadBufferBytes = kMaxDapMessageBytes + (1ull * 1024 * 1024);
+// TD-2026-07-17A-098: cap the pre-initialize replay buffer. Individual frames and the read
+// buffer are bounded, and the wall-clock deadline prevents infinite waiting, but a hostile
+// adapter can stream many valid small output/event frames for the full timeout window and
+// grow `early_messages` without an item budget. A conforming adapter emits only a handful
+// of events before its initialize response, so exceeding this count is a runaway adapter.
+constexpr std::size_t kMaxDapEarlyMessages = 10000;
 
 bool DapLifecycleTraceEnabled() {
   static const bool enabled = []() {
@@ -813,6 +819,18 @@ struct DapClient::Impl {
         // response (e.g. an early `output`, or a non-conformant `initialized`)
         // until capabilities are stored, preserving arrival order.
         early_messages.push_back(std::move(*msg_opt));
+        // TD-2026-07-17A-098: bound the pre-initialize replay buffer. A conforming
+        // adapter emits only a handful of events before its initialize response; an
+        // adapter flooding thousands is runaway — fail initialization cleanly instead
+        // of retaining an unbounded event backlog for the full timeout window.
+        if (early_messages.size() > kMaxDapEarlyMessages) {
+          SetLastError("debug adapter emitted too many events before initialize response");
+          ShutdownProcessOnce();
+          FailPendingRequests(false);
+          ClearDeferredMessages();
+          initializing.store(false, std::memory_order_release);
+          return;
+        }
         continue;
       }
       if (!msg["success"].AsBool(false)) {
