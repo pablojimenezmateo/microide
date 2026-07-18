@@ -45,6 +45,13 @@ class DebugWatchModel {
   // Fold an evaluate result onto the expression at `index`.
   void ApplyEvaluate(std::size_t index, const dap_protocol::DapEvaluateResult& result);
 
+  // True once a value has been folded in since the last BeginEvaluation, i.e. the
+  // placeholder tree is no longer pristine. DebugService::EvaluateWatches uses this
+  // to skip a redundant BeginEvaluation right after a model mutation already
+  // rebuilt the tree (mutations self-rebuild for standalone/persistence use), while
+  // still rebuilding on the stop/frame-switch path where prior values are present.
+  bool NeedsPlaceholderRebuild() const { return needs_placeholder_rebuild_; }
+
   // Tree pass-throughs (lazy expand + child setVariable edit reuse the shared
   // DebugValueTree verbatim).
   DebugValueTree::ChildFetch ToggleRow(std::size_t row_index) { return tree_.ToggleRow(row_index); }
@@ -88,6 +95,9 @@ class DebugWatchModel {
   DebugValueTree tree_;
   std::vector<std::string> expressions_;
   std::vector<std::uint32_t> expression_root_ids_;  // parallel to expressions_
+  // Set by ApplyEvaluate (a value was folded in), cleared by BeginEvaluation (the
+  // tree is pristine placeholders again). See NeedsPlaceholderRebuild().
+  bool needs_placeholder_rebuild_ = false;
 };
 
 }  // namespace microide::workspace

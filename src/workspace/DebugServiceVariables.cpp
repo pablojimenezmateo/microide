@@ -248,8 +248,13 @@ int DebugService::FocusedFrameId() const {
 void DebugService::EvaluateWatches(int frame_id) {
   DebugWatchModel& watch = CurrentProjectState().debug_watch;
   // Rebuild one placeholder root per expression so rows stay stable/ordered while
-  // the (async) results stream in by index.
-  watch.BeginEvaluation();
+  // the (async) results stream in by index — but only when the tree still holds
+  // values from a prior pass. A model mutation (add/edit/remove/restore) already
+  // rebuilt the placeholder tree, so rebuilding again here would be a redundant
+  // full row-tree teardown on every watch edit.
+  if (watch.NeedsPlaceholderRebuild()) {
+    watch.BeginEvaluation();
+  }
   // Each pass clears + rebuilds expression_root_ids_; a result from a prior pass
   // (the user added/removed/edited a watch, or stepped) would otherwise land on a
   // reshuffled index and stamp a value onto the wrong expression. Bind every
@@ -257,7 +262,11 @@ void DebugService::EvaluateWatches(int frame_id) {
   const std::uint64_t generation = watch_generation_.bump();
   DebugSession* session = CurrentDapManager().ActiveSession();
   if (session != nullptr) {
-    const std::vector<std::string> expressions = watch.Expressions();
+    // Iterate the stored expressions by const reference: RequestEvaluate copies the
+    // expression it needs, and nothing in this loop (or the async callbacks, which
+    // only fold values via ApplyEvaluate) mutates the expression list, so the old
+    // whole-vector copy per evaluation pass was pure overhead.
+    const std::vector<std::string>& expressions = watch.Expressions();
     for (std::size_t i = 0; i < expressions.size(); ++i) {
       session->RequestEvaluate(
           expressions[i], frame_id, "watch",

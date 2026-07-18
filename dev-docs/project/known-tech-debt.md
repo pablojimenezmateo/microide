@@ -859,8 +859,17 @@ speed-path items first, then the correctness/lifecycle cleanups.
   plugin hover provider with no visible plugin error. Treat provider exceptions/errors as a
   failed provider result, keep scanning ordered fallbacks, and record the provider failure in
   bounded plugin output.
-- **TD-2026-07-17A-050 — debug watch re-evaluation rebuilds and copies bounded state
-  redundantly.** `DebugWatchModel::AddExpression`, `EditExpression`, and `RemoveExpression`
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-050 — debug watch re-evaluation rebuilds and copies bounded state
+  redundantly.** Fixed: `DebugWatchModel` carries a `needs_placeholder_rebuild_` freshness flag
+  (`BeginEvaluation` clears it; `ApplyEvaluate` sets it), exposed via `NeedsPlaceholderRebuild()`.
+  `DebugService::EvaluateWatches` now calls `watch.BeginEvaluation()` only when that flag is set, so a
+  watch mutation — which already rebuilt the placeholder tree for standalone/persistence
+  self-consistency — no longer pays a second full row-tree teardown+rebuild; the stop/frame-switch path
+  (which holds prior values) still rebuilds. `EvaluateWatches` also iterates `watch.Expressions()` by
+  `const&` instead of copying the whole capped expression vector into a fresh
+  `std::vector<std::string>` every pass. Regression:
+  `DebugService/WatchModelPlaceholderRebuildFreshness`.
+  `DebugWatchModel::AddExpression`, `EditExpression`, and `RemoveExpression`
   all call `BeginEvaluation`, then `DebugService::AddWatch`/`EditWatch`/`RemoveWatch`
   immediately call `EvaluateWatches`, which calls `watch.BeginEvaluation()` again.
   `EvaluateWatches` also copies `watch.Expressions()` into a new `std::vector<std::string>`

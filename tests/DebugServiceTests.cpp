@@ -1880,6 +1880,36 @@ void TestDebugWatchModelBehavior() {
          "ClearResults blanks evaluated values but keeps the placeholder rows");
 }
 
+// Regression (TD-2026-07-17A-050): the placeholder-rebuild freshness flag that
+// DebugService::EvaluateWatches uses to avoid a redundant second BeginEvaluation
+// per watch mutation. A mutation (add/edit/set) and ClearResults/BeginEvaluation
+// all leave the tree pristine (needs_placeholder_rebuild == false); folding a
+// value in flips it true so the next evaluation pass rebuilds exactly once.
+void TestDebugWatchModelPlaceholderRebuildFreshness() {
+  DebugWatchModel model;
+  Expect(!model.NeedsPlaceholderRebuild(), "a fresh model needs no rebuild");
+
+  model.AddExpression("x");
+  Expect(!model.NeedsPlaceholderRebuild(),
+         "adding an expression rebuilds placeholders, leaving the tree pristine");
+
+  model.ApplyEvaluate(0, codec::DapEvaluateResult{.result = "42"});
+  Expect(model.NeedsPlaceholderRebuild(),
+         "folding a value in marks the tree dirty for the next evaluation pass");
+
+  model.BeginEvaluation();
+  Expect(!model.NeedsPlaceholderRebuild(), "BeginEvaluation clears the dirty flag");
+
+  model.ApplyEvaluate(0, codec::DapEvaluateResult{.result = "43"});
+  model.EditExpression(0, "x + 1");
+  Expect(!model.NeedsPlaceholderRebuild(),
+         "editing rebuilds placeholders and clears the dirty flag");
+
+  model.ApplyEvaluate(0, codec::DapEvaluateResult{.result = "44"});
+  model.ClearResults();
+  Expect(!model.NeedsPlaceholderRebuild(), "ClearResults leaves a pristine tree");
+}
+
 // Regression: a hostile/broken adapter can return a deeply nested one-child tree.
 // EraseSubtree must not recurse per level (stack overflow); the iterative walk
 // tears the whole chain down without growing the C++ stack.
@@ -3378,6 +3408,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/GdbAdapterClampsValueFormatting",
           TestGdbAdapterClampsValueFormatting);
   AddTest(tests, "DebugService/WatchModelBehavior", TestDebugWatchModelBehavior);
+  AddTest(tests, "DebugService/WatchModelPlaceholderRebuildFreshness",
+          TestDebugWatchModelPlaceholderRebuildFreshness);
   AddTest(tests, "DebugService/ValueTreeDeepSubtreeEraseDoesNotOverflow",
           TestDebugValueTreeDeepSubtreeEraseDoesNotOverflow);
   AddTest(tests, "DebugService/WatchModelCapsExpressions", TestDebugWatchModelCapsExpressions);

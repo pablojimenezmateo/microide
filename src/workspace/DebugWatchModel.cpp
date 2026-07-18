@@ -73,6 +73,7 @@ void DebugWatchModel::BeginEvaluation() {
                       /*is_scope=*/false));
   }
   tree_.Rebuild();
+  needs_placeholder_rebuild_ = false;
 }
 
 void DebugWatchModel::ApplyEvaluate(std::size_t index,
@@ -82,6 +83,7 @@ void DebugWatchModel::ApplyEvaluate(std::size_t index,
   }
   tree_.SetNodeValue(expression_root_ids_[index], result.result, result.type,
                      result.variables_reference);
+  needs_placeholder_rebuild_ = true;
 }
 
 std::optional<std::size_t> DebugWatchModel::ExpressionIndexForRow(std::size_t row_index) const {
