@@ -140,9 +140,9 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > **074** (serial-work-queue depth/dedupe) is now **RESOLVED 2026-07-18** as its own data-structure
 > pass (`std::list` + key->node index ⇒ O(1) `PostLatest`; opt-in `max_depth` budget that only sheds
 > caller-marked droppable jobs, never critical ones). The only
-> other still-open addendum items are the multi-file/data-structure DEFERRALS **015/016** (LSP
-> bulk-sync before/after-snapshot refactor), **022** (soft-wrap `TextLayoutCache` piece/range
-> rewrite), **004** (folding refresh from prep) and the platform WON'T-DO **104/133/134** (Windows).
+> other still-open addendum items are the data-structure DEFERRAL **022** (soft-wrap
+> `TextLayoutCache` piece/range rewrite) and the platform WON'T-DO **104/133/134** (Windows).
+> (**004** folding-refresh hoist and **015/016** LSP bulk-sync are now RESOLVED — see their entries.)
 >
 > **RESOLVED this pass (39 fixed + 1 already-satisfied; each with a regression test):**
 > - **001** — passive menu measurement (`ComputePopupMenuRect`, `MenuItemLabel`, `IsMenuItemEnabled`) reads LSP readiness with `ensure_started=false`, so opening/hovering a menu never spawns a server; servers still start on explicit LSP actions via `GetServer`.
@@ -204,12 +204,11 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    **focus pass 3b/9** below and now **all RESOLVED 2026-07-18**.
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
 > 4. **Render-TU / view-model hoist + frame-prep** (Standing #2): **focus pass 4/9 LANDED
->    2026-07-18** — 007, 008, 014, 017, 023, 026, 027, 069, 079, 084, 103 RESOLVED (each with a
->    regression test; see the RESOLVED markers on the item entries below). **004 DEFERRED** —
->    folding refresh runs from the render frame and depends on the render-loop
->    `SetViewportSize`; moving it to prep needs the editor-pane metrics/viewport-size computed
->    in prep too, and the refresh is already fingerprint-gated to a no-op on settled frames, so
->    it wants its own reviewed change with fold-render before/after verification.
+>    2026-07-18, fully RESOLVED with the 004 folding-refresh hoist (focus pass 9/9)** — 007, 008,
+>    014, 017, 023, 026, 027, 069, 079, 084, 103, and **004** RESOLVED (each with a regression
+>    test; see the RESOLVED markers on the item entries below). 004 moved folding freshness into
+>    `PrepareFrameOnce::RefreshEditorFoldingModels` (consuming the viewport's prior-frame
+>    `visible_lines()`), so `RenderClip` no longer re-runs the fold scan on every partial redraw.
 >    *(006, 019 RESOLVED 2026-07-17A — allocation-free filter; per-category row index.)*
 > 5. **Plugin correctness / safety** (plugin-safety pass — fail-open providers, interest-mask
 >    gating, NUL handling, `loadfile`/`dofile` sandbox, subprocess sandbox roots, env-key
