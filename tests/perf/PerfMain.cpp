@@ -1458,6 +1458,27 @@ int main(int argc, char** argv) {
       continue;
     }
     const BaselineComparison comparison = CompareToBaseline(*baseline, *aggregate);
+    // Print a per-scenario verdict so a tripped gate is self-diagnosing: which
+    // scenario, which metric, baseline vs measured, the delta, and the tolerance
+    // it blew. Without this a failing run only surfaced a bare exit code and the
+    // offending metric had to be reverse-engineered from --report-json. Smoke
+    // runs do not enforce, so they annotate the line as advisory.
+    const char* verdict = comparison.passed ? "PASS" : (options->smoke ? "WARN" : "FAIL");
+    std::cerr << "[perf] " << verdict << ' ' << scenario.name << " (p50_wall="
+              << aggregate->metrics.p50_wall_ms << "ms, p50_alloc="
+              << aggregate->metrics.p50_allocations << ")\n";
+    if (!comparison.passed) {
+      for (const MetricComparison& metric : comparison.metrics) {
+        if (metric.passed) {
+          continue;
+        }
+        const double delta_percent =
+            metric.expected != 0.0 ? (metric.actual / metric.expected - 1.0) * 100.0 : 0.0;
+        std::cerr << "[perf]   " << metric.metric << ": baseline=" << metric.expected
+                  << " measured=" << metric.actual << " (" << (delta_percent >= 0.0 ? "+" : "")
+                  << delta_percent << "%, tolerance +" << metric.tolerance_percent << "%)\n";
+      }
+    }
     if (!comparison.passed && !options->smoke) {
       all_passed = false;
     }
