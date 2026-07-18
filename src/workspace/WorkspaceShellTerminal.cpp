@@ -408,9 +408,30 @@ void WorkspaceShell::ClearTerminalSelection() {
 }
 
 void WorkspaceShell::AppendTerminalPendingInput(std::string_view input) {
-  if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
-    terminal_tab->pending_input.append(input);
+  auto* terminal_tab = ActiveTerminalTab();
+  if (terminal_tab == nullptr) {
+    return;
   }
+  // TD-2026-07-17A-068: pending_input feeds only copy-last-command prompt stripping,
+  // never the PTY, so bound its growth across repeated sends/pastes before a newline.
+  std::string& pending = terminal_tab->pending_input;
+  if (pending.size() >= TerminalTabState::kMaxPendingInputBytes) {
+    terminal_tab->pending_input_truncated = true;
+    return;
+  }
+  const std::size_t remaining = TerminalTabState::kMaxPendingInputBytes - pending.size();
+  if (input.size() <= remaining) {
+    pending.append(input);
+    return;
+  }
+  // Append a UTF-8-safe prefix that fits the budget, then flag truncation so submit
+  // skips the (now partial, unreliable) prompt-prefix match.
+  std::size_t fit = remaining;
+  while (fit > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(input[fit]))) {
+    --fit;
+  }
+  pending.append(input.substr(0, fit));
+  terminal_tab->pending_input_truncated = true;
 }
 
 void WorkspaceShell::EraseLastTerminalPendingInputCodepoint() {
@@ -436,13 +457,17 @@ void WorkspaceShell::SubmitTerminalPendingInput() {
   terminal_tab->last_command_invocation = captured.text;
   terminal_tab->last_command_prompt_prefix.clear();
   terminal_tab->has_last_command = !captured.text.empty();
-  if (!terminal_tab->pending_input.empty() &&
+  // A truncated capture is only a partial suffix of the real command, so the
+  // ends_with match would strip the wrong prefix — skip it (TD-2026-07-17A-068).
+  if (!terminal_tab->pending_input_truncated &&
+      !terminal_tab->pending_input.empty() &&
       captured.text.size() >= terminal_tab->pending_input.size() &&
       captured.text.ends_with(terminal_tab->pending_input)) {
     terminal_tab->last_command_prompt_prefix = captured.text.substr(
         0, captured.text.size() - terminal_tab->pending_input.size());
   }
   terminal_tab->pending_input.clear();
+  terminal_tab->pending_input_truncated = false;
 }
 
 bool WorkspaceShell::HasLastTerminalCommand() const {

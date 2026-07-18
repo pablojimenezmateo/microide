@@ -320,6 +320,18 @@
   static int ActiveTerminalScrollRow(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->scroll_row;
   }
+  static void AppendTerminalPendingInput(WorkspaceShell& shell, std::string_view input) {
+    shell.AppendTerminalPendingInput(input);
+  }
+  static void SubmitTerminalPendingInput(WorkspaceShell& shell) {
+    shell.SubmitTerminalPendingInput();
+  }
+  static std::size_t ActiveTerminalPendingInputSize(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->pending_input.size();
+  }
+  static bool ActiveTerminalPendingInputTruncated(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->pending_input_truncated;
+  }
   static bool HandleTerminalKeyDown(WorkspaceShell& shell,
                                     SDL_Keycode key,
                                     SDL_Keymod modifiers) {

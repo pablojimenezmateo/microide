@@ -616,6 +616,42 @@ void TestWorkspaceShellCopyLastTerminalCommandIncludesOutput() {
          "copy last terminal command should include the submitted command and rendered output");
 }
 
+// TD-2026-07-17A-068: pending_input (host-side copy-last-command capture, never sent to
+// the PTY) must be bounded so repeated pastes/programmatic input before a newline cannot
+// grow it without limit. Once the budget is hit further bytes are dropped and the
+// truncation flag is set; command execution is unaffected.
+void TestWorkspaceShellTerminalPendingInputIsCapped() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  const std::size_t cap = microide::workspace::TerminalTabState::kMaxPendingInputBytes;
+  // Multi-byte UTF-8 so a naive byte-cut could split a codepoint; the cap must back off
+  // to a codepoint boundary.
+  std::string chunk;
+  for (int i = 0; i < 4096; ++i) {
+    chunk += "\xC3\xA9";  // 'é'
+  }
+  // Push well past the cap across many appends (simulating repeated pastes).
+  for (int i = 0; i < 400; ++i) {
+    WorkspaceShellTestAccess::AppendTerminalPendingInput(shell, chunk);
+  }
+  const std::size_t size = WorkspaceShellTestAccess::ActiveTerminalPendingInputSize(shell);
+  Expect(size <= cap, "pending_input must never exceed the capture budget");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPendingInputTruncated(shell),
+         "hitting the pending-input budget must set the truncated flag");
+  Expect(size % 2 == 0,
+         "the truncation must land on a UTF-8 codepoint boundary (2-byte 'é' units)");
+
+  // Submitting clears the capture and the flag so the next command starts clean.
+  WorkspaceShellTestAccess::SubmitTerminalPendingInput(shell);
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPendingInputSize(shell) == 0,
+         "submit clears the pending-input capture");
+  Expect(!WorkspaceShellTestAccess::ActiveTerminalPendingInputTruncated(shell),
+         "submit resets the truncation flag");
+}
+
 // Copy Last Command enablement uses the cheap HasLastTerminalCommand() predicate, not the
 // full transcript build (TD-2026-07-17A-065). Disabled before any command, enabled after —
 // and the predicate must agree with the expensive builder returning a value.
@@ -1258,6 +1294,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellHandleEventPassesEscapeToTerminal);
   AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandIncludesOutput",
           TestWorkspaceShellCopyLastTerminalCommandIncludesOutput);
+  AddTest(tests, "WorkspaceShell/TerminalPendingInputIsCapped",
+          TestWorkspaceShellTerminalPendingInputIsCapped);
   AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandEnablementUsesCheapPredicate",
           TestWorkspaceShellCopyLastTerminalCommandEnablementUsesCheapPredicate);
   AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandFallsBackDuringAlternateScreen",

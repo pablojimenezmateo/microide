@@ -128,10 +128,10 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test) —
 >    **focus pass 2/9 IN PROGRESS 2026-07-18**:
->    018, 029, 038, 039, 043, 044, 046, 056, 057, 064, 068, 070,
+>    018, 029, 038, 039, 043, 044, 046, 056, 057, 064, 070,
 >    071, 072, 073, 074, 095, 096, 097, 098, 099, 105, 107, 116, 118, 119.
 >    *(020, 090, 101, 037, 042 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets; control-socket complete-line cap + aggregate inbound-byte budget.)*
->    *(040, 106, 121 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; project.files_exclude rule/byte cap; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
+>    *(040, 068, 106, 121 RESOLVED 2026-07-18 — debug value-tree aggregate node budget + terminal truncated row; terminal pending-input byte cap; project.files_exclude rule/byte cap; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
 >    latent): 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
@@ -867,8 +867,16 @@ speed-path items first, then the correctness/lifecycle cleanups.
   key movement over a large changed-file list copies and scans the full tree multiple times per
   step. Expose a const cached presentation/span plus precomputed visible-entry indexes, and let
   reveal consume the selected line and line count from the same snapshot.
-- **TD-2026-07-17A-068 — terminal pending-command input is uncapped across sends before
-  Enter.** `WorkspaceShell::AppendTerminalPendingInput` appends every typed or pasted byte to
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-068 — terminal pending-command input is uncapped across sends before
+  Enter.** Fixed: `TerminalTabState::pending_input` is bounded by `kMaxPendingInputBytes`
+  (1 MiB). `AppendTerminalPendingInput` appends only up to the remaining budget (backing off
+  to a UTF-8 codepoint boundary), drops further bytes, and sets `pending_input_truncated`.
+  `SubmitTerminalPendingInput` skips the prompt-prefix strip when the capture is truncated
+  (a partial suffix would strip the wrong prefix) and resets the flag on clear. Command
+  execution is unaffected — `pending_input` feeds only copy-last-command prompt stripping,
+  never the PTY. Regression: `WorkspaceShell/TerminalPendingInputIsCapped` (multi-byte input
+  past the cap stays ≤ budget, flag set, codepoint-boundary truncation, submit resets).
+  `WorkspaceShell::AppendTerminalPendingInput` appends every typed or pasted byte to
   `TerminalTabState::pending_input`, and `SubmitTerminalPendingInput` only clears it when Enter is
   submitted. `TextInputCoordinator::PasteTextIntoTerminal` caps one paste to 64 MiB, but repeated
   pastes, bracketed-paste chunks, or programmatic panel input before a newline can grow the host-side

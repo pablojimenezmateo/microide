@@ -276,7 +276,15 @@ struct TerminalTabState {
   bool mouse_selecting = false;
   std::optional<TerminalSelectionPosition> selection_anchor;
   std::optional<TerminalSelectionPosition> selection_head;
+  // Host-side capture of bytes typed/pasted since the last Enter, used ONLY to strip
+  // the prompt prefix from the copy-last-command transcript (never sent to the PTY).
+  // Bounded by kMaxPendingInputBytes: repeated pastes/programmatic input before a
+  // newline must not grow this without limit. Once the budget is hit, further bytes
+  // are dropped and `pending_input_truncated` is set so submit skips the (now
+  // unreliable) prefix match instead of using a partial capture. TD-2026-07-17A-068.
+  static constexpr std::size_t kMaxPendingInputBytes = 1u * 1024 * 1024;  // 1 MiB
   std::string pending_input;
+  bool pending_input_truncated = false;
   std::string last_command_invocation;
   std::string last_command_prompt_prefix;
   std::size_t last_command_start_row = 0;
