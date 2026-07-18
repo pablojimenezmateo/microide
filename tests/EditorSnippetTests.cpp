@@ -383,9 +383,61 @@ void TestSnippetParseHonorsEscapedDelimiters() {
          "an escaped comma stays inside the choice value");
 }
 
+// The batched mirror shift (TD-2026-07-17A-060: O(mirrors * placeholders) ->
+// O(mirrors + placeholders) per keystroke) must reproduce the old per-edit
+// ShiftPlaceholdersAtOrAfter result exactly at scale. Expand a snippet with many
+// mirrors of one tab on a single line, plus a trailing distinct tab stop, then
+// type into the linked tab: every mirror must grow in place and the trailing tab
+// stop's recorded start must shift by the aggregate of all mirror insertions.
+void TestSnippetManyMirrorBatchedShift() {
+  TextViewport viewport;
+  viewport.LoadContent("--", "/tmp/snippet-many-mirror.cpp");
+  viewport.MoveCursorTo(0, 0);
+  SnippetSessionState session;
+  viewport.BeginUndoGroup();
+
+  constexpr int kMirrors = 200;
+  std::string body;
+  for (int i = 0; i < kMirrors; ++i) {
+    body += "${1:a}";  // each mirror expands to a single 'a' at columns 0..N-1
+  }
+  body += "${2:z}$0";  // a distinct tab stop right after the mirrors
+
+  SelectionRange trigger{{0, 0}, {0, 2}};
+  Expect(ExpandSnippetAtSelection(viewport, session, trigger, body),
+         "a snippet with hundreds of linked mirrors should expand");
+  Expect(session.ranges_by_tab[1].size() == static_cast<std::size_t>(kMirrors),
+         "every mirror occurrence of tab 1 should be recorded");
+  Expect(session.ranges_by_tab[2][0].start.column == static_cast<std::size_t>(kMirrors),
+         "tab 2 starts right after the N single-char mirrors");
+
+  // Caret is on tab 1's first occurrence (column 0, rel 0). Insert "bb" before the
+  // 'a' in every mirror; each mirror grows by 2 and tab 2 shifts by 2*N.
+  Expect(SnippetTryInsertText(viewport, session, "bb"),
+         "typing into the linked tab should edit every mirror");
+
+  bool mirrors_ok = true;
+  for (int i = 0; i < kMirrors; ++i) {
+    // Mirror i now occupies [3i, 3i+3] holding "bba".
+    const SelectionRange& r = session.ranges_by_tab[1][static_cast<std::size_t>(i)];
+    if (r.start.column != static_cast<std::size_t>(3 * i) ||
+        r.end.column != static_cast<std::size_t>(3 * i + 3)) {
+      mirrors_ok = false;
+      break;
+    }
+  }
+  Expect(mirrors_ok, "every mirror must grow in place to [3i, 3i+3] after the batched shift");
+  Expect(session.ranges_by_tab[2][0].start.column == static_cast<std::size_t>(3 * kMirrors),
+         "tab 2's recorded start must shift by the aggregate of all mirror insertions "
+         "(N -> N + 2N = 3N), not a stale column");
+  Expect(viewport.lines()[0].size() == static_cast<std::size_t>(3 * kMirrors + 1),
+         "the line holds N 'bba' mirrors plus the single-char tab 2");
+}
+
 }  // namespace
 
 void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorSnippet/ManyMirrorBatchedShift", TestSnippetManyMirrorBatchedShift);
   AddTest(tests, "EditorSnippet/ParseHonorsEscapedDelimiters",
           TestSnippetParseHonorsEscapedDelimiters);
   AddTest(tests, "EditorSnippet/ParseRejectsNewlineInChoice",

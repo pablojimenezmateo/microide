@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cctype>
 #include <set>
+#include <unordered_map>
+#include <utility>
 
 #include "util/StringUtil.h"
 
@@ -266,30 +268,94 @@ static std::size_t RelativeColumnInRange(const SelectionRange& r, const TextPosi
   return p.column - r.start.column;
 }
 
-// Shift every recorded placeholder range — across ALL tab stops, not just the one
-// being edited — that begins at/after `at` on the same line by `delta` columns. An
-// edit inside one placeholder moves the text of every later placeholder on that
-// line; without shifting the OTHER tab stops' recorded ranges too, FocusTabStop
-// would later jump to a stale column. `skip_tab`/`skip_index` names the range the
-// edit happened inside (its own end is adjusted by the caller).
-static void ShiftPlaceholdersAtOrAfter(SnippetSessionState& session, const TextPosition& at,
-                                       std::ptrdiff_t delta, int skip_tab,
-                                       std::size_t skip_index) {
+// One applied mirror edit of the currently-edited tab: `range_index` names its
+// range in the edited tab's vector, `origin_col` is the column on `line` at/after
+// which text shifts, and `delta` is the signed byte size change.
+struct AppliedMirrorEdit {
+  std::size_t range_index = 0;
+  std::size_t line = 0;
+  std::size_t origin_col = 0;
+  std::ptrdiff_t delta = 0;
+};
+
+// Fold every mirror edit's column shift into every recorded placeholder range in
+// one pass, replacing the old per-edit ShiftPlaceholdersAtOrAfter scan (which
+// re-walked ALL tab stops and ALL placeholder ranges once per mirror, so a
+// snippet with many mirrors or many tab stops on one line was
+// O(active_mirrors * total_placeholders) per keystroke — TD-2026-07-17A-060).
+//
+// The mirror edits of one tab are disjoint and stay ordered under the shifts, so
+// each placeholder endpoint's total shift is the sum of deltas of same-line edits
+// whose `origin_col` is <= the endpoint's governing (start) column — independent
+// of the high-to-low application order, exactly matching the incremental result.
+// Start and end move together (linked mirrors keep their width); the edited tab's
+// own mirror additionally grows/shrinks by its own delta, and never shifts its
+// own start on its own edit.
+static void ApplyBatchedMirrorShifts(SnippetSessionState& session, int edited_tab,
+                                     const std::vector<AppliedMirrorEdit>& edits) {
+  if (edits.empty()) {
+    return;
+  }
+  // Per-line sorted (origin_col -> running prefix-sum of deltas at/left of it).
+  std::unordered_map<std::size_t, std::vector<std::pair<std::size_t, std::ptrdiff_t>>> by_line;
+  for (const AppliedMirrorEdit& e : edits) {
+    by_line[e.line].emplace_back(e.origin_col, e.delta);
+  }
+  for (auto& [line, events] : by_line) {
+    std::sort(events.begin(), events.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::ptrdiff_t acc = 0;
+    for (auto& ev : events) {
+      acc += ev.second;
+      ev.second = acc;  // sum of deltas with origin_col <= ev.first
+    }
+  }
+  // Sum of deltas whose origin_col <= col on `line` (0 when the line has none).
+  const auto shift_at = [&](std::size_t line, std::size_t col) -> std::ptrdiff_t {
+    const auto it = by_line.find(line);
+    if (it == by_line.end()) {
+      return 0;
+    }
+    const auto& events = it->second;
+    std::size_t lo = 0;
+    std::size_t hi = events.size();
+    while (lo < hi) {
+      const std::size_t mid = (lo + hi) / 2;
+      if (events[mid].first <= col) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo > 0 ? events[lo - 1].second : 0;
+  };
+  // The edited tab's mirrors, keyed by range index, with their own edit footprint.
+  std::unordered_map<std::size_t, std::pair<std::size_t, std::ptrdiff_t>> own_edit;
+  for (const AppliedMirrorEdit& e : edits) {
+    own_edit[e.range_index] = {e.origin_col, e.delta};
+  }
+  const auto shift_column = [](std::size_t& column, std::ptrdiff_t delta) {
+    column = static_cast<std::size_t>(
+        std::max<std::ptrdiff_t>(0, static_cast<std::ptrdiff_t>(column) + delta));
+  };
   for (auto& [tab, vec] : session.ranges_by_tab) {
     for (std::size_t j = 0; j < vec.size(); ++j) {
-      if (tab == skip_tab && j == skip_index) {
-        continue;
+      SelectionRange& r = vec[j];
+      std::ptrdiff_t start_shift = shift_at(r.start.line, r.start.column);
+      std::ptrdiff_t own_delta = 0;
+      if (tab == edited_tab) {
+        const auto it = own_edit.find(j);
+        if (it != own_edit.end()) {
+          own_delta = it->second.second;
+          // Its own edit must not shift its own start; only exclude it when the
+          // edit origin actually falls at/left of the start (rel == 0 case).
+          if (it->second.first <= r.start.column) {
+            start_shift -= it->second.second;
+          }
+        }
       }
-      SelectionRange& other = vec[j];
-      if (other.start.line != at.line || other.start.column < at.column) {
-        continue;
-      }
-      const auto shift = [delta](std::size_t& column) {
-        column = static_cast<std::size_t>(
-            std::max<std::ptrdiff_t>(0, static_cast<std::ptrdiff_t>(column) + delta));
-      };
-      shift(other.start.column);
-      shift(other.end.column);
+      shift_column(r.start.column, start_shift);
+      shift_column(r.end.column, start_shift + own_delta);
     }
   }
 }
@@ -311,19 +377,22 @@ static void ApplyChoiceForTab(TextViewport& viewport,
     }
     return ra.start.column > rb.start.column;
   });
+  // Apply each mirror's full-range replacement high-to-low (so lower mirrors'
+  // recorded columns stay valid), collecting each edit. A choice can change the
+  // placeholder's length; the shift origin is the pre-edit end (`r.end`), so a
+  // single batched pass then folds every mirror's delta into all recorded ranges
+  // instead of rescanning every tab stop per mirror.
+  std::vector<AppliedMirrorEdit> edits;
+  edits.reserve(order.size());
   for (std::size_t idx : order) {
-    SelectionRange r = ranges[idx];
+    const SelectionRange r = ranges[idx];
     viewport.ReplaceRange(r, text, false);
     const std::ptrdiff_t delta = static_cast<std::ptrdiff_t>(text.size()) -
                                  (static_cast<std::ptrdiff_t>(r.end.column) -
                                   static_cast<std::ptrdiff_t>(r.start.column));
-    ranges[idx].end.column = r.start.column + text.size();
-    // A choice can change the placeholder's length; every OTHER placeholder after
-    // this mirror on the same line (a different tab stop, or a sibling mirror) must
-    // shift by that delta or its recorded range goes stale. `r.end` is the pre-edit
-    // end, so start >= r.end catches exactly what moved.
-    ShiftPlaceholdersAtOrAfter(session, r.end, delta, tab, idx);
+    edits.push_back(AppliedMirrorEdit{idx, r.end.line, r.end.column, delta});
   }
+  ApplyBatchedMirrorShifts(session, tab, edits);
 }
 
 bool ExpandSnippetAtSelection(TextViewport& viewport,
@@ -547,17 +616,18 @@ bool SnippetTryInsertText(TextViewport& viewport, SnippetSessionState& session, 
     return ra.start.column + rel > rb.start.column + rel;
   });
 
+  // Insert into each mirror high-to-low (so lower mirrors' recorded columns stay
+  // valid), collecting each edit. One batched pass then advances every recorded
+  // range at/after each insertion instead of rescanning all tab stops per mirror.
+  std::vector<AppliedMirrorEdit> edits;
+  edits.reserve(order.size());
   for (std::size_t idx : order) {
     const TextPosition ins{ranges[idx].start.line, ranges[idx].start.column + rel};
     viewport.ReplaceRange(SelectionRange{ins, ins}, text, false);
-    ranges[idx].end.column += text.size();
-    // The insertion shifts every column at or after `ins` on this line to the right.
-    // Every OTHER placeholder to the right — whether a mirror of THIS tab stop or a
-    // different tab stop sharing the line — must have BOTH its start and end columns
-    // advanced, or its recorded range goes stale and FocusTabStop later jumps to the
-    // wrong column.
-    ShiftPlaceholdersAtOrAfter(session, ins, static_cast<std::ptrdiff_t>(text.size()), tab, idx);
+    edits.push_back(
+        AppliedMirrorEdit{idx, ins.line, ins.column, static_cast<std::ptrdiff_t>(text.size())});
   }
+  ApplyBatchedMirrorShifts(session, tab, edits);
   FocusTabStop(viewport, session, tab);
   return true;
 }
@@ -606,6 +676,11 @@ bool SnippetTryBackspace(TextViewport& viewport, SnippetSessionState& session) {
     return ra.start.column + rel_del > rb.start.column + rel_del;
   });
 
+  // Delete from each mirror high-to-low (so lower mirrors' recorded columns stay
+  // valid), collecting each edit. One batched pass then pulls every recorded range
+  // at/after each deletion left, instead of rescanning all tab stops per mirror.
+  std::vector<AppliedMirrorEdit> edits;
+  edits.reserve(order.size());
   for (std::size_t idx : order) {
     const auto& r = ranges[idx];
     const TextPosition del{r.start.line, r.start.column + rel_del};
@@ -626,13 +701,10 @@ bool SnippetTryBackspace(TextViewport& viewport, SnippetSessionState& session) {
     }
     viewport.ReplaceRange(
         SelectionRange{del, TextPosition{del.line, del.column + width}}, "", false);
-    ranges[idx].end.column -= width;
-    // Mirror SnippetTryInsertText: the deletion pulls every column at/after `del`
-    // on this line `width` bytes to the left, so every OTHER placeholder there (a
-    // same-tab mirror or a different tab stop sharing the line) must shift too, or
-    // its recorded range goes stale and FocusTabStop later jumps to the wrong column.
-    ShiftPlaceholdersAtOrAfter(session, del, -static_cast<std::ptrdiff_t>(width), tab, idx);
+    edits.push_back(
+        AppliedMirrorEdit{idx, del.line, del.column, -static_cast<std::ptrdiff_t>(width)});
   }
+  ApplyBatchedMirrorShifts(session, tab, edits);
   FocusTabStop(viewport, session, tab);
   return true;
 }
@@ -671,6 +743,11 @@ bool SnippetTryDeleteForward(TextViewport& viewport, SnippetSessionState& sessio
     }
     return ra.start.column + rel_del > rb.start.column + rel_del;
   });
+  // Delete-forward from each mirror high-to-low, collecting each edit, then fold
+  // all deletions into every recorded range in one batched pass (see
+  // SnippetTryBackspace) instead of rescanning all tab stops per mirror.
+  std::vector<AppliedMirrorEdit> edits;
+  edits.reserve(order.size());
   for (std::size_t idx : order) {
     const auto& r = ranges[idx];
     const TextPosition del{r.start.line, r.start.column + rel_del};
@@ -690,11 +767,10 @@ bool SnippetTryDeleteForward(TextViewport& viewport, SnippetSessionState& sessio
     }
     viewport.ReplaceRange(
         SelectionRange{del, TextPosition{del.line, del.column + width}}, "", false);
-    ranges[idx].end.column -= width;
-    // See SnippetTryBackspace: shift every other placeholder at/after `del` on this
-    // line left by `width` so cross-tab and sibling-mirror ranges stay accurate.
-    ShiftPlaceholdersAtOrAfter(session, del, -static_cast<std::ptrdiff_t>(width), tab, idx);
+    edits.push_back(
+        AppliedMirrorEdit{idx, del.line, del.column, -static_cast<std::ptrdiff_t>(width)});
   }
+  ApplyBatchedMirrorShifts(session, tab, edits);
   FocusTabStop(viewport, session, tab);
   return true;
 }
