@@ -21,6 +21,7 @@
 
 #include "app/DirtyRegionPolicy.h"
 #include "app/ApplicationPresentationCache.h"
+#include "app/EventDrainBudget.h"
 #include "app/IdleWaitStrategy.h"
 #include "platform/RuntimePaths.h"
 #include "platform/SubprocessSandbox.h"
@@ -239,6 +240,9 @@ int Application::Run() {
       continue;
     }
 
+    // Bound how many events one drain processes before yielding to a pending redraw
+    // (see EventDrainBudget.h) so a sustained event flood can't starve the frame.
+    int events_processed = 0;
     do {
       // Coalesce consecutive mouse-motion events to the latest position.
       // High-poll-rate mice can fire many motion events per frame; processing
@@ -269,6 +273,13 @@ int Application::Run() {
           dirty_rects.insert(dirty_rects.end(), result.redraw.rects.begin(), result.redraw.rects.end());
         }
         redraw_reason = result.redraw.full ? "event-full" : "event-partial";
+      }
+      // Once a redraw is pending, yield to render after the drain budget so a
+      // sustained event flood cannot starve the frame. Remaining queued events are
+      // handled on the next iteration (after a render).
+      ++events_processed;
+      if (ShouldYieldEventDrain(events_processed, full_redraw_pending || !dirty_rects.empty())) {
+        break;
       }
     } while (SDL_PollEvent(&event));
   }

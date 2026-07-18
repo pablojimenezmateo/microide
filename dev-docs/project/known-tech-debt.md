@@ -1441,8 +1441,16 @@ speed-path items first, then the correctness/lifecycle cleanups.
   so frequent updates from one item can scale with every contributed status item. Keep an id-to-order
   index alongside the ordered vector, or store the mutable item once and have the ordered presentation
   reference stable entries so updates are O(1) and do not copy more than the changed fields.
-- **TD-2026-07-17A-082 — session restore can probe/build thousands of tabs before first
-  frame.** `DecodeEditorGroup` accepts up to 4,096 tabs per group and
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-082 — session restore can probe/build thousands of tabs before first
+  frame.** Fixed: `RestoreSessionState` caps rebuilt tabs per group at a product limit
+  (`kMaxRestoredTabsPerGroup` = 200, far below the 4096 decode ceiling); past the cap non-active
+  tabs are skipped, and the active tab is always restored so focus never strands. A CRC-valid but
+  oversized session can no longer make startup path-probe clean editors and build full compare/merge
+  models for thousands of tabs before the first frame. Regression:
+  `WorkspaceShell/RestoreSessionCapsTabCount`. (Keeping compare/merge tabs deferred like clean editor
+  tabs — the note's other suggestion — remains a larger follow-up; the cap already bounds the
+  workload.)
+  `DecodeEditorGroup` accepts up to 4,096 tabs per group and
   `DecodeProjectSessionRecord` keeps two groups; `RestoreSessionState` then loops every decoded tab.
   Clean editor tabs still call `std::filesystem::exists` and build a deferred handle with
   `runtime_syntax::DetectFiletype`, while compare/merge tabs call the full compare/merge tab builders

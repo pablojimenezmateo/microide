@@ -8,6 +8,7 @@
 #include "app/Application.h"
 #include "app/AppStartupOptions.h"
 #include "app/ApplicationPresentationCache.h"
+#include "app/EventDrainBudget.h"
 #include "app/IdleWaitStrategy.h"
 #include "app/RedrawTraceAccumulator.h"
 
@@ -85,6 +86,25 @@ void TestChooseIdleWaitMapsHints() {
       ChooseIdleWait(IdleWaitState{.hint = IdleHint::CaretOnly, .caret_remaining_ms = 0});
   Expect(caret_zero.timeout_ms == 1,
          "CaretOnly should clamp a zero timeout to 1ms so the loop never busy-spins");
+}
+
+// The event-drain budget yields to render ONLY once a redraw is pending and the
+// budget is reached; with no pending redraw the loop keeps draining. TD-2026-07-17A-100.
+void TestEventDrainBudgetYieldsOnlyWithPendingRedraw() {
+  using microide::app::ShouldYieldEventDrain;
+  using microide::app::kMaxEventsPerDrain;
+
+  // No pending redraw: never yield, no matter how many events processed.
+  Expect(!ShouldYieldEventDrain(kMaxEventsPerDrain + 1000, /*redraw_pending=*/false),
+         "with no pending redraw the drain never yields (idle input still fully drains)");
+  // Pending redraw but under budget: keep draining.
+  Expect(!ShouldYieldEventDrain(kMaxEventsPerDrain - 1, /*redraw_pending=*/true),
+         "under the budget the drain continues even with a pending redraw");
+  // Pending redraw and at/over budget: yield to render.
+  Expect(ShouldYieldEventDrain(kMaxEventsPerDrain, /*redraw_pending=*/true),
+         "at the budget with a pending redraw the drain yields to render");
+  Expect(ShouldYieldEventDrain(kMaxEventsPerDrain + 1, /*redraw_pending=*/true),
+         "past the budget with a pending redraw the drain yields to render");
 }
 
 void TestRedrawTraceAccumulatorCountsAndFlushes() {
@@ -265,6 +285,8 @@ void RegisterApplicationTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Application/PresentationCacheInvalidatedWhenUiScaleChanges",
           TestPresentationCacheInvalidatedWhenUiScaleChanges);
   AddTest(tests, "Application/ChooseIdleWaitMapsHints", TestChooseIdleWaitMapsHints);
+  AddTest(tests, "Application/EventDrainBudgetYieldsOnlyWithPendingRedraw",
+          TestEventDrainBudgetYieldsOnlyWithPendingRedraw);
   AddTest(tests, "Application/RedrawTraceAccumulatorCountsAndFlushes",
           TestRedrawTraceAccumulatorCountsAndFlushes);
   AddTest(tests, "Application/RedrawTraceAccumulatorIgnoresFramesWhenDisabled",
