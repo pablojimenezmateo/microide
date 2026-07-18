@@ -695,18 +695,11 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       const float name_x =
           draw_leading_git_badge(row_rect, label_x, row_status, selected, row_background);
 
-      primary_label.clear();
-      if (row_vm != nullptr && !row_vm->review_marker_label.empty()) {
-        primary_label += "[";
-        primary_label += row_vm->review_marker_label;
-        primary_label += "] ";
-      }
-      if (line.label.empty()) {
-        primary_label += entry.relative_path.filename().string();
-      } else {
-        primary_label += line.label;
-      }
-      const std::string secondary_label;
+      // The full primary text (including any "[<marker>] " branch-review prefix) is
+      // precomputed in the git presentation (TD-2026-07-17A-008), so render draws it
+      // directly instead of assembling it per row.
+      const std::string_view primary_label = line.display_label;
+      const std::string_view secondary_label;
       const SDL_Color primary_color = emphasized ? theme_.text_primary : theme_.text_secondary;
       const SDL_Color secondary_color = emphasized ? theme_.text_secondary : theme_.text_muted;
       DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, name_x, right_edge,

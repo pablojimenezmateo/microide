@@ -59,6 +59,7 @@ void EmitGitSidebarTreeLines(const GitSidebarTreeNode& node,
         .kind = GitSidebarLineKind::Directory,
         .section = section,
         .label = label,
+        .display_label = label,
         .tree_node_key = node_key,
         .expanded = !collapsed,
         .depth = depth,
@@ -71,10 +72,25 @@ void EmitGitSidebarTreeLines(const GitSidebarTreeNode& node,
     if (row == nullptr) {
       continue;
     }
+    std::string leaf = FileLeafLabel(*row);
+    // Assemble the render-ready primary text once here (with the branch-review
+    // "[<marker>] " prefix) so the sidebar render TU draws it directly instead of
+    // rebuilding it per paint (TD-2026-07-17A-008).
+    std::string display_label;
+    if (!row->review_marker_label.empty()) {
+      display_label.reserve(row->review_marker_label.size() + leaf.size() + 3);
+      display_label += "[";
+      display_label += row->review_marker_label;
+      display_label += "] ";
+      display_label += leaf;
+    } else {
+      display_label = leaf;
+    }
     lines->push_back(GitSidebarLineSpec{
         .kind = GitSidebarLineKind::Entry,
         .section = section,
-        .label = FileLeafLabel(*row),
+        .label = std::move(leaf),
+        .display_label = std::move(display_label),
         .tree_node_key = {},
         .depth = depth,
         .entry_index = row->entry_index,
@@ -116,6 +132,7 @@ std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
         .kind = GitSidebarLineKind::Header,
         .section = section.section,
         .label = section.header_label,
+        .display_label = section.header_label,
         .tree_node_key = {},
     });
     if (section.rows.empty()) {
@@ -123,6 +140,7 @@ std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
           .kind = GitSidebarLineKind::Empty,
           .section = section.section,
           .label = section.empty_label,
+          .display_label = section.empty_label,
           .tree_node_key = {},
       });
       continue;
@@ -205,6 +223,7 @@ std::vector<GitSidebarLine> BuildGitSidebarLines(
                                                              : GitSidebarLine::Kind::Empty,
         .section = spec.section,
         .label = spec.label,
+        .display_label = spec.display_label,
         .tree_node_key = spec.tree_node_key,
         .expanded = spec.expanded,
         .depth = spec.depth,

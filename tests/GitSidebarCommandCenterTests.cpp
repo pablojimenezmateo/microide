@@ -130,6 +130,51 @@ void TestGitSidebarViewModelGrouping() {
          "nested file entries should be indented under their directory");
 }
 
+// TD-2026-07-17A-008: entry rows carry a render-ready display_label with the
+// branch-review "[<marker>] " prefix precomputed, so the sidebar render TU no longer
+// assembles it per paint. A marker-less row's display_label equals its leaf label.
+void TestGitSidebarEntryDisplayLabelCarriesReviewMarker() {
+  using microide::workspace::GitSidebarRowViewModel;
+  using microide::workspace::GitSidebarSectionViewModel;
+
+  GitSidebarViewModel view_model;
+  GitSidebarSectionViewModel section;
+  section.section = GitSidebarEntry::Section::Changed;
+  section.header_label = "Changed (2)";
+  GitSidebarRowViewModel marked;
+  marked.entry_index = 0;
+  marked.relative_path = "src/marked.cpp";
+  marked.primary_label = "marked.cpp";
+  marked.review_marker_label = "M";
+  GitSidebarRowViewModel plain;
+  plain.entry_index = 1;
+  plain.relative_path = "src/plain.cpp";
+  plain.primary_label = "plain.cpp";
+  section.rows = {marked, plain};
+  view_model.sections = {section};
+
+  const auto lines = BuildGitSidebarLineSpecs(view_model);
+  const microide::workspace::GitSidebarLineSpec* marked_line = nullptr;
+  const microide::workspace::GitSidebarLineSpec* plain_line = nullptr;
+  for (const auto& line : lines) {
+    if (line.kind != GitSidebarLineKind::Entry) {
+      continue;
+    }
+    if (line.entry_index == 0) {
+      marked_line = &line;
+    } else if (line.entry_index == 1) {
+      plain_line = &line;
+    }
+  }
+  Expect(marked_line != nullptr && plain_line != nullptr, "both entry rows should be built");
+  Expect(marked_line->display_label == "[M] marked.cpp",
+         "a review-marked row precomputes the bracketed marker prefix in display_label");
+  Expect(marked_line->label == "marked.cpp",
+         "the plain label stays the leaf name (used for navigation/selection)");
+  Expect(plain_line->display_label == "plain.cpp",
+         "a marker-less row's display_label equals its leaf label");
+}
+
 void TestConflictRowsDisableDirectStageUnstage() {
   GitSidebarEntry conflict_entry{
       .section = GitSidebarEntry::Section::Conflicts,
@@ -337,6 +382,7 @@ std::string DigestPresentation(const GitSidebarViewModel& vm,
     add("line_kind", std::to_string(static_cast<int>(line.kind)));
     add("line_sect", std::to_string(static_cast<int>(line.section)));
     add("line_label", line.label);
+    add("line_display_label", line.display_label);
     add("line_key", line.tree_node_key);
     addb("line_expanded", line.expanded);
     add("line_depth", std::to_string(line.depth));
@@ -540,6 +586,8 @@ void RegisterGitSidebarCommandCenterTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitSidebarCommandCenter/SectionClassification",
           TestGitSidebarSectionClassification);
   AddTest(tests, "GitSidebarCommandCenter/ViewModelGrouping", TestGitSidebarViewModelGrouping);
+  AddTest(tests, "GitSidebarCommandCenter/EntryDisplayLabelCarriesReviewMarker",
+          TestGitSidebarEntryDisplayLabelCarriesReviewMarker);
   AddTest(tests, "GitSidebarCommandCenter/ConflictRowsDisableStageUnstage",
           TestConflictRowsDisableDirectStageUnstage);
   AddTest(tests, "GitSidebarCommandCenter/ConflictDefaultViewRoutesToMerge",

@@ -106,6 +106,11 @@ struct GitSidebarLine {
   Kind kind = Kind::Empty;
   GitSidebarEntry::Section section = GitSidebarEntry::Section::Changed;
   std::string label;
+  // Fully-assembled primary text the sidebar render TU draws for this row, including
+  // the "[<marker>] " branch-review prefix for entry rows. Precomputed here so the
+  // render TU no longer assembles the label per paint (TD-2026-07-17A-008). Equals
+  // `label` for header/directory/empty rows.
+  std::string display_label;
   std::string tree_node_key;
   bool expanded = false;
   int depth = 0;

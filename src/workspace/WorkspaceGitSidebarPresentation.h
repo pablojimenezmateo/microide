@@ -25,6 +25,9 @@ struct GitSidebarLineSpec {
   GitSidebarLineKind kind = GitSidebarLineKind::Empty;
   GitSidebarEntry::Section section = GitSidebarEntry::Section::Changed;
   std::string label;
+  // Render-ready primary text (see GitSidebarLine::display_label): entry rows carry
+  // the "[<marker>] " branch-review prefix; other kinds equal `label`.
+  std::string display_label;
   std::string tree_node_key;
   bool expanded = false;
   int depth = 0;
