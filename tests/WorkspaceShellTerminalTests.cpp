@@ -1089,6 +1089,33 @@ void TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix() {
          "URL hit-testing must map the grid column to a byte offset before matching");
 }
 
+// TD-2026-07-17A-027: hover cursor-kind resolution reuses the render frame's cached
+// visible-line snapshot instead of re-snapshotting per pointer move. After a render
+// populates the snapshot, hovering a URL cell must still resolve to the Pointer
+// cursor, and a non-URL cell to the Text cursor.
+void TestWorkspaceShellTerminalUrlHoverUsesRenderedSnapshot() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "see https://example.com/x done");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  // Render the terminal panel so the visible-line snapshot cache is populated; the
+  // hover path then reuses it rather than taking a fresh session snapshot.
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+
+  // Column 4 is the 'h' of the URL ("see " is columns 0-3).
+  const SDL_FPoint url_point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 4);
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, url_point.x, url_point.y),
+         "hovering a terminal URL cell resolves to the Pointer cursor via the cached snapshot");
+  // Column 0 ('s' of "see") is plain text, not a link.
+  const SDL_FPoint text_point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 0);
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsText(shell, text_point.x, text_point.y),
+         "hovering a non-URL terminal cell resolves to the Text cursor");
+}
+
 // Regression: URL schemes are case-insensitive, so an uppercase or mixed-case
 // scheme (`HTTPS://`) must still be detected. Previously the scheme match was a
 // literal case-sensitive find and only lowercase schemes were recognized.
@@ -1332,6 +1359,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix);
   AddTest(tests, "WorkspaceShellTerminal/UrlHitTestHonorsUppercaseScheme",
           TestWorkspaceShellTerminalUrlHitTestHonorsUppercaseScheme);
+  AddTest(tests, "WorkspaceShellTerminal/UrlHoverUsesRenderedSnapshot",
+          TestWorkspaceShellTerminalUrlHoverUsesRenderedSnapshot);
   AddTest(tests, "WorkspaceShell/TerminalMouseCaptureSendsButtonEvents",
           TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents);
 }

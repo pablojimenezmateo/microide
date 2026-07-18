@@ -305,8 +305,25 @@ std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) 
   const LogSurfaceLayout panel_layout = ComputeBottomPanelLogLayout(*layout_state, line_count);
   const std::size_t first_row =
       static_cast<std::size_t>(std::max(0, panel_layout.scroll.vertical_scroll));
-  const auto lines = terminal_tab->session.SnapshotLineRange(
-      first_row, static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows)));
+  const std::size_t visible_rows =
+      static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows));
+  // Hover cursor-kind resolution runs on every pointer move over the terminal. The
+  // render frame already copied this exact visible range into
+  // `visible_lines_snapshot` (keyed by first_row/max_rows/generation), so reuse it
+  // instead of re-snapshotting the visible lines per move (TD-2026-07-17A-027). Fall
+  // back to a fresh snapshot only when the cached range does not match (e.g. a hover
+  // arriving before the first terminal-panel render).
+  std::vector<terminal::TerminalLine> owned_lines;
+  const std::vector<terminal::TerminalLine>* lines_ptr = nullptr;
+  if (terminal_tab->visible_lines_first_row == first_row &&
+      terminal_tab->visible_lines_max_rows == visible_rows &&
+      !terminal_tab->visible_lines_snapshot.lines.empty()) {
+    lines_ptr = &terminal_tab->visible_lines_snapshot.lines;
+  } else {
+    owned_lines = terminal_tab->session.SnapshotLineRange(first_row, visible_rows);
+    lines_ptr = &owned_lines;
+  }
+  const std::vector<terminal::TerminalLine>& lines = *lines_ptr;
   const auto position =
       TerminalSelectionPositionForPoint(static_cast<int>(std::lround(x)),
                                         static_cast<int>(std::lround(y)), lines, first_row);
