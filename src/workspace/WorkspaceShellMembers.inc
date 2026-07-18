@@ -1332,9 +1332,16 @@
   // tab is active. Callers (render path, fold-action handlers) consume the
   // model directly.
   editor::FoldingModel* EnsureActiveFoldingModelFresh();
-  editor::FoldingModel* EnsureGroupFoldingModelFresh(EditorGroup& group);
   editor::FoldingModel* EnsureFoldingModelFreshForTab(TabEntry::EditorTabState* editor_tab,
                                                       editor::TextViewport* active_viewport);
+  // Once-per-frame folding freshness for every editor group's active tab. Runs in
+  // PrepareFrameOnce so the fold scan (state-mutating) executes exactly once per
+  // prepared frame instead of per pane per partial-redraw RenderClip. The render
+  // path then only reads the already-resolved model via GroupFoldingModelPtr.
+  void RefreshEditorFoldingModels();
+  // Non-mutating fetch of a group's active-tab folding model. Safe to call from
+  // the render path because RefreshEditorFoldingModels already made it fresh.
+  editor::FoldingModel* GroupFoldingModelPtr(EditorGroup& group);
   bool WriteClipboardText(std::string_view text) const;
   std::optional<std::string> ReadClipboardText() const;
   bool WritePrimarySelectionText(std::string_view text) const;

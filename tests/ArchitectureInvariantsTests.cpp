@@ -186,8 +186,11 @@ void TestArchitectureFileSizes() {
              // compare/ref picker git queries never queue behind an in-flight sidebar git status.
              // 1692: +1 for media_background_executor_ (TD-2026-07-17-044), a dedicated lane so
              // plugin raster decode never queues ahead of core git/diff/merge/project-state work.
+             // 1693: net +1 for TD-2026-07-17A-004 folding-refresh hoist: replaced the render-only
+             // EnsureGroupFoldingModelFresh with RefreshEditorFoldingModels (once-per-frame prep)
+             // + the non-mutating GroupFoldingModelPtr the render TU reads.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1692);
+                                                     1693);
            });
 
   AssertRuleResultsPass(results);

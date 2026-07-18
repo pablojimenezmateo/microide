@@ -11,6 +11,7 @@ namespace microide::util {
 
 enum class PerfCounterId : std::size_t {
   FramePrepareCalls = 0,
+  FrameRefreshEditorFoldingModelsCalls,
   FrameApplyEditorPreferencesAllTabsCalls,
   FrameRefreshStatusBarCalls,
   RenderBuildEditorViewModelCalls,

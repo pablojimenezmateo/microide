@@ -282,6 +282,11 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   const BottomPanelSurfaceViewModel& panel_vm = *prepare_cached_bottom_panel_vm_;
   ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
   ApplyLiveSettings();
+  // Resolve editor folding freshness once here, before any RenderClip runs, so the
+  // state-mutating fold scan executes a single time per prepared frame instead of
+  // per pane on every partial-redraw RenderClip. Render then consumes the already-
+  // resolved model via GroupFoldingModelPtr (TD-2026-07-17A-004).
+  RefreshEditorFoldingModels();
   prepare_cached_text_input_vm_.emplace(view_models.BuildTextInputSurface());
   const float clamped_sidebar_width =
       ClampSidebarWidth(project_state.sidebar.width, static_cast<float>(width));
@@ -630,13 +635,9 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         debug_enabled ? &project_state.breakpoint_store : nullptr;
     const DebugExecutionView* debug_execution =
         debug_enabled ? &project_state.debug_execution : nullptr;
-    if (!fold_enabled) {
-      for (EditorGroup& group : project_state.editor_groups) {
-        if (auto* editor_tab = GroupActiveEditorTab(group); editor_tab != nullptr) {
-          editor_tab->viewport.SetFoldingModel(nullptr);
-        }
-      }
-    }
+    // Folding freshness (including the fold-disabled expand+detach) already ran once
+    // in PrepareFrameOnce::RefreshEditorFoldingModels; the render path only reads the
+    // resolved model below via GroupFoldingModelPtr (TD-2026-07-17A-004).
     const RenderViewModelBuilder editor_render_builder(context_);
     const bool sticky_scroll_setting_enabled =
         setting_enabled("editor.fold.sticky_scroll.enabled", true);
@@ -670,7 +671,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             text_renderer_, *viewport, pane.rect, 0, line_numbers_enabled);
         viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
         editor::FoldingModel* welcome_fold =
-            fold_enabled ? EnsureGroupFoldingModelFresh(group) : nullptr;
+            fold_enabled ? GroupFoldingModelPtr(group) : nullptr;
         const bool sticky_active =
             fold_enabled && sticky_scroll_setting_enabled && welcome_fold != nullptr;
         editor_render_builder.BuildEditorViewModelInto(
@@ -703,7 +704,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
           text_renderer_, *viewport, pane.rect, 0, line_numbers_enabled);
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
       editor::FoldingModel* group_folding_model =
-          fold_enabled ? EnsureGroupFoldingModelFresh(group) : nullptr;
+          fold_enabled ? GroupFoldingModelPtr(group) : nullptr;
       const editor::FoldingModel* folding_for_vm = fold_enabled ? group_folding_model : nullptr;
       const bool sticky_active =
           fold_enabled && sticky_scroll_setting_enabled && folding_for_vm != nullptr;

@@ -176,10 +176,6 @@ editor::FoldingModel* WorkspaceShell::EnsureActiveFoldingModelFresh() {
   return EnsureFoldingModelFreshForTab(ActiveEditorTab(), ActiveEditorViewport());
 }
 
-editor::FoldingModel* WorkspaceShell::EnsureGroupFoldingModelFresh(EditorGroup& group) {
-  return EnsureFoldingModelFreshForTab(GroupActiveEditorTab(group), GroupActiveViewport(group));
-}
-
 editor::FoldingModel* WorkspaceShell::EnsureFoldingModelFreshForTab(
     TabEntry::EditorTabState* editor_tab, editor::TextViewport* active_viewport) {
   if (editor_tab == nullptr) {
@@ -203,6 +199,24 @@ editor::FoldingModel* WorkspaceShell::EnsureFoldingModelFreshForTab(
                                            ? nullptr
                                            : editor_tab->folding_model.get());
   return editor_tab->folding_model.get();
+}
+
+void WorkspaceShell::RefreshEditorFoldingModels() {
+  util::AddPerformanceCounter(util::PerfCounterId::FrameRefreshEditorFoldingModelsCalls);
+  // Resolve folding freshness once per prepared frame for every editor group's
+  // active tab (both panes of a split fold independently). EnsureFoldingModelFreshForTab
+  // is fingerprint-gated to a no-op on settled frames and folds/expands based on the
+  // live editor.fold.enabled setting, so this subsumes the render path's former
+  // per-pane refresh and fold-disabled clear. The render TUs then only read the
+  // resolved model — no state mutation inside RenderClip.
+  for (EditorGroup& group : context_.current_project_state.editor_groups) {
+    EnsureFoldingModelFreshForTab(GroupActiveEditorTab(group), GroupActiveViewport(group));
+  }
+}
+
+editor::FoldingModel* WorkspaceShell::GroupFoldingModelPtr(EditorGroup& group) {
+  TabEntry::EditorTabState* editor_tab = GroupActiveEditorTab(group);
+  return editor_tab == nullptr ? nullptr : editor_tab->folding_model.get();
 }
 
 void WorkspaceShell::ActivateTab(std::size_t index) {

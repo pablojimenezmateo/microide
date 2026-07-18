@@ -16,6 +16,7 @@ CounterArray& Counters() {
 
 constexpr std::array<std::string_view, kPerfCounterCount> kCounterNames = {
     "frame.prepare_calls",
+    "frame.refresh_editor_folding_models_calls",
     "frame.apply_editor_preferences_all_tabs_calls",
     "frame.refresh_status_bar_calls",
     "render.build_editor_view_model_calls",

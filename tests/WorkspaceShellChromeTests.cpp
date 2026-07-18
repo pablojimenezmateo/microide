@@ -2006,6 +2006,50 @@ void TestWorkspaceShellRenderBuildsEditorViewModelOncePerSimplePaneFrame() {
   Expect(util::ReadPerformanceCounter(util::PerfCounterId::RenderBuildEditorViewModelCalls) == 1,
          "simple single-pane editor frame should build the editor view model exactly once");
 }
+
+// TD-2026-07-17A-004: folding freshness is resolved once per prepared frame in
+// PrepareFrameOnce, not per pane on every partial-redraw RenderClip. Repeated
+// RenderPrepared (retained partial redraws) after a single PrepareRenderFrame
+// must not re-run the state-mutating fold scan.
+void TestWorkspaceShellFoldingRefreshRunsOncePerPreparedFrame() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(1280, 720);
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "main.cpp";
+  WriteFile(file, "void f() {\n  body();\n  more();\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "folding-refresh regression test should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+
+  // Settle one full frame so the viewport metrics (visible line count) are set
+  // for the fold scan, then measure a single prepared frame in isolation.
+  shell.Render(canvas.renderer(), 1280, 720);
+  util::ResetPerformanceCounters();
+
+  shell.PrepareRenderFrame(canvas.renderer(), 1280, 720);
+  Expect(util::ReadPerformanceCounter(
+             util::PerfCounterId::FrameRefreshEditorFoldingModelsCalls) == 1,
+         "PrepareFrameOnce should resolve editor folding exactly once per prepared frame");
+
+  // The fold scan must actually resolve the braced range during prep, so the
+  // render path can consume an already-fresh model.
+  Expect(!WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell)->ranges().empty(),
+         "prepared-frame folding refresh should resolve the fold range before render");
+
+  // Five retained partial redraws off the same prepared frame must not re-run
+  // the fold scan — folding stays resolved from prep.
+  for (int i = 0; i < 5; ++i) {
+    shell.RenderPrepared(canvas.renderer(), 1280, 720);
+  }
+  Expect(util::ReadPerformanceCounter(
+             util::PerfCounterId::FrameRefreshEditorFoldingModelsCalls) == 1,
+         "RenderClip partial redraws must not re-run the folding refresh");
+}
 #endif
 
 void TestViewMenuToggleReflectsBackingSetting() {
@@ -2481,6 +2525,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPrepareFrameRecomputesLayoutAfterResize);
   AddTest(tests, "WorkspaceShell/RenderBuildsEditorViewModelOncePerSimplePaneFrame",
           TestWorkspaceShellRenderBuildsEditorViewModelOncePerSimplePaneFrame);
+  AddTest(tests, "WorkspaceShell/FoldingRefreshRunsOncePerPreparedFrame",
+          TestWorkspaceShellFoldingRefreshRunsOncePerPreparedFrame);
 #endif
   AddTest(tests, "WorkspaceShell/FileCloseAllTabsClosesOpenEditorTabs",
           TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs);
