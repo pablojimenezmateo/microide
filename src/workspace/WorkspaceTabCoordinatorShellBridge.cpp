@@ -73,10 +73,10 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .notify_lsp_buffer_close =
               [this](const std::filesystem::path& path) { NotifyLspBufferClose(path); },
           .notify_lsp_buffer_reloaded =
-              [this](const editor::TextViewport& viewport,
-                     const std::vector<std::string>& before_lines,
-                     const std::vector<std::string>& after_lines) {
-                lsp_service_.SyncLspForBufferChange(viewport, before_lines, after_lines);
+              [this](const editor::TextViewport& viewport, std::size_t before_line_count,
+                     std::size_t first_changed_line) {
+                lsp_service_.SyncLspForBufferChange(
+                    viewport, {before_line_count, first_changed_line});
               },
           .count_open_buffer_views =
               [this](const std::filesystem::path& path) { return CountOpenBufferViews(path); },

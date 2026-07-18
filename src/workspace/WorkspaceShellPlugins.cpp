@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <set>
 #include <string>
 #include <string_view>
@@ -1255,22 +1256,31 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
     bucket_for(viewport).emplace_back(edit.range, edit.new_text);
   }
 
-  // Snapshot EVERY target buffer before applying so each edited buffer can be
-  // re-synced with a FULL document change (the incremental last-change path only
-  // carries the last of N edits, which would desync the server). A WorkspaceEdit
-  // can touch several open buffers (header+source rename, multi-file fixit); each
-  // one's server mirror and stored diagnostics must be reconciled, not just the
-  // active tab's.
+  // Each edited buffer is re-synced with a FULL document change afterward (the
+  // incremental last-change path only carries the last of N edits, which would
+  // desync the server). A WorkspaceEdit can touch several open buffers (header+
+  // source rename, multi-file fixit); each one's server mirror and stored
+  // diagnostics must be reconciled, not just the active tab's. Rather than snapshot
+  // every whole buffer twice (before + after), capture only the compact delta the
+  // re-sync needs — pre-edit line count plus the affected line span — and stream
+  // the after-content live from the viewport at sync time (TD-2026-07-17A-016).
   editor::TextViewport* active_viewport = ActiveEditableViewport();
-  std::vector<std::vector<std::string>> before_snapshots(by_viewport.size());
+  struct BucketSync {
+    std::size_t before_line_count = 0;
+    std::size_t first_changed_line = 0;  // min affected line (before-coords)
+    std::size_t last_changed_line = 0;   // max affected line, inclusive (before-coords)
+  };
+  std::vector<BucketSync> bucket_sync(by_viewport.size());
   for (std::size_t i = 0; i < by_viewport.size(); ++i) {
     if (by_viewport[i].first != nullptr && !by_viewport[i].second.empty()) {
-      before_snapshots[i] = by_viewport[i].first->lines().Snapshot();
+      bucket_sync[i].before_line_count = by_viewport[i].first->line_count();
     }
   }
 
   bool applied_any = false;
-  for (auto& [viewport, buffer_edits] : by_viewport) {
+  for (std::size_t bucket_i = 0; bucket_i < by_viewport.size(); ++bucket_i) {
+    editor::TextViewport* viewport = by_viewport[bucket_i].first;
+    auto& buffer_edits = by_viewport[bucket_i].second;
     if (viewport == nullptr || buffer_edits.empty()) {
       continue;
     }
@@ -1362,6 +1372,21 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
       continue;
     }
 
+    // Record the affected line span (before-coords) for the LSP re-sync + redraw
+    // instead of diffing full before/after snapshots. Every edit changes its target
+    // line, so the lowest start line is the first differing line, and the highest
+    // end line bounds the redraw range for a same-line-count edit.
+    std::size_t first_changed = std::numeric_limits<std::size_t>::max();
+    std::size_t last_changed = 0;
+    for (const auto& [range, text] : buffer_edits) {
+      const editor::SelectionRange normalized = editor::TextViewport::NormalizeRange(range);
+      first_changed = std::min(first_changed, normalized.start.line);
+      last_changed = std::max(last_changed, normalized.end.line);
+    }
+    bucket_sync[bucket_i].first_changed_line =
+        first_changed == std::numeric_limits<std::size_t>::max() ? 0 : first_changed;
+    bucket_sync[bucket_i].last_changed_line = last_changed;
+
     viewport->BeginUndoGroup();
     for (const std::size_t idx : apply_order) {
       viewport->ReplaceRange(buffer_edits[idx].first, buffer_edits[idx].second,
@@ -1406,12 +1431,30 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
         continue;
       }
       mark_folds_dirty(viewport);
+      const LspService::BufferChangeDelta delta{bucket_sync[i].before_line_count,
+                                                bucket_sync[i].first_changed_line};
+      lsp_service_.SyncLspForBufferChange(*viewport, delta);
       if (viewport == active_viewport) {
-        RequestActiveEditableChangeRedraw(before_snapshots[i], viewport->lines().Snapshot());
+        // Repaint only the touched line span for the visible buffer (the after-
+        // content lives in the viewport now, so no before/after diff is needed). A
+        // net line-count change reflows everything below, so fall back to a full
+        // editor redraw; otherwise damage [first_changed, last_changed].
+        const std::size_t after_count = viewport->line_count();
+        if (bucket_sync[i].before_line_count != after_count) {
+          RequestFocusedEditorRedraw();
+        } else {
+          const std::size_t start_line = bucket_sync[i].first_changed_line;
+          const std::size_t end_line =
+              std::max(bucket_sync[i].last_changed_line + 1, start_line + 1);
+          if (ActiveTabIsCompare()) {
+            RequestCompareRightLineRangeRedraw(start_line, end_line);
+          } else if (ActiveTabIsMerge()) {
+            RequestMergeResultLineRangeRedraw(start_line, end_line);
+          } else {
+            RequestEditorLineRangeRedraw(start_line, end_line);
+          }
+        }
         active_synced = true;
-      } else {
-        lsp_service_.SyncLspForBufferChange(*viewport, before_snapshots[i],
-                                            viewport->lines().Snapshot());
       }
     }
     if (!active_synced) {

@@ -3,7 +3,10 @@
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
+#include "editor/TextBuffer.h"
+
 #include <chrono>
+#include <string>
 #include <thread>
 
 namespace microide::tests {
@@ -260,6 +263,60 @@ void TestWorkspaceShellBannerKeepPreservesBoth() {
          "Keep should leave the on-disk content untouched");
 }
 
+// TD-2026-07-17A-015: an external clean reload replaces an open buffer's content
+// and re-syncs the LSP server with a full didChange. That re-sync used to snapshot
+// BOTH the pre-reload and the reloaded buffer into whole-document vectors; it now
+// captures only the pre-reload line count + first differing line (compared while
+// both buffers exist) and streams the didChange from the reloaded viewport, so a
+// large external reload copies neither buffer.
+void TestWorkspaceShellCleanReloadDoesNotSnapshotBuffers() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_path = root / "big.txt";
+  std::string content;
+  for (int i = 0; i < 500; ++i) {
+    content += "line ";
+    content += std::to_string(i);
+    content += "\n";
+  }
+  WriteFile(file_path, content);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "snapshot-free reload fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  for (int attempt = 0; attempt < 20; ++attempt) {
+    if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  // Rewrite on disk with a DIFFERENT line count so the reload takes the diagnostic-
+  // shift delta path (first differing line + net line delta), not just the equal-
+  // count early-out. The first ~250 lines are unchanged so first_changed is > 0.
+  std::string updated;
+  for (int i = 0; i < 250; ++i) {
+    updated += "line ";
+    updated += std::to_string(i);
+    updated += "\n";
+  }
+  updated += "brand new tail line\n";
+  WriteFile(file_path, updated);
+
+  microide::editor::TextBuffer::reset_snapshot_build_count();
+  Expect(WaitForProjectReload(shell, std::chrono::seconds(1)),
+         "external change to a clean buffer should trigger a reload");
+  Expect(microide::editor::TextBuffer::snapshot_build_count() == 0,
+         "a clean external reload must not snapshot the old or new buffer for LSP sync");
+  // 250 "line i" rows + the new tail + a trailing empty line the editor tracks.
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).line_count() == 252,
+         "the reloaded buffer should hold the new (shorter) content");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[250] == "brand new tail line",
+         "the reloaded buffer should end with the new tail line");
+}
+
 void TestWorkspaceShellCleanReloadRaisesNotice() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -399,6 +456,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellAutosaveFlushesNonFocusedGroupDirtyTab);
   AddTest(tests, "ExternalRepoChange/ReloadsCleanBuffer",
           TestWorkspaceShellExternalChangeReloadsCleanBuffer);
+  AddTest(tests, "ExternalRepoChange/CleanReloadDoesNotSnapshotBuffers",
+          TestWorkspaceShellCleanReloadDoesNotSnapshotBuffers);
   AddTest(tests, "ExternalRepoChange/ReloadsBothSplitGroups",
           TestWorkspaceShellExternalChangeReloadsBothSplitGroups);
   AddTest(tests, "ExternalRepoChange/BannerForDirtyBuffer",

@@ -34,9 +34,12 @@ class TabCoordinator {
     // (HasOpenDocument) and the server would otherwise keep the PRE-reload text —
     // desyncing diagnostics/hover/completion and corrupting the next incremental
     // edit (its range is computed against the reloaded buffer but applied to the
-    // stale mirror). Args: (reloaded viewport, before-lines, after-lines).
-    std::function<void(const editor::TextViewport&, const std::vector<std::string>&,
-                       const std::vector<std::string>&)>
+    // stale mirror). The reloaded viewport already holds the after-content, so the
+    // full didChange streams from it; only the pre-reload line count and the first
+    // differing line are passed (computed while both buffers exist), avoiding two
+    // whole-document snapshots on large external reloads (TD-2026-07-17A-015).
+    // Args: (reloaded viewport, before-line-count, first-changed-line).
+    std::function<void(const editor::TextViewport&, std::size_t, std::size_t)>
         notify_lsp_buffer_reloaded;
     std::function<std::size_t(const std::filesystem::path&)> count_open_buffer_views;
     // Whole-workspace open-view counts keyed by normalized generic path, built

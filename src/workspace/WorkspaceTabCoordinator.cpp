@@ -538,11 +538,14 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
   operations_.apply_editor_preferences(reopened_view);
   operations_.apply_detected_indent_on_open(reopened_view);
 
-  // Capture the pre-reload buffer content (what the LSP server currently mirrors)
-  // from the first view we replace, so the server can be re-synced to the reloaded
-  // content with a full didChange afterward. All matching views share this path's
-  // single server document, so one sync suffices.
-  std::vector<std::string> lsp_before_lines;
+  // Capture just the delta the LSP re-sync needs (pre-reload line count + the first
+  // line whose content differs from the reloaded buffer) from the first view we
+  // replace. Both the old view and `reopened_view` (the after-content) exist here,
+  // so this compares them line-by-line without materializing either whole buffer —
+  // the full didChange later streams straight from the reloaded viewport. All
+  // matching views share this path's single server document, so one sync suffices.
+  std::size_t lsp_before_line_count = 0;
+  std::size_t lsp_first_changed_line = 0;
   bool captured_lsp_before = false;
 
   const std::size_t focused_index = state_.clamped_focused_group_index();
@@ -556,7 +559,15 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
       }
       auto& editor_state = *tab.editor_state;
       if (!captured_lsp_before) {
-        lsp_before_lines = editor_state.viewport.lines().Snapshot();
+        const editor::TextBuffer& old_lines = editor_state.viewport.lines();
+        const editor::TextBuffer& new_lines = reopened_view.lines();
+        lsp_before_line_count = old_lines.size();
+        const std::size_t common = std::min(old_lines.size(), new_lines.size());
+        while (lsp_first_changed_line < common &&
+               old_lines.LineView(lsp_first_changed_line) ==
+                   new_lines.LineView(lsp_first_changed_line)) {
+          ++lsp_first_changed_line;
+        }
         captured_lsp_before = true;
       }
       const editor::TextViewport* current_view = &editor_state.viewport;
@@ -584,8 +595,8 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
   // didChange). Fired once after all views are swapped, since the server tracks a
   // single document per path regardless of how many split views show it.
   if (captured_lsp_before && operations_.notify_lsp_buffer_reloaded) {
-    operations_.notify_lsp_buffer_reloaded(reopened_view, lsp_before_lines,
-                                           reopened_view.lines().Snapshot());
+    operations_.notify_lsp_buffer_reloaded(reopened_view, lsp_before_line_count,
+                                           lsp_first_changed_line);
   }
 }
 

@@ -157,12 +157,20 @@ class LspService {
                             std::vector<LspClient::InlayHint> hints);
   void SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
                                       const std::vector<std::string>& after_lines);
+  // Compact description of a bulk buffer change, replacing the two full
+  // before/after line-vector snapshots callers used to materialize (TD-2026-07-17A-
+  // 015/016). The AFTER content is read live from the viewport (streamed for
+  // didChange); the diagnostic-shift only needs the pre-change line count plus the
+  // first line whose content differs, both cheap to compute at the change site.
+  struct BufferChangeDelta {
+    std::size_t before_line_count = 0;
+    std::size_t first_changed_line = 0;  // 0-based; ignored when line counts match
+  };
   // Full-document re-sync for an arbitrary edited buffer (not necessarily the
   // active one). Used by multi-buffer workspace edits so every edited buffer's
   // server mirror + stored diagnostics stay in sync, not just the active tab's.
-  void SyncLspForBufferChange(const editor::TextViewport& viewport,
-                              const std::vector<std::string>& before_lines,
-                              const std::vector<std::string>& after_lines);
+  // Reads the post-change text straight from `viewport` (no after-snapshot).
+  void SyncLspForBufferChange(const editor::TextViewport& viewport, BufferChangeDelta delta);
   void SyncLspForActiveEditableLastChange();
 
   // Outcome of a silent on-disk WorkspaceEdit application (VSCode-style rename
@@ -245,9 +253,12 @@ class LspService {
   // viewport's last applied edit; the bulk path (paste/undo/format) shifts
   // diagnostics below the first changed line by the net line delta.
   void ShiftLspDiagnosticsForAppliedEdit(const editor::TextViewport& viewport);
+  // `after_line_count` is read from the viewport; only the pre-change line count
+  // and the first differing line (both supplied by the change site) are needed to
+  // slide diagnostics below the edit by the net line delta.
   void ShiftLspDiagnosticsForBulkChange(const editor::TextViewport& viewport,
-                                        const std::vector<std::string>& before_lines,
-                                        const std::vector<std::string>& after_lines);
+                                        std::size_t before_line_count,
+                                        std::size_t first_changed_line);
 
   // Drop the absolute-positioned "lsp:semantic" recolor overlay for `viewport`'s
   // file. The overlay is invalid the moment the buffer's line/column geometry

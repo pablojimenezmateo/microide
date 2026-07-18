@@ -833,18 +833,15 @@ void LspService::ShiftLspDiagnosticsForAppliedEdit(const editor::TextViewport& v
 }
 
 void LspService::ShiftLspDiagnosticsForBulkChange(const editor::TextViewport& viewport,
-                                                  const std::vector<std::string>& before_lines,
-                                                  const std::vector<std::string>& after_lines) {
-  if (viewport.path().empty() || before_lines.size() == after_lines.size()) {
+                                                  std::size_t before_line_count,
+                                                  std::size_t first_changed_line) {
+  const std::size_t after_line_count = viewport.line_count();
+  if (viewport.path().empty() || before_line_count == after_line_count) {
     return;  // No net line change: in-place edits keep diagnostics roughly aligned.
   }
-  std::size_t first_changed = 0;
-  const std::size_t common = std::min(before_lines.size(), after_lines.size());
-  while (first_changed < common && before_lines[first_changed] == after_lines[first_changed]) {
-    ++first_changed;
-  }
-  const std::ptrdiff_t line_delta = static_cast<std::ptrdiff_t>(after_lines.size()) -
-                                    static_cast<std::ptrdiff_t>(before_lines.size());
+  const std::size_t first_changed = first_changed_line;
+  const std::ptrdiff_t line_delta = static_cast<std::ptrdiff_t>(after_line_count) -
+                                    static_cast<std::ptrdiff_t>(before_line_count);
   TransformLspDiagnostics(
       viewport, [first_changed, line_delta](editor::SelectionRange range) {
         const auto shift = [&](editor::TextPosition p) {
@@ -907,12 +904,21 @@ void LspService::SyncLspForActiveEditableChange(const std::vector<std::string>& 
   if (viewport == nullptr) {
     return;
   }
-  SyncLspForBufferChange(*viewport, before_lines, after_lines);
+  // The keystroke/action redraw path still hands us full before/after vectors; the
+  // viewport already holds the after-content, so derive the compact delta (first
+  // differing line) here and reuse the streaming sync below.
+  BufferChangeDelta delta;
+  delta.before_line_count = before_lines.size();
+  const std::size_t common = std::min(before_lines.size(), after_lines.size());
+  while (delta.first_changed_line < common &&
+         before_lines[delta.first_changed_line] == after_lines[delta.first_changed_line]) {
+    ++delta.first_changed_line;
+  }
+  SyncLspForBufferChange(*viewport, delta);
 }
 
 void LspService::SyncLspForBufferChange(const editor::TextViewport& viewport,
-                                        const std::vector<std::string>& before_lines,
-                                        const std::vector<std::string>& after_lines) {
+                                        BufferChangeDelta delta) {
   if (viewport.path().empty()) {
     return;
   }
@@ -925,7 +931,7 @@ void LspService::SyncLspForBufferChange(const editor::TextViewport& viewport,
 
   // Keep diagnostics positioned for the dirty buffer until the server republishes.
   // Runs before the client early-out so a dead/absent server never strands them.
-  ShiftLspDiagnosticsForBulkChange(viewport, before_lines, after_lines);
+  ShiftLspDiagnosticsForBulkChange(viewport, delta.before_line_count, delta.first_changed_line);
 
   const std::optional<BufferSyncTarget> target = ResolveOpenDocumentForSync(viewport);
   if (!target.has_value()) {
@@ -934,12 +940,14 @@ void LspService::SyncLspForBufferChange(const editor::TextViewport& viewport,
 
   // Full-document sync for the bulk-change path. The per-keystroke path
   // (SyncLspForActiveEditableLastChange) sends true ranged incremental edits via
-  // the viewport's last applied edit; here we only have before/after snapshots,
-  // so a clean full replace is the correct, desync-proof choice. Full text needs
-  // no per-column position-encoding conversion, so this stays correct for utf-16
-  // servers too. Only when the doc was already open (see ResolveOpenDocumentForSync).
+  // the viewport's last applied edit; here we only have a before/after delta, so a
+  // clean full replace is the correct, desync-proof choice. The payload streams
+  // straight from the live buffer (no whole-document vector materialized), and full
+  // text needs no per-column position-encoding conversion, so this stays correct
+  // for utf-16 servers too. Only when the doc was already open (see
+  // ResolveOpenDocumentForSync).
   if (target->was_open) {
-    target->client->DidChange(target->uri, util::SerializeLines(after_lines, viewport.line_ending()));
+    target->client->DidChange(target->uri, SerializeViewportText(viewport));
   }
   // Re-request semantic tokens only when the edit left the buffer clean (e.g. an
   // undo landing on the saved point). The overlay is render-suppressed while

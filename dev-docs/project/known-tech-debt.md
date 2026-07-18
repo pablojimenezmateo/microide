@@ -443,20 +443,28 @@ speed-path items first, then the correctness/lifecycle cleanups.
   the same model on mouse probing. Cache validated recent rows in `RecentsService` or
   build the welcome view model during once-per-frame prep so paint and hit-testing do
   not perform filesystem probes.
-- **TD-2026-07-17A-015 — external clean reload full-snapshots old and new buffers for LSP.**
-  `TabCoordinator::ReloadOpenTabsForPath` captures `editor_state.viewport.lines().Snapshot()`
-  before replacing the first matching view, then passes `reopened_view.lines().Snapshot()`
-  to `notify_lsp_buffer_reloaded`. `LspService::SyncLspForBufferChange` only needs the
-  old/new line counts plus the first changed line for diagnostic shifting, and the
-  post-reload full-sync payload can use the streaming serializer already present for
-  didOpen/didChange. Avoid two full vector materializations on large external reloads.
-- **TD-2026-07-17A-016 — open-buffer LSP WorkspaceEdit snapshots every target buffer twice.**
-  `WorkspaceShell::ApplyLspWorkspaceEdit` snapshots each target buffer before applying
-  edits and then snapshots the edited buffer again for `RequestActiveEditableChangeRedraw`
-  or `SyncLspForBufferChange`. A single same-line rename in a large open file therefore
-  copies the entire buffer before and after the edit. Keep the multi-edit correctness
-  baseline, but represent the pre/post sync as affected ranges plus line-count deltas
-  and stream the full didChange payload only when the server actually needs it.
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-015 — external clean reload full-snapshots old and new buffers for LSP.**
+  Fixed: `SyncLspForBufferChange` now takes a compact `LspService::BufferChangeDelta`
+  (pre-change line count + first differing line) instead of before/after line vectors, and
+  streams the full didChange straight from the live viewport via `SerializeViewportText`
+  (the didOpen streaming serializer). `TabCoordinator::ReloadEditorTabsForPath` computes
+  the delta by comparing the old view against `reopened_view` line-by-line with `LineView`
+  (zero-copy) while both buffers still exist, so the reload materializes neither buffer.
+  `ShiftLspDiagnosticsForBulkChange` reads the after-count from the viewport and takes the
+  first-changed line from the caller. Regression:
+  `ExternalRepoChange/CleanReloadDoesNotSnapshotBuffers` (asserts
+  `TextBuffer::snapshot_build_count() == 0` across a shorter-content reload).
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-016 — open-buffer LSP WorkspaceEdit snapshots every target buffer twice.**
+  Fixed: `WorkspaceShell::ApplyLspWorkspaceEdit` no longer snapshots any target buffer.
+  Per bucket it records only `before_line_count` (before applying) and the affected line
+  span (`first_changed`/`last_changed`, the min/max normalized edit line — every edit
+  changes its target line, so the lowest start line is the first differing line). The
+  re-sync passes a `BufferChangeDelta` to `SyncLspForBufferChange` (streamed didChange from
+  the live buffer); the active buffer's redraw is damaged over the recorded span (or a full
+  editor redraw when the line count changed) instead of diffing before/after vectors. A
+  single same-line rename in a large open file now copies nothing. Regression:
+  `WorkspaceShell/WorkspaceEditDoesNotSnapshotBuffers` (same-line + line-count-changing
+  edits, both assert `snapshot_build_count() == 0`).
 - **[RESOLVED 2026-07-18 — focus pass 4/9] TD-2026-07-17A-017 — output-panel rendering resolves paths and snippet layout during paint.**
   Fixed: `WorkspaceOutputChannels::ResolvedReferencePath` resolves a parsed entry's
   reference against the project root and `lexically_normal`izes it, memoized per entry

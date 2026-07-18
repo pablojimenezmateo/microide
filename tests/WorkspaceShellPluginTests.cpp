@@ -4524,6 +4524,64 @@ void TestWorkspaceShellMultiBufferWorkspaceEditIndependentBaselines() {
   Expect(ReadFile(b_path) == "bbb\n", "buffer B was never written to disk");
 }
 
+// TD-2026-07-17A-016: an open-buffer LSP WorkspaceEdit must NOT materialize a
+// whole-document TextBuffer::Snapshot() — not the pre-edit baseline, not the
+// post-edit re-sync. The sync now carries only a compact line-count/affected-span
+// delta and streams the full didChange straight from the live buffer, so a single
+// rename in a large open file no longer copies every line twice.
+void TestWorkspaceShellWorkspaceEditDoesNotSnapshotBuffers() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path src = root / "big.txt";
+  // A buffer large enough that a stray whole-document snapshot would be obvious.
+  std::string content;
+  for (int i = 0; i < 500; ++i) {
+    content += "line ";
+    content += std::to_string(i);
+    content += " token\n";
+  }
+  WriteFile(src, content);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, src);
+
+  const auto range = [](std::size_t l0, std::size_t c0, std::size_t l1, std::size_t c1) {
+    return editor::SelectionRange{editor::TextPosition{l0, c0}, editor::TextPosition{l1, c1}};
+  };
+
+  // Same-line-count rename: replace "token" on line 200. before/after line counts
+  // match, so the diagnostic-shift early-outs and only a streamed didChange runs.
+  microide::editor::TextBuffer::reset_snapshot_build_count();
+  const std::vector<microide::workspace::CodeActionEdit> same_line_edits = {
+      {src, range(200, 9, 200, 14), "TOKEN"},
+  };
+  Expect(WorkspaceShellTestAccess::ApplyLspWorkspaceEdit(shell, same_line_edits),
+         "the same-line rename should apply to the open buffer");
+  Expect(microide::editor::TextBuffer::snapshot_build_count() == 0,
+         "a same-line WorkspaceEdit must not snapshot the whole buffer");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[200] == "line 200 TOKEN",
+         "the same-line rename should land on line 200");
+
+  // Line-count-changing edit: insert two new lines at the top. This exercises the
+  // delta path (before != after line count -> diagnostic shift by net delta) which
+  // must still avoid a whole-document snapshot.
+  microide::editor::TextBuffer::reset_snapshot_build_count();
+  const std::vector<microide::workspace::CodeActionEdit> insert_edits = {
+      {src, range(0, 0, 0, 0), "inserted a\ninserted b\n"},
+  };
+  Expect(WorkspaceShellTestAccess::ApplyLspWorkspaceEdit(shell, insert_edits),
+         "the multi-line insert should apply to the open buffer");
+  Expect(microide::editor::TextBuffer::snapshot_build_count() == 0,
+         "a line-count-changing WorkspaceEdit must not snapshot the whole buffer");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "inserted a",
+         "the insert should prepend the new lines");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[202] == "line 200 TOKEN",
+         "the earlier rename should have shifted down by two lines after the insert");
+}
+
 // Regression: a WorkspaceEdit with two overlapping ranges for one buffer must be
 // rejected wholesale, not applied highest-first (which double-edits the shared
 // bytes order-dependently). The buffer is left untouched.
@@ -4684,6 +4742,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWorkspaceEditRefreshesFolds);
   AddTest(tests, "WorkspaceShell/MultiBufferWorkspaceEditIndependentBaselines",
           TestWorkspaceShellMultiBufferWorkspaceEditIndependentBaselines);
+  AddTest(tests, "WorkspaceShell/WorkspaceEditDoesNotSnapshotBuffers",
+          TestWorkspaceShellWorkspaceEditDoesNotSnapshotBuffers);
   AddTest(tests, "WorkspaceShell/WorkspaceEditRejectsOverlappingEdits",
           TestWorkspaceShellWorkspaceEditRejectsOverlappingEdits);
   AddTest(tests, "WorkspaceShell/PluginSnippetTabTriggerExpands",
