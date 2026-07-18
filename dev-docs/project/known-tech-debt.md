@@ -860,7 +860,15 @@ speed-path items first, then the correctness/lifecycle cleanups.
   therefore makes each commit-message keystroke copy the whole summary even though the cached
   owner is stable. Keep a `const CommitStagedSummary&`/pointer view for the supplied summary
   and only materialize an owned summary when the function has to build it itself.
-- **TD-2026-07-17A-046 — plugin provider result caps multiply across providers.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-046 — plugin provider result caps multiply across providers.**
+  Fixed: `QueryCompletions`/`QueryCodeActions`/`QueryAnnotations` now enforce a per-QUERY aggregate
+  ceiling (`kMaxAggregateCompletionCandidates`=20000, `kMaxAggregateCodeActions`=4096,
+  `kMaxAggregateAnnotationLines`=200000) across ALL matching providers: each provider's harvest `count`
+  is additionally clamped to the remaining aggregate budget, and the provider loop breaks once the
+  budget is reached. Many providers per kind can no longer each stay under their per-table cap yet sum
+  to millions of rows fed to the assist/annotation UI — the per-provider caps are now an input guard,
+  not the product size. Regression: `PluginHost/CompletionAggregateBudgetAcrossProviders` (two
+  15000-candidate providers yield 20000, not 30000).
   `PluginProviderQueryInterop` caps one Lua result table per provider
   (`kMaxCompletionCandidates`, `kMaxCodeActions`, `kMaxAnnotationLines`), but
   `QueryCompletions`, `QueryCodeActions`, and `QueryAnnotations` append every matching

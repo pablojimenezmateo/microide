@@ -25,6 +25,16 @@ constexpr lua_Integer kMaxScmEntries = 200000;
 constexpr lua_Integer kMaxAnnotationLines = 200000;
 constexpr lua_Integer kMaxAuthScopes = 4096;
 
+// Per-QUERY aggregate ceilings across ALL matching providers. The per-provider
+// caps above are an INPUT guard, not the final product size: a language can
+// register many providers of a kind, each staying under its own table cap yet
+// summing to millions of rows fed to the assist/annotation UI. Bound the harvested
+// total per query so provider count does not multiply into unbounded host memory
+// (TD-2026-07-17A-046).
+constexpr lua_Integer kMaxAggregateCompletionCandidates = 20000;
+constexpr lua_Integer kMaxAggregateCodeActions = 4096;
+constexpr lua_Integer kMaxAggregateAnnotationLines = 200000;
+
 // A discovered test's 1-based `line`, validated: a non-positive or out-of-int value is
 // treated as ABSENT (0), never a wrapped positive that would navigate the Tests sidebar
 // row to a wrong/huge line. (TD-2026-07-16-67.)
@@ -64,6 +74,9 @@ std::vector<PluginHost::CompletionCandidate> QueryCompletions(
     if (provider.language_id != language_id) {
       continue;
     }
+    if (static_cast<lua_Integer>(results.size()) >= kMaxAggregateCompletionCandidates) {
+      break;  // aggregate budget reached across providers
+    }
     lua_State* state = provider.state;
     const lua_interop::StackResetGuard stack_guard(state);
     lua_rawgeti(state, LUA_REGISTRYINDEX, provider.provide_ref);
@@ -86,8 +99,12 @@ std::vector<PluginHost::CompletionCandidate> QueryCompletions(
       // an unbounded for(;;) + metamethod-invoking lua_geti over an adversarial
       // __index/__len would hang the worker thread or longjmp past native frames.
       const int array_index = lua_absindex(state, -1);
+      const lua_Integer remaining =
+          kMaxAggregateCompletionCandidates - static_cast<lua_Integer>(results.size());
       const lua_Integer count = std::min<lua_Integer>(
-          static_cast<lua_Integer>(lua_rawlen(state, array_index)), kMaxCompletionCandidates);
+          std::min<lua_Integer>(static_cast<lua_Integer>(lua_rawlen(state, array_index)),
+                                 kMaxCompletionCandidates),
+          remaining);
       for (lua_Integer i = 1; i <= count; ++i) {
         lua_rawgeti(state, array_index, i);
         if (!lua_istable(state, -1)) {
@@ -142,6 +159,9 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
     if (provider.language_id != language_id) {
       continue;
     }
+    if (static_cast<lua_Integer>(results.size()) >= kMaxAggregateCodeActions) {
+      break;  // aggregate budget reached across providers
+    }
     lua_State* state = provider.state;
     const lua_interop::StackResetGuard stack_guard(state);
     lua_rawgeti(state, LUA_REGISTRYINDEX, provider.provide_ref);
@@ -157,8 +177,12 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
     }
     if (lua_istable(state, -1)) {
       const int array_index = lua_absindex(state, -1);
+      const lua_Integer remaining =
+          kMaxAggregateCodeActions - static_cast<lua_Integer>(results.size());
       const lua_Integer count = std::min<lua_Integer>(
-          static_cast<lua_Integer>(lua_rawlen(state, array_index)), kMaxCodeActions);
+          std::min<lua_Integer>(static_cast<lua_Integer>(lua_rawlen(state, array_index)),
+                                 kMaxCodeActions),
+          remaining);
       for (lua_Integer i = 1; i <= count; ++i) {
         lua_rawgeti(state, array_index, i);
         if (!lua_istable(state, -1)) {
@@ -439,6 +463,9 @@ std::vector<PluginHost::AnnotationLine> QueryAnnotations(
         (!language_id.empty() && provider.language_id != language_id)) {
       continue;
     }
+    if (static_cast<lua_Integer>(lines.size()) >= kMaxAggregateAnnotationLines) {
+      break;  // aggregate budget reached across providers (provider_id-empty fan-out)
+    }
 
     lua_State* state = provider.state;
     const lua_interop::StackResetGuard stack_guard(state);
@@ -456,8 +483,12 @@ std::vector<PluginHost::AnnotationLine> QueryAnnotations(
     }
     if (lua_istable(state, -1)) {
       const int array_index = lua_absindex(state, -1);
+      const lua_Integer remaining =
+          kMaxAggregateAnnotationLines - static_cast<lua_Integer>(lines.size());
       const lua_Integer count = std::min<lua_Integer>(
-          static_cast<lua_Integer>(lua_rawlen(state, array_index)), kMaxAnnotationLines);
+          std::min<lua_Integer>(static_cast<lua_Integer>(lua_rawlen(state, array_index)),
+                                 kMaxAnnotationLines),
+          remaining);
       for (lua_Integer index = 1; index <= count; ++index) {
         lua_rawgeti(state, array_index, index);
         if (!lua_istable(state, -1)) {

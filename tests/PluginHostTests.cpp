@@ -4006,6 +4006,52 @@ return ide.plugin({
          "the failing provider should be recorded in the aggregated warning");
 }
 
+// TD-2026-07-17A-046: per-provider result caps are an input guard, not the final
+// product size. Two completion providers each returning 15000 candidates must not
+// sum to 30000 host candidates — the per-query aggregate ceiling (20000) bounds the
+// harvested total across all matching providers.
+void TestPluginHostCompletionAggregateBudgetAcrossProviders() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.todo";
+  WriteFile(source, "alpha\n");
+
+  WritePluginInit(
+      global_plugins, "many-completion",
+      R"lua(local ide = require("microide")
+local function big(tag)
+  return function()
+    local out = {}
+    for i = 1, 15000 do out[i] = { label = tag .. i, insert_text = tag .. i } end
+    return out
+  end
+end
+return ide.plugin({
+  id = "many-completion",
+  setup = function(ctx)
+    ctx.completion.add({ id = "a", language_id = "todo", provide = big("a") })
+    ctx.completion.add({ id = "b", language_id = "todo", provide = big("b") })
+  end
+})
+)lua");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "many-completion plugin should reload");
+
+  std::string runtime_error;
+  const auto completions = host.QueryCompletions("todo", source, 1, 0, "", &runtime_error);
+  // First provider fills 15000; the second is capped to the remaining 5000.
+  Expect(completions.size() == 20000,
+         "the per-query aggregate ceiling bounds the total across providers (15000+5000)");
+}
+
 // TD-2026-07-17A-080: a scalar string field carrying an embedded NUL is rejected (not
 // truncated), so a completion whose label is "x\0y" is dropped while a clean sibling
 // candidate is kept.
@@ -4255,6 +4301,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostDisabledPluginsSkipSetupButRemainListed);
   AddTest(tests, "PluginHost/CompletionProviderFailureKeepsOthers",
           TestPluginHostCompletionProviderFailureKeepsOthers);
+  AddTest(tests, "PluginHost/CompletionAggregateBudgetAcrossProviders",
+          TestPluginHostCompletionAggregateBudgetAcrossProviders);
   AddTest(tests, "PluginHost/CompletionLabelWithNulIsRejected",
           TestPluginHostCompletionLabelWithNulIsRejected);
   AddTest(tests, "PluginHost/HoverProviderFailureFallsThrough",
