@@ -704,6 +704,11 @@ return ide.plugin({
     ctx.log("package_path:" .. tostring(type(package.path) == "string"))
     ctx.log("io_nil:" .. tostring(io == nil))
     ctx.log("os_nil:" .. tostring(os == nil))
+    -- TD-2026-07-17A-128: the base library's file loaders must be removed so a
+    -- plugin cannot open/execute files outside its declared fs capability.
+    ctx.log("loadfile_nil:" .. tostring(loadfile == nil))
+    ctx.log("dofile_nil:" .. tostring(dofile == nil))
+    ctx.log("load_fn:" .. tostring(type(load) == "function"))
   end
 })
 )");
@@ -715,7 +720,7 @@ return ide.plugin({
 
   Expect(host.Reload(project_root), "plugin reload should succeed for stdlib probe");
   const std::vector<std::string>& messages = host.Messages();
-  Expect(messages.size() == 9, "stdlib probe should emit one log per documented capability check");
+  Expect(messages.size() == 12, "stdlib probe should emit one log per documented capability check");
   Expect(messages[0] == "stdlib.probe: base:true", "base stdlib should be exposed");
   Expect(messages[1] == "stdlib.probe: table:true", "table stdlib should be exposed");
   Expect(messages[2] == "stdlib.probe: string:true", "string stdlib should be exposed");
@@ -726,6 +731,12 @@ return ide.plugin({
          "package.path should remain available for Lua module resolution");
   Expect(messages[7] == "stdlib.probe: io_nil:true", "io stdlib should stay unavailable");
   Expect(messages[8] == "stdlib.probe: os_nil:true", "os stdlib should stay unavailable");
+  Expect(messages[9] == "stdlib.probe: loadfile_nil:true",
+         "loadfile must be removed so plugins cannot bypass fs capabilities");
+  Expect(messages[10] == "stdlib.probe: dofile_nil:true",
+         "dofile must be removed so plugins cannot bypass fs capabilities");
+  Expect(messages[11] == "stdlib.probe: load_fn:true",
+         "load (string/reader chunks, no filesystem) should stay available");
   Expect(host.Errors().empty(), "stdlib probe should not report host errors");
 }
 
@@ -3855,6 +3866,56 @@ return ide.plugin({
          "OnBufferSave must dispatch to a buffer_save subscriber");
 }
 
+// TD-2026-07-17A-077: OnCursorMove / OnSelectionChange must honor the published
+// interest mask before capturing a snapshot and posting worker work. A plugin that
+// subscribes to on_cursor_move only sets the cursor_move interest (not selection_change),
+// so a cursor move dispatches while a selection change is gated out.
+void TestPluginHostCursorSelectionInterestGate() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  WritePluginInit(
+      global_plugins, "cursor-only",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "events.cursor_only",
+  on_cursor_move = function(ctx) ctx.log("cursor moved") end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "cursor-only fixture should load");
+
+  const PluginHost::EditorEventInterest interest = host.EditorEventInterests();
+  Expect(interest.cursor_move, "declaring on_cursor_move sets cursor_move interest");
+  Expect(!interest.selection_change,
+         "no on_selection_change leaves selection_change interest clear");
+  Expect(!interest.buffer_change, "no on_buffer_change leaves buffer_change interest clear");
+
+  // A selection change with no subscriber must not dispatch (gated out before snapshot).
+  const std::size_t before = host.Messages().size();
+  host.OnSelectionChange(source, true, 1, 1, 1, 4);
+  Expect(host.Messages().size() == before,
+         "OnSelectionChange must not dispatch when no plugin subscribes");
+
+  // A cursor move with a subscriber still dispatches (the gate must not over-suppress).
+  host.OnCursorMove(source, 1, 1);
+  Expect(std::any_of(host.Messages().begin(), host.Messages().end(),
+                     [](const std::string& entry) {
+                       return entry == "events.cursor_only: cursor moved";
+                     }),
+         "OnCursorMove must dispatch to a cursor_move subscriber");
+}
+
 void TestPluginHostThemeRegisterRejectsNonTableWithoutCrash() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3894,6 +3955,189 @@ return ide.plugin({
         return e.find("table") != std::string::npos;
       });
   Expect(mentions_table, "the rejection should surface a clear 'expects a table' error");
+}
+
+// TD-2026-07-17A-047: one failing completion provider must not suppress every other
+// provider's results. A first provider whose provide() errors is skipped and the second
+// provider's candidates still reach the caller.
+void TestPluginHostCompletionProviderFailureKeepsOthers() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.todo";
+  WriteFile(source, "alpha\n");
+
+  WritePluginInit(
+      global_plugins, "two-completion",
+      R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "two-completion",
+  setup = function(ctx)
+    ctx.completion.add({
+      id = "broken",
+      language_id = "todo",
+      provide = function() error("provider blew up") end
+    })
+    ctx.completion.add({
+      id = "healthy",
+      language_id = "todo",
+      provide = function() return { { label = "HEALTHY", insert_text = "HEALTHY" } } end
+    })
+  end
+})
+)lua");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "two-completion plugin should reload");
+
+  std::string runtime_error;
+  const auto completions = host.QueryCompletions("todo", source, 1, 0, "", &runtime_error);
+  Expect(completions.size() == 1,
+         "a failing completion provider must not discard a healthy provider's candidates");
+  Expect(!completions.empty() && completions.front().label == "HEALTHY",
+         "the healthy provider's candidate must survive the earlier provider's failure");
+  Expect(runtime_error.find("broken") != std::string::npos,
+         "the failing provider should be recorded in the aggregated warning");
+}
+
+// TD-2026-07-17A-080: a scalar string field carrying an embedded NUL is rejected (not
+// truncated), so a completion whose label is "x\0y" is dropped while a clean sibling
+// candidate is kept.
+void TestPluginHostCompletionLabelWithNulIsRejected() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.todo";
+  WriteFile(source, "alpha\n");
+
+  WritePluginInit(
+      global_plugins, "nul-label",
+      R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "nul-label",
+  setup = function(ctx)
+    ctx.completion.add({
+      id = "nul",
+      language_id = "todo",
+      provide = function()
+        return {
+          { label = "bad\0suffix", insert_text = "z" },
+          { label = "clean", insert_text = "clean" },
+        }
+      end
+    })
+  end
+})
+)lua");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "nul-label plugin should reload");
+
+  std::string runtime_error;
+  const auto completions = host.QueryCompletions("todo", source, 1, 0, "", &runtime_error);
+  Expect(completions.size() == 1,
+         "a candidate whose label carries an embedded NUL must be dropped, not truncated");
+  Expect(!completions.empty() && completions.front().label == "clean",
+         "the NUL-free sibling candidate must still be returned");
+}
+
+// TD-2026-07-17A-049: a broken hover provider must not mask later ordered providers. The
+// first provider errors; QueryHover keeps scanning and returns the second provider's hover.
+void TestPluginHostHoverProviderFailureFallsThrough() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "hover fallthrough\n");
+
+  WritePluginInit(
+      global_plugins, "two-hover",
+      R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "two-hover",
+  setup = function(ctx)
+    ctx.hover.add({
+      id = "broken",
+      provide = function() error("hover blew up") end
+    })
+    ctx.hover.add({
+      id = "healthy",
+      provide = function() return { title = "OK", content = "from healthy" } end
+    })
+  end
+})
+)lua");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "two-hover plugin should reload");
+
+  PluginHost::HoverResult hover;
+  std::string hover_error;
+  Expect(host.QueryHover(project_root / "README.md", 1, 1, &hover, &hover_error),
+         "a broken first hover provider must not mask a healthy later provider");
+  Expect(hover.title == "OK" && hover.content == "from healthy",
+         "the healthy provider's hover must be returned after the earlier failure");
+}
+
+// TD-2026-07-17A-126: an env key containing '=' is rejected at the plugin/process
+// boundary rather than being split by the child into an unintended variable name.
+void TestPluginHostProcessEnvKeyWithEqualsRejected() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "env key fixture\n");
+
+  WritePluginInit(
+      global_plugins, "env-key",
+      R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "env-key",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    local ok, err = pcall(function()
+      ctx.process.run({"true"}, { env = { ["LD_PRELOAD=x"] = "1" } })
+    end)
+    ctx.log("env_key_ok:" .. tostring(ok))
+    ctx.log("env_key_err:" .. tostring(err))
+  end
+})
+)lua");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "env-key plugin should reload");
+
+  const std::vector<std::string>& messages = host.Messages();
+  const bool rejected = std::any_of(messages.begin(), messages.end(), [](const std::string& m) {
+    return m.find("env_key_ok:false") != std::string::npos;
+  });
+  const bool explained = std::any_of(messages.begin(), messages.end(), [](const std::string& m) {
+    return m.find("env keys must be non-empty") != std::string::npos;
+  });
+  Expect(rejected, "an env key containing '=' must be rejected");
+  Expect(explained, "the rejection should explain the env-key name constraint");
 }
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -4009,6 +4253,16 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/NotifyInvokesCallback", TestPluginHostNotifyInvokesCallback);
   AddTest(tests, "PluginHost/DisabledPluginsSkipSetupButRemainListed",
           TestPluginHostDisabledPluginsSkipSetupButRemainListed);
+  AddTest(tests, "PluginHost/CompletionProviderFailureKeepsOthers",
+          TestPluginHostCompletionProviderFailureKeepsOthers);
+  AddTest(tests, "PluginHost/CompletionLabelWithNulIsRejected",
+          TestPluginHostCompletionLabelWithNulIsRejected);
+  AddTest(tests, "PluginHost/HoverProviderFailureFallsThrough",
+          TestPluginHostHoverProviderFailureFallsThrough);
+  AddTest(tests, "PluginHost/ProcessEnvKeyWithEqualsRejected",
+          TestPluginHostProcessEnvKeyWithEqualsRejected);
+  AddTest(tests, "PluginHost/CursorSelectionInterestGate",
+          TestPluginHostCursorSelectionInterestGate);
 }
 
 }  // namespace microide::tests
