@@ -1,6 +1,7 @@
 #include "project/ProjectFileScanner.h"
 
 #include <algorithm>
+#include <memory>
 #include <system_error>
 
 #include "platform/Filesystem.h"
@@ -19,7 +20,7 @@ bool IsHiddenName(const std::filesystem::path& path) {
 
 void CollectFiles(const std::filesystem::path& root,
                   const std::filesystem::path& directory,
-                  const IgnoreMatcher& matcher,
+                  const std::shared_ptr<const IgnoreMatcher>& matcher,
                   ProjectFileScanMode mode,
                   std::vector<std::filesystem::path>& files,
                   SymlinkLoopGuard& loop_guard,
@@ -74,12 +75,15 @@ void CollectFiles(const std::filesystem::path& root,
       // actually descend into — otherwise every ignored dir (node_modules, build, .git,
       // target, dist, __pycache__) pays a rules-vector copy + 2 syscalls per refresh just
       // to be discarded. Mirrors DirectoryTree::AppendDirectory.
-      if (matcher.Ignored(relative, true)) {
+      if (matcher->Ignored(relative, true)) {
         iterator.increment(error);
         continue;
       }
-      IgnoreMatcher child_matcher = matcher;
-      child_matcher.LoadIgnoreFile(path / ".gitignore");
+      // Inherit the parent matcher as a shared layer and add only this
+      // directory's own .gitignore — no copy of the inherited rules
+      // (TD-2026-07-17A-055).
+      std::shared_ptr<IgnoreMatcher> child_matcher = IgnoreMatcher::MakeChild(matcher);
+      child_matcher->LoadIgnoreFile(path / ".gitignore");
       std::error_code link_error;
       const bool is_symlink = iterator->is_symlink(link_error);
       const SymlinkLoopGuard::Scope scope = loop_guard.TryEnter(path, is_symlink && !link_error);
@@ -90,7 +94,7 @@ void CollectFiles(const std::filesystem::path& root,
       continue;
     }
 
-    if (matcher.Ignored(relative, false)) {
+    if (matcher->Ignored(relative, false)) {
       iterator.increment(error);
       continue;
     }
@@ -117,11 +121,11 @@ std::vector<std::filesystem::path> CollectProjectFiles(const std::filesystem::pa
     return {};
   }
 
-  IgnoreMatcher matcher;
-  matcher.SetRoot(absolute_root);
+  auto matcher = std::make_shared<IgnoreMatcher>();
+  matcher->SetRoot(absolute_root);
   // Defaults after the root .gitignore (take precedence), user excludes last.
-  matcher.AddDefaultRules();
-  matcher.AddExcludeGlobs(exclude_globs);
+  matcher->AddDefaultRules();
+  matcher->AddExcludeGlobs(exclude_globs);
 
   std::vector<std::filesystem::path> files;
   SymlinkLoopGuard loop_guard(absolute_root,

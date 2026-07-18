@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -9,6 +10,17 @@ namespace microide::project {
 
 class IgnoreMatcher {
  public:
+  // Create a child matcher that inherits `parent` as a shared, immutable layer
+  // (its rules are referenced, never copied) and shares the parent's root. The
+  // child starts with no local rules — load this directory's `.gitignore` (and
+  // any local additions) into it. A whole-tree walk therefore stores each
+  // directory's inherited context as a parent link plus its own rules, instead
+  // of copying the full ancestor rule set into every visited directory
+  // (TD-2026-07-17A-055). `parent` must outlive every descendant it is linked to
+  // and must not be mutated after it becomes a parent (it is read as const).
+  static std::shared_ptr<IgnoreMatcher> MakeChild(
+      const std::shared_ptr<const IgnoreMatcher>& parent);
+
   bool SetRoot(const std::filesystem::path& root);
   void LoadIgnoreFile(const std::filesystem::path& path);
   // Seed built-in ignore defaults: VCS metadata (.git/.svn/.hg/.bzr), dependency
@@ -47,7 +59,13 @@ class IgnoreMatcher {
 
   static bool ParseRule(std::string base_relative, std::string line, Rule& out_rule);
 
+  // Inherited ancestor context, shared and immutable. Null for a standalone /
+  // root matcher. Evaluated before this matcher's own rules so a child's rules
+  // (later in gitignore order) still override an inherited decision.
+  std::shared_ptr<const IgnoreMatcher> parent_;
   std::filesystem::path root_;
+  // This matcher's OWN rules only (this directory's .gitignore + any local
+  // defaults/excludes); the ancestor chain lives behind parent_.
   std::vector<Rule> rules_;
 };
 

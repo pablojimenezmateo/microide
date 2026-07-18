@@ -18,11 +18,13 @@ ProjectTraversalFilter::ProjectTraversalFilter(std::filesystem::path root,
   if (!root_.has_filename() && root_.has_parent_path()) {
     root_ = root_.parent_path();
   }
-  root_matcher_.SetRoot(root_);
+  auto root_matcher = std::make_shared<IgnoreMatcher>();
+  root_matcher->SetRoot(root_);
   // Defaults after the root .gitignore so they take precedence; user excludes last
   // so an explicit "!name/" re-include wins over both.
-  root_matcher_.AddDefaultRules();
-  root_matcher_.AddExcludeGlobs(extra_excludes);
+  root_matcher->AddDefaultRules();
+  root_matcher->AddExcludeGlobs(extra_excludes);
+  root_matcher_ = std::move(root_matcher);
 }
 
 bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platform::PathType type) {
@@ -45,10 +47,11 @@ bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platfor
     return true;
   }
 
-  const auto& matcher = MatcherForParentDirectory(normalized_path.parent_path().lexically_normal());
+  const std::shared_ptr<const IgnoreMatcher> matcher =
+      MatcherForParentDirectory(normalized_path.parent_path().lexically_normal());
   // `relative` is already lexically-normalized, so the string_view overload skips
   // the per-call re-normalization the path overload would otherwise perform.
-  if (matcher.IgnoredNormalized(relative.generic_string(), is_directory)) {
+  if (matcher->IgnoredNormalized(relative.generic_string(), is_directory)) {
     return false;
   }
   // Each parent_path() of a normalized path is also normalized; no need to
@@ -57,7 +60,7 @@ bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platfor
   static const std::filesystem::path kDot(".");
   for (std::filesystem::path parent = relative.parent_path();
        !parent.empty() && parent != kDot; parent = parent.parent_path()) {
-    if (matcher.IgnoredNormalized(parent.generic_string(), true)) {
+    if (matcher->IgnoredNormalized(parent.generic_string(), true)) {
       return false;
     }
   }
@@ -87,7 +90,7 @@ std::filesystem::path ProjectTraversalFilter::RelativeToRoot(
 #endif
 }
 
-const IgnoreMatcher& ProjectTraversalFilter::MatcherForParentDirectory(
+std::shared_ptr<const IgnoreMatcher> ProjectTraversalFilter::MatcherForParentDirectory(
     const std::filesystem::path& directory) {
   // Terminate at the project root (normal case) or, defensively, at the filesystem root
   // ("/", which has no relative path) so a root/path mismatch can never recurse forever.
@@ -101,9 +104,12 @@ const IgnoreMatcher& ProjectTraversalFilter::MatcherForParentDirectory(
     return existing->second;
   }
 
-  const auto& parent_matcher = MatcherForParentDirectory(directory.parent_path().lexically_normal());
-  IgnoreMatcher matcher = parent_matcher;
-  matcher.LoadIgnoreFile(directory / ".gitignore");
+  const std::shared_ptr<const IgnoreMatcher> parent_matcher =
+      MatcherForParentDirectory(directory.parent_path().lexically_normal());
+  // Inherit the ancestor chain as a shared layer and add only this directory's
+  // own .gitignore rules — no copy of the inherited rule set (TD-2026-07-17A-055).
+  std::shared_ptr<IgnoreMatcher> matcher = IgnoreMatcher::MakeChild(parent_matcher);
+  matcher->LoadIgnoreFile(directory / ".gitignore");
   return directory_matchers_.emplace(key, std::move(matcher)).first->second;
 }
 

@@ -3,6 +3,7 @@
 #include "project/IgnoreMatcher.h"
 
 #include <filesystem>
+#include <memory>
 
 namespace microide::tests {
 namespace {
@@ -30,6 +31,62 @@ void TestIgnoreMatcherNestedGitignoreBasePrefix() {
   Expect(!matcher.Ignored("ignored_here.txt", false),
          "a nested gitignore rule should not match outside its base directory");
   Expect(!matcher.Ignored("sub/keep.txt", false), "unmatched files should not be ignored");
+}
+
+// TD-2026-07-17A-055: a directory's matcher inherits its ancestors as a shared,
+// immutable parent layer (not a full copy of the rule set) via MakeChild. The
+// parent-then-local evaluation must be byte-identical to the old flattened
+// last-match-wins matcher, including negations that cross layer boundaries and a
+// multi-level ancestor chain.
+void TestIgnoreMatcherParentLinkedLayersMatchFlattened() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / "sub" / "deep");
+  WriteFile(root / ".gitignore", "*.log\nsecret/\n");
+  WriteFile(root / "sub" / ".gitignore", "!important.log\nlocal.tmp\n");
+  WriteFile(root / "sub" / "deep" / ".gitignore", "*.bin\n");
+
+  // Parent-linked chain: root -> sub -> sub/deep, each holding only its own rules.
+  auto root_matcher = std::make_shared<IgnoreMatcher>();
+  root_matcher->SetRoot(root);
+  std::shared_ptr<IgnoreMatcher> sub_matcher = IgnoreMatcher::MakeChild(root_matcher);
+  sub_matcher->LoadIgnoreFile(root / "sub" / ".gitignore");
+  std::shared_ptr<IgnoreMatcher> deep_matcher = IgnoreMatcher::MakeChild(sub_matcher);
+  deep_matcher->LoadIgnoreFile(root / "sub" / "deep" / ".gitignore");
+
+  // Old flattened equivalent: one matcher with every ancestor's rules loaded in order.
+  IgnoreMatcher flat;
+  flat.SetRoot(root);
+  flat.LoadIgnoreFile(root / "sub" / ".gitignore");
+  flat.LoadIgnoreFile(root / "sub" / "deep" / ".gitignore");
+
+  const struct {
+    const char* path;
+    bool is_dir;
+  } cases[] = {
+      {"debug.log", false},          {"sub/debug.log", false},
+      {"sub/important.log", false},  {"sub/local.tmp", false},
+      {"local.tmp", false},          {"secret", true},
+      {"sub/deep/x.bin", false},     {"x.bin", false},
+      {"sub/deep/important.log", false}, {"sub/keep.txt", false},
+  };
+  for (const auto& c : cases) {
+    Expect(deep_matcher->Ignored(c.path, c.is_dir) == flat.Ignored(c.path, c.is_dir),
+           "parent-linked layers must decide identically to the flattened matcher");
+  }
+
+  // Spot-check the load-bearing semantics directly (not just parity):
+  Expect(deep_matcher->Ignored("sub/debug.log", false),
+         "an inherited root rule still ignores a nested match");
+  Expect(!deep_matcher->Ignored("sub/important.log", false),
+         "a child negation crosses the layer boundary to un-ignore an ancestor-ignored path");
+  Expect(deep_matcher->Ignored("sub/deep/x.bin", false),
+         "the deepest layer's own rule applies under its base directory");
+  Expect(!deep_matcher->Ignored("x.bin", false),
+         "the deepest layer's rule must not apply outside its base directory");
+  // The intermediate matcher does not see the grandchild's rules.
+  Expect(!sub_matcher->Ignored("sub/deep/x.bin", false),
+         "an ancestor matcher must not see a descendant layer's rules");
 }
 
 void TestIgnoreMatcherNegationAndDirectoryRules() {
@@ -240,6 +297,8 @@ void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests) {
           TestIgnoreMatcherAnchoredPatternsDoNotFloat);
   AddTest(tests, "IgnoreMatcher/NestedGitignoreBasePrefix",
           TestIgnoreMatcherNestedGitignoreBasePrefix);
+  AddTest(tests, "IgnoreMatcher/ParentLinkedLayersMatchFlattened",
+          TestIgnoreMatcherParentLinkedLayersMatchFlattened);
   AddTest(tests, "IgnoreMatcher/NegationAndDirectoryRules",
           TestIgnoreMatcherNegationAndDirectoryRules);
   AddTest(tests, "IgnoreMatcher/DefaultRulesGrayVcsAndBuildDirs",

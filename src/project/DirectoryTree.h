@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -88,7 +89,7 @@ class DirectoryTree {
   void RebuildEntries(bool refresh_git_statuses);
   void AppendDirectory(const std::filesystem::path& directory,
                        int depth,
-                       const IgnoreMatcher& matcher,
+                       const std::shared_ptr<const IgnoreMatcher>& matcher,
                        SymlinkLoopGuard& loop_guard);
   GitFileStatus EntryGitStatus(const std::filesystem::path& path) const;
   bool IsExpanded(const std::filesystem::path& path) const;

@@ -158,6 +158,18 @@ bool GlobMatches(std::string_view pattern, std::string_view text) {
 
 }  // namespace
 
+std::shared_ptr<IgnoreMatcher> IgnoreMatcher::MakeChild(
+    const std::shared_ptr<const IgnoreMatcher>& parent) {
+  auto child = std::make_shared<IgnoreMatcher>();
+  child->parent_ = parent;
+  if (parent != nullptr) {
+    // Share the parent's root so LoadIgnoreFile computes the same base-relative
+    // prefixes it would in a copied matcher.
+    child->root_ = parent->root_;
+  }
+  return child;
+}
+
 bool IgnoreMatcher::SetRoot(const std::filesystem::path& root) {
   std::error_code error;
   const auto absolute_root = std::filesystem::absolute(root, error);
@@ -256,7 +268,14 @@ bool IgnoreMatcher::Ignored(const std::filesystem::path& relative_path, bool is_
 
 bool IgnoreMatcher::IgnoredNormalized(std::string_view normalized_relative_path,
                                       bool is_directory) const {
-  bool ignored = false;
+  // Evaluate the inherited ancestor layers first, then this directory's own
+  // rules on top. Because a child's rules apply strictly after its ancestors'
+  // (gitignore last-match-wins), this parent-then-local recursion is exactly
+  // equivalent to a single flattened ancestor-first rule list — with no rule
+  // copied into the child (TD-2026-07-17A-055).
+  bool ignored = parent_ != nullptr
+                     ? parent_->IgnoredNormalized(normalized_relative_path, is_directory)
+                     : false;
   for (const auto& rule : rules_) {
     if (!rule.Matches(normalized_relative_path, is_directory)) {
       continue;
