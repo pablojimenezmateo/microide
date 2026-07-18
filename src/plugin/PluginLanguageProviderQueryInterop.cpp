@@ -14,6 +14,11 @@ namespace {
 // counts/depth before allocating. Oversize input is truncated, not rejected,
 // so a misbehaving provider degrades rather than failing the query.
 constexpr lua_Integer kMaxLocations = 4096;
+// Shared per-query ceiling across ALL definition/reference providers for one navigation
+// (TD-2026-07-17A-048): kMaxLocations bounds a single provider, but many matching
+// providers could otherwise append kMaxLocations each with no aggregate bound. Once the
+// harvest reaches this, later providers are skipped.
+constexpr std::size_t kMaxAggregateLocations = 8192;
 constexpr lua_Integer kMaxSignatures = 64;
 constexpr lua_Integer kMaxParameters = 256;
 constexpr int kMaxSymbolDepth = 32;
@@ -175,15 +180,17 @@ std::vector<PluginHost::LocationResult> QueryLocations(
     const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
     std::string call_error;
     if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(nargs, 1, &call_error)) {
-      if (error_message != nullptr) {
-        *error_message =
-            (is_references ? "references provider '" : "definition provider '") + provider.id +
-            "' failed: " + call_error;
-      }
-      return {};
+      // Keep earlier providers' locations and keep scanning later providers instead of
+      // making navigation look empty because one provider threw (TD-2026-07-17A-048).
+      // Queries run with allow_registration=false, so `runtimes` cannot reallocate across
+      // the PCall and `provider` stays valid for the error record.
+      lua_interop::AppendProviderFailure(
+          error_message, is_references ? "references" : "definition", provider.id, call_error);
+      continue;
     }
     if (lua_istable(state, -1)) {
-      for (lua_Integer i = 1; i <= kMaxLocations; ++i) {
+      for (lua_Integer i = 1;
+           i <= kMaxLocations && results.size() < kMaxAggregateLocations; ++i) {
         // Raw read: the harvest runs after PCall disarmed the count-hook watchdog,
         // so a metamethod-invoking lua_geti over an adversarial __index/__len could
         // spin this worker thread forever. Mirrors ReadSymbolArray.
@@ -202,6 +209,9 @@ std::vector<PluginHost::LocationResult> QueryLocations(
       }
     }
     lua_pop(state, 1);
+    if (results.size() >= kMaxAggregateLocations) {
+      break;  // shared per-query ceiling reached; skip remaining providers
+    }
   }
   return results;
 }
@@ -234,10 +244,10 @@ bool QuerySignatureHelp(
     const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
     std::string call_error;
     if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(2, 1, &call_error)) {
-      if (error_message != nullptr) {
-        *error_message = "signature help provider '" + provider.id + "' failed: " + call_error;
-      }
-      return false;
+      // A broken provider must not mask a healthy later one (TD-2026-07-17A-048/049):
+      // record the failure and keep scanning ordered providers.
+      lua_interop::AppendProviderFailure(error_message, "signature help", provider.id, call_error);
+      continue;
     }
     if (lua_istable(state, -1)) {
       lua_interop::GetFieldProtected(state, -1, "active_signature");
@@ -325,10 +335,11 @@ std::vector<PluginHost::DocumentSymbolNode> QueryDocumentSymbols(
     const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
     std::string call_error;
     if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
-      if (error_message != nullptr) {
-        *error_message = "document symbol provider '" + provider.id + "' failed: " + call_error;
-      }
-      return {};
+      // Keep scanning ordered providers so one broken provider can't mask a healthy
+      // later one (TD-2026-07-17A-048/049).
+      lua_interop::AppendProviderFailure(error_message, "document symbol", provider.id,
+                                         call_error);
+      continue;
     }
     if (lua_istable(state, -1)) {
       std::size_t total = 0;

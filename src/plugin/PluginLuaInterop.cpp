@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <cstring>
 
 #if MICROIDE_HAS_LUA_PLUGINS
 #include "util/Hex.h"
@@ -17,6 +18,25 @@ bool IsValidIdentifier(std::string_view value) {
   return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
     return std::isalnum(ch) || ch == '.' || ch == '-' || ch == '_';
   });
+}
+
+void AppendProviderFailure(std::string* error_message, std::string_view kind,
+                           std::string_view provider_id, std::string_view call_error) {
+  // Keep the aggregated warning bounded: a language with hundreds of broken providers
+  // must not balloon one string. Stop appending once we cross the ceiling.
+  constexpr std::size_t kMaxAggregatedProviderErrorBytes = 4096;
+  if (error_message == nullptr ||
+      error_message->size() >= kMaxAggregatedProviderErrorBytes) {
+    return;
+  }
+  if (!error_message->empty()) {
+    error_message->append("; ");
+  }
+  error_message->append(kind);
+  error_message->append(" provider '");
+  error_message->append(provider_id);
+  error_message->append("' failed: ");
+  error_message->append(call_error);
 }
 
 #if MICROIDE_HAS_LUA_PLUGINS
@@ -62,6 +82,21 @@ void GetFieldProtected(lua_State* state, int table_index, const char* field) {
   }
 }
 
+std::optional<std::string> ToHostString(lua_State* state, int index) {
+  std::size_t len = 0;
+  const char* s = lua_tolstring(state, index, &len);
+  if (s == nullptr) {
+    return std::nullopt;
+  }
+  // Reject an embedded NUL rather than truncate at it (TD-2026-07-17A-080): scalar reads
+  // back host ids/labels/paths/model names/provider results, and a truncated value could
+  // collide ids or reach a C-string OS call with only the prefix.
+  if (std::memchr(s, '\0', len) != nullptr) {
+    return std::nullopt;
+  }
+  return std::string(s, len);
+}
+
 std::optional<std::string> ReadOptionalStringField(lua_State* state,
                                                    int table_index,
                                                    const char* field) {
@@ -70,7 +105,7 @@ std::optional<std::string> ReadOptionalStringField(lua_State* state,
     lua_pop(state, 1);
     return std::nullopt;
   }
-  std::string value = lua_tostring(state, -1);
+  std::optional<std::string> value = ToHostString(state, -1);
   lua_pop(state, 1);
   return value;
 }
@@ -248,20 +283,20 @@ PluginHost::SidebarItem ReadSidebarItem(lua_State* state, int table_index) {
   const int absolute_index = lua_absindex(state, table_index);
 
   GetFieldProtected(state, absolute_index, "label");
-  if (lua_isstring(state, -1)) {
-    item.label = lua_tostring(state, -1);
+  if (auto host = ToHostString(state, -1)) {
+    item.label = std::move(*host);
   }
   lua_pop(state, 1);
 
   GetFieldProtected(state, absolute_index, "detail");
-  if (lua_isstring(state, -1)) {
-    item.detail = lua_tostring(state, -1);
+  if (auto host = ToHostString(state, -1)) {
+    item.detail = std::move(*host);
   }
   lua_pop(state, 1);
 
   GetFieldProtected(state, absolute_index, "path");
-  if (lua_isstring(state, -1)) {
-    item.path = lua_tostring(state, -1);
+  if (auto host = ToHostString(state, -1)) {
+    item.path = std::move(*host);
   }
   lua_pop(state, 1);
 
@@ -280,8 +315,8 @@ PluginHost::SidebarItem ReadSidebarItem(lua_State* state, int table_index) {
   lua_pop(state, 1);
 
   GetFieldProtected(state, absolute_index, "id");
-  if (lua_isstring(state, -1)) {
-    item.id = lua_tostring(state, -1);
+  if (auto host = ToHostString(state, -1)) {
+    item.id = std::move(*host);
   }
   lua_pop(state, 1);
 

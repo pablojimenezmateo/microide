@@ -19,6 +19,16 @@ namespace microide::plugin::lua_interop {
 // plugin-id validation during load. Pure std; usable regardless of Lua support.
 bool IsValidIdentifier(std::string_view value);
 
+// Accumulate a provider failure into `*error_message` without letting a flood of broken
+// providers grow it without bound. Used by the completion/code-action, nav/reference, and
+// hover harvest loops (TD-2026-07-17A-047/048/049): one failing provider must no longer
+// suppress every healthy provider's results, so those loops now *continue* past a failed
+// PCall and record the failure here instead of discarding accumulated results. A null
+// `error_message` is a no-op; the aggregate is capped so a language with hundreds of
+// broken providers cannot balloon a single warning string. Pure std.
+void AppendProviderFailure(std::string* error_message, std::string_view kind,
+                           std::string_view provider_id, std::string_view call_error);
+
 #if MICROIDE_HAS_LUA_PLUGINS
 // Pushes `table[field]` onto the stack, protected against a raising `__index`
 // metamethod. A plugin controls the tables we harvest and can install a metatable
@@ -49,6 +59,18 @@ std::string ReadStringField(lua_State* state, int table_index, const char* field
 std::optional<std::string> ReadOptionalStringField(lua_State* state,
                                                    int table_index,
                                                    const char* field);
+
+// Length-preserving extraction of a host string from the value at `index`. Returns
+// nullopt when the value is not a string/number OR contains an embedded NUL byte. Lua
+// strings are length-bearing, so "foo\0bar" is a single distinct string; the legacy
+// `std::string(lua_tostring(...))` path silently truncated it at the first NUL, which
+// could collapse two distinct plugin ids to one host id, skip validation of the bytes
+// after the NUL, or hand a truncated path/argument to a C-string OS call
+// (TD-2026-07-17A-080). Every scalar id/label/path/argument read routes through here (or
+// the field readers above, which share it); binary payloads that legitimately carry NULs
+// use the explicit length-preserving ReadStringField(..., std::string*) overload instead.
+// Like lua_tolstring, a number value is coerced to its string form in place.
+std::optional<std::string> ToHostString(lua_State* state, int index);
 int ReadFunctionRefField(lua_State* state, int table_index, const char* field);
 std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
                                                              int table_index,

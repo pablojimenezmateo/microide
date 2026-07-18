@@ -73,10 +73,12 @@ std::vector<PluginHost::CompletionCandidate> QueryCompletions(
     const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
     std::string call_error;
     if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(3, 1, &call_error)) {
-      if (error_message != nullptr) {
-        *error_message = "completion provider '" + provider.id + "' failed: " + call_error;
-      }
-      return {};
+      // Continue to later providers instead of discarding every earlier provider's
+      // healthy candidates (TD-2026-07-17A-047). Queries run with
+      // allow_registration=false, so `completion_runtimes` cannot reallocate across the
+      // PCall and `provider` stays valid for the error record.
+      lua_interop::AppendProviderFailure(error_message, "completion", provider.id, call_error);
+      continue;
     }
     if (lua_istable(state, -1)) {
       // Bound the harvest by lua_rawlen and read entries with lua_rawgeti: the
@@ -148,10 +150,10 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
     const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
     std::string call_error;
     if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(2, 1, &call_error)) {
-      if (error_message != nullptr) {
-        *error_message = "code action provider '" + provider.id + "' failed: " + call_error;
-      }
-      return {};
+      // Keep earlier providers' actions and keep scanning later providers
+      // (TD-2026-07-17A-047).
+      lua_interop::AppendProviderFailure(error_message, "code action", provider.id, call_error);
+      continue;
     }
     if (lua_istable(state, -1)) {
       const int array_index = lua_absindex(state, -1);
@@ -173,8 +175,10 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
               static_cast<lua_Integer>(lua_rawlen(state, args_index)), kMaxCodeActionArguments);
           for (lua_Integer arg_index = 1; arg_index <= args_count; ++arg_index) {
             lua_rawgeti(state, args_index, arg_index);
-            if (lua_isstring(state, -1)) {
-              action.arguments.emplace_back(lua_tostring(state, -1));
+            // These arguments feed command execution; NUL-reject rather than truncate
+            // (TD-2026-07-17A-080).
+            if (auto arg = lua_interop::ToHostString(state, -1)) {
+              action.arguments.push_back(std::move(*arg));
             }
             lua_pop(state, 1);
           }
