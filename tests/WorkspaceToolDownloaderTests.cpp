@@ -164,6 +164,31 @@ void TestToolDownloaderRejectsRemoteFileUri() {
          "a non-local file:// host is rejected");
 }
 
+// TD-2026-07-17A-109: the tool downloader's file:// parsing now shares the strict
+// PathFromFileUri decoder. A malformed percent-escape rejects the whole URI (instead of
+// decoding to a literal '%'), and a decoded NUL is rejected (instead of truncating the
+// native path), matching the shared file-URI path used elsewhere.
+void TestToolDownloaderRejectsMalformedFileUri() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path cache_dir = temp_dir.path() / "cache";
+  const std::filesystem::path source = temp_dir.path() / "tool.bin";
+  WriteFile(source, "payload\n");
+  const std::string sha = "d4e4877bac978b7952f0d544fc52ebff5411d351d129f1f056fa43f11da9af2b";
+
+  ToolDownloader downloader;
+  downloader.SetCacheDir(cache_dir);
+
+  const std::string base = "file://" + source.generic_string();
+  // A well-formed file:// URL for the same bytes still resolves (proving the rejections
+  // below are about the malformation, not a blanket file:// failure).
+  Expect(downloader.Download("tool", base, sha).has_value(),
+         "a well-formed file:// URL still resolves under the strict decoder");
+  Expect(!downloader.Download("tool2", base + "%zz", sha).has_value(),
+         "a malformed %-escape in a file:// tool URL must reject the whole URI");
+  Expect(!downloader.Download("tool3", base + "%00tail", sha).has_value(),
+         "a decoded NUL in a file:// tool URL must be rejected, not truncate the path");
+}
+
 void TestToolDownloaderHashMismatchLeavesNoPartialFile() {
 #if defined(_WIN32)
   return;
@@ -245,6 +270,8 @@ void RegisterWorkspaceToolDownloaderTests(std::vector<TestCase>& tests) {
           TestToolDownloaderRejectsRemoteSchemesNoNetworking);
   AddTest(tests, "WorkspaceToolDownloader/FileUriPercentDecodesLocalHost",
           TestToolDownloaderFileUriPercentDecodesLocalHost);
+  AddTest(tests, "WorkspaceToolDownloader/RejectsMalformedFileUri",
+          TestToolDownloaderRejectsMalformedFileUri);
   AddTest(tests, "WorkspaceToolDownloader/RejectsRemoteFileUri",
           TestToolDownloaderRejectsRemoteFileUri);
   AddTest(tests, "WorkspaceToolDownloader/HashMismatchLeavesNoPartialFile",

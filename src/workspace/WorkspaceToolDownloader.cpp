@@ -7,8 +7,8 @@
 
 #include "project/SubprocessHelper.h"
 #include "util/DurableFile.h"
-#include "util/Hex.h"
 #include "util/Sha256.h"
+#include "workspace/FileUri.h"
 
 namespace microide::workspace {
 
@@ -39,23 +39,13 @@ bool IsSafeToolId(std::string_view tool_id) {
 std::optional<std::filesystem::path> ResolveToolSourcePath(const std::string& url) {
   static constexpr std::string_view kFileScheme = "file://";
   if (url.starts_with(kFileScheme)) {
-    // Parse the file URI properly: `file://<host>/<path>`. Only an empty or
-    // localhost host is a local path; `file://remote/x` is NOT this machine and
-    // must be rejected rather than read as the relative path "remote/x". The path
-    // component is percent-decoded so `%20` etc. resolve to the real filename.
-    std::string_view rest = std::string_view(url).substr(kFileScheme.size());
-    const std::size_t slash = rest.find('/');
-    const std::string_view host = rest.substr(0, slash);
-    if (!host.empty() && host != "localhost") {
-      return std::nullopt;
-    }
-    const std::string_view path_part = (slash == std::string_view::npos)
-                                           ? std::string_view{}
-                                           : rest.substr(slash);
-    if (path_part.empty()) {
-      return std::nullopt;
-    }
-    return std::filesystem::path(util::PercentDecode(path_part)).lexically_normal();
+    // Reuse the shared strict file-URI parser rather than a private lax decode
+    // (TD-2026-07-17A-109): PathFromFileUri does strict percent-decoding (a malformed
+    // %-escape rejects the whole URI), rejects a decoded NUL (which would truncate a
+    // C-string filesystem call), rejects non-local authorities, and handles the Windows
+    // drive form — none of which the old util::PercentDecode path did before hashing and
+    // copying the local source.
+    return PathFromFileUri(url);
   }
 
   // No networking, by design: any remote scheme (`http://`, `https://`, `ftp://`,
