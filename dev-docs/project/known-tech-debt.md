@@ -124,7 +124,7 @@ speed-path items first, then the correctness/lifecycle cleanups.
 > matrix; folded into the Standing backlog above where a matching cluster exists). Union of the
 > numbers below covers every remaining addendum item:
 >
-> 1. **Off-UI-thread / async** (Standing #1): 024, 033, 108. *(005 RESOLVED 2026-07-18 — `TaskExecutor` latest-only keyed submit; blame coalesces queued work by file.)*
+> 1. **Off-UI-thread / async** (Standing #1): 033, 108. *(005, 024 RESOLVED 2026-07-18 — `TaskExecutor` latest-only keyed submit + blame coalescing; `util::ReadFileLineWindow` bounded reference-snippet reader + live-buffer reuse.)*
 > 2. **Bounded resources — caps / budgets / truncation & backpressure** (new dedicated
 >    memory-safety pass; each needs a per-item cap + truncation flag + hostile-input test):
 >    018, 029, 038, 039, 040, 041, 043, 044, 046, 056, 057, 064, 068, 070,
@@ -376,8 +376,19 @@ speed-path items first, then the correctness/lifecycle cleanups.
   path-derived strings on the render path. Move breadcrumb/title/tooltip labels and their
   measured tooltip layouts into the chrome view model or a hover-state cache so the render
   TU consumes prepared `string_view`/layout data.
-- **TD-2026-07-17A-024 — LSP reference/workspace-symbol output reads whole files on the
-  main-thread callback path.** `LspClient` documents request callbacks as main-thread
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-024 — LSP reference/workspace-symbol output reads whole files on the
+  main-thread callback path.** Fixed on three tiers in `EmitReferenceEntry`: (1) when the
+  reference lands in the file already open as the active editor buffer, the snippet is read
+  straight from the live document via a zero-copy `editor::LineSpan` (no I/O, no copy); (2)
+  small on-disk files (≤256 KiB) are still read+split once and cached so many references
+  into one file amortize to a single read; (3) larger files use the new
+  `util::ReadFileLineWindow`, a bounded reader that streams in 64 KiB chunks, retains only
+  the in-range lines, and stops at the snippet's last line or a 2 MiB byte budget — so a hit
+  inside a huge generated file never materializes (or caches) the whole file on the shell
+  thread. Regression: `TextFileIO/ReadFileLineWindow*` (range, single-line, EOF/overrun,
+  byte-budget give-up, binary rejection) plus the existing `Phase5` find-references snippet
+  assertions (which exercise both the viewport-reuse and on-disk snippet paths).
+  `LspClient` documents request callbacks as main-thread
   `DrainCallbacks()` work. `AssistService::PublishReferenceMerge` and
   `ShowWorkspaceSymbols` call `EmitReferenceEntry` for every result; that helper falls back
   to `util::ReadTextFile(path)` and `util::SplitLines(*text)` per distinct file so it can

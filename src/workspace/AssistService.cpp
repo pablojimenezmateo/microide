@@ -1314,6 +1314,20 @@ void AssistService::ApplyFormattingResult(const std::filesystem::path& request_p
 
 namespace {
 
+// A reference/workspace-symbol result shows a 3-line snippet (the hit line +/- 1).
+// Files at or below this size are read+split once and cached so many references
+// into the same file amortize to one read; larger files use the bounded
+// line-window reader instead so a hit inside a huge generated file never
+// materializes (or retains) the whole file on the shell thread. 256 KiB covers
+// essentially every hand-written source file.
+constexpr std::uintmax_t kReferenceSnippetWholeReadBytes = 256ull * 1024;
+
+// Byte budget for the bounded line-window reader used on large files: it streams
+// at most this many bytes looking for the snippet's last line, then gives up
+// (showing just the file:line:col header). Bounds the shell-thread scan for a
+// deep hit without ever slurping a multi-hundred-MB blob.
+constexpr std::uintmax_t kReferenceSnippetScanBytes = 2ull * 1024 * 1024;
+
 // Lower a signature-help result to the display (signature, documentation) pair the
 // caret-anchored popup shows: the active overload's label plus a block that leads
 // with the active parameter (so the user sees which argument they are typing) then
@@ -1549,28 +1563,73 @@ void AssistService::EmitReferenceEntry(
       channel_id, channel_title,
       label + ":" + std::to_string(line) + ":" + std::to_string(column));
 
-  const auto lines_it = file_line_cache.find(path);
-  const std::vector<std::string>* file_lines = nullptr;
-  if (lines_it != file_line_cache.end()) {
-    file_lines = &lines_it->second;
-  } else if (const auto text = util::ReadTextFile(path); text.has_value()) {
-    file_lines = &file_line_cache.emplace(path, util::SplitLines(*text)).first->second;
-  }
-  if (file_lines == nullptr || file_lines->empty()) {
-    return;
-  }
-
   const std::size_t target_line = line > 0 ? line : 1;
   const std::size_t first_line = target_line > 1 ? target_line - 1 : 1;
   const std::size_t last_line = target_line + 1;
-  for (std::size_t line_number = first_line; line_number <= last_line; ++line_number) {
-    if (line_number == 0 || line_number > file_lines->size()) {
-      continue;
-    }
+
+  const auto append_snippet_line = [&](std::size_t line_number, std::string_view text) {
     output_channels_->AppendLine(
         channel_id, channel_title,
         std::string(line_number == target_line ? " > " : "   ") + std::to_string(line_number) +
-            " | " + (*file_lines)[line_number - 1]);
+            " | " + std::string(text));
+  };
+
+  // 1. When the reference lands in the file that is already open as the active
+  //    editor buffer, read the snippet straight from the live document via a
+  //    zero-copy LineSpan — no file I/O and no whole-file line vector.
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  if (const editor::TextViewport* viewport = operations_.active_editable_viewport();
+      viewport != nullptr && viewport->path().lexically_normal() == normalized_path) {
+    const editor::LineSpan lines = viewport->lines();
+    for (std::size_t line_number = first_line;
+         line_number <= last_line && line_number <= lines.size(); ++line_number) {
+      append_snippet_line(line_number, lines[line_number - 1]);
+    }
+    if (append_separator) {
+      output_channels_->AppendLine(channel_id, channel_title, "");
+    }
+    return;
+  }
+
+  // 2. On disk. Small files are read+split once and cached, so many references
+  //    into the same file share one read; large files use a bounded line-window
+  //    reader that streams only up to the snippet's last line and never
+  //    materializes (or caches) the whole file. This bounds both the shell-thread
+  //    time and the retained memory for a reference set that spans huge generated
+  //    files.
+  const std::vector<std::string>* file_lines = nullptr;
+  std::vector<std::string> window;  // owns the bounded-window fallback lines
+  const auto cache_it = file_line_cache.find(path);
+  if (cache_it != file_line_cache.end()) {
+    file_lines = &cache_it->second;
+  } else {
+    const util::FileSignature signature = util::StatFileSignature(path);
+    if (signature.exists && !signature.error &&
+        signature.size <= kReferenceSnippetWholeReadBytes) {
+      if (const auto text = util::ReadTextFile(path); text.has_value()) {
+        file_lines = &file_line_cache.emplace(path, util::SplitLines(*text)).first->second;
+      }
+    } else {
+      window = util::ReadFileLineWindow(path, first_line, last_line,
+                                        kReferenceSnippetScanBytes);
+    }
+  }
+
+  if (file_lines != nullptr) {
+    if (file_lines->empty()) {
+      return;
+    }
+    for (std::size_t line_number = first_line;
+         line_number <= last_line && line_number <= file_lines->size(); ++line_number) {
+      append_snippet_line(line_number, (*file_lines)[line_number - 1]);
+    }
+  } else {
+    if (window.empty()) {
+      return;
+    }
+    for (std::size_t i = 0; i < window.size(); ++i) {
+      append_snippet_line(first_line + i, window[i]);
+    }
   }
   if (append_separator) {
     output_channels_->AppendLine(channel_id, channel_title, "");

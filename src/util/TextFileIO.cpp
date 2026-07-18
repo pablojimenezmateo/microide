@@ -65,6 +65,87 @@ std::optional<std::string> ReadTextFile(const std::filesystem::path& path) {
   return content;
 }
 
+std::vector<std::string> ReadFileLineWindow(const std::filesystem::path& path,
+                                            std::size_t first_line, std::size_t last_line,
+                                            std::uintmax_t max_bytes) {
+  std::vector<std::string> window;
+  if (first_line == 0) {
+    first_line = 1;
+  }
+  if (last_line < first_line) {
+    return window;
+  }
+  // Reject non-regular files before opening: a FIFO/device/procfs entry can block
+  // the caller on open/read before any byte budget applies.
+  if (!IsRegularFileFollowingSymlinks(path)) {
+    return window;
+  }
+  std::ifstream file(path, std::ios::binary);
+  if (!file) {
+    return window;
+  }
+
+  window.reserve(last_line - first_line + 1);
+  std::string current;          // bytes of the line currently being accumulated
+  std::size_t line_number = 1;  // 1-based number of the line `current` belongs to
+  std::uintmax_t consumed = 0;  // total bytes streamed (bounds time + allocation)
+  bool binary = false;
+  bool budget_hit = false;
+  char chunk[64 * 1024];
+
+  const auto flush_line = [&]() {
+    if (line_number >= first_line && line_number <= last_line) {
+      if (!current.empty() && current.back() == '\r') {
+        current.pop_back();
+      }
+      window.push_back(current);
+    }
+    current.clear();
+  };
+
+  while (file && !binary && !budget_hit && line_number <= last_line) {
+    file.read(chunk, sizeof(chunk));
+    const std::streamsize got = file.gcount();
+    for (std::streamsize i = 0; i < got; ++i) {
+      if (++consumed > max_bytes) {
+        budget_hit = true;
+        break;
+      }
+      const char c = chunk[i];
+      if (c == '\0') {
+        binary = true;
+        break;
+      }
+      if (c == '\n') {
+        flush_line();
+        if (line_number >= last_line) {
+          break;
+        }
+        ++line_number;
+      } else if (line_number >= first_line && line_number <= last_line) {
+        // Retain bytes only for lines we may emit; skipped lines still advance
+        // line_number via their newline but cost no allocation.
+        current.push_back(c);
+      }
+    }
+    if (got < static_cast<std::streamsize>(sizeof(chunk))) {
+      break;  // short read == EOF
+    }
+  }
+
+  // Emit a final line that ended at EOF without a trailing newline, but only when
+  // the scan stopped cleanly (not on the binary or byte-budget guard, which leave
+  // `current` holding an incomplete/oversized line we must not surface).
+  if (!binary && !budget_hit && !current.empty() && line_number >= first_line &&
+      line_number <= last_line) {
+    flush_line();
+  }
+  if (binary) {
+    window.clear();
+  }
+  return window;
+}
+
 TextFileReadResult ReadTextFileClassified(const std::filesystem::path& path) {
   TextFileReadResult result;
 

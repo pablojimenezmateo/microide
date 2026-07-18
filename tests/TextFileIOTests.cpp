@@ -18,6 +18,7 @@ namespace {
 
 using microide::util::kMaxTextFileBytes;
 using microide::util::ReadFileForTextSearch;
+using microide::util::ReadFileLineWindow;
 using microide::util::ReadTextFile;
 using microide::util::ReadTextFileClassified;
 using microide::util::TextFileReadStatus;
@@ -203,6 +204,81 @@ void TestReadTextFileRejectsNonRegularFiles() {
 #endif
 }
 
+// TD-2026-07-17A-024: the bounded line-window reader returns exactly the
+// requested 1-based range, strips CRLF, and never materializes the whole file.
+void TestReadFileLineWindowReturnsRequestedRange() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "src.txt";
+  WriteFile(path, "one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n");
+
+  const auto window = ReadFileLineWindow(path, 2, 4);
+  Expect(window.size() == 3, "window should return exactly lines [2,4]");
+  Expect(window[0] == "two", "first window line should be line 2 with CR stripped");
+  Expect(window[1] == "three", "second window line should be line 3");
+  Expect(window[2] == "four", "third window line should be line 4");
+}
+
+// A single target line (first==last) works, including the very first line.
+void TestReadFileLineWindowSingleLine() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "src.txt";
+  WriteFile(path, "alpha\nbeta\ngamma\n");
+
+  const auto first = ReadFileLineWindow(path, 1, 1);
+  Expect(first.size() == 1 && first[0] == "alpha", "line 1 window should be just 'alpha'");
+  const auto mid = ReadFileLineWindow(path, 2, 2);
+  Expect(mid.size() == 1 && mid[0] == "beta", "line 2 window should be just 'beta'");
+}
+
+// A final line with no trailing newline is still returned; a range past EOF
+// yields only the lines that exist.
+void TestReadFileLineWindowHandlesEofAndOverrun() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "src.txt";
+  WriteFile(path, "first\nsecond\nlast-no-newline");
+
+  const auto tail = ReadFileLineWindow(path, 3, 3);
+  Expect(tail.size() == 1 && tail[0] == "last-no-newline",
+         "a final newline-less line must still be returned");
+  const auto past = ReadFileLineWindow(path, 4, 6);
+  Expect(past.empty(), "a range entirely past EOF yields no lines");
+  const auto straddle = ReadFileLineWindow(path, 2, 10);
+  Expect(straddle.size() == 2, "a range straddling EOF returns only existing lines");
+}
+
+// The byte budget bounds the scan: a target line beyond the budget is not
+// materialized, so the reader degrades to no snippet instead of slurping the file.
+void TestReadFileLineWindowRespectsByteBudget() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "big.txt";
+  std::string content;
+  for (int i = 0; i < 5000; ++i) {
+    content += "0123456789abcdef\n";  // 17 bytes/line
+  }
+  WriteFile(path, content);
+
+  // Line 4000 sits well past a 1 KiB budget; the reader must give up cleanly.
+  const auto capped = ReadFileLineWindow(path, 3999, 4001, /*max_bytes=*/1024);
+  Expect(capped.empty(), "a target beyond the byte budget yields an empty window");
+  // The same line resolves when the budget covers it.
+  const auto full = ReadFileLineWindow(path, 3999, 4001, /*max_bytes=*/kMaxTextFileBytes);
+  Expect(full.size() == 3, "with an ample budget the deep window resolves");
+  Expect(full[1] == "0123456789abcdef", "the deep line content should match");
+}
+
+// A file whose scanned prefix contains a NUL is treated as binary -> empty window.
+void TestReadFileLineWindowRejectsBinary() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "bin.dat";
+  std::string bytes("line one\nli");
+  bytes.push_back('\0');
+  bytes.append("ne two\nthree\n");
+  WriteFile(path, bytes);
+
+  const auto window = ReadFileLineWindow(path, 1, 3);
+  Expect(window.empty(), "a binary prefix must yield an empty window, not garbage");
+}
+
 }  // namespace
 
 void RegisterTextFileIOTests(std::vector<TestCase>& tests) {
@@ -214,6 +290,16 @@ void RegisterTextFileIOTests(std::vector<TestCase>& tests) {
           TestReadFileForTextSearchRespectsMaxBytes);
   AddTest(tests, "TextFileIO/ReadTextFileClassifiedDistinguishesCases",
           TestReadTextFileClassifiedDistinguishesCases);
+  AddTest(tests, "TextFileIO/ReadFileLineWindowReturnsRequestedRange",
+          TestReadFileLineWindowReturnsRequestedRange);
+  AddTest(tests, "TextFileIO/ReadFileLineWindowSingleLine",
+          TestReadFileLineWindowSingleLine);
+  AddTest(tests, "TextFileIO/ReadFileLineWindowHandlesEofAndOverrun",
+          TestReadFileLineWindowHandlesEofAndOverrun);
+  AddTest(tests, "TextFileIO/ReadFileLineWindowRespectsByteBudget",
+          TestReadFileLineWindowRespectsByteBudget);
+  AddTest(tests, "TextFileIO/ReadFileLineWindowRejectsBinary",
+          TestReadFileLineWindowRejectsBinary);
   AddTest(tests, "TextFileIO/ReadTextFileRejectsNonRegularFiles",
           TestReadTextFileRejectsNonRegularFiles);
 }

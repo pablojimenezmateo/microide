@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace microide::util {
 
@@ -26,6 +27,22 @@ inline constexpr std::uintmax_t kMaxSearchFileBytes = 32ull * 1024 * 1024;
 
 std::optional<std::string> ReadTextFile(const std::filesystem::path& path);
 bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text);
+
+// Reads the 1-based inclusive line range [first_line, last_line] from a text file
+// WITHOUT materializing the whole file. Streams bytes in bounded chunks, counting
+// newlines, retaining only the bytes of in-range lines, and stops as soon as
+// `last_line` has been read (or `max_bytes` total bytes have been streamed). This
+// lets a caller show a small snippet (e.g. a reference's line +/- one) out of a
+// huge generated file at O(bytes up to last_line) cost with no whole-file
+// retention. `first_line == 0` is treated as 1. The returned vector holds the
+// lines actually present in range; element i corresponds to line `first_line + i`,
+// and it may be shorter than requested if the file ends first or the byte budget
+// is hit before the range is reached. Trailing '\r' is stripped so a CRLF file
+// shows no stray carriage return. A non-regular / unopenable file, or one whose
+// scanned prefix contains a NUL byte (binary), yields an empty vector.
+std::vector<std::string> ReadFileLineWindow(const std::filesystem::path& path,
+                                            std::size_t first_line, std::size_t last_line,
+                                            std::uintmax_t max_bytes = kMaxTextFileBytes);
 
 // Outcome of a classifying text read. Distinguishes a genuinely absent file from
 // one that exists but cannot be represented as ordinary text. Callers that would
