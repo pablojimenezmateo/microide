@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "editor/DecoratedTextGridRenderer.h"
@@ -1057,13 +1058,16 @@ LspService::DiskEditResult LspService::ApplyLspEditsToClosedFilesOnDisk(
   std::vector<std::pair<std::filesystem::path,
                         std::vector<std::pair<editor::SelectionRange, std::string>>>>
       by_path;
+  // Map normalized path -> slot so grouping is O(1) per edit rather than a linear
+  // scan (O(edits * touched_files) otherwise for a large multi-file rename).
+  std::unordered_map<std::string, std::size_t> bucket_index;
   const auto bucket_for = [&](const std::filesystem::path& normalized)
       -> std::vector<std::pair<editor::SelectionRange, std::string>>& {
-    for (auto& entry : by_path) {
-      if (entry.first == normalized) {
-        return entry.second;
-      }
+    const auto it = bucket_index.find(normalized.generic_string());
+    if (it != bucket_index.end()) {
+      return by_path[it->second].second;
     }
+    bucket_index.emplace(normalized.generic_string(), by_path.size());
     by_path.emplace_back(normalized,
                          std::vector<std::pair<editor::SelectionRange, std::string>>{});
     return by_path.back().second;

@@ -68,7 +68,8 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
                 return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
               },
           .git_sidebar_list_top = [this](const SDL_FRect& rect) { return GitSidebarListTop(rect); },
-          .build_git_sidebar_lines = [this]() { return BuildGitSidebarLines(); },
+          .build_git_sidebar_lines =
+              [this]() -> const std::vector<GitSidebarLine>& { return BuildGitSidebarLines(); },
           .compute_git_sidebar_list_layout =
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputeGitSidebarListLayout(rect, count);

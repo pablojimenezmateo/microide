@@ -500,32 +500,53 @@ bool ExtractStatusItemUpdate(lua_State* state,
 
 bool ApplyStatusItemUpdate(
     const StatusItemUpdate& update,
-    std::vector<PluginHost::ContributedStatusItem>* status_item_order) {
-  if (status_item_order == nullptr) {
+    std::vector<PluginHost::ContributedStatusItem>* status_item_order,
+    std::unordered_map<std::string, std::size_t>* index) {
+  if (status_item_order == nullptr || index == nullptr) {
     return false;
   }
-  for (auto& order_item : *status_item_order) {
-    if (order_item.id != update.full_id) {
-      continue;
+  const auto rebuild_index = [&] {
+    index->clear();
+    index->reserve(status_item_order->size());
+    for (std::size_t i = 0; i < status_item_order->size(); ++i) {
+      index->emplace((*status_item_order)[i].id, i);
     }
-    if (update.has_text) {
-      order_item.text = update.text;
-    }
-    if (update.has_tooltip) {
-      order_item.tooltip = update.tooltip;
-    }
-    if (update.has_icon) {
-      order_item.icon = update.icon;
-    }
-    if (update.has_tone) {
-      order_item.tone = update.tone;
-    }
-    if (update.has_progress) {
-      order_item.progress = update.progress;
-    }
-    return true;
+  };
+  // Ids are unique, so index->size() tracks the vector's size 1:1. A structural
+  // change (register append / teardown erase) always changes the vector size;
+  // in-place field updates below keep positions valid. Rebuild only on a size
+  // mismatch so steady-state updates stay O(1).
+  if (index->size() != status_item_order->size()) {
+    rebuild_index();
   }
-  return false;
+  auto it = index->find(update.full_id);
+  if (it == index->end() || it->second >= status_item_order->size() ||
+      (*status_item_order)[it->second].id != update.full_id) {
+    // Defend against a same-size structural swap: rebuild once and retry before
+    // concluding the item is absent.
+    rebuild_index();
+    it = index->find(update.full_id);
+    if (it == index->end()) {
+      return false;
+    }
+  }
+  auto& order_item = (*status_item_order)[it->second];
+  if (update.has_text) {
+    order_item.text = update.text;
+  }
+  if (update.has_tooltip) {
+    order_item.tooltip = update.tooltip;
+  }
+  if (update.has_icon) {
+    order_item.icon = update.icon;
+  }
+  if (update.has_tone) {
+    order_item.tone = update.tone;
+  }
+  if (update.has_progress) {
+    order_item.progress = update.progress;
+  }
+  return true;
 }
 
 }  // namespace microide::plugin::registry_interop

@@ -406,6 +406,10 @@ struct PluginHost::Impl {
     // mutates THIS copy directly on the UI thread (see LuaStatusUpdate) so a status
     // change shows without a reload.
     std::vector<PluginHost::ContributedStatusItem> status_item_order;
+    // id->position cache over status_item_order, maintained by ApplyStatusItemUpdate
+    // so runtime ctx.status.update resolves the target in O(1). Reset to empty on each
+    // publish (this snapshot is rebuilt wholesale) and lazily repopulated on first use.
+    std::unordered_map<std::string, std::size_t> status_item_index;
     // Which reactive editor events any loaded plugin subscribes to. The shell gates
     // its per-keystroke sampling on this, so it must read the published (race-free)
     // value rather than scanning the live `plugins` vector the worker rebuilds.
@@ -445,6 +449,9 @@ struct PluginHost::Impl {
   // status_item_order into published_.status_item_order for the UI to render.
   std::unordered_map<std::string, PluginHost::ContributedStatusItem> status_items;
   std::vector<PluginHost::ContributedStatusItem> status_item_order;
+  // id->position cache over the worker status_item_order (see the published mirror in
+  // ContributionSnapshot); used only on the in-reload ctx.status.update path.
+  std::unordered_map<std::string, std::size_t> status_item_index;
   std::vector<PluginHost::ContributedFormatter> formatters;
   std::vector<PluginHost::ContributedSaveParticipant> save_participants;
   std::vector<SaveParticipantRuntime> save_participant_runtimes;

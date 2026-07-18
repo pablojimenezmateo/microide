@@ -1087,7 +1087,10 @@
                                                      std::size_t line_count) const;
   ScrollableListLayout ComputePluginSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                       std::size_t line_count) const;
-  std::vector<GitSidebarLine> BuildGitSidebarLines() const;
+  // Reference to the shared revision-exact cached line model (valid until the next
+  // CachedGitSidebarPresentation call on the same thread). Navigation/hit-testing
+  // read this to avoid copying the whole flattened tree per arrow key / mouse move.
+  const std::vector<GitSidebarLine>& BuildGitSidebarLines() const;
   bool ToggleGitSidebarDirectoryCollapsed(const std::string& tree_node_key);
   std::optional<std::size_t> SelectedGitSidebarLineIndex() const;
   const GitSidebarEntry* SelectedGitSidebarEntry() const;

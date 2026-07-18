@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <functional>
 #include <type_traits>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -31,20 +33,57 @@ struct TwoSourceState {
   bool AllResolved() const { return !lsp_pending && !plugin_pending; }
 };
 
+// Detects whether `Key` can be used with std::hash (so the hash-set fast path
+// below only instantiates for hashable keys; anything else keeps the linear
+// scan, which never needs hashing).
+template <typename Key, typename = void>
+struct IsStdHashable : std::false_type {};
+template <typename Key>
+struct IsStdHashable<
+    Key, std::void_t<decltype(std::declval<std::hash<Key>>()(std::declval<const Key&>()))>>
+    : std::true_type {};
+
 // Ranked, de-duplicated union of two already-transformed result lists. The
 // authoritative source is passed as `primary`; its items come first and win key
 // ties, and `secondary` contributes only items whose key has not already
 // appeared. Per-source order is preserved. `key_of(item)` yields a comparable
-// de-dup key (e.g. a completion label or code-action title). Lists are short
-// (an overlay's worth), so a linear seen-scan beats hashing.
+// de-dup key (e.g. a completion label or code-action title).
+//
+// An overlay's worth of results is short, so a linear seen-scan (no hashing,
+// cache-friendly) wins there. But providers are only bounded by harvest caps
+// (LSP up to 5,000 rows, plugins up to 20,000 completions), so a verbose or
+// hostile source set could make the linear scan O(total^2) — tens of millions
+// of comparisons. Once the combined size crosses a small threshold, switch to a
+// hash set so de-dup stays O(total).
 template <typename Item, typename KeyOf>
 std::vector<Item> RankedUnion(const std::vector<Item>& primary,
                               const std::vector<Item>& secondary, KeyOf key_of) {
   using Key = std::decay_t<decltype(key_of(std::declval<const Item&>()))>;
+  const std::size_t total = primary.size() + secondary.size();
   std::vector<Item> merged;
-  merged.reserve(primary.size() + secondary.size());
+  merged.reserve(total);
+
+  if constexpr (IsStdHashable<Key>::value) {
+    constexpr std::size_t kHashThreshold = 128;
+    if (total >= kHashThreshold) {
+      std::unordered_set<Key> seen;
+      seen.reserve(total);
+      const auto append = [&](const std::vector<Item>& source) {
+        for (const Item& item : source) {
+          if (!seen.insert(key_of(item)).second) {
+            continue;
+          }
+          merged.push_back(item);
+        }
+      };
+      append(primary);
+      append(secondary);
+      return merged;
+    }
+  }
+
   std::vector<Key> seen;
-  seen.reserve(primary.size() + secondary.size());
+  seen.reserve(total);
   const auto append = [&](const std::vector<Item>& source) {
     for (const Item& item : source) {
       Key key = key_of(item);

@@ -124,6 +124,43 @@ void TestBreakpointStoreApplyVerificationMatchesByLineNotIndex() {
          "line 30 should match by requested line (id 3)");
 }
 
+// Verification against a large sorted breakpoint set must land each result on the
+// breakpoint at its requested line (the binary search replaces the O(n) scan).
+void TestBreakpointStoreApplyVerificationManyLines() {
+  BreakpointStore store;
+  const std::filesystem::path path = "/tmp/project/big.py";
+  constexpr std::size_t kCount = 4000;
+  for (std::size_t i = 0; i < kCount; ++i) {
+    store.Toggle(path, i * 2);  // even 0-based lines 0,2,4,...
+  }
+  // Verify a scattered subset. VerifiedBreakpoint.line is the 1-based requested line.
+  store.ApplyVerification(
+      path, {
+                VerifiedBreakpoint{.id = 1, .verified = true, .line = 1},        // 0-based 0
+                VerifiedBreakpoint{.id = 2, .verified = true, .line = 4001},     // 0-based 4000
+                VerifiedBreakpoint{.id = 3, .verified = false, .line = 7999,
+                                   .message = "no code"},                        // 0-based 7998
+                VerifiedBreakpoint{.id = 4, .verified = true, .line = 5000},     // 0-based 4999: odd, absent
+            });
+  const auto* bps = store.FindByPath(path);
+  Expect(bps != nullptr && bps->size() == kCount, "all breakpoints retained");
+  const auto find = [&](std::size_t line) -> const Breakpoint* {
+    for (const auto& bp : *bps) {
+      if (bp.line == line) {
+        return &bp;
+      }
+    }
+    return nullptr;
+  };
+  Expect(find(0)->verified && find(0)->adapter_id == 1, "line 0 verifies by requested line");
+  Expect(find(4000)->verified && find(4000)->adapter_id == 2, "line 4000 verifies by requested line");
+  Expect(!find(7998)->verified && find(7998)->verify_message == "no code",
+         "line 7998 reflects its rejection");
+  // The odd requested line 4999 has no breakpoint; it must not clobber a neighbour.
+  Expect(find(4998)->adapter_id == 0 && find(5000)->adapter_id == 0,
+         "an absent requested line does not bleed onto neighbours");
+}
+
 // The async DAP `breakpoint` event updates verification after the initial
 // response: matched by the adapter id assigned at setBreakpoints time.
 void TestBreakpointStoreApplyBreakpointEvent() {

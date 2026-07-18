@@ -1,5 +1,8 @@
 #include "workspace/CompareTabReview.h"
 
+#include <string>
+#include <unordered_map>
+
 #include "compare/BranchReviewStateTypes.h"
 #include "util/StringUtil.h"
 #include "workspace/WorkspaceUiText.h"
@@ -90,6 +93,14 @@ void ApplyBranchReviewPresentationMarkers(
       .path = compare_tab.path,
       .model = &compare_tab.model,
   };
+  // Hunk status/note state is constant per hunk, but a large compare tab has many
+  // rows per hunk. Memoize the resolved (marker label, has_note) per hunk index so
+  // each hunk's HunkStatus/HasNote scan runs once instead of row_count times.
+  struct HunkMarker {
+    std::string marker_label;
+    bool has_note = false;
+  };
+  std::unordered_map<int, HunkMarker> hunk_markers;
   for (compare::ComparePresentationRow& row : compare_tab.presentation.rows) {
     row.review_marker_label.clear();
     row.has_review_note = false;
@@ -102,12 +113,18 @@ void ApplyBranchReviewPresentationMarkers(
         row.model_row_index < compare_tab.model.rows.size()) {
       const int hunk = compare_tab.model.rows[row.model_row_index].hunk;
       if (hunk >= 0) {
-        compare::BranchReviewStateQueryInput query = base_query;
-        query.selected_hunk_index = hunk;
-        row.review_marker_label =
-            compare::BranchReviewMarkerLabel(review_service.HunkStatus(query));
-        row.has_review_note =
-            review_service.HasNote(query, compare::BranchReviewNoteScope::Hunk);
+        auto it = hunk_markers.find(hunk);
+        if (it == hunk_markers.end()) {
+          compare::BranchReviewStateQueryInput query = base_query;
+          query.selected_hunk_index = hunk;
+          HunkMarker marker{
+              .marker_label = compare::BranchReviewMarkerLabel(review_service.HunkStatus(query)),
+              .has_note = review_service.HasNote(query, compare::BranchReviewNoteScope::Hunk),
+          };
+          it = hunk_markers.emplace(hunk, std::move(marker)).first;
+        }
+        row.review_marker_label = it->second.marker_label;
+        row.has_review_note = it->second.has_note;
       }
     }
     compare::ComposeComparePresentationDisplaySummary(row);

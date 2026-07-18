@@ -143,7 +143,7 @@
   }
   static SDL_FRect GitSidebarEntryRowRect(WorkspaceShell& shell, std::size_t entry_index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto lines = shell.BuildGitSidebarLines();
+    const auto& lines = shell.BuildGitSidebarLines();
     auto list_layout = shell.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
     for (std::size_t i = 0; i < lines.size(); ++i) {
       if (lines[i].entry_index < 0 || static_cast<std::size_t>(lines[i].entry_index) != entry_index) {

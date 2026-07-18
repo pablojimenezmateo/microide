@@ -340,7 +340,8 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                 return ComputeTreeSidebarListLayout(rect, count);
               },
           .selected_git_sidebar_line_index = [this]() { return SelectedGitSidebarLineIndex(); },
-          .build_git_sidebar_lines = [this]() { return BuildGitSidebarLines(); },
+          .build_git_sidebar_lines =
+              [this]() -> const std::vector<GitSidebarLine>& { return BuildGitSidebarLines(); },
           .compute_git_sidebar_list_layout =
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputeGitSidebarListLayout(rect, count);

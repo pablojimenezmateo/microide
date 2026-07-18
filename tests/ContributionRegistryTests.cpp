@@ -3,7 +3,11 @@
 #include "editor/PluginDecorationStore.h"
 #include "editor/PluginSurfaceStore.h"
 #include "plugin/PluginHost.h"
+#include "plugin/PluginRegistryInterop.h"
 #include "render/PluginDisplayList.h"
+
+#include <cstddef>
+#include <unordered_map>
 
 #include <variant>
 #include "workspace/WorkspaceFileIconRegistry.h"
@@ -481,6 +485,56 @@ return ide.plugin({
 // ---------------------------------------------------------------------------
 // Plugin-contributed status items
 // ---------------------------------------------------------------------------
+
+// registry_interop::ApplyStatusItemUpdate now keeps an id->position cache so a
+// runtime ctx.status.update resolves in O(1). This exercises the cache directly:
+// updates land on the right row, the lazy rebuild triggers when the order vector's
+// size changes (register/teardown), and a same-size structural swap still resolves.
+void TestStatusItemUpdateIndexCache() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  namespace registry_interop = microide::plugin::registry_interop;
+  using ContributedStatusItem = PluginHost::ContributedStatusItem;
+
+  std::vector<ContributedStatusItem> order = {
+      ContributedStatusItem{.id = "p.a", .text = "a0"},
+      ContributedStatusItem{.id = "p.b", .text = "b0"},
+      ContributedStatusItem{.id = "p.c", .text = "c0"},
+  };
+  std::unordered_map<std::string, std::size_t> index;
+
+  const auto text_update = [](const std::string& id, const std::string& text) {
+    registry_interop::StatusItemUpdate u;
+    u.full_id = id;
+    u.has_text = true;
+    u.text = text;
+    return u;
+  };
+
+  Expect(registry_interop::ApplyStatusItemUpdate(text_update("p.b", "b1"), &order, &index),
+         "update finds an existing item");
+  Expect(order[1].text == "b1", "the right row is updated");
+  Expect(!registry_interop::ApplyStatusItemUpdate(text_update("p.missing", "x"), &order, &index),
+         "an unknown id reports no match");
+
+  // Simulate a teardown: the order vector shrinks. The next update must rebuild the
+  // stale index (size mismatch) and still resolve the surviving row.
+  order.erase(order.begin());  // drop "p.a"; order is now [p.b, p.c]
+  Expect(registry_interop::ApplyStatusItemUpdate(text_update("p.c", "c1"), &order, &index),
+         "update resolves after a structural shrink");
+  Expect(order[1].text == "c1", "the surviving row updates at its new position");
+  Expect(!registry_interop::ApplyStatusItemUpdate(text_update("p.a", "x"), &order, &index),
+         "the removed id no longer resolves");
+
+  // Simulate a same-size swap (one id replaced by another): the id-verify fallback
+  // must rebuild and resolve rather than trust a stale slot.
+  order[0].id = "p.d";
+  order[0].text = "d0";
+  Expect(registry_interop::ApplyStatusItemUpdate(text_update("p.d", "d1"), &order, &index),
+         "a same-size id swap still resolves via the id-verify fallback");
+  Expect(order[0].text == "d1", "the swapped-in row updates");
+}
 
 void TestPluginContributedStatusItems() {
 #if !MICROIDE_HAS_LUA_PLUGINS
@@ -1158,6 +1212,7 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "KeybindingRegistry/ResolveSkipsSecondPluginSameChord",
           TestResolveKeybindingsSkipsSecondPluginSameChord);
   AddTest(tests, "StatusRegistry/PluginContributions", TestPluginContributedStatusItems);
+  AddTest(tests, "StatusRegistry/StatusItemUpdateIndexCache", TestStatusItemUpdateIndexCache);
   AddTest(tests, "StatusRegistry/EqualPriorityKeepsRegistrationOrder",
           TestPluginStatusItemsEqualPriorityKeepRegistrationOrder);
   AddTest(tests, "StatusRegistry/Update", TestPluginStatusItemUpdate);

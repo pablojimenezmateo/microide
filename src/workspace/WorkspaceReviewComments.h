@@ -95,19 +95,26 @@ class ReviewCommentsRegistry {
 
  private:
   struct UriIndex {
-    bool dirty = true;
     std::vector<std::size_t> thread_indices;
     std::unordered_map<int, std::vector<std::size_t>> comment_indices_by_line;
     std::unordered_map<int, std::vector<std::size_t>> thread_indices_by_line;
   };
 
+  // Non-inserting: returns nullptr for a URI with no markers WITHOUT growing the
+  // cache (a render pass visiting many marker-free files must not accumulate empty
+  // per-file records). Rebuilds the whole per-URI grouping in one pass when the
+  // cache is dirty, so the first lookup after a mutation is O(comments+threads)
+  // once for all URIs instead of a full scan per first-seen URI.
   const UriIndex* IndexForUri(const std::string& uri) const;
-  void InvalidateUri(const std::string& uri);
+  void RebuildIndices() const;
   void InvalidateAll();
 
   std::vector<ReviewComment> comments_;
   std::vector<ReviewThread> threads_;
+  // Only URIs that actually carry markers appear here; rebuilt wholesale when
+  // indices_dirty_ is set (any comment/thread mutation).
   mutable std::unordered_map<std::string, UriIndex> indices_by_uri_;
+  mutable bool indices_dirty_ = true;
 };
 
 }  // namespace microide::workspace

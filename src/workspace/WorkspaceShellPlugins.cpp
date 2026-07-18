@@ -4,7 +4,9 @@
 #include <filesystem>
 #include <iostream>
 #include <set>
+#include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "project/CompileCommandsLocator.h"
@@ -1183,7 +1185,7 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
   // one matching the active buffer) resolves to the active editable buffer; other
   // paths must already be open (v1 never edits files on disk, so undo stays
   // coherent). Mirrors ApplyPluginWorkspaceEdit's resolution.
-  const auto resolve = [&](const std::filesystem::path& path) -> editor::TextViewport* {
+  const auto resolve_uncached = [&](const std::filesystem::path& path) -> editor::TextViewport* {
     if (path.empty()) {
       return ActiveEditableViewport();
     }
@@ -1207,17 +1209,36 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
     return nullptr;
   };
 
+  // A large rename / code action repeatedly targets the same handful of files, so
+  // memoize the (normalized) path -> viewport resolution instead of re-scanning
+  // every open tab per edit — that inner scan is the second half of the O(edits *
+  // touched_files) worst case the parser caps still permit.
+  std::unordered_map<std::string, editor::TextViewport*> resolve_cache;
+  const auto resolve = [&](const std::filesystem::path& path) -> editor::TextViewport* {
+    std::string key = path.lexically_normal().generic_string();
+    const auto it = resolve_cache.find(key);
+    if (it != resolve_cache.end()) {
+      return it->second;
+    }
+    editor::TextViewport* viewport = resolve_uncached(path);
+    resolve_cache.emplace(std::move(key), viewport);
+    return viewport;
+  };
+
   // Group edits by the buffer they resolve to; each buffer applies its edits as a
   // single grouped-undo step, highest-position-first so earlier ranges stay valid.
+  // `bucket_index` maps a viewport to its slot in `by_viewport` so grouping is O(1)
+  // per edit rather than a linear scan (O(edits * touched_files) otherwise).
   std::vector<std::pair<editor::TextViewport*, std::vector<std::pair<editor::SelectionRange, std::string>>>>
       by_viewport;
+  std::unordered_map<editor::TextViewport*, std::size_t> bucket_index;
   const auto bucket_for = [&](editor::TextViewport* viewport)
       -> std::vector<std::pair<editor::SelectionRange, std::string>>& {
-    for (auto& entry : by_viewport) {
-      if (entry.first == viewport) {
-        return entry.second;
-      }
+    const auto it = bucket_index.find(viewport);
+    if (it != bucket_index.end()) {
+      return by_viewport[it->second].second;
     }
+    bucket_index.emplace(viewport, by_viewport.size());
     by_viewport.emplace_back(viewport, std::vector<std::pair<editor::SelectionRange, std::string>>{});
     return by_viewport.back().second;
   };
@@ -1425,14 +1446,17 @@ void WorkspaceShell::ApplyRenameWorkspaceEdit(const std::string& new_name,
     return;
   }
   // Distinct affected files (an empty path targets the active buffer, always open).
+  // Dedupe through a hash set (O(edits)) rather than a linear std::find per edit —
+  // a large legal rename otherwise pays O(edits * touched_files) here.
   std::vector<std::filesystem::path> affected;
+  std::unordered_set<std::string> affected_seen;
   std::size_t closed_count = 0;
   for (const CodeActionEdit& edit : edits) {
     if (edit.path.empty()) {
       continue;
     }
     const std::filesystem::path normalized = edit.path.lexically_normal();
-    if (std::find(affected.begin(), affected.end(), normalized) != affected.end()) {
+    if (!affected_seen.insert(normalized.generic_string()).second) {
       continue;
     }
     affected.push_back(normalized);

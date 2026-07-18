@@ -373,11 +373,13 @@
     if (g_exec.in_reload) {
       // Update issued from a setup / project-open handler: mutate the live order so the
       // reload's publish carries it (a publish to published_ here would be overwritten).
-      registry_interop::ApplyStatusItemUpdate(update, &host->status_item_order);
+      registry_interop::ApplyStatusItemUpdate(update, &host->status_item_order,
+                                              &host->status_item_index);
       return 0;
     }
     host->ApplyHostMutation([host, update = std::move(update)]() mutable {
-      if (registry_interop::ApplyStatusItemUpdate(update, &host->published_.status_item_order)) {
+      if (registry_interop::ApplyStatusItemUpdate(update, &host->published_.status_item_order,
+                                                  &host->published_.status_item_index)) {
         ++host->status_view_revision;
         if (host->raw_callbacks.request_status_redraw) {
           host->raw_callbacks.request_status_redraw();

@@ -77,7 +77,10 @@ class SidebarCoordinator {
     std::function<std::optional<WorkspaceLayout>()> current_workspace_layout;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_tree_sidebar_list_layout;
     std::function<std::optional<std::size_t>()> selected_git_sidebar_line_index;
-    std::function<std::vector<GitSidebarLine>()> build_git_sidebar_lines;
+    // Returns a reference to the shared revision-exact cached line model (valid
+    // until the next call on the same thread), so arrow-key navigation reads the
+    // flattened tree without copying the whole vector on every step.
+    std::function<const std::vector<GitSidebarLine>&()> build_git_sidebar_lines;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_git_sidebar_list_layout;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>
         compute_problems_sidebar_list_layout;

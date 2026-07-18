@@ -49,7 +49,9 @@ class SidebarMouseCoordinator {
     std::function<void(MenuId, const SDL_FRect&)> open_anchored_menu;
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
     std::function<float(const SDL_FRect&)> git_sidebar_list_top;
-    std::function<std::vector<GitSidebarLine>()> build_git_sidebar_lines;
+    // Reference to the shared cached line model (valid until the next cache call on
+    // the same thread); mouse hit-testing reads it without copying the tree.
+    std::function<const std::vector<GitSidebarLine>&()> build_git_sidebar_lines;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_git_sidebar_list_layout;
     std::function<bool(const std::string&)> toggle_git_sidebar_directory_collapsed;
     std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;

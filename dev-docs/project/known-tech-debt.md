@@ -6,6 +6,11 @@ entries have been pruned as they land. The **2026-07-17A addendum burndown** the
 dispositioned every item in the "Cross-subsystem bug/perf audit addendum" section:
 39 RESOLVED (fixed + regression-tested), the rest folded into scheduled focused-pass
 clusters or marked platform-only — see the burndown blockquote under that heading.
+Scheduled focused passes have since landed: **focus pass 1/9 (async)** = 005/024/033/108;
+**focus pass 2/9 (bounded resources, partial)**; and **focus pass 3/9 (quadratic → indexed
+lookup/dedupe, 2026-07-18)** = 051/053/058/061/062/063/066/067/081/102/114 RESOLVED, with
+054/060/076 carved into the new **focus pass 3b/9** cluster (delicate coordinate/cross-boundary
+rewrites — see the burndown blockquote).
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
 Keep current priorities summarized first; deep-audit backlogs may be longer when they are intended
@@ -133,7 +138,10 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    *(020, 090, 101, 037, 042 RESOLVED 2026-07-17A — plugin log/error history cap; terminal selection + last-command byte budgets; control-socket complete-line cap + aggregate inbound-byte budget.)*
 >    *(029, 039, 040, 064, 068, 096, 098, 105, 106, 116, 119, 121 RESOLVED 2026-07-18 — buffer-search match cap; plugin filesystem read/write byte ceilings; debug value-tree aggregate node budget + terminal truncated row; merged-diagnostics aggregate per-file cap; terminal pending-input byte cap; debug-output control-event byte cap; DAP pre-initialize event-flood cap; text-measurement byte budget + no-cache-oversized; project.files_exclude rule/byte cap; output-channel global count cap + LRU eviction; clipboard export byte budget + cut refusal; process-allowlist per-item/aggregate byte cap + NUL rejection.)*
 > 3. **Quadratic → indexed lookup/dedupe** (algorithmic pass; all bounded by existing caps, so
->    latent): 051, 053, 054, 058, 060, 061, 062, 063, 066, 067, 076, 081, 102, 114.
+>    latent): **focus pass 3/9 LANDED 2026-07-18** — 051, 053, 058, 061, 062, 063, 066, 067, 081,
+>    102, 114 RESOLVED (see the RESOLVED-this-pass list below). Remaining: 054, 060, 076 (moved to
+>    the new **focus pass 3b/9** cluster below — each needs a delicate coordinate/cross-boundary
+>    rewrite, not a drop-in index).
 >    *(011, 012, 032, 045 RESOLVED 2026-07-17A — `PluginHost::HasCommand`; completion by reference; palette match indices; commit precheck summary by `const&`.)*
 > 4. **Render-TU / view-model hoist + frame-prep** (Standing #2): 004, 007, 008, 014, 017,
 >    023, 026, 027, 069, 079, 084, 103. *(006, 019 RESOLVED 2026-07-17A — allocation-free filter; per-category row index.)*
@@ -152,6 +160,27 @@ speed-path items first, then the correctness/lifecycle cleanups.
 >    *(010, 089, 111 RESOLVED 2026-07-17A — `util::RelativePathWithin`; restored-tree-key containment.)*
 > 9. **Search / traversal**: 055 (parent-linked ignore layers).
 >    *(065 RESOLVED 2026-07-17A — split cheap `HasLastTerminalCommand` predicate from the transcript builder.)*
+> 3b. **Coordinate/cross-boundary rewrites carved out of cluster 3** (each is more than a drop-in
+>    index — it needs a delta-accumulator or an invalidation signal, and touches a
+>    correctness-sensitive path, so it wants its own reviewed change + targeted tests): 054, 060,
+>    076. These were deliberately NOT bundled into focus pass 3/9 (which landed the 11 self-
+>    contained index/dedupe wins) because a subtle error corrupts edits (054/060) or serves stale
+>    settings (076). Details:
+>    - **054** — multi-caret result-caret remap is O(carets²): each applied edit re-remaps every
+>      already-produced `ResultCaret`. Needs a one-pass prefix/suffix delta (Fenwick-style)
+>      accumulator so each caret is remapped once. Single-line-only fast path simplifies it, but the
+>      shared-line column interactions must be reproduced exactly.
+>    - **060** — snippet mirror edits call `ShiftPlaceholdersAtOrAfter` (scans all tab stops + all
+>      recorded placeholder ranges) once per mirror ⇒ O(active_mirrors * total_placeholders) per
+>      typed byte/backspace/delete. All interactions are single-line (the fast path bails on
+>      newlines), so a per-line insertion-column table + a single post-loop shift pass is provably
+>      equivalent; must cover `SnippetTryInsertText`/`Backspace`/`DeleteForward`/`ApplyChoiceForTab`.
+>    - **076** — `PluginHost::Impl::CaptureSnapshot` re-copies every contributed setting value into
+>      each per-callback snapshot (cursor/selection/hover/completion), so cost scales with total
+>      setting count even for plugins that read none. The snapshot pre-resolves on the UI thread for
+>      thread-safety, so a safe fix needs a revisioned/shared immutable settings snapshot plus a
+>      settings-change invalidation signal from the shell (a new cross-boundary hook) — not just an
+>      index. Do NOT cache without the invalidation signal (stale-read correctness regression).
 >
 > **WON'T-DO here — platform-only (Windows `RunSubprocess`; no Windows host to build/verify):**
 > 104, 133, 134. Keep as intake for a Windows subprocess-hardening pass.
@@ -717,7 +746,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
   not unbounded, but every stop/frame switch and every watch edit repeats avoidable string
   copies and row-tree rebuilds. Make the model mutations mark evaluation dirty, then let the
   single evaluation pass rebuild once and iterate expressions by stable index/span.
-- **TD-2026-07-17A-051 — breakpoint verification reconciliation is quadratic.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-051 — breakpoint verification reconciliation is quadratic.**
+  Fixed: `BreakpointStore::ApplyVerification` binary-searches the sorted line vector
+  (`std::lower_bound`) per result; `FunctionBreakpointStore::ApplyVerification` builds a
+  name→pointer index once (O(n)) instead of a linear `std::find_if` per result. Regressions:
+  `BreakpointStore/ApplyVerificationManyLines`,
+  `DebugService/FunctionBreakpointStoreApplyVerificationManyNames`.
   `DebugSession::SendBreakpointsForFile` captures every requested line and
   `SendFunctionBreakpoints` captures every requested name; their callbacks pass the full adapter
   response to `BreakpointStore::ApplyVerification` and
@@ -734,7 +768,11 @@ speed-path items first, then the correctness/lifecycle cleanups.
   memmoves over up to `kMaxWriteBufferBytes` per connection while the I/O thread is trying to
   drain sockets. Keep a read offset/ring buffer for pending writes and compact only when the
   consumed prefix is large or the buffer becomes empty.
-- **TD-2026-07-17A-053 — function-breakpoint restore dedupes with repeated linear scans.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-053 — function-breakpoint restore dedupes with repeated linear scans.**
+  Fixed: `FunctionBreakpointStore::ReplaceAll` reserves the destination and dedupes against an
+  `unordered_set<string_view>` of already-accepted names (views into the stable stored copies)
+  instead of an O(n) `HasName` scan per entry. Regression:
+  `DebugService/FunctionBreakpointStoreReplaceAllDedupes`.
   `DecodeDebugStateRecord` caps persisted function breakpoints at 4096, then
   `PersistenceCoordinator::RestoreDebugState` copies them into a vector and calls
   `FunctionBreakpointStore::ReplaceAll`. `ReplaceAll` clears the store and, for every incoming
@@ -781,7 +819,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
   payload for all of them. Keep only action metadata in the menu and resolve/materialize the
   selected action's edit lazily, or add a shared aggregate edit/byte budget with truncation that
   disables oversized inline fixes.
-- **TD-2026-07-17A-058 — persisted config dedupe uses repeated linear scans.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-058 — persisted config dedupe uses repeated linear scans.**
+  Fixed: `DecodeUserConfigRecord`/`DecodeProjectConfigRecord` decode settings through an
+  `unordered_map<string,size_t>` id→index (last-writer-wins, O(1) per record);
+  `AppendDisabledIdCapped` takes an `unordered_set<string>` dedupe index. Covered by the existing
+  round-trip dedupe tests `PersistedStateRecord/ConfigDedupesDuplicateSettingIds` and
+  `.../ConfigDedupesDisabledIds`.
   `DecodeUserConfigRecord` and `DecodeProjectConfigRecord` cap restored settings at 8,192, but
   every setting record calls `std::find_if` over the already accepted vector to implement
   last-writer-wins dedupe. `AppendDisabledIdCapped` does the same `std::find` for disabled
@@ -813,8 +856,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
   O(active_mirrors * total_placeholders) range-shift work, plus repeated small order-vector
   allocations. Keep per-line placeholder indexes or accumulate one delta map per edit so all
   affected ranges are shifted once after the mirror replacements finish.
-- **TD-2026-07-17A-061 — commit partial-stage precheck scans git status once per staged
-  file.** `RunCommitPreChecks` iterates every `staged_summary.files` entry and calls
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-061 — commit partial-stage precheck scans git status once per staged
+  file.**
+  Fixed: `RunCommitPreChecks` builds a one-pass `PartiallyStagedPaths` set from
+  `repository_state.entries` (O(entries)) and short-circuits on the first staged file in that set,
+  replacing the O(staged_files * status_entries) `PathHasStagedAndUnstaged`-per-file scan.
+  Covered by the existing commit-precheck partial-stage tests. `RunCommitPreChecks` iterates every `staged_summary.files` entry and calls
   `PathHasStagedAndUnstaged`; that helper walks the full `repository_state.entries` vector to find
   matching staged/worktree-dirty records. In a large repository with many staged paths, every
   commit-subject keystroke can therefore pay O(staged_files * status_entries) comparisons after the
@@ -822,7 +869,10 @@ speed-path items first, then the correctness/lifecycle cleanups.
   the UI only checks whether the vector is empty. Build a one-pass set of partially staged paths
   from `repository_state.entries`, or short-circuit on the first partial path when the warning text
   does not list files.
-- **TD-2026-07-17A-062 — branch-review presentation markers rescan review state per row.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-062 — branch-review presentation markers rescan review state per row.**
+  Fixed: `ApplyBranchReviewPresentationMarkers` memoizes the resolved (marker label, has_note) per
+  hunk index in an `unordered_map<int,...>`, so `HunkStatus`/`HasNote` run once per hunk instead of
+  once per row. Covered by the existing compare/branch-review presentation tests.
   `ApplyBranchReviewPresentationMarkers` walks every compare presentation row, and for each model
   row calls `BranchReviewStateService::HunkStatus` plus `HasNote`. Those helpers repeatedly scan the
   same capped `reviewed_hunks` / `notes` vectors and recompute the same
@@ -832,8 +882,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   presentation refresh even though hunk status/note state is constant per hunk. Precompute a
   per-hunk marker/note map for the active `(target,path,model_revision)` and stamp rows from that
   map, or make the review service expose an indexed query object for one compare model.
-- **TD-2026-07-17A-063 — review-comment marker lookups create empty URI indexes and
-  rescan all comments per first URI.** `ReviewCommentsRegistry::IndexForUri` is `const` but uses
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-063 — review-comment marker lookups create empty URI indexes and
+  rescan all comments per first URI.**
+  Fixed: `ReviewCommentsRegistry` replaced the per-URI lazy `indices_by_uri_[uri]` (which inserted
+  an empty record on every marker-free lookup and rescanned all comments/threads per first-seen
+  URI) with a single `indices_dirty_` flag + `RebuildIndices()` that groups ALL markers by URI in
+  one pass. `IndexForUri` is now non-inserting (`.find`): a marker-free URI is a pure miss (no
+  insert, no scan). Regression: `Phase4.ReviewCommentsRegistryMarkerFreeLookupsAreCorrect`. `ReviewCommentsRegistry::IndexForUri` is `const` but uses
   `indices_by_uri_[uri]`, so a render-time `MarkersForUri` call for any marker-free viewport creates
   a persistent empty `UriIndex`. When that index is dirty, the first lookup for one URI scans every
   stored `ReviewComment` and `ReviewThread` to find matching entries. With review comments enabled,
@@ -873,8 +928,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   never copies anything. Split the API into a cheap `HasLastTerminalCommand()` predicate plus the
   expensive bounded transcript builder, and cache/invalidate transcript metadata by terminal
   generation when possible.
-- **TD-2026-07-17A-066 — LSP WorkspaceEdit grouping is quadratic across target
-  files.** `WorkspaceShell::ApplyLspWorkspaceEdit` groups edits by open viewport with a linear
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-066 — LSP WorkspaceEdit grouping is quadratic across target
+  files.**
+  Fixed: `WorkspaceShell::ApplyLspWorkspaceEdit` groups edits through an
+  `unordered_map<TextViewport*,size_t>` bucket index plus a normalized-path→viewport resolve cache;
+  `LspService::ApplyLspEditsToClosedFilesOnDisk` uses an `unordered_map<string,size_t>` bucket index;
+  `ApplyRenameWorkspaceEdit` dedupes affected paths through an `unordered_set<string>`. All O(edits)
+  now instead of O(edits * touched_files). Covered by the existing workspace-edit / rename tests. `WorkspaceShell::ApplyLspWorkspaceEdit` groups edits by open viewport with a linear
   `bucket_for` scan over `by_viewport`; `LspService::ApplyLspEditsToClosedFilesOnDisk` repeats the
   same pattern by normalized path; `ApplyRenameWorkspaceEdit` dedupes affected paths with
   `std::find`. The protocol parser caps one edit payload at 10,000 files / 200,000 edits, but a
@@ -882,8 +942,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   or pointer comparisons before sorting/applying. Build an index map from viewport/path to bucket
   once, reuse normalized paths through the rename confirmation/save flow, and keep the parser caps
   as hard budgets instead of quadratic worst cases.
-- **TD-2026-07-17A-067 — git-sidebar navigation copies and rescans the full line model per
-  move.** `SidebarCoordinator::MoveGitSelection` calls `operations_.build_git_sidebar_lines()`,
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-067 — git-sidebar navigation copies and rescans the full line model per
+  move.**
+  Fixed: `WorkspaceShell::BuildGitSidebarLines()` now returns a `const std::vector<GitSidebarLine>&`
+  into the shared revision-exact cache (valid until the next `CachedGitSidebarPresentation` call);
+  the two `build_git_sidebar_lines` coordinator operations return that reference, and
+  `MoveGitSelection`/`RevealSelectedGitLine`/hit-testing consume it without copying the flattened
+  tree per arrow key / mouse move. Covered by the existing sidebar navigation tests. `SidebarCoordinator::MoveGitSelection` calls `operations_.build_git_sidebar_lines()`,
   builds a fresh `visible` vector from every line, then `RevealSelectedGitLine` asks for
   `selected_git_sidebar_line_index()` and `build_git_sidebar_lines().size()` again. The shared
   git-sidebar presentation cache avoids rebuilding on hits, but
@@ -1018,7 +1083,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
   launch/open a truncated path/argument. Route all Lua-to-host string extraction through
   `lua_tolstring`, reject embedded NULs for identifier/path-like fields, and keep length-preserving
   reads only where binary payloads are explicitly allowed.
-- **TD-2026-07-17A-081 — runtime status-item updates scan the full status order.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-081 — runtime status-item updates scan the full status order.**
+  Fixed: `registry_interop::ApplyStatusItemUpdate` takes a caller-owned
+  `unordered_map<string,size_t>` id→position cache (one per worker + published order vector), rebuilt
+  lazily on a size mismatch (register/teardown) with an id-verify fallback for a same-size swap, so
+  `ctx.status.update` resolves in O(1) instead of a linear `status_item_order` scan. Regression:
+  `StatusRegistry/StatusItemUpdateIndexCache`.
   Status items are stored in both `status_items` (a map) and `status_item_order` (the render order), but
   `ctx.status.update` reads an update and calls `registry_interop::ApplyStatusItemUpdate`, which linearly
   scans `status_item_order` for the full id on the worker reload path and again on the UI-published path.
@@ -1222,7 +1292,11 @@ speed-path items first, then the correctness/lifecycle cleanups.
   and built-in error paths can pass subprocess/provider text, so one toast can still force large string
   copies and text measurement during a full redraw. Truncate notifications by bytes/codepoint boundary
   at ingress, store a `truncated` flag, and render the shortened display string from the view model.
-- **TD-2026-07-17A-102 — settings row rebuild resolves overrides with per-row vector scans.**
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-102 — settings row rebuild resolves overrides with per-row vector scans.**
+  Fixed: `SettingsOverlayService::RebuildSettingsRows` indexes the user/project layers once into
+  `unordered_map<string_view,const string*>` maps and looks up each row's override in O(1), instead
+  of two `settings_layer::Find` linear scans per surviving row. Covered by the existing
+  settings-overlay override tests.
   `SettingsOverlayService::RebuildSettingsRows` loops every `SettingInfo`, then calls
   `settings_layer::Find(user_settings, setting.id)` and
   `settings_layer::Find(project_settings, setting.id)` for each surviving row. The decode path caps each
@@ -1360,8 +1434,12 @@ speed-path items first, then the correctness/lifecycle cleanups.
   wedge repository-change sampling before the existing symbolic-ref containment checks run. Read these
   tiny metadata files through a regular-file-gated helper with small line/byte caps, treating
   non-regular paths as "metadata unavailable".
-- **TD-2026-07-17A-114 — completion/code-action source merge de-duplicates with a quadratic scan on
-  capped-but-large result lists.** `assist_merge::RankedUnion` stores seen keys in a vector and calls
+- **[RESOLVED 2026-07-18] TD-2026-07-17A-114 — completion/code-action source merge de-duplicates with a quadratic scan on
+  capped-but-large result lists.**
+  Fixed: `assist_merge::RankedUnion` keeps the linear seen-scan for small overlays but switches to an
+  `unordered_set` once the combined source size crosses a threshold (128), gated by an
+  `IsStdHashable` trait so non-hashable keys still compile. Ranked-append semantics unchanged.
+  Regression: `AssistService/RankedUnionLargeListsDedupeIdentically`. `assist_merge::RankedUnion` stores seen keys in a vector and calls
   `std::find` for every item. That helper is used for completion and code-action overlay publication,
   where the LSP side can contribute up to 5,000 rows and the plugin side up to 20,000 completions or
   4,096 code actions. A hostile or simply verbose provider set can make the UI callback do tens or

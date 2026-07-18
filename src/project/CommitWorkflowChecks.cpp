@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <limits>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "project/GitPorcelainParser.h"
 #include "project/GitRepository.h"
@@ -43,27 +46,39 @@ CommitPreCheck MakeCheck(const CommitPreCheckKind kind,
   };
 }
 
-bool PathHasStagedAndUnstaged(const GitRepositoryState& repository_state,
-                              const std::filesystem::path& relative_path) {
-  // porcelain v2 emits exactly one record per path, so a partially-staged file
-  // (staged edit plus a further unstaged edit, `1 MM`) is a single entry that is both
-  // `staged` and `worktree_dirty`. An older two-entries-per-path assumption never fired
-  // under v2. Still tolerate a split representation (staged in one record, unstaged in
-  // another) in case a caller pre-splits the entries for display.
-  bool staged = false;
-  bool unstaged = false;
+// One-pass set of the paths that are both staged and unstaged ("partially staged").
+// A prior implementation re-scanned repository_state.entries once per staged file,
+// which is O(staged_files * status_entries) on every commit-subject keystroke in a
+// large repo; this walks the entries a single time.
+//
+// porcelain v2 emits exactly one record per path, so a partially-staged file (staged
+// edit plus a further unstaged edit, `1 MM`) is a single entry that is both `staged`
+// and `worktree_dirty`. An older two-entries-per-path assumption never fired under v2.
+// Still tolerate a split representation (staged in one record, unstaged in another) by
+// aggregating per-path flags before intersecting.
+std::unordered_set<std::string> PartiallyStagedPaths(const GitRepositoryState& repository_state) {
+  struct StageFlags {
+    bool staged = false;
+    bool unstaged = false;
+  };
+  std::unordered_map<std::string, StageFlags> flags;
+  flags.reserve(repository_state.entries.size());
   for (const GitRepositoryEntry& entry : repository_state.entries) {
-    if (entry.path.relative_path != relative_path) {
-      continue;
-    }
+    StageFlags& f = flags[entry.path.relative_path.generic_string()];
     if (entry.staged) {
-      staged = true;
+      f.staged = true;
     }
     if (entry.worktree_dirty && entry.kind != GitRepositoryEntryKind::Untracked) {
-      unstaged = true;
+      f.unstaged = true;
     }
   }
-  return staged && unstaged;
+  std::unordered_set<std::string> partial;
+  for (auto& [path, f] : flags) {
+    if (f.staged && f.unstaged) {
+      partial.insert(path);
+    }
+  }
+  return partial;
 }
 
 }  // namespace
@@ -247,13 +262,15 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
     }
   }
 
-  std::vector<std::filesystem::path> partial_stage_paths;
+  const std::unordered_set<std::string> partially_staged = PartiallyStagedPaths(repository_state);
+  bool any_partial_stage = false;
   for (const CommitStagedFileSummary& file : staged_summary.files) {
-    if (PathHasStagedAndUnstaged(repository_state, file.relative_path)) {
-      partial_stage_paths.push_back(file.relative_path);
+    if (partially_staged.count(file.relative_path.generic_string()) != 0) {
+      any_partial_stage = true;
+      break;
     }
   }
-  if (!partial_stage_paths.empty()) {
+  if (any_partial_stage) {
     checks.push_back(MakeCheck(
         CommitPreCheckKind::UnstagedLeftovers, CommitPreCheckSeverity::Warning,
         "Some staged files also have unstaged changes; the commit will include only staged hunks"));

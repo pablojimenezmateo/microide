@@ -104,9 +104,9 @@ void SidebarCoordinator::MoveGitSelection(int delta) {
   if (git.entries.empty() || delta == 0) {
     return;
   }
-  const std::vector<GitSidebarLine> lines =
-      operations_.build_git_sidebar_lines ? operations_.build_git_sidebar_lines()
-                                          : std::vector<GitSidebarLine>{};
+  static const std::vector<GitSidebarLine> kEmptyLines;
+  const std::vector<GitSidebarLine>& lines =
+      operations_.build_git_sidebar_lines ? operations_.build_git_sidebar_lines() : kEmptyLines;
   std::vector<std::size_t> visible;
   visible.reserve(git.entries.size());
   for (const GitSidebarLine& line : lines) {

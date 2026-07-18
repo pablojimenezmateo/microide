@@ -123,7 +123,7 @@ SDL_FRect WorkspaceShell::GitSidebarDiscardAllButtonRect(const SDL_FRect& sideba
 
 std::optional<SDL_FRect> WorkspaceShell::GitSidebarOutgoingBaseButtonRect(
     const SDL_FRect& sidebar_rect) const {
-  const auto lines = BuildGitSidebarLines();
+  const auto& lines = BuildGitSidebarLines();
   const auto list_layout = ComputeGitSidebarListLayout(sidebar_rect, lines.size());
   for (std::size_t i = 0; i < lines.size(); ++i) {
     const auto& line = lines[i];
@@ -411,7 +411,7 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredGitSidebarTooltipRect(const Work
   return MakeRect(tooltip_x, tooltip_y, tooltip.rect.w, tooltip.rect.h);
 }
 
-std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines() const {
+const std::vector<WorkspaceShell::GitSidebarLine>& WorkspaceShell::BuildGitSidebarLines() const {
   // Always reads live git state through the shared revision-exact memo (never the
   // possibly-stale per-frame prepare cache), so hit-testing between frames matches
   // the current collapse/entry state and is cheap when nothing changed. The render
@@ -439,7 +439,7 @@ bool WorkspaceShell::ToggleGitSidebarDirectoryCollapsed(const std::string& tree_
   // index, the tree filters rows). Snap the flat selection to the nearest still-
   // visible entry so arrow keys and the highlight don't strand on an invisible row.
   if (git.selected_index < git.entries.size()) {
-    const std::vector<GitSidebarLine> lines = BuildGitSidebarLines();
+    const std::vector<GitSidebarLine>& lines = BuildGitSidebarLines();
     if (!FindSelectedGitSidebarLineIndex(lines, git.selected_index).has_value()) {
       std::optional<std::size_t> nearest;
       for (const GitSidebarLine& line : lines) {

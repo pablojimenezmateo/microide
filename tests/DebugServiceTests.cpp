@@ -2944,6 +2944,61 @@ void TestFunctionBreakpointStoreBehavior() {
   Expect(store.Count() == 1 && store.All()[0].name == "helper", "Remove drops the right row");
 }
 
+// ReplaceAll (persistence restore) dedupes by name and drops empty names. The
+// dedupe now runs through a hash set (O(n)) instead of a per-entry linear scan;
+// this pins the observable behavior (first-writer-wins, order preserved).
+void TestFunctionBreakpointStoreReplaceAllDedupes() {
+  editor::FunctionBreakpointStore store;
+  std::vector<editor::FunctionBreakpoint> restored = {
+      editor::FunctionBreakpoint{.name = "main", .verified = true, .adapter_id = 9},
+      editor::FunctionBreakpoint{.name = ""},       // dropped (empty)
+      editor::FunctionBreakpoint{.name = "helper"},
+      editor::FunctionBreakpoint{.name = "main"},   // dropped (duplicate)
+      editor::FunctionBreakpoint{.name = "helper"}, // dropped (duplicate)
+      editor::FunctionBreakpoint{.name = "tail"},
+  };
+  store.ReplaceAll(std::move(restored));
+  Expect(store.Count() == 3, "empty and duplicate names are dropped");
+  Expect(store.All()[0].name == "main" && store.All()[1].name == "helper" &&
+             store.All()[2].name == "tail",
+         "surviving names keep first-seen order");
+  Expect(!store.All()[0].verified && store.All()[0].adapter_id == 0,
+         "ReplaceAll drops persisted transient verification state");
+}
+
+// Verification with many function breakpoints must still land each result on the
+// row named by its requested name (the name->index map replaces the O(n^2) scan).
+void TestFunctionBreakpointStoreApplyVerificationManyNames() {
+  editor::FunctionBreakpointStore store;
+  constexpr int kCount = 2000;
+  for (int i = 0; i < kCount; ++i) {
+    Expect(store.Add("fn_" + std::to_string(i)), "each distinct name adds");
+  }
+  // Verify a scattered subset by requested name; results are positional to names.
+  std::vector<std::string> requested = {"fn_1999", "fn_0", "fn_1000", "fn_missing"};
+  std::vector<editor::VerifiedFunctionBreakpoint> results = {
+      editor::VerifiedFunctionBreakpoint{.id = 11, .verified = true},
+      editor::VerifiedFunctionBreakpoint{.id = 22, .verified = true},
+      editor::VerifiedFunctionBreakpoint{.id = 33, .verified = false, .message = "no code"},
+      editor::VerifiedFunctionBreakpoint{.id = 44, .verified = true},  // name absent: dropped
+  };
+  store.ApplyVerification(requested, results);
+  const auto find = [&](const std::string& name) -> const editor::FunctionBreakpoint* {
+    for (const auto& bp : store.All()) {
+      if (bp.name == name) {
+        return &bp;
+      }
+    }
+    return nullptr;
+  };
+  Expect(find("fn_1999")->verified && find("fn_1999")->adapter_id == 11, "last name verifies");
+  Expect(find("fn_0")->verified && find("fn_0")->adapter_id == 22, "first name verifies");
+  Expect(!find("fn_1000")->verified && find("fn_1000")->verify_message == "no code",
+         "middle name reflects rejection");
+  // A name not present in the store must not have clobbered any row's adapter id.
+  Expect(find("fn_500")->adapter_id == 0, "unrelated rows stay untouched");
+}
+
 // ---- Real gdb 17.x end-to-end (gated; skipped when gdb/gcc are unavailable) ----
 bool GdbDapAvailable() {
   FILE* pipe = ::popen("gdb --version 2>/dev/null", "r");
@@ -3288,6 +3343,10 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugSessionStopWithoutThreadIdResolvesThread);
   AddTest(tests, "DebugService/FunctionBreakpointStoreBehavior",
           TestFunctionBreakpointStoreBehavior);
+  AddTest(tests, "DebugService/FunctionBreakpointStoreReplaceAllDedupes",
+          TestFunctionBreakpointStoreReplaceAllDedupes);
+  AddTest(tests, "DebugService/FunctionBreakpointStoreApplyVerificationManyNames",
+          TestFunctionBreakpointStoreApplyVerificationManyNames);
   AddTest(tests, "DebugService/GdbRealFunctionBreakpointsE2E", TestGdbRealFunctionBreakpointsE2E);
   AddTest(tests, "DebugService/BreakpointsModelBehavior", TestDebugBreakpointsModelBehavior);
   AddTest(tests, "DebugService/SessionVariablesTreeAndSetVariable",

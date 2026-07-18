@@ -89,7 +89,7 @@ ScrollableListLayout SidebarMouseCoordinator::CurrentListLayout(const WorkspaceL
     return operations_.compute_project_search_sidebar_list_layout(layout.sidebar, line_map.size());
   }
   if (sidebar_mode == SidebarMode::Git) {
-    const auto lines = operations_.build_git_sidebar_lines();
+    const auto& lines = operations_.build_git_sidebar_lines();
     return operations_.compute_git_sidebar_list_layout(layout.sidebar, lines.size());
   }
   if (sidebar_mode == SidebarMode::Problems) {

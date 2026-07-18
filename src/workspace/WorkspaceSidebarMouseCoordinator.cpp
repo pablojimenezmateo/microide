@@ -159,7 +159,7 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
     return true;
   }
 
-  const auto lines = operations_.build_git_sidebar_lines();
+  const auto& lines = operations_.build_git_sidebar_lines();
   const auto list_layout = operations_.compute_git_sidebar_list_layout(layout.sidebar, lines.size());
   const auto line_index = ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
   if (!line_index.has_value() || *line_index < 0 || *line_index >= static_cast<int>(lines.size())) {

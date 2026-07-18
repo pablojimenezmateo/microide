@@ -234,11 +234,14 @@ void BreakpointStore::ApplyVerification(const std::filesystem::path& path,
     }
     // Match by the requested line, not by array index: the user may have toggled
     // another breakpoint in this file while the response was in flight, so the
-    // current store order need not align with the request order.
+    // current store order need not align with the request order. Breakpoints are
+    // kept sorted by line, so binary-search each result instead of a linear scan —
+    // a file with thousands of breakpoints otherwise pays O(n*results) here.
     const std::size_t line = static_cast<std::size_t>(result.line - 1);
-    const auto it = std::find_if(breakpoints->begin(), breakpoints->end(),
-                                 [line](const Breakpoint& bp) { return bp.line == line; });
-    if (it == breakpoints->end()) {
+    const auto it = std::lower_bound(
+        breakpoints->begin(), breakpoints->end(), line,
+        [](const Breakpoint& bp, std::size_t value) { return bp.line < value; });
+    if (it == breakpoints->end() || it->line != line) {
       continue;  // line was removed while the response was in flight
     }
     it->verified = result.verified;

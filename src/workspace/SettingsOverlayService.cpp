@@ -196,12 +196,32 @@ void SettingsOverlayService::RebuildSettingsRows(
     const std::vector<SettingsOverlayRow>& extra_rows) {
   settings_rows_.clear();
   settings_rows_.reserve(settings.size());
+  // Index each layer once (O(layer)) so per-row override resolution is O(1) rather
+  // than a linear settings_layer::Find scan per surviving row — a large plugin
+  // settings surface otherwise costs setting_count * override_count comparisons on
+  // every overlay open / query change / plugin reload. The string_view keys point
+  // into the caller's layers, which are not mutated during the rebuild.
+  const auto index_layer = [](const std::vector<std::pair<std::string, std::string>>& layer) {
+    std::unordered_map<std::string_view, const std::string*> index;
+    index.reserve(layer.size());
+    for (const auto& entry : layer) {
+      index[std::string_view(entry.first)] = &entry.second;
+    }
+    return index;
+  };
+  const auto user_index = index_layer(user_settings);
+  const auto project_index = index_layer(project_settings);
+  const auto lookup = [](const std::unordered_map<std::string_view, const std::string*>& index,
+                         std::string_view id) -> const std::string* {
+    const auto it = index.find(id);
+    return it != index.end() ? it->second : nullptr;
+  };
   for (const SettingInfo& setting : settings) {
     if (!RowMatchesQuery(setting.label, setting.id)) {
       continue;
     }
-    const std::string* user_stored = settings_layer::Find(user_settings, setting.id);
-    const std::string* project_stored = settings_layer::Find(project_settings, setting.id);
+    const std::string* user_stored = lookup(user_index, setting.id);
+    const std::string* project_stored = lookup(project_index, setting.id);
     // Built-in project-scoped settings support a user-level default that a
     // per-project override wins over (project → user default → spec default).
     const bool scope_selectable =

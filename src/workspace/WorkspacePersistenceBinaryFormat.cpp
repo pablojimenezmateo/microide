@@ -3,6 +3,9 @@
 #include "workspace/SettingsStore.h"
 
 #include <algorithm>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace microide::workspace {
 
@@ -20,9 +23,12 @@ constexpr std::size_t kMaxPersistedSidebarPolicies = 512;
 
 // Append `id` to `ids` unless already present (dedupe by value) or the cap is reached.
 // Returns false only when the cap would be exceeded by a NEW id, so the caller can fail
-// the record closed. Repeated stale entries are silently deduped.
-bool AppendDisabledIdCapped(std::vector<std::string>* ids, std::string id) {
-  if (std::find(ids->begin(), ids->end(), id) != ids->end()) {
+// the record closed. Repeated stale entries are silently deduped. `seen` is the caller's
+// O(1) dedupe index over `ids` — a hostile config with thousands of unique disabled IDs
+// otherwise pays O(n^2) string comparisons here during startup.
+bool AppendDisabledIdCapped(std::vector<std::string>* ids,
+                            std::unordered_set<std::string>* seen, std::string id) {
+  if (!seen->insert(id).second) {
     return true;  // dedupe: repeated entries do not inflate downstream resolution
   }
   if (ids->size() >= kMaxPersistedDisabledIds) {
@@ -73,6 +79,11 @@ bool DecodeUserConfigRecord(std::span<const std::byte> input, PersistedUserConfi
   }
   *state = PersistedUserConfigState{};
   bool seen_schema = false;
+  // O(1) dedupe indexes so a config with thousands of unique settings / disabled
+  // IDs decodes in O(n) rather than paying an O(n) linear scan per record.
+  std::unordered_map<std::string, std::size_t> setting_index;
+  std::unordered_set<std::string> disabled_keybinding_seen;
+  std::unordered_set<std::string> disabled_plugin_seen;
   return ParseRecordStream<UserConfigTag>(
              input, [&](UserConfigTag tag, std::span<const std::byte> payload) {
                PrimitiveReader reader(payload);
@@ -100,15 +111,14 @@ bool DecodeUserConfigRecord(std::span<const std::byte> input, PersistedUserConfi
                    // Dedupe by id, last-writer-wins: a corrupt/hand-edited config
                    // with duplicate keys must not become a split-brain state where
                    // the UI shows one value and layering applies another.
-                   auto existing = std::find_if(
-                       state->settings.begin(), state->settings.end(),
-                       [&](const auto& s) { return s.first == setting.first; });
-                   if (existing != state->settings.end()) {
-                     existing->second = std::move(setting.second);
+                   auto existing = setting_index.find(setting.first);
+                   if (existing != setting_index.end()) {
+                     state->settings[existing->second].second = std::move(setting.second);
                    } else {
                      if (state->settings.size() >= kMaxPersistedSettings) {
                        return false;  // over the product settings budget
                      }
+                     setting_index.emplace(setting.first, state->settings.size());
                      state->settings.push_back(std::move(setting));
                    }
                    return true;
@@ -118,14 +128,16 @@ bool DecodeUserConfigRecord(std::span<const std::byte> input, PersistedUserConfi
                    if (!reader.ReadString(&id) || reader.remaining() != 0) {
                      return false;
                    }
-                   return AppendDisabledIdCapped(&state->disabled_keybinding_ids, std::move(id));
+                   return AppendDisabledIdCapped(&state->disabled_keybinding_ids,
+                                                 &disabled_keybinding_seen, std::move(id));
                  }
                  case UserConfigTag::DisabledPlugin: {
                    std::string id;
                    if (!reader.ReadString(&id) || reader.remaining() != 0) {
                      return false;
                    }
-                   return AppendDisabledIdCapped(&state->disabled_plugin_ids, std::move(id));
+                   return AppendDisabledIdCapped(&state->disabled_plugin_ids,
+                                                 &disabled_plugin_seen, std::move(id));
                  }
                }
                return true;
@@ -203,6 +215,8 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
   std::optional<std::size_t> legacy_tab_size;
   std::optional<std::size_t> legacy_indent_width;
   std::optional<bool> legacy_soft_tabs;
+  // O(1) settings dedupe index (see DecodeUserConfigRecord).
+  std::unordered_map<std::string, std::size_t> setting_index;
   const bool parsed = ParseRecordStream<ProjectConfigTag>(
              input, [&](ProjectConfigTag tag, std::span<const std::byte> payload) {
                PrimitiveReader reader(payload);
@@ -264,15 +278,14 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
                      return false;
                    }
                    // Dedupe by id, last-writer-wins (see DecodeUserConfigRecord).
-                   auto existing = std::find_if(
-                       state->settings.begin(), state->settings.end(),
-                       [&](const auto& s) { return s.first == setting.first; });
-                   if (existing != state->settings.end()) {
-                     existing->second = std::move(setting.second);
+                   auto existing = setting_index.find(setting.first);
+                   if (existing != setting_index.end()) {
+                     state->settings[existing->second].second = std::move(setting.second);
                    } else {
                      if (state->settings.size() >= kMaxPersistedSettings) {
                        return false;  // over the product settings budget
                      }
+                     setting_index.emplace(setting.first, state->settings.size());
                      state->settings.push_back(std::move(setting));
                    }
                    return true;

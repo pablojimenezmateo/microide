@@ -75,6 +75,34 @@ void RegisterAssistServiceTests(std::vector<TestCase>& tests) {
                             "the union of two empty sources is empty");
                    }});
 
+  // Above the hash-set threshold (combined size >= 128) the de-dup switches from a
+  // linear seen-scan to a hash set; the ranked-append semantics (primary first,
+  // drop later duplicates, preserve per-source order) must be identical.
+  tests.push_back({"AssistService/RankedUnionLargeListsDedupeIdentically", [] {
+                     std::vector<std::string> primary;
+                     std::vector<std::string> secondary;
+                     for (int i = 0; i < 200; ++i) {
+                       primary.push_back("p_" + std::to_string(i));
+                     }
+                     // Secondary repeats every primary key (all dropped) plus 200 fresh
+                     // keys and internal duplicates (only the first survives).
+                     for (int i = 0; i < 200; ++i) {
+                       secondary.push_back("p_" + std::to_string(i));  // dup of primary
+                     }
+                     for (int i = 0; i < 200; ++i) {
+                       secondary.push_back("s_" + std::to_string(i));
+                       secondary.push_back("s_" + std::to_string(i));  // internal dup
+                     }
+                     const std::vector<std::string> merged = RankLabels(primary, secondary);
+                     Expect(merged.size() == 400, "200 primary + 200 unique secondary keys survive");
+                     for (int i = 0; i < 200; ++i) {
+                       Expect(merged[static_cast<std::size_t>(i)] == "p_" + std::to_string(i),
+                              "primary items keep their order and rank first");
+                       Expect(merged[static_cast<std::size_t>(200 + i)] == "s_" + std::to_string(i),
+                              "unique secondary items follow in first-seen order");
+                     }
+                   }});
+
   // ChooseNavigation: single-result nav prefers the authoritative source, waits
   // for it while pending, and only consults the other once it resolves empty.
   using assist_merge::ChooseNavigation;

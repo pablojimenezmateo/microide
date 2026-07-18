@@ -8,12 +8,12 @@ ReviewCommentsRegistry::ReviewCommentsRegistry() = default;
 ReviewCommentsRegistry::~ReviewCommentsRegistry() = default;
 
 void ReviewCommentsRegistry::AddComment(const ReviewComment& comment) {
-  InvalidateUri(comment.uri);
+  InvalidateAll();
   comments_.push_back(comment);
 }
 
 void ReviewCommentsRegistry::AddThread(const ReviewThread& thread) {
-  InvalidateUri(thread.uri);
+  InvalidateAll();
   threads_.push_back(thread);
 }
 
@@ -111,51 +111,36 @@ void ReviewCommentsRegistry::Clear() {
   comments_.clear();
   threads_.clear();
   indices_by_uri_.clear();
+  indices_dirty_ = false;  // nothing to index
+}
+
+void ReviewCommentsRegistry::RebuildIndices() const {
+  // One pass over all comments/threads, grouping by URI. Only URIs that actually
+  // carry a marker get an entry, so a subsequent lookup for a marker-free URI is a
+  // pure miss (no insert, no scan).
+  indices_by_uri_.clear();
+  for (std::size_t i = 0; i < comments_.size(); ++i) {
+    const ReviewComment& comment = comments_[i];
+    indices_by_uri_[comment.uri].comment_indices_by_line[comment.line].push_back(i);
+  }
+  for (std::size_t i = 0; i < threads_.size(); ++i) {
+    const ReviewThread& thread = threads_[i];
+    UriIndex& index = indices_by_uri_[thread.uri];
+    index.thread_indices.push_back(i);
+    index.thread_indices_by_line[thread.line].push_back(i);
+  }
+  indices_dirty_ = false;
 }
 
 const ReviewCommentsRegistry::UriIndex* ReviewCommentsRegistry::IndexForUri(
     const std::string& uri) const {
-  UriIndex& index = indices_by_uri_[uri];
-  if (!index.dirty) {
-    return index.thread_indices.empty() && index.comment_indices_by_line.empty() ? nullptr
-                                                                                : &index;
+  if (indices_dirty_) {
+    RebuildIndices();
   }
-
-  index.thread_indices.clear();
-  index.comment_indices_by_line.clear();
-  index.thread_indices_by_line.clear();
-
-  for (std::size_t i = 0; i < comments_.size(); ++i) {
-    const ReviewComment& comment = comments_[i];
-    if (comment.uri == uri) {
-      index.comment_indices_by_line[comment.line].push_back(i);
-    }
-  }
-  for (std::size_t i = 0; i < threads_.size(); ++i) {
-    const ReviewThread& thread = threads_[i];
-    if (thread.uri == uri) {
-      index.thread_indices.push_back(i);
-      index.thread_indices_by_line[thread.line].push_back(i);
-    }
-  }
-
-  index.dirty = false;
-  return index.thread_indices.empty() && index.comment_indices_by_line.empty() ? nullptr
-                                                                              : &index;
+  const auto it = indices_by_uri_.find(uri);
+  return it != indices_by_uri_.end() ? &it->second : nullptr;
 }
 
-void ReviewCommentsRegistry::InvalidateUri(const std::string& uri) {
-  auto it = indices_by_uri_.find(uri);
-  if (it != indices_by_uri_.end()) {
-    it->second.dirty = true;
-  }
-}
-
-void ReviewCommentsRegistry::InvalidateAll() {
-  for (auto& [uri, index] : indices_by_uri_) {
-    (void)uri;
-    index.dirty = true;
-  }
-}
+void ReviewCommentsRegistry::InvalidateAll() { indices_dirty_ = true; }
 
 }  // namespace microide::workspace

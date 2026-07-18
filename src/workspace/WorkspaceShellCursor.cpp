@@ -506,7 +506,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           return CursorKind::Pointer;
         }
       }
-      const auto lines = BuildGitSidebarLines();
+      const auto& lines = BuildGitSidebarLines();
       const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
       const auto line_index = ScrollableListIndexAtY(list_layout, y);
       if (!line_index.has_value() || *line_index < 0 ||
@@ -1081,7 +1081,7 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
     };
     switch (ActiveSidebarMode()) {
       case SidebarMode::Git: {
-        const auto lines = BuildGitSidebarLines();
+        const auto& lines = BuildGitSidebarLines();
         return row_band(ComputeGitSidebarListLayout(layout.sidebar, lines.size()), lines.size());
       }
       case SidebarMode::Search: {
