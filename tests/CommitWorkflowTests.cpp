@@ -456,6 +456,32 @@ void TestConflictMarkerScanGate() {
          "scan=false (interactive refresh) must skip the unbounded conflict-marker scan");
 }
 
+// Regression (A-075): CommitWorkflowState::BodyText() memoizes the serialized
+// commit body against the body viewport's content_revision, so a precheck +
+// persisted-draft build on the same keystroke does not re-snapshot and
+// re-concatenate the whole body twice. A matching revision must return the
+// cached string (same storage); a content edit must invalidate it.
+void TestCommitBodyTextCachesUntilContentEdit() {
+  using microide::workspace::CommitWorkflowState;
+
+  CommitWorkflowState state;
+  state.body.LoadContent("first line\nsecond line");
+
+  const std::string& first = state.BodyText();
+  Expect(first == "first line\nsecond line", "BodyText must serialize the loaded body");
+
+  // No content edit between calls: the cache is reused (same backing storage).
+  const std::string& again = state.BodyText();
+  Expect(&again == &first, "unchanged body must return the cached string, not rebuild it");
+  Expect(again == "first line\nsecond line", "cached body content must stay correct");
+
+  // A content edit bumps content_revision and must invalidate the cache.
+  state.body.LoadContent("replaced body");
+  const std::string& after_edit = state.BodyText();
+  Expect(after_edit == "replaced body",
+         "an edit must invalidate the cache and re-serialize the new body");
+}
+
 }  // namespace
 
 void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
@@ -477,6 +503,8 @@ void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CommitWorkflow/ExecuteCommitInTempRepo", TestExecuteCommitInTempRepo);
   AddTest(tests, "CommitWorkflow/ExecuteCommitPreservesShellSignificantAndLargeBody",
           TestExecuteCommitPreservesShellSignificantAndLargeBody);
+  AddTest(tests, "CommitWorkflow/BodyTextCachesUntilContentEdit",
+          TestCommitBodyTextCachesUntilContentEdit);
 }
 
 }  // namespace microide::tests

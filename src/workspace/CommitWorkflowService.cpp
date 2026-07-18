@@ -94,7 +94,7 @@ PersistedCommitDraftState CommitWorkflowService::BuildPersistedDraft(
       .head_oid = state.draft_context.head_oid,
       .branch_name = state.draft_context.branch_name,
       .subject = state.subject.text(),
-      .body = CommitWorkflowBodyText(state.body),
+      .body = state.BodyText(),
   };
 }
 
@@ -122,7 +122,7 @@ void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state,
   // `git diff --cached` conflict-marker scan only runs when a commit is about to
   // dispatch (run_blocking_conflict_scan); interactive refreshes skip it for speed.
   state.checks = project::RunCommitPreChecks(
-      repository_state, state.subject.text(), CommitWorkflowBodyText(state.body),
+      repository_state, state.subject.text(), state.BodyText(),
       state.acknowledged_warning_ids, &state.staged_summary, run_blocking_conflict_scan);
   if (callbacks_.request_commit_workflow_redraw != nullptr) {
     callbacks_.request_commit_workflow_redraw();
@@ -157,7 +157,7 @@ void CommitWorkflowService::Open(CommitWorkflowState& state) {
 
 void CommitWorkflowService::Close(CommitWorkflowState& state) {
   if (state.open && callbacks_.persist_commit_draft != nullptr &&
-      (!state.subject.text().empty() || !CommitWorkflowBodyText(state.body).empty())) {
+      (!state.subject.text().empty() || !state.BodyText().empty())) {
     callbacks_.persist_commit_draft();
   }
   state.open = false;
@@ -253,7 +253,7 @@ void CommitWorkflowService::DispatchCommit(CommitWorkflowState& state,
   }
 
   const std::string subject = state.subject.text();
-  const std::string body = CommitWorkflowBodyText(state.body);
+  const std::string body = state.BodyText();
   const std::uint64_t repository_generation = repository_state.generation;
   state.operation_in_flight = true;
   state.status_message = "Committing...";
