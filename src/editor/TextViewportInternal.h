@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -154,6 +155,104 @@ inline TextPosition RemapPositionAfterReplace(TextPosition position,
   TextPosition result = position;
   result.line = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(position.line) + line_delta);
   return result;
+}
+
+// One site produced by a multi-caret reverse-apply walk: the caret's own
+// post-edit `landed` position (in the coordinate space *before* any lower /
+// earlier-caret edit is folded in — exactly what the walk records right after
+// applying this caret's edit and before remapping), plus that edit's removed
+// range + replacement shape. `has_edit` is false for carets that produced no
+// buffer edit (no-op backspace at doc start, auto-close skip, invalid range);
+// they still get remapped by lower edits but shift nothing themselves.
+struct MultiCaretRemapSite {
+  TextPosition landed{};
+  std::optional<TextPosition> anchor;  // companion position (selection anchor), remapped too
+  bool has_edit = false;
+  SelectionRange removed{};
+  ReplacementShape shape{};
+};
+
+// Fold every lower-index site's edit into each site's `landed` (and `anchor`),
+// reproducing the reverse-apply walk's incremental "remap every already-produced
+// result after each applied edit" exactly, but without its O(sites^2) inner loop
+// in the common case. Sites are in ascending caret order; edits are disjoint and
+// sorted (the caller rejects overlaps first).
+//
+// When every edit removed a single-line range and no site carries an anchor, the
+// net effect of all lower edits on a caret is a pure additive line delta plus a
+// same-line column delta, computed in one forward pass (O(sites)). Multi-line
+// removed ranges or anchors fall back to the exact O(sites^2) remap. Both paths
+// yield identical results to the original per-edit remap.
+inline void ResolveMultiCaretRemapSites(std::vector<MultiCaretRemapSite>& sites) {
+  bool fast_eligible = true;
+  for (const MultiCaretRemapSite& site : sites) {
+    if (site.anchor.has_value() ||
+        (site.has_edit && site.removed.start.line != site.removed.end.line)) {
+      fast_eligible = false;
+      break;
+    }
+  }
+
+  if (!fast_eligible) {
+    // Exact fallback: site i is remapped by edits i-1, i-2, ..., 0 in that order
+    // (matching the reverse walk, which applies higher carets first and remaps
+    // each lower edit into the already-recorded higher results).
+    for (std::size_t i = 0; i < sites.size(); ++i) {
+      for (std::size_t k = i; k-- > 0;) {
+        if (!sites[k].has_edit) {
+          continue;
+        }
+        const SelectionRange& removed = sites[k].removed;
+        sites[i].landed =
+            RemapPositionAfterReplace(sites[i].landed, removed.start, removed.end, sites[k].shape);
+        if (sites[i].anchor.has_value()) {
+          sites[i].anchor = RemapPositionAfterReplace(*sites[i].anchor, removed.start, removed.end,
+                                                      sites[k].shape);
+        }
+      }
+    }
+    return;
+  }
+
+  // Fast path — single-line removed ranges only, so every edit's line delta is
+  // non-negative and a caret's line never decreases across the fold. `acc_line`
+  // accumulates every lower edit's line delta (both remap branches add it);
+  // `acc_col` accumulates the same-original-line column shift, resetting to 0 at
+  // each new original line and rebasing when an edit inserts newlines (its prefix
+  // moves to a fresh tail line, so earlier same-line column growth no longer
+  // applies to carets past it).
+  std::ptrdiff_t acc_line = 0;
+  std::ptrdiff_t acc_col = 0;
+  std::size_t prev_orig_line = std::numeric_limits<std::size_t>::max();
+  for (MultiCaretRemapSite& site : sites) {
+    const std::size_t orig_line =
+        site.has_edit ? site.removed.start.line : site.landed.line;
+    if (orig_line != prev_orig_line) {
+      acc_col = 0;
+      prev_orig_line = orig_line;
+    }
+    const std::size_t final_line =
+        static_cast<std::size_t>(static_cast<std::ptrdiff_t>(site.landed.line) + acc_line);
+    std::size_t final_col = site.landed.column;
+    // Apply the same-line column shift only when this caret still sits on its
+    // original line — a caret whose own edit inserted newlines landed on a fresh
+    // tail line that lower same-line edits do not touch.
+    if (site.landed.line == orig_line) {
+      final_col = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(final_col) + acc_col);
+    }
+    site.landed = TextPosition{final_line, final_col};
+
+    if (site.has_edit) {
+      acc_line += static_cast<std::ptrdiff_t>(site.shape.inserted_newlines);
+      if (site.shape.inserted_newlines == 0) {
+        acc_col += static_cast<std::ptrdiff_t>(site.shape.last_segment_cols) -
+                   static_cast<std::ptrdiff_t>(site.removed.end.column - site.removed.start.column);
+      } else {
+        acc_col = static_cast<std::ptrdiff_t>(site.shape.last_segment_cols) -
+                  static_cast<std::ptrdiff_t>(site.removed.end.column);
+      }
+    }
+  }
 }
 
 }  // namespace microide::editor::detail

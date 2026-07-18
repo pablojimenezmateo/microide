@@ -736,7 +736,94 @@ void TestMultiCaretDisjointGroupedJoinNoSnapshotRoundTrips() {
          "undo/redo of the stitched entry must not snapshot the whole buffer");
 }
 
+// The batched lower-edit remap (TD-2026-07-17A-054: O(carets^2) -> O(carets))
+// must produce byte-identical results to the old per-edit remap at scale. Insert
+// one character at hundreds of carets spread across a single line and verify every
+// caret lands exactly after its own insertion, shifted right by the count of lower
+// insertions -- the exact stale-caret bug the O(k^2) walk avoided.
+void TestMultiCaretManySameLineInsertRemapsEveryCaret() {
+  TextViewport viewport;
+  constexpr std::size_t kCaretCount = 400;
+  // A line of '.'s, one caret every 2 columns: 0, 2, 4, ... (disjoint).
+  std::string line(kCaretCount * 2, '.');
+  viewport.LoadContent(line + "\n", "/tmp/mc-scale-insert.txt");
+  viewport.MoveCursorTo(0, 0);
+  std::vector<TextPosition> secondaries;
+  secondaries.reserve(kCaretCount - 1);
+  for (std::size_t i = 1; i < kCaretCount; ++i) {
+    secondaries.push_back({0, i * 2});
+  }
+  viewport.SetSecondaryCarets(secondaries);
+
+  viewport.InsertText("X");
+
+  Expect(viewport.secondary_carets().size() == kCaretCount - 1,
+         "every caret should survive the large same-line insert");
+  // Primary was at column 0 -> lands at column 1 (its own X, no lower carets).
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 1,
+         "the lowest caret should land right after its own insertion");
+  // Caret originally at column 2*i now sits after i lower insertions plus its own:
+  // 2*i + i (lower Xs) + 1 (own X) = 3*i + 1.
+  bool all_correct = true;
+  for (std::size_t i = 1; i < kCaretCount; ++i) {
+    const TextPosition expected{0, 3 * i + 1};
+    if (viewport.secondary_carets()[i - 1] != expected) {
+      all_correct = false;
+      break;
+    }
+  }
+  Expect(all_correct, "each same-line caret must sit just after its own insertion once "
+                      "all lower insertions have shifted it -- no stale positions");
+  // 800 '.'s + 400 'X's inserted.
+  Expect(viewport.lines()[0].size() == kCaretCount * 3,
+         "exactly one insertion should land at each of the hundreds of carets");
+}
+
+// Same scale check for the auto-close fast path (TryMultiCaretPairInsert): typing
+// '(' at many carets on one line inserts a matching '()' pair at each and shifts
+// every higher caret by two columns, landing each caret between its own pair.
+void TestMultiCaretManyPairInsertRemapsEveryCaret() {
+  TextViewport viewport;
+  viewport.SetLanguageContractView(MakeCStyleContractView());
+  constexpr std::size_t kCaretCount = 300;
+  std::string line(kCaretCount * 2, ' ');
+  viewport.LoadContent(line + "\n", "/tmp/mc-scale-pair.txt");
+  viewport.MoveCursorTo(0, 0);
+  std::vector<TextPosition> secondaries;
+  secondaries.reserve(kCaretCount - 1);
+  for (std::size_t i = 1; i < kCaretCount; ++i) {
+    secondaries.push_back({0, i * 2});
+  }
+  viewport.SetSecondaryCarets(secondaries);
+
+  viewport.InsertCharacter('(');
+
+  Expect(viewport.secondary_carets().size() == kCaretCount - 1,
+         "every caret should survive the large auto-close pair insert");
+  // Primary at column 0 lands between its own "()" -> column 1.
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 1,
+         "the lowest caret should land inside its own inserted pair");
+  // Caret originally at 2*i: 2 columns per lower pair (2*i) plus 1 (inside own
+  // pair) = 2*i + i*2 ... each lower caret adds 2, so 2*i + 2*i + 1 = 4*i + 1.
+  bool all_correct = true;
+  for (std::size_t i = 1; i < kCaretCount; ++i) {
+    const TextPosition expected{0, 4 * i + 1};
+    if (viewport.secondary_carets()[i - 1] != expected) {
+      all_correct = false;
+      break;
+    }
+  }
+  Expect(all_correct, "each caret must land inside its own auto-closed pair after all "
+                      "lower pairs shift it -- no stale positions");
+  Expect(viewport.lines()[0].size() == kCaretCount * 2 + kCaretCount * 2,
+         "each caret should insert exactly one '()' pair");
+}
+
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorMultiCaret/ManySameLineInsertRemapsEveryCaret",
+          TestMultiCaretManySameLineInsertRemapsEveryCaret);
+  AddTest(tests, "EditorMultiCaret/ManyPairInsertRemapsEveryCaret",
+          TestMultiCaretManyPairInsertRemapsEveryCaret);
   AddTest(tests, "EditorMultiCaret/DisjointGroupedInsertNoSnapshotRoundTrips",
           TestMultiCaretDisjointGroupedInsertNoSnapshotRoundTrips);
   AddTest(tests, "EditorMultiCaret/DisjointGroupedJoinNoSnapshotRoundTrips",

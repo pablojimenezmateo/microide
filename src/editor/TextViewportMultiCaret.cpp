@@ -68,11 +68,6 @@ TextViewportUndoHistory::Entry BuildAggregateFromLineSlice(
   return aggregate;
 }
 
-struct ResultCaret {
-  TextPosition position;
-  bool is_primary = false;
-};
-
 // One caret's planned edit, computed from the pre-edit buffer. The reverse walk
 // applies higher (later) carets first, and those edits never touch the content
 // at a lower caret, so planning every edit up front from the original buffer is
@@ -335,12 +330,15 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
                          return detail::PositionLess(site.position, value);
                        }) -
       carets.begin());
-  std::vector<ResultCaret> results;
-  results.reserve(carets.size());
+  // Apply edits high-to-low (so each edit's coordinates stay valid against the
+  // still-unedited lower buffer), recording each caret's landed position + its
+  // edit footprint indexed by ascending caret order. The lower-edit remap is then
+  // done in a single batched pass (detail::ResolveMultiCaretRemapSites) instead of
+  // re-remapping every already-produced result after each apply (which was
+  // O(carets^2) per typed character with thousands of carets).
+  std::vector<detail::MultiCaretRemapSite> sites(carets.size());
   bool changed = false;
-
   for (std::size_t i = carets.size(); i-- > 0;) {
-    const bool is_primary = (i == primary_index);
     const std::size_t line = std::min(carets[i].position.line, document_->lines.size() - 1);
     const std::size_t column =
         TextLayout::ClampTextColumn(document_->lines[line], carets[i].position.column);
@@ -348,34 +346,34 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
         planned[i].has_value() ? BuildRangeHistoryEntry(planned[i]->removed, planned[i]->replacement)
                                : std::nullopt;
     if (!entry.has_value()) {
-      results.push_back(ResultCaret{TextPosition{line, column}, is_primary});
+      sites[i] = detail::MultiCaretRemapSite{.landed = TextPosition{line, column}};
       continue;
     }
     changed = true;
-    const SelectionRange removed = planned[i]->removed;
-    const detail::ReplacementShape shape = detail::ComputeReplacementShape(planned[i]->replacement);
     ApplyHistoryEntry(*entry, true);
-    for (ResultCaret& result : results) {
-      result.position =
-          detail::RemapPositionAfterReplace(result.position, removed.start, removed.end, shape);
-    }
     const TextPosition landed = planned[i]->landed_override.value_or(
         TextPosition{entry->after_state.cursor_line, entry->after_state.cursor_column});
-    results.push_back(ResultCaret{landed, is_primary});
+    sites[i] = detail::MultiCaretRemapSite{
+        .landed = landed,
+        .has_edit = true,
+        .removed = planned[i]->removed,
+        .shape = detail::ComputeReplacementShape(planned[i]->replacement)};
   }
 
   if (!changed) {
     return false;
   }
 
+  detail::ResolveMultiCaretRemapSites(sites);
+
   TextPosition primary_after = primary_before;
   std::vector<TextPosition> updated_secondary_carets;
-  updated_secondary_carets.reserve(results.size());
-  for (const ResultCaret& result : results) {
-    if (result.is_primary) {
-      primary_after = result.position;
+  updated_secondary_carets.reserve(sites.size());
+  for (std::size_t i = 0; i < sites.size(); ++i) {
+    if (i == primary_index) {
+      primary_after = sites[i].landed;
     } else {
-      updated_secondary_carets.push_back(result.position);
+      updated_secondary_carets.push_back(sites[i].landed);
     }
   }
 

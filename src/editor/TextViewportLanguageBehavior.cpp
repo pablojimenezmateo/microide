@@ -483,36 +483,20 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   const std::size_t before_document_line_count = document_->lines.size();
   const ViewState before_state = CaptureViewState();
 
-  // Record each slot's post-edit caret (and selection anchor) in processing
-  // order. Because slots are walked high-to-low, every edit shifts the carets
-  // already recorded above it; remapping keeps multiple carets on one line from
-  // drifting out of place.
-  struct Recorded {
-    bool is_primary = false;
-    std::size_t secondary_index = 0;
-    TextPosition position{};
-    std::optional<TextPosition> anchor;
-  };
-  std::vector<Recorded> recorded;
-  recorded.reserve(slots.size());
-
-  const auto remap_recorded = [&](const SelectionRange& removed, std::string_view replacement) {
-    const detail::ReplacementShape shape = detail::ComputeReplacementShape(replacement);
-    for (Recorded& r : recorded) {
-      r.position =
-          detail::RemapPositionAfterReplace(r.position, removed.start, removed.end, shape);
-      if (r.anchor.has_value()) {
-        r.anchor =
-            detail::RemapPositionAfterReplace(*r.anchor, removed.start, removed.end, shape);
-      }
-    }
-  };
+  // Record each slot's post-edit caret (and selection anchor) plus its edit
+  // footprint, indexed by ascending slot order. Edits are applied high-to-low so
+  // each stays valid against the still-unedited lower buffer; the lower-edit
+  // remap is then batched in one pass (detail::ResolveMultiCaretRemapSites)
+  // instead of remapping every already-recorded caret after each apply (which was
+  // O(carets^2)). `landed` holds each caret's own post-edit position before the
+  // lower-edit fold-in — exactly what the reverse walk recorded before remapping.
+  std::vector<detail::MultiCaretRemapSite> sites(slots.size());
 
   bool text_changed = false;
   bool caret_changed = false;
 
-  for (auto it = slots.rbegin(); it != slots.rend(); ++it) {
-    const Slot& slot = *it;
+  for (std::size_t slot_index = slots.size(); slot_index-- > 0;) {
+    const Slot& slot = slots[slot_index];
     const std::size_t line = std::min(slot.reference.line, document_->lines.size() - 1);
     const std::size_t column =
         TextLayout::ClampTextColumn(document_->lines[line], slot.reference.column);
@@ -523,10 +507,11 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
       if (!detail::ValidateRangeColumns(document_->lines, norm)) {
         // Range no longer valid: keep this caret in place (it still shifts if a
         // lower edit moves it).
-        recorded.push_back(Recorded{
-            slot.is_primary, slot.secondary_index, TextPosition{line, column},
-            slot.is_primary ? selection_anchor_
-                            : secondary_carets_[slot.secondary_index].selection_anchor});
+        sites[slot_index] = detail::MultiCaretRemapSite{
+            .landed = TextPosition{line, column},
+            .anchor = slot.is_primary
+                          ? selection_anchor_
+                          : secondary_carets_[slot.secondary_index].selection_anchor};
         continue;
       }
 
@@ -544,38 +529,43 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
                                    &inner_anchor, &inner_cursor);
         const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(norm, replacement);
         if (!entry.has_value()) {
-          recorded.push_back(Recorded{slot.is_primary, slot.secondary_index,
-                                      TextPosition{line, column}, std::nullopt});
+          sites[slot_index] =
+              detail::MultiCaretRemapSite{.landed = TextPosition{line, column}};
           continue;
         }
         text_changed = true;
         ApplyHistoryEntry(*entry, true);
-        remap_recorded(norm, replacement);
-        recorded.push_back(
-            Recorded{slot.is_primary, slot.secondary_index, inner_cursor, inner_anchor});
+        sites[slot_index] =
+            detail::MultiCaretRemapSite{.landed = inner_cursor,
+                                        .anchor = inner_anchor,
+                                        .has_edit = true,
+                                        .removed = norm,
+                                        .shape = detail::ComputeReplacementShape(replacement)};
         continue;
       }
 
       const std::string replacement(1, static_cast<char>(ch));
       const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(norm, replacement);
       if (!entry.has_value()) {
-        recorded.push_back(Recorded{slot.is_primary, slot.secondary_index,
-                                    TextPosition{line, column}, std::nullopt});
+        sites[slot_index] = detail::MultiCaretRemapSite{.landed = TextPosition{line, column}};
         continue;
       }
       text_changed = true;
       ApplyHistoryEntry(*entry, true);
-      remap_recorded(norm, replacement);
       const TextPosition pos{entry->after_state.cursor_line, entry->after_state.cursor_column};
-      recorded.push_back(Recorded{slot.is_primary, slot.secondary_index, pos, std::nullopt});
+      sites[slot_index] =
+          detail::MultiCaretRemapSite{.landed = pos,
+                                      .has_edit = true,
+                                      .removed = norm,
+                                      .shape = detail::ComputeReplacementShape(replacement)};
       continue;
     }
 
     const auto* close_pair = lc_view_.auto_close_enabled ? FindAutoCloseCloser(lc_view_, ch) : nullptr;
     if (close_pair != nullptr && column < current_line.size() && current_line[column] == ch) {
       caret_changed = true;
-      recorded.push_back(Recorded{slot.is_primary, slot.secondary_index,
-                                  TextPosition{line, column + 1}, std::nullopt});
+      sites[slot_index] =
+          detail::MultiCaretRemapSite{.landed = TextPosition{line, column + 1}};
       continue;
     }
 
@@ -591,37 +581,42 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
     const SelectionRange removed{TextPosition{line, column}, TextPosition{line, column}};
     const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(removed, replacement);
     if (!entry.has_value()) {
-      recorded.push_back(Recorded{slot.is_primary, slot.secondary_index,
-                                  TextPosition{line, column}, std::nullopt});
+      sites[slot_index] = detail::MultiCaretRemapSite{.landed = TextPosition{line, column}};
       continue;
     }
     text_changed = true;
     ApplyHistoryEntry(*entry, true);
-    remap_recorded(removed, replacement);
     TextPosition updated_position{entry->after_state.cursor_line, entry->after_state.cursor_column};
     if (replacement.size() > 1) {
       updated_position.column = column + 1;
     }
-    recorded.push_back(
-        Recorded{slot.is_primary, slot.secondary_index, updated_position, std::nullopt});
+    sites[slot_index] =
+        detail::MultiCaretRemapSite{.landed = updated_position,
+                                    .has_edit = true,
+                                    .removed = removed,
+                                    .shape = detail::ComputeReplacementShape(replacement)};
   }
 
   if (!text_changed && !caret_changed) {
     return false;
   }
 
+  // Fold every lower edit into each recorded caret+anchor in one batched pass.
+  detail::ResolveMultiCaretRemapSites(sites);
+
   TextPosition primary_after{cursor_line_, cursor_column_};
   std::optional<TextPosition> new_primary_anchor = selection_anchor_;
   std::vector<SecondaryCaret> new_secondaries = secondary_carets_;
-  for (const Recorded& r : recorded) {
-    if (r.is_primary) {
-      primary_after = r.position;
-      new_primary_anchor = r.anchor;
+  for (std::size_t i = 0; i < slots.size(); ++i) {
+    const detail::MultiCaretRemapSite& site = sites[i];
+    if (slots[i].is_primary) {
+      primary_after = site.landed;
+      new_primary_anchor = site.anchor;
     } else {
-      new_secondaries[r.secondary_index] = SecondaryCaret{
-          .position = r.position,
-          .preferred_column = PreferredColumnForCaret(r.position),
-          .selection_anchor = r.anchor,
+      new_secondaries[slots[i].secondary_index] = SecondaryCaret{
+          .position = site.landed,
+          .preferred_column = PreferredColumnForCaret(site.landed),
+          .selection_anchor = site.anchor,
       };
     }
   }
