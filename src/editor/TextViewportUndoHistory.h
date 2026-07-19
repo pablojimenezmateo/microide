@@ -74,13 +74,12 @@ class TextViewportUndoHistory {
   // Grouping ------------------------------------------------------------
   bool IsGroupActive() const { return !group_stack_.empty(); }
   void BeginGroup(ViewState before_state);
-  // Records a candidate child edit. While a group is active this either
-  // merges into the aggregate entry or falls back to whole-buffer-snapshot
-  // mode; with no group active it either coalesces into the top undo entry
-  // (per `hint`) or pushes a fresh entry, clearing the redo stack either way
-  // (same base semantics as the prior PushHistoryEntry).
-  void RecordEntry(Entry entry, const TextBuffer& current_lines,
-                   CoalesceHint hint = CoalesceHint{});
+  // Records a candidate child edit. While a group is active this merges into
+  // the frame's disjoint-range aggregate; with no group active it either
+  // coalesces into the top undo entry (per `hint`) or pushes a fresh entry,
+  // clearing the redo stack either way (same base semantics as the prior
+  // PushHistoryEntry).
+  void RecordEntry(Entry entry, CoalesceHint hint = CoalesceHint{});
   // Bypass-grouping push (matches PushHistoryEntryDirect): clears redo,
   // pushes onto undo, enforces the history cap. Used by paths that have
   // already built a known-good aggregate (e.g. ResetState / Save).

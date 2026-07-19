@@ -528,7 +528,7 @@ void TextViewport::RestoreViewState(const ViewState& state) {
 }
 
 void TextViewport::PushHistoryEntry(HistoryEntry entry, CoalesceHint hint) {
-  undo_history_.RecordEntry(std::move(entry), document_->lines, hint);
+  undo_history_.RecordEntry(std::move(entry), hint);
 }
 
 void TextViewport::PushHistoryEntryDirect(HistoryEntry entry) {

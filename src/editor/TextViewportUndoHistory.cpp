@@ -51,9 +51,7 @@ void TextViewportUndoHistory::BeginGroup(ViewState before_state) {
   group_stack_.push_back(std::move(frame));
 }
 
-void TextViewportUndoHistory::RecordEntry(Entry entry,
-                                          const TextBuffer& current_lines,
-                                          CoalesceHint hint) {
+void TextViewportUndoHistory::RecordEntry(Entry entry, CoalesceHint hint) {
   redo_stack_.clear();
   if (group_stack_.empty()) {
     if (hint.kind != CoalesceKind::None && TryCoalesceWithTop(entry, hint)) {

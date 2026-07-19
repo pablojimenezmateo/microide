@@ -386,6 +386,8 @@ void RegisterBreakpointStoreTests(std::vector<TestCase>& tests) {
           TestBreakpointStoreApplyVerificationByIndex);
   AddTest(tests, "BreakpointStore/ApplyVerificationMatchesByLineNotIndex",
           TestBreakpointStoreApplyVerificationMatchesByLineNotIndex);
+  AddTest(tests, "BreakpointStore/ApplyVerificationManyLines",
+          TestBreakpointStoreApplyVerificationManyLines);
   AddTest(tests, "BreakpointStore/ApplyBreakpointEvent", TestBreakpointStoreApplyBreakpointEvent);
   AddTest(tests, "BreakpointStore/EventForeignIdDoesNotClobberBoundBreakpoint",
           TestBreakpointStoreEventForeignIdDoesNotClobberBoundBreakpoint);
