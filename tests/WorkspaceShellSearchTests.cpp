@@ -542,7 +542,115 @@ void TestWorkspaceShellProjectSearchSidebarScrollPastSelection() {
          "navigating to the first result should reveal it at the top");
 }
 
+namespace {
+
+// Reconstruct the active editor's document text (lines joined with '\n') for
+// assertions.
+std::string ActiveEditorDocText(WorkspaceShell& shell) {
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  std::string out;
+  for (std::size_t i = 0; i < editor.lines().LineCount(); ++i) {
+    if (i != 0) {
+      out += '\n';
+    }
+    out += std::string(editor.lines().LineView(i));
+  }
+  return out;
+}
+
+}  // namespace
+
+// In-file regex replace-all expands capture groups across every match and applies
+// as ONE undo group, so a single undo restores the original buffer.
+void TestWorkspaceShellBufferRegexReplaceAll() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "kv.txt";
+  WriteFile(source, "a=1\nb=2\nc=3");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  WorkspaceShellTestAccess::SetBufferSearchRegexAndRefresh(shell, true);
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "(\\w)=(\\d)");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3,
+         "regex find should match all three key=value lines");
+
+  WorkspaceShellTestAccess::SetBufferReplaceText(shell, "$2$1");
+  WorkspaceShellTestAccess::ReplaceAllBufferSearchMatches(shell);
+  Expect(ActiveEditorDocText(shell) == "1a\n2b\n3c",
+         "regex replace-all should expand $1/$2 on every match");
+
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).Undo(),
+         "a single undo should be available after regex replace-all");
+  Expect(ActiveEditorDocText(shell) == "a=1\nb=2\nc=3",
+         "one undo should restore the whole regex replace-all as a single group");
+}
+
+// In-file regex "Replace" (current match) expands only the selected occurrence.
+void TestWorkspaceShellBufferRegexReplaceCurrent() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "nums.txt";
+  WriteFile(source, "x12 y34");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  WorkspaceShellTestAccess::SetBufferSearchRegexAndRefresh(shell, true);
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "(\\d+)");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2,
+         "regex find should match both digit runs");
+
+  WorkspaceShellTestAccess::SetBufferReplaceText(shell, "[$1]");
+  WorkspaceShellTestAccess::SetBufferSearchSelectedIndex(shell, 0);
+  WorkspaceShellTestAccess::ReplaceCurrentBufferSearchMatch(shell);
+  Expect(ActiveEditorDocText(shell) == "x[12] y34",
+         "replace-current should expand only the selected match");
+}
+
+// Alt+R toggles regex mode in the find widget and recomputes matches; an invalid
+// pattern yields no matches (0/0) without crashing.
+void TestWorkspaceShellBufferRegexToggleViaAltR() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "digits.txt";
+  WriteFile(source, "a1 b2\nc3\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should open the find widget");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "\\d"),
+         "the find widget should accept a regex query");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 0,
+         "in literal mode the query '\\d' matches nothing");
+
+  Expect(SendKeyDown(shell, SDLK_R, SDL_KMOD_ALT), "Alt+R should toggle regex mode");
+  Expect(WorkspaceShellTestAccess::BufferSearchRegexEnabled(shell),
+         "Alt+R should enable regex mode");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3,
+         "after enabling regex, '\\d' should match every digit");
+
+  // An invalid pattern must not crash and yields no matches.
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "[unterminated");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 0,
+         "an invalid regex should produce zero matches without crashing");
+}
+
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/BufferRegexReplaceAll",
+          TestWorkspaceShellBufferRegexReplaceAll);
+  AddTest(tests, "WorkspaceShell/BufferRegexReplaceCurrent",
+          TestWorkspaceShellBufferRegexReplaceCurrent);
+  AddTest(tests, "WorkspaceShell/BufferRegexToggleViaAltR",
+          TestWorkspaceShellBufferRegexToggleViaAltR);
   AddTest(tests, "WorkspaceShell/ProjectSearchSidebarScrollPastSelection",
           TestWorkspaceShellProjectSearchSidebarScrollPastSelection);
   AddTest(tests, "WorkspaceShell/ProjectSearchHiddenToggleReruns",

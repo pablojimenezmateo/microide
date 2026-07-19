@@ -2,11 +2,63 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
+
+namespace {
+
+// Applies a regex replace-all across `viewport` as ONE undo group. Re-scans the
+// live buffer (so the match set is fresh even if the document was edited while the
+// find widget stayed open), expands every match's replacement against the ORIGINAL
+// line text up-front, then applies the edits bottom-to-top (descending position) so
+// each not-yet-applied match keeps valid coordinates. A per-match expansion failure
+// (bad replacement escape) aborts before any edit is applied — nothing is written.
+void ApplyBufferRegexReplaceAll(editor::TextViewport& viewport,
+                                const std::string& query,
+                                std::string_view replacement) {
+  if (query.empty()) {
+    return;
+  }
+  const std::uint32_t options = UsesCaseSensitiveLiteralMatch(query) ? 0u : PCRE2_CASELESS;
+  const util::CompiledRegex pattern(query, options);
+  if (!pattern.valid()) {
+    return;
+  }
+  const std::vector<editor::SelectionRange> matches =
+      FindRegexSearchMatches(viewport.lines(), pattern);
+  if (matches.empty()) {
+    return;
+  }
+
+  // Pre-expand every replacement against the original buffer so a rightward edit on
+  // the same line cannot perturb a later expansion's lookaround context.
+  std::vector<std::string> expansions;
+  expansions.reserve(matches.size());
+  for (const editor::SelectionRange& match : matches) {
+    if (match.start.line >= viewport.lines().LineCount()) {
+      return;
+    }
+    std::optional<std::string> expanded = pattern.ExpandMatchAt(
+        viewport.lines().LineView(match.start.line), match.start.column, replacement);
+    if (!expanded.has_value()) {
+      return;  // bad replacement escape -> abort with no edits
+    }
+    expansions.push_back(std::move(*expanded));
+  }
+
+  viewport.BeginUndoGroup();
+  for (std::size_t i = matches.size(); i-- > 0;) {
+    viewport.ReplaceRange(matches[i], expansions[i]);
+  }
+  viewport.EndUndoGroup();
+}
+
+}  // namespace
 
 void WorkspaceShell::RefreshBufferSearch() {
   editor::TextViewport* viewport = ActiveEditorViewport();
@@ -30,20 +82,32 @@ void WorkspaceShell::RefreshBufferSearch() {
   // the whole document each keystroke. Identity (viewport pointer) + content
   // revision guard against a stale or wrong-buffer cache.
   auto& incremental = buffer_search.incremental;
-  const bool can_refine = incremental.valid &&
-                          incremental.viewport == static_cast<const void*>(viewport) &&
-                          incremental.content_revision == content_revision &&
-                          !incremental.query.empty() &&
-                          QueryExtendsCaseInsensitive(incremental.query, query);
-  buffer_search.matches = can_refine
-                              ? RefineLiteralSearchMatches(buffer, query, buffer_search.matches)
-                              : FindLiteralSearchMatches(buffer, query);
+  if (buffer_search.regex) {
+    // Regex mode: smart-case (an uppercase letter in the query forces
+    // case-sensitivity, matching project search), full-scan every keystroke. An
+    // invalid pattern yields no matches (the widget shows 0/0). The literal refine
+    // cache is bypassed and invalidated so switching back to literal rescans.
+    const std::uint32_t options = UsesCaseSensitiveLiteralMatch(query) ? 0u : PCRE2_CASELESS;
+    const util::CompiledRegex pattern(query, options);
+    buffer_search.matches =
+        pattern.valid() ? FindRegexSearchMatches(buffer, pattern)
+                        : std::vector<editor::SelectionRange>{};
+    incremental.valid = false;
+  } else {
+    const bool can_refine = incremental.valid &&
+                            incremental.viewport == static_cast<const void*>(viewport) &&
+                            incremental.content_revision == content_revision &&
+                            !incremental.query.empty() &&
+                            QueryExtendsCaseInsensitive(incremental.query, query);
+    buffer_search.matches = can_refine
+                                ? RefineLiteralSearchMatches(buffer, query, buffer_search.matches)
+                                : FindLiteralSearchMatches(buffer, query);
+    incremental.valid = true;
+    incremental.viewport = viewport;
+    incremental.content_revision = content_revision;
+    incremental.query = query;
+  }
   ++buffer_search.matches_revision;
-
-  incremental.valid = true;
-  incremental.viewport = viewport;
-  incremental.content_revision = content_revision;
-  incremental.query = query;
 
   buffer_search.selected_index = 0;
 
@@ -134,8 +198,26 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
   buffer_search.preserve_temporarily_expanded_folds = true;
   const auto match = buffer_search.matches[buffer_search.selected_index];
   editor::TextViewport* viewport = ActiveEditorViewport();
-  if (viewport == nullptr ||
-      !viewport->ReplaceRange(match, buffer_search.replace_text.text())) {
+  if (viewport == nullptr) {
+    return;
+  }
+
+  if (buffer_search.regex) {
+    // Regex mode: expand the replacement for THIS match (capture groups resolve in
+    // full line context, so lookarounds work), then apply it to the match span.
+    const std::string& query = buffer_search.query.text();
+    const std::uint32_t options = UsesCaseSensitiveLiteralMatch(query) ? 0u : PCRE2_CASELESS;
+    const util::CompiledRegex pattern(query, options);
+    if (!pattern.valid() || match.start.line >= viewport->lines().LineCount()) {
+      return;
+    }
+    const std::optional<std::string> expanded = pattern.ExpandMatchAt(
+        viewport->lines().LineView(match.start.line), match.start.column,
+        buffer_search.replace_text.text());
+    if (!expanded.has_value() || !viewport->ReplaceRange(match, *expanded)) {
+      return;
+    }
+  } else if (!viewport->ReplaceRange(match, buffer_search.replace_text.text())) {
     return;
   }
 
@@ -156,26 +238,30 @@ void WorkspaceShell::ReplaceAllBufferSearchMatches() {
 
   buffer_search.preserve_temporarily_expanded_folds = true;
   if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
-    // TD-2026-07-17A-028: RefreshBufferSearch already computed the exact match
-    // set (same case-insensitive fold ReplaceAll uses) for this query over the
-    // current content. When that set is fresh (same viewport + content revision +
-    // query) and complete (below the retained-match cap, so not truncated), apply
-    // it as one grouped range edit instead of re-scanning + re-folding the whole
-    // document. Any inconsistency makes ReplaceAllRanges return nullopt, and we
-    // fall back to the self-contained scanning ReplaceAll.
-    const auto& incremental = buffer_search.incremental;
-    const bool matches_fresh =
-        incremental.valid && incremental.viewport == static_cast<const void*>(viewport) &&
-        incremental.content_revision == viewport->content_revision() &&
-        incremental.query == buffer_search.query.text() &&
-        buffer_search.matches.size() < kMaxBufferSearchMatches;
-    const bool applied =
-        matches_fresh &&
-        viewport
-            ->ReplaceAllRanges(buffer_search.matches, buffer_search.replace_text.text())
-            .has_value();
-    if (!applied) {
-      viewport->ReplaceAll(buffer_search.query.text(), buffer_search.replace_text.text());
+    if (buffer_search.regex) {
+      ApplyBufferRegexReplaceAll(*viewport, buffer_search.query.text(),
+                                 buffer_search.replace_text.text());
+    } else {
+      // TD-2026-07-17A-028: RefreshBufferSearch already computed the exact match
+      // set (same case-insensitive fold ReplaceAll uses) for this query over the
+      // current content. When that set is fresh (same viewport + content revision +
+      // query) and complete (below the retained-match cap, so not truncated), apply
+      // it as one grouped range edit instead of re-scanning + re-folding the whole
+      // document. Any inconsistency makes ReplaceAllRanges return nullopt, and we
+      // fall back to the self-contained scanning ReplaceAll.
+      const auto& incremental = buffer_search.incremental;
+      const bool matches_fresh =
+          incremental.valid && incremental.viewport == static_cast<const void*>(viewport) &&
+          incremental.content_revision == viewport->content_revision() &&
+          incremental.query == buffer_search.query.text() &&
+          buffer_search.matches.size() < kMaxBufferSearchMatches;
+      const bool applied =
+          matches_fresh &&
+          viewport->ReplaceAllRanges(buffer_search.matches, buffer_search.replace_text.text())
+              .has_value();
+      if (!applied) {
+        viewport->ReplaceAll(buffer_search.query.text(), buffer_search.replace_text.text());
+      }
     }
   }
   RefreshBufferSearch();

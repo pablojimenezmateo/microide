@@ -13,11 +13,10 @@
 
 namespace microide::project::search_internal {
 
-// Poll interval (loop iterations) for the cancellation check inside the
-// empty-match advance loop. Coarse enough that the modulo/atomic-load cost is
-// negligible against the per-offset PCRE2 Match, fine enough that Stop() latency
-// stays sub-millisecond on a pathological single-line file.
-constexpr std::size_t kRegexCancelPollInterval = 4096;
+// Poll interval (loop iterations) for the cancellation checks in the worker's
+// over-cap count loop. Aliases the shared match-engine constant so the two stay
+// in lockstep (the empty-match advance loop itself now lives in RegexUtil).
+constexpr std::size_t kRegexCancelPollInterval = util::kRegexMatchCancelPollInterval;
 
 // Find the next regex match in `line` starting at *search_from, advancing past
 // empty matches (recovering a non-empty alternative anchored at the same offset).

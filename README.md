@@ -82,7 +82,7 @@ for what is actually measured, and what is not.
 
 ### Search
 - Parallelized project-search sidebar: literal (default) or regex, case control, hidden-file toggle
-- Count-all totals with match highlighting; replace-in-project in literal mode
+- Count-all totals with match highlighting; replace-in-project in literal and regex modes (regex expands capture groups)
 - File finder overlay with cached index
 - Standalone `microide_search_bench` for repeatable timing
 
@@ -187,7 +187,7 @@ Mature enough to use day-to-day on the maintainer's own work:
   three-way merge with per-hunk picks and whole-side apply, `[`/`]` navigation
 - git sidebar: working-tree changes, staging / discard, conflicts open into the merge tab,
   outgoing-branch file view, commit-picker overlay
-- project search: async, literal and regex, replace-in-project for literal mode, file finder
+- project search: async, literal and regex, replace-in-project (literal & regex), file finder
 - terminal: PTY tabs, scrollback, selection / copy / paste, alternate screen, common ANSI paths
   needed by real interactive programs
 - session restore across restarts; per-project config and accent color

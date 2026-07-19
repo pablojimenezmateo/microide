@@ -107,8 +107,7 @@ std::string ComposeProjectSearchStatus(const ProjectSearchState& ps, bool can_re
   const std::string match_actions =
       can_replace_all
           ? JoinHintSegments({"/ query", "= replace", "r rerun", "R replace all", "c count all"})
-          : JoinHintSegments(
-                {"/ query", "= replace", "r rerun", "R literal mode required", "c count all"});
+          : JoinHintSegments({"/ query", "= replace", "r rerun", "c count all"});
   if (ps.editing) {
     return ps.edit_field == ProjectSearchEditField::Query
                ? JoinHintSegments({"Editing query", "Enter apply", "Esc cancel"})
@@ -136,9 +135,9 @@ std::string ComposeProjectSearchStatus(const ProjectSearchState& ps, bool can_re
 }
 
 std::string_view CachedProjectSearchStatus(const ProjectSearchState& ps) {
-  const bool can_replace_all =
-      ps.options.pattern_mode == project::ProjectSearchPatternMode::Literal &&
-      !ps.query.text().empty();
+  // Replace-all now works in both literal and regex modes (regex substitutes with
+  // capture-group expansion), so the only gate is a non-empty query.
+  const bool can_replace_all = !ps.query.text().empty();
   const ProjectSearchStatusKey key{
       .editing = ps.editing,
       .edit_field = ps.edit_field,

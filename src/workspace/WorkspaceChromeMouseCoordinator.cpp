@@ -479,7 +479,9 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
       operations_.dismiss_overlay(true);
       return true;
     }
-    if (Contains(fw.prev_button, event.button.x, event.button.y)) {
+    if (Contains(fw.regex_button, event.button.x, event.button.y)) {
+      operations_.toggle_buffer_search_regex();
+    } else if (Contains(fw.prev_button, event.button.x, event.button.y)) {
       operations_.move_buffer_search_selection(-1);
     } else if (Contains(fw.next_button, event.button.x, event.button.y)) {
       operations_.move_buffer_search_selection(1);
@@ -662,6 +664,12 @@ ChromeMouseCoordinator WorkspaceShell::MakeChromeMouseCoordinator() {
           .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
           .replace_current_buffer_search_match = [this]() { ReplaceCurrentBufferSearchMatch(); },
           .replace_all_buffer_search_matches = [this]() { ReplaceAllBufferSearchMatches(); },
+          .toggle_buffer_search_regex =
+              [this]() {
+                auto& bs = context_.current_project_state.overlay.workflow.buffer_search;
+                bs.regex = !bs.regex;
+                RefreshBufferSearch();
+              },
           .move_project_search_selection = [this](int delta) { MoveProjectSearchSelection(delta); },
           .move_file_finder_selection = [this](int delta) { MoveFileFinderSelection(delta); },
           .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },

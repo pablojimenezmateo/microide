@@ -103,6 +103,115 @@ std::size_t ReplaceLiteralMatchesInText(std::string& content,
   return replacements;
 }
 
+namespace {
+
+// Splits `content` into logical lines (on '\n'), invoking `on_line(line, cr, eol)`
+// for each: `line` is the match window (trailing '\r' removed), `cr` is "\r" when
+// one was stripped else "", and `eol` is "\n" for every line but a final one with
+// no trailing newline. Matches the project-search worker's getline framing.
+template <typename OnLine>
+void ForEachSearchLine(std::string_view content, OnLine&& on_line) {
+  std::size_t line_start = 0;
+  // `<` (not `<=`) matches the search worker's getline framing: the final '\n' is
+  // the terminator of the preceding line, NOT the start of a phantom empty line.
+  // This keeps an empty-matching pattern (e.g. `^` or `x?`) from substituting on a
+  // trailing line the search never reported.
+  while (line_start < content.size()) {
+    const std::size_t newline = content.find('\n', line_start);
+    const std::size_t line_end = (newline == std::string_view::npos) ? content.size() : newline;
+    std::string_view line = content.substr(line_start, line_end - line_start);
+    std::string_view cr;
+    if (!line.empty() && line.back() == '\r') {
+      line.remove_suffix(1);
+      cr = "\r";
+    }
+    const std::string_view eol = (newline == std::string_view::npos) ? std::string_view{} : "\n";
+    on_line(line, cr, eol);
+    if (newline == std::string_view::npos) {
+      break;
+    }
+    line_start = newline + 1;
+  }
+}
+
+}  // namespace
+
+std::optional<std::size_t> ReplaceRegexMatchesInText(std::string& content,
+                                                     const util::CompiledRegex& pattern,
+                                                     std::string_view replacement) {
+  if (content.empty() || !pattern.valid()) {
+    return std::size_t{0};
+  }
+
+  std::size_t replacements = 0;
+  bool errored = false;
+  std::string rebuilt;
+  rebuilt.reserve(content.size());
+  ForEachSearchLine(content, [&](std::string_view line, std::string_view cr, std::string_view eol) {
+    if (errored) {
+      return;
+    }
+    // SubstituteInto appends the substituted line (or, on a no-match line, the
+    // subject copied through unchanged) to `rebuilt`; on error it leaves `rebuilt`
+    // untouched and returns a negative rc.
+    const int rc = pattern.SubstituteInto(line, replacement, rebuilt);
+    if (rc < 0) {
+      errored = true;
+      return;
+    }
+    replacements += static_cast<std::size_t>(rc);
+    rebuilt.append(cr);
+    rebuilt.append(eol);
+  });
+
+  if (errored) {
+    return std::nullopt;
+  }
+  if (replacements == 0) {
+    return std::size_t{0};  // Leave `content` byte-identical.
+  }
+  content = std::move(rebuilt);
+  return replacements;
+}
+
+std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuffer& buffer,
+                                                           const util::CompiledRegex& pattern,
+                                                           bool* truncated) {
+  std::vector<editor::SelectionRange> matches;
+  if (truncated != nullptr) {
+    *truncated = false;
+  }
+  if (!pattern.valid()) {
+    return matches;
+  }
+
+  util::RegexMatchData match_data = pattern.CreateMatchData();
+  if (!match_data.valid()) {
+    return matches;
+  }
+
+  for (std::size_t line_index = 0; line_index < buffer.LineCount(); ++line_index) {
+    const std::string_view line = buffer.LineView(line_index);
+    std::size_t search_from = 0;
+    std::size_t match_start = 0;
+    std::size_t match_end = 0;
+    while (util::FindNextRegexMatchInLine(pattern, line, &search_from, &match_data, &match_start,
+                                          &match_end, /*cancel=*/nullptr)) {
+      if (matches.size() >= kMaxBufferSearchMatches) {
+        if (truncated != nullptr) {
+          *truncated = true;
+        }
+        return matches;
+      }
+      matches.push_back(editor::SelectionRange{
+          .start = editor::TextPosition{line_index, match_start},
+          .end = editor::TextPosition{line_index, match_end},
+      });
+    }
+  }
+  return matches;
+}
+
 std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
                                                    std::size_t start_from,
                                                    std::string_view needle,

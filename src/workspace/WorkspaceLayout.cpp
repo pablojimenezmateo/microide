@@ -954,8 +954,11 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area, bool repl
                                 row1_y, kFindWidgetButton, kFindWidgetRowHeight);
   const float count_x = layout.prev_button.x - kFindWidgetButtonGap - kFindWidgetCountWidth;
   layout.count_rect = MakeRect(count_x, row1_y, kFindWidgetCountWidth, kFindWidgetRowHeight);
+  // `.*` regex toggle sits between the search field and the match count.
+  const float regex_x = count_x - kFindWidgetButtonGap - kFindWidgetButton;
+  layout.regex_button = MakeRect(regex_x, row1_y, kFindWidgetButton, kFindWidgetRowHeight);
   layout.search_field = MakeRect(field_x, row1_y,
-                                 std::max(0.0f, count_x - kFindWidgetButtonGap - field_x),
+                                 std::max(0.0f, regex_x - kFindWidgetButtonGap - field_x),
                                  kFindWidgetRowHeight);
 
   if (replace_mode) {

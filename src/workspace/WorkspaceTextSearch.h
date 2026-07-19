@@ -7,6 +7,7 @@
 
 #include "editor/TextBuffer.h"
 #include "editor/TextViewport.h"
+#include "util/RegexUtil.h"
 
 namespace microide::workspace {
 
@@ -23,6 +24,30 @@ std::size_t ReplaceLiteralMatchesInText(std::string& content,
                                         std::string_view query,
                                         std::string_view replacement,
                                         bool case_sensitive);
+
+// Regex replace-all over an in-memory text blob, mirroring project search's line
+// framing exactly: `content` is split on '\n', a trailing '\r' is excluded from
+// each line's match window (terminators are preserved verbatim), and every line is
+// substituted independently so `^`/`$` and the replaced set match what the
+// per-line search reports. `replacement` uses PCRE2 extended syntax ($1 group refs,
+// \n/\t escapes, \U/\L case modifiers — see CompiledRegex::SubstituteInto).
+//
+// Returns the number of replacements, or std::nullopt if a substitution errored
+// (an unsupported replacement escape or a match-limit hit) — the caller aborts and
+// surfaces a message. `content` is only reassigned when the count is > 0, so a blob
+// with no match is left byte-identical (no needless rewrite/mtime churn).
+std::optional<std::size_t> ReplaceRegexMatchesInText(std::string& content,
+                                                     const util::CompiledRegex& pattern,
+                                                     std::string_view replacement);
+
+// Per-line regex scan over a buffer's zero-copy `LineView`, producing one
+// SelectionRange per match for the in-file find widget (navigation + overview
+// ruler). Uses the shared match engine (util::FindNextRegexMatchInLine) so it
+// cannot drift from project-wide search. Caps the retained set at
+// kMaxBufferSearchMatches, setting `*truncated` when the cap trims matches.
+std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuffer& buffer,
+                                                           const util::CompiledRegex& pattern,
+                                                           bool* truncated = nullptr);
 // TD-2026-07-17A-029: the stored buffer-search match set is scanned in full by the
 // editor overview ruler and reassigned on the shell path per query update, so a
 // one-character query in a large minified/generated buffer could allocate millions of

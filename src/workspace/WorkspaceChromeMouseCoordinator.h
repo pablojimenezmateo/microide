@@ -53,6 +53,7 @@ class ChromeMouseCoordinator {
     std::function<void(int)> move_buffer_search_selection;
     std::function<void()> replace_current_buffer_search_match;
     std::function<void()> replace_all_buffer_search_matches;
+    std::function<void()> toggle_buffer_search_regex;
     std::function<void(int)> move_project_search_selection;
     std::function<void(int)> move_file_finder_selection;
     std::function<void()> request_overlay_redraw;

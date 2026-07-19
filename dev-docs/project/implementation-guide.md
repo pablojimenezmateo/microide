@@ -57,7 +57,7 @@ The current SDL shell already includes:
 - tree mutations preserve affected editor, compare, and merge state across rename/delete workflows
 - a file finder overlay and an async project-search sidebar
 - parallelized literal-by-default project search with regex, case-mode, hidden-file controls, count-all totals, and match highlighting
-- literal replace-in-project tied to literal search mode
+- replace-in-project in both literal and regex search modes (regex expands $1/$2 capture groups)
 - a standalone project-search benchmark utility for repeatable larger-repo timing runs
 - a git sidebar for working-tree changes, conflicts, outgoing branch files, bulk stage-all, and confirmed discard-all flows, with an editable commit message and a branch/commit ref picker
 - editor copy-with-context via the Edit menu and right-click editor popup, formatting clipboard text as `relative/path:line` or `relative/path:start-end` plus the selected text

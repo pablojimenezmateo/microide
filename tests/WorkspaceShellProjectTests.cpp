@@ -4023,7 +4023,80 @@ void TestWorkspaceShellOpenBufferViewCountsAcrossGroups() {
   }
 }
 
+// Project-wide regex replace-all: a regex query with a capture group replaces
+// across every matching file, expanding $1, and leaves unmatched files untouched.
+// Regex mode now allows replace-all (previously gated to literal only).
+void TestWorkspaceShellRegexReplaceAllAcrossFiles() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "a.txt", "foo_alpha and foo_beta\n");
+  WriteFile(root / "b.txt", "foo_gamma\n");
+  WriteFile(root / "c.txt", "nothing here\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "regex replace-all fixture should open the project");
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("a.txt"), true,
+                              std::chrono::milliseconds(1000)),
+         "regex replace-all fixture should wait for file index initialization");
+
+  WorkspaceShellTestAccess::SetProjectSearchPatternModeRegex(shell, true);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "foo_(\\w+)", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "regex search should complete");
+  Expect(!WorkspaceShellTestAccess::ProjectSearchResults(shell).empty(),
+         "regex search should find matches across files");
+  Expect(WorkspaceShellTestAccess::ProjectSearchCanReplaceAll(shell),
+         "regex mode should now permit replace-all");
+
+  WorkspaceShellTestAccess::SetProjectSearchReplaceText(shell, "bar_$1");
+  WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "regex replace-all should refresh the search after writing");
+
+  Expect(ReadFile(root / "a.txt") == "bar_alpha and bar_beta\n",
+         "every capture-group match on a line should be replaced");
+  Expect(ReadFile(root / "b.txt") == "bar_gamma\n",
+         "matches in other files should be replaced too");
+  Expect(ReadFile(root / "c.txt") == "nothing here\n",
+         "a file with no match must be left untouched");
+}
+
+// A regex replace-all with an invalid replacement escape aborts with an error and
+// writes nothing (the failure is deterministic across every file).
+void TestWorkspaceShellRegexReplaceAllInvalidReplacementAborts() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "a.txt";
+  WriteFile(source, "foo_alpha\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "invalid-replacement fixture should open the project");
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("a.txt"), true,
+                              std::chrono::milliseconds(1000)),
+         "invalid-replacement fixture should wait for file index initialization");
+
+  WorkspaceShellTestAccess::SetProjectSearchPatternModeRegex(shell, true);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "foo_(\\w+)", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "invalid-replacement fixture should complete search");
+
+  // `\q` is not a valid extended replacement escape.
+  WorkspaceShellTestAccess::SetProjectSearchReplaceText(shell, "bar_\\q");
+  WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
+
+  Expect(!WorkspaceShellTestAccess::ProjectSearchError(shell).empty(),
+         "an invalid replacement pattern must surface an error");
+  Expect(ReadFile(source) == "foo_alpha\n",
+         "an aborted regex replace-all must not write any file");
+}
+
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/RegexReplaceAllAcrossFiles",
+          TestWorkspaceShellRegexReplaceAllAcrossFiles);
+  AddTest(tests, "WorkspaceShell/RegexReplaceAllInvalidReplacementAborts",
+          TestWorkspaceShellRegexReplaceAllInvalidReplacementAborts);
   AddTest(tests, "WorkspaceShell/OpenBufferViewCountsAcrossGroups",
           TestWorkspaceShellOpenBufferViewCountsAcrossGroups);
   AddTest(tests, "WorkspaceShell/UntitledTabFloodIsBounded",

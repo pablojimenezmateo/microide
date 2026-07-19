@@ -14,10 +14,11 @@ namespace microide::workspace {
 // affected editor tabs, refreshes the index/tree/finder, and reports status.
 struct ProjectReplaceOutcome {
   enum class Status : std::uint8_t {
-    NothingToDo,    // no file matched -> no writes, no UI change
-    BlockedByDirty, // an affected file is open with unsaved edits -> no writes
-    CapExceeded,    // buffered content exceeded the aggregate ceiling -> no writes
-    Applied,        // writes attempted (see `failed_write_count` for partials)
+    NothingToDo,        // no file matched -> no writes, no UI change
+    BlockedByDirty,     // an affected file is open with unsaved edits -> no writes
+    CapExceeded,        // buffered content exceeded the aggregate ceiling -> no writes
+    InvalidReplacement, // regex replacement escape/limit error -> no writes
+    Applied,            // writes attempted (see `failed_write_count` for partials)
   };
 
   // One successfully-written file (content already flushed + dropped; the apply

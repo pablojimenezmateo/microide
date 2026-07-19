@@ -104,6 +104,11 @@ struct CommandFeedbackState {
 struct BufferSearchState {
   editor::SingleLineEditor query;
   editor::SingleLineEditor replace_text;
+  // When true, `query` is a PCRE2 regex (smart-case, per-line) and replace expands
+  // capture groups ($1, \n, \U, ...); the incremental find-as-you-type refine cache
+  // below is bypassed (regex always full-scans). Toggled by the find widget's `.*`
+  // button / Alt+R.
+  bool regex = false;
   std::vector<editor::SelectionRange> matches;
   // Bumped whenever `matches` is reassigned (see WorkspaceShell::RefreshBufferSearch) so
   // the editor overview ruler can cheaply detect when its cached markers are stale.

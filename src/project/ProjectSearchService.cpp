@@ -55,63 +55,13 @@ bool FindNextRegexMatch(const util::CompiledRegex& pattern,
                         std::size_t* match_start,
                         std::size_t* match_end,
                         const std::atomic<bool>& cancel_requested) {
-  if (!pattern.valid() || search_from == nullptr || match_data == nullptr ||
-      !match_data->valid() || match_start == nullptr || match_end == nullptr) {
-    return false;
-  }
-
-  std::size_t iterations = 0;
-  while (*search_from <= line.size()) {
-    // A pattern that matches empty at every offset (e.g. `x?`) advances one byte
-    // per iteration, so a huge single line spins ~N PCRE2 Match calls that Stop()
-    // cannot otherwise interrupt (the outer per-line cancel check never re-runs).
-    // Poll the cancel flag on a coarse tick so responsiveness stays bounded by a
-    // constant, not by line length. On cancel *search_from is left short of the
-    // line end, so the caller's match loop and the worker loop both wind down.
-    if ((++iterations % search_internal::kRegexCancelPollInterval) == 0 &&
-        cancel_requested.load(std::memory_order_relaxed)) {
-      return false;
-    }
-    const int rc = pattern.Match(line, *search_from, *match_data);
-    if (rc == PCRE2_ERROR_NOMATCH) {
-      return false;
-    }
-    if (rc < 0) {
-      return false;
-    }
-
-    util::RegexMatchRange range;
-    if (!pattern.CaptureRange(*match_data, line.size(), &range)) {
-      return false;
-    }
-    if (range.start == range.end) {
-      // PCRE2 returned the leftmost match and it is empty. There is no match of
-      // any kind before range.start, but a non-empty alternative may begin at the
-      // SAME offset (e.g. `x?|foo` on "foo": the leftmost `x?` matches empty at 0,
-      // yet `foo` also starts at 0). The naive "advance one byte" idiom loses it.
-      // Retry anchored at range.start rejecting an empty match to recover it.
-      const int anchored_rc = pattern.Match(line, range.start, *match_data,
-                                            PCRE2_NOTEMPTY_ATSTART | PCRE2_ANCHORED);
-      util::RegexMatchRange anchored;
-      if (anchored_rc >= 0 && pattern.CaptureRange(*match_data, line.size(), &anchored) &&
-          anchored.start != anchored.end) {
-        *match_start = anchored.start;
-        *match_end = anchored.end;
-        *search_from = anchored.end;
-        return true;
-      }
-      // No non-empty match here; skip the pure empty match and advance one byte.
-      *search_from = range.end < line.size() ? range.end + 1 : line.size() + 1;
-      continue;
-    }
-
-    *match_start = range.start;
-    *match_end = range.end;
-    *search_from = range.end;
-    return true;
-  }
-
-  return false;
+  // Thin seam over the shared match engine (util::FindNextRegexMatchInLine): the
+  // empty-match advance, anchored-alternative recovery, and coarse cancel polling
+  // all live once in RegexUtil so project-wide and in-file regex search cannot
+  // drift. This wrapper only binds the worker's cancellation flag and preserves
+  // the internal test seam.
+  return util::FindNextRegexMatchInLine(pattern, line, search_from, match_data, match_start,
+                                        match_end, &cancel_requested);
 }
 
 }  // namespace search_internal

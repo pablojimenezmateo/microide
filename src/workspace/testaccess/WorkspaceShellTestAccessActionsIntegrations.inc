@@ -285,6 +285,18 @@
   static void ToggleProjectSearchPatternMode(WorkspaceShell& shell) {
     shell.ToggleProjectSearchPatternMode();
   }
+  static void SetProjectSearchPatternModeRegex(WorkspaceShell& shell, bool regex) {
+    shell.context_.current_project_state.overlay.workflow.project_search.options.pattern_mode =
+        regex ? project::ProjectSearchPatternMode::Regex
+              : project::ProjectSearchPatternMode::Literal;
+  }
+  static void SetProjectSearchReplaceText(WorkspaceShell& shell, std::string text) {
+    shell.context_.current_project_state.overlay.workflow.project_search.replace_text.SetText(
+        std::move(text));
+  }
+  static bool ProjectSearchCanReplaceAll(const WorkspaceShell& shell) {
+    return shell.ProjectSearchCanReplaceAll();
+  }
   static void CycleProjectSearchCaseMode(WorkspaceShell& shell) {
     shell.CycleProjectSearchCaseMode();
   }

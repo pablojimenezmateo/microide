@@ -495,6 +495,7 @@ struct FindWidgetLayout {
   SDL_FRect search_field{};
   SDL_FRect replace_field{};
   SDL_FRect count_rect{};
+  SDL_FRect regex_button{};  // `.*` regex-mode toggle (row 1, left of the count)
   SDL_FRect prev_button{};
   SDL_FRect next_button{};
   SDL_FRect close_button{};

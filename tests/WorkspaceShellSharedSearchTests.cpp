@@ -28,7 +28,9 @@ using microide::compare::BranchReviewStateService;
 using microide::workspace::QueryExtendsCaseInsensitive;
 using microide::workspace::QuerySupportsLiteralReplace;
 using microide::workspace::RefineLiteralSearchMatches;
+using microide::workspace::FindRegexSearchMatches;
 using microide::workspace::ReplaceLiteralMatchesInText;
+using microide::workspace::ReplaceRegexMatchesInText;
 using microide::workspace::UsesCaseSensitiveLiteralMatch;
 
 void TestWorkspaceSharedGitSidebarLineHelpers() {
@@ -252,6 +254,83 @@ void TestWorkspaceSharedLiteralSearchDoesNotOverlap() {
   Expect(ReplaceLiteralMatchesInText(content, "aa", "aa", false) == 2 &&
              FindLiteralSearchMatches({content}, "aa").size() == 2,
          "find-all count and replace count must agree for overlapping needles");
+}
+
+// ReplaceRegexMatchesInText: per-line substitution with capture groups, mirroring
+// project-search line framing (trailing '\r' excluded from the match, terminators
+// preserved), only reassigning `content` when something changed.
+void TestWorkspaceSharedRegexReplaceInText() {
+  const microide::util::CompiledRegex swap("(\\w+)=(\\w+)", 0);
+  Expect(swap.valid(), "regex-replace fixture should compile");
+
+  // Capture-group expansion across multiple lines; each line substitutes globally.
+  std::string content = "a=1 b=2\nc=3\n";
+  const auto count = ReplaceRegexMatchesInText(content, swap, "$2:$1");
+  Expect(count.has_value() && *count == 3,
+         "regex replace should report the total per-line substitution count");
+  Expect(content == "1:a 2:b\n3:c\n",
+         "regex replace should expand capture groups and preserve newline terminators");
+
+  // CRLF terminators: '\r' is excluded from the match window and preserved verbatim,
+  // and `$` still anchors at end-of-content (before the stripped '\r').
+  const microide::util::CompiledRegex tail("o$", 0);
+  std::string crlf = "foo\r\nbar\r\n";
+  const auto crlf_count = ReplaceRegexMatchesInText(crlf, tail, "X");
+  Expect(crlf_count.has_value() && *crlf_count == 1 && crlf == "foX\r\nbar\r\n",
+         "regex replace should anchor per-line and preserve CRLF terminators");
+
+  // No match: content is left byte-identical and the count is 0.
+  const microide::util::CompiledRegex none("zzz", 0);
+  std::string untouched = "alpha\nbeta";
+  const auto zero = ReplaceRegexMatchesInText(untouched, none, "X");
+  Expect(zero.has_value() && *zero == 0 && untouched == "alpha\nbeta",
+         "a no-match regex replace leaves content untouched with a count of 0");
+
+  // Invalid replacement escape -> nullopt (the caller aborts with a message).
+  const microide::util::CompiledRegex any("a", 0);
+  std::string bad = "aaa";
+  Expect(!ReplaceRegexMatchesInText(bad, any, "\\q").has_value(),
+         "an invalid replacement escape should surface as nullopt");
+  Expect(bad == "aaa", "a failed regex replace must not partially rewrite content");
+
+  // Smart-case parity: a caseless pattern folds every variant.
+  const microide::util::CompiledRegex caseless("foo", PCRE2_CASELESS);
+  std::string mixed = "FOO foo Foo";
+  const auto mixed_count = ReplaceRegexMatchesInText(mixed, caseless, "x");
+  Expect(mixed_count.has_value() && *mixed_count == 3 && mixed == "x x x",
+         "a caseless regex replace folds every case variant");
+
+  // An empty-matching, line-anchored pattern must fire once per REAL line, not on a
+  // phantom empty line after the trailing newline (mirrors the search worker's
+  // getline framing). `^` on "a\nb\n" prepends ">" to line a and line b only.
+  const microide::util::CompiledRegex bol("^", 0);
+  std::string anchored = "a\nb\n";
+  const auto bol_count = ReplaceRegexMatchesInText(anchored, bol, ">");
+  Expect(bol_count.has_value() && *bol_count == 2 && anchored == ">a\n>b\n",
+         "a line-anchored empty match fires per real line, not on a trailing phantom line");
+}
+
+// FindRegexSearchMatches: per-line SelectionRanges over a buffer, feeding the
+// in-file find widget's navigation + overview ruler.
+void TestWorkspaceSharedRegexSearchMatches() {
+  const microide::editor::TextBuffer buffer(
+      std::vector<std::string>{"foo123 bar", "no digits", "9 and 42"});
+  const microide::util::CompiledRegex digits("\\d+", 0);
+  Expect(digits.valid(), "regex-search fixture should compile");
+
+  const auto matches = FindRegexSearchMatches(buffer, digits);
+  Expect(matches.size() == 3, "regex search should find every per-line match");
+  Expect(matches[0].start.line == 0 && matches[0].start.column == 3 && matches[0].end.column == 6,
+         "first match spans the digits on line 0");
+  Expect(matches[1].start.line == 2 && matches[1].start.column == 0 && matches[1].end.column == 1,
+         "matches are grouped by ascending line then column");
+  Expect(matches[2].start.line == 2 && matches[2].start.column == 6 && matches[2].end.column == 8,
+         "the second match on a line resumes past the first");
+
+  // An invalid pattern yields no matches (the widget shows 0/0, no crash).
+  const microide::util::CompiledRegex invalid("[unterminated", 0);
+  Expect(!invalid.valid() && FindRegexSearchMatches(buffer, invalid).empty(),
+         "an invalid regex produces an empty match set");
 }
 
 void TestWorkspaceSharedLiteralReplaceModeHelpers() {
@@ -549,6 +628,10 @@ void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedLiteralSearchUtf8Fold);
   AddTest(tests, "WorkspaceTextSearch/LiteralReplaceModeHelpers",
           TestWorkspaceSharedLiteralReplaceModeHelpers);
+  AddTest(tests, "WorkspaceTextSearch/RegexReplaceInText",
+          TestWorkspaceSharedRegexReplaceInText);
+  AddTest(tests, "WorkspaceTextSearch/RegexSearchMatches",
+          TestWorkspaceSharedRegexSearchMatches);
   AddTest(tests, "WorkspaceTextSearch/LiteralNeedleScanCaseModeInLine",
           TestWorkspaceLiteralNeedleScanCaseModeInLine);
   AddTest(tests, "WorkspaceTextSearch/NextLiteralMatchAfterSeedWrapOnce",

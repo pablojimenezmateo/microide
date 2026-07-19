@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <memory>
+#include <optional>
 #include <unordered_set>
 #include <vector>
 
@@ -28,6 +30,7 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
                                         const std::unordered_set<std::string>& dirty_open,
                                         const std::string& query,
                                         const std::string& replace_text, bool case_sensitive,
+                                        const util::CompiledRegex* regex,
                                         std::size_t aggregate_cap_bytes) {
   ProjectReplaceOutcome outcome;
   struct Buffered {
@@ -47,8 +50,21 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
     if (!util::ReadFileForTextSearch(absolute_path, content)) {
       continue;
     }
-    const std::size_t replacements =
-        ReplaceLiteralMatchesInText(content, query, replace_text, case_sensitive);
+    std::size_t replacements = 0;
+    if (regex != nullptr) {
+      // Regex mode: per-line substitution with capture-group expansion. A negative
+      // result means an invalid replacement escape / match-limit hit — deterministic
+      // across every file, so abort the whole operation with a precise message.
+      const std::optional<std::size_t> count =
+          ReplaceRegexMatchesInText(content, *regex, replace_text);
+      if (!count.has_value()) {
+        outcome.status = ProjectReplaceOutcome::Status::InvalidReplacement;
+        return outcome;
+      }
+      replacements = *count;
+    } else {
+      replacements = ReplaceLiteralMatchesInText(content, query, replace_text, case_sensitive);
+    }
     if (replacements == 0) {
       continue;
     }
@@ -376,9 +392,9 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredSidebarSearchTooltipRect(
 }
 
 bool WorkspaceShell::ProjectSearchCanReplaceAll() const {
-  return context_.current_project_state.overlay.workflow.project_search.options.pattern_mode ==
-             project::ProjectSearchPatternMode::Literal &&
-         !context_.current_project_state.overlay.workflow.project_search.query.text().empty();
+  // Both literal and regex modes support replace-all (regex substitutes with
+  // capture-group expansion). The only gate is a non-empty query.
+  return !context_.current_project_state.overlay.workflow.project_search.query.text().empty();
 }
 
 bool WorkspaceShell::ProjectSearchReplaceCaseSensitive() const {
@@ -487,6 +503,24 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   const std::string query = ps.query.text();
   const std::string replace_text = ps.replace_text.text();
   const bool case_sensitive = ProjectSearchReplaceCaseSensitive();
+  const bool regex_mode =
+      ps.options.pattern_mode == project::ProjectSearchPatternMode::Regex;
+
+  // Regex mode: compile once on the main thread so an invalid pattern surfaces
+  // immediately (before dispatch). The compiled pattern is a shared_ptr-backed,
+  // thread-safe-const value shared read-only by the background job.
+  std::shared_ptr<util::CompiledRegex> regex;
+  if (regex_mode) {
+    const uint32_t regex_options = case_sensitive ? 0u : PCRE2_CASELESS;
+    regex = std::make_shared<util::CompiledRegex>(query, regex_options,
+                                                  "Invalid project search pattern");
+    if (!regex->valid()) {
+      ps.error = regex->error();
+      RequestSidebarRedraw();
+      return;
+    }
+  }
+
   const std::size_t aggregate_cap = replace_all_aggregate_cap_bytes_;
   const std::uint64_t generation = ++project_replace_generation_;
 
@@ -496,9 +530,10 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   project_background_executor_.PostLatest(
       "project-replace-all",
       [this, files = std::move(files), dirty_open = std::move(dirty_open), query, replace_text,
-       case_sensitive, root, aggregate_cap, generation]() mutable {
-        ProjectReplaceOutcome outcome = RunProjectReplace(root, files, dirty_open, query,
-                                                          replace_text, case_sensitive, aggregate_cap);
+       case_sensitive, regex, root, aggregate_cap, generation]() mutable {
+        ProjectReplaceOutcome outcome =
+            RunProjectReplace(root, files, dirty_open, query, replace_text, case_sensitive,
+                              regex.get(), aggregate_cap);
         outcome.project_root = root;
         outcome.generation = generation;
         project_replace_mailbox_.Post([this, outcome = std::move(outcome)]() mutable {
@@ -527,6 +562,10 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
       return;
     case ProjectReplaceOutcome::Status::CapExceeded:
       ps.error = "Replace-all aborted: too much content to modify at once.";
+      RequestSidebarRedraw();
+      return;
+    case ProjectReplaceOutcome::Status::InvalidReplacement:
+      ps.error = "Replace-all aborted: invalid replacement pattern.";
       RequestSidebarRedraw();
       return;
     case ProjectReplaceOutcome::Status::Applied:

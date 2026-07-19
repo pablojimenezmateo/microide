@@ -6,13 +6,17 @@
 
 #include <pcre2.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace microide::util {
 
@@ -152,11 +156,159 @@ class CompiledRegex {
     return true;
   }
 
+  // Substitutes ALL matches in `subject` (global) and APPENDS the result to
+  // `out`. The replacement is interpreted with PCRE2's extended syntax: `$1` /
+  // `${name}` group references plus `\n \t \r`, `\U \L \u \l \E` case modifiers,
+  // and `${name:-default}` conditionals (VSCode-parity). Returns the number of
+  // substitutions (>= 0) or a negative PCRE2 error code (e.g.
+  // PCRE2_ERROR_BADREPESCAPE for an unsupported `\` escape); `out` is left
+  // unchanged on error. Honors the shared match/depth limits.
+  int SubstituteInto(std::string_view subject,
+                     std::string_view replacement,
+                     std::string& out) const {
+    if (!valid()) {
+      return PCRE2_ERROR_BADOPTION;
+    }
+    // Reused across calls so a per-line replace-all pass does not allocate a
+    // fresh output buffer for every line. PCRE2_SUBSTITUTE_OVERFLOW_LENGTH lets
+    // us size exactly on the first overflow and retry once.
+    thread_local std::vector<PCRE2_UCHAR> buffer(256);
+    const uint32_t options = PCRE2_SUBSTITUTE_GLOBAL | PCRE2_SUBSTITUTE_EXTENDED |
+                             PCRE2_SUBSTITUTE_OVERFLOW_LENGTH;
+    for (;;) {
+      PCRE2_SIZE out_length = buffer.size();
+      const int rc = pcre2_substitute(
+          code_.get(), reinterpret_cast<PCRE2_SPTR>(subject.data()), subject.size(),
+          /*startoffset=*/0, options, /*match_data=*/nullptr, match_context_.get(),
+          reinterpret_cast<PCRE2_SPTR>(replacement.data()), replacement.size(), buffer.data(),
+          &out_length);
+      if (rc == PCRE2_ERROR_NOMEMORY) {
+        // out_length holds the required size (including the NUL) on overflow.
+        buffer.resize(out_length);
+        continue;
+      }
+      if (rc < 0) {
+        return rc;
+      }
+      out.append(reinterpret_cast<const char*>(buffer.data()), out_length);
+      return rc;
+    }
+  }
+
+  // Expands `replacement` for the single match that begins at `offset` in
+  // `subject` (matched in full context, so lookarounds resolve), returning ONLY
+  // the expanded replacement text — used by "Replace current" to substitute one
+  // occurrence. Same replacement syntax as SubstituteInto. Returns std::nullopt
+  // on any PCRE2 error (bad escape, no anchored match at `offset`, limit hit).
+  std::optional<std::string> ExpandMatchAt(std::string_view subject,
+                                           std::size_t offset,
+                                           std::string_view replacement) const {
+    if (!valid() || offset > subject.size()) {
+      return std::nullopt;
+    }
+    std::vector<PCRE2_UCHAR> buffer(std::max<std::size_t>(64, replacement.size() + 16));
+    const uint32_t options = PCRE2_SUBSTITUTE_EXTENDED | PCRE2_SUBSTITUTE_REPLACEMENT_ONLY |
+                             PCRE2_SUBSTITUTE_OVERFLOW_LENGTH | PCRE2_ANCHORED;
+    for (;;) {
+      PCRE2_SIZE out_length = buffer.size();
+      const int rc = pcre2_substitute(
+          code_.get(), reinterpret_cast<PCRE2_SPTR>(subject.data()), subject.size(), offset, options,
+          /*match_data=*/nullptr, match_context_.get(),
+          reinterpret_cast<PCRE2_SPTR>(replacement.data()), replacement.size(), buffer.data(),
+          &out_length);
+      if (rc == PCRE2_ERROR_NOMEMORY) {
+        buffer.resize(out_length);
+        continue;
+      }
+      if (rc <= 0) {
+        return std::nullopt;  // rc == 0: nothing matched anchored at `offset`.
+      }
+      return std::string(reinterpret_cast<const char*>(buffer.data()), out_length);
+    }
+  }
+
  private:
   std::shared_ptr<pcre2_code> code_;
   std::shared_ptr<pcre2_match_context> match_context_;
   std::string error_prefix_;
   std::string error_;
 };
+
+// Default cancellation poll interval (advance-loop iterations) for
+// FindNextRegexMatchInLine — coarse enough that the modulo/atomic-load cost is
+// negligible against the per-offset PCRE2 match, fine enough that a cooperative
+// Stop() stays sub-millisecond even on a pathological single-line file.
+inline constexpr std::size_t kRegexMatchCancelPollInterval = 4096;
+
+// Finds the next regex match in `line` starting at *search_from, advancing past
+// empty matches (recovering a non-empty alternative anchored at the same offset,
+// e.g. `x?|foo` on "foo"). Returns true and fills *match_start / *match_end /
+// *search_from on a real match; false when the line is exhausted.
+//
+// `cancel` (optional) is polled every kRegexMatchCancelPollInterval iterations of
+// the empty-match advance loop so a pattern that matches empty at every offset
+// (e.g. `x?`) on a very large single line can be interrupted; on cancel it returns
+// false leaving *search_from short of line.size()+1. Callers with no cancellation
+// need (in-memory buffer search) pass nullptr. This is the single shared match
+// engine for both project-wide and in-file regex search.
+inline bool FindNextRegexMatchInLine(const CompiledRegex& pattern,
+                                     std::string_view line,
+                                     std::size_t* search_from,
+                                     RegexMatchData* match_data,
+                                     std::size_t* match_start,
+                                     std::size_t* match_end,
+                                     const std::atomic<bool>* cancel = nullptr) {
+  if (!pattern.valid() || search_from == nullptr || match_data == nullptr ||
+      !match_data->valid() || match_start == nullptr || match_end == nullptr) {
+    return false;
+  }
+
+  std::size_t iterations = 0;
+  while (*search_from <= line.size()) {
+    if (cancel != nullptr && (++iterations % kRegexMatchCancelPollInterval) == 0 &&
+        cancel->load(std::memory_order_relaxed)) {
+      return false;
+    }
+    const int rc = pattern.Match(line, *search_from, *match_data);
+    if (rc == PCRE2_ERROR_NOMATCH) {
+      return false;
+    }
+    if (rc < 0) {
+      return false;
+    }
+
+    RegexMatchRange range;
+    if (!pattern.CaptureRange(*match_data, line.size(), &range)) {
+      return false;
+    }
+    if (range.start == range.end) {
+      // PCRE2 returned the leftmost match and it is empty. There is no match of
+      // any kind before range.start, but a non-empty alternative may begin at the
+      // SAME offset (e.g. `x?|foo` on "foo": the leftmost `x?` matches empty at 0,
+      // yet `foo` also starts at 0). The naive "advance one byte" idiom loses it.
+      // Retry anchored at range.start rejecting an empty match to recover it.
+      const int anchored_rc =
+          pattern.Match(line, range.start, *match_data, PCRE2_NOTEMPTY_ATSTART | PCRE2_ANCHORED);
+      RegexMatchRange anchored;
+      if (anchored_rc >= 0 && pattern.CaptureRange(*match_data, line.size(), &anchored) &&
+          anchored.start != anchored.end) {
+        *match_start = anchored.start;
+        *match_end = anchored.end;
+        *search_from = anchored.end;
+        return true;
+      }
+      // No non-empty match here; skip the pure empty match and advance one byte.
+      *search_from = range.end < line.size() ? range.end + 1 : line.size() + 1;
+      continue;
+    }
+
+    *match_start = range.start;
+    *match_end = range.end;
+    *search_from = range.end;
+    return true;
+  }
+
+  return false;
+}
 
 }  // namespace microide::util

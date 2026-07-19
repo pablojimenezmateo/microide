@@ -412,6 +412,12 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
                                       : TextInputSurface::BufferSearch,
                         buffer_search.query.text()));
 
+  // `.*` regex-mode toggle: highlighted (Primary tone) when active, neutral when
+  // off. Mirrors the project-search "Rx" affordance for the in-file find widget.
+  DrawButtonCentered(text_renderer_, renderer, theme_, fw.regex_button, ".*",
+                     buffer_search.regex ? ButtonTone::Accent : ButtonTone::Neutral,
+                     ButtonVisualState{.enabled = true});
+
   const bool has_matches = !buffer_search.matches.empty();
   const bool has_query = !buffer_search.query.text().empty();
   std::string count;

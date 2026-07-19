@@ -83,7 +83,7 @@ These are implemented and should not be treated as open migration work:
 - host-owned app-directory, trash or recycle-bin, open-URL, reveal-path, and bundled-asset
   services for Linux, macOS, and Windows policy, with runtime assets copied into desktop-build
   and macOS-bundle layouts
-- file finder overlay plus async project search with literal or regex mode, case controls, hidden-file controls, replace-in-project for literal mode, capped-result feedback, and a standalone benchmark tool
+- file finder overlay plus async project search with literal or regex mode, case controls, hidden-file controls, replace-in-project in both literal and regex modes (regex expands $1/$2 capture groups), capped-result feedback, and a standalone benchmark tool
 - git sidebar with compare, merge, stage, unstage, discard, outgoing-file views, bulk stage-all, and confirmed discard-all
 - PTY-backed terminal tabs with scrollback, selection, copy/paste, alternate screen, title updates, OSC 52 clipboard copy, focus notifications, bracketed paste, cursor-key mode, origin mode, autowrap control, and the common ANSI scroll-region paths currently needed by real tools
 - runtime syntax highlighting from the in-tree generated syntax snapshot plus plugin `syntax/*.lua` contributions loaded into the host tokenizer at startup and `plugins-reload`

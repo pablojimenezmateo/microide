@@ -79,6 +79,16 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
       case SDLK_PAGEDOWN:
         operations_.move_buffer_search_selection(kListPageStep);
         return true;
+      case SDLK_R:
+        // Alt+R toggles regex mode (VSCode's find-widget shortcut); a plain `r`
+        // still types into the focused field via the default text-input path.
+        if (modifiers & SDL_KMOD_ALT) {
+          state_.overlay.workflow.buffer_search.regex =
+              !state_.overlay.workflow.buffer_search.regex;
+          operations_.refresh_buffer_search();
+          return true;
+        }
+        return operations_.text_input_handle_single_line_key_down(event, modifiers);
       default:
         return operations_.text_input_handle_single_line_key_down(event, modifiers);
     }
@@ -118,6 +128,16 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
       case SDLK_PAGEDOWN:
         operations_.move_buffer_search_selection(kListPageStep);
         return true;
+      case SDLK_R:
+        // Alt+R toggles regex mode (VSCode's find-widget shortcut); a plain `r`
+        // still types into the focused field via the default text-input path.
+        if (modifiers & SDL_KMOD_ALT) {
+          state_.overlay.workflow.buffer_search.regex =
+              !state_.overlay.workflow.buffer_search.regex;
+          operations_.refresh_buffer_search();
+          return true;
+        }
+        return operations_.text_input_handle_single_line_key_down(event, modifiers);
       default:
         return operations_.text_input_handle_single_line_key_down(event, modifiers);
     }

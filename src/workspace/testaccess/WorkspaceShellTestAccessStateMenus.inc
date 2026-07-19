@@ -490,6 +490,27 @@
   static std::size_t BufferSearchSelectedIndex(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.buffer_search.selected_index;
   }
+  static void SetBufferSearchSelectedIndex(WorkspaceShell& shell, std::size_t index) {
+    shell.context_.current_project_state.overlay.workflow.buffer_search.selected_index = index;
+  }
+  static bool BufferSearchRegexEnabled(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.buffer_search.regex;
+  }
+  // Toggles in-file regex mode and recomputes matches, as the `.*` button / Alt+R do.
+  static void SetBufferSearchRegexAndRefresh(WorkspaceShell& shell, bool enabled) {
+    shell.context_.current_project_state.overlay.workflow.buffer_search.regex = enabled;
+    shell.RefreshBufferSearch();
+  }
+  static void SetBufferReplaceText(WorkspaceShell& shell, std::string text) {
+    shell.context_.current_project_state.overlay.workflow.buffer_search.replace_text.SetText(
+        std::move(text));
+  }
+  static void ReplaceCurrentBufferSearchMatch(WorkspaceShell& shell) {
+    shell.ReplaceCurrentBufferSearchMatch();
+  }
+  static void ReplaceAllBufferSearchMatches(WorkspaceShell& shell) {
+    shell.ReplaceAllBufferSearchMatches();
+  }
   static std::size_t ProjectSearchSelectedIndex(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.selected_index;
   }
