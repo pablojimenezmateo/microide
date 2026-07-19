@@ -2227,7 +2227,25 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   refresh) no longer pays a per-event whole-right-buffer allocation, matching the
   31/068/083 "drop the whole-buffer copy from the hot path" family. Same on-thread
   `BuildCompareModel` remains for an actual content change; the full move to a
-  generation-gated background build is still deferred. Covered by the extended
+  generation-gated background build is still deferred.
+  **[2026-07-18 investigation — full async is a PARTIAL win with high risk; awaiting a
+  go/no-go]** Moving the rebuild off-thread can only relocate `BuildCompareModel` (the
+  O(n·m) LCS): the syntax rebuild in `RefreshCompareTabDerivedState`
+  (`SyntaxHighlighter::InitialState` → `runtime_syntax::DetectState`) reads the shared
+  `RuntimeSyntaxRegistry` under the lock-free-**main-reader** invariant, so it MUST stay on
+  the main thread (same constraint that kept TD-2026-07-17-011's language detection on-main).
+  The remaining serialize of the right pane also needs the live viewport (main thread). A
+  from-scratch async would need: a per-compare-tab build generation, stable-id routing of the
+  result back to the (possibly closed/moved) tab across editor groups, a results mailbox, an
+  atomic model+tokens+max-cols swap so render never sees a tokens-vs-model mismatch, render
+  tolerating a one-keystroke-stale model, a PatchApply force-sync before hunk staging (which
+  reads `model`+`model_revision`), and the same again for the merge surface — heavy coupling
+  on a diff/merge view that is hard to verify headless. Value is narrow (only very large diffs
+  being *live-edited*; common diffs rebuild in <1ms, and the no-op-refresh allocation hot path
+  is already fixed above). Given the project's correctness-first priority this is poor
+  risk/reward; recommend keeping the shipped PARTIAL unless a profile shows large-diff live
+  edit as a real stall. NOT implemented pending an explicit go-ahead.
+  Covered by the extended
   `WorkspaceShell/CompareRecomputeGate` (adds right-pane-edit-via-content_revision
   rebuild + no-op-after-edit reuse assertions to the existing left-content/ignore-
   whitespace gate coverage).
