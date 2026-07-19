@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.7.2] - 2026-07-19
+
+A **search, compare, and editor** cycle on top of 2.7.1. Find & replace
+gains full regex support in both the project-wide and in-file surfaces,
+comparisons no longer require git, and a JSON formatter lands in the editor. A
+focus click-through fix makes the first click on an inactive window land on its
+target. No public API or persisted-format changes — a recommended upgrade for
+all users.
+
+### Added
+
+- **Regex find & replace.** Both the project-wide and in-file find & replace
+  surfaces accept PCRE2 regular expressions, with capture-group substitution in
+  the replacement. A single shared engine backs both surfaces.
+- **Non-git comparisons.** Compare arbitrary files, editor buffers, and the
+  clipboard against each other — no git repository required. The review mode is
+  sticky per session.
+- **Format JSON command.** A new editor command reformats the active buffer as
+  key-sorted, indented JSON in memory.
+
+### Fixed
+
+- **In-file regex across line breaks.** Multi-line regex matches (spanning `\n`)
+  now resolve correctly in the in-file search surface, and matched newlines are
+  visualized with an end-of-line marker.
+- **Focus click-through.** Clicking an inactive microide window now both
+  activates the window and delivers the click to the target underneath, instead
+  of swallowing the activating click.
+
 ## [2.7.1] - 2026-07-19
 
 A **performance, robustness, and hardening** cycle on top of 2.7.0 — the large
