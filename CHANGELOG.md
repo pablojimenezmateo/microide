@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.7.1] - 2026-07-19
+
+A **performance, robustness, and hardening** cycle on top of 2.7.0 — the large
+tech-debt burndown (`TD-2026-07-16/17` and the `TD-2026-07-17A` addendum) landed
+end to end. Hot paths across editor, render, LSP/DAP, terminal, search, and
+persistence are measurably faster on the reference runner; a broad "bound the
+resource" sweep caps previously unbounded queues, buffers, and result sets; and
+several real correctness and plugin-sandbox defects are fixed. The full suite
+plus ASAN/UBSAN/TSAN stay green. No public API or persisted-format changes — a
+recommended upgrade for all users.
+
+### Performance
+
+- **Off the shell thread.** Project-wide replace-all, forced file-index rescans,
+  file-manager reveal, server-pushed `WorkspaceEdit` writes to closed files,
+  syntax reload, and buffered PTY writes now run off the UI thread, so large
+  operations no longer stall the frame. Shutting-down LSP clients retire to a
+  host-owned pool instead of blocking.
+- **Render view models.** Breadcrumb labels, git-sidebar entry labels and spans,
+  settings edit-control values, output-reference paths, project-search line maps,
+  bottom-panel tab models, and commit bodies are precomputed/memoized so paint
+  stays allocation-free on the hot path.
+- **Algorithmic rewrites.** Roughly a dozen quadratic paths became indexed or
+  amortized (multi-caret result remap, snippet mirror shifts, deleted-directory
+  stat sweep, soft-wrap edit caches now O(edit) in place, `PostLatest` dedup now
+  O(1), Add-Cursor-at-All-Matches folds once and is capped). Replace-All and
+  surround reuse existing matches instead of rescanning; merge/undo track applied
+  edit spans rather than diffing the whole buffer.
+
+### Fixed
+
+- **Bounded resources.** A wide sweep caps in-flight and retained work that could
+  previously grow without limit: LSP/DAP outbound queues (by retained bytes),
+  the event drain, session-restore tab rebuilds, raster decode bytes, provider
+  and code-action result sets, control-query responses, output channels, debug
+  value trees, clipboard export, text-measurement, and more. Silent truncation
+  now surfaces status where it matters.
+- **Plugin sandbox.** Removed the Lua `loadfile`/`dofile` file loaders; embedded
+  NULs and invalid env keys are rejected; the process sandbox is untied from
+  filesystem capabilities; and provider results survive a single failing or
+  slow provider instead of being dropped wholesale.
+- **Filesystem & persistence safety.** Persisted-record writes rotate through the
+  symlink target so a symlinked state file is followed, not clobbered; the
+  control socket hardens its runtime dir before bind; the tool downloader does a
+  strict `file://` decode.
+- **Editor & workspace.** Dirty `CloseTab` prompts survive a tab close/reorder;
+  background compare & merge tabs retarget or close on path mutation; ranged
+  secondary caret anchors are preserved across shaping.
+
+### Internal
+
+- The test suite is sharded for parallel `ctest`, cutting sanitizer wall time
+  substantially; new perf coverage gates the rewritten hot paths, with decoupled
+  wall-clock vs. allocation baseline tolerances.
+
 ## [2.7.0] - 2026-07-15
 
 A **correctness-hardening and tech-debt closeout** cycle on top of 2.6.8. Roughly
