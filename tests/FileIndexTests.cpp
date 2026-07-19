@@ -292,7 +292,30 @@ void TestFileIndexMovePreservesFollowSymlinksFlag() {
   Expect(!off_moved.FollowOutOfRootSymlinks(), "a cleared flag must also survive the move");
 }
 
+// A forced rescan (ScanFiles -> ReplaceScannedFiles) carries the scan's
+// truncation outcome into truncated(): incomplete=true asserts it, and a later
+// complete rescan clears it rather than leaving the prior root's "truncated"
+// state asserted over a freshly scanned tree (TD-2026-07-17-008/033).
+void TestFileIndexReplaceScannedFilesCarriesTruncation() {
+  using microide::project::ProjectFile;
+  FileIndex index;
+
+  std::vector<ProjectFile> files;
+  ProjectFile a;
+  a.relative_path = "a.txt";
+  files.push_back(a);
+
+  index.ReplaceScannedFiles(files, /*incomplete=*/true);
+  Expect(index.truncated(), "an incomplete rescan marks the index truncated");
+
+  index.ReplaceScannedFiles(files, /*incomplete=*/false);
+  Expect(!index.truncated(),
+         "a subsequent complete rescan clears the stale truncation flag");
+}
+
 void RegisterFileIndexTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileIndex/ReplaceScannedFilesCarriesTruncation",
+          TestFileIndexReplaceScannedFilesCarriesTruncation);
   AddTest(tests, "FileIndex/MovePreservesFollowSymlinksFlag",
           TestFileIndexMovePreservesFollowSymlinksFlag);
   AddTest(tests, "FileIndex/RecursiveDeleteRemovesSubtree",

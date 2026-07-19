@@ -324,6 +324,16 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
   } else {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Find File");
+    // When the file index is only a prefix of a very large/deep tree, say so on the
+    // title row (right-aligned) so the ranked list is never read as authoritative
+    // (TD-2026-07-17-008/033). A constant literal — no per-frame string build.
+    if (project_state.file_finder.index_truncated()) {
+      constexpr std::string_view kIncompleteNote = "index incomplete — project too large";
+      const float note_x =
+          overlay.x + overlay.w - kOverlayInset - text_renderer_.MeasureWidth(kIncompleteNote);
+      DrawTextOn(text_renderer_, renderer, note_x, overlay.y + 8.0f, theme_.text_muted,
+                 theme_.overlay_background, kIncompleteNote);
+    }
     DrawTextFieldFrame(renderer, theme_, overlay_field_rect(overlay.y + 44.0f),
                        current_surface == TextInputSurface::FileFinder);
     DrawSingleLineTextTail(renderer, overlay.x + kOverlayInset, overlay_field_text_y(overlay.y + 44.0f),

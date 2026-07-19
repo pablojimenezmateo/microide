@@ -349,7 +349,35 @@ void TestFileFinderCapsRecentsOnEmptyQuery() {
          "empty-query recents must not exceed the finder's visible result cap");
 }
 
+// The finder reports its backing index's truncation so the overlay can flag an
+// incomplete result set instead of presenting a prefix of a huge tree as the
+// authoritative file list (TD-2026-07-17-008/033).
+void TestFileFinderReportsTruncatedIndex() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred),
+         "truncation fixture should initialize deferred file index root");
+
+  FileFinder finder;
+  finder.SetIndex(&index);
+  Expect(!finder.index_truncated(), "a fresh index is not truncated");
+
+  IndexUpdateBatch batch;
+  batch.is_initial = true;
+  batch.truncated = true;
+  batch.changes.push_back(MakeCreateChange("src/foo.cpp"));
+  Expect(index.ApplyBatch(std::move(batch)),
+         "truncation fixture should apply the truncated initial batch");
+
+  Expect(finder.index_truncated(),
+         "the finder must surface the backing index's truncation status");
+}
+
 void RegisterFileFinderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileFinder/ReportsTruncatedIndex", TestFileFinderReportsTruncatedIndex);
   AddTest(tests, "FileFinder/CapsRecentsOnEmptyQuery", TestFileFinderCapsRecentsOnEmptyQuery);
   AddTest(tests, "FileFinder/CapsBroadResultCount", TestFileFinderCapsBroadResultCount);
   AddTest(tests, "FileFinder/NarrowsToEntryBeyondDisplayCap",

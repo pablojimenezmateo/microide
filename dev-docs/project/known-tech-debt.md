@@ -2457,18 +2457,32 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Scanner / search incomplete-state plumbing (land together):**
 
-> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 008/033 (thread a
-> complete/truncated_by_budget/incomplete status from the file scanner through to the
-> search UI) is a status-plumbing change across the scanner → index → search-result
-> pipeline + UI surfacing, and 009 (degrade the fallback watcher's full-tree snapshot to
-> a targeted rescan) is native-watcher work — both "land together" multi-layer passes. The
-> partial-result case is currently silent but not incorrect (results returned are real).
-> Deferred to a dedicated scanner-status change (pairs with the async 081/082/086 watcher work).
+> **[PARTIAL 2026-07-19 — file-finder slice landed; search/tree surfaces + 009 still deferred]**
+> The scanner → index → file-finder truncation slice of 008/033 shipped (see the RESOLVED
+> marker below). The remaining deferred work is the *search-result* and *directory-tree*
+> surfacing plus the richer status taxonomy (permission_limited / error), and 009 (degrade
+> the fallback watcher's full-tree snapshot to a targeted rescan) is native-watcher work.
+> The still-unsurfaced partial-result cases are silent but not incorrect (results returned
+> are real). Pairs with the async 081/082/086 watcher work.
 
-- **008 / 033 — surface a scanner result status** (complete / truncated_by_budget /
-  permission_limited / error) and thread searched/skipped/incomplete-catalog through
-  the file-finder / search / tree view models so partial results are never silently
-  authoritative.
+- **[PARTIAL 2026-07-19] 008 / 033 — surface a scanner result status** (complete /
+  truncated_by_budget / permission_limited / error) and thread searched/skipped/
+  incomplete-catalog through the file-finder / search / tree view models so partial
+  results are never silently authoritative. **Landed:** `CollectProjectFiles` now reports
+  an `out_incomplete` flag (set when the walk hits the entry budget or `kMaxTreeWalkDepth`),
+  threaded through `FileIndex::ScanFiles`/`ReplaceScannedFiles` so the direct-scan/`Refresh`
+  path sets `FileIndex::truncated()` instead of unconditionally clearing it — closing the
+  gap flagged in the old `ReplaceScannedFiles` comment ("CollectProjectFiles does not
+  currently report budget exhaustion"). `FileFinder::index_truncated()` exposes it and the
+  Find-File overlay draws a right-aligned muted "index incomplete — project too large" note
+  on its title row, so the ranked list is never read as an authoritative complete file set.
+  Regressions: `ProjectFileScanner/ReportsEntryBudgetTruncation` (tiny injected entry budget
+  ⇒ incomplete + prefix), `FileIndex/ReplaceScannedFilesCarriesTruncation` (commit-path
+  propagation + stale-flag clear), `FileFinder/ReportsTruncatedIndex` (finder mirrors the
+  backing index). **Still deferred:** the project-*search* and directory-*tree* view models
+  do not yet surface truncation (project search already has its own match-cap `truncated`
+  flag, distinct from catalog incompleteness), and the taxonomy is a single bool rather than
+  the full complete/truncated_by_budget/permission_limited/error enum.
 - **009 — fallback watcher snapshots are expensive on huge trees;** degrade to
   manual-refresh-with-banner + incremental directory hashing.
 

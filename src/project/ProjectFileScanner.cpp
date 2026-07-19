@@ -25,9 +25,14 @@ void CollectFiles(const std::filesystem::path& root,
                   std::vector<std::filesystem::path>& files,
                   SymlinkLoopGuard& loop_guard,
                   int depth,
-                  std::size_t& visited) {
+                  std::size_t& visited,
+                  std::size_t entry_budget,
+                  bool& incomplete) {
   if (depth > platform::kMaxTreeWalkDepth) {
-    return;  // too deep: stop descending rather than risk a stack overflow
+    // Too deep: stop descending rather than risk a stack overflow. The subtree
+    // beneath this point is dropped, so the resulting list is a prefix.
+    incomplete = true;
+    return;
   }
   std::error_code error;
   std::filesystem::directory_iterator iterator(
@@ -35,8 +40,11 @@ void CollectFiles(const std::filesystem::path& root,
   std::filesystem::directory_iterator end;
 
   while (!error && iterator != end) {
-    if (visited >= platform::kTreeTraversalEntryBudget) {
-      return;  // entry budget exhausted: stop indexing an unaffordably large tree
+    if (visited >= entry_budget) {
+      // Entry budget exhausted: stop indexing an unaffordably large tree. The
+      // list returned so far is only a prefix of the real tree.
+      incomplete = true;
+      return;
     }
     ++visited;
     const std::filesystem::path path = iterator->path();
@@ -88,7 +96,8 @@ void CollectFiles(const std::filesystem::path& root,
       const bool is_symlink = iterator->is_symlink(link_error);
       const SymlinkLoopGuard::Scope scope = loop_guard.TryEnter(path, is_symlink && !link_error);
       if (scope.entered()) {
-        CollectFiles(root, path, child_matcher, mode, files, loop_guard, depth + 1, visited);
+        CollectFiles(root, path, child_matcher, mode, files, loop_guard, depth + 1, visited,
+                     entry_budget, incomplete);
       }
       iterator.increment(error);
       continue;
@@ -112,7 +121,12 @@ void CollectFiles(const std::filesystem::path& root,
 std::vector<std::filesystem::path> CollectProjectFiles(const std::filesystem::path& root,
                                                        ProjectFileScanMode mode,
                                                        bool follow_out_of_root_symlinks,
-                                                       const std::vector<std::string>& exclude_globs) {
+                                                       const std::vector<std::string>& exclude_globs,
+                                                       bool* out_incomplete,
+                                                       std::size_t entry_budget) {
+  if (out_incomplete != nullptr) {
+    *out_incomplete = false;
+  }
   util::AddPerformanceCounter(util::PerfCounterId::ProjectFileScannerCollectProjectFilesCalls);
   std::error_code error;
   const std::filesystem::path absolute_root = std::filesystem::absolute(root, error);
@@ -131,10 +145,15 @@ std::vector<std::filesystem::path> CollectProjectFiles(const std::filesystem::pa
   SymlinkLoopGuard loop_guard(absolute_root,
                               /*enforce_containment=*/!follow_out_of_root_symlinks);
   std::size_t visited = 0;
-  CollectFiles(absolute_root, absolute_root, matcher, mode, files, loop_guard, 1, visited);
+  bool incomplete = false;
+  CollectFiles(absolute_root, absolute_root, matcher, mode, files, loop_guard, 1, visited,
+               entry_budget, incomplete);
   std::sort(files.begin(), files.end(), [](const auto& lhs, const auto& rhs) {
     return lhs.native() < rhs.native();
   });
+  if (out_incomplete != nullptr) {
+    *out_incomplete = incomplete;
+  }
   return files;
 }
 

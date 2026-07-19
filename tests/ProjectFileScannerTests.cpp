@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <string>
 #include <system_error>
 
 namespace microide::tests {
@@ -174,9 +175,37 @@ void TestScannerPrunesDefaultsAndUserExcludes() {
   Expect(ContainsName(excluded_scan, "main.cpp"), "real sources remain after exclusion");
 }
 
+// A scan that completes reports incomplete=false; a scan that hits the entry
+// budget reports incomplete=true and returns only a prefix of the tree, so the
+// caller can surface "index incomplete" instead of a silently-authoritative
+// partial list (TD-2026-07-17-008/033).
+void TestScannerReportsEntryBudgetTruncation() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  for (int i = 0; i < 8; ++i) {
+    WriteFile(root / ("f" + std::to_string(i) + ".txt"), "x\n");
+  }
+
+  bool incomplete = true;
+  const auto complete_scan = CollectProjectFiles(root, ProjectFileScanMode::IncludeHidden, false,
+                                                 {}, &incomplete);
+  Expect(!incomplete, "a scan under the entry budget reports complete");
+  Expect(complete_scan.size() == 8, "a complete scan lists every file");
+
+  // Force truncation with a tiny entry budget rather than materializing a 50k tree.
+  bool truncated_flag = false;
+  const auto truncated_scan = CollectProjectFiles(
+      root, ProjectFileScanMode::IncludeHidden, false, {}, &truncated_flag, /*entry_budget=*/3);
+  Expect(truncated_flag, "a scan that exhausts the entry budget reports incomplete");
+  Expect(truncated_scan.size() < complete_scan.size(),
+         "a truncated scan returns only a prefix of the tree");
+}
+
 }  // namespace
 
 void RegisterProjectFileScannerTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ProjectFileScanner/ReportsEntryBudgetTruncation",
+          TestScannerReportsEntryBudgetTruncation);
   AddTest(tests, "ProjectFileScanner/PrunesDefaultsAndUserExcludes",
           TestScannerPrunesDefaultsAndUserExcludes);
   AddTest(tests, "ProjectFileScanner/DoesNotFollowRootEscapingSymlink",

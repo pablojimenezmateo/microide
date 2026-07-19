@@ -35,6 +35,10 @@ class FileFinder {
   editor::SingleLineEditor& query_state() { return query_; }
   const editor::SingleLineEditor& query_state() const { return query_; }
   const std::vector<FileFinderResult>& results() const { return results_; }
+  // True when the backing file index was truncated (project too large / too deep),
+  // so the finder's results are drawn from only a prefix of the tree and must be
+  // surfaced as incomplete rather than authoritative (TD-2026-07-17-008/033).
+  bool index_truncated() const { return index_ != nullptr && index_->truncated(); }
   std::size_t selected_index() const { return selected_index_; }
   std::optional<std::filesystem::path> SelectedPath() const;
 

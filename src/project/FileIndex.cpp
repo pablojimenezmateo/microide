@@ -143,11 +143,16 @@ void FileIndex::Reset() {
 
 std::vector<ProjectFile> FileIndex::ScanFiles(const std::filesystem::path& root,
                                               bool follow_out_of_root_symlinks,
-                                              const std::vector<std::string>& exclude_globs) {
+                                              const std::vector<std::string>& exclude_globs,
+                                              bool* out_incomplete) {
+  if (out_incomplete != nullptr) {
+    *out_incomplete = false;
+  }
   std::vector<ProjectFile> rebuilt;
   if (!root.empty()) {
     const auto scanned = CollectProjectFiles(root, ProjectFileScanMode::IncludeHidden,
-                                             follow_out_of_root_symlinks, exclude_globs);
+                                             follow_out_of_root_symlinks, exclude_globs,
+                                             out_incomplete);
     rebuilt.reserve(scanned.size());
     for (const auto& relative_path : scanned) {
       rebuilt.push_back(BuildProjectFile(root, relative_path));
@@ -157,15 +162,16 @@ std::vector<ProjectFile> FileIndex::ScanFiles(const std::filesystem::path& root,
   return rebuilt;
 }
 
-void FileIndex::ReplaceScannedFiles(std::vector<ProjectFile> files) {
+void FileIndex::ReplaceScannedFiles(std::vector<ProjectFile> files, bool incomplete) {
   {
     std::unique_lock lock(files_mutex_);
     files_ = std::move(files);
-    // A full rescan replaces the file list; the watcher-batch truncation flag no
-    // longer describes this content. CollectProjectFiles does not currently report
-    // budget exhaustion, so clear the stale flag rather than leave a prior root's
-    // "truncated" state asserted over a freshly scanned (often smaller) tree.
-    truncated_ = false;
+    // A full rescan replaces the file list, so it also replaces the truncation
+    // status: adopt this scan's outcome rather than leaving a prior root's
+    // watcher-batch "truncated" state asserted over a freshly scanned (often
+    // smaller) tree. `incomplete` is true when the scan hit the entry/depth budget
+    // (TD-2026-07-17-008/033).
+    truncated_ = incomplete;
     ++version_;
     exclude_hidden_cache_.needs_refresh = true;
     include_hidden_cache_.needs_refresh = true;
@@ -183,7 +189,9 @@ void FileIndex::Refresh() {
     excludes = exclude_globs_;
     follow = follow_out_of_root_symlinks_.load(std::memory_order_relaxed);
   }
-  ReplaceScannedFiles(ScanFiles(root, follow, excludes));
+  bool incomplete = false;
+  std::vector<ProjectFile> scanned = ScanFiles(root, follow, excludes, &incomplete);
+  ReplaceScannedFiles(std::move(scanned), incomplete);
 }
 
 bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
