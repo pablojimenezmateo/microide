@@ -613,6 +613,39 @@ void TestWorkspaceShellBufferRegexReplaceCurrent() {
          "replace-current should expand only the selected match");
 }
 
+// In-file regex matches across line breaks: `\n` finds the newlines, a multi-line
+// pattern spans two lines, and replacing `\n` joins the lines (the reported bug —
+// per-line search could never match `\n`).
+void TestWorkspaceShellBufferRegexMultilineNewline() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "lines.txt";
+  WriteFile(source, "a=1\nb=2\nc=3");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetBufferSearchRegexAndRefresh(shell, true);
+
+  // `\n` matches the two line breaks between the three lines.
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "\\n");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2,
+         "regex `\\n` should find the two newlines (per-line search found none)");
+
+  // A pattern that spans a line break matches across lines (digit, newline, word).
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "\\d\\n\\w");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2,
+         "a multi-line regex should match across line breaks");
+
+  // Replacing `\n` joins the lines into one.
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "\\n");
+  WorkspaceShellTestAccess::SetBufferReplaceText(shell, " | ");
+  WorkspaceShellTestAccess::ReplaceAllBufferSearchMatches(shell);
+  Expect(ActiveEditorDocText(shell) == "a=1 | b=2 | c=3",
+         "replacing `\\n` should join the lines");
+}
+
 // Alt+R toggles regex mode in the find widget and recomputes matches; an invalid
 // pattern yields no matches (0/0) without crashing.
 void TestWorkspaceShellBufferRegexToggleViaAltR() {
@@ -649,6 +682,8 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBufferRegexReplaceAll);
   AddTest(tests, "WorkspaceShell/BufferRegexReplaceCurrent",
           TestWorkspaceShellBufferRegexReplaceCurrent);
+  AddTest(tests, "WorkspaceShell/BufferRegexMultilineNewline",
+          TestWorkspaceShellBufferRegexMultilineNewline);
   AddTest(tests, "WorkspaceShell/BufferRegexToggleViaAltR",
           TestWorkspaceShellBufferRegexToggleViaAltR);
   AddTest(tests, "WorkspaceShell/ProjectSearchSidebarScrollPastSelection",

@@ -88,7 +88,13 @@ class EditorViewRenderer {
               const FoldingModel* folding_model = nullptr,
               const WelcomeViewModel* welcome_view = nullptr,
               const FileDecorations* plugin_decorations = nullptr,
-              bool show_line_numbers = true) const;
+              bool show_line_numbers = true,
+              // Precomputed match highlight spans (regex / whole-buffer find). Each
+              // span is SINGLE-LINE (multi-line matches are pre-split by the caller)
+              // and the set is sorted by (start.line, start.column). When non-empty
+              // these drive the match highlight instead of the literal `search_query`
+              // scan, so regex and multi-line matches highlight correctly.
+              std::span<const SelectionRange> explicit_search_matches = {}) const;
 
   // Test/diagnostic accessors for the bracket-match cache. The cache is keyed
   // on (viewport, content_revision, primary_caret_line, primary_caret_column)

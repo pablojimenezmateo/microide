@@ -190,24 +190,56 @@ std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuf
     return matches;
   }
 
-  for (std::size_t line_index = 0; line_index < buffer.LineCount(); ++line_index) {
-    const std::string_view line = buffer.LineView(line_index);
-    std::size_t search_from = 0;
-    std::size_t match_start = 0;
-    std::size_t match_end = 0;
-    while (util::FindNextRegexMatchInLine(pattern, line, &search_from, &match_data, &match_start,
-                                          &match_end, /*cancel=*/nullptr)) {
-      if (matches.size() >= kMaxBufferSearchMatches) {
-        if (truncated != nullptr) {
-          *truncated = true;
-        }
-        return matches;
-      }
-      matches.push_back(editor::SelectionRange{
-          .start = editor::TextPosition{line_index, match_start},
-          .end = editor::TextPosition{line_index, match_end},
-      });
+  // Whole-buffer scan (not per-line) so a pattern can span line breaks — `\n`, `$`
+  // (with PCRE2_MULTILINE), or a multi-line construct like `foo\nbar`. Build the
+  // '\n'-joined content once (the buffer is internally CRLF-normalized) plus the
+  // byte offset of each line start, then map every match's byte span back to
+  // (line, column) positions. A match may span multiple lines.
+  const std::size_t line_count = buffer.LineCount();
+  if (line_count == 0) {
+    return matches;  // No lines -> no offsets to map against.
+  }
+  std::vector<std::size_t> line_starts;
+  line_starts.reserve(line_count);
+  std::string content;
+  {
+    std::size_t total = 0;
+    for (std::size_t i = 0; i < line_count; ++i) {
+      total += buffer.LineLength(i) + 1;  // + newline
     }
+    content.reserve(total);
+    for (std::size_t i = 0; i < line_count; ++i) {
+      line_starts.push_back(content.size());
+      content.append(buffer.LineView(i));
+      if (i + 1 < line_count) {
+        content.push_back('\n');
+      }
+    }
+  }
+
+  // Byte offset -> (line, column). `line_starts` is ascending, so the owning line is
+  // the last start <= offset.
+  const auto to_position = [&](std::size_t offset) -> editor::TextPosition {
+    const auto it = std::upper_bound(line_starts.begin(), line_starts.end(), offset);
+    const std::size_t line = static_cast<std::size_t>(it - line_starts.begin()) - 1;
+    return editor::TextPosition{line, offset - line_starts[line]};
+  };
+
+  std::size_t search_from = 0;
+  std::size_t match_start = 0;
+  std::size_t match_end = 0;
+  while (util::FindNextRegexMatchInLine(pattern, content, &search_from, &match_data, &match_start,
+                                        &match_end, /*cancel=*/nullptr)) {
+    if (matches.size() >= kMaxBufferSearchMatches) {
+      if (truncated != nullptr) {
+        *truncated = true;
+      }
+      return matches;
+    }
+    matches.push_back(editor::SelectionRange{
+        .start = to_position(match_start),
+        .end = to_position(match_end),
+    });
   }
   return matches;
 }

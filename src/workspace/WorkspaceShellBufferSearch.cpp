@@ -12,50 +12,68 @@ namespace microide::workspace {
 
 namespace {
 
-// Applies a regex replace-all across `viewport` as ONE undo group. Re-scans the
-// live buffer (so the match set is fresh even if the document was edited while the
-// find widget stayed open), expands every match's replacement against the ORIGINAL
-// line text up-front, then applies the edits bottom-to-top (descending position) so
-// each not-yet-applied match keeps valid coordinates. A per-match expansion failure
-// (bad replacement escape) aborts before any edit is applied — nothing is written.
+// Compiles the in-file find query as a regex. Smart-case (an uppercase letter in
+// the query forces case-sensitivity, matching project search) plus PCRE2_MULTILINE
+// so `^`/`$` anchor at every line boundary and `\n` matches line breaks — the query
+// runs over the whole '\n'-joined buffer, not per line, so multi-line patterns work.
+util::CompiledRegex CompileBufferSearchRegex(const std::string& query) {
+  const std::uint32_t options =
+      (UsesCaseSensitiveLiteralMatch(query) ? 0u : PCRE2_CASELESS) | PCRE2_MULTILINE;
+  return util::CompiledRegex(query, options);
+}
+
+// Whole-document range [(0,0) .. (last_line, last_line_length)].
+editor::SelectionRange WholeDocumentRange(const editor::TextViewport& viewport) {
+  const std::size_t line_count = viewport.lines().LineCount();
+  const std::size_t last = line_count == 0 ? 0 : line_count - 1;
+  return editor::SelectionRange{
+      .start = editor::TextPosition{0, 0},
+      .end = editor::TextPosition{last, line_count == 0 ? 0 : viewport.lines().LineLength(last)},
+  };
+}
+
+// The whole buffer as one '\n'-joined string (the buffer is internally
+// CRLF-normalized, so this contains only '\n' line breaks).
+std::string BuildWholeBufferContent(const editor::TextViewport& viewport) {
+  const editor::TextBuffer& buffer = viewport.lines();
+  const std::size_t line_count = buffer.LineCount();
+  std::size_t total = 0;
+  for (std::size_t i = 0; i < line_count; ++i) {
+    total += buffer.LineLength(i) + 1;
+  }
+  std::string content;
+  content.reserve(total);
+  for (std::size_t i = 0; i < line_count; ++i) {
+    content.append(buffer.LineView(i));
+    if (i + 1 < line_count) {
+      content.push_back('\n');
+    }
+  }
+  return content;
+}
+
+// Applies a regex replace-all across `viewport` as ONE undo entry. Substitutes over
+// the whole '\n'-joined buffer (so `\n`/multi-line matches and capture groups work)
+// and replaces the entire document with the result. A no-match (rc 0) or a bad
+// replacement escape (rc < 0) leaves the document untouched.
 void ApplyBufferRegexReplaceAll(editor::TextViewport& viewport,
                                 const std::string& query,
                                 std::string_view replacement) {
   if (query.empty()) {
     return;
   }
-  const std::uint32_t options = UsesCaseSensitiveLiteralMatch(query) ? 0u : PCRE2_CASELESS;
-  const util::CompiledRegex pattern(query, options);
+  const util::CompiledRegex pattern = CompileBufferSearchRegex(query);
   if (!pattern.valid()) {
     return;
   }
-  const std::vector<editor::SelectionRange> matches =
-      FindRegexSearchMatches(viewport.lines(), pattern);
-  if (matches.empty()) {
-    return;
+  const editor::SelectionRange whole = WholeDocumentRange(viewport);
+  const std::string content = BuildWholeBufferContent(viewport);
+  std::string rebuilt;
+  const int rc = pattern.SubstituteInto(content, replacement, rebuilt);
+  if (rc <= 0) {
+    return;  // 0: nothing matched; < 0: invalid replacement escape — no edit.
   }
-
-  // Pre-expand every replacement against the original buffer so a rightward edit on
-  // the same line cannot perturb a later expansion's lookaround context.
-  std::vector<std::string> expansions;
-  expansions.reserve(matches.size());
-  for (const editor::SelectionRange& match : matches) {
-    if (match.start.line >= viewport.lines().LineCount()) {
-      return;
-    }
-    std::optional<std::string> expanded = pattern.ExpandMatchAt(
-        viewport.lines().LineView(match.start.line), match.start.column, replacement);
-    if (!expanded.has_value()) {
-      return;  // bad replacement escape -> abort with no edits
-    }
-    expansions.push_back(std::move(*expanded));
-  }
-
-  viewport.BeginUndoGroup();
-  for (std::size_t i = matches.size(); i-- > 0;) {
-    viewport.ReplaceRange(matches[i], expansions[i]);
-  }
-  viewport.EndUndoGroup();
+  viewport.ReplaceRange(whole, rebuilt);
 }
 
 }  // namespace
@@ -83,12 +101,11 @@ void WorkspaceShell::RefreshBufferSearch() {
   // revision guard against a stale or wrong-buffer cache.
   auto& incremental = buffer_search.incremental;
   if (buffer_search.regex) {
-    // Regex mode: smart-case (an uppercase letter in the query forces
-    // case-sensitivity, matching project search), full-scan every keystroke. An
-    // invalid pattern yields no matches (the widget shows 0/0). The literal refine
-    // cache is bypassed and invalidated so switching back to literal rescans.
-    const std::uint32_t options = UsesCaseSensitiveLiteralMatch(query) ? 0u : PCRE2_CASELESS;
-    const util::CompiledRegex pattern(query, options);
+    // Regex mode: smart-case + MULTILINE over the whole buffer (so `\n`/multi-line
+    // patterns match), full-scan every keystroke. An invalid pattern yields no
+    // matches (the widget shows 0/0). The literal refine cache is bypassed and
+    // invalidated so switching back to literal rescans.
+    const util::CompiledRegex pattern = CompileBufferSearchRegex(query);
     buffer_search.matches =
         pattern.valid() ? FindRegexSearchMatches(buffer, pattern)
                         : std::vector<editor::SelectionRange>{};
@@ -203,17 +220,23 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
   }
 
   if (buffer_search.regex) {
-    // Regex mode: expand the replacement for THIS match (capture groups resolve in
-    // full line context, so lookarounds work), then apply it to the match span.
+    // Regex mode: expand the replacement for THIS match against the whole '\n'-joined
+    // buffer (so capture groups + lookarounds resolve in full context and a multi-
+    // line match works), then apply it to the match span.
     const std::string& query = buffer_search.query.text();
-    const std::uint32_t options = UsesCaseSensitiveLiteralMatch(query) ? 0u : PCRE2_CASELESS;
-    const util::CompiledRegex pattern(query, options);
+    const util::CompiledRegex pattern = CompileBufferSearchRegex(query);
     if (!pattern.valid() || match.start.line >= viewport->lines().LineCount()) {
       return;
     }
-    const std::optional<std::string> expanded = pattern.ExpandMatchAt(
-        viewport->lines().LineView(match.start.line), match.start.column,
-        buffer_search.replace_text.text());
+    const editor::SelectionRange whole = WholeDocumentRange(*viewport);
+    const std::string content = BuildWholeBufferContent(*viewport);
+    std::size_t offset = 0;
+    for (std::size_t i = 0; i < match.start.line; ++i) {
+      offset += viewport->lines().LineLength(i) + 1;  // + newline
+    }
+    offset += match.start.column;
+    const std::optional<std::string> expanded =
+        pattern.ExpandMatchAt(content, offset, buffer_search.replace_text.text());
     if (!expanded.has_value() || !viewport->ReplaceRange(match, *expanded)) {
       return;
     }

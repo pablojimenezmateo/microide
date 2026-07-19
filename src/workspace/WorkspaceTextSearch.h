@@ -40,11 +40,12 @@ std::optional<std::size_t> ReplaceRegexMatchesInText(std::string& content,
                                                      const util::CompiledRegex& pattern,
                                                      std::string_view replacement);
 
-// Per-line regex scan over a buffer's zero-copy `LineView`, producing one
-// SelectionRange per match for the in-file find widget (navigation + overview
-// ruler). Uses the shared match engine (util::FindNextRegexMatchInLine) so it
-// cannot drift from project-wide search. Caps the retained set at
-// kMaxBufferSearchMatches, setting `*truncated` when the cap trims matches.
+// Whole-buffer regex scan for the in-file find widget (navigation + overview
+// ruler). Matches run over the '\n'-joined buffer (NOT per line), so a pattern can
+// span line breaks — `\n`, `^`/`$` under PCRE2_MULTILINE, or `foo\nbar` — and a
+// returned SelectionRange may span multiple lines. Uses the shared match engine
+// (util::FindNextRegexMatchInLine). Caps the retained set at kMaxBufferSearchMatches,
+// setting `*truncated` when the cap trims matches.
 std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuffer& buffer,
                                                            const util::CompiledRegex& pattern,
                                                            bool* truncated = nullptr);

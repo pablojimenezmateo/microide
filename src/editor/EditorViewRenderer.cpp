@@ -310,7 +310,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                 const FoldingModel* folding_model,
                                 const WelcomeViewModel* welcome_view,
                                 const FileDecorations* plugin_decorations,
-                                bool show_line_numbers) const {
+                                bool show_line_numbers,
+                                std::span<const SelectionRange> explicit_search_matches) const {
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
@@ -698,7 +699,27 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     column_fill_scratch_.clear();
     prepositioned_fill_scratch_.clear();
 
-    if (!lowered_search_query.empty()) {
+    if (!explicit_search_matches.empty()) {
+      // Regex / whole-buffer find: the caller supplies single-line match fragments
+      // sorted by (start.line, start.column). Binary-search this row's slice (mirrors
+      // the occurrence_ranges handling) and emit its fills — no per-line query scan.
+      const SelectionRange* const frag_begin = explicit_search_matches.data();
+      const SelectionRange* const frag_end = frag_begin + explicit_search_matches.size();
+      const SelectionRange* it = std::lower_bound(
+          frag_begin, frag_end, line_index,
+          [](const SelectionRange& r, std::size_t l) { return r.start.line < l; });
+      for (; it != frag_end && it->start.line == line_index; ++it) {
+        const bool is_active_match = active_search_match.has_value() &&
+                                     active_search_match->start.line == it->start.line &&
+                                     active_search_match->start.column == it->start.column;
+        column_fill_scratch_.push_back(RowFillSpan{
+            .start_column = it->start.column,
+            .end_column = it->end.column,
+            .color = is_active_match ? theme.search_match_active : theme.search_match,
+            .geometry = RowFillSpan::Geometry::kRange,
+        });
+      }
+    } else if (!lowered_search_query.empty()) {
       // Probe with a borrowed view so a cache hit allocates nothing (the query
       // string is identical for every row this frame).
       const SearchMatchCacheKeyView cache_key_view{

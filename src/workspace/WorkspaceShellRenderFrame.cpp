@@ -184,6 +184,52 @@ void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
   }
 }
 
+// Pre-split the (possibly multi-line) regex match set into single-line highlight
+// fragments the editor renderer can draw per row, cached per (viewport, content,
+// match-set) so it rebuilds only when the matches actually change — not per frame.
+// `matches` is ascending by (line, column); splitting preserves that order, so the
+// renderer can binary-search each row's slice.
+std::span<const editor::SelectionRange> BufferSearchHighlightFragments(
+    const editor::TextViewport& viewport,
+    const std::vector<editor::SelectionRange>& matches,
+    std::uint64_t matches_revision) {
+  struct Cache {
+    const void* viewport = nullptr;
+    std::uint64_t content_revision = 0;
+    std::uint64_t matches_revision = 0;
+    bool valid = false;
+    std::vector<editor::SelectionRange> fragments;
+  };
+  thread_local Cache cache;
+  const std::uint64_t content_revision = viewport.content_revision();
+  if (cache.valid && cache.viewport == &viewport &&
+      cache.content_revision == content_revision && cache.matches_revision == matches_revision) {
+    return cache.fragments;
+  }
+
+  cache.fragments.clear();
+  const editor::TextBuffer& buffer = viewport.lines();
+  for (const editor::SelectionRange& match : matches) {
+    if (match.start.line == match.end.line) {
+      cache.fragments.push_back(match);
+      continue;
+    }
+    for (std::size_t line = match.start.line;
+         line <= match.end.line && line < buffer.LineCount(); ++line) {
+      cache.fragments.push_back(editor::SelectionRange{
+          .start = editor::TextPosition{line, line == match.start.line ? match.start.column : 0},
+          .end = editor::TextPosition{
+              line, line == match.end.line ? match.end.column : buffer.LineLength(line)},
+      });
+    }
+  }
+  cache.viewport = &viewport;
+  cache.content_revision = content_revision;
+  cache.matches_revision = matches_revision;
+  cache.valid = true;
+  return cache.fragments;
+}
+
 }  // namespace
 
 void WorkspaceShell::ResizeTerminalToPanel(const SDL_FRect& panel_rect) {
@@ -740,20 +786,36 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         // hover/click targets never resolve against stale blame geometry.
         editor_blame_overlay_service_.SetVisibleOverlay(blame_overlay);
       }
+      // In-file find highlights: regex/whole-buffer mode drives the highlight from the
+      // precomputed (possibly multi-line) match set — a literal query scan cannot
+      // reproduce a regex or `\n`-spanning match — while literal mode keeps the fast
+      // cached per-line query scan.
+      const BufferSearchState& buffer_search_state =
+          project_state.overlay.workflow.buffer_search;
+      const bool buffer_find_active =
+          pane.active && (overlay_vm.mode == OverlayMode::BufferSearch ||
+                          overlay_vm.mode == OverlayMode::BufferReplace);
+      const bool buffer_regex_active = buffer_find_active && buffer_search_state.regex;
+      const std::span<const editor::SelectionRange> explicit_search_matches =
+          buffer_regex_active
+              ? BufferSearchHighlightFragments(*viewport, buffer_search_state.matches,
+                                               buffer_search_state.matches_revision)
+              : std::span<const editor::SelectionRange>{};
+      const std::string_view buffer_search_query_for_render =
+          (buffer_find_active && !buffer_search_state.regex)
+              ? std::string_view(overlay_vm.buffer_search_query_text)
+              : std::string_view{};
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
                                    pane.active && draw_editor_caret,
-                                   pane.active &&
-                                           (overlay_vm.mode == OverlayMode::BufferSearch ||
-                                            overlay_vm.mode == OverlayMode::BufferReplace)
-                                       ? overlay_vm.buffer_search_query_text
-                                       : "",
+                                   buffer_search_query_for_render,
                                    pane.active ? ActiveBufferSearchMatch() : std::nullopt,
                                    blame_overlay, diagnostics_for_viewport(*viewport),
                                    &tls_editor_surface_vm,
                                    pane.active && bracket_match_highlight_enabled,
                                    indent_guides_enabled, render_whitespace_enabled,
                                    group_folding_model, nullptr,
-                                   decorations_for_viewport(*viewport), line_numbers_enabled);
+                                   decorations_for_viewport(*viewport), line_numbers_enabled,
+                                   explicit_search_matches);
       DrawEditorInsets(renderer, pane.rect, metrics, viewport->scroll_line(),
                        tls_editor_surface_vm);
       draw_review_comment_markers(*viewport, pane.rect, metrics);
