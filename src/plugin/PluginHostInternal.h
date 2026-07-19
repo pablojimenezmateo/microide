@@ -19,6 +19,7 @@
 #include <system_error>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -484,6 +485,16 @@ struct PluginHost::Impl {
   std::vector<PluginHost::ContributedLaunchConfig> launch_configs;
   std::vector<PluginHost::ContributedTask> tasks;
   std::vector<PluginHost::ContributedTool> tools;
+  // O(1) duplicate-id indexes mirroring the non-empty ids of the five
+  // id-deduplicated contribution vectors above. Registration checks + updates
+  // these instead of a linear vector scan (registering N unique ids was O(N^2));
+  // RebuildContributionIdIndexes() re-syncs them after per-plugin teardown/pop.
+  // See TD-2026-07-17-077.
+  std::unordered_set<std::string> language_server_ids;
+  std::unordered_set<std::string> debug_adapter_ids;
+  std::unordered_set<std::string> launch_config_ids;
+  std::unordered_set<std::string> task_ids;
+  std::unordered_set<std::string> tool_ids;
   std::vector<PluginHost::ContributedTestProvider> test_providers;
   std::vector<TestProviderRuntime> test_provider_runtimes;
   std::vector<PluginHost::ContributedScmProvider> scm_providers;

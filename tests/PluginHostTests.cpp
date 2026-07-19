@@ -2139,6 +2139,54 @@ return ide.plugin({
   Expect(tools[0].label == "first", "the first registration with a given id wins");
 }
 
+// The O(1) duplicate-id index (TD-2026-07-17-077) is a second source of truth
+// beside the contribution vectors; a teardown must reset it or a reload's
+// re-registration of the same id would be wrongly rejected as a duplicate. Drive
+// two reloads of a plugin that registers a tool id and assert it survives both.
+void TestPluginHostContributionIdIndexResetsAcrossReload() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "id-index reset fixture\n");
+
+  WritePluginInit(
+      global_plugins, "id-index",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "id.index",
+  setup = function(ctx)
+    local sha = string.rep("a", 64)
+    ctx.tools.add({ id = "only", label = "only", platform = "linux-x64",
+      url = "file:///tmp/only", sha256 = sha, install_dir = "only" })
+    -- A same-id second add must still be rejected within this reload.
+    pcall(function() ctx.tools.add({ id = "only", label = "dupe", platform = "linux-x64",
+      url = "file:///tmp/dupe", sha256 = sha, install_dir = "dupe" }) end)
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  host.Reload(project_root);
+  Expect(host.ContributedTools().size() == 1,
+         "first reload registers the tool once (duplicate rejected)");
+
+  // A second reload tears down the first reload's contributions and re-runs setup.
+  // If the id index were not reset on teardown, "only" would still be present and
+  // the re-registration would be rejected, leaving zero tools.
+  host.Reload(project_root);
+  Expect(host.ContributedTools().size() == 1,
+         "the tool re-registers after a reload (id index reset on teardown)");
+  Expect(host.ContributedTools()[0].label == "only",
+         "the surviving tool is the valid first registration");
+}
+
 void TestRepoTypescriptLspPluginUsesAbsoluteProjectBinary() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4275,6 +4323,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostToolRegistrationValidatesSha256);
   AddTest(tests, "PluginHost/RejectsDuplicateContributionId",
           TestPluginHostRejectsDuplicateContributionId);
+  AddTest(tests, "PluginHost/ContributionIdIndexResetsAcrossReload",
+          TestPluginHostContributionIdIndexResetsAcrossReload);
   AddTest(tests, "PluginHost/LaunchConfigRequiresProcessExec",
           TestPluginHostLaunchConfigRequiresProcessExec);
   AddTest(tests, "PluginHost/RepoTypescriptLspPluginUsesAbsoluteProjectBinary",

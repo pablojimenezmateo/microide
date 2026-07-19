@@ -4,30 +4,42 @@
 
 #include "plugin/PluginContributionLimits.h"
 
-#include <algorithm>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace microide::plugin::contribution_interop {
 
 namespace {
 
-// Reject a contribution whose non-empty `.id` already exists in the target
-// vector. First-match consumers (task runner, tool/adapter/launch lookup) would
-// otherwise behave order-dependently on a duplicate local id. Empty ids are left
-// to the per-type parser's own validation.
+// Reject a contribution whose non-empty `.id` already exists among the kind's
+// registered contributions. First-match consumers (task runner, tool/adapter/
+// launch lookup) would otherwise behave order-dependently on a duplicate local
+// id. `id_index` mirrors the storage vector's non-empty ids, so the membership
+// test is O(1) instead of an O(n) scan (registering N ids was O(N^2)). Empty ids
+// are left to the per-type parser's own validation and never enter the index.
 template <typename T>
-bool DuplicateContributionId(const std::vector<T>& items, const T& candidate,
+bool DuplicateContributionId(const std::unordered_set<std::string>* id_index, const T& candidate,
                              std::string_view kind, std::string* error_message) {
-  if (candidate.id.empty()) {
+  if (candidate.id.empty() || id_index == nullptr) {
     return false;
   }
-  const bool duplicate = std::any_of(
-      items.begin(), items.end(), [&](const T& e) { return e.id == candidate.id; });
-  if (duplicate && error_message != nullptr) {
+  if (id_index->find(candidate.id) == id_index->end()) {
+    return false;
+  }
+  if (error_message != nullptr) {
     *error_message = "duplicate " + std::string(kind) + " id '" + candidate.id + "'";
   }
-  return duplicate;
+  return true;
+}
+
+// Record a just-accepted contribution's non-empty id in the kind's index so a
+// later duplicate is detected in O(1). Keeps the index in sync with push_back.
+template <typename T>
+void NoteContributionId(std::unordered_set<std::string>* id_index, const T& candidate) {
+  if (id_index != nullptr && !candidate.id.empty()) {
+    id_index->insert(candidate.id);
+  }
 }
 
 }  // namespace
@@ -143,6 +155,7 @@ bool RegisterLanguageQuery(lua_State* state,
 bool RegisterTask(lua_State* state,
                   std::string_view plugin_id,
                   std::vector<PluginHost::ContributedTask>* tasks,
+                  std::unordered_set<std::string>* id_index,
                   std::string* error_message) {
   if (tasks == nullptr) {
     return false;
@@ -155,9 +168,10 @@ bool RegisterTask(lua_State* state,
                                                    error_message)) {
     return false;
   }
-  if (DuplicateContributionId(*tasks, registration.contributed, "task", error_message)) {
+  if (DuplicateContributionId(id_index, registration.contributed, "task", error_message)) {
     return false;
   }
+  NoteContributionId(id_index, registration.contributed);
   tasks->push_back(std::move(registration.contributed));
   return true;
 }
@@ -165,6 +179,7 @@ bool RegisterTask(lua_State* state,
 bool RegisterLanguageServer(lua_State* state,
                             std::string_view plugin_id,
                             std::vector<PluginHost::ContributedLanguageServer>* servers,
+                            std::unordered_set<std::string>* id_index,
                             std::string* error_message) {
   if (servers == nullptr) {
     return false;
@@ -177,10 +192,11 @@ bool RegisterLanguageServer(lua_State* state,
                                                              &registration, error_message)) {
     return false;
   }
-  if (DuplicateContributionId(*servers, registration.contributed, "language server",
+  if (DuplicateContributionId(id_index, registration.contributed, "language server",
                               error_message)) {
     return false;
   }
+  NoteContributionId(id_index, registration.contributed);
   servers->push_back(std::move(registration.contributed));
   return true;
 }
@@ -188,6 +204,7 @@ bool RegisterLanguageServer(lua_State* state,
 bool RegisterDebugAdapter(lua_State* state,
                           std::string_view plugin_id,
                           std::vector<PluginHost::ContributedDebugAdapter>* adapters,
+                          std::unordered_set<std::string>* id_index,
                           std::string* error_message) {
   if (adapters == nullptr) {
     return false;
@@ -200,10 +217,11 @@ bool RegisterDebugAdapter(lua_State* state,
                                                             &registration, error_message)) {
     return false;
   }
-  if (DuplicateContributionId(*adapters, registration.contributed, "debug adapter",
+  if (DuplicateContributionId(id_index, registration.contributed, "debug adapter",
                               error_message)) {
     return false;
   }
+  NoteContributionId(id_index, registration.contributed);
   adapters->push_back(std::move(registration.contributed));
   return true;
 }
@@ -211,6 +229,7 @@ bool RegisterDebugAdapter(lua_State* state,
 bool RegisterLaunchConfig(lua_State* state,
                           std::string_view plugin_id,
                           std::vector<PluginHost::ContributedLaunchConfig>* configs,
+                          std::unordered_set<std::string>* id_index,
                           std::string* error_message) {
   if (configs == nullptr) {
     return false;
@@ -223,10 +242,11 @@ bool RegisterLaunchConfig(lua_State* state,
                                                            &registration, error_message)) {
     return false;
   }
-  if (DuplicateContributionId(*configs, registration.contributed, "launch config",
+  if (DuplicateContributionId(id_index, registration.contributed, "launch config",
                               error_message)) {
     return false;
   }
+  NoteContributionId(id_index, registration.contributed);
   configs->push_back(std::move(registration.contributed));
   return true;
 }
@@ -234,6 +254,7 @@ bool RegisterLaunchConfig(lua_State* state,
 bool RegisterTool(lua_State* state,
                   std::string_view plugin_id,
                   std::vector<PluginHost::ContributedTool>* tools,
+                  std::unordered_set<std::string>* id_index,
                   std::string* error_message) {
   if (tools == nullptr) {
     return false;
@@ -246,9 +267,10 @@ bool RegisterTool(lua_State* state,
                                                    error_message)) {
     return false;
   }
-  if (DuplicateContributionId(*tools, registration.contributed, "tool", error_message)) {
+  if (DuplicateContributionId(id_index, registration.contributed, "tool", error_message)) {
     return false;
   }
+  NoteContributionId(id_index, registration.contributed);
   tools->push_back(std::move(registration.contributed));
   return true;
 }

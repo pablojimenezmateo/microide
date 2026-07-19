@@ -106,7 +106,8 @@ they land.
    status (008/033); targeted fallback rescan (009).
 6. **LSP completeness** — resource ops + version-aware edits (011), explicit timeout result
    variants (012).
-7. **Plugin registry** — O(1) duplicate-id detection (077); per-field byte caps (018);
+7. **Plugin registry** — O(1) duplicate-id detection (077) **[RESOLVED 2026-07-18 — per-kind
+   id index; see the Plugin caps / policy subsection]**; per-field byte caps (018);
    measured caps (019); `lua_State*` boundary refactor (22/020/058).
 8. **Tab identity** — stable per-tab id threaded through dirty-prompt + persistence (024).
 9. **Test-infra sweeps** — architecture lints + negative fixtures (032/037), watcher
@@ -2491,21 +2492,35 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 > **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 018 (per-field byte caps on every provider
 > result surface — 078 already landed the aggregate string cap, so remaining surfaces are
 > incremental hardening) and 019 (re-derive status/contribution caps from *measured*
-> render/registry budgets — a measurement task) are policy/tuning, not defects. 077
-> (O(N²) duplicate-id scan in contribution registration) is reachable only by a
-> pathological/malicious plugin registering thousands of unique ids — memory is already
-> capped (100k/kind) and the setup watchdog bounds a runaway loop; the clean fix is
-> persistent per-kind id sets threaded through the whole `Register*` registry shape,
-> disproportionate for a non-realistic trigger. Deferred to a dedicated plugin-registry pass.
+> render/registry budgets — a measurement task) are policy/tuning, not defects.
+> (**077 RESOLVED 2026-07-18** — the O(N²) duplicate-id scan is now an O(1) per-kind
+> id index; see its entry.)
 
 - **018 — per-field byte caps for every provider result surface** (078 landed the
   string-array caps; the remaining diagnostics/hover/status/sidebar/tools/tasks/
   scm/auth surfaces are a bounded parser sweep).
 - **019 — re-derive plugin status/contribution caps from measured render/registry
   budgets** (a measurement task).
-- **077 — plugin contribution registration is O(N²)** via linear duplicate scans;
-  per-kind id sets threaded through every `Register*` signature. Memory already
-  capped; only a pathological plugin hits it.
+- **[RESOLVED 2026-07-18] 077 — plugin contribution registration was O(N²)** via a
+  linear `std::any_of` duplicate-id scan over the storage vector on every `add`. The
+  five id-deduplicated kinds (task / language server / debug adapter / launch config /
+  tool) now carry a per-kind `std::unordered_set<std::string>` id index
+  (`Impl::{task,language_server,debug_adapter,launch_config,tool}_ids`) that
+  `contribution_interop::Register*` checks and updates in O(1), so registering N unique
+  ids is O(N) instead of O(N²) (the trigger was a plugin looping `add` up to the
+  100k/kind contribution cap — 10^10 string compares). `DuplicateContributionId` now
+  takes the index (not the vector); `NoteContributionId` records the accepted id. The
+  index mirrors the vector's non-empty ids: the two `pop_back` call sites (task/LS/adapter
+  command-not-in-allowlist) `erase` the just-noted id, and `RebuildContributionIdIndexes()`
+  re-syncs all five from the survivors after each per-plugin `UnregisterContributionsForState`
+  teardown (which does a remove_if that doesn't report removed ids). Behaviour is
+  byte-identical — same first-registration-wins dedup, same `"duplicate <kind> id '<id>'"`
+  message, empty ids still never deduped. Regressions:
+  `PluginHost/RejectsDuplicateContributionId` (unchanged) plus new
+  `PluginHost/ContributionIdIndexResetsAcrossReload` (a tool id re-registers cleanly after
+  a reload teardown — guards the index-reset invariant). Correctness-tested rather than
+  perf-gated: registration is Lua-parse-coupled, so a faithful pure micro-benchmark isn't
+  available (consistent with the harness's integration-heavy triage note).
 - **[RESOLVED 2026-07-17] 090 — plugin decoration aggregate cap applies after full
   concat + sort.** `PluginDecorationStore::RebuildPath`'s multi-owner branch replaced
   the concatenate-all / sort-all / resize-down path with a bounded k-way merge

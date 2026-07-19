@@ -499,11 +499,14 @@
             return false;
           }
           if (!contribution_interop::RegisterTask(
-                  state, plugin->id, &host->tasks, error_message)) {
+                  state, plugin->id, &host->tasks, &host->task_ids, error_message)) {
             return false;
           }
           if (!host->tasks.empty() &&
               !CommandAllowed(plugin->capabilities, host->tasks.back().command)) {
+            // RegisterTask already recorded the id in task_ids; drop it back out so
+            // the index stays a faithful mirror of the surviving vector.
+            host->task_ids.erase(host->tasks.back().id);
             host->tasks.pop_back();
             *error_message = "task program not in capabilities.process.allow";
             return false;
@@ -522,11 +525,13 @@
             return false;
           }
           if (!contribution_interop::RegisterLanguageServer(
-                  state, plugin->id, &host->language_servers, error_message)) {
+                  state, plugin->id, &host->language_servers, &host->language_server_ids,
+                  error_message)) {
             return false;
           }
           if (!host->language_servers.empty() &&
               !CommandAllowed(plugin->capabilities, host->language_servers.back().command)) {
+            host->language_server_ids.erase(host->language_servers.back().id);
             host->language_servers.pop_back();
             *error_message = "language server program not in capabilities.process.allow";
             return false;
@@ -549,11 +554,13 @@
             return false;
           }
           if (!contribution_interop::RegisterDebugAdapter(
-                  state, plugin->id, &host->debug_adapters, error_message)) {
+                  state, plugin->id, &host->debug_adapters, &host->debug_adapter_ids,
+                  error_message)) {
             return false;
           }
           if (!host->debug_adapters.empty() &&
               !CommandAllowed(plugin->capabilities, host->debug_adapters.back().command)) {
+            host->debug_adapter_ids.erase(host->debug_adapters.back().id);
             host->debug_adapters.pop_back();
             *error_message = "debug adapter program not in capabilities.process.allow";
             return false;
@@ -577,8 +584,8 @@
             *error_message = "debug launch config requires capabilities.process.exec";
             return false;
           }
-          return contribution_interop::RegisterLaunchConfig(state, plugin->id,
-                                                            &host->launch_configs, error_message);
+          return contribution_interop::RegisterLaunchConfig(
+              state, plugin->id, &host->launch_configs, &host->launch_config_ids, error_message);
         });
   }
 
@@ -588,7 +595,7 @@
         "failed to parse tool registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
           return contribution_interop::RegisterTool(
-              state, plugin->id, &host->tools, error_message);
+              state, plugin->id, &host->tools, &host->tool_ids, error_message);
         });
   }
 
@@ -1172,9 +1179,34 @@
         &scm_providers, &scm_provider_runtimes, &annotation_providers,
         &annotation_provider_runtimes, &auth_providers, &auth_provider_runtimes,
         &bracket_sets, &comment_markers, &indent_rules, &snippets, &themes, &file_icon_themes);
+    // The teardown remove_if above dropped one plugin's entries from the five
+    // id-deduplicated vectors; re-sync their O(1) duplicate-id indexes from the
+    // survivors so a later reload/registration sees exactly the live ids (see
+    // TD-2026-07-17-077).
+    RebuildContributionIdIndexes();
     // Teardown runs on the worker during reload; the publish at the end of the reload
     // copies the (now-empty or rebuilt) status_item_order into published_ and bumps
     // the UI-visible status_view_revision, so no separate invalidation is needed here.
+  }
+
+  // Rebuild the five contribution id indexes from their storage vectors. Cheap
+  // (these kinds hold a handful of entries in practice) and the simplest way to
+  // keep the indexes exact after a per-plugin remove_if teardown that does not
+  // report which ids it removed. Empty ids are excluded, matching registration.
+  void RebuildContributionIdIndexes() {
+    const auto rebuild = [](std::unordered_set<std::string>* index, const auto& items) {
+      index->clear();
+      for (const auto& item : items) {
+        if (!item.id.empty()) {
+          index->insert(item.id);
+        }
+      }
+    };
+    rebuild(&language_server_ids, language_servers);
+    rebuild(&debug_adapter_ids, debug_adapters);
+    rebuild(&launch_config_ids, launch_configs);
+    rebuild(&task_ids, tasks);
+    rebuild(&tool_ids, tools);
   }
 
   bool InitializeState(PluginInstance* plugin, std::string* error_message) {
