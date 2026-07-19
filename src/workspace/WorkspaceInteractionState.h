@@ -93,6 +93,14 @@ struct InteractionState {
   // Identifies which single-line input owns the in-flight drag-select gesture so the drag
   // handler can keep updating the right editor without a second hit-test.
   TextInputSurface single_line_drag_surface = TextInputSurface::None;
+  // Editor column/box selection drag (Shift+Alt+drag). While active, editor
+  // selection-motion extends a rectangular per-line selection from the fixed
+  // anchor corner to the pointer instead of moving the single primary caret.
+  // The anchor is the primary caret position captured at press. Stored as raw
+  // line/column so this header keeps no editor-type dependency.
+  bool editor_box_selecting = false;
+  std::size_t editor_box_anchor_line = 0;
+  std::size_t editor_box_anchor_column = 0;
 };
 
 struct WheelTicks {

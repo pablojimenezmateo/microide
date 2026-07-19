@@ -545,12 +545,21 @@ void TextViewport::ClearSecondaryCarets() {
 void TextViewport::PlaceColumnCaretsBetweenLines(std::size_t anchor_line,
                                                  std::size_t target_line,
                                                  std::size_t column) {
+  // Zero-width column carets are the degenerate box selection where both corners
+  // share `column`; delegate so the span cap and caret-set construction live once.
+  SetBoxSelection(TextPosition{anchor_line, column}, TextPosition{target_line, column});
+}
+
+void TextViewport::SetBoxSelection(TextPosition anchor, TextPosition caret) {
   if (document_->lines.empty()) {
     return;
   }
+  const std::size_t last_line = document_->lines.size() - 1;
+  anchor.line = std::min(anchor.line, last_line);
+  caret.line = std::min(caret.line, last_line);
 
-  std::size_t lo = std::min(anchor_line, target_line);
-  std::size_t hi = std::max(anchor_line, target_line);
+  std::size_t lo = std::min(anchor.line, caret.line);
+  std::size_t hi = std::max(anchor.line, caret.line);
 
   // Cap the caret span. A column/box-select gesture across a multi-million-line
   // file would otherwise allocate one caret per line (and every later multi-caret
@@ -559,27 +568,43 @@ void TextViewport::PlaceColumnCaretsBetweenLines(std::size_t anchor_line,
   // edit spans a modest number of lines.
   constexpr std::size_t kMaxColumnCarets = 10000;
   if (hi - lo + 1 > kMaxColumnCarets) {
-    if (target_line >= hi) {
+    if (caret.line >= hi) {
       lo = hi - (kMaxColumnCarets - 1);
     } else {
       hi = lo + (kMaxColumnCarets - 1);
     }
   }
 
-  ClearSecondaryCarets();
-  ClearSelection();
-  MoveCursorTo(target_line, column, false);
+  // Virtual box columns. Each line clamps them to its own length so a short line
+  // collapses to a zero-width caret at end-of-line instead of dropping out.
+  const std::size_t anchor_column = anchor.column;
+  const std::size_t caret_column = caret.column;
 
-  // Build the full caret set once and rebuild through SetSecondaryCarets (a
-  // single clamp+sort+dedup pass). The previous per-line AddSecondaryCaret loop
-  // re-ran a linear find_if plus a full std::sort on every insert, making a
-  // column selection across N lines O(N^2 log N); this is O(N log N).
-  std::vector<TextPosition> carets;
-  carets.reserve(hi - lo + 1);
+  ClearSecondaryCarets();
+
+  // Build the ranged secondary set once (single clamp+sort+dedupe pass in
+  // SetSecondaryCaretsWithRanges) for every line except the primary/caret line.
+  // Columns are pre-clamped to each line's length so ValidateRangeColumns accepts
+  // them; an anchor==caret range on a line yields a zero-width caret.
+  std::vector<SelectionRange> ranges;
+  ranges.reserve(hi - lo);
   for (std::size_t line = lo; line <= hi; ++line) {
-    carets.push_back(TextPosition{line, column});
+    if (line == caret.line) {
+      continue;
+    }
+    const std::size_t line_len = document_->lines[line].size();
+    const std::size_t a = std::min(anchor_column, line_len);
+    const std::size_t c = std::min(caret_column, line_len);
+    ranges.push_back(SelectionRange{TextPosition{line, a}, TextPosition{line, c}});
   }
-  SetSecondaryCarets(std::move(carets));
+
+  // Primary caret+selection on the caret line: land on the anchor column (clearing
+  // any prior selection), then extend to the caret column so the primary row spans
+  // the box. Equal columns leave an empty selection -> a plain column caret.
+  const std::size_t caret_line_len = document_->lines[caret.line].size();
+  MoveCursorTo(caret.line, std::min(anchor_column, caret_line_len), false);
+  MoveCursorTo(caret.line, std::min(caret_column, caret_line_len), true);
+  SetSecondaryCaretsWithRanges(std::move(ranges));
 }
 
 bool TextViewport::has_selection() const {

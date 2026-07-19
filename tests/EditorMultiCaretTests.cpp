@@ -526,6 +526,70 @@ void TestPlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine() {
          "column caret placement should clamp each line to the shared column");
 }
 
+// A rectangular box selection gives every line in the row span a per-line
+// selection from the anchor column to the caret column, with the caret line as
+// the primary selection and the others as ranged secondary carets. This is the
+// mouse-driven multi-line block selection (Shift+Alt+drag).
+void TestSetBoxSelectionSelectsEachLineAcrossColumns() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdef\nghijkl\nmnopqr\n", "/tmp/mc-box-select.txt");
+
+  // Box from (0,1) to (2,4): columns 1..4 on lines 0,1,2.
+  viewport.SetBoxSelection(TextPosition{0, 1}, TextPosition{2, 4});
+
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 4,
+         "box selection should leave the primary caret on the caret corner");
+  const auto primary = viewport.selection_range();
+  Expect(primary.has_value() && primary->start == TextPosition{2, 1} &&
+             primary->end == TextPosition{2, 4},
+         "the caret line should carry the box selection as the primary selection");
+
+  const auto ranges = viewport.secondary_caret_ranges();
+  Expect(ranges.size() == 2, "box selection should add a secondary caret per other line");
+  Expect(ranges[0].position == TextPosition{0, 4} &&
+             ranges[0].selection_anchor == std::optional<TextPosition>(TextPosition{0, 1}),
+         "line 0 should select columns 1..4 with its caret at the caret column");
+  Expect(ranges[1].position == TextPosition{1, 4} &&
+             ranges[1].selection_anchor == std::optional<TextPosition>(TextPosition{1, 1}),
+         "line 1 should select columns 1..4 with its caret at the caret column");
+}
+
+// Lines shorter than both box columns collapse to a zero-width caret at
+// end-of-line instead of dropping out of the selection (matches VSCode).
+void TestSetBoxSelectionClampsShortLinesToEndOfLine() {
+  TextViewport viewport;
+  viewport.LoadContent("aaaaaa\nbb\ncccccc\n", "/tmp/mc-box-short.txt");
+
+  // Box columns 3..5; line 1 ("bb") is only length 2.
+  viewport.SetBoxSelection(TextPosition{0, 3}, TextPosition{2, 5});
+
+  const auto ranges = viewport.secondary_caret_ranges();
+  Expect(ranges.size() == 2, "every line in the span keeps a caret");
+  // Line 1 clamps both corners to length 2 -> zero-width caret, no selection.
+  const auto short_line = std::find_if(ranges.begin(), ranges.end(),
+                                       [](const auto& c) { return c.position.line == 1; });
+  Expect(short_line != ranges.end() && short_line->position == TextPosition{1, 2} &&
+             !short_line->selection_anchor.has_value(),
+         "a line shorter than both box columns collapses to a zero-width end-of-line caret");
+}
+
+// Dragging a box straight down at a fixed column (equal corners) degenerates to
+// plain zero-width column carets, and PlaceColumnCaretsBetweenLines routes
+// through the same path.
+void TestSetBoxSelectionEqualColumnsMakesPlainColumnCarets() {
+  TextViewport viewport;
+  viewport.LoadContent("aaa\nbbb\nccc\n", "/tmp/mc-box-equal.txt");
+
+  viewport.SetBoxSelection(TextPosition{0, 2}, TextPosition{2, 2});
+
+  Expect(!viewport.selection_range().has_value(),
+         "equal box columns leave the primary caret without a selection");
+  const auto ranges = viewport.secondary_caret_ranges();
+  Expect(ranges.size() == 2, "equal box columns still place a caret per other line");
+  Expect(!ranges[0].selection_anchor.has_value() && !ranges[1].selection_anchor.has_value(),
+         "equal box columns produce selection-less column carets");
+}
+
 // Regression: a multi-caret edit whose carets straddle a preserved interior line
 // must NOT publish a single contiguous AppliedEdit. The aggregate history entry
 // spans first..last caret line, but the interior line is unchanged; a single
@@ -844,6 +908,12 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestMultiCaretPageUpAcrossCollapsedFoldUsesVisibleRows);
   AddTest(tests, "EditorMultiCaret/PlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine",
           TestPlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine);
+  AddTest(tests, "EditorMultiCaret/SetBoxSelectionSelectsEachLineAcrossColumns",
+          TestSetBoxSelectionSelectsEachLineAcrossColumns);
+  AddTest(tests, "EditorMultiCaret/SetBoxSelectionClampsShortLinesToEndOfLine",
+          TestSetBoxSelectionClampsShortLinesToEndOfLine);
+  AddTest(tests, "EditorMultiCaret/SetBoxSelectionEqualColumnsMakesPlainColumnCarets",
+          TestSetBoxSelectionEqualColumnsMakesPlainColumnCarets);
   AddTest(tests, "EditorMultiCaret/SoftWrapMultiCaretInsertAppliesAtEveryCaret",
           TestSoftWrapMultiCaretInsertAppliesAtEveryCaret);
   AddTest(tests, "EditorMultiCaret/SoftWrapMultiCaretBackspaceErasesAtEveryCaret",

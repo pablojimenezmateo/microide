@@ -23,9 +23,13 @@ MicroIDE SHALL allow one primary selection/caret and zero or more secondary sele
 - **WHEN** the primary caret is on line 0 column 0 and the user Shift+Alt+clicks line 3 column 0 in the editor
 - **THEN** the editor SHALL place zero-width carets on lines 0 through 3 at column 0, with the primary caret on the clicked line and secondary carets on the other lines in the range
 
-#### Scenario: Shift+Alt+click off-column falls back to Alt+click
-- **WHEN** the primary caret is on line 0 column 0 and the user Shift+Alt+clicks a different column on another line
-- **THEN** the editor SHALL preserve the anchor caret as a secondary caret and move the primary caret to the clicked position, matching Alt+click behavior
+#### Scenario: Shift+Alt off-column makes a rectangular box selection
+- **WHEN** the primary caret is on line 0 column 0 and the user Shift+Alt+clicks (or drags to) a different column on another line
+- **THEN** the editor SHALL make a rectangular selection: every line in the row span SHALL carry a per-line selection between the anchor column and the clicked/dragged column, with the clicked line holding the primary selection and the other lines becoming ranged secondary carets; a line shorter than both box columns SHALL collapse to a zero-width caret at end-of-line
+
+#### Scenario: Shift+Alt+drag continuously updates the box selection
+- **WHEN** the user presses Shift+Alt inside the editor and drags the pointer across lines and columns
+- **THEN** the editor SHALL rebuild the rectangular selection from the fixed press anchor to the live pointer on each motion, and mouse-up SHALL end the box gesture leaving the resulting multi-caret selection in place
 
 #### Scenario: Promoted caret behaves like a manually-placed caret
 - **WHEN** a caret was added by `Add Cursor At Next Match` and the user invokes any multi-caret-aware command (insert, backspace, indent, paste, line-wise edit)

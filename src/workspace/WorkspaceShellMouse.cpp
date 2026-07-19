@@ -587,6 +587,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   }
   const bool was_selecting = context_.interaction_state.mouse_selecting;
   context_.interaction_state.mouse_selecting = false;
+  context_.interaction_state.editor_box_selecting = false;
   if (was_selecting) {
     SyncPrimarySelectionWithActiveEditor();
     EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });

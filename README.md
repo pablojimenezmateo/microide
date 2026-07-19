@@ -181,8 +181,9 @@ with the shipped UI. The most honest look is still the running app: build it in 
 Mature enough to use day-to-day on the maintainer's own work:
 
 - editor: open / save / undo / redo, soft wrap, syntax highlighting with checkpointed state,
-  multi-cursor (within a current set of limitations — see below), folding, indent guides, bracket
-  match, auto-close / surround driven by a language contract, snippets, save normalization
+  multi-cursor (Alt+click, add-cursor-at-match, and Shift+Alt+drag column/box selection), folding,
+  indent guides, bracket match, auto-close / surround driven by a language contract, snippets,
+  save normalization
 - compare and merge tabs: working-tree vs HEAD, vs arbitrary commit, outgoing-base-branch files,
   three-way merge with per-hunk picks and whole-side apply, `[`/`]` navigation
 - git sidebar: working-tree changes, staging / discard, conflicts open into the merge tab,
@@ -241,10 +242,6 @@ serious work.
   (see `src/editor/TextBuffer.h`). Buffer offsets are 32-bit, so there is a practical ~4 GiB
   per-file ceiling; behavior on extremely large files and pathological single long lines is still
   under measurement.
-- **Multi-caret has a known gap.** Per-caret selection-range surround now works for
-  single- and multi-line ranges when carets are set up with `AddSecondaryCaretWithRange`
-  or add-at-match promotion; mouse-driven multi-line block selections on secondary
-  carets are not yet exposed.
 - **Capability-sandboxed plugins, not full isolation.** Plugin filesystem/process access is
   enforced per-plugin (default-deny process, project-scoped fs, Linux kernel confinement of
   spawned children), but the Lua state still runs in-process. See

@@ -333,8 +333,18 @@ class TextViewport {
   // Places zero-width carets on every line between anchor_line and target_line
   // (inclusive) at column. Primary caret moves to target_line; other lines become
   // secondary carets. Clears any existing secondary carets and selection.
+  // Degenerate box selection: delegates to SetBoxSelection with both corners on
+  // `column`.
   void PlaceColumnCaretsBetweenLines(std::size_t anchor_line, std::size_t target_line,
                                      std::size_t column);
+  // Rectangular (column/box) selection between two corners. Every line in the row
+  // span gets a per-line selection from `anchor.column` to `caret.column`, clamped
+  // to that line's length (lines shorter than both columns collapse to a zero-width
+  // caret at end-of-line, matching VSCode column selection). The `caret` line holds
+  // the primary caret+selection; other lines become ranged secondary carets. Clears
+  // any existing secondary carets and selection. The caret span is capped so a drag
+  // across a huge file cannot allocate one caret per line.
+  void SetBoxSelection(TextPosition anchor, TextPosition caret);
   bool has_selection() const;
   std::optional<SelectionRange> selection_range() const;
   const std::optional<AppliedEdit>& last_applied_edit() const { return last_applied_edit_; }

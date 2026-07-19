@@ -2571,7 +2571,7 @@ void TestWorkspaceShellShiftAltClickAddsColumnCarets() {
          "Shift+Alt+vertical click should cover every line between anchor and target");
 }
 
-void TestWorkspaceShellShiftAltClickOffColumnFallsBackToAltClick() {
+void TestWorkspaceShellShiftAltClickOffColumnMakesBoxSelection() {
   EnsureDummySdlVideoInitialized();
   ResetSdlModStateForTests();
 
@@ -2595,16 +2595,86 @@ void TestWorkspaceShellShiftAltClickOffColumnFallsBackToAltClick() {
   const float click_x = metrics.text_x + char_width * 5.0f;
 
   ScopedSdlModState shift_alt_mods(static_cast<SDL_Keymod>(SDL_KMOD_ALT | SDL_KMOD_SHIFT));
+  // Shift+Alt off-column is a rectangular (column/box) selection from the anchor
+  // corner (0,0) to the clicked corner (1,5): every line in the span selects
+  // columns 0..5 (VSCode behavior), not the old single-caret Alt+click fallback.
   const bool handled = SendMouseDown(shell, click_x, y, SDL_BUTTON_LEFT);
 
   Expect(handled, "Shift+Alt+off-column click should still be handled");
   Expect(viewport.has_multiple_carets(),
-         "Shift+Alt+off-column click should fall back to Alt+click multi-caret behavior");
-  Expect(viewport.secondary_carets().size() == 1 &&
-             viewport.secondary_carets().front() == microide::editor::TextPosition{0, 0},
-         "Shift+Alt+off-column click should preserve the anchor caret as a secondary");
+         "Shift+Alt+off-column click should make a multi-line box selection");
   Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 5,
-         "Shift+Alt+off-column click should move the primary caret to the clicked position");
+         "Shift+Alt+off-column click should place the primary caret on the clicked corner");
+  const auto primary = viewport.selection_range();
+  Expect(primary.has_value() &&
+             primary->start == microide::editor::TextPosition{1, 0} &&
+             primary->end == microide::editor::TextPosition{1, 5},
+         "the primary line should select the box columns 0..5");
+  const auto ranges = viewport.secondary_caret_ranges();
+  Expect(ranges.size() == 1 && ranges.front().position == microide::editor::TextPosition{0, 5} &&
+             ranges.front().selection_anchor ==
+                 std::optional<microide::editor::TextPosition>(
+                     microide::editor::TextPosition{0, 0}),
+         "line 0 should carry a ranged secondary caret selecting columns 0..5");
+}
+
+// Shift+Alt+drag continuously rebuilds the box from the fixed press anchor to the
+// live pointer, and mouse-up ends the box gesture.
+void TestWorkspaceShellShiftAltDragUpdatesBoxSelection() {
+  EnsureDummySdlVideoInitialized();
+  ResetSdlModStateForTests();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.txt";
+  WriteFile(source, "aaaaaaaa\nbbbbbbbb\ncccccccc\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::SetSettingValue(shell, "editor.fold.enabled", "false");
+  WorkspaceShellTestAccess::SetSettingValue(shell, "editor.fold.sticky_scroll.enabled", "false");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::RenderFrame(shell);
+
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.SetScrollLine(0);
+  viewport.SetHorizontalScroll(0);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+  const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
+
+  // Press at (line 0, col 2).
+  viewport.MoveCursorTo(0, 2);
+  const float press_x = metrics.text_x + char_width * 2.0f;
+  const float press_y = metrics.first_line_y + metrics.line_height * 0.5f;
+  ScopedSdlModState shift_alt_mods(static_cast<SDL_Keymod>(SDL_KMOD_ALT | SDL_KMOD_SHIFT));
+  Expect(SendMouseDown(shell, press_x, press_y, SDL_BUTTON_LEFT),
+         "Shift+Alt press should be handled");
+
+  // Drag to (line 2, col 6).
+  const float drag_x = metrics.text_x + char_width * 6.0f;
+  const float drag_y = metrics.first_line_y + metrics.line_height * 2.5f;
+  Expect(SendMouseMotion(shell, drag_x, drag_y, SDL_BUTTON_LMASK),
+         "Shift+Alt drag motion should be handled");
+
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 6,
+         "the box drag should track the pointer to the caret corner");
+  const auto primary = viewport.selection_range();
+  Expect(primary.has_value() &&
+             primary->start == microide::editor::TextPosition{2, 2} &&
+             primary->end == microide::editor::TextPosition{2, 6},
+         "the primary line should select the dragged box columns 2..6");
+  const auto ranges = viewport.secondary_caret_ranges();
+  Expect(ranges.size() == 2, "the box drag should span lines 0 and 1 as secondaries");
+  for (const auto& caret : ranges) {
+    Expect(caret.selection_anchor.has_value() &&
+               caret.selection_anchor->column == 2 && caret.position.column == 6,
+           "every dragged secondary line should select columns 2..6");
+  }
+
+  Expect(SendMouseUp(shell, drag_x, drag_y, SDL_BUTTON_LEFT),
+         "mouse-up should end the box selection gesture");
 }
 
 void TestWorkspaceShellHoveredTabShowsRelativePathTooltip() {
@@ -4278,8 +4348,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellAltClickAddsSecondaryCaret);
   AddTest(tests, "WorkspaceShell/ShiftAltClickAddsColumnCarets",
           TestWorkspaceShellShiftAltClickAddsColumnCarets);
-  AddTest(tests, "WorkspaceShell/ShiftAltClickOffColumnFallsBackToAltClick",
-          TestWorkspaceShellShiftAltClickOffColumnFallsBackToAltClick);
+  AddTest(tests, "WorkspaceShell/ShiftAltClickOffColumnMakesBoxSelection",
+          TestWorkspaceShellShiftAltClickOffColumnMakesBoxSelection);
+  AddTest(tests, "WorkspaceShell/ShiftAltDragUpdatesBoxSelection",
+          TestWorkspaceShellShiftAltDragUpdatesBoxSelection);
   AddTest(tests, "WorkspaceShell/HoveredTabShowsRelativePathTooltip",
           TestWorkspaceShellHoveredTabShowsRelativePathTooltip);
   AddTest(tests, "WorkspaceShell/WindowMouseLeaveClearsTabTooltip",

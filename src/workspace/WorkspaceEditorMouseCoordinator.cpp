@@ -418,16 +418,24 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   const bool alt_left_click =
       event.button.button == SDL_BUTTON_LEFT && (modifiers & SDL_KMOD_ALT) != 0;
   const editor::TextPosition anchor{viewport->cursor_line(), viewport->cursor_column()};
-  const bool shift_alt_column_click =
-      alt_left_click && (modifiers & SDL_KMOD_SHIFT) != 0 && hit.column == anchor.column;
+  // Shift+Alt+drag is a rectangular (column/box) selection: the anchor corner is
+  // the current primary caret, and the pointer extends a per-line selection across
+  // the row span. When the two corners share a column this degenerates to plain
+  // zero-width column carets, matching the prior Shift+Alt+click behavior.
+  const bool shift_alt_box =
+      alt_left_click && (modifiers & SDL_KMOD_SHIFT) != 0;
   const bool plain_left_click =
       event.button.button == SDL_BUTTON_LEFT &&
       (modifiers & (SDL_KMOD_ALT | SDL_KMOD_SHIFT | SDL_KMOD_CTRL | SDL_KMOD_GUI)) == 0;
+  interaction_state_.editor_box_selecting = false;
   if (plain_left_click && viewport->has_multiple_carets()) {
     viewport->ClearSecondaryCarets();
   }
-  if (shift_alt_column_click) {
-    viewport->PlaceColumnCaretsBetweenLines(anchor.line, hit.line, anchor.column);
+  if (shift_alt_box) {
+    viewport->SetBoxSelection(anchor, editor::TextPosition{hit.line, hit.column});
+    interaction_state_.editor_box_selecting = true;
+    interaction_state_.editor_box_anchor_line = anchor.line;
+    interaction_state_.editor_box_anchor_column = anchor.column;
   } else {
     {
       util::PerformanceTrace::Scope move_scope(
@@ -440,10 +448,14 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       viewport->ClearSelection();
     }
   }
-  if (event.button.clicks == 2) {
-    viewport->SelectWordAtCursor();
-  } else if (event.button.clicks >= 3) {
-    viewport->SelectLineAtCursor();
+  // Word/line expansion never applies to a box gesture (it would collapse the
+  // rectangular selection back to a single row).
+  if (!shift_alt_box) {
+    if (event.button.clicks == 2) {
+      viewport->SelectWordAtCursor();
+    } else if (event.button.clicks >= 3) {
+      viewport->SelectLineAtCursor();
+    }
   }
   operations_.reset_caret_blink();
   state_.surface.focus = FocusTarget::Editor;
@@ -464,7 +476,9 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return true;
   }
   operations_.request_focused_editor_redraw();
-  if (alt_left_click) {
+  // A plain Alt+click just drops a caret and does not drag-select. A Shift+Alt box
+  // gesture keeps selecting on drag, so it falls through to arm mouse_selecting.
+  if (alt_left_click && !shift_alt_box) {
     return true;
   }
   interaction_state_.mouse_selecting = true;
@@ -589,7 +603,17 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
       std::max(0, visual_column - static_cast<int>(viewport->horizontal_scroll()));
   const editor::LogicalPosition hit = viewport->LogicalPositionForVisualHit(visual_row, hit_column);
 
-  viewport->MoveCursorTo(hit.line, hit.column, true);
+  if (interaction_state_.editor_box_selecting) {
+    // Rebuild the rectangular selection from the fixed anchor corner to the live
+    // pointer. The anchor column is virtual: SetBoxSelection clamps it per line, so
+    // dragging past a short line and back preserves the full-width box.
+    viewport->SetBoxSelection(
+        editor::TextPosition{interaction_state_.editor_box_anchor_line,
+                             interaction_state_.editor_box_anchor_column},
+        editor::TextPosition{hit.line, hit.column});
+  } else {
+    viewport->MoveCursorTo(hit.line, hit.column, true);
+  }
   operations_.reset_caret_blink();
   operations_.request_focused_editor_redraw();
   state_.surface.focus = FocusTarget::Editor;

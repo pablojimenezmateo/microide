@@ -196,10 +196,14 @@ Default **Edit** menu shortcuts (editor context):
 
 - **Alt+click** — add a secondary caret at the previous primary position and move
   the primary caret to the click target.
-- **Shift+Alt+click** on the same column as the primary caret — add zero-width
-  carets on every line between the primary line and the clicked line (inclusive),
-  all at that column. Shift+Alt+click on a different column falls back to
-  Alt+click behavior.
+- **Shift+Alt+click / Shift+Alt+drag** — rectangular (column/box) selection. The
+  anchor corner is the current primary caret; the click/drag target is the other
+  corner. Every line in the row span gets a per-line selection between the two box
+  columns, with the target line holding the primary selection and the other lines
+  becoming ranged secondary carets. Equal columns degenerate to zero-width column
+  carets; a line shorter than both box columns collapses to a zero-width caret at
+  end-of-line (matching VSCode). Drag continuously rebuilds the box from the fixed
+  press anchor to the pointer via `TextViewport::SetBoxSelection`.
 
 **Note:** `WorkspaceEditActionExecutor` currently invokes
 `ToggleLineComment` / `ToggleBlockComment` with fixed `//` and `/*` `*/`
