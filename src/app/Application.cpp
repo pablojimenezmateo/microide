@@ -295,6 +295,14 @@ bool Application::Initialize() {
   util::StartupTrace::Reset();
   util::StartupTrace::Scope trace_scope("Application::Initialize");
 
+  // Deliver the mouse click that activates an unfocused window to the app
+  // instead of swallowing it. SDL's default ("0") eats the focusing click, so a
+  // click on a background microide only raised the window and the button under
+  // the pointer never fired — the user had to click twice. "1" gives the
+  // click-through behavior every modern editor (VSCode included) has: one click
+  // both focuses the window and activates what was clicked.
+  SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
+
   {
     util::StartupTrace::Scope sdl_init_scope("SDL_Init");
     if (!SDL_Init(SDL_INIT_VIDEO)) {

@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include <filesystem>
+#include <string_view>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -206,6 +207,25 @@ void TestHeadlessInitializeAndShutdownTearsDownCleanly() {
          "a second Shutdown() should remain a clean no-op");
 }
 
+void TestInitializeEnablesFocusClickThrough() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  HeadlessHomeGuard homes(temp_dir.path());
+
+  app::Application application(HeadlessStartupOptions());
+  Expect(ApplicationTestAccess::Initialize(application),
+         "headless Initialize() should succeed under the dummy video driver");
+
+  // The click that activates an unfocused window must reach the app so a single
+  // click both focuses microide and fires the button under the pointer, instead
+  // of SDL swallowing the focusing click and forcing a second click.
+  const char* hint = SDL_GetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH);
+  Expect(hint != nullptr && std::string_view(hint) == "1",
+         "Initialize() should enable SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH");
+
+  ApplicationTestAccess::Shutdown(application);
+}
+
 void TestHeadlessRendersRetainedSceneFrame() {
   EnsureDummySdlVideoInitialized();
   TemporaryDirectory temp_dir;
@@ -291,6 +311,8 @@ void RegisterApplicationTests(std::vector<TestCase>& tests) {
           TestRedrawTraceAccumulatorCountsAndFlushes);
   AddTest(tests, "Application/RedrawTraceAccumulatorIgnoresFramesWhenDisabled",
           TestRedrawTraceAccumulatorIgnoresFramesWhenDisabled);
+  AddTest(tests, "Application/InitializeEnablesFocusClickThrough",
+          TestInitializeEnablesFocusClickThrough);
   AddTest(tests, "Application/HeadlessInitializeAndShutdownTearsDownCleanly",
           TestHeadlessInitializeAndShutdownTearsDownCleanly);
   AddTest(tests, "Application/HeadlessRendersRetainedSceneFrame",
