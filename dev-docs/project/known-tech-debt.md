@@ -86,13 +86,16 @@ they land.
 
 **Worth doing — schedule these (each = one focused pass):**
 
-1. **Async / off-thread hardening** — move blocking work off the shell/UI thread:
-   compare/merge model build (047/19), project
-   save-participant /
-   **014 (POSIX terminal write deadline) RESOLVED 2026-07-18** — non-blocking buffered PTY
-   writes drained off the reader thread. **016/017 (plugin-worker capacity) WON'T-DO** —
-   gracefully bounded today; the fix is a plugin-API contract change (see its entry).
-   *Speed is the #1 project priority, so this cluster is the highest-value backlog.*
+1. **Async / off-thread hardening — CLUSTER COMPLETE 2026-07-18.** All items resolved or
+   dispositioned: **014** (terminal write), **061** (file-manager reveal), **081/082**
+   (forced rescan), **091** (LSP client retirement pool), **21** (project replace-all),
+   **011/18** (server-pushed WorkspaceEdit closed-file writes) RESOLVED — all moved off the
+   shell thread; **080/086/38** already-satisfied/already-off-thread; **055** WON'T-DO
+   (per-run search thread spawn is off-UI-thread + measurement-negligible); **016/017**
+   WON'T-DO (gracefully bounded; the fix is a `run_async` plugin-API contract change);
+   **047/19** (compare/merge model build) WON'T-DO in this burndown (partial win — syntax is
+   pinned main-thread — with high coupling risk on an unverifiable surface; the shipped
+   PARTIAL already took the practical no-op-refresh win). See each item's entry for detail.
 2. **Render view-model build-out** — overlay view model owns state, no live pointers in
    render TUs (084/26); + the residual commit-body sizing/scroll-clamp move-to-prep from 083.
 3. **Editor display-column unification** — one grapheme/visual-width service; inlay hints
@@ -2228,8 +2231,9 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   31/068/083 "drop the whole-buffer copy from the hot path" family. Same on-thread
   `BuildCompareModel` remains for an actual content change; the full move to a
   generation-gated background build is still deferred.
-  **[2026-07-18 investigation — full async is a PARTIAL win with high risk; awaiting a
-  go/no-go]** Moving the rebuild off-thread can only relocate `BuildCompareModel` (the
+  **[WON'T-DO in this burndown 2026-07-18 — partial win, high risk on an unverifiable
+  surface; the shipped PARTIAL already took the practical win]** Moving the rebuild
+  off-thread can only relocate `BuildCompareModel` (the
   O(n·m) LCS): the syntax rebuild in `RefreshCompareTabDerivedState`
   (`SyntaxHighlighter::InitialState` → `runtime_syntax::DetectState`) reads the shared
   `RuntimeSyntaxRegistry` under the lock-free-**main-reader** invariant, so it MUST stay on
@@ -2243,8 +2247,9 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   on a diff/merge view that is hard to verify headless. Value is narrow (only very large diffs
   being *live-edited*; common diffs rebuild in <1ms, and the no-op-refresh allocation hot path
   is already fixed above). Given the project's correctness-first priority this is poor
-  risk/reward; recommend keeping the shipped PARTIAL unless a profile shows large-diff live
-  edit as a real stall. NOT implemented pending an explicit go-ahead.
+  risk/reward; keeping the shipped PARTIAL. Revisit only if a profile shows large-diff live
+  edit as a real stall (then it is a dedicated, carefully-reviewed diff/merge pass with its
+  own generation/routing test matrix — not a burndown item).
   Covered by the extended
   `WorkspaceShell/CompareRecomputeGate` (adds right-pane-edit-via-content_revision
   rebuild + no-op-after-edit reuse assertions to the existing left-content/ignore-
