@@ -254,6 +254,13 @@ struct TabEntry {
   Kind kind = Kind::Editor;
   std::filesystem::path path;
   std::string title;
+  // Stable per-tab identity, assigned lazily (from ProjectWorkspaceState::
+  // next_tab_stable_id) the first time a tab is referenced by a modal dirty prompt.
+  // 0 = unassigned. Lets a dirty prompt survive a tab close/reorder while it is up:
+  // the prompt stores ids, not indices, and resolves them back to current indices at
+  // confirm time — so it never saves/closes the wrong tab (TD-2026-07-17-024). Purely
+  // in-memory (a modal prompt never survives a session save), so it is not persisted.
+  std::uint64_t stable_id = 0;
   std::optional<EditorTabState> editor_state;
   std::optional<DeferredTabHandle> deferred_handle;
   std::optional<CompareTabState> compare;

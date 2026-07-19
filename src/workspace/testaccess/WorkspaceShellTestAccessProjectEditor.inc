@@ -104,6 +104,13 @@
         .open_tabs[tab_index]
         .editor_state->viewport;
   }
+  static std::size_t FocusedGroupOpenTabCount(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.focused_group().open_tabs.size();
+  }
+  static std::filesystem::path FocusedGroupTabPath(const WorkspaceShell& shell,
+                                                   std::size_t tab_index) {
+    return shell.context_.current_project_state.focused_group().open_tabs[tab_index].path;
+  }
 
   static void SamplePluginEditorEvents(WorkspaceShell& shell) {
     shell.SamplePluginEditorEvents();

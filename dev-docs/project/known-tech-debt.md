@@ -2527,9 +2527,19 @@ build and verify the target platform. Descriptions retained as intake for that p
 > interacting with tabs while a modal dirty prompt is up, so it is latent rather than a
 > reproduced live bug. Deferred to a dedicated tab-identity change.
 
-- **024 — dirty-prompt state keyed by tab indices is fragile.** Add a stable per-tab
-  id to `TabEntry`, thread it through the prompt flow + persistence, revalidate on
-  completion.
+- **[RESOLVED 2026-07-18] 024 — dirty-prompt state keyed by tab indices is fragile.**
+  Added `TabEntry::stable_id` (assigned lazily from `ProjectWorkspaceState::next_tab_stable_id`
+  the first time a tab is referenced by a dirty prompt — purely in-memory, so no persistence
+  change: a modal prompt never survives a session save). `PromptSurfaceService` stamps the
+  focused-group target/dirty tabs with ids when a `CloseTab`/`CloseTabs` prompt opens and
+  stores the ids (`DirtyPromptState::{tab_id,target_tab_ids,dirty_tab_ids}`);
+  `DirtyPromptCoordinator::ConfirmCloseTab{,s}` resolve those ids back to the CURRENT
+  focused-group indices at confirm time (`ResolveFocusedTabIndexById`), dropping tabs that
+  closed and never saving/closing whatever now occupies the captured index. The prompt
+  message also resolves the id for its label. `CloseProject`/`Quit` were already safe (they
+  re-read the live dirty set + use `project_index`, not stored tab indices). Regression:
+  `WorkspaceShell/DirtyPromptSurvivesTabShiftWhileOpen` (dirties b, opens its prompt, closes
+  clean tab a to shift indices, confirms — asserts b is saved+closed and c survives).
 
 **Architecture lint / test infrastructure:**
 

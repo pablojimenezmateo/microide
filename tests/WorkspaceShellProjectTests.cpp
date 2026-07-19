@@ -167,6 +167,59 @@ void TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection() {
          "selected project should open the README startup file");
 }
 
+// TD-2026-07-17-024: a dirty CloseTab prompt stores a STABLE tab id, so if a tab
+// closes/reorders while the modal prompt is up, Confirm resolves the id back to the
+// current index and saves+closes the ORIGINALLY-TARGETED tab -- never whatever now
+// occupies the captured index.
+void TestWorkspaceShellDirtyPromptSurvivesTabShiftWhileOpen() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path a = root / "a.txt";
+  const std::filesystem::path b = root / "b.txt";
+  const std::filesystem::path c = root / "c.txt";
+  WriteFile(a, "a\n");
+  WriteFile(b, "b\n");
+  WriteFile(c, "c\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, a);  // tab 0 (clean)
+  WorkspaceShellTestAccess::OpenFile(shell, b);  // tab 1 (will be dirtied)
+  WorkspaceShellTestAccess::OpenFile(shell, c);  // tab 2 (clean)
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 3,
+         "fixture should have three open tabs");
+
+  // Dirty the non-active tab b (index 1) directly.
+  WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 1).InsertText("!");
+  Expect(WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 1).dirty(),
+         "tab b should be dirty");
+
+  // Request closing the dirty tab b -> a modal dirty prompt opens for it (stamping b's id).
+  WorkspaceShellTestAccess::RequestCloseTab(shell, 1);
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "closing a dirty tab should open the dirty prompt");
+
+  // While the prompt is up, close the CLEAN tab a (index 0) -- simulating a
+  // control-channel/plugin close. This shifts b to index 0 and c to index 1, so the
+  // prompt's captured index 1 now points at c.
+  WorkspaceShellTestAccess::RequestCloseTab(shell, 0);
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 2,
+         "closing the clean tab should leave two tabs while the prompt is up");
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "the dirty prompt for b should still be up after the unrelated close");
+
+  // Confirm Save+Close. It must act on b (via its stable id), NOT on c (which now sits
+  // at the originally-captured index 1).
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
+
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 1,
+         "confirming should close exactly the targeted dirty tab");
+  Expect(WorkspaceShellTestAccess::FocusedGroupTabPath(shell, 0) == c,
+         "the surviving tab must be c -- b (the prompt target) was closed, not c");
+  Expect(ReadFile(b) == "!b\n",
+         "tab b's unsaved edit should have been saved to disk before closing");
+}
+
 // TD-2026-07-17-081/082: the forced full rescan (manual refresh / exclude edit)
 // runs its whole-tree scan + per-file stat off the shell thread and applies the
 // result back on the main thread. Adding a file on disk and forcing a refresh must
@@ -4204,6 +4257,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRevealInFileTreeFromTabMenu);
   AddTest(tests, "WorkspaceShell/ForcedFileIndexRefreshRunsOffThreadAndPicksUpNewFiles",
           TestWorkspaceShellForcedFileIndexRefreshRunsOffThreadAndPicksUpNewFiles);
+  AddTest(tests, "WorkspaceShell/DirtyPromptSurvivesTabShiftWhileOpen",
+          TestWorkspaceShellDirtyPromptSurvivesTabShiftWhileOpen);
 }
 
 }  // namespace microide::tests

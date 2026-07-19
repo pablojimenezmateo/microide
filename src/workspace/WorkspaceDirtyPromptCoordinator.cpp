@@ -93,8 +93,50 @@ bool DirtyPromptCoordinator::SwitchProjectByRoot(const std::filesystem::path& ro
   return index.has_value() && operations_.switch_project(*index, false);
 }
 
+std::optional<std::size_t> DirtyPromptCoordinator::ResolveFocusedTabIndexById(
+    std::uint64_t id) const {
+  if (id == 0) {
+    return std::nullopt;
+  }
+  const auto& tabs = context_.current_project_state.focused_group().open_tabs;
+  for (std::size_t i = 0; i < tabs.size(); ++i) {
+    if (tabs[i].stable_id == id) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
+std::vector<std::size_t> DirtyPromptCoordinator::ResolveFocusedTabIndices(
+    const std::vector<std::uint64_t>& ids,
+    const std::vector<std::size_t>& fallback_indices) const {
+  if (ids.empty()) {
+    // No ids captured (id-less legacy prompt): use the stored indices as-is.
+    return fallback_indices;
+  }
+  std::vector<std::size_t> indices;
+  indices.reserve(ids.size());
+  for (std::uint64_t id : ids) {
+    if (const std::optional<std::size_t> resolved = ResolveFocusedTabIndexById(id)) {
+      indices.push_back(*resolved);
+    }
+  }
+  return indices;
+}
+
 void DirtyPromptCoordinator::ConfirmCloseTab(const DirtyPromptState& prompt) {
-  if (prompt.selected_action == 0 && !editor_tabs_.Save(prompt.tab_index)) {
+  // Resolve the stored stable id to the CURRENT focused-group index: a tab that
+  // closed/reordered while the modal prompt was up must never be mis-saved/closed
+  // (TD-2026-07-17-024). Fall back to the stored index only for an id-less prompt.
+  const std::optional<std::size_t> resolved =
+      prompt.tab_id != 0 ? ResolveFocusedTabIndexById(prompt.tab_id)
+                         : std::optional<std::size_t>(prompt.tab_index);
+  if (!resolved.has_value()) {
+    // The target tab has already been closed — nothing to save or close.
+    prompt_surfaces_.DismissDirtyPrompt(true);
+    return;
+  }
+  if (prompt.selected_action == 0 && !editor_tabs_.Save(*resolved)) {
     return;
   }
   // Restore the pre-prompt focus (matching ConfirmCloseProject). TabCoordinator::
@@ -103,20 +145,27 @@ void DirtyPromptCoordinator::ConfirmCloseTab(const DirtyPromptState& prompt) {
   // now hidden every keystroke would route to the dead overlay handler and be
   // swallowed until the user clicked back into a surface. restore_focus fixes it.
   prompt_surfaces_.DismissDirtyPrompt(true);
-  editor_tabs_.Close(prompt.tab_index);
+  editor_tabs_.Close(*resolved);
 }
 
 void DirtyPromptCoordinator::ConfirmCloseTabs(const DirtyPromptState& prompt) {
-  if (prompt.selected_action == 0 && !SaveDirtyTabs(prompt.dirty_tabs)) {
+  // Resolve stored stable ids to CURRENT focused-group indices (dropping tabs that
+  // closed while the prompt was up) so the save/close acts on the intended tabs, not
+  // whatever now occupies the captured indices (TD-2026-07-17-024).
+  const std::vector<std::size_t> dirty_indices =
+      ResolveFocusedTabIndices(prompt.dirty_tab_ids, prompt.dirty_tabs);
+  if (prompt.selected_action == 0 && !SaveDirtyTabs(dirty_indices)) {
     return;
   }
 
   // See ConfirmCloseTab: restore focus so closing non-active dirty tabs cannot
   // strand keyboard input on the now-hidden overlay handler.
   prompt_surfaces_.DismissDirtyPrompt(true);
-  std::vector<std::size_t> indices = prompt.target_tabs;
+  std::vector<std::size_t> indices =
+      ResolveFocusedTabIndices(prompt.target_tab_ids, prompt.target_tabs);
   std::sort(indices.begin(), indices.end());
   indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+  // Close highest-index-first so each close cannot shift a not-yet-closed lower index.
   for (std::size_t i = indices.size(); i > 0; --i) {
     editor_tabs_.Close(indices[i - 1]);
   }

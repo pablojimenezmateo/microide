@@ -461,6 +461,9 @@ struct ProjectWorkspaceState {
   // selects which group owns keyboard focus / receives newly opened files.
   std::vector<EditorGroup> editor_groups = std::vector<EditorGroup>(1);
   std::size_t focused_group_index = 0;
+  // Monotonic source of TabEntry::stable_id (never reused within a project session).
+  // Only advanced when a dirty prompt first stamps a tab (TD-2026-07-17-024).
+  std::uint64_t next_tab_stable_id = 1;
   EditorSplitOrientation group_split_orientation = EditorSplitOrientation::None;
   float group_split_fraction = 0.5f;
 

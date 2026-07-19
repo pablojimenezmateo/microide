@@ -43,6 +43,12 @@ class PromptSurfaceService {
   void OpenExternalUrlPrompt(std::string url);
 
  private:
+  // Assign (if needed) and return the stable id of the focused group's tab at
+  // `index`; 0 if out of range. Used to make dirty prompts index-shift-safe
+  // (TD-2026-07-17-024).
+  std::uint64_t EnsureFocusedTabStableId(std::size_t index);
+  std::vector<std::uint64_t> StableIdsForFocusedTabs(const std::vector<std::size_t>& indices);
+
   ProjectWorkspaceState& state_;
   PromptState& prompts_;
   Operations operations_;

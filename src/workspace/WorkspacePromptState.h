@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -33,6 +34,15 @@ struct DirtyPromptState {
   std::size_t dirty_count = 0;
   std::filesystem::path path;
   int selected_action = 0;
+  // Stable focused-group tab ids captured when the prompt opened (TD-2026-07-17-024).
+  // CloseTab / CloseTabs resolve these back to current indices at confirm time so a
+  // tab that closed/reordered while the modal prompt was up is never mis-saved or
+  // mis-closed. 0 = none. (CloseProject / Quit re-read the live dirty set instead and
+  // do not use these.) `tab_index`/`target_tabs`/`dirty_tabs` stay for display + the
+  // resolved-index fallback.
+  std::uint64_t tab_id = 0;
+  std::vector<std::uint64_t> target_tab_ids;
+  std::vector<std::uint64_t> dirty_tab_ids;
 };
 
 struct PromptSurfaceState {

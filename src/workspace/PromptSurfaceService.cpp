@@ -1,6 +1,8 @@
 #include "workspace/PromptSurfaceService.h"
 
+#include <cstdint>
 #include <utility>
+#include <vector>
 
 #include "workspace/WorkspaceProjectState.h"
 
@@ -12,6 +14,31 @@ PromptSurfaceService::PromptSurfaceService(ProjectWorkspaceState& state,
     : state_(state),
       prompts_(prompts),
       operations_(std::move(operations)) {}
+
+std::uint64_t PromptSurfaceService::EnsureFocusedTabStableId(std::size_t index) {
+  auto& tabs = state_.focused_group().open_tabs;
+  if (index >= tabs.size()) {
+    return 0;
+  }
+  TabEntry& tab = tabs[index];
+  if (tab.stable_id == 0) {
+    tab.stable_id = state_.next_tab_stable_id++;
+  }
+  return tab.stable_id;
+}
+
+std::vector<std::uint64_t> PromptSurfaceService::StableIdsForFocusedTabs(
+    const std::vector<std::size_t>& indices) {
+  std::vector<std::uint64_t> ids;
+  ids.reserve(indices.size());
+  for (std::size_t index : indices) {
+    const std::uint64_t id = EnsureFocusedTabStableId(index);
+    if (id != 0) {
+      ids.push_back(id);
+    }
+  }
+  return ids;
+}
 
 void PromptSurfaceService::ShowDirtyPromptForTab(std::size_t index) {
   if (index >= state_.focused_group().open_tabs.size()) {
@@ -26,6 +53,11 @@ void PromptSurfaceService::ShowDirtyPromptForTab(std::size_t index) {
   prompts_.dirty.target_tabs = {index};
   prompts_.dirty.dirty_tabs = {index};
   prompts_.dirty.dirty_count = 1;
+  prompts_.dirty.tab_id = EnsureFocusedTabStableId(index);
+  prompts_.dirty.target_tab_ids =
+      prompts_.dirty.tab_id != 0 ? std::vector<std::uint64_t>{prompts_.dirty.tab_id}
+                                 : std::vector<std::uint64_t>{};
+  prompts_.dirty.dirty_tab_ids = prompts_.dirty.target_tab_ids;
   prompts_.dirty.path.clear();
   prompts_.dirty.selected_action = 0;
   state_.surface.focus = FocusTarget::Overlay;
@@ -46,6 +78,10 @@ void PromptSurfaceService::ShowDirtyPromptForTabs(std::vector<std::size_t> targe
   prompts_.dirty.target_tabs = std::move(target_tabs);
   prompts_.dirty.dirty_tabs = std::move(dirty_tabs);
   prompts_.dirty.dirty_count = prompts_.dirty.dirty_tabs.size();
+  prompts_.dirty.target_tab_ids = StableIdsForFocusedTabs(prompts_.dirty.target_tabs);
+  prompts_.dirty.dirty_tab_ids = StableIdsForFocusedTabs(prompts_.dirty.dirty_tabs);
+  prompts_.dirty.tab_id =
+      prompts_.dirty.target_tab_ids.empty() ? 0 : prompts_.dirty.target_tab_ids.front();
   prompts_.dirty.path.clear();
   prompts_.dirty.selected_action = 0;
   state_.surface.focus = FocusTarget::Overlay;
@@ -68,6 +104,11 @@ void PromptSurfaceService::ShowDirtyPromptForProject(std::size_t index,
   prompts_.dirty.target_tabs = dirty_tabs;
   prompts_.dirty.dirty_tabs = std::move(dirty_tabs);
   prompts_.dirty.dirty_count = dirty_count;
+  // CloseProject re-reads the live dirty set at confirm time (not stored indices/ids),
+  // so clear any stale ids from a prior prompt.
+  prompts_.dirty.tab_id = 0;
+  prompts_.dirty.target_tab_ids.clear();
+  prompts_.dirty.dirty_tab_ids.clear();
   prompts_.dirty.path.clear();
   prompts_.dirty.selected_action = 0;
   state_.surface.focus = FocusTarget::Overlay;
@@ -86,6 +127,10 @@ void PromptSurfaceService::ShowDirtyPromptForQuit(std::size_t active_tab_index,
   prompts_.dirty.project_index = active_project_index;
   prompts_.dirty.dirty_tabs = std::move(dirty_tabs);
   prompts_.dirty.dirty_count = dirty_count;
+  // Quit re-reads the live dirty set per project at confirm time; clear stale ids.
+  prompts_.dirty.tab_id = 0;
+  prompts_.dirty.target_tab_ids.clear();
+  prompts_.dirty.dirty_tab_ids.clear();
   prompts_.dirty.path.clear();
   prompts_.dirty.selected_action = 0;
   state_.surface.focus = FocusTarget::Overlay;
