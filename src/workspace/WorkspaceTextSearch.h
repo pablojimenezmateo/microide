@@ -49,6 +49,15 @@ std::optional<std::size_t> ReplaceRegexMatchesInText(std::string& content,
 std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuffer& buffer,
                                                            const util::CompiledRegex& pattern,
                                                            bool* truncated = nullptr);
+
+// Splits a (whole-buffer, possibly multi-line) match set into single-line highlight
+// fragments the editor renderer can draw per row. A fragment on a line that is NOT
+// the match's final line carries `end.column == LineLength(line) + 1` — one past the
+// content — which the renderer draws as a newline marker so an otherwise invisible
+// `\n`-spanning match is visible at the line end. Preserves the input's ascending
+// (line, column) order so the renderer can binary-search each row's slice.
+std::vector<editor::SelectionRange> SplitRegexMatchHighlightFragments(
+    const editor::TextBuffer& buffer, const std::vector<editor::SelectionRange>& matches);
 // TD-2026-07-17A-029: the stored buffer-search match set is scanned in full by the
 // editor overview ruler and reassigned on the shell path per query update, so a
 // one-character query in a large minified/generated buffer could allocate millions of

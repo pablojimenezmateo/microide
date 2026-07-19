@@ -12,6 +12,7 @@
 #include "util/PerformanceTrace.h"
 #include "workspace/OverviewRuler.h"
 #include "workspace/RenderViewModelBuilder.h"
+#include "workspace/WorkspaceTextSearch.h"
 #include "render/ScopedRenderClip.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
@@ -207,22 +208,7 @@ std::span<const editor::SelectionRange> BufferSearchHighlightFragments(
     return cache.fragments;
   }
 
-  cache.fragments.clear();
-  const editor::TextBuffer& buffer = viewport.lines();
-  for (const editor::SelectionRange& match : matches) {
-    if (match.start.line == match.end.line) {
-      cache.fragments.push_back(match);
-      continue;
-    }
-    for (std::size_t line = match.start.line;
-         line <= match.end.line && line < buffer.LineCount(); ++line) {
-      cache.fragments.push_back(editor::SelectionRange{
-          .start = editor::TextPosition{line, line == match.start.line ? match.start.column : 0},
-          .end = editor::TextPosition{
-              line, line == match.end.line ? match.end.column : buffer.LineLength(line)},
-      });
-    }
-  }
+  cache.fragments = SplitRegexMatchHighlightFragments(viewport.lines(), matches);
   cache.viewport = &viewport;
   cache.content_revision = content_revision;
   cache.matches_revision = matches_revision;

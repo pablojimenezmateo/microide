@@ -244,6 +244,32 @@ std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuf
   return matches;
 }
 
+std::vector<editor::SelectionRange> SplitRegexMatchHighlightFragments(
+    const editor::TextBuffer& buffer, const std::vector<editor::SelectionRange>& matches) {
+  std::vector<editor::SelectionRange> fragments;
+  fragments.reserve(matches.size());
+  const std::size_t line_count = buffer.LineCount();
+  for (const editor::SelectionRange& match : matches) {
+    if (match.start.line == match.end.line) {
+      fragments.push_back(match);
+      continue;
+    }
+    for (std::size_t line = match.start.line; line <= match.end.line && line < line_count; ++line) {
+      const std::size_t start_col = (line == match.start.line) ? match.start.column : 0;
+      // The trailing newline of every line but the match's last is part of the match.
+      // Encode it as one column past the content; the renderer draws a newline marker
+      // there so a `\n`-spanning match is visible at the line end.
+      const std::size_t end_col =
+          (line == match.end.line) ? match.end.column : buffer.LineLength(line) + 1;
+      fragments.push_back(editor::SelectionRange{
+          .start = editor::TextPosition{line, start_col},
+          .end = editor::TextPosition{line, end_col},
+      });
+    }
+  }
+  return fragments;
+}
+
 std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
                                                    std::size_t start_from,
                                                    std::string_view needle,

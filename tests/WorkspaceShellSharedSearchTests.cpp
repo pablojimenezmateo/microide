@@ -31,6 +31,7 @@ using microide::workspace::RefineLiteralSearchMatches;
 using microide::workspace::FindRegexSearchMatches;
 using microide::workspace::ReplaceLiteralMatchesInText;
 using microide::workspace::ReplaceRegexMatchesInText;
+using microide::workspace::SplitRegexMatchHighlightFragments;
 using microide::workspace::UsesCaseSensitiveLiteralMatch;
 
 void TestWorkspaceSharedGitSidebarLineHelpers() {
@@ -333,6 +334,31 @@ void TestWorkspaceSharedRegexSearchMatches() {
          "an invalid regex produces an empty match set");
 }
 
+// Splitting multi-line matches into per-line highlight fragments: a fragment on a
+// non-final line ends one past its content so the renderer can draw a newline marker
+// (otherwise a `\n`-spanning match would be invisible).
+void TestWorkspaceSharedRegexHighlightFragments() {
+  const microide::editor::TextBuffer buffer(std::vector<std::string>{"ab", "cd", "ef"});
+
+  // A `\n`-only match: end of line 0 -> start of line 1.
+  const std::vector<microide::editor::SelectionRange> newline_match = {
+      {{0, 2}, {1, 0}}};
+  const auto frags = SplitRegexMatchHighlightFragments(buffer, newline_match);
+  Expect(frags.size() == 2, "a `\\n` match splits into two per-line fragments");
+  // Line 0 fragment ends one PAST the 2-char content -> newline marker at the EOL.
+  Expect(frags[0].start.line == 0 && frags[0].start.column == 2 && frags[0].end.line == 0 &&
+             frags[0].end.column == 3,
+         "the non-final line's fragment ends one past its content (newline marker)");
+  Expect(frags[1].start.line == 1 && frags[1].start.column == 0 && frags[1].end.column == 0,
+         "the final line's fragment ends at the match end column (no marker)");
+
+  // A single-line match passes through unchanged (no marker).
+  const std::vector<microide::editor::SelectionRange> inline_match = {{{2, 0}, {2, 2}}};
+  const auto inline_frags = SplitRegexMatchHighlightFragments(buffer, inline_match);
+  Expect(inline_frags.size() == 1 && inline_frags[0].end.column == 2,
+         "a single-line match is not extended past its content");
+}
+
 void TestWorkspaceSharedLiteralReplaceModeHelpers() {
   Expect(QuerySupportsLiteralReplace("alpha"),
          "literal replace helper should accept plain queries");
@@ -632,6 +658,8 @@ void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedRegexReplaceInText);
   AddTest(tests, "WorkspaceTextSearch/RegexSearchMatches",
           TestWorkspaceSharedRegexSearchMatches);
+  AddTest(tests, "WorkspaceTextSearch/RegexHighlightFragments",
+          TestWorkspaceSharedRegexHighlightFragments);
   AddTest(tests, "WorkspaceTextSearch/LiteralNeedleScanCaseModeInLine",
           TestWorkspaceLiteralNeedleScanCaseModeInLine);
   AddTest(tests, "WorkspaceTextSearch/NextLiteralMatchAfterSeedWrapOnce",

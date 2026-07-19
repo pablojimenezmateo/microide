@@ -708,16 +708,32 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       const SelectionRange* it = std::lower_bound(
           frag_begin, frag_end, line_index,
           [](const SelectionRange& r, std::size_t l) { return r.start.line < l; });
+      const std::size_t row_len = lines[line_index].size();
       for (; it != frag_end && it->start.line == line_index; ++it) {
         const bool is_active_match = active_search_match.has_value() &&
                                      active_search_match->start.line == it->start.line &&
                                      active_search_match->start.column == it->start.column;
-        column_fill_scratch_.push_back(RowFillSpan{
-            .start_column = it->start.column,
-            .end_column = it->end.column,
-            .color = is_active_match ? theme.search_match_active : theme.search_match,
-            .geometry = RowFillSpan::Geometry::kRange,
-        });
+        const SDL_Color color = is_active_match ? theme.search_match_active : theme.search_match;
+        // Content span (clipped to the line's characters).
+        const std::size_t content_end = std::min(it->end.column, row_len);
+        if (content_end > it->start.column) {
+          column_fill_scratch_.push_back(RowFillSpan{
+              .start_column = it->start.column,
+              .end_column = content_end,
+              .color = color,
+              .geometry = RowFillSpan::Geometry::kRange,
+          });
+        }
+        // A fragment ending past the line content includes the trailing newline: draw
+        // a one-cell marker at the line end so an invisible `\n` match is visible.
+        if (it->end.column > row_len) {
+          column_fill_scratch_.push_back(RowFillSpan{
+              .start_column = row_len,
+              .end_column = row_len + 1,
+              .color = color,
+              .geometry = RowFillSpan::Geometry::kSingleCell,
+          });
+        }
       }
     } else if (!lowered_search_query.empty()) {
       // Probe with a borrowed view so a cache hit allocates nothing (the query
