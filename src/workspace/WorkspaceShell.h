@@ -37,6 +37,7 @@
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
 #include "terminal/TerminalSession.h"
+#include "workspace/CompareInput.h"
 #include "workspace/ProjectReplaceOutcome.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceActionAvailability.h"

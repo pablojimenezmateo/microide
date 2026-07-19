@@ -23,6 +23,7 @@ class CompareMergeService {
                                                      std::string_view right_ref) const;
   std::optional<std::size_t> FindOpenMergeTabIndex(const std::filesystem::path& path) const;
   void OpenComparison(const project::GitCommitEntry& commit);
+  bool OpenPlainComparison(CompareInput left, CompareInput right);
   bool OpenMergeEditor(const std::filesystem::path& base_path,
                        const std::filesystem::path& incoming_path,
                        const std::filesystem::path& current_path,

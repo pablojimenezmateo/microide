@@ -1532,6 +1532,173 @@ void TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows() {
          "a deep content row behind the collapsed run has syntax tokens (is highlighted)");
 }
 
+microide::workspace::CompareInput MakeFileCompareInput(const std::filesystem::path& path,
+                                                       bool editable) {
+  auto input = microide::workspace::ReadFileCompareInput(path, editable);
+  Expect(input.has_value(), "plain-compare fixture file should read cleanly");
+  return std::move(*input);
+}
+
+void TestWorkspaceShellPlainCompareBuildsStickyEditableTab() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path left_path = root / "a.txt";
+  const std::filesystem::path right_path = root / "b.txt";
+  WriteFile(left_path, "alpha\nshared\n");
+  WriteFile(right_path, "beta\nshared\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenPlainComparison(shell,
+                                                       MakeFileCompareInput(left_path, false),
+                                                       MakeFileCompareInput(right_path, true)),
+         "OpenPlainComparison of two files should succeed");
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell),
+         "a plain comparison should open as a compare tab");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.plain_compare, "the tab should be marked as a plain (non-git) comparison");
+  Expect(compare.review_mode == microide::compare::CompareReviewMode::Plain,
+         "a plain comparison should use the Plain review mode");
+  Expect(compare.left_label == "a.txt" && compare.right_label == "b.txt",
+         "plain-compare labels should be the two filenames");
+  Expect(compare.left_path == left_path.lexically_normal() &&
+             compare.right_path == right_path.lexically_normal(),
+         "plain-compare should keep the distinct left/right paths");
+  Expect(compare.right_editable,
+         "the right pane should be editable when its side is a real file");
+  Expect(!compare.model.hunks.empty(), "differing files should produce at least one hunk");
+
+  // The mode is sticky: a derived-state refresh must not re-infer a git mode.
+  WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
+  Expect(compare.plain_compare && compare.review_mode == microide::compare::CompareReviewMode::Plain,
+         "review mode should stay Plain across a derived-state refresh");
+}
+
+void TestWorkspaceShellPlainCompareBufferSidesAreReadOnly() {
+  WorkspaceShell shell;
+  // Buffer (untitled, no path) on the right, clipboard on the left: neither is a
+  // real file, so the compare is read-only even though the right side requested
+  // editability.
+  microide::workspace::CompareInput clipboard{
+      .content = "one\ntwo\n", .label = "Clipboard", .path = {}, .editable = false};
+  microide::workspace::CompareInput buffer{
+      .content = "one\nTWO\n", .label = "Untitled", .path = {}, .editable = true};
+  Expect(WorkspaceShellTestAccess::OpenPlainComparison(shell, std::move(clipboard),
+                                                       std::move(buffer)),
+         "OpenPlainComparison of buffer vs clipboard should succeed");
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.plain_compare, "buffer/clipboard comparison should be plain");
+  Expect(!compare.right_editable,
+         "the right pane must be read-only when its side has no on-disk path");
+  Expect(compare.left_label == "Clipboard" && compare.right_label == "Untitled",
+         "buffer/clipboard labels should be preserved");
+}
+
+void TestWorkspaceShellPlainCompareDedupsSameFilePair() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path left_path = root / "a.txt";
+  const std::filesystem::path right_path = root / "b.txt";
+  WriteFile(left_path, "alpha\n");
+  WriteFile(right_path, "beta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenPlainComparison(shell,
+                                                       MakeFileCompareInput(left_path, false),
+                                                       MakeFileCompareInput(right_path, true)),
+         "first plain comparison should open");
+  const std::size_t tabs_after_first = WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell);
+  Expect(WorkspaceShellTestAccess::OpenPlainComparison(shell,
+                                                       MakeFileCompareInput(left_path, false),
+                                                       MakeFileCompareInput(right_path, true)),
+         "re-opening the same file pair should succeed");
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == tabs_after_first,
+         "re-opening the same file pair should activate the existing tab, not add one");
+}
+
+void TestWorkspaceShellCompareFilesCommandOpensPlainCompare() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path left_path = temp_dir.path() / "outside_a.txt";
+  const std::filesystem::path right_path = temp_dir.path() / "outside_b.txt";
+  WriteFile(left_path, "one\n");
+  WriteFile(right_path, "TWO\n");
+
+  // No project is opened: compare-files works on arbitrary/outside-project paths.
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::ExecuteAction(
+             shell, WorkspaceShell::ActionId::CompareFiles,
+             {left_path.string(), right_path.string()}),
+         "compare-files command should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell),
+         "compare-files should open a compare tab");
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.plain_compare && compare.left_label == "outside_a.txt" &&
+             compare.right_label == "outside_b.txt",
+         "compare-files should build a plain comparison of the two files");
+}
+
+void TestWorkspaceShellSelectForCompareThenCompareWithSelected() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  WriteFile(file_a, "alpha\n");
+  WriteFile(file_b, "beta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell,
+                                                    WorkspaceShell::ActionId::CompareWithSelected),
+         "Compare with Selected should be disabled before anything is selected");
+
+  // Right-click file A -> Select for Compare.
+  WorkspaceShellTestAccess::OpenTreeContextMenuForPath(shell, microide::workspace::TreeContextTargetKind::File, file_a);
+  Expect(WorkspaceShellTestAccess::ExecuteContextMenuAction(
+             shell, WorkspaceShell::ActionId::SelectForCompare),
+         "Select for Compare should execute");
+  Expect(WorkspaceShellTestAccess::HasCompareSelection(shell),
+         "selecting a file should stash a compare selection");
+
+  // Right-click file B -> Compare with Selected.
+  WorkspaceShellTestAccess::OpenTreeContextMenuForPath(shell, microide::workspace::TreeContextTargetKind::File, file_b);
+  Expect(WorkspaceShellTestAccess::ExecuteContextMenuAction(
+             shell, WorkspaceShell::ActionId::CompareWithSelected),
+         "Compare with Selected should execute");
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell),
+         "Compare with Selected should open a compare tab");
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.plain_compare && compare.left_label == "a.txt" && compare.right_label == "b.txt",
+         "the stashed file should be the left side and the current file the right side");
+}
+
+void TestWorkspaceShellCompareWithClipboardOpensPlainCompare() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path file_a = root / "a.txt";
+  WriteFile(file_a, "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetClipboardTextReader(
+      shell, []() { return std::optional<std::string>("clipboard body\n"); });
+
+  WorkspaceShellTestAccess::OpenTreeContextMenuForPath(shell, microide::workspace::TreeContextTargetKind::File, file_a);
+  Expect(WorkspaceShellTestAccess::ExecuteContextMenuAction(
+             shell, WorkspaceShell::ActionId::CompareWithClipboard),
+         "Compare with Clipboard should execute");
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell),
+         "Compare with Clipboard should open a compare tab");
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.plain_compare && compare.left_label == "Clipboard" &&
+             compare.right_label == "a.txt",
+         "clipboard should be the left side and the current file the right side");
+  Expect(compare.right_editable,
+         "the right pane should be editable when its side is a real file");
+}
+
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/CompareSyntaxReachesDeepCollapsedRows",
           TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows);
@@ -1594,6 +1761,18 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCommitPickerDismissesAfterOpeningCompare);
   AddTest(tests, "WorkspaceShell/ComparePickerOpensAsyncAndDropsStaleResult",
           TestWorkspaceShellComparePickerOpensAsyncAndDropsStaleResult);
+  AddTest(tests, "WorkspaceShell/PlainCompareBuildsStickyEditableTab",
+          TestWorkspaceShellPlainCompareBuildsStickyEditableTab);
+  AddTest(tests, "WorkspaceShell/PlainCompareBufferSidesAreReadOnly",
+          TestWorkspaceShellPlainCompareBufferSidesAreReadOnly);
+  AddTest(tests, "WorkspaceShell/PlainCompareDedupsSameFilePair",
+          TestWorkspaceShellPlainCompareDedupsSameFilePair);
+  AddTest(tests, "WorkspaceShell/CompareFilesCommandOpensPlainCompare",
+          TestWorkspaceShellCompareFilesCommandOpensPlainCompare);
+  AddTest(tests, "WorkspaceShell/SelectForCompareThenCompareWithSelected",
+          TestWorkspaceShellSelectForCompareThenCompareWithSelected);
+  AddTest(tests, "WorkspaceShell/CompareWithClipboardOpensPlainCompare",
+          TestWorkspaceShellCompareWithClipboardOpensPlainCompare);
 }
 
 }  // namespace microide::tests

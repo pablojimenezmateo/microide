@@ -46,6 +46,52 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                 return BuildCompareTabFromBuffers(path, left_content, right_content, left_label,
                                                   right_label, selected_row, persistable);
               },
+          .build_plain_compare_tab =
+              [this](CompareInput left, CompareInput right) -> std::optional<TabEntry> {
+                const std::filesystem::path left_path = left.path.lexically_normal();
+                const std::filesystem::path right_path = right.path.lexically_normal();
+                // The editable viewport and syntax highlighting bind to the right
+                // (primary) side's path when it is a real file; otherwise fall back
+                // to the left path so at least one side carries language context. A
+                // clipboard/untitled side leaves this empty (untitled buffer).
+                const std::filesystem::path tab_path =
+                    !right_path.empty() ? right_path : left_path;
+
+                CompareTabState compare_tab;
+                compare_tab.path = tab_path;
+                compare_tab.left_path = left_path;
+                compare_tab.right_path = right_path;
+                compare_tab.title = "compare: " + left.label + "  ↔  " + right.label;
+                compare_tab.plain_compare = true;
+                compare_tab.review_mode = compare::CompareReviewMode::Plain;
+                // Non-git sentinel ref so IsWorkingTreePatchTarget stays false —
+                // staging and patch export never target a plain compare.
+                compare_tab.commit_hash = left.label;
+                compare_tab.right_ref = "PLAIN";
+                compare_tab.left_label = std::move(left.label);
+                compare_tab.right_label = std::move(right.label);
+                compare_tab.left_content = std::move(left.content);
+                compare_tab.persistable = false;
+                // Right pane saves back only when it is a real on-disk file.
+                compare_tab.right_editable = right.editable && !right_path.empty();
+                compare_tab.right_viewport.LoadContent(right.content, tab_path);
+                ApplyEditorPreferences(compare_tab.right_viewport);
+                // plain_compare is set above, so this refresh resolves review_mode
+                // to Plain (sticky) rather than inferring a git mode from the empty
+                // refs.
+                RefreshCompareTabDerivedState(compare_tab);
+                compare_tab.selected_row = 0;
+                compare_tab.right_view_active = true;
+                return TabEntry{
+                    .kind = TabEntry::Kind::Compare,
+                    .path = tab_path,
+                    .title = compare_tab.title,
+                    .editor_state = std::nullopt,
+                    .deferred_handle = std::nullopt,
+                    .compare = std::move(compare_tab),
+                    .merge = std::nullopt,
+                };
+              },
           .build_merge_tab_entry =
               [this](const std::filesystem::path& base_path,
                      const std::filesystem::path& incoming_path,

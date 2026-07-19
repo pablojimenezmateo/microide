@@ -12,6 +12,10 @@ enum class CompareReviewMode {
   Commit,
   Branch,
   Conflict,
+  // A non-git ("plain") comparison: two arbitrary sides (file/buffer/clipboard)
+  // with no repository backing. Sticky — never re-inferred from refs — so the
+  // git review metadata, staging, and branch-review machinery stay disabled.
+  Plain,
 };
 
 enum class WorkingTreeStagingView {

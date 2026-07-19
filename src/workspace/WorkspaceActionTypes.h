@@ -18,6 +18,15 @@ enum class ActionId {
   Completion,
   Compare,
   CompareHead,
+  // Non-git ("plain") comparisons of arbitrary sides — files (even outside the
+  // project), open buffers, and the clipboard. CompareFiles diffs two paths;
+  // SelectForCompare stashes the current target (tree file or active buffer);
+  // CompareWithSelected diffs the current target against the stash;
+  // CompareWithClipboard diffs the current target against clipboard text.
+  CompareFiles,
+  SelectForCompare,
+  CompareWithSelected,
+  CompareWithClipboard,
   Merge,
   // Batch review verbs (control channel / command line). Each switches to the
   // Source Control view and bulk-opens diff/merge tabs, deduping against open

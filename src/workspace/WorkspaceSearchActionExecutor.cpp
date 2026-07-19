@@ -102,6 +102,38 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       context_.OpenHeadComparison(path);
       return DispatchResult::Handled;
     }
+    case ActionId::CompareFiles: {
+      // Works with no project open — arbitrary/outside-project paths allowed.
+      const std::optional<CompareFilesRequest> request = BuildCompareFilesRequest(
+          args, context_.HasProjectRoot() ? context_.ProjectRoot() : std::filesystem::path{});
+      if (!request.has_value()) {
+        return reject("compare-files requires exactly two paths: <left> <right>");
+      }
+      if (const std::string error =
+              context_.CompareFiles(request->left_path, request->right_path);
+          !error.empty()) {
+        return reject(error);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::SelectForCompare: {
+      if (const std::string error = context_.SelectForCompare(source); !error.empty()) {
+        return reject(error);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::CompareWithSelected: {
+      if (const std::string error = context_.CompareWithSelected(source); !error.empty()) {
+        return reject(error);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::CompareWithClipboard: {
+      if (const std::string error = context_.CompareWithClipboard(source); !error.empty()) {
+        return reject(error);
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::Merge: {
       if (!context_.HasProjectRoot()) {
         return reject("No active project");

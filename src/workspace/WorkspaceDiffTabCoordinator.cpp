@@ -34,6 +34,20 @@ void NotifyBufferOpenForEditableTab(const TabEntry& tab,
 
 }  // namespace
 
+std::optional<CompareInput> ReadFileCompareInput(const std::filesystem::path& path, bool editable) {
+  const std::filesystem::path normalized = path.lexically_normal();
+  const util::TextFileReadResult read = util::ReadTextFileClassified(normalized);
+  if (read.is_error()) {
+    return std::nullopt;
+  }
+  return CompareInput{
+      .content = read.ok() ? read.content : std::string{},  // missing file -> empty (deleted) side
+      .label = normalized.filename().string(),
+      .path = normalized,
+      .editable = editable,
+  };
+}
+
 DiffTabCoordinator::DiffTabCoordinator(ProjectWorkspaceState& state, Operations operations)
     : state_(state), operations_(std::move(operations)) {}
 
@@ -66,6 +80,52 @@ std::optional<std::size_t> DiffTabCoordinator::FindOpenMergeTabIndex(
     }
   }
   return std::nullopt;
+}
+
+std::optional<std::size_t> DiffTabCoordinator::FindOpenPlainCompareTabIndex(
+    const std::filesystem::path& left_path, const std::filesystem::path& right_path) const {
+  const std::filesystem::path normalized_left = left_path.lexically_normal();
+  const std::filesystem::path normalized_right = right_path.lexically_normal();
+  for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
+    const auto& tab = state_.focused_group().open_tabs[i];
+    if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
+        !tab.compare->plain_compare) {
+      continue;
+    }
+    if (tab.compare->left_path == normalized_left && tab.compare->right_path == normalized_right) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
+bool DiffTabCoordinator::OpenPlainComparison(CompareInput left, CompareInput right) {
+  const std::filesystem::path left_path = left.path.lexically_normal();
+  const std::filesystem::path right_path = right.path.lexically_normal();
+  // Dedup only when both sides are real files. A clipboard/untitled side has no
+  // stable identity and its content may have changed, so re-running always opens
+  // a fresh tab reflecting the caller's freshly-resolved content.
+  if (!left_path.empty() && !right_path.empty()) {
+    if (const auto existing_index = FindOpenPlainCompareTabIndex(left_path, right_path);
+        existing_index.has_value()) {
+      operations_.sync_active_editor_tab();
+      ActivateCompareTab(*existing_index, false);
+      return true;
+    }
+  }
+
+  auto compare_tab = operations_.build_plain_compare_tab(std::move(left), std::move(right));
+  if (!compare_tab.has_value() || !compare_tab->compare.has_value()) {
+    return false;
+  }
+  if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
+    return false;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
+  }
+  operations_.sync_active_editor_tab();
+  state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
+  ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, false);
+  NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);
+  return true;
 }
 
 void DiffTabCoordinator::ActivateCompareTab(std::size_t index, bool dismiss_overlay) {

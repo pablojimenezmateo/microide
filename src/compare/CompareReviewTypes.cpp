@@ -20,6 +20,8 @@ std::string CompareReviewModeLabel(CompareReviewMode mode) {
       return "branch";
     case CompareReviewMode::Conflict:
       return "conflict";
+    case CompareReviewMode::Plain:
+      return "plain";
   }
   return "working-tree";
 }

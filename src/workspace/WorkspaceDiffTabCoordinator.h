@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 
+#include "workspace/CompareInput.h"
 #include "workspace/WorkspaceProjectState.h"
 
 namespace microide::workspace {
@@ -35,6 +36,7 @@ class DiffTabCoordinator {
                                           std::size_t,
                                           bool)>
         build_compare_tab_from_buffers;
+    std::function<std::optional<TabEntry>(CompareInput, CompareInput)> build_plain_compare_tab;
     std::function<std::optional<TabEntry>(const std::filesystem::path&,
                                           const std::filesystem::path&,
                                           const std::filesystem::path&,
@@ -59,7 +61,12 @@ class DiffTabCoordinator {
                                                      std::string_view left_ref,
                                                      std::string_view right_ref) const;
   std::optional<std::size_t> FindOpenMergeTabIndex(const std::filesystem::path& path) const;
+  std::optional<std::size_t> FindOpenPlainCompareTabIndex(
+      const std::filesystem::path& left_path, const std::filesystem::path& right_path) const;
   void OpenComparison(const project::GitCommitEntry& commit);
+  // Opens a non-git comparison of two arbitrary sides (file/buffer/clipboard).
+  // `left` is the reference side, `right` the primary (possibly editable) side.
+  bool OpenPlainComparison(CompareInput left, CompareInput right);
   bool OpenMergeEditor(const std::filesystem::path& base_path,
                        const std::filesystem::path& incoming_path,
                        const std::filesystem::path& current_path,

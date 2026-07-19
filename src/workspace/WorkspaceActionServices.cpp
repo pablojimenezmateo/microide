@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "editor/TextViewport.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "workspace/SettingFlags.h"
@@ -438,6 +439,144 @@ void WorkspaceActionContext::OpenHeadComparison(const std::filesystem::path& pat
       .author = {},
       .relative_date = {},
   });
+}
+
+std::optional<CompareInput> WorkspaceActionContext::ResolveCurrentCompareInput(
+    ActionSource source, bool* from_file, std::string* error) const {
+  const auto fail = [&](std::string message) -> std::optional<CompareInput> {
+    if (error != nullptr) {
+      *error = std::move(message);
+    }
+    return std::nullopt;
+  };
+  const auto read_file = [&](const std::filesystem::path& path) -> std::optional<CompareInput> {
+    if (from_file != nullptr) {
+      *from_file = true;
+    }
+    auto input = ReadFileCompareInput(path, /*editable=*/true);
+    if (!input.has_value()) {
+      return fail("Cannot compare (unreadable or binary file): " + path.string());
+    }
+    return input;
+  };
+
+  // A context-menu invocation acts on the file targeted in the tree.
+  if (source == ActionSource::ContextMenu) {
+    const std::filesystem::path path =
+        operations_.resolve_tree_action_path ? operations_.resolve_tree_action_path(source)
+                                              : std::filesystem::path{};
+    if (path.empty()) {
+      return fail("No file selected to compare");
+    }
+    return read_file(path);
+  }
+
+  // Otherwise prefer the active editor buffer — its live, possibly-unsaved text.
+  if (operations_.active_editor_viewport != nullptr) {
+    if (editor::TextViewport* viewport = operations_.active_editor_viewport(); viewport != nullptr) {
+      const std::filesystem::path path = viewport->path().lexically_normal();
+      CompareInput input;
+      input.content = util::SerializeLines(viewport->lines().Snapshot(), viewport->line_ending());
+      input.path = path;
+      input.label = path.empty() ? std::string("Untitled") : path.filename().string();
+      input.editable = !path.empty();
+      if (from_file != nullptr) {
+        *from_file = false;
+      }
+      return input;
+    }
+  }
+
+  // Fall back to a file resolved from the tree selection.
+  const std::filesystem::path path = ResolveComparePath({}, source);
+  if (!path.empty()) {
+    return read_file(path);
+  }
+  return fail("No file or buffer selected to compare");
+}
+
+std::string WorkspaceActionContext::CompareFiles(const std::filesystem::path& left_path,
+                                                 const std::filesystem::path& right_path) {
+  auto left = ReadFileCompareInput(left_path, /*editable=*/false);
+  if (!left.has_value()) {
+    return "Cannot read left file: " + left_path.string();
+  }
+  auto right = ReadFileCompareInput(right_path, /*editable=*/true);
+  if (!right.has_value()) {
+    return "Cannot read right file: " + right_path.string();
+  }
+  if (!operations_.open_plain_comparison ||
+      !operations_.open_plain_comparison(std::move(*left), std::move(*right))) {
+    return "Failed to open comparison";
+  }
+  return {};
+}
+
+std::string WorkspaceActionContext::SelectForCompare(ActionSource source) {
+  bool from_file = false;
+  std::string error;
+  auto input = ResolveCurrentCompareInput(source, &from_file, &error);
+  if (!input.has_value()) {
+    return error;
+  }
+  const std::string label = input->label;
+  state_.compare_selection = std::move(*input);
+  state_.compare_selection_from_file = from_file;
+  if (operations_.notify) {
+    operations_.notify(NotificationService::Tone::Info, "Selected '" + label + "' for compare");
+  }
+  return {};
+}
+
+std::string WorkspaceActionContext::CompareWithSelected(ActionSource source) {
+  if (!state_.compare_selection.has_value()) {
+    return "Nothing selected — use 'Select for Compare' first";
+  }
+  CompareInput stashed = *state_.compare_selection;
+  // Re-read a file source so the compare reflects edits made since it was
+  // selected; keep the captured snapshot if the file has since vanished.
+  if (state_.compare_selection_from_file && !stashed.path.empty()) {
+    if (auto fresh = ReadFileCompareInput(stashed.path, stashed.editable); fresh.has_value()) {
+      fresh->label = stashed.label;
+      stashed = std::move(*fresh);
+    }
+  }
+  bool from_file = false;
+  std::string error;
+  auto current = ResolveCurrentCompareInput(source, &from_file, &error);
+  if (!current.has_value()) {
+    return error;
+  }
+  if (!operations_.open_plain_comparison ||
+      !operations_.open_plain_comparison(std::move(stashed), std::move(*current))) {
+    return "Failed to open comparison";
+  }
+  return {};
+}
+
+std::string WorkspaceActionContext::CompareWithClipboard(ActionSource source) {
+  bool from_file = false;
+  std::string error;
+  auto current = ResolveCurrentCompareInput(source, &from_file, &error);
+  if (!current.has_value()) {
+    return error;
+  }
+  std::optional<std::string> clip =
+      operations_.read_clipboard_text ? operations_.read_clipboard_text() : std::nullopt;
+  if (!clip.has_value() || clip->empty()) {
+    return "Clipboard is empty";
+  }
+  CompareInput clipboard_input{
+      .content = std::move(*clip),
+      .label = "Clipboard",
+      .path = {},
+      .editable = false,
+  };
+  if (!operations_.open_plain_comparison ||
+      !operations_.open_plain_comparison(std::move(clipboard_input), std::move(*current))) {
+    return "Failed to open comparison";
+  }
+  return {};
 }
 
 void WorkspaceActionContext::MarkBranchFileReviewed() {

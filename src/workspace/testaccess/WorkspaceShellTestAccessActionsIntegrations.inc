@@ -96,6 +96,19 @@
     return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::CopyAbsolutePath, {}, WorkspaceShell::ActionSource::Menu);
   }
+  static bool ExecuteAction(WorkspaceShell& shell, WorkspaceShell::ActionId id,
+                            std::vector<std::string> args,
+                            WorkspaceShell::ActionSource source =
+                                WorkspaceShell::ActionSource::Menu) {
+    return ActionCoordinator(shell.MakeActionContext())
+        .Execute(id, std::move(args), source);
+  }
+  static bool OpenPlainComparison(WorkspaceShell& shell, CompareInput left, CompareInput right) {
+    return shell.MakeCompareMergeService().OpenPlainComparison(std::move(left), std::move(right));
+  }
+  static bool HasCompareSelection(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.compare_selection.has_value();
+  }
   static void OpenTreeContextMenuForPath(WorkspaceShell& shell,
                                          TreeContextTargetKind target,
                                          const std::filesystem::path& path) {

@@ -10,6 +10,7 @@
 
 #include "workspace/NotificationService.h"
 #include "workspace/WorkspaceActionRequests.h"
+#include "workspace/CompareInput.h"
 #include "workspace/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceMenuState.h"
 #include "workspace/WorkspaceProjectState.h"
@@ -117,6 +118,8 @@ class WorkspaceActionContext {
     std::function<bool(std::string*)> request_inline_completion;
     std::function<void(const std::filesystem::path&, const std::string&)> open_compare_picker_for_path;
     std::function<void(const project::GitCommitEntry&)> open_comparison;
+    // Non-git ("plain") comparison of two arbitrary sides (file/buffer/clipboard).
+    std::function<bool(CompareInput, CompareInput)> open_plain_comparison;
     std::function<bool(const std::filesystem::path&,
                        const std::filesystem::path&,
                        const std::filesystem::path&,
@@ -356,6 +359,15 @@ class WorkspaceActionContext {
   void OpenComparePickerForPath(const std::filesystem::path& path,
                                 const std::string& commit_spec);
   void OpenHeadComparison(const std::filesystem::path& path);
+  // Non-git compare verbs. `CompareFiles` diffs two arbitrary paths;
+  // `SelectForCompare` stashes the current side; `CompareWithSelected` diffs the
+  // current side against the stash; `CompareWithClipboard` against clipboard text.
+  // Return an empty string on success, or an error message to surface.
+  std::string CompareFiles(const std::filesystem::path& left_path,
+                           const std::filesystem::path& right_path);
+  std::string SelectForCompare(ActionSource source);
+  std::string CompareWithSelected(ActionSource source);
+  std::string CompareWithClipboard(ActionSource source);
   void MarkBranchFileReviewed();
   void MarkBranchHunkReviewed();
   void ClearBranchReviewState();
@@ -520,6 +532,14 @@ class WorkspaceActionContext {
   // `distribute_across_carets` is set (paste), a multi-line payload split N ways
   // is distributed one line per caret if the counts match (VSCode paste).
   void InsertTextIntoActiveSurface(std::string text, bool distribute_across_carets = false);
+
+  // Resolves the compare side the user is acting on for a plain compare: a file
+  // targeted in the tree (context menu) or the active editor buffer (its live,
+  // possibly-unsaved content). Sets `*from_file` true for a file source. Returns
+  // nullopt with `*error` populated when nothing resolves or the file is
+  // unreadable/binary.
+  std::optional<CompareInput> ResolveCurrentCompareInput(ActionSource source, bool* from_file,
+                                                         std::string* error) const;
 
   ProjectCatalogState& project_catalog_;
   ProjectWorkspaceState& state_;

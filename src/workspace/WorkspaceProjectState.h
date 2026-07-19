@@ -33,6 +33,7 @@
 #include "workspace/WorkspaceLspManager.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceSidebarState.h"
+#include "workspace/CompareInput.h"
 #include "workspace/WorkspaceTabState.h"
 
 namespace microide::workspace {
@@ -621,6 +622,12 @@ struct ProjectWorkspaceState {
   std::vector<std::pair<std::string, std::string>> settings;
   std::vector<SidebarViewPolicy> sidebar_policies;
   compare::BranchReviewStateService branch_review;
+  // "Select for Compare" stash: the reference side awaiting "Compare with
+  // Selected". Runtime-only (never persisted). `compare_selection_from_file`
+  // marks a file source so the compare re-reads fresh content at compare time
+  // (buffer/clipboard snapshots are used as captured).
+  std::optional<CompareInput> compare_selection;
+  bool compare_selection_from_file = false;
   // At most one banner per path; rendered for the active editor tab whose file
   // matches. Empty in the common case (no external changes pending).
   std::vector<EditorBannerState> editor_banners;

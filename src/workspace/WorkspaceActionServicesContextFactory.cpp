@@ -542,6 +542,11 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
                 OpenComparePickerForPath(path, commit_spec);
               },
           .open_comparison = [this](const project::GitCommitEntry& commit) { OpenComparison(commit); },
+          .open_plain_comparison =
+              [this](CompareInput left, CompareInput right) {
+                return MakeCompareMergeService().OpenPlainComparison(std::move(left),
+                                                                     std::move(right));
+              },
           .open_merge_editor =
               [this](const std::filesystem::path& base_path,
                      const std::filesystem::path& incoming_path,

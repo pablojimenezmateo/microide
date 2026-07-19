@@ -233,6 +233,20 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::OpenSelectedTreeItemInNewTab:
       return !context_.current_project_state.root.empty() &&
              ActiveTreeTargetKind() == TreeContextTargetKind::File;
+    case ActionId::CompareFiles:
+      // Diffs two arbitrary paths (or files picked interactively); works even
+      // with no project open, so it is always available.
+      return true;
+    case ActionId::SelectForCompare:
+    case ActionId::CompareWithClipboard:
+      // Need a resolvable "current side": an active editor buffer, or a file
+      // targeted in the tree.
+      return active_viewport != nullptr ||
+             ActiveTreeTargetKind() == TreeContextTargetKind::File;
+    case ActionId::CompareWithSelected:
+      return context_.current_project_state.compare_selection.has_value() &&
+             (active_viewport != nullptr ||
+              ActiveTreeTargetKind() == TreeContextTargetKind::File);
     case ActionId::CreateDirectory:
     case ActionId::CreateFile: {
       if (context_.current_project_state.root.empty()) {

@@ -151,6 +151,11 @@ struct CompareTabState {
   bool right_editable = false;
   bool right_view_active = false;
   bool persistable = true;
+  // Sticky flag marking a non-git ("plain") comparison — two arbitrary sides
+  // (file/buffer/clipboard) with no repository backing. When set, the derived-
+  // state refresh forces review_mode to Plain instead of re-inferring it from
+  // git refs, keeping staging/branch-review off. See ApplyCompareTabReviewMetadata.
+  bool plain_compare = false;
 };
 
 struct MergeTabState {

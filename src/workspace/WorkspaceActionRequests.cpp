@@ -143,6 +143,17 @@ std::optional<MergeRequest> BuildMergeRequest(const std::vector<std::string>& ar
   };
 }
 
+std::optional<CompareFilesRequest> BuildCompareFilesRequest(
+    const std::vector<std::string>& args, const std::filesystem::path& project_root) {
+  if (args.size() != 2) {
+    return std::nullopt;
+  }
+  return CompareFilesRequest{
+      .left_path = NormalizeCommandPath(project_root, std::filesystem::path(args[0])),
+      .right_path = NormalizeCommandPath(project_root, std::filesystem::path(args[1])),
+  };
+}
+
 std::optional<OpenPathRequest> BuildOpenPathRequest(const std::vector<std::string>& args,
                                                     const std::filesystem::path& project_root) {
   if (args.empty()) {

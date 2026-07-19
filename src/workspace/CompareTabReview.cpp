@@ -27,6 +27,8 @@ std::string CompareReviewHeaderModeLabel(compare::CompareReviewMode mode) {
       return "Branch review";
     case compare::CompareReviewMode::Conflict:
       return "Conflict review";
+    case compare::CompareReviewMode::Plain:
+      return "Compare";
   }
   return "Working tree review";
 }
@@ -57,6 +59,25 @@ void AppendHintSegment(std::string& line, std::string_view segment) {
 
 void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
                                    const CompareTabReviewRefreshInput& input) {
+  // A plain (non-git) compare has no refs to infer from. The mode is sticky —
+  // fixed at build time — so this refresh (fired from ~10 sites) must not
+  // re-infer it back to a git mode and re-enable staging/branch review. Keep the
+  // cheap semantic-file inference (binary/text) below; it is source-agnostic.
+  if (compare_tab.plain_compare) {
+    compare_tab.review_mode = compare::CompareReviewMode::Plain;
+    compare_tab.staging_view = compare::WorkingTreeStagingView::Combined;
+    compare::CompareSemanticMetadataInput plain_semantic_input{
+        .path = compare_tab.path,
+        .left_content = compare_tab.left_content,
+        .right_content =
+            util::SerializeLines(compare_tab.right_viewport.lines().Snapshot(),
+                                 compare_tab.right_viewport.line_ending()),
+        .git_entry = std::nullopt,
+        .old_path = {},
+    };
+    compare_tab.semantic_file = compare::InferCompareSemanticFileMetadata(plain_semantic_input);
+    return;
+  }
   compare_tab.review_mode = compare::InferCompareReviewMode(compare_tab.commit_hash,
                                                             compare_tab.right_ref,
                                                             input.opened_from_commit_picker);
@@ -152,7 +173,12 @@ void RefreshCompareTabPresentation(CompareTabState& compare_tab) {
 }
 
 void RefreshCompareReviewHeader(CompareTabState& compare_tab) {
-  std::string summary = CompareReviewHeaderModeLabel(compare_tab.review_mode);
+  const bool plain = compare_tab.review_mode == compare::CompareReviewMode::Plain;
+  // A plain compare has no git mode/staging metadata — lead with the two side
+  // labels ("left ↔ right") so the header names what is actually being diffed.
+  std::string summary = plain
+                            ? compare_tab.left_label + "  ↔  " + compare_tab.right_label
+                            : CompareReviewHeaderModeLabel(compare_tab.review_mode);
   if (compare_tab.review_mode == compare::CompareReviewMode::WorkingTree) {
     summary += "  ·  ";
     summary += CompareReviewHeaderStagingLabel(compare_tab.staging_view);
@@ -179,10 +205,14 @@ void RefreshCompareReviewHeader(CompareTabState& compare_tab) {
   if (compare_tab.semantic_file.line_ending_only) {
     summary += "  ·  line endings";
   }
-  const std::string file_label = compare_tab.path.filename().string();
-  if (!file_label.empty()) {
-    summary += "  ·  ";
-    summary += file_label;
+  // Plain compares already lead with both side labels; the git path suffix is
+  // redundant (and often empty for buffer/clipboard sides).
+  if (!plain) {
+    const std::string file_label = compare_tab.path.filename().string();
+    if (!file_label.empty()) {
+      summary += "  ·  ";
+      summary += file_label;
+    }
   }
   compare_tab.review_header.summary_line = std::move(summary);
 

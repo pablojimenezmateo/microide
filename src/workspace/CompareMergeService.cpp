@@ -22,6 +22,10 @@ void CompareMergeService::OpenComparison(const project::GitCommitEntry& commit) 
   diff_tabs_.OpenComparison(commit);
 }
 
+bool CompareMergeService::OpenPlainComparison(CompareInput left, CompareInput right) {
+  return diff_tabs_.OpenPlainComparison(std::move(left), std::move(right));
+}
+
 bool CompareMergeService::OpenMergeEditor(const std::filesystem::path& base_path,
                                           const std::filesystem::path& incoming_path,
                                           const std::filesystem::path& current_path,

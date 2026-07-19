@@ -58,6 +58,17 @@ struct MergeRequest {
 std::optional<MergeRequest> BuildMergeRequest(const std::vector<std::string>& args,
                                               const std::filesystem::path& project_root);
 
+// Two arbitrary paths for a non-git `compare-files <left> <right>` command.
+// Relative paths resolve against `project_root` when one is open; absolute paths
+// (files outside the project) pass through unchanged.
+struct CompareFilesRequest {
+  std::filesystem::path left_path;
+  std::filesystem::path right_path;
+};
+
+std::optional<CompareFilesRequest> BuildCompareFilesRequest(
+    const std::vector<std::string>& args, const std::filesystem::path& project_root);
+
 // Result of a batch review verb (review-conflicts / review-branch / review-commit).
 // `message` is the human/agent-facing summary (file list on success, reason on
 // failure); it is surfaced as the control-channel feedback/error.

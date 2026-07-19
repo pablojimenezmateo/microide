@@ -530,6 +530,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `completion`
 - `insert-snippet`
 - `compare [path] [commit-prefix]`
+- `compare-files <left> <right>`
+- `compare-clipboard`
 - `merge <base> <incoming> <current> [output]`
 - `review-conflicts`
 - `review-branch [ref]`
