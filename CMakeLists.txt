@@ -349,6 +349,7 @@ set(MICROIDE_CORE_SOURCES
   src/util/DebugTrace.cpp
   src/util/DurableFile.cpp
   src/util/JsonValue.cpp
+  src/util/JsonFormat.cpp
   src/util/GitConflictMarkers.cpp
   src/util/MainThreadMailbox.cpp
   src/util/SerialWorkQueue.cpp
@@ -817,6 +818,8 @@ add_executable(microide_tests
   tests/PluginThreadTests.cpp
   tests/ParseTests.cpp
   tests/JsonValueTests.cpp
+  tests/JsonFormatTests.cpp
+  tests/WorkspaceShellFormatJsonTests.cpp
   tests/ProjectFileScannerTests.cpp
   tests/TextFileIOTests.cpp
   tests/SaveDataIntegrityTests.cpp

@@ -1,6 +1,8 @@
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceActionServices.h"
 
+#include <cstddef>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -8,6 +10,7 @@
 #include "editor/BracketScanner.h"
 #include "editor/ShapingActions.h"
 #include "editor/TextViewport.h"
+#include "util/JsonFormat.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceActionRequests.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -60,6 +63,92 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       std::string error_message;
       if (!context_.FormatActiveDocument(&error_message)) {
         return reject(error_message.empty() ? "Formatting unavailable" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::FormatJson: {
+      // Optional path argument: open/focus that file first (resolved against the
+      // project root like `open`), then format its buffer. With no argument the
+      // command targets the active buffer. Feedback surfaces via toast per the
+      // command's contract; disk is never touched (the edit stays in memory).
+      if (!args.empty()) {
+        if (!context_.HasProjectRoot()) {
+          context_.Notify(NotificationService::Tone::Error, "No active project");
+          return DispatchResult::Handled;
+        }
+        const std::optional<OpenPathRequest> request =
+            BuildOpenPathRequest(args, context_.ProjectRoot());
+        if (!request.has_value()) {
+          context_.Notify(NotificationService::Tone::Error, "format-json requires a valid path");
+          return DispatchResult::Handled;
+        }
+        std::string open_error;
+        if (!context_.OpenPath(request->path, &open_error)) {
+          context_.Notify(NotificationService::Tone::Error,
+                          open_error.empty() ? "Could not open file" : open_error);
+          return DispatchResult::Handled;
+        }
+      }
+      auto* viewport = context_.ActiveEditableViewport();
+      if (viewport == nullptr) {
+        context_.Notify(NotificationService::Tone::Warning, "No active buffer to format");
+        return DispatchResult::Handled;
+      }
+      // Join the buffer into one contiguous string via zero-copy line views.
+      const editor::TextBuffer& lines = viewport->lines();
+      const std::size_t line_count = lines.LineCount();
+      std::string source;
+      {
+        std::size_t total = 0;
+        for (std::size_t i = 0; i < line_count; ++i) total += lines.LineView(i).size() + 1;
+        source.reserve(total);
+        for (std::size_t i = 0; i < line_count; ++i) {
+          if (i != 0) source.push_back('\n');
+          source.append(lines.LineView(i));
+        }
+      }
+      // Indentation follows the buffer's own editor settings (VSCode-style).
+      const std::string indent_unit = viewport->soft_tabs()
+                                          ? std::string(viewport->indent_width(), ' ')
+                                          : std::string("\t");
+      const util::JsonFormatResult formatted = util::FormatJson(source, indent_unit);
+      if (!formatted.ok) {
+        // Byte offset -> 1-based line:col for a helpful toast.
+        std::size_t line = 1;
+        std::size_t col = 1;
+        for (std::size_t i = 0; i < formatted.error_offset && i < source.size(); ++i) {
+          if (source[i] == '\n') {
+            ++line;
+            col = 1;
+          } else {
+            ++col;
+          }
+        }
+        context_.Notify(NotificationService::Tone::Error,
+                        "Invalid JSON (" + std::to_string(line) + ":" + std::to_string(col) +
+                            "): " + formatted.error);
+        return DispatchResult::Handled;
+      }
+      if (formatted.text == source) {
+        // Already formatted: no edit, no undo churn (VSCode is silent here).
+        return DispatchResult::Handled;
+      }
+      // Replace the whole document as one undo step (the same whole-document
+      // replace path editor::SortLines uses). The formatter emits '\n'-joined
+      // lines with no trailing newline.
+      std::vector<std::string> new_lines;
+      {
+        std::size_t start = 0;
+        const std::string& text = formatted.text;
+        for (std::size_t i = 0; i <= text.size(); ++i) {
+          if (i == text.size() || text[i] == '\n') {
+            new_lines.emplace_back(text.substr(start, i - start));
+            start = i + 1;
+          }
+        }
+      }
+      if (viewport->ReplaceLines(0, viewport->line_count(), new_lines, /*record_undo=*/true)) {
+        context_.NotifyEditorViewportChanged(/*last_change=*/true);
       }
       return DispatchResult::Handled;
     }

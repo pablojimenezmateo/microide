@@ -522,6 +522,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 
 - `code-actions`
 - `format-document`
+- `format-json [path]`
 - `rename-symbol`
 - `command-palette`
 - `colorscheme [name|list]`

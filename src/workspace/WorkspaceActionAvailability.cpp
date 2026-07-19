@@ -57,6 +57,10 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // feature is enabled. The executor reports "no language server" on invocation.
       return active_editable_viewport != nullptr && !active_editable_viewport->path().empty() &&
              LspFeatureAvailable(operations_, "lsp.formatting.enabled");
+    case ActionId::FormatJson:
+      // Self-contained (no language server); available for any editable buffer,
+      // including untitled ones. A path argument can still target another file.
+      return active_editable_viewport != nullptr;
     case ActionId::RenameSymbol:
       return active_editable_viewport != nullptr && !active_editable_viewport->path().empty() &&
              LspFeatureAvailable(operations_, "lsp.rename.enabled");

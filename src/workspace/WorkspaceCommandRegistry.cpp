@@ -11,6 +11,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Ctrl+."},
       ActionSpec{ActionId::FormatDocument, "format-document", "format-document", "Format Document",
                  "Ctrl+Shift+I"},
+      ActionSpec{ActionId::FormatJson, "format-json", "format-json [path]", "Format JSON", ""},
       ActionSpec{ActionId::RenameSymbol, "rename-symbol", "rename-symbol", "Rename Symbol", "F2"},
       ActionSpec{ActionId::OpenCommandPalette, "command-palette", "command-palette",
                  "Command Palette", "Ctrl+Shift+P"},

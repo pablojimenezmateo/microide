@@ -7,6 +7,10 @@ namespace microide::workspace {
 enum class ActionId {
   CodeActions,
   FormatDocument,
+  // Reindent the active (or a named) buffer as JSON, in memory. Unlike
+  // FormatDocument this is self-contained (no language server) and works on
+  // untitled buffers.
+  FormatJson,
   RenameSymbol,
   OpenCommandPalette,
   Colorscheme,

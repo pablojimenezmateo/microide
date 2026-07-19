@@ -127,6 +127,8 @@ void RegisterPhase4Tests(std::vector<TestCase>& tests);
 void RegisterPhase5Tests(std::vector<TestCase>& tests);
 void RegisterParseTests(std::vector<TestCase>& tests);
 void RegisterJsonValueTests(std::vector<TestCase>& tests);
+void RegisterJsonFormatTests(std::vector<TestCase>& tests);
+void RegisterWorkspaceShellFormatJsonTests(std::vector<TestCase>& tests);
 void RegisterProjectFileScannerTests(std::vector<TestCase>& tests);
 void RegisterTextFileIOTests(std::vector<TestCase>& tests);
 void RegisterSaveDataIntegrityTests(std::vector<TestCase>& tests);
@@ -416,6 +418,8 @@ int main(int argc, char** argv) {
   microide::tests::RegisterPluginThreadTests(tests);
   microide::tests::RegisterParseTests(tests);
   microide::tests::RegisterJsonValueTests(tests);
+  microide::tests::RegisterJsonFormatTests(tests);
+  microide::tests::RegisterWorkspaceShellFormatJsonTests(tests);
   microide::tests::RegisterProjectFileScannerTests(tests);
   microide::tests::RegisterTextFileIOTests(tests);
   microide::tests::RegisterSaveDataIntegrityTests(tests);
