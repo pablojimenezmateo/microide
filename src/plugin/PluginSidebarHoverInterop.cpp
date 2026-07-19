@@ -3,6 +3,7 @@
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include "plugin/PluginLuaInterop.h"
+#include "util/StringUtil.h"
 
 namespace microide::plugin::sidebar_hover_interop {
 namespace {
@@ -23,9 +24,19 @@ bool ReadHoverResultTable(lua_State* state,
   result->title.clear();
   result->content.clear();
 
+  // A plugin hover popup measures and lays out the full title/content, so an oversized
+  // string would stall layout (TD-2026-07-17-018). Cap each on a UTF-8 boundary at the
+  // same ceiling the LSP hover path uses. Reading via ToHostString (not a raw
+  // lua_tostring) also keeps NUL handling consistent with every other scalar field: an
+  // embedded NUL rejects the value rather than silently truncating at the first NUL.
+  constexpr std::size_t kMaxHoverBytes = 32u * 1024;
+
   lua_interop::GetFieldProtected(state, absolute_index, "title");
   if (lua_isstring(state, -1)) {
-    result->title = lua_tostring(state, -1);
+    if (auto title = lua_interop::ToHostString(state, -1)) {
+      util::TruncateUtf8ToByteBudget(*title, kMaxHoverBytes);
+      result->title = std::move(*title);
+    }
   } else if (!lua_isnil(state, -1)) {
     if (error_message != nullptr) {
       *error_message = "plugin hover '" + std::string(provider_id) +
@@ -38,7 +49,10 @@ bool ReadHoverResultTable(lua_State* state,
 
   lua_interop::GetFieldProtected(state, absolute_index, "content");
   if (lua_isstring(state, -1)) {
-    result->content = lua_tostring(state, -1);
+    if (auto content = lua_interop::ToHostString(state, -1)) {
+      util::TruncateUtf8ToByteBudget(*content, kMaxHoverBytes);
+      result->content = std::move(*content);
+    }
   } else if (!lua_isnil(state, -1)) {
     if (error_message != nullptr) {
       *error_message = "plugin hover '" + std::string(provider_id) +

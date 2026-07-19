@@ -455,11 +455,7 @@ void WorkspaceShell::AppendTerminalPendingInput(std::string_view input) {
   }
   // Append a UTF-8-safe prefix that fits the budget, then flag truncation so submit
   // skips the (now partial, unreliable) prompt-prefix match.
-  std::size_t fit = remaining;
-  while (fit > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(input[fit]))) {
-    --fit;
-  }
-  pending.append(input.substr(0, fit));
+  pending.append(input.substr(0, util::Utf8ByteBudgetPrefixLength(input, remaining)));
   terminal_tab->pending_input_truncated = true;
 }
 

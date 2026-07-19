@@ -4,6 +4,7 @@
 #include <limits>
 #include <utility>
 
+#include "util/StringUtil.h"
 #include "workspace/LspPositionEncoding.h"
 #include "workspace/ProtocolNumeric.h"
 
@@ -283,18 +284,10 @@ std::string StringOrValueField(const JsonValue& value) {
   return {};
 }
 
-// Truncate `text` to at most `max_bytes` without splitting a UTF-8 code point:
-// back up off any continuation byte (0b10xxxxxx) at the cut so a multi-byte
-// sequence is never chopped mid-character.
-void TruncateUtf8InPlace(std::string& text, std::size_t max_bytes) {
-  if (text.size() <= max_bytes) {
-    return;
-  }
-  std::size_t cut = max_bytes;
-  while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) {
-    --cut;
-  }
-  text.resize(cut);
+// Truncate `text` to at most `max_bytes` without splitting a UTF-8 code point.
+// Thin alias over the shared primitive so the hover/label harvest reads locally.
+inline void TruncateUtf8InPlace(std::string& text, std::size_t max_bytes) {
+  util::TruncateUtf8ToByteBudget(text, max_bytes);
 }
 }  // namespace
 

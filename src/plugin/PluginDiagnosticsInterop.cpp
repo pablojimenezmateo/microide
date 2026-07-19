@@ -61,7 +61,7 @@ bool ReadDiagnosticTable(lua_State* state,
 
   const int absolute_index = lua_absindex(state, table_index);
 
-  const std::optional<std::string> message =
+  std::optional<std::string> message =
       lua_interop::ReadOptionalStringField(state, absolute_index, "message");
   if (!message.has_value()) {
     if (error_message != nullptr) {
@@ -69,7 +69,14 @@ bool ReadDiagnosticTable(lua_State* state,
     }
     return false;
   }
-  diagnostic->message = *message;
+  // Render cap (TD-2026-07-17-018): a diagnostic message is shown in the Problems list,
+  // inline, and in the hover popup, all of which measure/lay out the full string. Cap it
+  // on a UTF-8 boundary (matches the LSP hover ceiling) so one oversized message cannot
+  // stall text layout — the shared ToHostString backstop only bounds the pathological
+  // multi-MiB case; 32 KiB keeps the interactive surfaces responsive.
+  constexpr std::size_t kMaxDiagnosticMessageBytes = 32u * 1024;
+  util::TruncateUtf8ToByteBudget(*message, kMaxDiagnosticMessageBytes);
+  diagnostic->message = std::move(*message);
 
   const std::optional<lua_Integer> line_field =
       lua_interop::ReadOptionalIntegerField(state, absolute_index, "line");

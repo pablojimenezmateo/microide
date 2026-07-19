@@ -23,10 +23,7 @@ ClipboardExportResult ClampClipboardExport(std::string_view text, std::size_t bu
   if (text.size() <= budget) {
     return {std::string(text), false};
   }
-  std::size_t fit = budget;
-  while (fit > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(text[fit]))) {
-    --fit;
-  }
+  const std::size_t fit = util::Utf8ByteBudgetPrefixLength(text, budget);
   ClipboardExportResult result;
   result.text.reserve(fit + 24);
   result.text.assign(text.substr(0, fit));

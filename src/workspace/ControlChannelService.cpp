@@ -744,11 +744,7 @@ void ControlChannelService::OnDebugOutput(const std::string& category, const std
   if (text.size() <= kMaxDebugOutputEventBytes) {
     event["text"] = util::JsonValue(text);
   } else {
-    std::size_t fit = kMaxDebugOutputEventBytes;
-    while (fit > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(text[fit]))) {
-      --fit;
-    }
-    std::string truncated(text, 0, fit);
+    std::string truncated(text, 0, util::Utf8ByteBudgetPrefixLength(text, kMaxDebugOutputEventBytes));
     truncated += "…[truncated]";
     event["text"] = util::JsonValue(std::move(truncated));
     event["truncated"] = util::JsonValue(true);

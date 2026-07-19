@@ -107,7 +107,8 @@ they land.
 6. **LSP completeness** — resource ops + version-aware edits (011), explicit timeout result
    variants (012).
 7. **Plugin registry** — O(1) duplicate-id detection (077) **[RESOLVED 2026-07-18 — per-kind
-   id index; see the Plugin caps / policy subsection]**; per-field byte caps (018);
+   id index]**; per-field byte caps (018) **[RESOLVED 2026-07-19 — central ToHostString
+   backstop + per-surface render caps; see the Plugin caps / policy subsection]**;
    measured caps (019); `lua_State*` boundary refactor (22/020/058).
 8. **Tab identity** — stable per-tab id threaded through dirty-prompt + persistence (024).
 9. **Test-infra sweeps** — architecture lints + negative fixtures (032/037), watcher
@@ -2489,16 +2490,35 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Plugin caps / policy:**
 
-> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 018 (per-field byte caps on every provider
-> result surface — 078 already landed the aggregate string cap, so remaining surfaces are
-> incremental hardening) and 019 (re-derive status/contribution caps from *measured*
-> render/registry budgets — a measurement task) are policy/tuning, not defects.
-> (**077 RESOLVED 2026-07-18** — the O(N²) duplicate-id scan is now an O(1) per-kind
-> id index; see its entry.)
+> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 019 (re-derive
+> status/contribution caps from *measured* render/registry budgets — a measurement task) is
+> policy/tuning, not a defect. (**018 RESOLVED 2026-07-19** and **077 RESOLVED 2026-07-18** —
+> the O(N²) duplicate-id scan is now an O(1) per-kind id index; see its entry.)
 
-- **018 — per-field byte caps for every provider result surface** (078 landed the
-  string-array caps; the remaining diagnostics/hover/status/sidebar/tools/tasks/
-  scm/auth surfaces are a bounded parser sweep).
+- **[RESOLVED 2026-07-19] 018 — per-field byte caps for every provider result surface.**
+  Every scalar provider result field routed through `lua_interop::ToHostString` (completion/
+  code-action/test/scm/blame/auth/sidebar/tools/tasks labels + the registration JSON blobs),
+  but a single hostile/buggy field could still hand the host a multi-hundred-megabyte string
+  to copy, retain, measure, and render. Two layers now bound it:
+  (1) **central backstop** — `ToHostString` truncates any scalar field to `kMaxProviderFieldBytes`
+  (4 MiB) on a UTF-8 boundary after the existing NUL check, so *every* current and future
+  scalar surface is bounded in one place (the length-preserving `ReadStringField(...,
+  std::string*)` binary overload is unaffected and carries its own caps; the string-array
+  reader already has per-item 64 KiB + aggregate 8 MiB caps).
+  (2) **tighter render caps** on the two prominently-measured, previously-uncapped surfaces:
+  the plugin **diagnostic message** (`PluginDiagnosticsInterop`, 32 KiB — shown in Problems +
+  inline + hover) and the plugin **hover title/content** (`PluginSidebarHoverInterop`, 32 KiB,
+  matching the LSP hover ceiling). The hover read also moved off a raw `lua_tostring` onto
+  `ToHostString`, so an embedded NUL now rejects the field (consistent with every other scalar
+  read) instead of silently truncating at the first NUL.
+  All caps share the new `util::TruncateUtf8ToByteBudget` / `util::Utf8ByteBudgetPrefixLength`
+  primitive, which also replaced eight hand-rolled "truncate to a byte budget on a UTF-8
+  boundary" loops across the notification, terminal selection/input, clipboard-export,
+  control-channel, LSP hover/label, and text-measurement paths (dedup). Regressions:
+  `StringUtil/Utf8ByteBudgetTruncatesOnBoundary`,
+  `PluginHost/HoverResultIsByteCapped`, `PluginHost/DiagnosticMessageIsByteCapped`.
+  (019 — re-deriving the *values* of these caps from measured render/registry budgets —
+  remains a separate deferred measurement task.)
 - **019 — re-derive plugin status/contribution caps from measured render/registry
   budgets** (a measurement task).
 - **[RESOLVED 2026-07-18] 077 — plugin contribution registration was O(N²)** via a

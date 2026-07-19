@@ -116,11 +116,8 @@ float TextRenderer::MeasureWidth(std::string_view text) const {
   if (text.size() > kMaxMeasureBytes) {
     ++width_cache_queries_;
     util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheQueries);
-    std::size_t fit = kMaxMeasureBytes;
-    while (fit > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(text[fit]))) {
-      --fit;
-    }
-    const std::string_view clipped = text.substr(0, fit);
+    const std::string_view clipped =
+        text.substr(0, util::Utf8ByteBudgetPrefixLength(text, kMaxMeasureBytes));
     return backend_ != nullptr ? backend_->MeasureWidth(clipped)
                                : static_cast<float>(clipped.size()) * 8.0f;
   }

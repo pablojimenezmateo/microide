@@ -59,11 +59,7 @@ std::string ExtractTerminalSelectionText(const std::vector<terminal::TerminalLin
     // unbounded transcript on the UI thread (TD-2026-07-17A-090). Truncate on a UTF-8
     // boundary and report truncation rather than silently clipping mid-codepoint.
     if (text.size() >= max_bytes) {
-      std::size_t cut = std::min(text.size(), max_bytes);
-      while (cut > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(text[cut]))) {
-        --cut;
-      }
-      text.resize(cut);
+      text.resize(util::Utf8ByteBudgetPrefixLength(text, max_bytes));
       text += "\n[selection truncated]";
       return text;
     }
@@ -120,11 +116,7 @@ std::string BuildLastTerminalCommandTranscript(
     // unbounded transcript on the UI thread (TD-2026-07-17A-037). Truncate on a UTF-8
     // boundary and report truncation rather than clipping mid-codepoint.
     if (transcript.size() >= max_bytes) {
-      std::size_t cut = std::min(transcript.size(), max_bytes);
-      while (cut > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(transcript[cut]))) {
-        --cut;
-      }
-      transcript.resize(cut);
+      transcript.resize(util::Utf8ByteBudgetPrefixLength(transcript, max_bytes));
       transcript += "\n[output truncated]";
       return transcript;
     }

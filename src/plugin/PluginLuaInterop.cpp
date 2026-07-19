@@ -7,6 +7,7 @@
 
 #if MICROIDE_HAS_LUA_PLUGINS
 #include "util/Hex.h"
+#include "util/StringUtil.h"
 #endif
 
 namespace microide::plugin::lua_interop {
@@ -93,6 +94,20 @@ std::optional<std::string> ToHostString(lua_State* state, int index) {
   // collide ids or reach a C-string OS call with only the prefix.
   if (std::memchr(s, '\0', len) != nullptr) {
     return std::nullopt;
+  }
+  // Per-field byte backstop (TD-2026-07-17-018): every scalar provider result surface
+  // (completion/code-action/hover/status/sidebar/test/scm/blame/auth labels, plus the
+  // registration JSON blobs) routes through here. A single hostile or buggy field could
+  // otherwise hand the host a multi-hundred-megabyte string to copy, retain, measure, and
+  // render. Cap each scalar field on a UTF-8 boundary. The ceiling is deliberately
+  // generous so no realistic label/message/JSON blob is affected; individual display
+  // surfaces (diagnostics, hover) apply their own tighter render caps on top. Length-
+  // preserving binary payloads use the ReadStringField(..., std::string*) overload, which
+  // bypasses this path and carries its own caps.
+  constexpr std::size_t kMaxProviderFieldBytes = 4u * 1024 * 1024;  // 4 MiB / field
+  if (len > kMaxProviderFieldBytes) {
+    return std::string(s, util::Utf8ByteBudgetPrefixLength(std::string_view(s, len),
+                                                           kMaxProviderFieldBytes));
   }
   return std::string(s, len);
 }

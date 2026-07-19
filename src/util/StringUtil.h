@@ -42,6 +42,17 @@ int CodepointDisplayWidth(char32_t codepoint);
 bool IsUtf8ContinuationByte(unsigned char byte);
 std::size_t PreviousUtf8Boundary(std::string_view text, std::size_t offset);
 std::size_t NextUtf8Boundary(std::string_view text, std::size_t offset);
+// Longest UTF-8-code-point-aligned prefix of `text` that fits within `max_bytes`:
+// the cut backs off any trailing continuation byte so a multi-byte sequence is never
+// chopped mid-character. Returns `text.size()` when the whole string already fits.
+// This is the shared primitive under every "truncate this string to a byte budget"
+// call site (notifications, terminal selection/input, clipboard export, control
+// channel, LSP hover/label harvest, plugin provider fields).
+std::size_t Utf8ByteBudgetPrefixLength(std::string_view text, std::size_t max_bytes);
+// In-place counterpart: resize `text` down to `Utf8ByteBudgetPrefixLength(text,
+// max_bytes)`. Returns true when it actually truncated (i.e. the input exceeded the
+// budget), so callers can flag/annotate the truncation.
+bool TruncateUtf8ToByteBudget(std::string& text, std::size_t max_bytes);
 bool RemoveLastUtf8Codepoint(std::string* text);
 std::size_t Utf8ByteOffsetForCodepointCount(std::string_view text, std::size_t codepoint_count);
 std::size_t Utf8CodepointCount(std::string_view text);

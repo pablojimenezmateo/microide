@@ -249,6 +249,29 @@ std::size_t NextUtf8Boundary(std::string_view text, std::size_t offset) {
   return std::min(text.size(), offset + Utf8SequenceLength(text, offset));
 }
 
+std::size_t Utf8ByteBudgetPrefixLength(std::string_view text, std::size_t max_bytes) {
+  if (text.size() <= max_bytes) {
+    return text.size();
+  }
+  // The byte at `cut` is the first byte that would be dropped; back the cut off any
+  // continuation byte (0b10xxxxxx) so the retained prefix ends on a code-point
+  // boundary and the straddling multi-byte sequence is dropped whole rather than
+  // chopped mid-character.
+  std::size_t cut = max_bytes;
+  while (cut > 0 && IsUtf8ContinuationByte(static_cast<unsigned char>(text[cut]))) {
+    --cut;
+  }
+  return cut;
+}
+
+bool TruncateUtf8ToByteBudget(std::string& text, std::size_t max_bytes) {
+  if (text.size() <= max_bytes) {
+    return false;
+  }
+  text.resize(Utf8ByteBudgetPrefixLength(text, max_bytes));
+  return true;
+}
+
 bool RemoveLastUtf8Codepoint(std::string* text) {
   if (text == nullptr || text->empty()) {
     return false;

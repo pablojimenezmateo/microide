@@ -25,16 +25,9 @@ void NotificationService::Show(Tone tone, std::string message, std::uint64_t now
   // Byte-cap the message at ingress on a UTF-8 codepoint boundary so one oversized
   // toast (a plugin ctx.notify, or a subprocess/provider error) cannot force large
   // string copies + text measurement during a full redraw (TD-2026-07-17A-101).
-  bool truncated = false;
-  if (message.size() > MaxMessageBytes()) {
-    std::size_t cut = MaxMessageBytes();
-    // Back up so `cut` never lands inside a multi-byte sequence.
-    while (cut > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(message[cut]))) {
-      --cut;
-    }
-    message.resize(cut);
+  const bool truncated = util::TruncateUtf8ToByteBudget(message, MaxMessageBytes());
+  if (truncated) {
     message += "…";  // ellipsis marker so the shortened display string reads as clipped
-    truncated = true;
   }
   // Saturate rather than wrap: a monotonic clock near UINT64_MAX would otherwise
   // overflow to a tiny expiry and drop the notification on the next ExpireDue.

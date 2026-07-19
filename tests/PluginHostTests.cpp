@@ -1268,6 +1268,107 @@ return ide.plugin({
          "missing hover results should leave the output empty");
 }
 
+// TD-2026-07-17-018: a plugin hover that returns a huge title/content must be capped on
+// a UTF-8 boundary before the host measures/lays it out, so an oversized string cannot
+// stall the hover popup. The cap matches the LSP hover ceiling (32 KiB).
+void TestPluginHostHoverResultIsByteCapped() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  constexpr std::size_t kMaxHoverBytes = 32u * 1024;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "hover cap\n");
+
+  WritePluginInit(
+      global_plugins, "hover-cap",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "hover-cap",
+  setup = function(ctx)
+    ctx.hover.add({
+      id = "hover-cap.provider",
+      provide = function(buffer, position)
+        return {
+          title = string.rep("T", 200000),
+          content = string.rep("x", 200000)
+        }
+      end
+    })
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "hover-cap plugin should reload successfully");
+
+  PluginHost::HoverResult hover;
+  std::string hover_error;
+  Expect(host.QueryHover(project_root / "README.md", 1, 1, &hover, &hover_error),
+         "hover query should return the oversized result");
+  Expect(hover.title.size() == kMaxHoverBytes,
+         "oversized hover title should be capped at the hover byte ceiling");
+  Expect(hover.content.size() == kMaxHoverBytes,
+         "oversized hover content should be capped at the hover byte ceiling");
+}
+
+// TD-2026-07-17-018: an oversized plugin diagnostic message must be byte-capped on a
+// UTF-8 boundary before it reaches the store (Problems list + inline + hover all measure
+// the full string).
+void TestPluginHostDiagnosticMessageIsByteCapped() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  constexpr std::size_t kMaxDiagnosticMessageBytes = 32u * 1024;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "diag cap\n");
+
+  WritePluginInit(
+      global_plugins, "diag-cap",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "diag-cap",
+  setup = function(ctx)
+    ctx.diagnostics.publish("README.md", {
+      {
+        message = string.rep("z", 200000),
+        line = 1,
+        column = 1,
+        end_column = 2,
+        severity = "error"
+      }
+    })
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  microide::editor::DiagnosticsStore diagnostics_store;
+  PluginHost host;
+  auto callbacks = MakePluginHostCallbacks();
+  callbacks.publish_diagnostics =
+      [&](std::string_view owner,
+          const std::filesystem::path& path,
+          std::vector<microide::editor::Diagnostic> diagnostics) {
+        diagnostics_store.ReplaceForOwnerFile(owner, path, std::move(diagnostics));
+      };
+  host.SetCallbacks(std::move(callbacks));
+  Expect(host.Reload(project_root), "diag-cap plugin should reload successfully");
+
+  const auto* diagnostics = diagnostics_store.FindByPath(project_root / "README.md");
+  Expect(diagnostics != nullptr && diagnostics->size() == 1,
+         "diag-cap plugin should publish exactly one diagnostic");
+  Expect(diagnostics->front().message.size() == kMaxDiagnosticMessageBytes,
+         "oversized diagnostic message should be capped at the message byte ceiling");
+}
+
 void TestPluginHostPhase3RuntimeApis() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4278,6 +4379,9 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/Phase2Apis", TestPluginHostPhase2Apis);
   AddTest(tests, "PluginHost/Phase2StatusApis", TestPluginHostPhase2StatusApis);
   AddTest(tests, "PluginHost/Phase3DiagnosticsApis", TestPluginHostPhase3DiagnosticsApis);
+  AddTest(tests, "PluginHost/HoverResultIsByteCapped", TestPluginHostHoverResultIsByteCapped);
+  AddTest(tests, "PluginHost/DiagnosticMessageIsByteCapped",
+          TestPluginHostDiagnosticMessageIsByteCapped);
   AddTest(tests, "PluginHost/Phase3HoverApis", TestPluginHostPhase3HoverApis);
   AddTest(tests, "PluginHost/Phase3RuntimeApis", TestPluginHostPhase3RuntimeApis);
   AddTest(tests, "PluginHost/ProviderQueryBoundsAdversarialMetatable",

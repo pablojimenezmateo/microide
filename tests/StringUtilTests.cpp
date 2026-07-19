@@ -55,6 +55,34 @@ void TestStringUtilUtf8SequenceLengthHandlesAsciiAndEmoji() {
          "utf8 sequence length should report zero past the end");
 }
 
+void TestStringUtilUtf8ByteBudgetTruncatesOnBoundary() {
+  using microide::util::TruncateUtf8ToByteBudget;
+  using microide::util::Utf8ByteBudgetPrefixLength;
+
+  // Fits within budget: no truncation, full length returned.
+  Expect(Utf8ByteBudgetPrefixLength("abc", 3) == 3, "exact-fit keeps all bytes");
+  Expect(Utf8ByteBudgetPrefixLength("abc", 100) == 3, "under-budget keeps all bytes");
+  Expect(Utf8ByteBudgetPrefixLength("", 0) == 0, "empty stays empty");
+
+  // "a😀z": 'a'(1) + 😀(4 bytes: F0 9F 98 80) + 'z'(1) = 6 bytes total.
+  const std::string mixed = "a😀z";
+  Expect(mixed.size() == 6, "fixture is six bytes");
+  // Budget lands mid-emoji (2..4): the whole 4-byte sequence is dropped, keeping "a".
+  Expect(Utf8ByteBudgetPrefixLength(mixed, 2) == 1, "budget mid-emoji backs off to boundary");
+  Expect(Utf8ByteBudgetPrefixLength(mixed, 3) == 1, "budget mid-emoji backs off to boundary");
+  Expect(Utf8ByteBudgetPrefixLength(mixed, 4) == 1, "budget mid-emoji backs off to boundary");
+  // Budget at the emoji's trailing edge (5) keeps 'a' + full emoji = 5 bytes.
+  Expect(Utf8ByteBudgetPrefixLength(mixed, 5) == 5, "budget at codepoint boundary keeps it whole");
+
+  // In-place variant reports whether it truncated and never splits a codepoint.
+  std::string s = mixed;
+  Expect(TruncateUtf8ToByteBudget(s, 3), "over-budget reports truncation");
+  Expect(s == "a", "truncation drops the straddling multi-byte sequence whole");
+  std::string t = "abc";
+  Expect(!TruncateUtf8ToByteBudget(t, 3), "exact-fit reports no truncation");
+  Expect(t == "abc", "exact-fit leaves the string intact");
+}
+
 void TestStringUtilUtf8ValidationRejectsBrokenSequences() {
   Expect(IsValidUtf8("hello 😀"),
          "utf8 validation should accept valid multibyte sequences");
@@ -438,6 +466,8 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
           TestStringUtilDecodeUtf8CodepointRejectsInvalidScalars);
   AddTest(tests, "StringUtil/Utf8SequenceLengthHandlesAsciiAndEmoji",
           TestStringUtilUtf8SequenceLengthHandlesAsciiAndEmoji);
+  AddTest(tests, "StringUtil/Utf8ByteBudgetTruncatesOnBoundary",
+          TestStringUtilUtf8ByteBudgetTruncatesOnBoundary);
   AddTest(tests, "StringUtil/Utf8ValidationRejectsBrokenSequences",
           TestStringUtilUtf8ValidationRejectsBrokenSequences);
   AddTest(tests, "StringUtil/SplitLinesNormalizesMixedLineEndings",
