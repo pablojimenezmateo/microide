@@ -1069,13 +1069,32 @@ void TextViewport::InvalidateSyntaxHighlighting() {
 }
 
 void TextViewport::BeginSelectionIfNeeded(bool extend_selection) {
+  // Anchoring/collapsing must be symmetric across EVERY caret, primary and
+  // secondary. Each move method advances the secondary positions in its own loop;
+  // this only fixes up the anchors, before those positions move.
   if (extend_selection) {
+    // Extending (Shift) move: start a selection at any caret that lacks one so a
+    // multi-caret Shift+Arrow selects at every cursor (VSCode), not just the
+    // primary. Carets that already own a selection (Ctrl+D / box set) keep it.
     if (!selection_anchor_.has_value()) {
       selection_anchor_ = TextPosition{cursor_line_, cursor_column_};
     }
+    for (SecondaryCaret& caret : secondary_carets_) {
+      if (!caret.selection_anchor.has_value()) {
+        caret.selection_anchor = caret.position;
+      }
+    }
     return;
   }
+  // Plain (non-extending) move collapses EVERY caret's selection. Without this a
+  // Ctrl+D / box-select set kept ghost selections on the secondary carets after an
+  // arrow key: they still rendered, and the next keystroke REPLACED those stale
+  // selections (or the edit was refused as overlapping) instead of inserting at the
+  // collapsed caret -- diverging from the primary and from VSCode.
   selection_anchor_.reset();
+  for (SecondaryCaret& caret : secondary_carets_) {
+    caret.selection_anchor.reset();
+  }
 }
 
 void TextViewport::UpdateVisualColumnCacheAfterEdit(std::size_t start_line,

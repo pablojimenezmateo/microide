@@ -508,6 +508,80 @@ void TestSetSecondaryCaretsWithRangesEmptyRangeIsBareCaret() {
          "an empty range must produce a selection-less secondary caret");
 }
 
+// A plain (non-extending) caret move must collapse EVERY caret's selection, not
+// just the primary's. Before the fix the move loops advanced each secondary
+// caret's position but left its selection_anchor intact, so a Ctrl+D / box set
+// kept ghost selections on the secondaries after an arrow key -- and a following
+// keystroke then REPLACED those stale selections (or the edit was refused as
+// overlapping) instead of inserting at the collapsed caret, diverging from the
+// primary and from VSCode.
+void TestNonExtendingMoveCollapsesSecondarySelections() {
+  TextViewport viewport;
+  viewport.LoadContent("aaa bbb ccc", "/tmp/mc-move-collapse.cpp");
+  viewport.MoveCursorTo(0, 1);
+  viewport.SelectWordAtCursor();  // primary selection over "aaa"
+  viewport.SetSecondaryCaretsWithRanges({
+      microide::editor::SelectionRange{TextPosition{0, 4}, TextPosition{0, 7}},   // "bbb"
+      microide::editor::SelectionRange{TextPosition{0, 8}, TextPosition{0, 11}},  // "ccc"
+  });
+  Expect(viewport.MultiCaretSelectedText().has_value(),
+         "fixture: every caret starts with a selection");
+
+  // Right arrow with no Shift: collapse-and-move, exactly like the primary.
+  viewport.MoveCursorHorizontal(1, /*extend_selection=*/false);
+
+  Expect(!viewport.has_selection(),
+         "the primary selection collapses on a non-extending move");
+  const auto ranges = viewport.secondary_caret_ranges();
+  bool any_secondary_selection = false;
+  for (const auto& caret : ranges) {
+    if (caret.selection_anchor.has_value()) {
+      any_secondary_selection = true;
+    }
+  }
+  Expect(!any_secondary_selection,
+         "every secondary selection also collapses on a non-extending move");
+
+  // With all selections collapsed, typing INSERTS at each caret rather than
+  // replacing a stale selection. A non-extending move clears the anchor and then
+  // advances the caret one past the old selection cursor-end (col 3/7/11 -> 4/8/11,
+  // the last clamped at end-of-line), so the inserts land after each word.
+  viewport.InsertText("X");
+  Expect(viewport.lines().size() == 1 && viewport.lines()[0] == "aaa Xbbb XcccX",
+         "after collapsing, a keystroke inserts at every caret instead of replacing");
+}
+
+// The symmetric counterpart: an extending (Shift) move must START a selection at
+// EVERY caret that lacks one, not only the primary. Before the fix Shift+Arrow on
+// a plain multi-caret set (no selections) anchored only the primary, so the
+// secondaries slid without selecting -- multi-caret Shift-select was broken on the
+// secondaries, diverging from VSCode.
+void TestExtendingMoveStartsSelectionAtEverySecondaryCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("aaa bbb ccc", "/tmp/mc-extend-start.cpp");
+  viewport.MoveCursorTo(0, 0);
+  viewport.SetSecondaryCarets({{0, 4}, {0, 8}});  // bare carets, no selections
+  Expect(!viewport.MultiCaretSelectedText().has_value(),
+         "fixture: no caret starts with a selection");
+
+  // Shift+Right: extend a one-char selection at every caret.
+  viewport.MoveCursorHorizontal(1, /*extend_selection=*/true);
+
+  const auto ranges = viewport.secondary_caret_ranges();
+  bool all_secondaries_selected = !ranges.empty();
+  for (const auto& caret : ranges) {
+    if (!caret.selection_anchor.has_value()) {
+      all_secondaries_selected = false;
+    }
+  }
+  Expect(viewport.has_selection() && all_secondaries_selected,
+         "an extending move starts a selection at every caret, primary and secondary");
+  // Each caret now owns a one-char selection -> aggregate copy grabs one char each.
+  const auto copied = viewport.MultiCaretSelectedText();
+  Expect(copied.has_value() && *copied == "a\nb\nc",
+         "each caret's freshly started selection covers the char it moved over");
+}
+
 }  // namespace
 
 void TestPlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine() {
@@ -952,6 +1026,10 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestSetSecondaryCaretsWithRangesPreservesSelections);
   AddTest(tests, "EditorMultiCaret/SetSecondaryCaretsWithRangesEmptyRangeIsBareCaret",
           TestSetSecondaryCaretsWithRangesEmptyRangeIsBareCaret);
+  AddTest(tests, "EditorMultiCaret/NonExtendingMoveCollapsesSecondarySelections",
+          TestNonExtendingMoveCollapsesSecondarySelections);
+  AddTest(tests, "EditorMultiCaret/ExtendingMoveStartsSelectionAtEverySecondaryCaret",
+          TestExtendingMoveStartsSelectionAtEverySecondaryCaret);
   AddTest(tests, "EditorMultiCaret/DisjointEditPublishesNoAppliedEdit",
           TestMultiCaretDisjointEditPublishesNoAppliedEdit);
   AddTest(tests, "EditorMultiCaret/PairInsertPublishesNoAppliedEdit",
