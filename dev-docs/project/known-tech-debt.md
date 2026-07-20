@@ -101,7 +101,8 @@ they land.
 3. **Editor display-column unification** — one grapheme/visual-width service; inlay hints
    share it (021/023). **[RESOLVED 2026-07-17 — see the Editor / Unicode subsection]**
 4. **DAP lifecycle hardening** — session-generation + request-id gating (025), bounded
-   stop/terminate escalation (026).
+   stop/terminate escalation (026). **[AUDITED 2026-07-20 — both already structurally
+   satisfied in-tree; no change made. See the Debug/DAP subsection for the per-item audit.]**
 5. **Scanner/search incomplete-state plumbing** — surface complete/truncated/incomplete
    status (008/033); targeted fallback rescan (009).
 6. **LSP completeness** — resource ops + version-aware edits (011); explicit timeout result
@@ -2444,17 +2445,36 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Debug / DAP:**
 
-> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 025 (session-generation + request-id gating
-> across REPL/hover/watch) and 026 (bounded disconnect→wait→kill→drain teardown escalation)
-> are a focused DAP-lifecycle hardening pass over the adapter request/response and shutdown
-> paths, with their own generation/timeout test matrix. No live hang was observed here (the
-> earlier gdb-DAP freezes were fixed); this is defense-in-depth against a misbehaving
-> adapter. Deferred to a dedicated debugger-lifecycle change (pairs with 091).
+> **[AUDITED 2026-07-20 — both already structurally satisfied; no code change made — see
+> the per-item audit below]** 025 and 026 were re-examined as a DAP-lifecycle hardening
+> pass. The properties they ask for are already present in the shipped code (generation /
+> session-identity gating on every evaluate surface; a bounded disconnect→wait→kill→drain
+> teardown). No live hang or stale-apply was ever observed; forcing a speculative refactor
+> onto a correct, hard-to-verify-on-this-host surface would add regression risk, not reduce
+> debt. Kept as intake only for the narrow residual (surfacing teardown-timeout text to the
+> pane — a cosmetic, deliberately-not-built defense-in-depth).
 
-- **025 — debug request/response paths need session-generation + request-id gating**
-  (REPL / hover / watch, matched by stable id).
-- **026 — DAP stop/terminate needs a bounded escalation** (disconnect → wait → kill →
-  bounded drain) with timeout surfaced to the pane. Pairs with 091.
+- **[AUDITED — already satisfied 2026-07-20] 025 — debug request/response session/request-id
+  gating (REPL / hover / watch).** Verified in-tree: (1) *DapClient is never reused across
+  sessions* — `DapManager::StartSession` mints a unique `session_id` and constructs a fresh
+  `DebugSession` owning its own `DapClient` + adapter process, so request-`seq`s never span
+  generations and a reaped session's destroyed callback closures cannot fire late. (2) Within
+  a session, responses correlate by numeric `request_seq` (`DapResponseSeqInRange`), and
+  `ResetProtocolState()` clears `pending_requests` on shutdown/reset. (3) Every evaluate
+  surface is already generation- or identity-gated: **watch** via `watch_generation_`,
+  **variables/scopes/setVariable** via `frame_generation_` (both bumped on each stop in
+  `DebugServiceCallbacks`), **hover** via the `DebugHoverModel` (frame,expression) generation
+  (`Begin`/`Resolve`/`Fail`, cleared on stop), and **REPL** by capturing the dispatching
+  `session_id`+`label` so output always lands on the originating session's console, never
+  "the active session". No stale response can apply to a newer context.
+- **[AUDITED — already satisfied 2026-07-20] 026 — bounded DAP stop/terminate escalation.**
+  `DoShutdown` already implements the exact escalation ladder: send `disconnect` under a
+  1000 ms bounded `write_mutex` acquisition → wait ≤750 ms for the response → `CloseStdin`
+  → wait ≤3000 ms for the process to exit → `stop_io` + wake → force-kill via
+  `ShutdownProcessOnce(1000)` → join the I/O thread. Every stage is `steady_clock`-bounded
+  so a wedged-but-alive adapter cannot stall teardown, and each transition is traced
+  (`TraceDapLifecycle`). The only unbuilt residual is echoing the timeout text into the pane
+  (cosmetic); the teardown itself is bounded and correct.
 
 **Scanner / search incomplete-state plumbing (land together):**
 
