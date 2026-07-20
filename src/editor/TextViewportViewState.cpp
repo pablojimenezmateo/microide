@@ -137,6 +137,49 @@ void TextViewport::MoveCursorHorizontal(int delta, bool extend_selection) {
   }
 
   undo_history_.NotifyCursorMoved();
+
+  // VSCode: a plain (non-extending) Left/Right over a selection collapses to that
+  // selection's edge -- the left edge for Left, the right edge for Right -- WITHOUT
+  // advancing past it, and does so per caret. The main editor previously cleared
+  // the anchor and then stepped one position further, so pressing Right after
+  // selecting a word landed the caret one column past the selection instead of at
+  // its end. This mirrors SingleLineEditor::MoveLeft/MoveRight. Carets with no
+  // selection advance one position as before.
+  if (!extend_selection) {
+    const bool to_end = delta > 0;
+    bool any_selection = has_selection();
+    for (const SecondaryCaret& caret : secondary_carets_) {
+      if (caret.selection_anchor.has_value()) {
+        any_selection = true;
+        break;
+      }
+    }
+    if (any_selection) {
+      TextPosition primary{cursor_line_, cursor_column_};
+      if (const std::optional<SelectionRange> sel = selection_range(); sel.has_value()) {
+        primary = to_end ? sel->end : sel->start;
+      } else {
+        AdvanceCaretHorizontal(primary, delta);
+      }
+      for (SecondaryCaret& caret : secondary_carets_) {
+        if (const std::optional<SelectionRange> sel =
+                detail::SelectionRangeForSecondaryCaret(caret.position, caret.selection_anchor);
+            sel.has_value()) {
+          caret.position = to_end ? sel->end : sel->start;
+        } else {
+          AdvanceCaretHorizontal(caret.position, delta);
+        }
+        caret.selection_anchor.reset();
+        caret.preferred_column = PreferredColumnForCaret(caret.position);
+      }
+      selection_anchor_.reset();
+      PlacePrimaryCaret(primary.line, primary.column);
+      DedupeSecondaryCaretsAgainstPrimary();
+      EnsureCursorVisible();
+      return;
+    }
+  }
+
   BeginSelectionIfNeeded(extend_selection);
   TextPosition primary{cursor_line_, cursor_column_};
   AdvanceCaretHorizontal(primary, delta);

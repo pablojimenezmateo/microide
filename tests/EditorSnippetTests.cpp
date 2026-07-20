@@ -315,6 +315,25 @@ void TestSnippetDiscardsPreExpansionSecondaryCarets() {
          "pre-expansion secondary carets are discarded on commit, not restored at stale offsets");
 }
 
+// Regression: a bare `$N` tab stop must read ALL consecutive digits, so `$10` is
+// tab stop 10 (VSCode) rather than tab stop 1 followed by a literal '0'. Before
+// the fix only the braced `${N}` form parsed multi-digit ids; the bare form read
+// a single digit and leaked the remaining digits into the expanded text.
+void TestSnippetParseBareTabStopReadsAllDigits() {
+  const auto parsed = ParseSnippetBody("a$10b");
+  Expect(parsed.expanded == "ab",
+         "the multi-digit id must not leak digits into the expanded text");
+  Expect(parsed.occurrences.size() == 1 && parsed.occurrences.front().tab_stop == 10,
+         "a bare $10 is tab stop 10, matching the braced ${10} form and VSCode");
+
+  // A bare final stop `$0` still resolves, and `$2$10` yields two distinct stops
+  // (2 and 10), not (2, 1, 0).
+  const auto two = ParseSnippetBody("$2$10");
+  Expect(two.occurrences.size() == 2 && two.occurrences[0].tab_stop == 2 &&
+             two.occurrences[1].tab_stop == 10,
+         "adjacent bare tab stops each consume their own full digit run");
+}
+
 // A snippet body with an enormous tab-stop id must not signed-overflow the id
 // accumulator; the parse fails cleanly to an empty result.
 void TestSnippetParseRejectsHugeTabId() {
@@ -466,6 +485,8 @@ void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
           TestSnippetMultiLineInsertDeclinesFastPath);
   AddTest(tests, "EditorSnippet/DiscardsPreExpansionSecondaryCarets",
           TestSnippetDiscardsPreExpansionSecondaryCarets);
+  AddTest(tests, "EditorSnippet/ParseBareTabStopReadsAllDigits",
+          TestSnippetParseBareTabStopReadsAllDigits);
   AddTest(tests, "EditorSnippet/ParseRejectsHugeTabId", TestSnippetParseRejectsHugeTabId);
   AddTest(tests, "EditorSnippet/ParseRejectsTooManyPlaceholders",
           TestSnippetParseRejectsTooManyPlaceholders);

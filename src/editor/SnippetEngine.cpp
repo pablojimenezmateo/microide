@@ -163,7 +163,19 @@ SnippetParseResult ParseSnippetBody(std::string_view body) {
       continue;
     }
     if (i + 1 < body.size() && IsDigit(body[i + 1])) {
-      const int tab = body[i + 1] - '0';
+      // Bare `$N` tab stop: read ALL consecutive digits. VSCode treats `$10` as
+      // tab stop 10, not tab stop 1 followed by a literal '0'; reading a single
+      // digit here diverged from that and from the braced `${N}` form above.
+      // Share that form's checked accumulation and overflow cap.
+      int tab = 0;
+      std::size_t j = i + 1;
+      while (j < body.size() && IsDigit(body[j])) {
+        tab = tab * 10 + (body[j] - '0');
+        if (tab > kMaxTabStopId) {
+          return SnippetParseResult{};
+        }
+        ++j;
+      }
       SnippetParseResult::Occurrence occ;
       occ.tab_stop = tab;
       occ.start_off = result.expanded.size();
@@ -173,7 +185,7 @@ SnippetParseResult ParseSnippetBody(std::string_view body) {
       if (result.occurrences.size() > kMaxOccurrences) {
         return SnippetParseResult{};
       }
-      i += 2;
+      i = j;
       continue;
     }
     result.expanded += '$';

@@ -542,13 +542,36 @@ void TestNonExtendingMoveCollapsesSecondarySelections() {
   Expect(!any_secondary_selection,
          "every secondary selection also collapses on a non-extending move");
 
-  // With all selections collapsed, typing INSERTS at each caret rather than
-  // replacing a stale selection. A non-extending move clears the anchor and then
-  // advances the caret one past the old selection cursor-end (col 3/7/11 -> 4/8/11,
-  // the last clamped at end-of-line), so the inserts land after each word.
+  // Right over a selection collapses each caret to its selection's RIGHT edge
+  // (end of each word: col 3/7/11) without advancing past it, so typing inserts
+  // immediately after each word rather than replacing a stale selection.
   viewport.InsertText("X");
-  Expect(viewport.lines().size() == 1 && viewport.lines()[0] == "aaa Xbbb XcccX",
-         "after collapsing, a keystroke inserts at every caret instead of replacing");
+  Expect(viewport.lines().size() == 1 && viewport.lines()[0] == "aaaX bbbX cccX",
+         "after collapsing to the selection edge, a keystroke inserts at every caret");
+}
+
+// Single-caret parity with SingleLineEditor and VSCode: a plain Left/Right over a
+// selection collapses to that selection's edge (left for Left, right for Right)
+// WITHOUT advancing past it. The main editor previously cleared the anchor and
+// then stepped one column further, landing the caret past the selection.
+void TestNonExtendingHorizontalMoveCollapsesToSelectionEdge() {
+  TextViewport viewport;
+  viewport.LoadContent("hello world", "/tmp/mc-collapse-edge.cpp");
+  viewport.MoveCursorTo(0, 1);
+  viewport.SelectWordAtCursor();  // selects "hello" -> [0,0)-[0,5)
+  Expect(viewport.has_selection(), "fixture: a word is selected");
+
+  // Right collapses to the RIGHT edge (col 5, end of "hello"), not col 6.
+  viewport.MoveCursorHorizontal(1, /*extend_selection=*/false);
+  Expect(!viewport.has_selection() && viewport.cursor_column() == 5,
+         "Right over a selection lands on its right edge, not one past it");
+
+  viewport.MoveCursorTo(0, 1);
+  viewport.SelectWordAtCursor();  // re-select "hello"
+  // Left collapses to the LEFT edge (col 0, start of "hello"), not col 0-then-back.
+  viewport.MoveCursorHorizontal(-1, /*extend_selection=*/false);
+  Expect(!viewport.has_selection() && viewport.cursor_column() == 0,
+         "Left over a selection lands on its left edge");
 }
 
 // The symmetric counterpart: an extending (Shift) move must START a selection at
@@ -1028,6 +1051,8 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestSetSecondaryCaretsWithRangesEmptyRangeIsBareCaret);
   AddTest(tests, "EditorMultiCaret/NonExtendingMoveCollapsesSecondarySelections",
           TestNonExtendingMoveCollapsesSecondarySelections);
+  AddTest(tests, "EditorMultiCaret/NonExtendingHorizontalMoveCollapsesToSelectionEdge",
+          TestNonExtendingHorizontalMoveCollapsesToSelectionEdge);
   AddTest(tests, "EditorMultiCaret/ExtendingMoveStartsSelectionAtEverySecondaryCaret",
           TestExtendingMoveStartsSelectionAtEverySecondaryCaret);
   AddTest(tests, "EditorMultiCaret/DisjointEditPublishesNoAppliedEdit",

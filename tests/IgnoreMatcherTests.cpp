@@ -288,7 +288,34 @@ void TestIgnoreMatcherHonorsGitignoreEscapes() {
          "the trimmed pattern must not match a trailing-space name 'plain '");
 }
 
+// A '[' character class matches a single char; an UNTERMINATED '[' (no closing
+// ']') is an ordinary literal per POSIX fnmatch / gitignore. Before the fix the
+// unterminated case failed to match, so a file literally named "weird[name" was
+// never ignored by a "weird[name" pattern.
+void TestIgnoreMatcherHonorsCharacterClasses() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root);
+  //   file[0-9].log -> a real character class (matches one digit)
+  //   weird[name    -> an unterminated '[' is a literal '['
+  WriteFile(root / ".gitignore", "file[0-9].log\nweird[name\n");
+
+  IgnoreMatcher matcher;
+  matcher.SetRoot(root);
+
+  Expect(matcher.Ignored("file7.log", false),
+         "a [0-9] class should ignore file7.log");
+  Expect(!matcher.Ignored("fileX.log", false),
+         "a [0-9] class must not match a non-digit");
+  Expect(matcher.Ignored("weird[name", false),
+         "an unterminated '[' is a literal char: 'weird[name' should be ignored");
+  Expect(!matcher.Ignored("weirdXname", false),
+         "the literal '[' pattern must not match as if '[' were a class");
+}
+
 void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "IgnoreMatcher/HonorsCharacterClasses",
+          TestIgnoreMatcherHonorsCharacterClasses);
   AddTest(tests, "IgnoreMatcher/HonorsGitignoreEscapes",
           TestIgnoreMatcherHonorsGitignoreEscapes);
   AddTest(tests, "IgnoreMatcher/DoubleStarBeforeWildcardCrossesDirectories",

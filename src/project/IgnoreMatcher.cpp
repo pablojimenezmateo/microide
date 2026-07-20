@@ -111,8 +111,19 @@ bool GlobMatches(std::string_view pattern, std::string_view text) {
               matched = true;
             }
           }
-          if (closed && (matched != negate)) {
-            pi = scan;
+          if (closed) {
+            if (matched != negate) {
+              pi = scan;
+              ++ti;
+              continue;
+            }
+          } else if (tc == '[') {
+            // POSIX fnmatch / gitignore(5): a '[' with no closing ']' is not a
+            // character class but an ordinary literal '['. Match it as such so a
+            // pattern like "weird[name" ignores the file literally named
+            // "weird[name" instead of failing to match. (A closed-but-unmatched
+            // class still falls through to backtrack above.)
+            ++pi;
             ++ti;
             continue;
           }
