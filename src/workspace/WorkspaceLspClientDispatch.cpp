@@ -164,7 +164,7 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
   int id = 0;
   if (has_id && !has_method && (msg["id"].IsInt() || msg["id"].IsDouble()) &&
       ResponseIdInRange(msg["id"], &id)) {
-    std::function<void(util::JsonValue)> cb;
+    std::function<void(LspRequestOutcome, util::JsonValue)> cb;
     {
       std::lock_guard lock(mutex);
       auto it = pending_requests.find(id);
@@ -177,7 +177,9 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
       util::JsonValue captured = std::move(msg);
       main_mailbox.Post([cb = std::move(cb), m = std::move(captured)]() mutable {
         util::StartupTrace::Scope scope("LspClient::DispatchResponse");
-        cb(std::move(m));
+        // kOk signals "a real frame arrived" — DispatchResultRequest refines it to
+        // kOk/kEmpty/kProtocolError from the payload.
+        cb(LspRequestOutcome::kOk, std::move(m));
       });
     }
   } else if (msg.HasKey("method")) {
@@ -236,6 +238,10 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
 // response handler degrades to its no-result path.
 void LspClient::Impl::FailPendingRequests(bool only_expired) {
   const auto now = std::chrono::steady_clock::now();
+  // The periodic sweep fails deadline-expired requests (a silent server) => timeout;
+  // the EOF/exit sweep fails every request (the server can never answer) => unavailable.
+  const LspRequestOutcome outcome =
+      only_expired ? LspRequestOutcome::kTimeout : LspRequestOutcome::kUnavailable;
   std::lock_guard lock(mutex);
   bool any = false;
   for (auto it = pending_requests.begin(); it != pending_requests.end();) {
@@ -245,8 +251,8 @@ void LspClient::Impl::FailPendingRequests(bool only_expired) {
     }
     auto cb = std::move(it->second.callback);
     it = pending_requests.erase(it);
-    main_mailbox.PostWithoutWake([cb = std::move(cb)]() mutable {
-      cb(util::JsonValue(util::JsonObject{}));
+    main_mailbox.PostWithoutWake([cb = std::move(cb), outcome]() mutable {
+      cb(outcome, util::JsonValue(util::JsonObject{}));
     });
     any = true;
   }

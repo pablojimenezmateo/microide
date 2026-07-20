@@ -671,7 +671,7 @@ void WorkspaceShell::KickOffLspHover(const std::filesystem::path& path, std::siz
   BeginTrackedLspRequest();
   client->RequestHoverAsync(
       FileUriForPath(path), ByteColumnToLspPosition(*viewport, line0, byte_column, encoding),
-      [this, path, line, column](std::optional<util::JsonValue> result) {
+      [this, path, line, column](LspResult<util::JsonValue> result) {
         FinishTrackedLspRequest();
         if (plugin_hover_cache_.state != PluginHoverCache::State::Pending ||
             !plugin_hover_cache_.Matches(path, line, column)) {

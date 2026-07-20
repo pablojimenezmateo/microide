@@ -336,6 +336,11 @@ void LspClient::SetMaxQueuedBytesForTesting(std::size_t bytes) {
   impl_->max_queued_bytes_ = bytes;
 }
 
+void LspClient::SetRequestTimeoutForTesting(std::chrono::milliseconds timeout) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->request_timeout_ = timeout;
+}
+
 void LspClient::EnableTestStubMode() {
   std::lock_guard lock(impl_->mutex);
   impl_->test_stub_mode.store(true, std::memory_order_release);

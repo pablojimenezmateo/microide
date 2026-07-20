@@ -5,6 +5,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <chrono>
 #include <functional>
 #include <optional>
 #include <string>
@@ -25,6 +26,62 @@ struct LspReadinessSnapshot {
   State state = State::Idle;
   std::string message;
   int indexed_count = 0;
+};
+
+// Why a request ended, so callers can tell an authoritative empty answer apart
+// from a transport failure. Before this taxonomy every non-result collapsed to a
+// bare std::nullopt: a timed-out or errored go-to-definition was shaped identically
+// to "the server has no definition here", so the UI reported "No definition found"
+// for a request the server never actually answered.
+enum class LspRequestOutcome {
+  // The server returned a result value (possibly an empty container — the server
+  // DID answer, it just had nothing to list).
+  kOk,
+  // The server responded with a null/absent result (an authoritative "nothing").
+  kEmpty,
+  // No response arrived before the per-request deadline.
+  kTimeout,
+  // The server can never answer: it exited/closed stdout, or the request could not
+  // be sent (not initialized / wedged outbound queue).
+  kUnavailable,
+  // The server sent a JSON-RPC error, or a malformed response with neither a
+  // `result` nor an `error`.
+  kProtocolError,
+};
+
+// An async request result: the parsed value (absent on any non-kOk outcome) plus
+// why the request ended. Implicit constructors from std::nullopt / std::optional /
+// a bare value keep the callback ergonomics of the old `std::optional<T>` shape, so
+// callback bodies that used `if (r)`, `*r`, `r->x`, `r.has_value()` are unchanged.
+template <typename T>
+struct LspResult {
+  LspRequestOutcome outcome = LspRequestOutcome::kEmpty;
+  std::optional<T> value;
+
+  LspResult() = default;
+  LspResult(std::nullopt_t) {}                                      // NOLINT: implicit
+  LspResult(std::optional<T> v)                                     // NOLINT: implicit
+      : outcome(v.has_value() ? LspRequestOutcome::kOk : LspRequestOutcome::kEmpty),
+        value(std::move(v)) {}
+  LspResult(T v)                                                    // NOLINT: implicit
+      : outcome(LspRequestOutcome::kOk), value(std::move(v)) {}
+  LspResult(LspRequestOutcome o, std::optional<T> v) : outcome(o), value(std::move(v)) {}
+
+  bool has_value() const { return value.has_value(); }
+  explicit operator bool() const { return value.has_value(); }
+  const T& operator*() const { return *value; }
+  T& operator*() { return *value; }
+  const T* operator->() const { return &*value; }
+  T* operator->() { return &*value; }
+
+  // True when the server actually answered (kOk or kEmpty), i.e. an empty result is
+  // an authoritative "nothing here". False for a transport failure (timeout /
+  // unavailable / protocol error) where "no result" must NOT be reported to the user
+  // as a definitive empty answer.
+  bool answered() const {
+    return outcome == LspRequestOutcome::kOk || outcome == LspRequestOutcome::kEmpty;
+  }
+  bool timed_out() const { return outcome == LspRequestOutcome::kTimeout; }
 };
 
 // Single LSP server connection with JSON-RPC 2.0.
@@ -155,23 +212,25 @@ class LspClient {
   // One text edit: a document range plus its replacement text (server encoding).
   using TextEdit = std::pair<Range, std::string>;
 
-  // Async callback types — called on the main thread from DrainCallbacks().
-  using HoverCallback = std::function<void(std::optional<util::JsonValue>)>;
-  using CompletionCallback = std::function<void(std::optional<std::vector<CompletionItem>>)>;
-  using CodeActionCallback = std::function<void(std::optional<std::vector<CodeAction>>)>;
+  // Async callback types — called on the main thread from DrainCallbacks(). Each
+  // delivers an LspResult<T> so callers can distinguish an authoritative empty
+  // answer from a transport failure (timeout / server-gone / protocol error).
+  using HoverCallback = std::function<void(LspResult<util::JsonValue>)>;
+  using CompletionCallback = std::function<void(LspResult<std::vector<CompletionItem>>)>;
+  using CodeActionCallback = std::function<void(LspResult<std::vector<CodeAction>>)>;
   // Formatting returns the full TextEdit[] (whole-document reformats commonly come
   // back as many edits); the caller applies them together.
-  using FormattingCallback = std::function<void(std::optional<std::vector<TextEdit>>)>;
-  using LocationCallback = std::function<void(std::optional<std::vector<Location>>)>;
-  using RenameCallback = std::function<void(std::optional<WorkspaceEdit>)>;
+  using FormattingCallback = std::function<void(LspResult<std::vector<TextEdit>>)>;
+  using LocationCallback = std::function<void(LspResult<std::vector<Location>>)>;
+  using RenameCallback = std::function<void(LspResult<WorkspaceEdit>)>;
   using DocumentSymbolCallback =
-      std::function<void(std::optional<std::vector<DocumentSymbol>>)>;
+      std::function<void(LspResult<std::vector<DocumentSymbol>>)>;
   using SemanticTokensCallback =
-      std::function<void(std::optional<std::vector<SemanticToken>>)>;
-  using InlayHintCallback = std::function<void(std::optional<std::vector<InlayHint>>)>;
-  using SignatureHelpCallback = std::function<void(std::optional<SignatureHelp>)>;
+      std::function<void(LspResult<std::vector<SemanticToken>>)>;
+  using InlayHintCallback = std::function<void(LspResult<std::vector<InlayHint>>)>;
+  using SignatureHelpCallback = std::function<void(LspResult<SignatureHelp>)>;
   using WorkspaceSymbolCallback =
-      std::function<void(std::optional<std::vector<WorkspaceSymbol>>)>;
+      std::function<void(LspResult<std::vector<WorkspaceSymbol>>)>;
 
   LspClient();
   ~LspClient();
@@ -299,7 +358,7 @@ class LspClient {
     Range range{};
     std::string placeholder;
   };
-  using PrepareRenameCallback = std::function<void(std::optional<PrepareRename>)>;
+  using PrepareRenameCallback = std::function<void(LspResult<PrepareRename>)>;
 
   // Async textDocument/prepareRename — validate the cursor position and fetch the
   // server's suggested placeholder before opening the rename prompt. nullopt when
@@ -340,6 +399,9 @@ class LspClient {
   // Lower the aggregate outbound byte budget so a test can exercise the byte cap
   // without ~512 MiB of queued payload. TD-2026-07-17A-071.
   void SetMaxQueuedBytesForTesting(std::size_t bytes);
+  // Shorten the per-request deadline so a test can exercise the timeout sweep
+  // without a 30s wait. Call before issuing the request.
+  void SetRequestTimeoutForTesting(std::chrono::milliseconds timeout);
   void DisableTestStubMode();
   void SetTestDocumentSymbolHandler(
       std::function<void(std::string uri, DocumentSymbolCallback cb)> handler);

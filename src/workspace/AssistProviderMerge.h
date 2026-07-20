@@ -28,6 +28,11 @@ struct TwoSourceState {
   bool lsp_authoritative = false;
   bool lsp_pending = true;
   bool plugin_pending = true;
+  // The LSP request completed as a transport failure (timeout / server-gone /
+  // protocol error) rather than an authoritative answer. When both sources end up
+  // empty, this distinguishes "the server said there is nothing here" from "the
+  // server never answered", so the UI does not report a false "No X found".
+  bool lsp_failed = false;
 
   bool AnyPending() const { return lsp_pending || plugin_pending; }
   bool AllResolved() const { return !lsp_pending && !plugin_pending; }

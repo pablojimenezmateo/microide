@@ -27,6 +27,7 @@ namespace microide::tests {
 namespace {
 
 using microide::workspace::LspClient;
+using microide::workspace::LspResult;
 
 // Locate a clangd binary: an explicit $MICROIDE_TEST_LSP_CLANGD override first,
 // then a PATH scan. Empty string means "not available -> skip".
@@ -137,7 +138,7 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
   //    callback fired with a hover payload, not its exact text.
   bool hover_done = false;
   bool hover_present = false;
-  client.RequestHoverAsync(uri, kAddCall, [&](std::optional<util::JsonValue> hover) {
+  client.RequestHoverAsync(uri, kAddCall, [&](LspResult<util::JsonValue> hover) {
     hover_done = true;
     hover_present = hover.has_value() && !hover->IsNull();
   });
@@ -149,7 +150,7 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
   bool definition_done = false;
   std::size_t definition_count = 0;
   client.RequestGoToDefinitionAsync(uri, kAddCall,
-                                    [&](std::optional<std::vector<LspClient::Location>> locs) {
+                                    [&](LspResult<std::vector<LspClient::Location>> locs) {
                                       definition_done = true;
                                       definition_count = locs.has_value() ? locs->size() : 0;
                                     });
@@ -162,7 +163,7 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
   bool completion_done = false;
   std::size_t completion_count = 0;
   client.RequestCompletionAsync(uri, LspClient::Position{1, 22},
-                                [&](std::optional<std::vector<LspClient::CompletionItem>> items) {
+                                [&](LspResult<std::vector<LspClient::CompletionItem>> items) {
                                   completion_done = true;
                                   completion_count = items.has_value() ? items->size() : 0;
                                 });
@@ -175,7 +176,7 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
   bool rename_done = false;
   std::size_t rename_edit_count = 0;
   client.RequestRenameAsync(uri, LspClient::Position{0, 4}, "sum",
-                            [&](std::optional<LspClient::WorkspaceEdit> edit) {
+                            [&](LspResult<LspClient::WorkspaceEdit> edit) {
                               rename_done = true;
                               if (edit.has_value()) {
                                 const auto it = edit->changes.find(uri);

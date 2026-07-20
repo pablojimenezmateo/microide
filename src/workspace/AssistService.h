@@ -102,7 +102,7 @@ class AssistService {
   // one. Past the budget an action's inline fix is dropped (edits_truncated set).
   // Static + free of member state so the budget is unit-testable. TD-2026-07-17A-057.
   static std::vector<CodeActionSessionItem> TransformLspCodeActions(
-      const std::optional<std::vector<LspClient::CodeAction>>& actions);
+      const LspResult<std::vector<LspClient::CodeAction>>& actions);
 
   bool EditorSnippetsSettingEnabled() const;
   bool ShowCompletionOverlay(std::string* error_message = nullptr);
@@ -165,7 +165,7 @@ class AssistService {
   // Apply a textDocument/formatting or rangeFormatting result to the active buffer
   // (shared by whole-document and range formatting). Drops superseded results.
   void ApplyFormattingResult(const std::filesystem::path& request_path,
-                             std::optional<std::vector<LspClient::TextEdit>> edits);
+                             LspResult<std::vector<LspClient::TextEdit>> edits);
 
   // Per-request state for the LSP-primary *concurrent* provider model: a plugin
   // worker and the language server are queried at once, then their results are
@@ -220,7 +220,7 @@ class AssistService {
   std::vector<CompletionSessionItem> TransformPluginCompletions(
       const std::vector<plugin::PluginHost::CompletionCandidate>& items) const;
   std::vector<CompletionSessionItem> TransformLspCompletions(
-      const std::optional<std::vector<LspClient::CompletionItem>>& items,
+      const LspResult<std::vector<LspClient::CompletionItem>>& items,
       lsp_encoding::PositionEncoding encoding) const;
   std::vector<CodeActionSessionItem> TransformPluginCodeActions(
       const std::vector<plugin::PluginHost::CodeActionCandidate>& items) const;

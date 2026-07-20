@@ -612,7 +612,9 @@ void LspService::RequestLspSemanticTokens(const editor::TextViewport& viewport, 
   const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(client);
   client.RequestSemanticTokensAsync(
       uri, [this, project, uri, generation, encoding, legend = std::move(legend)](
-               std::optional<std::vector<LspClient::SemanticToken>> tokens) mutable {
+               LspResult<std::vector<LspClient::SemanticToken>> tokens) mutable {
+        // A transport failure (timeout / server-gone) leaves any prior tokens in
+        // place; only an authoritative response (possibly empty) publishes.
         if (!tokens.has_value()) {
           return;
         }
@@ -736,7 +738,7 @@ void LspService::RequestLspInlayHints(const editor::TextViewport& viewport, LspC
   client.RequestInlayHintsAsync(
       uri, range,
       [this, project, uri, generation, encoding](
-          std::optional<std::vector<LspClient::InlayHint>> hints) mutable {
+          LspResult<std::vector<LspClient::InlayHint>> hints) mutable {
         if (!hints.has_value()) {
           return;
         }

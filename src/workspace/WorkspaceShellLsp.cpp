@@ -197,7 +197,7 @@ void WorkspaceShell::QueryLspDocumentSymbolsForOutline(const editor::TextViewpor
   client->RequestDocumentSymbolAsync(
       FileUriForPath(request_path),
       [this, request_path = std::move(request_path), plugin_error = std::move(plugin_error),
-       encoding, apply](std::optional<std::vector<LspClient::DocumentSymbol>> symbols) {
+       encoding, apply](LspResult<std::vector<LspClient::DocumentSymbol>> symbols) {
         FinishTrackedLspRequest();
         editor::TextViewport* current = ActiveEditorViewport();
         // Superseded (buffer/file switched): apply empty; ApplyLspOutlineResult

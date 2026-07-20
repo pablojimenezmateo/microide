@@ -19,6 +19,8 @@ namespace microide::tests {
 namespace {
 
 using microide::workspace::LspClient;
+using microide::workspace::LspRequestOutcome;
+using microide::workspace::LspResult;
 
 bool WaitForLspReadinessState(LspClient& client,
                               LspClient::ReadinessSnapshot::State state,
@@ -736,7 +738,7 @@ void TestWorkspaceLspClientSemanticTokensStubRoundTrip() {
   Expect(client.SemanticTokenLegend().size() == 3, "the stub legend is reported back");
 
   std::optional<std::vector<LspClient::SemanticToken>> received;
-  client.RequestSemanticTokensAsync("file:///s.cpp", [&](auto tokens) { received = std::move(tokens); });
+  client.RequestSemanticTokensAsync("file:///s.cpp", [&](auto tokens) { received = std::move(tokens.value); });
   client.DrainCallbacks();  // stub responses dispatch on the main-thread pump
 
   Expect(received.has_value() && received->size() == 1, "the stubbed token is delivered");
@@ -765,7 +767,7 @@ void TestWorkspaceLspClientInlayHintStubRoundTrip() {
 
   std::optional<std::vector<LspClient::InlayHint>> received;
   client.RequestInlayHintsAsync("file:///s.cpp", LspClient::Range{{0, 0}, {20, 0}},
-                                [&](auto hints) { received = std::move(hints); });
+                                [&](auto hints) { received = std::move(hints.value); });
   client.DrainCallbacks();
 
   Expect(received.has_value() && received->size() == 1, "the stubbed hint is delivered");
@@ -779,7 +781,7 @@ void TestWorkspaceLspClientInlayHintStubRoundTrip() {
   std::optional<std::vector<LspClient::InlayHint>> after_clear;
   bool called = false;
   client.RequestInlayHintsAsync("file:///s.cpp", LspClient::Range{{0, 0}, {1, 0}},
-                                [&](auto hints) { after_clear = std::move(hints); called = true; });
+                                [&](auto hints) { after_clear = std::move(hints.value); called = true; });
   client.DrainCallbacks();
   Expect(called && !after_clear.has_value(), "with no handler the stub reports no hints");
 }
@@ -800,7 +802,7 @@ void TestWorkspaceLspClientFormattingReturnsAllEdits() {
   });
 
   std::optional<std::vector<LspClient::TextEdit>> received;
-  client.RequestFormattingAsync("file:///s.cpp", 4, true, [&](auto edits) { received = std::move(edits); });
+  client.RequestFormattingAsync("file:///s.cpp", 4, true, [&](auto edits) { received = std::move(edits.value); });
   client.DrainCallbacks();
 
   Expect(received.has_value() && received->size() == 3,
@@ -1715,7 +1717,7 @@ while True:
 
   std::optional<std::vector<LspClient::CompletionItem>> received;
   client.RequestCompletionAsync("file:///tmp/s.py", LspClient::Position{0, 0},
-                                [&](auto items) { received = std::move(items); });
+                                [&](auto items) { received = std::move(items.value); });
 
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
   while (std::chrono::steady_clock::now() < deadline && !received.has_value()) {
@@ -1802,7 +1804,7 @@ while True:
 
   std::optional<std::vector<LspClient::CompletionItem>> received;
   client.RequestCompletionAsync("file:///tmp/s.py", LspClient::Position{0, 0},
-                                [&](auto items) { received = std::move(items); });
+                                [&](auto items) { received = std::move(items.value); });
 
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
   while (std::chrono::steady_clock::now() < deadline && !received.has_value()) {
@@ -1856,8 +1858,13 @@ time.sleep(0.3)
   // be failed (callback invoked with no result), not silently dropped -> otherwise
   // its UI loading state strands forever.
   std::atomic<bool> hover_called{false};
+  std::atomic<int> hover_outcome{-1};
+  std::atomic<bool> hover_answered{true};
   client.RequestHoverAsync("file:///tmp/a.py", LspClient::Position{0, 0},
-                           [&hover_called](std::optional<util::JsonValue>) {
+                           [&](LspResult<util::JsonValue> r) {
+                             hover_outcome.store(static_cast<int>(r.outcome),
+                                                 std::memory_order_release);
+                             hover_answered.store(r.answered(), std::memory_order_release);
                              hover_called.store(true, std::memory_order_release);
                            });
 
@@ -1871,10 +1878,180 @@ time.sleep(0.3)
   Expect(!client.IsInitialized(), "init should have failed (server never responded)");
   Expect(hover_called.load(std::memory_order_acquire),
          "a request registered during a failed init must have its callback failed, not dropped");
+  // The server can never answer -> the outcome is Unavailable, and answered() is
+  // false so the UI does not mistake it for an authoritative empty result.
+  Expect(hover_outcome.load(std::memory_order_acquire) ==
+             static_cast<int>(LspRequestOutcome::kUnavailable),
+         "a failed-init pending request reports the Unavailable outcome");
+  Expect(!hover_answered.load(std::memory_order_acquire),
+         "an unavailable request is not an authoritative answer");
   client.Shutdown();
 }
 
+// A minimal LSP server fixture the outcome-taxonomy tests reuse: it responds to
+// initialize (advertising hover + definition), then dispatches on a per-method
+// script — never responding to `hover` (to exercise the timeout sweep), erroring on
+// `signatureHelp`, and returning an authoritative empty `[]` for `definition`.
+#if defined(__unix__) || defined(__APPLE__)
+constexpr const char* kOutcomeFixtureServer = R"py(import json
+import sys
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": {"capabilities": {
+            "hoverProvider": True, "definitionProvider": True,
+            "signatureHelpProvider": {}}}})
+    elif method == "textDocument/hover":
+        pass  # deliberately never answer -> the client's deadline sweep must fire
+    elif method == "textDocument/signatureHelp":
+        write_message({"jsonrpc": "2.0", "id": msg["id"],
+                       "error": {"code": -32603, "message": "boom"}})
+    elif method == "textDocument/definition":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": []})
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py";
+
+template <typename Request>
+void PumpUntilOutcomeDelivered(LspClient& client, const std::atomic<bool>& done,
+                              std::chrono::milliseconds budget) {
+  const auto deadline = std::chrono::steady_clock::now() + budget;
+  while (std::chrono::steady_clock::now() < deadline && !done.load(std::memory_order_acquire)) {
+    client.DrainCallbacks();
+    if (!client.IsRunning()) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  client.DrainCallbacks();
+}
+#endif
+
+// A silent server (never answers hover) must resolve the request as a Timeout, not a
+// silent empty success -> so a slow/hung server no longer reads as "no hover here".
+void TestWorkspaceLspClientTimeoutReportsTimeoutOutcome() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+#if defined(__unix__) || defined(__APPLE__)
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "silent-hover.py";
+  WriteFile(server_path, std::string(kOutcomeFixtureServer));
+
+  LspClient client;
+  // Shorten the per-request deadline so the sweep fires quickly instead of at 30s.
+  client.SetRequestTimeoutForTesting(std::chrono::milliseconds(150));
+  Expect(client.Start({"python3", server_path.string()}, "file:///tmp", "python"),
+         "outcome fixture should start");
+
+  std::atomic<bool> done{false};
+  std::atomic<int> outcome{-1};
+  std::atomic<bool> answered{true};
+  client.RequestHoverAsync("file:///tmp/a.py", LspClient::Position{0, 0},
+                           [&](LspResult<util::JsonValue> r) {
+                             outcome.store(static_cast<int>(r.outcome), std::memory_order_release);
+                             answered.store(r.answered(), std::memory_order_release);
+                             done.store(true, std::memory_order_release);
+                           });
+  PumpUntilOutcomeDelivered<int>(client, done, std::chrono::seconds(5));
+
+  Expect(done.load(std::memory_order_acquire), "the silent hover request must be resolved, not stranded");
+  Expect(outcome.load(std::memory_order_acquire) == static_cast<int>(LspRequestOutcome::kTimeout),
+         "a request the server never answers reports the Timeout outcome");
+  Expect(!answered.load(std::memory_order_acquire),
+         "a timed-out request is not an authoritative empty answer");
+  client.Shutdown();
+#endif
+}
+
+// A JSON-RPC error response is a ProtocolError (not answered); an empty `[]` result
+// is an authoritative empty answer (answered, so "No X found" is still correct).
+void TestWorkspaceLspClientOutcomeTaxonomy() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+#if defined(__unix__) || defined(__APPLE__)
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "outcome.py";
+  WriteFile(server_path, std::string(kOutcomeFixtureServer));
+
+  LspClient client;
+  Expect(client.Start({"python3", server_path.string()}, "file:///tmp", "python"),
+         "outcome fixture should start");
+
+  // 1. signatureHelp -> JSON-RPC error -> ProtocolError, not answered.
+  std::atomic<bool> sig_done{false};
+  std::atomic<int> sig_outcome{-1};
+  std::atomic<bool> sig_answered{true};
+  client.RequestSignatureHelpAsync("file:///tmp/a.py", LspClient::Position{0, 0},
+                                   [&](LspResult<LspClient::SignatureHelp> r) {
+                                     sig_outcome.store(static_cast<int>(r.outcome),
+                                                       std::memory_order_release);
+                                     sig_answered.store(r.answered(), std::memory_order_release);
+                                     sig_done.store(true, std::memory_order_release);
+                                   });
+  PumpUntilOutcomeDelivered<int>(client, sig_done, std::chrono::seconds(5));
+  Expect(sig_outcome.load(std::memory_order_acquire) ==
+             static_cast<int>(LspRequestOutcome::kProtocolError),
+         "a server error response reports the ProtocolError outcome");
+  Expect(!sig_answered.load(std::memory_order_acquire),
+         "a protocol error is not an authoritative answer");
+
+  // 2. definition -> [] -> answered empty (Ok with an empty list), so the caller's
+  //    own emptiness check still drives the "No definition found" message.
+  std::atomic<bool> def_done{false};
+  std::atomic<bool> def_answered{false};
+  std::atomic<bool> def_empty{false};
+  client.RequestGoToDefinitionAsync("file:///tmp/a.py", LspClient::Position{0, 0},
+                                    [&](LspResult<std::vector<LspClient::Location>> r) {
+                                      def_answered.store(r.answered(), std::memory_order_release);
+                                      def_empty.store(r.has_value() && r->empty(),
+                                                      std::memory_order_release);
+                                      def_done.store(true, std::memory_order_release);
+                                    });
+  PumpUntilOutcomeDelivered<int>(client, def_done, std::chrono::seconds(5));
+  Expect(def_answered.load(std::memory_order_acquire),
+         "an authoritative empty [] result is answered (not a transport failure)");
+  Expect(def_empty.load(std::memory_order_acquire),
+         "the empty result carries a present-but-empty location list");
+  client.Shutdown();
+#endif
+}
+
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceLspClient/TimeoutReportsTimeoutOutcome",
+          TestWorkspaceLspClientTimeoutReportsTimeoutOutcome);
+  AddTest(tests, "WorkspaceLspClient/OutcomeTaxonomy",
+          TestWorkspaceLspClientOutcomeTaxonomy);
   AddTest(tests, "WorkspaceLspClient/InitFailureFailsPendingRequest",
           TestWorkspaceLspClientInitFailureFailsPendingRequest);
   AddTest(tests, "WorkspaceLspClient/AcceptsFloatEchoedResponseId",

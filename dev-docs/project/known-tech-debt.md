@@ -104,8 +104,9 @@ they land.
    stop/terminate escalation (026).
 5. **Scanner/search incomplete-state plumbing** — surface complete/truncated/incomplete
    status (008/033); targeted fallback rescan (009).
-6. **LSP completeness** — resource ops + version-aware edits (011), explicit timeout result
-   variants (012).
+6. **LSP completeness** — resource ops + version-aware edits (011); explicit timeout result
+   variants (012) **[RESOLVED 2026-07-20 — `LspResult<T>` outcome taxonomy; see the LSP
+   feature-completeness subsection]**.
 7. **Plugin registry** — O(1) duplicate-id detection (077) **[RESOLVED 2026-07-18 — per-kind
    id index]**; per-field byte caps (018) **[RESOLVED 2026-07-19 — central ToHostString
    backstop + per-surface render caps; see the Plugin caps / policy subsection]**;
@@ -2520,8 +2521,27 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   with atomic/rollback-safe staging. (The *async apply* facet — load/save closed files
   off-thread — is RESOLVED under **TD-2026-07-16-18**; this remaining facet is the net-new
   resource-operation FEATURE support, not a perf/correctness bug.)
-- **012 — replace empty-success-shaped LSP timeouts with explicit result variants**
-  (success / empty_success / timeout / cancelled / protocol_error).
+- **[RESOLVED 2026-07-20] 012 — replace empty-success-shaped LSP timeouts with explicit
+  result variants.** Every async LSP request now delivers an `LspResult<T>` carrying an
+  `LspRequestOutcome` (`kOk` / `kEmpty` / `kTimeout` / `kUnavailable` / `kProtocolError`)
+  alongside the parsed value, replacing the overloaded `std::optional<T>` where a
+  timed-out or errored request was shaped identically to an authoritative empty answer.
+  The taxonomy is computed once in the shared `DispatchResultRequest` scaffolding: the
+  deadline sweep reports `kTimeout`, the EOF/send-failure paths report `kUnavailable`, a
+  JSON-RPC `error` (or a frame with neither `result` nor `error`) reports `kProtocolError`,
+  and a real payload refines to `kOk`/`kEmpty`. `LspResult<T>` keeps the old callback
+  ergonomics (`if (r)`, `*r`, `r->x`, `r.has_value()`), plus `answered()` (kOk||kEmpty) so
+  callers distinguish "the server said nothing here" from "the server never answered".
+  **User-visible fix:** go-to-definition / references / type-definition / implementation /
+  declaration / workspace-symbol / rename / formatting no longer report "No X found" (or
+  "No rename edits" / "No formatting changes") when the request actually timed out or
+  errored — they surface a "Language server did not respond" message instead (the merge
+  path carries a `TwoSourceState::lsp_failed` flag so a transport failure does not read as
+  an authoritative empty). Regressions: `WorkspaceLspClient/TimeoutReportsTimeoutOutcome`
+  (silent server → `kTimeout`, `!answered()`), `WorkspaceLspClient/OutcomeTaxonomy` (error
+  response → `kProtocolError`; empty `[]` → answered), and the tightened
+  `WorkspaceLspClient/InitFailureFailsPendingRequest` (server-gone → `kUnavailable`). Test
+  seam: `LspClient::SetRequestTimeoutForTesting`.
 
 **Plugin caps / policy:**
 

@@ -143,7 +143,7 @@ bool AssistService::ShowCompletionOverlay(std::string* error_message) {
         FileUriForPath(request_path),
         ByteColumnToLspPosition(*viewport, request_line, viewport->cursor_column(), encoding),
         [this, request_path, encoding, merge](
-            std::optional<std::vector<LspClient::CompletionItem>> items) {
+            LspResult<std::vector<LspClient::CompletionItem>> items) {
           operations_.finish_tracked_lsp_request();
           merge->sources.lsp_pending = false;
           // finish_tracked above must run first so the in-flight counter is not
@@ -193,7 +193,7 @@ std::vector<CompletionSessionItem> AssistService::TransformPluginCompletions(
 }
 
 std::vector<CompletionSessionItem> AssistService::TransformLspCompletions(
-    const std::optional<std::vector<LspClient::CompletionItem>>& items,
+    const LspResult<std::vector<LspClient::CompletionItem>>& items,
     lsp_encoding::PositionEncoding encoding) const {
   std::vector<CompletionSessionItem> result;
   if (!items.has_value()) {
@@ -610,7 +610,7 @@ bool AssistService::ShowCodeActionsOverlay(std::string* error_message,
             .end = ByteColumnToLspPosition(*viewport, range.end.line, range.end.column, encoding),
         },
         std::move(context_diagnostics),
-        [this, request_path, merge](std::optional<std::vector<LspClient::CodeAction>> actions) {
+        [this, request_path, merge](LspResult<std::vector<LspClient::CodeAction>> actions) {
           operations_.finish_tracked_lsp_request();
           merge->sources.lsp_pending = false;
           if (ResultIsStale(operations_.active_editable_viewport(), request_path) ||
@@ -655,7 +655,7 @@ std::vector<CodeActionSessionItem> AssistService::TransformPluginCodeActions(
 }
 
 std::vector<CodeActionSessionItem> AssistService::TransformLspCodeActions(
-    const std::optional<std::vector<LspClient::CodeAction>>& actions) {
+    const LspResult<std::vector<LspClient::CodeAction>>& actions) {
   std::vector<CodeActionSessionItem> result;
   if (!actions.has_value()) {
     return result;
@@ -829,9 +829,10 @@ bool AssistService::GoToLspDefinition(std::string* error_message) {
     client->RequestGoToDefinitionAsync(
         FileUriForPath(request_path),
         ByteColumnToLspPosition(*viewport, request_line, request_column, merge->lsp_encoding),
-        [this, request_path, merge](std::optional<std::vector<LspClient::Location>> locations) {
+        [this, request_path, merge](LspResult<std::vector<LspClient::Location>> locations) {
           operations_.finish_tracked_lsp_request();
           merge->sources.lsp_pending = false;
+          merge->sources.lsp_failed = !locations.answered();
           if (locations.has_value()) {
             merge->lsp_locations = std::move(*locations);
           }
@@ -873,7 +874,13 @@ void AssistService::ResolveDefinitionNavigation(const std::shared_ptr<Navigation
       return;
     case assist_merge::NavChoice::None:
       merge->acted = true;
-      output_channels_->AppendLine("lsp.definition", "LSP Definition", "No definition found");
+      // Both sources ended up empty. If the language server never actually answered
+      // (timeout / gone / protocol error), don't claim "No definition found" for a
+      // request it never resolved.
+      output_channels_->AppendLine(
+          "lsp.definition", "LSP Definition",
+          merge->sources.lsp_failed ? "Language server did not respond (no definition resolved)"
+                                    : "No definition found");
       return;
     case assist_merge::NavChoice::UsePlugin:
       merge->acted = true;
@@ -927,10 +934,15 @@ bool AssistService::GoToLspNavigation(LspNavigationKind kind, std::string* error
                                                                           : "No declaration found";
   const std::uint64_t request_generation = ++navigation_request_generation_;
   auto on_result = [this, request_path, encoding, empty_message, request_generation](
-                       std::optional<std::vector<LspClient::Location>> locations) {
+                       LspResult<std::vector<LspClient::Location>> locations) {
     operations_.finish_tracked_lsp_request();
     if (request_generation != navigation_request_generation_ ||
         ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+      return;
+    }
+    if (!locations.answered()) {
+      output_channels_->AppendLine("lsp.definition", "LSP Definition",
+                                   "Language server did not respond");
       return;
     }
     if (!locations.has_value() || locations->empty()) {
@@ -996,9 +1008,10 @@ bool AssistService::FindLspReferences(std::string* error_message) {
         ByteColumnToLspPosition(*viewport, request_line, request_column,
                                 LspEncodingForClient(*client)),
         true,
-        [this, request_path, merge](std::optional<std::vector<LspClient::Location>> locations) {
+        [this, request_path, merge](LspResult<std::vector<LspClient::Location>> locations) {
           operations_.finish_tracked_lsp_request();
           merge->sources.lsp_pending = false;
+          merge->sources.lsp_failed = !locations.answered();
           if (locations.has_value()) {
             merge->lsp_locations = std::move(*locations);
           }
@@ -1068,7 +1081,11 @@ void AssistService::PublishReferenceMerge(const std::shared_ptr<NavigationMerge>
 
   output_channels_->Clear("lsp.references");
   if (merged.empty()) {
-    output_channels_->AppendLine("lsp.references", "LSP References", "No references found");
+    // Distinguish an authoritative empty result from an LSP that never answered.
+    output_channels_->AppendLine(
+        "lsp.references", "LSP References",
+        merge->sources.lsp_failed ? "Language server did not respond (no references resolved)"
+                                  : "No references found");
     return;
   }
   std::map<std::filesystem::path, std::vector<std::string>> file_line_cache;
@@ -1101,7 +1118,7 @@ bool AssistService::ShowWorkspaceSymbols(const std::string& query, std::string* 
   client->RequestWorkspaceSymbolAsync(
       query,
       [this, query, request_generation](
-          std::optional<std::vector<LspClient::WorkspaceSymbol>> symbols) {
+          LspResult<std::vector<LspClient::WorkspaceSymbol>> symbols) {
         operations_.finish_tracked_lsp_request();
         // Drop a superseded query's response so it can't clear the channel and render
         // stale results over the newer query (TD-2026-07-17A-034).
@@ -1109,6 +1126,11 @@ bool AssistService::ShowWorkspaceSymbols(const std::string& query, std::string* 
           return;
         }
         output_channels_->Clear("lsp.workspaceSymbols");
+        if (!symbols.answered()) {
+          output_channels_->AppendLine("lsp.workspaceSymbols", "Workspace Symbols",
+                                       "Language server did not respond");
+          return;
+        }
         if (!symbols.has_value() || symbols->empty()) {
           output_channels_->AppendLine("lsp.workspaceSymbols", "Workspace Symbols",
                                        "No symbols matching \"" + query + "\"");
@@ -1183,9 +1205,14 @@ bool AssistService::RenameSymbol(const std::string& new_name, std::string* error
       ByteColumnToLspPosition(*viewport, viewport->cursor_line(), viewport->cursor_column(), encoding);
   client->RequestRenameAsync(
       FileUriForPath(request_path), position, new_name,
-      [this, request_path, new_name](std::optional<LspClient::WorkspaceEdit> edit) {
+      [this, request_path, new_name](LspResult<LspClient::WorkspaceEdit> edit) {
         operations_.finish_tracked_lsp_request();
         if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+          return;
+        }
+        if (!edit.answered()) {
+          output_channels_->AppendLine("lsp.log", "LSP Log",
+                                       "Rename request did not complete (server timed out or errored)");
           return;
         }
         if (!edit.has_value() || edit->changes.empty()) {
@@ -1254,13 +1281,13 @@ void AssistService::PrepareRenameForCursor(std::function<void(bool, std::string)
   client->RequestPrepareRenameAsync(
       FileUriForPath(request_path), position,
       [this, request_path, callback = std::move(callback)](
-          std::optional<LspClient::PrepareRename> result) {
+          LspResult<LspClient::PrepareRename> result) {
         // Only meaningful while the same buffer is active; a switch abandons refine.
         if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
           return;
         }
         if (!result.has_value()) {
-          return;  // no provider / error — the caller keeps its heuristic seed
+          return;  // no provider / timeout / error — the caller keeps its heuristic seed
         }
         callback(result->can_rename, result->placeholder);
       });
@@ -1284,7 +1311,7 @@ bool AssistService::FormatActiveDocument(std::string* error_message) {
   const std::filesystem::path request_path = viewport->path();
   const int tab_size = static_cast<int>(viewport->indent_width() > 0 ? viewport->indent_width() : 4);
   const auto on_result = [this, request_path](
-                             std::optional<std::vector<LspClient::TextEdit>> edits) {
+                             LspResult<std::vector<LspClient::TextEdit>> edits) {
     ApplyFormattingResult(request_path, std::move(edits));
   };
   // Format the SELECTION only when there is one (VSCode "Format Selection"), else the
@@ -1310,10 +1337,15 @@ bool AssistService::FormatActiveDocument(std::string* error_message) {
 }
 
 void AssistService::ApplyFormattingResult(const std::filesystem::path& request_path,
-                                          std::optional<std::vector<LspClient::TextEdit>> edits) {
+                                          LspResult<std::vector<LspClient::TextEdit>> edits) {
   operations_.finish_tracked_lsp_request();
   // Drop superseded results (buffer switched/closed) before mutating.
   if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+    return;
+  }
+  if (!edits.answered()) {
+    output_channels_->AppendLine("lsp.log", "LSP Log",
+                                 "Formatting request did not complete (server timed out or errored)");
     return;
   }
   if (!edits.has_value() || edits->empty()) {
@@ -1473,7 +1505,7 @@ bool AssistService::ShowSignatureHelp(std::string* error_message) {
     client->RequestSignatureHelpAsync(
         FileUriForPath(request_path),
         ByteColumnToLspPosition(*viewport, request_line, request_column, encoding),
-        [this, request_path, merge](std::optional<LspClient::SignatureHelp> help) {
+        [this, request_path, merge](LspResult<LspClient::SignatureHelp> help) {
           operations_.finish_tracked_lsp_request();
           merge->sources.lsp_pending = false;
           if (help.has_value()) {

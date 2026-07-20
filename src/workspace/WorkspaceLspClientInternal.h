@@ -82,11 +82,19 @@ struct LspClient::Impl {
   // loading state) forever: the I/O loop sweeps expired requests and synthesizes an
   // empty response, which every handler treats as "no result". Mirrors the DAP
   // client's timeout sweep.
+  // The callback receives the transport-level outcome plus the response envelope.
+  // The outcome is kOk when a real frame arrived (DispatchResultRequest then refines
+  // it to kOk/kEmpty/kProtocolError by inspecting the payload); kTimeout / kUnavailable
+  // when the sweep synthesizes a failure (the envelope is then an empty `{}`).
   struct PendingRequest {
-    std::function<void(util::JsonValue)> callback;
+    std::function<void(LspRequestOutcome, util::JsonValue)> callback;
     std::chrono::steady_clock::time_point deadline;
   };
   std::unordered_map<int, PendingRequest> pending_requests;
+
+  // Per-request timeout; kLspRequestTimeout in production, lowered by tests so the
+  // deadline sweep can be exercised without a 30s wait.
+  std::chrono::milliseconds request_timeout_ = kLspRequestTimeout;
 
   // Callbacks marshalled to the main thread and drained once per frame. Carries
   // its own mutex + SDL wake event, so it is the innermost lock: producers may
@@ -349,12 +357,12 @@ struct LspClient::Impl {
   // progress. Defined in WorkspaceLspClientDispatch.cpp.
   void DispatchMessage(util::JsonValue msg);
 
-  int RegisterPendingRequest(std::function<void(util::JsonValue)> cb) {
+  int RegisterPendingRequest(std::function<void(LspRequestOutcome, util::JsonValue)> cb) {
     std::lock_guard lock(mutex);
     const int id = next_id++;
     pending_requests[id] = PendingRequest{
         .callback = std::move(cb),
-        .deadline = std::chrono::steady_clock::now() + kLspRequestTimeout,
+        .deadline = std::chrono::steady_clock::now() + request_timeout_,
     };
     return id;
   }
@@ -406,7 +414,7 @@ struct LspClient::Impl {
   // send the request, and on send failure clean up and invoke the failure path.
   // Keeps the per-method code to "build params" + "parse result".
   void DispatchRequest(const std::string& method, util::JsonValue params,
-                       std::function<void(util::JsonValue)> response_handler,
+                       std::function<void(LspRequestOutcome, util::JsonValue)> response_handler,
                        std::function<void()> on_send_failure) {
     const int id = RegisterPendingRequest(std::move(response_handler));
     if (!SendMessageAfterInitialize(MakeRequest(id, method, std::move(params)))) {
@@ -431,23 +439,45 @@ struct LspClient::Impl {
     if (!callback) {
       return;
     }
+    // T is the payload the parser yields (parse_result returns std::optional<T>);
+    // the callback takes LspResult<T>.
+    using OptT = std::decay_t<std::invoke_result_t<Parser&, util::JsonValue&>>;
+    using ResultT = LspResult<typename OptT::value_type>;
     Callback failure = callback;
     DispatchRequest(
         method, std::move(params),
         [cb = std::move(callback), parse_result = std::move(parse_result)](
-            util::JsonValue resp) mutable {
+            LspRequestOutcome transport, util::JsonValue resp) mutable {
+          // A synthesized transport failure (timeout / server-gone) carries no
+          // payload: deliver the reason so the caller does not mistake it for an
+          // authoritative empty answer.
+          if (transport != LspRequestOutcome::kOk) {
+            cb(ResultT(transport, std::nullopt));
+            return;
+          }
+          // A real frame arrived. A JSON-RPC error response, or a frame with neither
+          // `result` nor `error`, is a protocol error — again NOT an empty answer.
+          if (util::JsonValue* error = resp.MutableAt("error"); error != nullptr && !error->IsNull()) {
+            cb(ResultT(LspRequestOutcome::kProtocolError, std::nullopt));
+            return;
+          }
           // The response is owned here, so hand the `result` subtree to the parser
           // as a mutable lvalue: hot parsers (completion/code-action) move their
           // strings out instead of copying. MutableAt is non-null iff the key is
           // present (matches the old HasKey guard, incl. a null `result`).
           util::JsonValue* result = resp.MutableAt("result");
           if (result == nullptr) {
-            cb({});
+            cb(ResultT(LspRequestOutcome::kProtocolError, std::nullopt));
             return;
           }
-          cb(parse_result(*result));
+          OptT parsed = parse_result(*result);
+          const LspRequestOutcome outcome =
+              parsed.has_value() ? LspRequestOutcome::kOk : LspRequestOutcome::kEmpty;
+          cb(ResultT(outcome, std::move(parsed)));
         },
-        [failure = std::move(failure)]() mutable { failure({}); });
+        [failure = std::move(failure)]() mutable {
+          failure(ResultT(LspRequestOutcome::kUnavailable, std::nullopt));
+        });
   }
 
   // The blocking initialize handshake: advertise client capabilities, read and
