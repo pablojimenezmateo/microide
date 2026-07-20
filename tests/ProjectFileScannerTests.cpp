@@ -175,10 +175,10 @@ void TestScannerPrunesDefaultsAndUserExcludes() {
   Expect(ContainsName(excluded_scan, "main.cpp"), "real sources remain after exclusion");
 }
 
-// A scan that completes reports incomplete=false; a scan that hits the entry
-// budget reports incomplete=true and returns only a prefix of the tree, so the
-// caller can surface "index incomplete" instead of a silently-authoritative
-// partial list (TD-2026-07-17-008/033).
+// A scan that completes reports a clean status; a scan that hits the entry budget
+// reports truncated_by_budget and returns only a prefix of the tree, so the caller
+// can surface "index incomplete" instead of a silently-authoritative partial list
+// (TD-2026-07-17-008/033).
 void TestScannerReportsEntryBudgetTruncation() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -186,19 +186,61 @@ void TestScannerReportsEntryBudgetTruncation() {
     WriteFile(root / ("f" + std::to_string(i) + ".txt"), "x\n");
   }
 
-  bool incomplete = true;
+  microide::project::ProjectFileScanStatus status;
   const auto complete_scan = CollectProjectFiles(root, ProjectFileScanMode::IncludeHidden, false,
-                                                 {}, &incomplete);
-  Expect(!incomplete, "a scan under the entry budget reports complete");
+                                                 {}, &status);
+  Expect(!status.incomplete(), "a scan under the entry budget reports complete");
   Expect(complete_scan.size() == 8, "a complete scan lists every file");
 
   // Force truncation with a tiny entry budget rather than materializing a 50k tree.
-  bool truncated_flag = false;
+  microide::project::ProjectFileScanStatus budget_status;
   const auto truncated_scan = CollectProjectFiles(
-      root, ProjectFileScanMode::IncludeHidden, false, {}, &truncated_flag, /*entry_budget=*/3);
-  Expect(truncated_flag, "a scan that exhausts the entry budget reports incomplete");
+      root, ProjectFileScanMode::IncludeHidden, false, {}, &budget_status, /*entry_budget=*/3);
+  Expect(budget_status.truncated_by_budget,
+         "a scan that exhausts the entry budget reports truncated_by_budget");
+  Expect(budget_status.incomplete(), "budget truncation is an incomplete scan");
+  Expect(!budget_status.permission_limited && !budget_status.error,
+         "a pure budget truncation does not spuriously flag permission/error");
   Expect(truncated_scan.size() < complete_scan.size(),
          "a truncated scan returns only a prefix of the tree");
+}
+
+// A directory the process cannot open is reported as permission_limited (not
+// silently skipped) while readable siblings are still indexed. Root-run CI can
+// read 0000 dirs, so the assertion is gated on the mode actually taking effect.
+void TestScannerReportsPermissionLimited() {
+#if defined(_WIN32)
+  return;  // POSIX permission semantics
+#else
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "readable.txt", "ok\n");
+  const std::filesystem::path locked = root / "locked";
+  WriteFile(locked / "secret.txt", "no\n");
+
+  std::error_code ec;
+  std::filesystem::permissions(locked, std::filesystem::perms::none, ec);
+  Expect(!ec, "permission fixture should apply");
+
+  // Skip the assertion when the walker can still read the dir (e.g. running as
+  // root): the fixture is a no-op there, so there is nothing to assert.
+  std::error_code probe_ec;
+  std::filesystem::directory_iterator probe(locked, probe_ec);
+  const bool actually_locked = static_cast<bool>(probe_ec);
+
+  microide::project::ProjectFileScanStatus status;
+  const auto files =
+      CollectProjectFiles(root, ProjectFileScanMode::IncludeHidden, false, {}, &status);
+  Expect(ContainsName(files, "readable.txt"), "readable siblings are still indexed");
+  if (actually_locked) {
+    Expect(status.permission_limited,
+           "an unreadable directory must be reported as permission_limited");
+    Expect(status.incomplete(), "permission-limited is an incomplete scan");
+    Expect(!ContainsName(files, "secret.txt"), "an unreadable dir's contents are not indexed");
+  }
+  // Restore perms so the temp dir can be cleaned up.
+  std::filesystem::permissions(locked, std::filesystem::perms::owner_all, ec);
+#endif
 }
 
 }  // namespace
@@ -206,6 +248,8 @@ void TestScannerReportsEntryBudgetTruncation() {
 void RegisterProjectFileScannerTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ProjectFileScanner/ReportsEntryBudgetTruncation",
           TestScannerReportsEntryBudgetTruncation);
+  AddTest(tests, "ProjectFileScanner/ReportsPermissionLimited",
+          TestScannerReportsPermissionLimited);
   AddTest(tests, "ProjectFileScanner/PrunesDefaultsAndUserExcludes",
           TestScannerPrunesDefaultsAndUserExcludes);
   AddTest(tests, "ProjectFileScanner/DoesNotFollowRootEscapingSymlink",

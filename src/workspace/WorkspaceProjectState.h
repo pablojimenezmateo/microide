@@ -168,6 +168,12 @@ struct ProjectSearchState {
   std::size_t total_matches = 0;
   bool running = false;
   bool truncated = false;
+  // True when the file index the candidate set was drawn from was itself
+  // incomplete (project too large / too deep / unreadable folders): the search
+  // never saw some files, so its results are not authoritative over the whole
+  // tree. Distinct from `truncated`, which is the display match-count cap
+  // (TD-2026-07-17-008/033). Pinned from FileIndex::truncated() at search start.
+  bool index_incomplete = false;
   std::string error;
 };
 

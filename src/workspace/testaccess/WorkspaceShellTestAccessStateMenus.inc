@@ -453,6 +453,9 @@
   static bool ProjectSearchTruncated(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.truncated;
   }
+  static bool ProjectSearchIndexIncomplete(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.project_search.index_incomplete;
+  }
   static const std::string& ProjectSearchError(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.error;
   }

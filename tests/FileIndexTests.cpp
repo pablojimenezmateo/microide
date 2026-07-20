@@ -292,12 +292,14 @@ void TestFileIndexMovePreservesFollowSymlinksFlag() {
   Expect(!off_moved.FollowOutOfRootSymlinks(), "a cleared flag must also survive the move");
 }
 
-// A forced rescan (ScanFiles -> ReplaceScannedFiles) carries the scan's
-// truncation outcome into truncated(): incomplete=true asserts it, and a later
-// complete rescan clears it rather than leaving the prior root's "truncated"
-// state asserted over a freshly scanned tree (TD-2026-07-17-008/033).
+// A forced rescan (ScanFiles -> ReplaceScannedFiles) carries the scan's status
+// into truncated()/scan_status(): a budget-truncated status asserts it (with the
+// specific cause preserved), and a later complete rescan clears it rather than
+// leaving the prior root's "truncated" state asserted over a freshly scanned tree
+// (TD-2026-07-17-008/033).
 void TestFileIndexReplaceScannedFilesCarriesTruncation() {
   using microide::project::ProjectFile;
+  using microide::project::ProjectFileScanStatus;
   FileIndex index;
 
   std::vector<ProjectFile> files;
@@ -305,12 +307,15 @@ void TestFileIndexReplaceScannedFilesCarriesTruncation() {
   a.relative_path = "a.txt";
   files.push_back(a);
 
-  index.ReplaceScannedFiles(files, /*incomplete=*/true);
+  index.ReplaceScannedFiles(files, ProjectFileScanStatus{.truncated_by_budget = true});
   Expect(index.truncated(), "an incomplete rescan marks the index truncated");
+  Expect(index.scan_status().truncated_by_budget,
+         "the specific truncation cause is preserved on the index");
 
-  index.ReplaceScannedFiles(files, /*incomplete=*/false);
+  index.ReplaceScannedFiles(files, ProjectFileScanStatus{});
   Expect(!index.truncated(),
          "a subsequent complete rescan clears the stale truncation flag");
+  Expect(!index.scan_status().incomplete(), "a complete rescan clears every cause");
 }
 
 void RegisterFileIndexTests(std::vector<TestCase>& tests) {

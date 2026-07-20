@@ -6,7 +6,29 @@
 #include <string>
 #include <string_view>
 
+#include "project/ProjectFileScanner.h"
+
 namespace microide::workspace {
+
+// A short, cause-specific note for an incomplete file-index scan, or an empty
+// view when the scan was complete (TD-2026-07-17-008/033). Returns a static
+// literal so render callers never materialize a string. Precedence favors the
+// most consequential cause (too large > too deep > unreadable folders > error).
+inline std::string_view ScanIncompleteNote(const project::ProjectFileScanStatus& status) {
+  if (status.truncated_by_budget) {
+    return "index incomplete — project too large";
+  }
+  if (status.truncated_by_depth) {
+    return "index incomplete — tree too deep";
+  }
+  if (status.permission_limited) {
+    return "index incomplete — some folders unreadable";
+  }
+  if (status.error) {
+    return "index incomplete";
+  }
+  return {};
+}
 
 inline void AppendUnsigned(std::string& out, std::size_t value) {
   std::array<char, 20> scratch;

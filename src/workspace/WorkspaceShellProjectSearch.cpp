@@ -119,6 +119,7 @@ void WorkspaceShell::RefreshProjectSearch() {
   ++context_.current_project_state.overlay.workflow.project_search.results_revision;
   context_.current_project_state.overlay.workflow.project_search.selected_index = 0;
   context_.current_project_state.overlay.workflow.project_search.truncated = false;
+  context_.current_project_state.overlay.workflow.project_search.index_incomplete = false;
   context_.current_project_state.overlay.workflow.project_search.error.clear();
   context_.current_project_state.overlay.workflow.project_search.searched_files = 0;
   context_.current_project_state.overlay.workflow.project_search.total_files = 0;
@@ -139,6 +140,10 @@ void WorkspaceShell::RefreshProjectSearch() {
                                                            : project::ProjectFileScanMode::ExcludeHidden;
   const project::FilePathSnapshot file_snapshot =
       context_.current_project_state.file_index.SnapshotPathsWithVersion(scan_mode);
+  // Pin the catalog's completeness at search start: if the index is only a prefix
+  // of the tree, the search can't have seen every file (TD-2026-07-17-008/033).
+  context_.current_project_state.overlay.workflow.project_search.index_incomplete =
+      context_.current_project_state.file_index.truncated();
   util::AddPerformanceCounter(util::PerfCounterId::SearchProjectCandidateFilesFromIndex,
                               file_snapshot.files ? file_snapshot.files->size() : 0);
   project_search_runtime_.Start(context_.current_project_state.root,

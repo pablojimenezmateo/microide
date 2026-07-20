@@ -2457,34 +2457,55 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Scanner / search incomplete-state plumbing (land together):**
 
-> **[PARTIAL 2026-07-19 — file-finder slice landed; search/tree surfaces + 009 still deferred]**
-> The scanner → index → file-finder truncation slice of 008/033 shipped (see the RESOLVED
-> marker below). The remaining deferred work is the *search-result* and *directory-tree*
-> surfacing plus the richer status taxonomy (permission_limited / error), and 009 (degrade
-> the fallback watcher's full-tree snapshot to a targeted rescan) is native-watcher work.
-> The still-unsurfaced partial-result cases are silent but not incorrect (results returned
-> are real). Pairs with the async 081/082/086 watcher work.
+> **[RESOLVED 2026-07-20 for 008/033's finder+search+taxonomy; directory-tree surfacing +
+> 009's incremental-hashing rewrite remain, with rationale below]** The scanner-status
+> taxonomy and its file-finder + project-search surfacing shipped (see the RESOLVED marker).
+> What remains is (a) directory-*tree* surfacing — deliberately not built, low value (the
+> tree is lazily expanded per-folder, so it never presents an authoritative "complete list"
+> the way the flat finder/search catalog does; its only realistic incompleteness is a
+> permission-denied folder rendering empty, which matches VSCode), and (b) 009's *incremental
+> directory hashing* — a behavior-risky native poll-loop rewrite on a surface that can't be
+> verified on this host. 009's user-facing half (a "banner" when the watcher gives up on a
+> too-large tree) is already covered: the watcher's initial-batch budget truncation flows
+> through `batch.truncated → FileIndex::scan_status().truncated_by_budget`, which the new
+> finder/search notes surface.
 
-- **[PARTIAL 2026-07-19] 008 / 033 — surface a scanner result status** (complete /
-  truncated_by_budget / permission_limited / error) and thread searched/skipped/
-  incomplete-catalog through the file-finder / search / tree view models so partial
-  results are never silently authoritative. **Landed:** `CollectProjectFiles` now reports
-  an `out_incomplete` flag (set when the walk hits the entry budget or `kMaxTreeWalkDepth`),
-  threaded through `FileIndex::ScanFiles`/`ReplaceScannedFiles` so the direct-scan/`Refresh`
-  path sets `FileIndex::truncated()` instead of unconditionally clearing it — closing the
-  gap flagged in the old `ReplaceScannedFiles` comment ("CollectProjectFiles does not
-  currently report budget exhaustion"). `FileFinder::index_truncated()` exposes it and the
-  Find-File overlay draws a right-aligned muted "index incomplete — project too large" note
-  on its title row, so the ranked list is never read as an authoritative complete file set.
-  Regressions: `ProjectFileScanner/ReportsEntryBudgetTruncation` (tiny injected entry budget
-  ⇒ incomplete + prefix), `FileIndex/ReplaceScannedFilesCarriesTruncation` (commit-path
-  propagation + stale-flag clear), `FileFinder/ReportsTruncatedIndex` (finder mirrors the
-  backing index). **Still deferred:** the project-*search* and directory-*tree* view models
-  do not yet surface truncation (project search already has its own match-cap `truncated`
-  flag, distinct from catalog incompleteness), and the taxonomy is a single bool rather than
-  the full complete/truncated_by_budget/permission_limited/error enum.
+- **[RESOLVED 2026-07-20] 008 / 033 — surface a scanner result status** (complete /
+  truncated_by_budget / permission_limited / error) and thread the incomplete-catalog
+  signal through the file-finder / search view models so partial results are never silently
+  authoritative. **Landed:**
+  - `CollectProjectFiles` reports a `ProjectFileScanStatus` (a flags struct:
+    `truncated_by_budget` / `truncated_by_depth` / `permission_limited` / `error`, with an
+    `incomplete()` helper). Permission detection is now real: the scanner handles the
+    directory-open error itself (rather than letting `skip_permission_denied` swallow it)
+    so an unreadable folder is *reported* instead of vanishing, while the skip behavior
+    (don't descend) is preserved. `entry_budget` is overridable so truncation is testable
+    without a 50k-entry tree.
+  - `FileIndex` stores the full `scan_status_` (replacing the bare `truncated_` bool);
+    `truncated()` derives from it and `scan_status()` exposes the cause. The direct-scan/
+    `Refresh` and forced-off-thread-refresh paths thread it through
+    `ScanFiles`/`ReplaceScannedFiles`, and the watcher batch maps `batch.truncated` onto
+    `truncated_by_budget`.
+  - `FileFinder::index_scan_status()` feeds `WorkspaceUiText.h`'s `ScanIncompleteNote`,
+    which the Find-File overlay draws right-aligned on its title row with the *specific*
+    cause ("project too large" / "tree too deep" / "some folders unreadable"). Project
+    search pins `ProjectSearchState::index_incomplete` from `FileIndex::truncated()` at
+    kickoff (distinct from its existing match-cap `truncated`) and the Project-Search
+    overlay flags "results may be partial". All notes are constant `string_view`s (no
+    render-path string materialization).
+  - Regressions: `ProjectFileScanner/ReportsEntryBudgetTruncation`,
+    `ProjectFileScanner/ReportsPermissionLimited`,
+    `FileIndex/ReplaceScannedFilesCarriesTruncation`, `FileFinder/ReportsTruncatedIndex`,
+    `WorkspaceShell/ProjectSearchSurfacesIncompleteIndex`.
 - **009 — fallback watcher snapshots are expensive on huge trees;** degrade to
-  manual-refresh-with-banner + incremental directory hashing.
+  manual-refresh-with-banner + incremental directory hashing. **[PARTIAL/DEFERRED
+  2026-07-20]** The manual-refresh-*banner* half is effectively delivered by the 008/033
+  work above (the watcher's too-large state now surfaces as an incomplete-index note). The
+  *incremental directory hashing* half — replacing the poll loop's full `CaptureTreeSnapshot`
+  compare — stays deferred: it is a behavior-risky rewrite of `FileTreeWatcher::Poll` on a
+  native surface with no build/verify path on this host, and the worst case is already
+  bounded (a truncated snapshot flips to `tree_too_large` → polling stops, changes come only
+  via explicit refresh).
 
 **LSP feature completeness:**
 

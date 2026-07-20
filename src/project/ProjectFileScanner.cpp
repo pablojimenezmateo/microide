@@ -27,23 +27,37 @@ void CollectFiles(const std::filesystem::path& root,
                   int depth,
                   std::size_t& visited,
                   std::size_t entry_budget,
-                  bool& incomplete) {
+                  ProjectFileScanStatus& status) {
   if (depth > platform::kMaxTreeWalkDepth) {
     // Too deep: stop descending rather than risk a stack overflow. The subtree
     // beneath this point is dropped, so the resulting list is a prefix.
-    incomplete = true;
+    status.truncated_by_depth = true;
     return;
   }
+  // Handle the directory-open error explicitly (rather than relying on
+  // skip_permission_denied to swallow it silently) so a directory we cannot read
+  // is REPORTED as permission-limited instead of vanishing without a trace. The
+  // skip behavior is preserved: on any open error we simply do not descend.
   std::error_code error;
-  std::filesystem::directory_iterator iterator(
-      directory, std::filesystem::directory_options::skip_permission_denied, error);
+  std::filesystem::directory_iterator iterator(directory, error);
   std::filesystem::directory_iterator end;
+  if (error) {
+    if (error == std::errc::permission_denied || error == std::errc::operation_not_permitted) {
+      status.permission_limited = true;
+    } else if (directory == root) {
+      // The root itself became unreadable between the caller's validation and now.
+      status.error = true;
+    } else {
+      status.permission_limited = true;
+    }
+    return;
+  }
 
   while (!error && iterator != end) {
     if (visited >= entry_budget) {
       // Entry budget exhausted: stop indexing an unaffordably large tree. The
       // list returned so far is only a prefix of the real tree.
-      incomplete = true;
+      status.truncated_by_budget = true;
       return;
     }
     ++visited;
@@ -97,7 +111,7 @@ void CollectFiles(const std::filesystem::path& root,
       const SymlinkLoopGuard::Scope scope = loop_guard.TryEnter(path, is_symlink && !link_error);
       if (scope.entered()) {
         CollectFiles(root, path, child_matcher, mode, files, loop_guard, depth + 1, visited,
-                     entry_budget, incomplete);
+                     entry_budget, status);
       }
       iterator.increment(error);
       continue;
@@ -122,16 +136,19 @@ std::vector<std::filesystem::path> CollectProjectFiles(const std::filesystem::pa
                                                        ProjectFileScanMode mode,
                                                        bool follow_out_of_root_symlinks,
                                                        const std::vector<std::string>& exclude_globs,
-                                                       bool* out_incomplete,
+                                                       ProjectFileScanStatus* out_status,
                                                        std::size_t entry_budget) {
-  if (out_incomplete != nullptr) {
-    *out_incomplete = false;
+  if (out_status != nullptr) {
+    *out_status = ProjectFileScanStatus{};
   }
   util::AddPerformanceCounter(util::PerfCounterId::ProjectFileScannerCollectProjectFilesCalls);
   std::error_code error;
   const std::filesystem::path absolute_root = std::filesystem::absolute(root, error);
   if (error || absolute_root.empty() || !std::filesystem::exists(absolute_root, error) || error ||
       !std::filesystem::is_directory(absolute_root, error)) {
+    if (out_status != nullptr) {
+      out_status->error = true;
+    }
     return {};
   }
 
@@ -145,14 +162,14 @@ std::vector<std::filesystem::path> CollectProjectFiles(const std::filesystem::pa
   SymlinkLoopGuard loop_guard(absolute_root,
                               /*enforce_containment=*/!follow_out_of_root_symlinks);
   std::size_t visited = 0;
-  bool incomplete = false;
+  ProjectFileScanStatus status;
   CollectFiles(absolute_root, absolute_root, matcher, mode, files, loop_guard, 1, visited,
-               entry_budget, incomplete);
+               entry_budget, status);
   std::sort(files.begin(), files.end(), [](const auto& lhs, const auto& rhs) {
     return lhs.native() < rhs.native();
   });
-  if (out_incomplete != nullptr) {
-    *out_incomplete = incomplete;
+  if (out_status != nullptr) {
+    *out_status = status;
   }
   return files;
 }

@@ -164,26 +164,26 @@ void WorkspaceShell::RequestFileIndexRefresh() {
   project_background_executor_.PostLatest(
       "file-index-refresh",
       [this, root, follow, excludes = std::move(excludes)]() {
-        bool incomplete = false;
+        project::ProjectFileScanStatus status;
         std::vector<project::ProjectFile> files =
-            project::FileIndex::ScanFiles(root, follow, excludes, &incomplete);
+            project::FileIndex::ScanFiles(root, follow, excludes, &status);
         file_index_refresh_mailbox_.Post(
-            [this, root, files = std::move(files), incomplete]() mutable {
-              ApplyForcedFileIndexRefresh(root, std::move(files), incomplete);
+            [this, root, files = std::move(files), status]() mutable {
+              ApplyForcedFileIndexRefresh(root, std::move(files), status);
             });
       });
 }
 
 void WorkspaceShell::ApplyForcedFileIndexRefresh(const std::filesystem::path& root,
                                                  std::vector<project::ProjectFile> files,
-                                                 bool incomplete) {
+                                                 project::ProjectFileScanStatus status) {
   // Drop a scan whose project has since been switched away — the current index
   // now belongs to a different project (or was reset), so applying an old root's
   // file list would corrupt it. Mirrors the generation guard on other async paths.
   if (root != context_.current_project_state.root) {
     return;
   }
-  context_.current_project_state.file_index.ReplaceScannedFiles(std::move(files), incomplete);
+  context_.current_project_state.file_index.ReplaceScannedFiles(std::move(files), status);
   context_.current_project_state.file_finder.InvalidateIndexCache();
   // A changed file set makes cached project-search results stale; drop the cache
   // marker so re-opening Search re-runs, and refresh live if Search/Finder is open.

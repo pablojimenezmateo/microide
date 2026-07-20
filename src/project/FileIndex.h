@@ -63,17 +63,17 @@ class FileIndex {
   // hands the sorted result to ReplaceScannedFiles() back on the main thread. This
   // keeps the whole-project `is_directory`/`file_size`/`last_write_time` sweep
   // (TD-2026-07-17-081/082) off the shell thread on manual refresh / exclude edits.
-  // `out_incomplete` (optional) reports whether the underlying tree walk hit the
-  // entry/depth budget, so a forced refresh can carry the truncation status to
+  // `out_status` (optional) reports why (if at all) the underlying tree walk
+  // returned only a prefix, so a forced refresh can carry that status to
   // ReplaceScannedFiles() instead of silently dropping it (TD-2026-07-17-008/033).
   static std::vector<ProjectFile> ScanFiles(const std::filesystem::path& root,
                                             bool follow_out_of_root_symlinks,
                                             const std::vector<std::string>& exclude_globs,
-                                            bool* out_incomplete = nullptr);
+                                            ProjectFileScanStatus* out_status = nullptr);
   // Commits a pre-scanned (already sorted) file list produced by ScanFiles(),
-  // replacing the current contents. Runs on the owning (main) thread. `incomplete`
-  // is the truncation status reported by ScanFiles() for this same scan.
-  void ReplaceScannedFiles(std::vector<ProjectFile> files, bool incomplete);
+  // replacing the current contents. Runs on the owning (main) thread. `status` is
+  // the completeness status reported by ScanFiles() for this same scan.
+  void ReplaceScannedFiles(std::vector<ProjectFile> files, ProjectFileScanStatus status);
   // Mirrors the `project.follow_out_of_root_symlinks` user setting; consulted by
   // the full rescan in Refresh(). Default false keeps the out-of-root containment
   // guard active.
@@ -89,10 +89,11 @@ class FileIndex {
   // manual ScanNow/Refresh path.
   void SetExcludeGlobs(std::vector<std::string> globs);
   // True when the last population of the index (the initial watcher batch or a
-  // full ScanFiles/Refresh rescan) hit the entry/depth budget and was truncated:
-  // the index therefore lists only a prefix of a very large tree and must not be
-  // presented as an authoritative complete file set (TD-2026-07-17-008/033).
+  // full ScanFiles/Refresh rescan) returned only a prefix of the tree: the index
+  // therefore must not be presented as an authoritative complete file set
+  // (TD-2026-07-17-008/033). `scan_status()` reports the specific cause(s).
   bool truncated() const;
+  ProjectFileScanStatus scan_status() const;
   // Applies an index update batch. For the initial full-scan batch (the only
   // expensive case), `is_cancelled` is polled during the bulk rebuild; if it
   // returns true the rebuild aborts before committing, leaving the index
@@ -133,8 +134,8 @@ class FileIndex {
   std::filesystem::path root_;
   std::atomic<bool> follow_out_of_root_symlinks_{false};
   mutable std::shared_mutex files_mutex_;
-  std::vector<std::string> exclude_globs_;  // guarded by files_mutex_
-  bool truncated_ = false;                  // guarded by files_mutex_
+  std::vector<std::string> exclude_globs_;   // guarded by files_mutex_
+  ProjectFileScanStatus scan_status_;        // guarded by files_mutex_
   std::vector<ProjectFile> files_;
   std::uint64_t version_ = 0;
   mutable CacheBucket exclude_hidden_cache_;

@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "platform/FileIndexWatcher.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
@@ -13,6 +14,7 @@
 namespace microide::tests {
 namespace {
 
+using microide::platform::IndexUpdateBatch;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
@@ -156,6 +158,47 @@ void TestWorkspaceShellProjectSearchRerunClearsTruncation() {
   Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell)[0].relative_path ==
              std::filesystem::path("nomatch.txt"),
          "rerunning project search should publish only the new query results");
+}
+
+// TD-2026-07-17-008/033: when the file index the candidate set is drawn from was
+// itself truncated (project too large), project search pins index_incomplete at
+// kickoff so the UI can flag that results are not authoritative over the whole
+// tree. A later search over a complete index clears it.
+void TestWorkspaceShellProjectSearchSurfacesIncompleteIndex() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "a.txt", "alpha\n");
+  WriteFile(root / "b.txt", "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+
+  // Force the backing index into the "truncated" state (as a huge-tree initial
+  // scan would), listing the on-disk files so the search still finds matches.
+  IndexUpdateBatch batch;
+  batch.is_initial = true;
+  batch.truncated = true;
+  for (const char* name : {"a.txt", "b.txt"}) {
+    IndexUpdateBatch::Change change;
+    change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
+    change.entry.relative_path = name;
+    batch.changes.push_back(change);
+  }
+  WorkspaceShellTestAccess::ApplyFileIndexBatchForTesting(shell, std::move(batch));
+
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+  Expect(WorkspaceShellTestAccess::ProjectSearchIndexIncomplete(shell),
+         "project search over a truncated index must flag results as incomplete");
+  Expect(!WorkspaceShellTestAccess::ProjectSearchResults(shell).empty(),
+         "a truncated index still yields the matches it does contain");
+
+  // A rescan of this small tree completes; the next search must clear the flag.
+  WorkspaceShellTestAccess::ForceFileIndexRefreshAndDrain(shell);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+  Expect(!WorkspaceShellTestAccess::ProjectSearchIndexIncomplete(shell),
+         "searching over a complete index clears the incomplete flag");
 }
 
 // TD-2026-07-17A-084/026: the grouped project-search line map is cached on
@@ -694,6 +737,8 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSearchPatternModeToggleReruns);
   AddTest(tests, "WorkspaceShell/ProjectSearchCaseModeCycleReruns",
           TestWorkspaceShellProjectSearchCaseModeCycleReruns);
+  AddTest(tests, "WorkspaceShell/ProjectSearchSurfacesIncompleteIndex",
+          TestWorkspaceShellProjectSearchSurfacesIncompleteIndex);
   AddTest(tests, "WorkspaceShell/ProjectSearchRerunClearsTruncation",
           TestWorkspaceShellProjectSearchRerunClearsTruncation);
   AddTest(tests, "WorkspaceShell/ProjectSearchLineMapCacheInvalidatesOnRerun",

@@ -686,7 +686,8 @@
   // executor, apply the sorted result on the main thread via file_index_refresh_mailbox_.
   void RequestFileIndexRefresh();
   void ApplyForcedFileIndexRefresh(const std::filesystem::path& root,
-                                   std::vector<project::ProjectFile> files, bool incomplete);
+                                   std::vector<project::ProjectFile> files,
+                                   project::ProjectFileScanStatus status);
   void SetWelcomePlaceholder();
   bool InitializeCurrentProject(const std::filesystem::path& project_root,
                                 bool restore_persistence,

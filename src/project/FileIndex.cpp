@@ -53,7 +53,7 @@ FileIndex::FileIndex(FileIndex&& other) noexcept {
   std::unique_lock other_lock(other.files_mutex_);
   root_ = std::move(other.root_);
   exclude_globs_ = std::move(other.exclude_globs_);
-  truncated_ = other.truncated_;
+  scan_status_ = other.scan_status_;
   files_ = std::move(other.files_);
   version_ = other.version_;
   // The symlink-containment flag is per-project state applied at root config time,
@@ -75,7 +75,7 @@ FileIndex& FileIndex::operator=(FileIndex&& other) noexcept {
   std::scoped_lock lock(files_mutex_, other.files_mutex_);
   root_ = std::move(other.root_);
   exclude_globs_ = std::move(other.exclude_globs_);
-  truncated_ = other.truncated_;
+  scan_status_ = other.scan_status_;
   files_ = std::move(other.files_);
   version_ = other.version_;
   // See the move constructor: this per-project flag must survive the move.
@@ -94,7 +94,12 @@ void FileIndex::SetExcludeGlobs(std::vector<std::string> globs) {
 
 bool FileIndex::truncated() const {
   std::shared_lock lock(files_mutex_);
-  return truncated_;
+  return scan_status_.incomplete();
+}
+
+ProjectFileScanStatus FileIndex::scan_status() const {
+  std::shared_lock lock(files_mutex_);
+  return scan_status_;
 }
 
 bool FileIndex::SetRoot(const std::filesystem::path& root,
@@ -115,9 +120,9 @@ bool FileIndex::SetRoot(const std::filesystem::path& root,
     root_ = absolute_root;
     files_.clear();
     // A previous root may have hit the entry budget; the new root has not been
-    // scanned yet, so clear the stale truncation flag (Refresh/ApplyBatch below
+    // scanned yet, so clear the stale truncation status (Refresh/ApplyBatch below
     // reassigns it from the real scan).
-    truncated_ = false;
+    scan_status_ = {};
     ++version_;
     exclude_hidden_cache_ = {};
     include_hidden_cache_ = {};
@@ -135,7 +140,7 @@ void FileIndex::Reset() {
   }
   root_.clear();
   files_.clear();
-  truncated_ = false;
+  scan_status_ = {};
   ++version_;
   exclude_hidden_cache_ = {};
   include_hidden_cache_ = {};
@@ -144,15 +149,15 @@ void FileIndex::Reset() {
 std::vector<ProjectFile> FileIndex::ScanFiles(const std::filesystem::path& root,
                                               bool follow_out_of_root_symlinks,
                                               const std::vector<std::string>& exclude_globs,
-                                              bool* out_incomplete) {
-  if (out_incomplete != nullptr) {
-    *out_incomplete = false;
+                                              ProjectFileScanStatus* out_status) {
+  if (out_status != nullptr) {
+    *out_status = ProjectFileScanStatus{};
   }
   std::vector<ProjectFile> rebuilt;
   if (!root.empty()) {
     const auto scanned = CollectProjectFiles(root, ProjectFileScanMode::IncludeHidden,
                                              follow_out_of_root_symlinks, exclude_globs,
-                                             out_incomplete);
+                                             out_status);
     rebuilt.reserve(scanned.size());
     for (const auto& relative_path : scanned) {
       rebuilt.push_back(BuildProjectFile(root, relative_path));
@@ -162,16 +167,16 @@ std::vector<ProjectFile> FileIndex::ScanFiles(const std::filesystem::path& root,
   return rebuilt;
 }
 
-void FileIndex::ReplaceScannedFiles(std::vector<ProjectFile> files, bool incomplete) {
+void FileIndex::ReplaceScannedFiles(std::vector<ProjectFile> files, ProjectFileScanStatus status) {
   {
     std::unique_lock lock(files_mutex_);
     files_ = std::move(files);
-    // A full rescan replaces the file list, so it also replaces the truncation
+    // A full rescan replaces the file list, so it also replaces the completeness
     // status: adopt this scan's outcome rather than leaving a prior root's
     // watcher-batch "truncated" state asserted over a freshly scanned (often
-    // smaller) tree. `incomplete` is true when the scan hit the entry/depth budget
+    // smaller) tree. `status` records why (if at all) the scan returned a prefix
     // (TD-2026-07-17-008/033).
-    truncated_ = incomplete;
+    scan_status_ = status;
     ++version_;
     exclude_hidden_cache_.needs_refresh = true;
     include_hidden_cache_.needs_refresh = true;
@@ -189,9 +194,9 @@ void FileIndex::Refresh() {
     excludes = exclude_globs_;
     follow = follow_out_of_root_symlinks_.load(std::memory_order_relaxed);
   }
-  bool incomplete = false;
-  std::vector<ProjectFile> scanned = ScanFiles(root, follow, excludes, &incomplete);
-  ReplaceScannedFiles(std::move(scanned), incomplete);
+  ProjectFileScanStatus status;
+  std::vector<ProjectFile> scanned = ScanFiles(root, follow, excludes, &status);
+  ReplaceScannedFiles(std::move(scanned), status);
 }
 
 bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
@@ -238,7 +243,9 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
     std::unique_lock lock(files_mutex_);
     files_ = std::move(rebuilt);
     ++version_;
-    truncated_ = batch.truncated;
+    // The watcher's initial batch only truncates on the entry budget (BuildInitialBatch),
+    // so map its bool onto the budget cause (TD-2026-07-17-008/033).
+    scan_status_ = ProjectFileScanStatus{.truncated_by_budget = batch.truncated};
     exclude_hidden_cache_.needs_refresh = true;
     include_hidden_cache_.needs_refresh = true;
     return true;

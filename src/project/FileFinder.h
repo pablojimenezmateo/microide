@@ -39,6 +39,11 @@ class FileFinder {
   // so the finder's results are drawn from only a prefix of the tree and must be
   // surfaced as incomplete rather than authoritative (TD-2026-07-17-008/033).
   bool index_truncated() const { return index_ != nullptr && index_->truncated(); }
+  // The specific cause(s) of any truncation, so the UI can say *why* the list is
+  // incomplete (too large / too deep / unreadable folders) rather than a bare note.
+  ProjectFileScanStatus index_scan_status() const {
+    return index_ != nullptr ? index_->scan_status() : ProjectFileScanStatus{};
+  }
   std::size_t selected_index() const { return selected_index_; }
   std::optional<std::filesystem::path> SelectedPath() const;
 

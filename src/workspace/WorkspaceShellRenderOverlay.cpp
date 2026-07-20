@@ -185,6 +185,15 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
   if (overlay_vm.mode == OverlayMode::ProjectSearch) {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Project Search");
+    // The candidate set came from the file index; if that index is only a prefix of
+    // the tree, some files were never searched — flag it (TD-2026-07-17-008/033).
+    if (overlay_state.workflow.project_search.index_incomplete) {
+      constexpr std::string_view kNote = "index incomplete — results may be partial";
+      const float note_x =
+          overlay.x + overlay.w - kOverlayInset - text_renderer_.MeasureWidth(kNote);
+      DrawTextOn(text_renderer_, renderer, note_x, overlay.y + 8.0f, theme_.text_muted,
+                 theme_.overlay_background, kNote);
+    }
     const std::string ps_fallback =
         "> " + overlay_state.workflow.project_search.query.text();
     DrawTextFieldFrame(renderer, theme_, overlay_field_rect(overlay.y + 44.0f),
@@ -324,15 +333,17 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
   } else {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Find File");
-    // When the file index is only a prefix of a very large/deep tree, say so on the
-    // title row (right-aligned) so the ranked list is never read as authoritative
-    // (TD-2026-07-17-008/033). A constant literal — no per-frame string build.
-    if (project_state.file_finder.index_truncated()) {
-      constexpr std::string_view kIncompleteNote = "index incomplete — project too large";
+    // When the file index is only a prefix of a very large/deep/unreadable tree,
+    // say so on the title row (right-aligned) with the specific cause so the ranked
+    // list is never read as authoritative (TD-2026-07-17-008/033). Constant
+    // literals — no per-frame string build.
+    if (const std::string_view note =
+            ScanIncompleteNote(project_state.file_finder.index_scan_status());
+        !note.empty()) {
       const float note_x =
-          overlay.x + overlay.w - kOverlayInset - text_renderer_.MeasureWidth(kIncompleteNote);
+          overlay.x + overlay.w - kOverlayInset - text_renderer_.MeasureWidth(note);
       DrawTextOn(text_renderer_, renderer, note_x, overlay.y + 8.0f, theme_.text_muted,
-                 theme_.overlay_background, kIncompleteNote);
+                 theme_.overlay_background, note);
     }
     DrawTextFieldFrame(renderer, theme_, overlay_field_rect(overlay.y + 44.0f),
                        current_surface == TextInputSurface::FileFinder);
