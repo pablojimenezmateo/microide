@@ -72,16 +72,10 @@ bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& tar
 // populates on a later frame via the git-sidebar wake event. Drive the mailbox
 // drain until the picker leaves its loading state (or a 2s deadline elapses).
 bool SettleComparePicker(WorkspaceShell& shell) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (std::chrono::steady_clock::now() < deadline) {
-    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-    if (!WorkspaceShellTestAccess::ComparePickerLoading(shell)) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  }
-  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-  return !WorkspaceShellTestAccess::ComparePickerLoading(shell);
+  return WaitUntil(
+      [&shell]() { return !WorkspaceShellTestAccess::ComparePickerLoading(shell); },
+      std::chrono::seconds(2), std::chrono::milliseconds(5),
+      [&shell]() { WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell); });
 }
 
 float MaxRectHeight(const std::vector<SDL_FRect>& rects) {

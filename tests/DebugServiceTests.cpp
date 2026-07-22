@@ -384,16 +384,9 @@ std::vector<std::string> GdbFlavoredAdapterCommand(const std::filesystem::path& 
 }
 
 bool PollUntil(DapManager& manager, const std::function<bool()>& predicate, int timeout_ms = 4000) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-  while (std::chrono::steady_clock::now() < deadline) {
-    manager.DrainCallbacks();
-    if (predicate()) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  }
-  manager.DrainCallbacks();
-  return predicate();
+  return WaitUntil(predicate, std::chrono::milliseconds(timeout_ms),
+                   std::chrono::milliseconds(5),
+                   [&manager]() { manager.DrainCallbacks(); });
 }
 
 struct CapturedSession {

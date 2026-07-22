@@ -68,16 +68,9 @@ std::string LocateClangd() {
 // Drain main-thread callbacks until `ready` returns true or the deadline passes.
 template <typename Predicate>
 bool PumpUntil(LspClient& client, Predicate&& ready, int timeout_ms) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-  while (std::chrono::steady_clock::now() < deadline) {
-    client.DrainCallbacks();
-    if (ready()) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-  }
-  client.DrainCallbacks();
-  return ready();
+  return WaitUntil([&ready]() { return ready(); }, std::chrono::milliseconds(timeout_ms),
+                   std::chrono::milliseconds(20),
+                   [&client]() { client.DrainCallbacks(); });
 }
 
 void TestLspRealServerClangdDrivesFullFeatureSet() {

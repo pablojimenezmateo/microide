@@ -56,40 +56,28 @@ bool RunCommandLine(WorkspaceShell& shell, std::string_view command) {
 }
 
 bool WaitForProjectReload(WorkspaceShell& shell, std::chrono::milliseconds timeout) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  return false;
+  return WaitUntil(
+      [&shell]() { return WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false); },
+      timeout, std::chrono::milliseconds(10));
 }
 
 bool WaitForFileIndexPath(WorkspaceShell& shell,
                           const std::filesystem::path& relative_path,
                           bool expected_present,
                           std::chrono::milliseconds timeout) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (WorkspaceShellTestAccess::FileIndexContainsPath(shell, relative_path) == expected_present) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  return WorkspaceShellTestAccess::FileIndexContainsPath(shell, relative_path) == expected_present;
+  return WaitUntil(
+      [&shell, &relative_path, expected_present]() {
+        return WorkspaceShellTestAccess::FileIndexContainsPath(shell, relative_path) ==
+               expected_present;
+      },
+      timeout, std::chrono::milliseconds(10));
 }
 
 bool WaitForProjectSearchCompletion(WorkspaceShell& shell, std::chrono::milliseconds timeout) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell);
-    if (!WorkspaceShellTestAccess::ProjectSearchRunning(shell)) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  }
-  return !WorkspaceShellTestAccess::ProjectSearchRunning(shell);
+  return WaitUntil(
+      [&shell]() { return !WorkspaceShellTestAccess::ProjectSearchRunning(shell); },
+      timeout, std::chrono::milliseconds(5),
+      [&shell]() { WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell); });
 }
 
 platform::IndexUpdateBatch BuildInjectedCreateBatch(const std::filesystem::path& root,

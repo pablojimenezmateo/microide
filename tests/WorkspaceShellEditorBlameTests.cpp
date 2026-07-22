@@ -31,14 +31,10 @@ bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& tar
 std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOverlay(
     WorkspaceShell& shell,
     std::size_t minimum_line_count = 1) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (std::chrono::steady_clock::now() < deadline) {
+  WaitUntil([&shell, minimum_line_count]() {
     const auto overlay = WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
-    if (overlay.has_value() && overlay->lines.size() >= minimum_line_count) {
-      return overlay;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+    return overlay.has_value() && overlay->lines.size() >= minimum_line_count;
+  }, std::chrono::seconds(2), std::chrono::milliseconds(10));
   return WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
 }
 

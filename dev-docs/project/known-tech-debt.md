@@ -114,9 +114,10 @@ they land.
    measured caps (019); `lua_State*` boundary refactor (22/020/058).
 8. **Tab identity** — stable per-tab id threaded through dirty-prompt + persistence (024).
 9. **Test-infra sweeps** — architecture lints + negative fixtures (032/037), watcher
-   contract suite (036), terminal stress suite (015), fuzz corpus seeding (052), no-raw-sleep
-   WaitUntil helpers (088), large-buffer edit perf scenario + direct-`Snapshot()` lint (022),
-   per-frame-prep counters (030).
+   contract suite (036), terminal stress suite (015), fuzz corpus seeding (052), shared
+   `WaitUntil` polling helper (088) **[RESOLVED 2026-07-22 — see the Architecture lint /
+   test infrastructure subsection]**, large-buffer edit perf scenario + direct-`Snapshot()`
+   lint (022), per-frame-prep counters (030).
 10. **Plugin UI features** — bottom-panel preview scroll (60), hit-region dispatch (61).
 
 **Platform passes (need a Windows/macOS host to build+verify):** 004/005/010/035 (Windows),
@@ -2682,7 +2683,8 @@ build and verify the target platform. Descriptions retained as intake for that p
 > negative fixtures; 036 is a backend-independent watcher contract suite; 015 a terminal
 > lifecycle stress suite; 052 seeds fuzz corpora; 022 adds a large-buffer edit perf
 > scenario + a direct-`Snapshot()`-in-edit-paths lint; 030 adds per-frame-prep regression
-> counters; 088 replaces ~132 duplicated fixed-sleep polling loops with a shared WaitUntil.
+> counters. (**088 RESOLVED 2026-07-22** — the ~12 duplicated fixed-sleep polling helpers now
+> delegate to one shared `tests::WaitUntil`; see its entry below.)
 > Each is a sizable mechanical pass; none fixes a live bug. Note: 022's *intent* (guard the
 > no-whole-buffer-snapshot invariant) is now partially served by the `TextBuffer::
 > snapshot_build_count()` seam added here and its use in the -068/-31/-083 regressions.
@@ -2708,8 +2710,28 @@ build and verify the target platform. Descriptions retained as intake for that p
 - **052 — seed the seed-light fuzz corpora** (PersistedRecordReader / GitBlameParser /
   PluginDisplayListParse / SurfaceRasterDecode / DebugStateRecord); the
   `run-checks.sh fuzz` runner landed (049).
-- **088 — replace ~132 duplicated fixed-sleep polling loops** with shared WaitUntil /
-  DrainUntilIdle helpers + a no-raw-sleep lint.
+- **[RESOLVED 2026-07-22] 088 — replace duplicated fixed-sleep polling loops** with a
+  shared WaitUntil helper. The suite had ~12 near-identical copy-pasted polling helpers
+  (`PollUntil` in DebugServiceTests + WorkspaceDapClientTests, `PumpUntil`, `WaitFor` in
+  PluginThreadTests + SerialWorkQueueTests, `WaitForLspReadinessState`, `WaitForLspCondition`,
+  `WaitForActiveEditorBlameOverlay`, `WaitForGitSidebarEntryCount`, `SettleComparePicker`
+  in two files, `WaitForProjectSearch`/`WaitForProjectSearchCompletion`, `WaitForProjectReload`
+  in two files, `WaitForFileIndexPath`) — each re-implementing the same
+  `deadline = now()+timeout; while (now()<deadline){ pump; if(pred) return; sleep } finalpump; return pred`
+  loop and its easy-to-get-wrong final-check edge. Added one canonical
+  `microide::tests::WaitUntil(predicate, timeout=2s, poll_interval=5ms, pump={})` to
+  `tests/TestSupport.{h,cpp}`; every helper above now delegates to it (binding its own pump —
+  `DrainCallbacks` / `ConsumeGitSidebarRefresh` / `ConsumeProjectSearchUpdates` /
+  `DrainPluginThreadActions` — and interval), and two inline polling loops in the search
+  tests fold in. Deliberately left untouched: settle-then-assert-**absence** fixed sleeps
+  (they intentionally wait a fixed window to confirm nothing happened), mtime-granularity /
+  debounce settles (e.g. the 1100 ms syntax-reload wait — a real filesystem-mtime
+  requirement, not an over-wait), and the bespoke accumulation loops in
+  `ProjectSearchServiceTests` (they aggregate streamed updates, not a pure predicate poll).
+  Regression: `tests/TestSupportTests.cpp` (`TestSupport/WaitUntil*` — prompt return on flip,
+  false-on-timeout, pump-runs-each-iteration, value-read pattern). The no-raw-sleep lint is
+  left out by design: many remaining `sleep_for`s are the legitimate settle/mtime waits above,
+  so a blanket ban would be wrong; the shared helper is the reusable primitive future waits use.
 
 **Security:**
 

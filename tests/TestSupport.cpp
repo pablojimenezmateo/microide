@@ -11,6 +11,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace microide::tests {
@@ -23,6 +24,29 @@ void Expect(bool condition, std::string_view message) {
   if (!condition) {
     throw std::runtime_error(std::string(message));
   }
+}
+
+bool WaitUntil(const std::function<bool()>& predicate,
+               std::chrono::milliseconds timeout,
+               std::chrono::milliseconds poll_interval,
+               const std::function<void()>& pump) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (pump) {
+      pump();
+    }
+    if (predicate()) {
+      return true;
+    }
+    std::this_thread::sleep_for(poll_interval);
+  }
+  // One last drain + check after the deadline: work posted just before the
+  // deadline can still be pending, and every hand-rolled loop this replaces did
+  // the same final check.
+  if (pump) {
+    pump();
+  }
+  return predicate();
 }
 
 std::filesystem::path TestRoot() {

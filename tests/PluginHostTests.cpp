@@ -3492,11 +3492,8 @@ return ide.plugin({ id = "syntax" })
   // Pump the worker<->main round-trips: host reload (worker) -> completion (main) ->
   // syntax load (worker) -> publish + on_complete (main). Draining the mailbox runs the
   // main-thread halves; the worker runs its halves on its own thread in between.
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (!done && std::chrono::steady_clock::now() < deadline) {
-    runtime.DrainPluginThreadActions();
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  WaitUntil([&done]() { return done; }, std::chrono::seconds(5), std::chrono::milliseconds(1),
+            [&runtime]() { runtime.DrainPluginThreadActions(); });
   Expect(done, "the async syntax reload should complete within the deadline");
   Expect(clean, "the syntax reload should report a clean load");
 

@@ -16,14 +16,9 @@ using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
 bool WaitForProjectReload(WorkspaceShell& shell, std::chrono::milliseconds timeout) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  return false;
+  return WaitUntil(
+      [&shell]() { return WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false); },
+      timeout, std::chrono::milliseconds(10));
 }
 
 void TestWorkspaceShellExternalChangeReloadsCleanBuffer() {

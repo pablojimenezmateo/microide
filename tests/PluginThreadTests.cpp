@@ -23,17 +23,12 @@ namespace {
 using microide::plugin::PluginThread;
 
 // Spin until `predicate` holds or the deadline elapses, so tests stay
-// deterministic without sleeping for a fixed duration.
+// deterministic without sleeping for a fixed duration. Delegates to the shared
+// WaitUntil (no pump needed here — the worker advances on its own thread).
 template <typename Predicate>
 bool WaitFor(Predicate predicate, std::chrono::milliseconds timeout = std::chrono::seconds(2)) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (predicate()) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
-  return predicate();
+  return WaitUntil([&predicate]() { return predicate(); }, timeout,
+                   std::chrono::milliseconds(1));
 }
 
 void TestPluginThreadNeverStartedIsZeroCost() {

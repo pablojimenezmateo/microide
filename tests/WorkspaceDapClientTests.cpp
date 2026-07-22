@@ -102,16 +102,9 @@ while True:
 }
 
 bool PollUntil(DapClient& client, const std::function<bool()>& predicate, int timeout_ms = 3000) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-  while (std::chrono::steady_clock::now() < deadline) {
-    client.DrainCallbacks();
-    if (predicate()) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  }
-  client.DrainCallbacks();
-  return predicate();
+  return WaitUntil(predicate, std::chrono::milliseconds(timeout_ms),
+                   std::chrono::milliseconds(5),
+                   [&client]() { client.DrainCallbacks(); });
 }
 
 bool WaitForInitialized(DapClient& client, int timeout_ms = 3000) {

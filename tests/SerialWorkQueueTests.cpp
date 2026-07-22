@@ -25,14 +25,8 @@ using microide::util::SerialWorkQueue;
 
 template <typename Predicate>
 bool WaitFor(Predicate predicate, std::chrono::milliseconds timeout = std::chrono::seconds(2)) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (predicate()) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
-  return predicate();
+  return WaitUntil([&predicate]() { return predicate(); }, timeout,
+                   std::chrono::milliseconds(1));
 }
 
 void TestLazyStartIsZeroCostUntilUsed() {

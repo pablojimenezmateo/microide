@@ -24,15 +24,11 @@ using microide::workspace::WindowControlButtonHitRect;
 using microide::workspace::WorkspaceShell;
 
 void WaitForProjectSearch(WorkspaceShell& shell) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (std::chrono::steady_clock::now() < deadline) {
-    WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell);
-    if (!WorkspaceShellTestAccess::ProjectSearchRunning(shell)) {
-      return;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  }
-  Expect(false, "workspace project search should finish");
+  const bool finished = WaitUntil(
+      [&shell]() { return !WorkspaceShellTestAccess::ProjectSearchRunning(shell); },
+      std::chrono::seconds(2), std::chrono::milliseconds(5),
+      [&shell]() { WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell); });
+  Expect(finished, "workspace project search should finish");
 }
 
 void TestWorkspaceShellCursorUpdatesWhenBottomPanelHidesWithoutMotion() {

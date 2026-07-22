@@ -41,14 +41,10 @@ void WritePluginInit(const std::filesystem::path& root,
 
 template <typename Predicate>
 bool WaitForLspCondition(WorkspaceShell& shell, Predicate&& ready, int timeout_ms = 2000) {
-  const Uint64 deadline =
-      SDL_GetTicks() + static_cast<Uint64>(timeout_ms > 0 ? timeout_ms : 0);
-  while (!ready() && SDL_GetTicks() <= deadline) {
-    WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
-    std::this_thread::yield();
-  }
-  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
-  return ready();
+  return WaitUntil([&ready]() { return ready(); },
+                   std::chrono::milliseconds(timeout_ms > 0 ? timeout_ms : 0),
+                   std::chrono::milliseconds(1),
+                   [&shell]() { WorkspaceShellTestAccess::ConsumeLspCallbacks(shell); });
 }
 
 void TestPhase3CommandSurfaceDrivesCompletionTasksAndTests() {

@@ -25,14 +25,9 @@ using microide::workspace::LspResult;
 bool WaitForLspReadinessState(LspClient& client,
                               LspClient::ReadinessSnapshot::State state,
                               int timeout_ms = 1000) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (client.GetReadinessSnapshot().state == state) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  return client.GetReadinessSnapshot().state == state;
+  return WaitUntil(
+      [&client, state]() { return client.GetReadinessSnapshot().state == state; },
+      std::chrono::milliseconds(timeout_ms), std::chrono::milliseconds(10));
 }
 
 void TestWorkspaceLspClientShutdownDoesNotRaceInitialization() {

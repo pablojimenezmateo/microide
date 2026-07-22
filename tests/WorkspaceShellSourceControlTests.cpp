@@ -44,32 +44,22 @@ std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOver
 }
 
 bool WaitForGitSidebarEntryCount(WorkspaceShell& shell, std::size_t expected_count) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (std::chrono::steady_clock::now() < deadline) {
-    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-    if (WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == expected_count &&
-        !WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-  return WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == expected_count;
+  return WaitUntil(
+      [&shell, expected_count]() {
+        return WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == expected_count &&
+               !WorkspaceShellTestAccess::GitSidebarRefreshing(shell);
+      },
+      std::chrono::seconds(2), std::chrono::milliseconds(10),
+      [&shell]() { WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell); });
 }
 
 // The outgoing-base ref picker now runs its branch/commit git queries on the
 // background executor; drive the mailbox drain until it leaves the loading state.
 bool SettleComparePicker(WorkspaceShell& shell) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (std::chrono::steady_clock::now() < deadline) {
-    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-    if (!WorkspaceShellTestAccess::ComparePickerLoading(shell)) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  }
-  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-  return !WorkspaceShellTestAccess::ComparePickerLoading(shell);
+  return WaitUntil(
+      [&shell]() { return !WorkspaceShellTestAccess::ComparePickerLoading(shell); },
+      std::chrono::seconds(2), std::chrono::milliseconds(5),
+      [&shell]() { WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell); });
 }
 
 void TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache() {

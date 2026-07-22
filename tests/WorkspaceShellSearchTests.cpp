@@ -19,15 +19,11 @@ using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
 void WaitForProjectSearch(WorkspaceShell& shell) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (std::chrono::steady_clock::now() < deadline) {
-    WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell);
-    if (!WorkspaceShellTestAccess::ProjectSearchRunning(shell)) {
-      return;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  }
-  Expect(false, "workspace project search should finish");
+  const bool finished = WaitUntil(
+      [&shell]() { return !WorkspaceShellTestAccess::ProjectSearchRunning(shell); },
+      std::chrono::seconds(2), std::chrono::milliseconds(5),
+      [&shell]() { WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell); });
+  Expect(finished, "workspace project search should finish");
 }
 
 void TestWorkspaceShellProjectSearchHiddenToggleReruns() {
@@ -255,21 +251,17 @@ void TestWorkspaceShellProjectSearchStreamsWhileRunning() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
 
-  bool saw_results_while_running = false;
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (std::chrono::steady_clock::now() < deadline) {
-    WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell);
-    const bool running = WorkspaceShellTestAccess::ProjectSearchRunning(shell);
-    const std::size_t count = WorkspaceShellTestAccess::ProjectSearchResults(shell).size();
-    if (count > 0) {
-      saw_results_while_running = true;
-      break;
-    }
-    if (!running) {
-      break;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
-  }
+  // Stop as soon as results appear (the wake-driven update we assert on) or the
+  // search finishes without any; `saw_results_while_running` records which.
+  WaitUntil(
+      [&shell]() {
+        return WorkspaceShellTestAccess::ProjectSearchResults(shell).size() > 0 ||
+               !WorkspaceShellTestAccess::ProjectSearchRunning(shell);
+      },
+      std::chrono::seconds(2), std::chrono::milliseconds(2),
+      [&shell]() { WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell); });
+  const bool saw_results_while_running =
+      WorkspaceShellTestAccess::ProjectSearchResults(shell).size() > 0;
 
   WaitForProjectSearch(shell);
   Expect(saw_results_while_running,

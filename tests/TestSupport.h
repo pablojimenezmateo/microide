@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -24,6 +25,19 @@ struct TestCase {
 
 void AddTest(std::vector<TestCase>& tests, std::string_view name, std::function<void()> run);
 void Expect(bool condition, std::string_view message);
+
+// Poll `predicate` until it holds or `timeout` elapses, running `pump` (if set)
+// before each check and once more after the deadline. Returns the final predicate
+// result, and returns as soon as the condition holds — no fixed over-wait. This is
+// the single canonical replacement for the copy-pasted
+// `deadline = now()+timeout; while (now() < deadline) { pump; if (pred) ...; sleep }`
+// polling loops that were duplicated across the test suite (known-tech-debt item 088).
+// `pump` typically drains a mailbox / callback queue (e.g. DrainCallbacks,
+// ConsumeProjectSearchUpdates) so the awaited state can advance between checks.
+bool WaitUntil(const std::function<bool()>& predicate,
+               std::chrono::milliseconds timeout = std::chrono::seconds(2),
+               std::chrono::milliseconds poll_interval = std::chrono::milliseconds(5),
+               const std::function<void()>& pump = {});
 
 std::filesystem::path TestRoot();
 std::filesystem::path FixturePath(std::string_view relative_path);
