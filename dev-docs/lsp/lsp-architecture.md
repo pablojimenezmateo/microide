@@ -79,6 +79,22 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
   the bound `apply_edit_handler`, then replies with the real `applied` flag. The
   handler (`LspService::ApplyServerWorkspaceEdit`) edits open buffers in place and
   writes closed files silently on disk — the same split as client-initiated rename.
+- **WorkspaceEdit resource ops + versioned edits are supported (TD-2026-07-17-011).**
+  The client advertises `workspace.workspaceEdit = {documentChanges,
+  resourceOperations: [create, rename, delete], failureHandling:
+  textOnlyTransactional}`. `ParseWorkspaceEdit` keeps the ops in array order
+  (re-keying pre-rename text edits to their post-rename URI) and records versioned
+  TextDocumentEdits in `expected_versions`. Apply order everywhere: version gate
+  (a stale tracked-document version fails the whole edit —
+  `LspService::WorkspaceEditVersionsCurrent` over
+  `LspClient::TrackedDocumentVersion`) → resource ops
+  (`LspService::ApplyWorkspaceResourceOps`: validate-first against a simulated
+  overlay, project-root containment, staged deletes/overwrites with rollback on
+  mid-flight failure, tab/diagnostic reconcile via
+  `PathMutationCoordinator::ReconcileAfterExternal{Rename,Delete}`) → text edits.
+  Ops-carrying code actions route through `LspService::ApplyFullWorkspaceEdit`
+  (ops, then open buffers, then closed files on disk); ops-carrying renames go
+  through the confirm prompt with the ops stashed in `PendingRenameSave`.
 - **Provider precedence is LSP-primary concurrent merge** (`AssistProviderMerge.h`).
   Completion / code actions / go-to-definition / find-references fire the plugin
   worker and the language server *at the same time*, then merge: list overlays
@@ -186,7 +202,11 @@ backstops: bounded message/read-buffer sizes with oversized-frame skip-and-resyn
   latency.
 - `WorkspaceShellPluginTests` — dual-source completion merge (LSP-first + de-dup),
   silent on-disk rename (closed file written, no tab), and server-initiated
-  `workspace/applyEdit` (open buffer + closed file) via the simulate-request hook.
+  `workspace/applyEdit` (open buffer + closed file) via the simulate-request hook —
+  incl. the resource-op batch (create+fill / rename-with-tab-retarget / delete /
+  no staging residue), validate-first atomicity + root containment, and the
+  versioned-edit gate (`ServerApplyEdit*` tests); the op/version parsing itself is
+  covered by `LspProtocol/ParsesWorkspaceEditResourceOps`.
 - `Phase5Tests` / `WorkspaceShellPluginTests` — end-to-end through a Python
   fake server (diagnostics, hover, outline, format, rename, semantic overlay).
 - `LspRealServerE2ETests` — **opt-in** end-to-end against real clangd (skips when

@@ -89,6 +89,15 @@ bool LspClient::HasOpenDocument(const std::string& uri) const {
   return impl_->document_versions.contains(uri);
 }
 
+std::optional<int> LspClient::TrackedDocumentVersion(const std::string& uri) const {
+  std::lock_guard lock(impl_->mutex);
+  const auto it = impl_->document_versions.find(uri);
+  if (it == impl_->document_versions.end()) {
+    return std::nullopt;
+  }
+  return it->second;
+}
+
 const std::string& LspClient::LastError() const {
   std::lock_guard lock(impl_->mutex);
   impl_->last_error_snapshot = impl_->last_error;

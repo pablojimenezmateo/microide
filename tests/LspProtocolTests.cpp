@@ -346,14 +346,17 @@ void TestLspProtocolParsesWorkspaceEdit() {
   Expect(edit.changes.at("file:///b.cpp").size() == 2, "b.cpp has two edits");
   Expect(edit.changes.at("file:///a.cpp")[0].second == "sum", "newText parsed");
 
-  // `documentChanges` array shape (TextDocumentEdit[]); resource ops are skipped.
+  // `documentChanges` array shape (TextDocumentEdit[] + resource ops).
   const JsonValue doc_changes = Json(R"({"documentChanges":[
       {"textDocument":{"uri":"file:///c.cpp","version":1},
        "edits":[{"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":2}},"newText":"x"}]},
       {"kind":"rename","oldUri":"file:///old.cpp","newUri":"file:///new.cpp"}]})");
   const LspClient::WorkspaceEdit from_doc = codec::ParseWorkspaceEdit(doc_changes);
-  Expect(from_doc.changes.size() == 1, "the resource-rename op is skipped, leaving one file");
+  Expect(from_doc.changes.size() == 1, "the resource-rename op adds no text-edit bucket");
   Expect(from_doc.changes.count("file:///c.cpp") == 1, "the TextDocumentEdit file is parsed");
+  Expect(from_doc.resource_ops.size() == 1, "the resource-rename op is parsed");
+  Expect(from_doc.expected_versions.at("file:///c.cpp") == 1,
+         "the versioned TextDocumentEdit records its expected version");
 
   // Caps bound a hostile edit count.
   const JsonValue hostile = Json(R"({"changes":{"file:///h.cpp":[
@@ -363,6 +366,64 @@ void TestLspProtocolParsesWorkspaceEdit() {
   const LspClient::WorkspaceEdit capped =
       codec::ParseWorkspaceEdit(hostile, /*max_files=*/10, /*max_edits_total=*/2);
   Expect(capped.changes.at("file:///h.cpp").size() == 2, "the total-edit cap truncates the list");
+}
+
+// TD-2026-07-17-011: WorkspaceEdit resource ops (create/rename/delete), their
+// options, versioned TextDocumentEdits, and the pre-rename edit re-keying.
+void TestLspProtocolParsesWorkspaceEditResourceOps() {
+  using Op = LspClient::WorkspaceEdit::ResourceOp;
+  const JsonValue edit_json = Json(R"({"documentChanges":[
+      {"kind":"create","uri":"file:///new.rs","options":{"overwrite":true}},
+      {"textDocument":{"uri":"file:///mod.rs","version":7},
+       "edits":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"newText":"m"}]},
+      {"kind":"rename","oldUri":"file:///mod.rs","newUri":"file:///renamed.rs",
+       "options":{"ignoreIfExists":true}},
+      {"kind":"delete","uri":"file:///dead.rs","options":{"recursive":true,"ignoreIfNotExists":true}},
+      {"kind":"warp","uri":"file:///nonsense"},
+      {"kind":"create","uri":""}]})");
+  const LspClient::WorkspaceEdit edit = codec::ParseWorkspaceEdit(edit_json);
+
+  Expect(edit.resource_ops.size() == 3, "known well-formed ops parse; unknown/malformed drop");
+  Expect(edit.resource_ops[0].kind == Op::Kind::Create && edit.resource_ops[0].uri == "file:///new.rs" &&
+             edit.resource_ops[0].overwrite,
+         "create op parses uri + overwrite option");
+  Expect(edit.resource_ops[1].kind == Op::Kind::Rename &&
+             edit.resource_ops[1].uri == "file:///mod.rs" &&
+             edit.resource_ops[1].new_uri == "file:///renamed.rs" &&
+             edit.resource_ops[1].ignore_if_exists,
+         "rename op parses oldUri/newUri + ignoreIfExists");
+  Expect(edit.resource_ops[2].kind == Op::Kind::Delete && edit.resource_ops[2].recursive &&
+             edit.resource_ops[2].ignore_if_not_exists,
+         "delete op parses recursive + ignoreIfNotExists");
+
+  // The edit listed BEFORE the rename of its file follows the file to its new
+  // name (the host applies all resource ops before any text edit).
+  Expect(edit.changes.count("file:///mod.rs") == 0, "the pre-rename bucket is re-keyed away");
+  Expect(edit.changes.at("file:///renamed.rs").size() == 1,
+         "the pre-rename edit lands under the post-rename uri");
+  // The version stays keyed by the URI the server actually sent.
+  Expect(edit.expected_versions.at("file:///mod.rs") == 7,
+         "expected version stays keyed by the original uri");
+
+  // The resource-op count shares the file cap.
+  const JsonValue many_ops = Json(R"({"documentChanges":[
+      {"kind":"create","uri":"file:///1"},
+      {"kind":"create","uri":"file:///2"},
+      {"kind":"create","uri":"file:///3"}]})");
+  const LspClient::WorkspaceEdit capped_ops =
+      codec::ParseWorkspaceEdit(many_ops, /*max_files=*/2, /*max_edits_total=*/10);
+  Expect(capped_ops.resource_ops.size() == 2, "resource ops are bounded by the file cap");
+
+  // Empty-edit versioned entries bypass the edit budget, so the version map is
+  // bounded by the file cap too (hostile-server backstop).
+  const JsonValue many_versions = Json(R"({"documentChanges":[
+      {"textDocument":{"uri":"file:///v1","version":1},"edits":[]},
+      {"textDocument":{"uri":"file:///v2","version":2},"edits":[]},
+      {"textDocument":{"uri":"file:///v3","version":3},"edits":[]}]})");
+  const LspClient::WorkspaceEdit capped_versions =
+      codec::ParseWorkspaceEdit(many_versions, /*max_files=*/2, /*max_edits_total=*/10);
+  Expect(capped_versions.expected_versions.size() == 2,
+         "expected versions are bounded by the file cap");
 }
 
 void TestLspProtocolParsesSignatureHelp() {
@@ -538,6 +599,8 @@ void TestLspProtocolParsesInlayHints() {
 void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspProtocol/ParsesInlayHints", TestLspProtocolParsesInlayHints);
   AddTest(tests, "LspProtocol/ParsesWorkspaceEdit", TestLspProtocolParsesWorkspaceEdit);
+  AddTest(tests, "LspProtocol/ParsesWorkspaceEditResourceOps",
+          TestLspProtocolParsesWorkspaceEditResourceOps);
   AddTest(tests, "LspProtocol/ParsesSignatureHelp", TestLspProtocolParsesSignatureHelp);
   AddTest(tests, "LspProtocol/ParsesWorkspaceSymbols", TestLspProtocolParsesWorkspaceSymbols);
   AddTest(tests, "LspProtocol/ParsesPrepareRename", TestLspProtocolParsesPrepareRename);

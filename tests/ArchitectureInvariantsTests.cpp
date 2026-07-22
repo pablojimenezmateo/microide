@@ -196,8 +196,12 @@ void TestArchitectureFileSizes() {
              // 1700: +3 for TD-2026-07-17-021 off-thread project replace-all:
              // project_replace_mailbox_ + project_replace_generation_ + ApplyProjectReplaceOutcome()
              // decl, so the bulk read/replace/atomic-write runs off the shell thread.
+             // 1702: +2 for TD-2026-07-17-011 WorkspaceEdit resource ops: the
+             // ApplyRenameWorkspaceEdit resource_ops parameter + the PendingRenameSave
+             // resource_ops field (the confirm prompt must stash the file ops with the
+             // edits). The apply logic itself lives in LspService, not the shell.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1700);
+                                                     1702);
            });
 
   AssertRuleResultsPass(results);

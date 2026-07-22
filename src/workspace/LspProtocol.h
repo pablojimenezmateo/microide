@@ -47,11 +47,16 @@ LspClient::PrepareRename ParsePrepareRename(const util::JsonValue& result);
 // main-thread allocation.
 LspClient::SignatureHelp ParseSignatureHelp(const util::JsonValue& result);
 
-// Parse a WorkspaceEdit into the URI-keyed edit map. Handles both the `changes`
-// object shape (uri -> TextEdit[]) and the `documentChanges` array shape
-// (TextDocumentEdit[]; resource create/rename/delete ops are skipped). The total
-// files and edits are bounded so a hostile server cannot force an unbounded
-// main-thread allocation (a rename/apply-edit result is re-materialized here).
+// Parse a WorkspaceEdit into the URI-keyed edit map plus the ordered resource
+// ops. Handles both the `changes` object shape (uri -> TextEdit[]) and the
+// `documentChanges` array shape: TextDocumentEdit entries (their optional
+// `textDocument.version` recorded in `expected_versions`) and create/rename/
+// delete resource ops (array order preserved in `resource_ops`; text edits
+// accumulated under a URI later renamed are re-keyed to the post-rename URI so
+// the host's ops-first apply order matches the wire order). The total files,
+// edits, and resource ops are bounded so a hostile server cannot force an
+// unbounded main-thread allocation (a rename/apply-edit result is
+// re-materialized here).
 LspClient::WorkspaceEdit ParseWorkspaceEdit(const util::JsonValue& edit,
                                             std::size_t max_files = 10000,
                                             std::size_t max_edits_total = 200000);

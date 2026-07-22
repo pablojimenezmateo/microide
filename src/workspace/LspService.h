@@ -25,6 +25,7 @@ namespace microide::workspace {
 struct WorkspaceContext;
 struct ProjectWorkspaceState;
 struct CodeActionEdit;
+struct WorkspaceResourceOp;
 
 // Host-owned home for the LSP glue that used to live directly on WorkspaceShell:
 // per-project server management, document synchronization, diagnostics publishing,
@@ -77,6 +78,23 @@ class LspService {
     // toggles plus inlay-hint gating (editor.inlay_hints.enabled). Bound to
     // WorkspaceShell::GetSettingValue; null in headless setups (treated as "on").
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
+    // Reconcile shell state after an LSP resource op renamed a path on disk:
+    // retarget open tabs (unsaved contents preserved), diagnostics, and plugin
+    // decorations. Bound to PathMutationCoordinator::ReconcileAfterExternalRename;
+    // null in headless setups (disk-only apply).
+    std::function<void(const std::filesystem::path&, const std::filesystem::path&)>
+        reconcile_tabs_after_resource_rename;
+    // Close tabs + clear diagnostics/decorations for a path an LSP resource op
+    // deleted. Bound to PathMutationCoordinator::ReconcileAfterExternalDelete;
+    // null in headless setups.
+    std::function<void(const std::filesystem::path&)> reconcile_tabs_after_resource_delete;
+    // Refresh the file tree / project search once after a resource-op batch
+    // mutated paths on disk. Null in headless setups.
+    std::function<void(const std::filesystem::path&)> refresh_views_after_resource_ops;
+    // Dispose the staged backups of applied delete/overwrite ops off the shell
+    // thread (removing a staged directory can be slow). Null → removed
+    // synchronously.
+    std::function<void(std::vector<std::filesystem::path>)> dispose_staged_paths_async;
   };
 
   LspService() = default;
@@ -227,6 +245,40 @@ class LspService {
   // private scratch viewport), so it is safe to run on a background thread. Static.
   static DiskEditResult RunClosedFileEdits(const std::vector<LspClosedFileEditBucket>& buckets);
 
+  // Outcome of applying a WorkspaceEdit's file resource ops.
+  struct ResourceOpsResult {
+    bool ok = true;           // every op applied (or was skipped per its ignore option)
+    bool any_applied = false; // at least one op mutated the filesystem
+    std::string error;        // first failure, for the log / notification
+  };
+  // Validate + apply `ops` in order with rollback-safe staging (TD-2026-07-17-011):
+  // every op's preconditions are checked against a simulated overlay BEFORE anything
+  // mutates, deletes/overwrites move the old content aside (a same-directory rename,
+  // not a removal) so a mid-flight I/O failure rolls every completed op back, and
+  // only a fully-applied batch disposes its staged backups (off the shell thread).
+  // Every target must live inside the project root — an op that escapes it fails
+  // the whole batch. On success, open tabs/diagnostics are reconciled per op and
+  // the project views refresh once. Main thread only.
+  ResourceOpsResult ApplyWorkspaceResourceOps(const std::vector<WorkspaceResourceOp>& ops);
+
+  // Apply a client-initiated WorkspaceEdit that carries resource ops: the ops run
+  // first (validate-first + rollback-safe), then the text edits — open buffers in
+  // place (via the Operations hook), closed files silently on disk (an
+  // ops-carrying edit typically fills the file it just created, which no buffer
+  // has open). Returns false when the op batch failed (nothing left applied);
+  // after the ops land, text-edit failures follow the abort-at-first-failure
+  // contract for resource-carrying edits. Main thread only.
+  bool ApplyFullWorkspaceEdit(const std::vector<CodeActionEdit>& edits,
+                              const std::vector<WorkspaceResourceOp>& resource_ops);
+
+  // True when every versioned TextDocumentEdit in `edit` matches the version
+  // `client` currently tracks for that document (documents not open on the client
+  // pass — there is no local version to conflict with). False means the server
+  // computed the edit against text the user has since changed; the edit must not
+  // be applied (LSP: the client fails the request on a version mismatch).
+  static bool WorkspaceEditVersionsCurrent(const LspClient& client,
+                                           const LspClient::WorkspaceEdit& edit);
+
  private:
   // Group `edits` by closed-file path (dropping open paths + the active buffer) and
   // resolve each file's server position encoding on the main thread (path-only
@@ -235,10 +287,12 @@ class LspService {
   std::vector<LspClosedFileEditBucket> PrepareClosedFileBuckets(
       const std::vector<CodeActionEdit>& edits,
       const std::function<bool(const std::filesystem::path&)>& is_open);
-  // Apply a server-initiated WorkspaceEdit on the main thread: open buffers in
-  // place (via the Operations hook), closed files silently on disk. Returns true
-  // when at least one edit was applied. Bound as the LspClient apply-edit handler.
-  bool ApplyServerWorkspaceEdit(LspClient::WorkspaceEdit edit);
+  // Apply a server-initiated WorkspaceEdit on the main thread: versioned edits are
+  // gated against `client`'s tracked document versions (stale → whole edit fails),
+  // resource ops run first (rollback-safe), then open buffers edit in place (via
+  // the Operations hook) and closed files write silently on disk. Returns true
+  // when the edit was accepted. Bound as the LspClient apply-edit handler.
+  bool ApplyServerWorkspaceEdit(LspClient& client, LspClient::WorkspaceEdit edit);
   // True when `normalized` (a lexically-normal path) is open in a hydrated editor
   // tab of the current project.
   bool IsPathOpenInProject(const std::filesystem::path& normalized) const;

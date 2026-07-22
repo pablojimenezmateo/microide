@@ -6,6 +6,7 @@
 #include <SDL3/SDL.h>
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -134,8 +135,31 @@ class LspClient {
   };
 
   struct WorkspaceEdit {
-    // Map from URI to list of text edits.
+    // One resource operation from the `documentChanges` array (an entry with
+    // `kind`: "create" / "rename" / "delete"), preserved in array order. The host
+    // applies these before any text edit; a text edit listed before a rename of
+    // its target file is re-keyed at parse time to the post-rename URI so the
+    // ops-first apply order yields the same file contents as the wire order.
+    struct ResourceOp {
+      enum class Kind : std::uint8_t { Create, Rename, Delete };
+      Kind kind = Kind::Create;
+      std::string uri;      // create/delete target; rename source (`oldUri`)
+      std::string new_uri;  // rename target (`newUri`); empty for create/delete
+      bool overwrite = false;             // create/rename option
+      bool ignore_if_exists = false;      // create/rename option
+      bool ignore_if_not_exists = false;  // delete option
+      bool recursive = false;             // delete option (directories)
+    };
+    // Map from URI to list of text edits (keyed by the FINAL post-rename URI).
     std::unordered_map<std::string, std::vector<std::pair<Range, std::string>>> changes;
+    // Resource operations in `documentChanges` array order.
+    std::vector<ResourceOp> resource_ops;
+    // Expected document versions from versioned TextDocumentEdits, keyed by the
+    // URI exactly as the server sent it (NOT rename-remapped: the version names
+    // the document as it exists before any resource op runs). The applier fails
+    // the whole edit when a tracked open document is at a different version —
+    // the server computed the edit against text the user has since changed.
+    std::unordered_map<std::string, int> expected_versions;
   };
 
   struct CodeAction {
@@ -291,6 +315,12 @@ class LspClient {
   // handler still replies applied:false. HasApplyEditHandler binds it once.
   void SetApplyEditHandler(std::function<bool(WorkspaceEdit)> handler);
   bool HasApplyEditHandler() const;
+
+  // Version this client last sent for `uri` via didOpen/didChange, or nullopt when
+  // the document is not open on this client. Thread-safe. Used to gate
+  // version-aware WorkspaceEdits: a versioned TextDocumentEdit whose expected
+  // version differs from the tracked one is stale and must not be applied.
+  std::optional<int> TrackedDocumentVersion(const std::string& uri) const;
 
   // Call from the main thread each frame to dispatch pending callbacks.
   void DrainCallbacks();

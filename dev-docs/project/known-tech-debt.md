@@ -108,9 +108,11 @@ they land.
    surfacing]**; targeted fallback rescan (009) **[CLOSED 2026-07-22 — incremental-hashing
    half dispositioned WON'T-DO (semantically unsound for content-change detection), poll-tick
    deep copies eliminated instead; see the scanner subsection]**.
-6. **LSP completeness** — resource ops + version-aware edits (011); explicit timeout result
-   variants (012) **[RESOLVED 2026-07-20 — `LspResult<T>` outcome taxonomy; see the LSP
-   feature-completeness subsection]**.
+6. **LSP completeness** — **CLUSTER COMPLETE 2026-07-23.** Resource ops + version-aware
+   edits (011) **[RESOLVED 2026-07-23 — `documentChanges` create/rename/delete ops with
+   validate-first + rollback-safe staging, versioned-TextDocumentEdit gating; see the LSP
+   feature-completeness subsection]**; explicit timeout result variants (012)
+   **[RESOLVED 2026-07-20 — `LspResult<T>` outcome taxonomy; see the same subsection]**.
 7. **Plugin registry** — O(1) duplicate-id detection (077) **[RESOLVED 2026-07-18 — per-kind
    id index]**; per-field byte caps (018) **[RESOLVED 2026-07-19 — central ToHostString
    backstop + per-surface render caps; see the Plugin caps / policy subsection]**;
@@ -2581,17 +2583,58 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **LSP feature completeness:**
 
-> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 011 (`WorkspaceEdit` create/delete/rename
-> resource operations + version-aware edits) is net-new LSP feature scope, not a bug; 012
-> (replace empty-success-shaped LSP timeouts with explicit result variants) is a
-> result-type refactor threaded through every LSP request site with a slow-server fixture.
-> Both are focused LSP passes with feature/robustness (not correctness-regression) payoff.
-> Deferred to a dedicated LSP-completeness change (pairs with the async 091 shutdown work).
+> **[CLUSTER COMPLETE 2026-07-23]** Both items of the 2026-07-17 deferred LSP-completeness
+> pass are now RESOLVED: 012 on 2026-07-20 (`LspResult<T>` outcome taxonomy) and 011 on
+> 2026-07-23 (resource ops + version-aware edits). Details in the per-item entries below.
 
-- **011 — `WorkspaceEdit` resource ops (create/delete/rename) + version-aware edits**
-  with atomic/rollback-safe staging. (The *async apply* facet — load/save closed files
-  off-thread — is RESOLVED under **TD-2026-07-16-18**; this remaining facet is the net-new
-  resource-operation FEATURE support, not a perf/correctness bug.)
+- **[RESOLVED 2026-07-23] 011 — `WorkspaceEdit` resource ops (create/delete/rename) +
+  version-aware edits with atomic/rollback-safe staging.** (The *async apply* facet —
+  load/save closed files off-thread — was already RESOLVED under **TD-2026-07-16-18**.)
+  What shipped:
+  - **Protocol.** `ParseWorkspaceEdit` now parses `documentChanges` resource ops
+    (`kind: create/rename/delete` + their `overwrite`/`ignoreIfExists`/
+    `ignoreIfNotExists`/`recursive` options) into `WorkspaceEdit::resource_ops`
+    (array order, count bounded by the file cap), and records each versioned
+    TextDocumentEdit's `textDocument.version` in `WorkspaceEdit::expected_versions`
+    (keyed by the URI as sent). Text edits accumulated under a URI that a later
+    rename op moves are re-keyed to the post-rename URI, so the host's ops-first
+    apply order reproduces the wire order's file contents. The initialize request
+    now advertises `workspace.workspaceEdit = {documentChanges, resourceOperations:
+    [create,rename,delete], failureHandling: textOnlyTransactional}` — servers
+    (rust-analyzer module renames / "extract module", TS "move to new file") only
+    send resource ops when the client advertises them.
+  - **Apply (host).** `LspService::ApplyWorkspaceResourceOps` validates every op
+    against a simulated existence overlay BEFORE mutating anything (project-root
+    containment for every target, source-exists / target-collision / non-empty-dir
+    rules, ignore-option skips), then applies in order with a rollback journal:
+    deletes and overwrite-displaced targets are STAGED (renamed to a hidden
+    same-directory sibling — same filesystem, pure rename) so any mid-flight I/O
+    failure rolls every completed op back; only a fully-landed batch disposes its
+    staged backups (off the shell thread via the background executor). Open tabs /
+    diagnostics / plugin decorations reconcile per op through the new public
+    `PathMutationCoordinator::ReconcileAfterExternalRename/Delete` (state-side half
+    of the sidebar flows), and the file tree refreshes once per batch.
+  - **Version gate.** `LspClient::TrackedDocumentVersion(uri)` (thread-safe) +
+    `LspService::WorkspaceEditVersionsCurrent`: a versioned TextDocumentEdit whose
+    expected version differs from the tracked open-document version fails the WHOLE
+    edit before anything applies (LSP-mandated), in both the server-initiated
+    `workspace/applyEdit` path and the client rename path.
+  - **Consumers.** Server `workspace/applyEdit`: version gate → resource ops →
+    open-buffer edits → async closed-file edits (a resource-op-only edit reports
+    `applied: true`). Rename: resource ops route through the confirm prompt
+    (stashed in `PendingRenameSave`; ops run before edits on commit, abort +
+    notify on op failure). Code actions: ops-carrying actions apply through
+    `LspService::ApplyFullWorkspaceEdit` (ops → open buffers → closed files on
+    disk, since an "extract module"-style fix fills the file it just created).
+  - **Regressions:** `LspProtocol/ParsesWorkspaceEditResourceOps` (op kinds/options,
+    ordering cap, pre-rename re-key, version capture),
+    `WorkspaceShell/ServerApplyEditAppliesResourceOps` (create+fill / rename-open-tab
+    retarget / delete / no staging residue),
+    `WorkspaceShell/ServerApplyEditResourceOpBatchIsAtomic` (validate-first: a bad op
+    voids the earlier create; out-of-root op refused),
+    `WorkspaceShell/ServerApplyEditHonorsDocumentVersions` (stale version rejected,
+    current version applies). `WorkspaceShellMembers.inc` cap 1700 → 1702 (rename
+    param + `PendingRenameSave.resource_ops`; the apply logic lives in `LspService`).
 - **[RESOLVED 2026-07-20] 012 — replace empty-success-shaped LSP timeouts with explicit
   result variants.** Every async LSP request now delivers an `LspResult<T>` carrying an
   `LspRequestOutcome` (`kOk` / `kEmpty` / `kTimeout` / `kUnavailable` / `kProtocolError`)
@@ -2905,7 +2948,7 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
   rename path. Covered by the existing (now barrier-drained)
   `WorkspaceShell/ServerApplyEdit{EditsOpenAndClosedFiles,RejectsOutOfRangeClosedFileEdit}`.
   (The distinct **TD-2026-07-17-011** resource-ops/version-aware-edits FEATURE facet — see
-  the LSP-completeness subsection — is separate and remains.)
+  the LSP-completeness subsection — was RESOLVED separately on 2026-07-23.)
 - **TD-2026-07-16-19 — compare/merge/review open paths run git blob reads
   synchronously on the workspace thread.** Dedicated async pass. Overlaps
   **TD-2026-07-17-047**.

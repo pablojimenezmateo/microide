@@ -677,8 +677,51 @@ std::vector<CodeActionSessionItem> AssistService::TransformLspCodeActions(
       arguments.push_back(JsonValueToArgumentString(argument));
     }
     std::vector<CodeActionEdit> edits;
+    std::vector<WorkspaceResourceOp> resource_ops;
     bool edits_truncated = false;
     if (action.has_edit) {
+      // Flatten the action's file resource ops (e.g. rust-analyzer "extract
+      // module" creates the target file). One undecodable op URI disables the
+      // whole inline fix — applying the text edits without their ops would leave
+      // the workspace inconsistent.
+      bool ops_unusable = false;
+      resource_ops.reserve(action.edit.resource_ops.size());
+      for (const auto& op : action.edit.resource_ops) {
+        const std::optional<std::filesystem::path> op_path = PathFromFileUri(op.uri);
+        std::optional<std::filesystem::path> op_new_path;
+        if (op.kind == LspClient::WorkspaceEdit::ResourceOp::Kind::Rename) {
+          op_new_path = PathFromFileUri(op.new_uri);
+        }
+        if (!op_path.has_value() ||
+            (op.kind == LspClient::WorkspaceEdit::ResourceOp::Kind::Rename &&
+             !op_new_path.has_value())) {
+          ops_unusable = true;
+          break;
+        }
+        WorkspaceResourceOp host_op;
+        switch (op.kind) {
+          case LspClient::WorkspaceEdit::ResourceOp::Kind::Create:
+            host_op.kind = WorkspaceResourceOp::Kind::Create;
+            break;
+          case LspClient::WorkspaceEdit::ResourceOp::Kind::Rename:
+            host_op.kind = WorkspaceResourceOp::Kind::Rename;
+            break;
+          case LspClient::WorkspaceEdit::ResourceOp::Kind::Delete:
+            host_op.kind = WorkspaceResourceOp::Kind::Delete;
+            break;
+        }
+        host_op.path = *op_path;
+        host_op.new_path = op_new_path.value_or(std::filesystem::path{});
+        host_op.overwrite = op.overwrite;
+        host_op.ignore_if_exists = op.ignore_if_exists;
+        host_op.ignore_if_not_exists = op.ignore_if_not_exists;
+        host_op.recursive = op.recursive;
+        resource_ops.push_back(std::move(host_op));
+      }
+      if (ops_unusable) {
+        resource_ops.clear();
+        edits_truncated = true;
+      }
       for (const auto& [uri, text_edits] : action.edit.changes) {
         if (edits_truncated) {
           break;
@@ -693,9 +736,11 @@ std::vector<CodeActionSessionItem> AssistService::TransformLspCodeActions(
         for (const auto& [lsp_range, new_text] : text_edits) {
           if (total_edits >= kMaxAggregateEdits ||
               total_edit_bytes + new_text.size() > kMaxAggregateEditBytes) {
-            // Budget exhausted: drop this action's (partial) edits so the overlay
-            // never holds a half-applied fix, and mark it disabled.
+            // Budget exhausted: drop this action's (partial) edits AND its
+            // resource ops so the overlay never holds a half-applied fix, and
+            // mark it disabled.
             edits.clear();
+            resource_ops.clear();
             edits_truncated = true;
             break;
           }
@@ -724,6 +769,7 @@ std::vector<CodeActionSessionItem> AssistService::TransformLspCodeActions(
         .command = action.command,
         .arguments = std::move(arguments),
         .edits = std::move(edits),
+        .resource_ops = std::move(resource_ops),
         .edits_truncated = edits_truncated,
     });
   }
@@ -769,7 +815,25 @@ bool AssistService::ExecuteSelectedCodeAction() {
 
   // Inline WorkspaceEdit actions (clangd quickfixes like "remove #include X")
   // apply directly to the open buffers; command-style actions dispatch through
-  // the command registry. An action with neither is inert.
+  // the command registry. An action with neither is inert. File resource ops
+  // (create/rename/delete) run FIRST — the edits are keyed by the post-op paths
+  // (e.g. rust-analyzer "extract module" creates the file its edits then fill).
+  if (!action.resource_ops.empty()) {
+    // Ops-carrying fix: the full applier runs the ops (rollback-safe), then the
+    // edits against open buffers AND closed files on disk (the edits typically
+    // fill the file the ops just created).
+    const bool applied = operations_.apply_full_lsp_workspace_edit
+                             ? operations_.apply_full_lsp_workspace_edit(action.edits,
+                                                                         action.resource_ops)
+                             : false;
+    if (applied) {
+      operations_.dismiss_overlay(true);
+    } else {
+      session.error = "Could not apply fix";
+      operations_.request_overlay_redraw();
+    }
+    return applied;
+  }
   if (!action.edits.empty()) {
     const bool applied = operations_.apply_lsp_workspace_edit
                              ? operations_.apply_lsp_workspace_edit(action.edits)
@@ -1205,7 +1269,9 @@ bool AssistService::RenameSymbol(const std::string& new_name, std::string* error
       ByteColumnToLspPosition(*viewport, viewport->cursor_line(), viewport->cursor_column(), encoding);
   client->RequestRenameAsync(
       FileUriForPath(request_path), position, new_name,
-      [this, request_path, new_name](LspResult<LspClient::WorkspaceEdit> edit) {
+      // `client` cannot dangle: the callback is stored on the client and invoked
+      // from its own DrainCallbacks (live or retiring), so the client outlives it.
+      [this, request_path, new_name, client](LspResult<LspClient::WorkspaceEdit> edit) {
         operations_.finish_tracked_lsp_request();
         if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
           return;
@@ -1215,9 +1281,60 @@ bool AssistService::RenameSymbol(const std::string& new_name, std::string* error
                                        "Rename request did not complete (server timed out or errored)");
           return;
         }
-        if (!edit.has_value() || edit->changes.empty()) {
+        if (!edit.has_value() || (edit->changes.empty() && edit->resource_ops.empty())) {
           output_channels_->AppendLine("lsp.log", "LSP Log", "No rename edits returned");
           return;
+        }
+        // Version gate: a versioned TextDocumentEdit pinned to a document version
+        // we have since advanced past is stale — applying it would corrupt the
+        // buffer the user kept typing in. LSP requires failing the whole edit.
+        for (const auto& [uri, expected] : edit->expected_versions) {
+          const std::optional<int> tracked = client->TrackedDocumentVersion(uri);
+          if (tracked.has_value() && *tracked != expected) {
+            output_channels_->AppendLine(
+                "lsp.log", "LSP Log",
+                "Rename aborted: the document changed while the server computed the rename");
+            return;
+          }
+        }
+        // Flatten resource ops (file create/rename/delete — e.g. rust-analyzer
+        // renames the file when a module is renamed). An undecodable target URI
+        // refuses the whole rename, mirroring the text-edit rule below.
+        std::vector<WorkspaceResourceOp> resource_ops;
+        resource_ops.reserve(edit->resource_ops.size());
+        for (const auto& op : edit->resource_ops) {
+          const std::optional<std::filesystem::path> op_path = PathFromFileUri(op.uri);
+          std::optional<std::filesystem::path> op_new_path;
+          if (op.kind == LspClient::WorkspaceEdit::ResourceOp::Kind::Rename) {
+            op_new_path = PathFromFileUri(op.new_uri);
+          }
+          if (!op_path.has_value() ||
+              (op.kind == LspClient::WorkspaceEdit::ResourceOp::Kind::Rename &&
+               !op_new_path.has_value())) {
+            output_channels_->AppendLine(
+                "lsp.log", "LSP Log",
+                "Rename aborted: server returned an unusable resource-operation URI");
+            return;
+          }
+          WorkspaceResourceOp host_op;
+          switch (op.kind) {
+            case LspClient::WorkspaceEdit::ResourceOp::Kind::Create:
+              host_op.kind = WorkspaceResourceOp::Kind::Create;
+              break;
+            case LspClient::WorkspaceEdit::ResourceOp::Kind::Rename:
+              host_op.kind = WorkspaceResourceOp::Kind::Rename;
+              break;
+            case LspClient::WorkspaceEdit::ResourceOp::Kind::Delete:
+              host_op.kind = WorkspaceResourceOp::Kind::Delete;
+              break;
+          }
+          host_op.path = *op_path;
+          host_op.new_path = op_new_path.value_or(std::filesystem::path{});
+          host_op.overwrite = op.overwrite;
+          host_op.ignore_if_exists = op.ignore_if_exists;
+          host_op.ignore_if_not_exists = op.ignore_if_not_exists;
+          host_op.recursive = op.recursive;
+          resource_ops.push_back(std::move(host_op));
         }
         // Flatten the URI-keyed WorkspaceEdit into the shared edit records (0-based
         // LSP coordinates; the apply path maps columns through the position
@@ -1252,7 +1369,11 @@ bool AssistService::RenameSymbol(const std::string& new_name, std::string* error
           }
         }
         if (operations_.apply_rename_workspace_edit) {
-          operations_.apply_rename_workspace_edit(new_name, workspace_edits);
+          operations_.apply_rename_workspace_edit(new_name, workspace_edits, resource_ops);
+        } else if (!resource_ops.empty() && operations_.apply_full_lsp_workspace_edit) {
+          // Headless fallback: resource ops first (the edits are keyed by the
+          // post-rename paths), then the text edits.
+          operations_.apply_full_lsp_workspace_edit(workspace_edits, resource_ops);
         } else if (operations_.apply_lsp_workspace_edit) {
           operations_.apply_lsp_workspace_edit(workspace_edits);
         }

@@ -285,6 +285,30 @@ void PathMutationCoordinator::ClearPluginDecorationsForPath(const std::filesyste
   state.MaybeReleasePluginPresentation();
 }
 
+void PathMutationCoordinator::ReconcileAfterExternalRename(
+    const std::filesystem::path& old_path, const std::filesystem::path& new_path) {
+  // The rename already happened on disk (LSP resource op); mirror the state-side
+  // half of the sidebar rename flow: retarget tabs (unsaved contents preserved),
+  // path-keyed diagnostics, and plugin decorations, then drop stale blame.
+  RetargetOpenTabsForRename(old_path, new_path, /*preserve_unsaved_state=*/true);
+  RetargetDiagnosticsForRename(old_path, new_path);
+  RetargetPluginDecorationsForRename(old_path, new_path);
+  operations_.clear_editor_blame();
+}
+
+void PathMutationCoordinator::ReconcileAfterExternalDelete(const std::filesystem::path& path) {
+  // Mirror the state-side half of the sidebar delete flow.
+  CloseOpenTabsForPath(path);
+  ClearDiagnosticsForPath(path);
+  ClearPluginDecorationsForPath(path);
+  operations_.clear_editor_blame();
+}
+
+void PathMutationCoordinator::RefreshViewsAfterExternalMutation(
+    const std::filesystem::path& preferred_tree_path) {
+  RefreshProjectViewsAfterMutation(preferred_tree_path);
+}
+
 void PathMutationCoordinator::RefreshProjectViewsAfterMutation(
     const std::filesystem::path& preferred_tree_path) {
   operations_.refresh_project_files();

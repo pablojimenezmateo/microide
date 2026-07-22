@@ -57,6 +57,16 @@ class PathMutationCoordinator {
   void CloseOpenTabsForPath(const std::filesystem::path& path);
   void ConfirmPromptSurface(DirtyPathResolution resolution);
 
+  // Reconcile shell state after an EXTERNAL path mutation (an LSP WorkspaceEdit
+  // resource op) already happened on disk: no prompts, no file operations — pure
+  // state retarget. Rename preserves unsaved buffer contents at the new path;
+  // delete closes the path's tabs and clears its diagnostics/decorations. The
+  // caller runs RefreshViewsAfterExternalMutation once after the batch.
+  void ReconcileAfterExternalRename(const std::filesystem::path& old_path,
+                                    const std::filesystem::path& new_path);
+  void ReconcileAfterExternalDelete(const std::filesystem::path& path);
+  void RefreshViewsAfterExternalMutation(const std::filesystem::path& preferred_tree_path);
+
  private:
   struct DirtyPathTarget {
     enum class Kind {

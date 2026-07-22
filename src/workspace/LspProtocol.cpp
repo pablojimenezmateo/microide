@@ -1,6 +1,7 @@
 #include "workspace/LspProtocol.h"
 
 #include <algorithm>
+#include <iterator>
 #include <limits>
 #include <utility>
 
@@ -231,15 +232,76 @@ LspClient::WorkspaceEdit ParseWorkspaceEdit(const JsonValue& edit, std::size_t m
   }
   if (edit.HasKey("documentChanges") && edit["documentChanges"].IsArray()) {
     for (const auto& doc_change : edit["documentChanges"].AsArray()) {
-      if (total_edits >= max_edits_total) {
-        break;
+      // Resource op shape: { kind: "create"|"rename"|"delete", uri/oldUri/newUri,
+      // options? }. Kept in array order; the op count shares the file cap so a
+      // hostile server cannot force an unbounded op list.
+      if (doc_change.HasKey("kind") && doc_change["kind"].IsString()) {
+        if (out.resource_ops.size() >= max_files) {
+          continue;
+        }
+        const std::string& kind = doc_change["kind"].AsString();
+        LspClient::WorkspaceEdit::ResourceOp op;
+        const JsonValue& options = doc_change["options"];
+        if (kind == "create") {
+          op.kind = LspClient::WorkspaceEdit::ResourceOp::Kind::Create;
+          op.uri = doc_change["uri"].AsString();
+        } else if (kind == "rename") {
+          op.kind = LspClient::WorkspaceEdit::ResourceOp::Kind::Rename;
+          op.uri = doc_change["oldUri"].AsString();
+          op.new_uri = doc_change["newUri"].AsString();
+        } else if (kind == "delete") {
+          op.kind = LspClient::WorkspaceEdit::ResourceOp::Kind::Delete;
+          op.uri = doc_change["uri"].AsString();
+        } else {
+          continue;  // unknown kind: ignore rather than misapply
+        }
+        op.overwrite = options["overwrite"].AsBool(false);
+        op.ignore_if_exists = options["ignoreIfExists"].AsBool(false);
+        op.ignore_if_not_exists = options["ignoreIfNotExists"].AsBool(false);
+        op.recursive = options["recursive"].AsBool(false);
+        if (op.uri.empty() ||
+            (op.kind == LspClient::WorkspaceEdit::ResourceOp::Kind::Rename &&
+             op.new_uri.empty())) {
+          continue;  // malformed op: no usable target
+        }
+        // The host applies all resource ops before any text edit, so text edits
+        // already accumulated under the pre-rename URI must follow the file to
+        // its new name (the wire order applied them before the rename ran).
+        if (op.kind == LspClient::WorkspaceEdit::ResourceOp::Kind::Rename &&
+            op.uri != op.new_uri) {
+          const auto old_bucket = out.changes.find(op.uri);
+          if (old_bucket != out.changes.end()) {
+            auto& new_bucket = out.changes[op.new_uri];
+            new_bucket.insert(new_bucket.end(),
+                              std::make_move_iterator(old_bucket->second.begin()),
+                              std::make_move_iterator(old_bucket->second.end()));
+            out.changes.erase(op.uri);
+          }
+        }
+        out.resource_ops.push_back(std::move(op));
+        continue;
       }
-      // TextDocumentEdit shape: { textDocument: { uri }, edits: [ TextEdit ] }.
-      // Skip create/rename/delete resource ops (no `edits` array).
+      if (total_edits >= max_edits_total) {
+        continue;  // text-edit budget spent; still collect later resource ops
+      }
+      // TextDocumentEdit shape: { textDocument: { uri, version? }, edits: [...] }.
       if (!doc_change.HasKey("edits") || !doc_change["edits"].IsArray()) {
         continue;
       }
-      append_edits(doc_change["textDocument"]["uri"].AsString(), doc_change["edits"]);
+      const JsonValue& text_document = doc_change["textDocument"];
+      const std::string& uri = text_document["uri"].AsString();
+      // OptionalVersionedTextDocumentIdentifier: a non-null integer version pins
+      // the edit to that document snapshot (accept a float-echoed integer, matching
+      // the diagnostics version gate). Keyed by the URI as sent — never remapped.
+      // Bounded by the file cap: empty-edit entries bypass the edit budget, so a
+      // hostile server could otherwise materialize an unbounded version map.
+      const JsonValue& version = text_document["version"];
+      if ((version.IsInt() || version.IsDouble()) &&
+          (out.expected_versions.size() < max_files ||
+           out.expected_versions.find(uri) != out.expected_versions.end())) {
+        out.expected_versions[uri] = version.AsInt();
+      }
+      append_edits(uri, doc_change["edits"]);
     }
   }
   return out;

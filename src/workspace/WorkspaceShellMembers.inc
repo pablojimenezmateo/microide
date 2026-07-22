@@ -975,11 +975,13 @@
   // dropped without applying (a line beyond EOF, or an overlapping group), so the
   // server-initiated workspace/applyEdit response can report partial failure.
   bool ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& edits, bool* out_any_rejected = nullptr);
-  // Apply an LSP rename result. If every affected file is already open, applies in
-  // place (dirty). If some are closed, stashes the edit and confirms before opening
-  // them all, applying, and saving — a project-wide rename that stays undo-coherent.
+  // Apply an LSP rename result. If every affected file is already open (and no
+  // resource ops), applies in place (dirty). If some are closed — or the rename
+  // carries file create/rename/delete ops — stashes the edit and confirms before
+  // applying ops, edits, and saves — a project-wide rename that stays undo-coherent.
   void ApplyRenameWorkspaceEdit(const std::string& new_name,
-                                const std::vector<CodeActionEdit>& edits);
+                                const std::vector<CodeActionEdit>& edits,
+                                const std::vector<WorkspaceResourceOp>& resource_ops);
   // Open, apply, and save the pending rename after the user confirms (or discard it
   // on cancel). No-op when nothing is pending.
   void CommitPendingRenameSave();
@@ -988,6 +990,7 @@
     std::string new_name;
     std::vector<CodeActionEdit> edits;
     std::vector<std::filesystem::path> affected_paths;
+    std::vector<WorkspaceResourceOp> resource_ops;
   };
   std::optional<PendingRenameSave> pending_rename_save_;
   // Collect the diagnostics for `viewport`'s file that overlap `range`, in LSP

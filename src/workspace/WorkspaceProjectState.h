@@ -264,6 +264,22 @@ struct CodeActionEdit {
   std::string new_text;
 };
 
+// One file create/rename/delete resource operation from a WorkspaceEdit's
+// `documentChanges`, resolved from URIs to filesystem paths at flatten time
+// (matching CodeActionEdit). Ops apply in vector order, BEFORE any text edit —
+// the protocol parser re-keys pre-rename text edits to their post-rename URI so
+// this ordering reproduces the wire order's file contents (TD-2026-07-17-011).
+struct WorkspaceResourceOp {
+  enum class Kind : std::uint8_t { Create, Rename, Delete };
+  Kind kind = Kind::Create;
+  std::filesystem::path path;      // create/delete target; rename source
+  std::filesystem::path new_path;  // rename target; empty for create/delete
+  bool overwrite = false;             // create/rename: replace an existing target
+  bool ignore_if_exists = false;      // create/rename: skip when target exists
+  bool ignore_if_not_exists = false;  // delete: skip when target is missing
+  bool recursive = false;             // delete: allow non-empty directories
+};
+
 struct CodeActionSessionItem {
   std::string title;
   std::string command;
@@ -271,6 +287,10 @@ struct CodeActionSessionItem {
   // When non-empty the action is applied directly as buffer edits (no command
   // dispatch). This is how clangd delivers quickfixes like "remove #include X".
   std::vector<CodeActionEdit> edits;
+  // File create/rename/delete ops carried by the action's inline WorkspaceEdit
+  // (e.g. rust-analyzer "extract module" creates the new file). Applied in order
+  // before `edits`. An action may carry ops without text edits.
+  std::vector<WorkspaceResourceOp> resource_ops;
   // True when this action's inline WorkspaceEdit was NOT materialized because the
   // overlay's shared aggregate edit/byte budget was exhausted — the action is shown
   // but its inline fix is disabled (no edits to apply). TD-2026-07-17A-057.

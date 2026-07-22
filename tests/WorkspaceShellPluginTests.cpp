@@ -2298,6 +2298,169 @@ return ide.plugin({
          "an out-of-range (beyond-EOF) edit must not be clamped onto the last line and written");
 }
 
+// Shared fixture for the server-initiated WorkspaceEdit resource-op tests
+// (TD-2026-07-17-011): a project with one OPEN buffer, a markdown stub client
+// with the apply-edit handler bound, returned ready for SimulateServerRequest.
+struct ServerApplyEditFixture {
+  TemporaryDirectory temp_dir;
+  std::filesystem::path project;
+  std::filesystem::path open_md;
+  std::unique_ptr<ScopedPluginConfigHomeEnv> scoped_env;
+  std::unique_ptr<WorkspaceShell> shell;
+  workspace::LspClient* stub = nullptr;
+
+  bool SetUp() {
+    const std::filesystem::path config_home = temp_dir.path() / "config";
+    const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+    project = temp_dir.path() / "proj";
+    open_md = project / "open.md";
+    WriteFile(open_md, "aaa\n");
+    WritePluginInit(
+        plugins_root, "mdlsp",
+        R"(local ide = require("microide")
+return ide.plugin({
+  id = "mdlsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "md-lsp-server" } })
+  end
+})
+)");
+    scoped_env = std::make_unique<ScopedPluginConfigHomeEnv>(config_home);
+    shell = std::make_unique<WorkspaceShell>();
+    if (!WorkspaceShellTestAccess::OpenProjectTab(*shell, project, false, false)) {
+      return false;
+    }
+    auto stub_owned = std::make_unique<workspace::LspClient>();
+    stub = stub_owned.get();
+    stub->EnableTestStubMode();
+    if (!WorkspaceShellTestAccess::LspManagerForTesting(*shell)
+             .InstallTestClientIntoExistingForTesting("markdown", std::move(stub_owned))) {
+      return false;
+    }
+    WorkspaceShellTestAccess::OpenFile(*shell, open_md);
+    WorkspaceShellTestAccess::ExecuteCommandLine(*shell, "completion");
+    WorkspaceShellTestAccess::ConsumeLspCallbacks(*shell);
+    return stub->HasApplyEditHandler();
+  }
+
+  void PushApplyEdit(const std::string& edit_json) {
+    std::optional<util::JsonValue> params = util::ParseJson(edit_json);
+    Expect(params.has_value(), "the applyEdit params fixture should parse");
+    stub->SimulateServerRequestForTesting("workspace/applyEdit", std::move(*params),
+                                          util::JsonValue(static_cast<std::int64_t>(1)));
+    WorkspaceShellTestAccess::ConsumeLspCallbacks(*shell);
+    WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(*shell);
+  }
+};
+
+// A server-pushed WorkspaceEdit with documentChanges resource ops: create a file
+// (then fill it via a TextDocumentEdit), rename the OPEN file (tab retargets in
+// place), and delete a closed file — all in one ordered batch (TD-2026-07-17-011).
+void TestWorkspaceShellServerApplyEditAppliesResourceOps() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  ServerApplyEditFixture fx;
+  Expect(fx.SetUp(), "resource-op fixture should come up with the handler bound");
+  const std::filesystem::path created_md = fx.project / "created.md";
+  const std::filesystem::path moved_md = fx.project / "moved.md";
+  const std::filesystem::path zombie_md = fx.project / "zombie.md";
+  WriteFile(zombie_md, "dead\n");
+
+  const std::string edit_json =
+      std::string("{\"edit\":{\"documentChanges\":[") +
+      "{\"kind\":\"create\",\"uri\":\"" + workspace::FileUriForPath(created_md) + "\"}," +
+      "{\"textDocument\":{\"uri\":\"" + workspace::FileUriForPath(created_md) +
+      "\",\"version\":null},\"edits\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},"
+      "\"end\":{\"line\":0,\"character\":0}},\"newText\":\"hello\\n\"}]}," +
+      "{\"kind\":\"rename\",\"oldUri\":\"" + workspace::FileUriForPath(fx.open_md) +
+      "\",\"newUri\":\"" + workspace::FileUriForPath(moved_md) + "\"}," +
+      "{\"kind\":\"delete\",\"uri\":\"" + workspace::FileUriForPath(zombie_md) + "\"}]}}";
+  fx.PushApplyEdit(edit_json);
+
+  Expect(ReadFile(created_md) == "hello\n",
+         "the created file should exist and carry the TextDocumentEdit fill");
+  Expect(!std::filesystem::exists(fx.open_md), "the renamed source should be gone on disk");
+  Expect(ReadFile(moved_md) == "aaa\n", "the renamed file should carry its content");
+  Expect(WorkspaceShellTestAccess::CountOpenBufferViews(*fx.shell, moved_md) == 1,
+         "the open tab should retarget to the renamed path");
+  Expect(WorkspaceShellTestAccess::CountOpenBufferViews(*fx.shell, fx.open_md) == 0,
+         "no tab should remain on the pre-rename path");
+  Expect(!std::filesystem::exists(zombie_md), "the deleted file should be gone");
+  // The staged delete backup must be disposed once the batch lands.
+  bool staging_residue = false;
+  for (const auto& entry : std::filesystem::directory_iterator(fx.project)) {
+    if (entry.path().filename().string().find(".microide-lsp-staged-") != std::string::npos) {
+      staging_residue = true;
+    }
+  }
+  Expect(!staging_residue, "no staging residue should remain after a successful batch");
+}
+
+// Validate-first atomicity: one bad op (rename of a missing source) fails the
+// WHOLE batch before anything mutates — the create listed before it must not run.
+void TestWorkspaceShellServerApplyEditResourceOpBatchIsAtomic() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  ServerApplyEditFixture fx;
+  Expect(fx.SetUp(), "atomicity fixture should come up with the handler bound");
+  const std::filesystem::path created_md = fx.project / "created.md";
+  const std::filesystem::path missing_md = fx.project / "missing.md";
+
+  const std::string edit_json =
+      std::string("{\"edit\":{\"documentChanges\":[") +
+      "{\"kind\":\"create\",\"uri\":\"" + workspace::FileUriForPath(created_md) + "\"}," +
+      "{\"kind\":\"rename\",\"oldUri\":\"" + workspace::FileUriForPath(missing_md) +
+      "\",\"newUri\":\"" + workspace::FileUriForPath(fx.project / "x.md") + "\"}]}}";
+  fx.PushApplyEdit(edit_json);
+
+  Expect(!std::filesystem::exists(created_md),
+         "a failed batch must not leave the earlier create applied");
+
+  // A delete escaping the project root also fails the batch up front.
+  const std::string escape_json =
+      std::string("{\"edit\":{\"documentChanges\":[") + "{\"kind\":\"delete\",\"uri\":\"" +
+      workspace::FileUriForPath(fx.temp_dir.path() / "outside.txt") + "\"}]}}";
+  WriteFile(fx.temp_dir.path() / "outside.txt", "keep\n");
+  fx.PushApplyEdit(escape_json);
+  Expect(ReadFile(fx.temp_dir.path() / "outside.txt") == "keep\n",
+         "a resource op outside the project root must not apply");
+}
+
+// Version-aware edits: a TextDocumentEdit pinned to a stale document version is
+// rejected wholesale; the matching version applies (TD-2026-07-17-011).
+void TestWorkspaceShellServerApplyEditHonorsDocumentVersions() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  ServerApplyEditFixture fx;
+  Expect(fx.SetUp(), "version fixture should come up with the handler bound");
+  // The open buffer was didOpen'd at version 1 by the completion request above.
+  const auto edit_with_version = [&](int version) {
+    return std::string("{\"edit\":{\"documentChanges\":[") + "{\"textDocument\":{\"uri\":\"" +
+           workspace::FileUriForPath(fx.open_md) + "\",\"version\":" + std::to_string(version) +
+           "},\"edits\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},"
+           "\"end\":{\"line\":0,\"character\":3}},\"newText\":\"bbb\"}]}]}}";
+  };
+  fx.PushApplyEdit(edit_with_version(999));
+  Expect(WorkspaceShellTestAccess::ActiveEditor(*fx.shell).lines()[0] == "aaa",
+         "an edit pinned to a stale document version must not apply");
+  fx.PushApplyEdit(edit_with_version(1));
+  Expect(WorkspaceShellTestAccess::ActiveEditor(*fx.shell).lines()[0] == "bbb",
+         "an edit pinned to the current document version applies");
+}
+
 void TestWorkspaceShellOutlineSidebarFromDocumentSymbols() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -4857,6 +5020,12 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellServerApplyEditEditsOpenAndClosedFiles);
   AddTest(tests, "WorkspaceShell/ServerApplyEditRejectsOutOfRangeClosedFileEdit",
           TestWorkspaceShellServerApplyEditRejectsOutOfRangeClosedFileEdit);
+  AddTest(tests, "WorkspaceShell/ServerApplyEditAppliesResourceOps",
+          TestWorkspaceShellServerApplyEditAppliesResourceOps);
+  AddTest(tests, "WorkspaceShell/ServerApplyEditResourceOpBatchIsAtomic",
+          TestWorkspaceShellServerApplyEditResourceOpBatchIsAtomic);
+  AddTest(tests, "WorkspaceShell/ServerApplyEditHonorsDocumentVersions",
+          TestWorkspaceShellServerApplyEditHonorsDocumentVersions);
   AddTest(tests, "WorkspaceShell/WorkspaceEditRejectsBeyondEofOpenBufferEdit",
           TestWorkspaceShellWorkspaceEditRejectsBeyondEofOpenBufferEdit);
   AddTest(tests, "WorkspaceShell/PluginsReloadFallsBackFromMissingActivePluginSidebar",

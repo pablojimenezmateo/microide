@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "editor/DecoratedTextGridRenderer.h"
@@ -495,10 +498,14 @@ LspClient* LspService::LspClientForViewport(const editor::TextViewport& viewport
     });
   }
   // Bind the server-initiated workspace/applyEdit handler once per client. Runs on
-  // the main thread (buffer/disk mutation) when the server pushes an edit.
+  // the main thread (buffer/disk mutation) when the server pushes an edit. The
+  // captured raw `client` is the client invoking its own handler (via its
+  // main-thread mailbox, which drops tasks unrun on destruction), so it cannot
+  // dangle; it is needed for the version gate against tracked document versions.
   if (!client->HasApplyEditHandler()) {
-    client->SetApplyEditHandler(
-        [this](LspClient::WorkspaceEdit edit) { return ApplyServerWorkspaceEdit(std::move(edit)); });
+    client->SetApplyEditHandler([this, client](LspClient::WorkspaceEdit edit) {
+      return ApplyServerWorkspaceEdit(*client, std::move(edit));
+    });
   }
   return client;
 }
@@ -1221,7 +1228,395 @@ bool LspService::IsPathOpenInProject(const std::filesystem::path& normalized) co
   return FindOpenEditorViewport(CurrentProjectState(), normalized) != nullptr;
 }
 
-bool LspService::ApplyServerWorkspaceEdit(LspClient::WorkspaceEdit edit) {
+bool LspService::ApplyFullWorkspaceEdit(const std::vector<CodeActionEdit>& edits,
+                                        const std::vector<WorkspaceResourceOp>& resource_ops) {
+  bool any_applied = false;
+  if (!resource_ops.empty()) {
+    const ResourceOpsResult ops_result = ApplyWorkspaceResourceOps(resource_ops);
+    if (!ops_result.ok) {
+      return false;
+    }
+    any_applied = ops_result.any_applied;
+  }
+  if (edits.empty()) {
+    return any_applied;
+  }
+  OpenBufferEditResult open_result;
+  if (operations_.apply_workspace_edit_to_open_buffers) {
+    open_result = operations_.apply_workspace_edit_to_open_buffers(edits);
+  }
+  // Synchronous closed-file apply (code-action scale: a handful of files, often
+  // just the one the ops created); the server-initiated bulk path stays async.
+  const DiskEditResult disk = ApplyLspEditsToClosedFilesOnDisk(
+      edits, [this](const std::filesystem::path& normalized) {
+        return IsPathOpenInProject(normalized);
+      });
+  return any_applied || open_result.applied_any || disk.files_written > 0;
+}
+
+bool LspService::WorkspaceEditVersionsCurrent(const LspClient& client,
+                                              const LspClient::WorkspaceEdit& edit) {
+  for (const auto& [uri, expected] : edit.expected_versions) {
+    const std::optional<int> tracked = client.TrackedDocumentVersion(uri);
+    if (tracked.has_value() && *tracked != expected) {
+      return false;
+    }
+  }
+  return true;
+}
+
+LspService::ResourceOpsResult LspService::ApplyWorkspaceResourceOps(
+    const std::vector<WorkspaceResourceOp>& ops) {
+  ResourceOpsResult result;
+  if (ops.empty()) {
+    return result;
+  }
+  namespace fs = std::filesystem;
+  using Kind = WorkspaceResourceOp::Kind;
+  const fs::path project_root = CurrentProjectState().root;
+
+  // --- Validate every op against a simulated existence overlay BEFORE mutating
+  // anything: the overlay tracks per-path existence as the earlier ops would
+  // leave it, so a create-then-rename batch validates the rename against the
+  // yet-to-be-created file. Catching every logical failure here is what makes
+  // the batch effectively atomic — the apply phase below can only fail on raw
+  // I/O errors, which the rollback journal covers.
+  std::unordered_map<std::string, bool> overlay;
+  const auto target_exists = [&](const fs::path& p) {
+    const auto it = overlay.find(p.generic_string());
+    if (it != overlay.end()) {
+      return it->second;
+    }
+    std::error_code ec;
+    return fs::exists(p, ec);
+  };
+  const auto set_exists = [&](const fs::path& p, bool exists) {
+    overlay[p.generic_string()] = exists;
+  };
+  const auto fail = [&](std::string message) {
+    result.ok = false;
+    result.any_applied = false;
+    result.error = std::move(message);
+    return result;
+  };
+  std::vector<char> skip(ops.size(), 0);  // ignore-option ops that resolve to no-ops
+  for (std::size_t i = 0; i < ops.size(); ++i) {
+    const WorkspaceResourceOp& op = ops[i];
+    const fs::path target = op.path.lexically_normal();
+    // A server may only touch files inside the active project root (mirrors the
+    // text-edit containment check; a compromised server must not create/rename/
+    // delete arbitrary user files). One bad op fails the whole batch — skipping
+    // it would desync every subsequent edit keyed to the op's outcome.
+    if (target.empty() || !util::PathEqualsOrWithin(target, project_root)) {
+      return fail("resource op target escapes the project root");
+    }
+    switch (op.kind) {
+      case Kind::Create:
+        if (target_exists(target)) {
+          if (!op.overwrite) {  // LSP: overwrite wins over ignoreIfExists
+            if (op.ignore_if_exists) {
+              skip[i] = 1;
+              break;
+            }
+            return fail("create target already exists: " + target.generic_string());
+          }
+        }
+        set_exists(target, true);
+        break;
+      case Kind::Rename: {
+        const fs::path dest = op.new_path.lexically_normal();
+        if (dest.empty() || !util::PathEqualsOrWithin(dest, project_root)) {
+          return fail("rename destination escapes the project root");
+        }
+        if (!target_exists(target)) {
+          return fail("rename source does not exist: " + target.generic_string());
+        }
+        if (target_exists(dest)) {
+          if (!op.overwrite) {
+            if (op.ignore_if_exists) {
+              skip[i] = 1;
+              break;
+            }
+            return fail("rename destination already exists: " + dest.generic_string());
+          }
+        }
+        set_exists(target, false);
+        set_exists(dest, true);
+        break;
+      }
+      case Kind::Delete: {
+        if (!target_exists(target)) {
+          if (op.ignore_if_not_exists) {
+            skip[i] = 1;
+            break;
+          }
+          return fail("delete target does not exist: " + target.generic_string());
+        }
+        std::error_code ec;
+        if (!op.recursive && fs::is_directory(target, ec) && !fs::is_empty(target, ec)) {
+          return fail("delete target is a non-empty directory (recursive not set): " +
+                      target.generic_string());
+        }
+        set_exists(target, false);
+        break;
+      }
+    }
+  }
+
+  // --- Apply in order, journaling the inverse of each mutation. A delete (or an
+  // overwrite's displaced target) is STAGED — renamed to a hidden sibling in the
+  // same directory (same filesystem, pure rename) — so it stays restorable until
+  // the whole batch lands; only then are the staged backups disposed.
+  struct JournalEntry {
+    enum class Undo : std::uint8_t {
+      RemoveCreatedFile,  // a: created file
+      RemoveCreatedDirs,  // a: topmost directory this batch created
+      RenameBack,         // a: current (new) path, b: original path
+      RestoreStaged,      // a: original path, b: staged path
+    };
+    Undo undo;
+    fs::path a;
+    fs::path b;
+  };
+  std::vector<JournalEntry> journal;
+  std::vector<fs::path> staged_disposals;
+  std::size_t stage_seq = 0;
+  const auto stage_aside = [&](const fs::path& victim) -> std::optional<fs::path> {
+    while (true) {
+      const fs::path staged =
+          victim.parent_path() / (".microide-lsp-staged-" + std::to_string(stage_seq++) + "-" +
+                                  victim.filename().string());
+      std::error_code ec;
+      if (fs::exists(staged, ec)) {
+        continue;  // seq collision with leftover debris; try the next name
+      }
+      fs::rename(victim, staged, ec);
+      if (ec) {
+        return std::nullopt;
+      }
+      return staged;
+    }
+  };
+  const auto ensure_parent_dirs = [&](const fs::path& target) -> bool {
+    const fs::path parent = target.parent_path();
+    std::error_code ec;
+    if (parent.empty() || fs::exists(parent, ec)) {
+      return true;
+    }
+    // Journal the TOPMOST directory this call creates so rollback removes the
+    // whole new chain, not just the leaf.
+    fs::path topmost = parent;
+    while (!topmost.parent_path().empty() && topmost.parent_path() != topmost &&
+           !fs::exists(topmost.parent_path(), ec)) {
+      topmost = topmost.parent_path();
+    }
+    fs::create_directories(parent, ec);
+    if (ec) {
+      return false;
+    }
+    journal.push_back({JournalEntry::Undo::RemoveCreatedDirs, topmost, {}});
+    return true;
+  };
+  const auto rollback = [&]() {
+    for (auto it = journal.rbegin(); it != journal.rend(); ++it) {
+      std::error_code ec;
+      switch (it->undo) {
+        case JournalEntry::Undo::RemoveCreatedFile:
+          fs::remove(it->a, ec);
+          break;
+        case JournalEntry::Undo::RemoveCreatedDirs:
+          fs::remove_all(it->a, ec);
+          break;
+        case JournalEntry::Undo::RenameBack:
+          fs::rename(it->a, it->b, ec);
+          break;
+        case JournalEntry::Undo::RestoreStaged:
+          fs::rename(it->b, it->a, ec);
+          break;
+      }
+    }
+  };
+
+  struct AppliedRename {
+    fs::path from;
+    fs::path to;
+  };
+  std::vector<AppliedRename> applied_renames;
+  std::vector<fs::path> applied_deletes;
+  fs::path last_mutated;
+  bool any_applied = false;
+  for (std::size_t i = 0; i < ops.size(); ++i) {
+    if (skip[i] != 0) {
+      continue;
+    }
+    const WorkspaceResourceOp& op = ops[i];
+    const fs::path target = op.path.lexically_normal();
+    std::string failure;
+    switch (op.kind) {
+      case Kind::Create: {
+        std::error_code ec;
+        if (!ensure_parent_dirs(target)) {
+          failure = "could not create parent directory for: " + target.generic_string();
+          break;
+        }
+        if (fs::exists(target, ec)) {
+          // Validated as an overwrite: stage the displaced content aside first so
+          // a later failure restores it byte-identically.
+          const std::optional<fs::path> staged = stage_aside(target);
+          if (!staged.has_value()) {
+            failure = "could not stage existing file for overwrite: " + target.generic_string();
+            break;
+          }
+          journal.push_back({JournalEntry::Undo::RestoreStaged, target, *staged});
+          staged_disposals.push_back(*staged);
+        }
+        std::ofstream created(target, std::ios::binary | std::ios::trunc);
+        if (!created) {
+          failure = "could not create file: " + target.generic_string();
+          break;
+        }
+        created.close();
+        journal.push_back({JournalEntry::Undo::RemoveCreatedFile, target, {}});
+        break;
+      }
+      case Kind::Rename: {
+        const fs::path dest = op.new_path.lexically_normal();
+        std::error_code ec;
+        if (!ensure_parent_dirs(dest)) {
+          failure = "could not create parent directory for: " + dest.generic_string();
+          break;
+        }
+        if (fs::exists(dest, ec)) {
+          const std::optional<fs::path> staged = stage_aside(dest);
+          if (!staged.has_value()) {
+            failure = "could not stage existing file for overwrite: " + dest.generic_string();
+            break;
+          }
+          journal.push_back({JournalEntry::Undo::RestoreStaged, dest, *staged});
+          staged_disposals.push_back(*staged);
+        }
+        fs::rename(target, dest, ec);
+        if (ec) {
+          failure = "could not rename " + target.generic_string() + " -> " +
+                    dest.generic_string() + ": " + ec.message();
+          break;
+        }
+        journal.push_back({JournalEntry::Undo::RenameBack, dest, target});
+        applied_renames.push_back({target, dest});
+        last_mutated = dest;
+        break;
+      }
+      case Kind::Delete: {
+        const std::optional<fs::path> staged = stage_aside(target);
+        if (!staged.has_value()) {
+          failure = "could not delete: " + target.generic_string();
+          break;
+        }
+        journal.push_back({JournalEntry::Undo::RestoreStaged, target, *staged});
+        staged_disposals.push_back(*staged);
+        applied_deletes.push_back(target);
+        last_mutated = target.parent_path();
+        break;
+      }
+    }
+    if (op.kind == Kind::Create && failure.empty()) {
+      last_mutated = target;
+    }
+    if (!failure.empty()) {
+      rollback();
+      return fail(std::move(failure));
+    }
+    any_applied = true;
+  }
+  result.any_applied = any_applied;
+  if (!any_applied) {
+    return result;  // every op was an ignore-option no-op
+  }
+
+  // --- The batch landed: reconcile shell state per op, dispose the staged
+  // backups (off the shell thread when possible — a staged directory removal can
+  // be slow), and refresh the project views once.
+  for (const AppliedRename& rename : applied_renames) {
+    if (operations_.reconcile_tabs_after_resource_rename) {
+      operations_.reconcile_tabs_after_resource_rename(rename.from, rename.to);
+    }
+  }
+  for (const fs::path& deleted : applied_deletes) {
+    if (operations_.reconcile_tabs_after_resource_delete) {
+      operations_.reconcile_tabs_after_resource_delete(deleted);
+    }
+  }
+  if (!staged_disposals.empty()) {
+    if (operations_.dispose_staged_paths_async) {
+      operations_.dispose_staged_paths_async(std::move(staged_disposals));
+    } else {
+      for (const fs::path& staged : staged_disposals) {
+        std::error_code ec;
+        fs::remove_all(staged, ec);
+      }
+    }
+  }
+  if (operations_.refresh_views_after_resource_ops) {
+    operations_.refresh_views_after_resource_ops(last_mutated);
+  }
+  return result;
+}
+
+bool LspService::ApplyServerWorkspaceEdit(LspClient& client, LspClient::WorkspaceEdit edit) {
+  // Version gate FIRST (before anything mutates): a versioned TextDocumentEdit
+  // whose expected version differs from the tracked open document is stale — the
+  // server computed it against text the user has since changed. LSP requires the
+  // client to fail the whole request on a mismatch.
+  if (!WorkspaceEditVersionsCurrent(client, edit)) {
+    return false;
+  }
+  // Resource ops (create/rename/delete) run before any text edit; the parser
+  // re-keyed pre-rename text edits to their post-rename URI to match. One
+  // undecodable target URI fails the whole edit — partially applying an edit
+  // whose op list we cannot fully honor would leave the workspace inconsistent.
+  bool any_resource_applied = false;
+  if (!edit.resource_ops.empty()) {
+    const auto to_host_kind = [](LspClient::WorkspaceEdit::ResourceOp::Kind kind) {
+      switch (kind) {
+        case LspClient::WorkspaceEdit::ResourceOp::Kind::Create:
+          return WorkspaceResourceOp::Kind::Create;
+        case LspClient::WorkspaceEdit::ResourceOp::Kind::Rename:
+          return WorkspaceResourceOp::Kind::Rename;
+        case LspClient::WorkspaceEdit::ResourceOp::Kind::Delete:
+          return WorkspaceResourceOp::Kind::Delete;
+      }
+      return WorkspaceResourceOp::Kind::Create;
+    };
+    std::vector<WorkspaceResourceOp> ops;
+    ops.reserve(edit.resource_ops.size());
+    for (const auto& op : edit.resource_ops) {
+      const std::optional<std::filesystem::path> op_path = PathFromFileUri(op.uri);
+      std::optional<std::filesystem::path> op_new_path;
+      if (op.kind == LspClient::WorkspaceEdit::ResourceOp::Kind::Rename) {
+        op_new_path = PathFromFileUri(op.new_uri);
+        if (!op_new_path.has_value()) {
+          return false;
+        }
+      }
+      if (!op_path.has_value()) {
+        return false;
+      }
+      ops.push_back(WorkspaceResourceOp{
+          .kind = to_host_kind(op.kind),
+          .path = *op_path,
+          .new_path = op_new_path.value_or(std::filesystem::path{}),
+          .overwrite = op.overwrite,
+          .ignore_if_exists = op.ignore_if_exists,
+          .ignore_if_not_exists = op.ignore_if_not_exists,
+          .recursive = op.recursive,
+      });
+    }
+    const ResourceOpsResult ops_result = ApplyWorkspaceResourceOps(ops);
+    if (!ops_result.ok) {
+      return false;
+    }
+    any_resource_applied = ops_result.any_applied;
+  }
   // Flatten the URI-keyed WorkspaceEdit into the shared 0-based edit records; both
   // appliers map the LSP `character` offsets through the position encoding.
   std::vector<CodeActionEdit> flat;
@@ -1256,7 +1651,8 @@ bool LspService::ApplyServerWorkspaceEdit(LspClient::WorkspaceEdit edit) {
     }
   }
   if (flat.empty()) {
-    return false;
+    // A resource-op-only edit (e.g. a bare file rename) is a legitimate success.
+    return any_resource_applied;
   }
   OpenBufferEditResult open_result;
   // Open buffers edit in place (the shell resolves + re-syncs them); closed files
@@ -1292,7 +1688,7 @@ bool LspService::ApplyServerWorkspaceEdit(LspClient::WorkspaceEdit edit) {
   if (open_result.any_rejected) {
     return false;
   }
-  return open_result.applied_any || had_closed_edits;
+  return open_result.applied_any || had_closed_edits || any_resource_applied;
 }
 
 void LspService::ConsumeLspCallbacks() {

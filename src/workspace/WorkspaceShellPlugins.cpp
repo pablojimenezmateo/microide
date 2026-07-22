@@ -6,6 +6,7 @@
 #include <limits>
 #include <set>
 #include <string>
+#include <system_error>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -15,8 +16,11 @@
 #include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
+#include "workspace/EditorTabService.h"
 #include "workspace/FileUri.h"
 #include "workspace/LspPositionEncoding.h"
+#include "workspace/PromptSurfaceService.h"
+#include "workspace/WorkspacePathMutationCoordinator.h"
 #include "workspace/LspViewportPositions.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceActionCoordinator.h"
@@ -194,6 +198,39 @@ WorkspaceShell::WorkspaceShell() {
                     });
               },
           .get_setting_value = [this](std::string_view id) { return GetSettingValue(id); },
+          .reconcile_tabs_after_resource_rename =
+              [this](const std::filesystem::path& old_path, const std::filesystem::path& new_path) {
+                EditorTabService editor_tabs = MakeEditorTabService();
+                PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+                MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
+                    .ReconcileAfterExternalRename(old_path, new_path);
+              },
+          .reconcile_tabs_after_resource_delete =
+              [this](const std::filesystem::path& path) {
+                EditorTabService editor_tabs = MakeEditorTabService();
+                PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+                MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
+                    .ReconcileAfterExternalDelete(path);
+              },
+          .refresh_views_after_resource_ops =
+              [this](const std::filesystem::path& preferred_tree_path) {
+                EditorTabService editor_tabs = MakeEditorTabService();
+                PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+                MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
+                    .RefreshViewsAfterExternalMutation(preferred_tree_path);
+              },
+          .dispose_staged_paths_async =
+              [this](std::vector<std::filesystem::path> staged) {
+                // Removing a staged (already-renamed-aside) backup can be slow for
+                // directories; do it off the shell thread. Failure is harmless — a
+                // leftover hidden staging entry, never user data.
+                project_background_executor_.Post([staged = std::move(staged)]() {
+                  for (const std::filesystem::path& path : staged) {
+                    std::error_code ec;
+                    std::filesystem::remove_all(path, ec);
+                  }
+                });
+              },
       });
   // Live theme pointer for baking semantic-token recolor decorations (theme_'s
   // address is stable; a theme switch mutates it in place).
@@ -320,9 +357,15 @@ WorkspaceShell::WorkspaceShell() {
               [this](const std::vector<CodeActionEdit>& edits) {
                 return ApplyLspWorkspaceEdit(edits);
               },
+          .apply_full_lsp_workspace_edit =
+              [this](const std::vector<CodeActionEdit>& edits,
+                     const std::vector<WorkspaceResourceOp>& resource_ops) {
+                return lsp_service_.ApplyFullWorkspaceEdit(edits, resource_ops);
+              },
           .apply_rename_workspace_edit =
-              [this](const std::string& new_name, const std::vector<CodeActionEdit>& edits) {
-                ApplyRenameWorkspaceEdit(new_name, edits);
+              [this](const std::string& new_name, const std::vector<CodeActionEdit>& edits,
+                     const std::vector<WorkspaceResourceOp>& resource_ops) {
+                ApplyRenameWorkspaceEdit(new_name, edits, resource_ops);
               },
           .open_file_in_new_tab =
               [this](const std::filesystem::path& path) { return OpenFileInNewTab(path); },
@@ -1498,8 +1541,9 @@ bool IsPathOpenInEditorState(const ProjectWorkspaceState& state,
 }  // namespace
 
 void WorkspaceShell::ApplyRenameWorkspaceEdit(const std::string& new_name,
-                                              const std::vector<CodeActionEdit>& edits) {
-  if (edits.empty()) {
+                                              const std::vector<CodeActionEdit>& edits,
+                                              const std::vector<WorkspaceResourceOp>& resource_ops) {
+  if (edits.empty() && resource_ops.empty()) {
     return;
   }
   // Distinct affected files (an empty path targets the active buffer, always open).
@@ -1522,21 +1566,28 @@ void WorkspaceShell::ApplyRenameWorkspaceEdit(const std::string& new_name,
     }
   }
 
-  if (closed_count == 0) {
+  if (closed_count == 0 && resource_ops.empty()) {
     // Everything is already open: apply in place, leaving the buffers dirty like any
     // other edit (the user saves as usual).
     ApplyLspWorkspaceEdit(edits);
     return;
   }
 
-  // Some files are not open. Confirm before writing them — editing files the user
-  // hasn't opened is an outward, hard-to-undo action. The closed files are applied
-  // SILENTLY on disk (VSCode-style); no tabs are opened for them.
+  // Some files are not open, or the rename carries file operations (e.g. a
+  // rust-analyzer module rename renames the file itself). Confirm before applying —
+  // writing files the user hasn't opened and mutating paths are outward,
+  // hard-to-undo actions. The closed files are applied SILENTLY on disk
+  // (VSCode-style); no tabs are opened for them.
   std::string detail = "Renaming to '" + new_name + "' changes " +
                        std::to_string(affected.size()) + (affected.size() == 1 ? " file" : " files") +
-                       " (" + std::to_string(closed_count) + " not open). Apply and save?";
+                       " (" + std::to_string(closed_count) + " not open)";
+  if (!resource_ops.empty()) {
+    detail += " and performs " + std::to_string(resource_ops.size()) +
+              (resource_ops.size() == 1 ? " file operation" : " file operations");
+  }
+  detail += ". Apply and save?";
   pending_rename_save_ =
-      PendingRenameSave{new_name, edits, std::move(affected)};
+      PendingRenameSave{new_name, edits, std::move(affected), resource_ops};
   OpenPromptSurface(PromptSurfaceState::Action::ConfirmRenameSave,
                     PromptSurfaceState::Kind::Confirm, std::filesystem::path{}, std::string{});
   context_.prompts.surface.detail = std::move(detail);
@@ -1551,6 +1602,17 @@ void WorkspaceShell::CommitPendingRenameSave() {
   }
   const PendingRenameSave pending = std::move(*pending_rename_save_);
   pending_rename_save_.reset();
+
+  // Resource ops run FIRST (the text edits are keyed by the post-rename paths;
+  // open tabs are retargeted by the reconcile hooks as each op lands). A failed
+  // op batch rolls itself back and aborts the rename — applying the text edits
+  // against paths the ops never produced would corrupt the workspace.
+  if (!pending.resource_ops.empty() &&
+      !lsp_service_.ApplyWorkspaceResourceOps(pending.resource_ops).ok) {
+    Notify(NotificationService::Tone::Error,
+           "Rename aborted: file operations failed (rolled back)");
+    return;
+  }
 
   // Open files keep their edits applied in place (ApplyLspWorkspaceEdit resolves
   // only already-open buffers; closed files are skipped there), then are saved.

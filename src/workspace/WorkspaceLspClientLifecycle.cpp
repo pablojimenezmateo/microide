@@ -190,6 +190,23 @@ void LspClient::Impl::DoInitializeBlocking() {
   // files silently on disk) via the bound apply-edit handler.
   workspace_caps["applyEdit"] = JsonValue(true);
   {
+    // WorkspaceEdit support: the ordered `documentChanges` shape, file
+    // create/rename/delete resource ops (validated up front, applied with
+    // rollback-safe staging), and versioned TextDocumentEdits (a stale expected
+    // version fails the whole edit). Failure handling matches VSCode: text-only
+    // edits are transactional; an edit containing resource ops aborts at the
+    // first failure (our applier additionally rolls back completed ops).
+    JsonObject workspace_edit_caps;
+    workspace_edit_caps["documentChanges"] = JsonValue(true);
+    JsonArray resource_ops;
+    resource_ops.push_back(JsonValue("create"));
+    resource_ops.push_back(JsonValue("rename"));
+    resource_ops.push_back(JsonValue("delete"));
+    workspace_edit_caps["resourceOperations"] = JsonValue(std::move(resource_ops));
+    workspace_edit_caps["failureHandling"] = JsonValue("textOnlyTransactional");
+    workspace_caps["workspaceEdit"] = JsonValue(std::move(workspace_edit_caps));
+  }
+  {
     JsonObject did_change_config;
     did_change_config["dynamicRegistration"] = JsonValue(false);
     workspace_caps["didChangeConfiguration"] = JsonValue(std::move(did_change_config));
