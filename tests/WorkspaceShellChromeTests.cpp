@@ -2080,6 +2080,51 @@ void TestWorkspaceShellFoldingRefreshRunsOncePerPreparedFrame() {
              util::PerfCounterId::FrameRefreshEditorFoldingModelsCalls) == 1,
          "RenderClip partial redraws must not re-run the folding refresh");
 }
+
+// TD-2026-07-16-30 / standing backlog #9: steady-state frame-prep counts. One
+// prepared frame does each unit of prep work exactly once — frame prep itself,
+// the status-bar model rebuild, and the frame/overlay view-model builds — and
+// retained partial redraws (RenderPrepared) off that frame re-run none of it.
+// The event-driven all-tabs preference apply must not run at all during quiet
+// prep/redraw. Guards the silent per-clip CPU-burn regression class the
+// counters were added to watch.
+void TestWorkspaceShellFramePrepCountersRunOncePerPreparedFrame() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(1280, 720);
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "main.txt";
+  WriteFile(file, "alpha\nbeta\ngamma\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "frame-prep counter regression test should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+
+  shell.Render(canvas.renderer(), 1280, 720);  // settle fonts/layout/first paint
+  util::ResetPerformanceCounters();
+
+  shell.PrepareRenderFrame(canvas.renderer(), 1280, 720);
+  for (int i = 0; i < 5; ++i) {
+    shell.RenderPrepared(canvas.renderer(), 1280, 720);
+  }
+
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::FramePrepareCalls) == 1,
+         "retained partial redraws must not re-run PrepareFrameOnce");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::FrameRefreshStatusBarCalls) == 1,
+         "the status-bar model must rebuild exactly once per prepared frame, not per clip");
+  Expect(util::ReadPerformanceCounter(
+             util::PerfCounterId::RenderViewModelBuildFrameSurfaceCalls) == 1,
+         "the frame-surface view model must build exactly once per prepared frame");
+  Expect(util::ReadPerformanceCounter(
+             util::PerfCounterId::RenderViewModelBuildOverlaySurfaceCalls) == 1,
+         "the overlay-surface view model must build exactly once per prepared frame");
+  Expect(util::ReadPerformanceCounter(
+             util::PerfCounterId::FrameApplyEditorPreferencesAllTabsCalls) == 0,
+         "the all-tabs preference apply is event-driven and must not run on quiet frames");
+}
 #endif
 
 void TestViewMenuToggleReflectsBackingSetting() {
@@ -2559,6 +2604,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenderBuildsEditorViewModelOncePerSimplePaneFrame);
   AddTest(tests, "WorkspaceShell/FoldingRefreshRunsOncePerPreparedFrame",
           TestWorkspaceShellFoldingRefreshRunsOncePerPreparedFrame);
+  AddTest(tests, "WorkspaceShell/FramePrepCountersRunOncePerPreparedFrame",
+          TestWorkspaceShellFramePrepCountersRunOncePerPreparedFrame);
 #endif
   AddTest(tests, "WorkspaceShell/FileCloseAllTabsClosesOpenEditorTabs",
           TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs);

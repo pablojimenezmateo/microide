@@ -117,7 +117,9 @@ they land.
    contract suite (036), terminal stress suite (015), fuzz corpus seeding (052), shared
    `WaitUntil` polling helper (088) **[RESOLVED 2026-07-22 — see the Architecture lint /
    test infrastructure subsection]**, large-buffer edit perf scenario + direct-`Snapshot()`
-   lint (022) **[RESOLVED 2026-07-22 — same subsection]**, per-frame-prep counters (030).
+   lint (022) **[RESOLVED 2026-07-22 — same subsection]**, per-frame-prep counters (030)
+   **[RESOLVED 2026-07-22 — audited satisfied + added the missing steady-state guard; see
+   the render subsection]**.
 10. **Plugin UI features** — bottom-panel preview scroll (60), hit-region dispatch (61).
 
 **Platform passes (need a Windows/macOS host to build+verify):** 004/005/010/035 (Windows),
@@ -2389,7 +2391,8 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 > `OverlayState*`/`ProjectWorkspaceState*` pointers + rebuilding labels in the render TU)
 > is the same render-view-model expansion class as the already-shipped 26/083 work but
 > for the overlay surface — a focused view-model build-out, not a hot bug (labels are
-> small). 029/030 are lint/regression-counter *test-infra* additions. The concrete
+> small). 029/030 (lint/regression-counter *test-infra* additions) are RESOLVED 2026-07-22
+> — see their entry below. The concrete
 > render hot-path perf win in this family was taken here: 083 (commit body now paints via
 > `LineView`, no whole-buffer `Snapshot()`). Deferred to a dedicated render-view-model pass.
 
@@ -2407,8 +2410,25 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   pointers and rebuilds labels in the render TU.** Expand into an owned/precomputed
   row+string model; move label composition into `RenderViewModelBuilder`; add a
   view-model-pointer lint. Same family as **TD-2026-07-16-26**.
-- **029 / 030 — expand render-string lint coverage + add per-frame-prep regression
-  counters** (layout recompute / view-model build / frame-prep counts).
+- **[RESOLVED 2026-07-22] 029 / 030 — expand render-string lint coverage + add per-frame-prep
+  regression counters** (layout recompute / view-model build / frame-prep counts). An audit
+  found both substantially shipped in-tree since filing: **029** — the render-string rules
+  (`CheckRenderTuDoesNotCallToStringOrFormat`, `CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings`,
+  `CheckRenderSurfaceStateAccess`) enumerate render TUs by `WorkspaceShellRender*` glob plus
+  the hover/debug-pane files, so every render TU (including the later-added
+  Chrome/Menus/Prompts/SettingsOverlay/StatusBar) is already covered; the narrower
+  hot-per-row-only scope of the literal+ident concat rule is a documented deliberate choice,
+  not a gap. **030** — the counters landed in cb2705bb (`FramePrepareCalls`,
+  `FrameRefreshStatusBarCalls`, `RenderBuildEditorViewModelCalls`,
+  `RenderViewModelBuildFrame/OverlaySurfaceCalls`, wrapped-row rebuild/visit counts, …) and
+  layout recompute (`PrepareFrameSkipsLayoutWhenNotDirty` / `RecomputesLayoutAfterResize`),
+  editor view-model build, and folding refresh already had once-per-frame regression tests.
+  The one genuine gap was closed this pass: the new
+  `WorkspaceShell/FramePrepCountersRunOncePerPreparedFrame` asserts a prepared frame runs
+  frame prep, the status-bar model rebuild, and the frame/overlay view-model builds exactly
+  once with five retained `RenderPrepared` clips re-running none of them, and that the
+  event-driven all-tabs preference apply stays at zero on quiet frames — the silent
+  per-clip CPU-burn regression class the counters were added to watch.
 
 **Editor / Unicode (schedule as one coherent pass):**
 
@@ -2681,8 +2701,7 @@ build and verify the target platform. Descriptions retained as intake for that p
 > not product defects: 020/058 (mechanical no-longjmp-across-C++-locals audit) needs
 > clang-tidy/AST tooling the repo doesn't wire up; 032/037 add architecture lints with
 > negative fixtures; 036 is a backend-independent watcher contract suite; 015 a terminal
-> lifecycle stress suite; 052 seeds fuzz corpora; 030 adds per-frame-prep regression
-> counters. (**088 RESOLVED 2026-07-22** — the ~12 duplicated fixed-sleep polling helpers now
+> lifecycle stress suite; 052 seeds fuzz corpora. (**088 RESOLVED 2026-07-22** — the ~12 duplicated fixed-sleep polling helpers now
 > delegate to one shared `tests::WaitUntil`; **022 RESOLVED 2026-07-22** — the
 > no-whole-buffer-snapshot lint was modernized to the live `TextBuffer` APIs, its vacuous
 > meta-fixture was fixed, and runtime `snapshot_build_count()==0` guards now cover the
@@ -2729,7 +2748,8 @@ build and verify the target platform. Descriptions retained as intake for that p
   (enter/backspace burst at line 25k of a 50k-line file) and `editor_moby_dick_workout`
   (select-all/cut/paste/undo/redo with wall + allocation gates) are the large-buffer
   insert/delete/undo wall-time oracles, so no new perf scenario was needed.
-- **030 — per-frame-prep regression counters** (see render section).
+- **[RESOLVED 2026-07-22] 030 — per-frame-prep regression counters** (see the render
+  subsection for the full audit + the new steady-state guard).
 - **015 — terminal lifecycle platform stress suite** (tab-close-during-output/exit,
   alt-screen shutdown, multi-terminal shutdown, open/close loops).
 - **052 — seed the seed-light fuzz corpora** (PersistedRecordReader / GitBlameParser /
