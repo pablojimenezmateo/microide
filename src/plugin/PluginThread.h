@@ -88,10 +88,20 @@ class PluginThread {
   void Drain() { inbound_.Drain(); }
 
  private:
-  // Inbound queue (UI -> worker); lazy so an unused host spawns no thread.
-  util::SerialWorkQueue inbound_{util::SerialWorkQueue::StartMode::kLazy};
-  // Outbound mailbox (worker -> UI).
+  // Declaration order is load-bearing for destruction safety. Members destruct in
+  // reverse declaration order, and the worker owned by `inbound_` posts into
+  // `mailbox_` (worker -> UI). So `mailbox_` MUST be declared first (destroyed
+  // last) and `inbound_` last (destroyed first): tearing `inbound_` down joins the
+  // worker while `mailbox_` is still alive, so a final in-flight job's PostToMain
+  // cannot touch a freed mailbox. The reverse order would free `mailbox_` first and
+  // then join the worker, use-after-freeing on any job that posts during the join.
+  // This keeps ~PluginThread self-safe even if an owner forgets to Shutdown() first.
+  //
+  // Outbound mailbox (worker -> UI). Declared first so it outlives the worker.
   util::MainThreadMailbox mailbox_;
+  // Inbound queue (UI -> worker); lazy so an unused host spawns no thread. Declared
+  // last so it (and its worker thread) is destroyed/joined before `mailbox_`.
+  util::SerialWorkQueue inbound_{util::SerialWorkQueue::StartMode::kLazy};
 };
 
 }  // namespace microide::plugin

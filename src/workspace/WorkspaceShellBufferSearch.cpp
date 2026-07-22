@@ -228,7 +228,6 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
     if (!pattern.valid() || match.start.line >= viewport->lines().LineCount()) {
       return;
     }
-    const editor::SelectionRange whole = WholeDocumentRange(*viewport);
     const std::string content = BuildWholeBufferContent(*viewport);
     std::size_t offset = 0;
     for (std::size_t i = 0; i < match.start.line; ++i) {
