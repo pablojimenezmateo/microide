@@ -5,7 +5,11 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <map>
 #include <regex>
+#include <string>
+#include <vector>
 
 namespace microide::tests::architecture {
 
@@ -259,6 +263,150 @@ RuleResult CheckPluginFieldReadsAreMetamethodProtected(const std::filesystem::pa
   return result;
 }
 
+RuleResult CheckLuaStaysBehindPluginBoundary(const std::filesystem::path& repo_root) {
+  // TD-2026-07-16-22: the plugin runtime's Lua coupling must not leak past the
+  // src/plugin boundary. Production code outside src/plugin must not name
+  // lua_State, must not include a Lua header, and must not include a plugin
+  // header that (transitively through other plugin headers) exposes either —
+  // the outward-facing surfaces (PluginHost.h, PluginThread.h, ...) stay
+  // Lua-free at the type level so the whole Lua dependency remains an
+  // implementation detail of the plugin subsystem. One sanctioned exemption:
+  // src/editor/SyntaxDefinitionLoader.cpp runs syntax-definition files in its
+  // own throwaway sandboxed lua_State, deliberately independent of the plugin
+  // runtime (it may also reuse plugin/LuaErrorMessage.h for error strings).
+  RuleResult result;
+  result.label = "lua_State stays behind the src/plugin boundary";
+  result.hard_fail = true;
+  const std::filesystem::path src_dir = repo_root / "src";
+  if (!std::filesystem::exists(src_dir)) {
+    return result;
+  }
+  const std::regex lua_state_token(R"(\blua_State\b)");
+  const std::regex lua_header_include(
+      R"(#\s*include\s*[<"](?:lua|lualib|lauxlib|luaconf)\.(?:h|hpp)[">])");
+  const std::regex plugin_header_include(R"(#\s*include\s*"(plugin/[^"]+)\")");
+
+  const auto has_code_match = [](const std::string& text, const std::vector<bool>& is_code,
+                                 const std::regex& pattern) {
+    for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
+      const std::size_t pos = static_cast<std::size_t>(it->position());
+      if (pos >= is_code.size() || is_code[pos]) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Pass 1: per plugin header, record direct Lua exposure (code positions only —
+  // the PluginThread.h threading contract legitimately discusses lua_State in
+  // comments) and the plugin headers it includes.
+  std::map<std::string, bool> direct_exposure;
+  std::map<std::string, std::vector<std::string>> header_includes;
+  const std::filesystem::path plugin_dir = src_dir / "plugin";
+  if (std::filesystem::exists(plugin_dir)) {
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(plugin_dir)) {
+      if (!entry.is_regular_file()) {
+        continue;
+      }
+      const std::string ext = entry.path().extension().string();
+      if (ext != ".h" && ext != ".hpp") {
+        continue;
+      }
+      const std::string key =
+          "plugin/" + std::filesystem::relative(entry.path(), plugin_dir).generic_string();
+      const std::string text = ReadText(entry.path());
+      const std::vector<bool> is_code = BuildCodeMask(text);
+      direct_exposure[key] = has_code_match(text, is_code, lua_state_token) ||
+                             has_code_match(text, is_code, lua_header_include);
+      for (std::sregex_iterator it(text.begin(), text.end(), plugin_header_include), end;
+           it != end; ++it) {
+        const std::size_t pos = static_cast<std::size_t>(it->position());
+        if (pos < is_code.size() && !is_code[pos]) {
+          continue;
+        }
+        header_includes[key].push_back((*it)[1].str());
+      }
+    }
+  }
+  // Transitive closure with memoization (unknown headers count as exposing, so
+  // a typo'd or unreadable include fails loudly instead of passing vacuously).
+  std::map<std::string, int> exposure_memo;  // -1 in progress, 0 no, 1 yes
+  const std::function<bool(const std::string&)> exposes = [&](const std::string& key) -> bool {
+    const auto direct = direct_exposure.find(key);
+    if (direct == direct_exposure.end()) {
+      return true;
+    }
+    if (direct->second) {
+      return true;
+    }
+    const auto memo = exposure_memo.find(key);
+    if (memo != exposure_memo.end()) {
+      return memo->second == 1;
+    }
+    exposure_memo[key] = -1;
+    bool exposed = false;
+    const auto includes = header_includes.find(key);
+    if (includes != header_includes.end()) {
+      for (const std::string& next : includes->second) {
+        if (exposure_memo.count(next) && exposure_memo[next] == -1) {
+          continue;  // include cycle: already being evaluated
+        }
+        if (exposes(next)) {
+          exposed = true;
+          break;
+        }
+      }
+    }
+    exposure_memo[key] = exposed ? 1 : 0;
+    return exposed;
+  };
+
+  // Pass 2: production files outside src/plugin.
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(src_dir)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::string ext = entry.path().extension().string();
+    if (ext != ".h" && ext != ".hpp" && ext != ".cpp" && ext != ".inc") {
+      continue;
+    }
+    const std::string generic = entry.path().generic_string();
+    if (generic.find("/src/plugin/") != std::string::npos) {
+      continue;
+    }
+    if (generic.ends_with("src/editor/SyntaxDefinitionLoader.cpp")) {
+      continue;  // sanctioned self-contained syntax sandbox
+    }
+    const std::string text = ReadText(entry.path());
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, lua_state_token,
+        "lua_State must stay behind src/plugin (TD-2026-07-16-22); route through the "
+        "Lua-free host surfaces (PluginHost.h / PluginThread.h)");
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, lua_header_include,
+        "Lua headers must stay behind src/plugin (TD-2026-07-16-22)");
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    for (std::sregex_iterator it(text.begin(), text.end(), plugin_header_include), end;
+         it != end; ++it) {
+      const std::size_t pos = static_cast<std::size_t>(it->position());
+      if (pos < is_code.size() && !is_code[pos]) {
+        continue;
+      }
+      const std::string included = (*it)[1].str();
+      if (exposes(included)) {
+        result.violations.push_back(Violation{
+            .path = entry.path(),
+            .line = LineNumberAt(text, pos),
+            .message = "includes Lua-exposing plugin header \"" + included +
+                       "\"; outward-facing plugin headers must stay Lua-free at the type "
+                       "level (TD-2026-07-16-22)",
+        });
+      }
+    }
+  }
+  return result;
+}
+
 RuleResult CheckCoreIsNetworkFree(const std::filesystem::path& repo_root) {
   // Hard product guarantee: the microide core binary makes no network calls and
   // links no networking client libraries. Plugins may reach the network in their
@@ -339,6 +487,7 @@ std::vector<RuleResult> RunPluginArchitectureRules(const std::filesystem::path& 
   run(CheckPluginTranslationUnitSize);
   run(CheckPluginLuaErrorDoesNotLongjmpOverCppLocals);
   run(CheckPluginFieldReadsAreMetamethodProtected);
+  run(CheckLuaStaysBehindPluginBoundary);
   run(CheckCoreIsNetworkFree);
   run(CheckNoUnwiredMcpScaffolding);
   return results;

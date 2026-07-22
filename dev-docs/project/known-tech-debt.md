@@ -114,7 +114,11 @@ they land.
 7. **Plugin registry** — O(1) duplicate-id detection (077) **[RESOLVED 2026-07-18 — per-kind
    id index]**; per-field byte caps (018) **[RESOLVED 2026-07-19 — central ToHostString
    backstop + per-surface render caps; see the Plugin caps / policy subsection]**;
-   measured caps (019); `lua_State*` boundary refactor (22/020/058).
+   measured caps (019); `lua_State*` boundary refactor (22/020/058) **[RESOLVED 2026-07-23 —
+   boundary verified already-clean + new hard lint `CheckLuaStaysBehindPluginBoundary`
+   (transitive-include aware); the no-longjmp audit shipped as the AST-based
+   `tools/audit-lua-longjmp.py`, tree clean over 142 raise-capable sites. See the
+   Architecture lint / test infrastructure subsection.]**.
 8. **Tab identity** — stable per-tab id threaded through dirty-prompt + persistence (024)
    **[RESOLVED 2026-07-18; re-verified in-tree 2026-07-22 — `TabEntry::stable_id` +
    prompt-time stamping + confirm-time resolution + `DirtyPromptSurvivesTabShiftWhileOpen`.
@@ -2724,27 +2728,43 @@ build and verify the target platform. Descriptions retained as intake for that p
 **Architecture lint / test infrastructure:**
 
 > **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** These are all *test-infrastructure* sweeps,
-> not product defects: 020/058 (mechanical no-longjmp-across-C++-locals audit) needs
-> clang-tidy/AST tooling the repo doesn't wire up; 032/037 add architecture lints with
+> not product defects: 032/037 add architecture lints with
 > negative fixtures; 036 is a backend-independent watcher contract suite; 015 a terminal
 > lifecycle stress suite. (**088 RESOLVED 2026-07-22** — the ~12 duplicated fixed-sleep polling helpers now
 > delegate to one shared `tests::WaitUntil`; **022 RESOLVED 2026-07-22** — the
 > no-whole-buffer-snapshot lint was modernized to the live `TextBuffer` APIs, its vacuous
 > meta-fixture was fixed, and runtime `snapshot_build_count()==0` guards now cover the
 > large-buffer edit funnel; **052 RESOLVED 2026-07-22** — 60 curated seeds committed across
-> all six fuzz targets and the silently link-broken fuzz gate fixed; see the entries below.)
+> all six fuzz targets and the silently link-broken fuzz gate fixed; **020/058 RESOLVED
+> 2026-07-23** — AST-based longjmp audit shipped and clean; see the entries below.)
 > Each remaining item is a sizable mechanical pass; none fixes a live bug.
 > Deferred to dedicated test-infra passes.
 
-- **020 / 058 — mechanical no-longjmp-across-C++-locals audit.** Needs a clang-tidy
-  AST matcher (a regex would false-positive on the ~30 legitimate entry-position
-  `luaL_check*` calls); the concrete instance (001) was fixed + tested.
+- **[RESOLVED 2026-07-23] 020 / 058 — mechanical no-longjmp-across-C++-locals audit.**
+  Shipped as `tools/audit-lua-longjmp.py`, a real clang-AST audit (python libclang over
+  `compile_commands.json` — the clang-tidy matcher the item asked for, without adding a
+  build-time dependency): for every raise-capable Lua call (`lua_error`, `luaL_error`,
+  `luaL_check*`/`luaL_opt*`/`luaL_argerror`, uncaught `lua_call`) in the `src/plugin`
+  TUs + `SyntaxDefinitionLoader.cpp`, it verifies NO non-trivially-destructible C++
+  object is alive in any enclosing scope — including by-value parameters,
+  lifetime-extended temporaries bound to reference locals, and range-for temporary
+  containers; lambda bodies are audited as their own frames. Structural
+  trivial-destructor analysis (user-provided/virtual dtor, recursive over bases+fields)
+  with a std::-type fallback for uninstantiated templates; conservative (unknown ⇒
+  non-trivial). Validated against a positive-control fixture (4 planted violation
+  shapes all flagged; 5 sanctioned idioms — block-scoped raise, entry-position check,
+  declared-after, ref-to-stable, lambda boundary — all pass). Current tree: 34 TUs,
+  142 raise-capable sites, **zero violations**, so the entry-position `luaL_check*`
+  exemption in the regex lint is now verified fact, not convention. On-demand tool
+  (needs `pip install clang==18.*` + libclang + `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`);
+  deliberately not wired into ctest. Rerun after touching `src/plugin` raise paths.
 - **032 — architecture lint for direct persistence file I/O outside
   `PersistenceService`** (hard to make precise by regex; the legacy-symbol ban
   already guards the biggest regression; 050 retired the stale legacy-importer spec).
 - **037 — convert more policy invariants into narrow lint checks with failing
-  negative fixtures** (no `lua_State*` outside LuaRuntime, no render-TU project-state
-  reads, etc.).
+  negative fixtures** (no `lua_State*` outside LuaRuntime **[first lint delivered
+  2026-07-23 — `CheckLuaStaysBehindPluginBoundary`, see TD-2026-07-16-22]**, no
+  render-TU project-state reads, etc.).
 - **036 — one backend-independent watcher contract test suite** run against every
   backend (pairs with 006/010/080).
 - **[RESOLVED 2026-07-22] 022 — large-buffer insert/delete/undo perf scenario + a lint for
@@ -2860,7 +2880,8 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
 > **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** All remaining open items in this section are
 > multi-file dedicated passes, and all overlap a 2026-07-17 subsection already dispositioned
 > above: 18→011 (LSP WorkspaceEdit async — RESOLVED, see TD-2026-07-16-18), 19→047 (compare/merge git blob async), 21→094-fixed
-> +cancellable-replace-all async, 22→020/058 (whole-plugin `lua_State*` boundary refactor),
+> +cancellable-replace-all async, 22→020/058 (whole-plugin `lua_State*` boundary refactor —
+> **RESOLVED 2026-07-23**, boundary lint + AST longjmp audit),
 > 26→084 (render-TU project-state pointers), 38→082 (git patch serialize async), 39→raster
 > decode/layout ordering (raster budget 043/092 already fixed), 60/61 (bottom-panel plugin
 > preview scroll + hit-region dispatch — net-new plugin-UI features). Deferred to the same
@@ -2922,9 +2943,24 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
   subset, via a control-refresh read-count subtraction) and
   `WorkspaceShell/ReplaceAllFallsBackWhenResultsTruncated` (>cap matches still all
   rewritten). The full off-thread move is the RESOLVED work described above.
-- **TD-2026-07-16-22 — plugin extension surfaces still expose raw `lua_State*` despite
-  the LuaRuntime boundary spec.** Won't-do pending a dedicated plugin-API refactor;
-  same Lua-safety family as **TD-2026-07-17-020/058**.
+- **[RESOLVED 2026-07-23] TD-2026-07-16-22 — plugin extension surfaces still expose raw
+  `lua_State*` despite the LuaRuntime boundary spec.** Audit-verified largely overtaken by
+  the plugin-host decomposition: every plugin header reachable from non-plugin production
+  code (`PluginHost.h`, `PluginThread.h` → `PluginThreadTypes.h`, `PluginInstallRoot.h`)
+  is already Lua-free at the type level (`lua_State` appears only in threading-contract
+  comments), and the only non-plugin Lua consumer is `SyntaxDefinitionLoader.cpp`'s own
+  sanctioned throwaway sandbox state. What was missing was ENFORCEMENT: the new hard lint
+  `CheckLuaStaysBehindPluginBoundary` (tests/architecture/PluginArchitectureRules.cpp)
+  bans `lua_State` tokens and Lua header includes in production code outside `src/plugin`,
+  and — transitively, by walking `#include "plugin/..."` chains through the plugin headers
+  with unknown includes counting as exposing — bans non-plugin code from including any
+  Lua-exposing plugin header, so a facade regression can't smuggle Lua back out. Covered
+  by violating fixtures (direct token, Lua include, transitive facade) plus a clean
+  positive-control fixture (comment-only mentions, Lua-free chain, sandbox exemption)
+  in `TestArchitectureInvariantTargetedScannerFixtures`. This also delivers the first
+  concrete lint 037 asked for ("no `lua_State*` outside the plugin boundary"). The
+  raise-site half of the family is the AST audit under **TD-2026-07-17-020/058**
+  (`tools/audit-lua-longjmp.py`, tree clean).
 - **TD-2026-07-16-26 — render view models smuggle mutable project-state pointers back
   into render TUs.** Dedicated architecture pass. Same item as **TD-2026-07-17-084**.
 - **[RESOLVED 2026-07-17] TD-2026-07-16-31 (== TD-2026-07-17-068's sibling) — merge

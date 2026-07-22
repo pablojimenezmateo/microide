@@ -35,3 +35,6 @@ __pycache__/
 # Nix build artifacts (the `nix build` / `nix flake check` output symlink).
 /result
 /result-*
+
+# clangd index (created whenever compile_commands.json is exported).
+/.cache/

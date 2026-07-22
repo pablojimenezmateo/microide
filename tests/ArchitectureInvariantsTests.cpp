@@ -446,6 +446,47 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
             "std::span<const OccurrenceRange> occurrence_ranges; };\n");
   Expect(architecture::CheckEditorViewModelStickyAndOccurrenceAreSpans(root).violations.empty(),
          "editor view-model rule should pass on the span fixture");
+
+  // Lua-behind-plugin-boundary rule (TD-2026-07-16-22). Fresh root: the shared
+  // fixture tree above plants lua_State fixtures for other rules, which this
+  // rule scans globally.
+  {
+    TemporaryDirectory lua_dir;
+    const auto& lroot = lua_dir.path();
+    std::filesystem::create_directories(lroot / "src/plugin");
+    std::filesystem::create_directories(lroot / "src/workspace");
+    std::filesystem::create_directories(lroot / "src/editor");
+    // Direct leak: a workspace TU naming lua_State / including a Lua header.
+    WriteFile(lroot / "src/workspace/BadDirect.cpp",
+              "#include <lua.hpp>\nvoid F(lua_State* s){ (void)s; }\n");
+    // Transitive leak: workspace includes a plugin facade that includes a
+    // Lua-exposing plugin header.
+    WriteFile(lroot / "src/plugin/Exposed.h", "#include <lua.hpp>\n");
+    WriteFile(lroot / "src/plugin/CleanFacade.h", "#include \"plugin/Exposed.h\"\n");
+    WriteFile(lroot / "src/workspace/BadTransitive.cpp",
+              "#include \"plugin/CleanFacade.h\"\nvoid G(){}\n");
+    const auto violating = architecture::CheckLuaStaysBehindPluginBoundary(lroot);
+    Expect(violating.violations.size() == 3,
+           "lua-boundary rule should catch the lua_State token, the Lua include, and the "
+           "transitively Lua-exposing plugin include");
+
+    // Positive control: comment-only lua_State mentions in a plugin header, a
+    // Lua-free plugin include chain, and the sanctioned SyntaxDefinitionLoader
+    // sandbox must produce ZERO violations (vacuity guard).
+    WriteFile(lroot / "src/workspace/BadDirect.cpp",
+              "#include \"plugin/PluginHost.h\"\nvoid F(PluginHost& h){ (void)h; }\n");
+    WriteFile(lroot / "src/workspace/BadTransitive.cpp",
+              "#include \"plugin/PluginThread.h\"\nvoid G(){}\n");
+    WriteFile(lroot / "src/plugin/PluginHost.h", "struct PluginHost {};\n");
+    WriteFile(lroot / "src/plugin/PluginThread.h",
+              "// jobs are the only place a lua_State may be touched\n"
+              "#include \"plugin/PluginHost.h\"\nstruct PluginThread {};\n");
+    WriteFile(lroot / "src/editor/SyntaxDefinitionLoader.cpp",
+              "#include <lua.hpp>\nvoid Load(lua_State* s){ (void)s; }\n");
+    Expect(architecture::CheckLuaStaysBehindPluginBoundary(lroot).violations.empty(),
+           "lua-boundary rule should accept Lua-free plugin facades, comment-only "
+           "lua_State mentions, and the sanctioned SyntaxDefinitionLoader sandbox");
+  }
 }
 
 }  // namespace
