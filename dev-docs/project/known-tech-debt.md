@@ -115,7 +115,11 @@ they land.
    id index]**; per-field byte caps (018) **[RESOLVED 2026-07-19 — central ToHostString
    backstop + per-surface render caps; see the Plugin caps / policy subsection]**;
    measured caps (019); `lua_State*` boundary refactor (22/020/058).
-8. **Tab identity** — stable per-tab id threaded through dirty-prompt + persistence (024).
+8. **Tab identity** — stable per-tab id threaded through dirty-prompt + persistence (024)
+   **[RESOLVED 2026-07-18; re-verified in-tree 2026-07-22 — `TabEntry::stable_id` +
+   prompt-time stamping + confirm-time resolution + `DirtyPromptSurvivesTabShiftWhileOpen`.
+   The persistence half stays deliberately unbuilt: ids only key modal dirty-prompt state,
+   and a modal prompt never survives a session save. See the Tab identity subsection.]**
 9. **Test-infra sweeps** — architecture lints + negative fixtures (032/037), watcher
    contract suite (036), terminal stress suite (015), fuzz corpus seeding (052), shared
    `WaitUntil` polling helper (088) **[RESOLVED 2026-07-22 — see the Architecture lint /
