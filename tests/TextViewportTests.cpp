@@ -1775,6 +1775,11 @@ void TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument() {
   }
   viewport.LoadContent(content, "/tmp/replace-all-large.txt");
 
+  // TD 022 (standing backlog #9): batch replace + undo/redo on a large document
+  // must stay affected-range-only — no whole-buffer TextBuffer::Snapshot()
+  // materialization anywhere in the edit funnel.
+  microide::editor::TextBuffer::reset_snapshot_build_count();
+
   const std::size_t replaced = viewport.ReplaceAll("TARGET", "hit");
   Expect(replaced == 5, "replace-all should update sparse case-insensitive matches");
   Expect(viewport.lines()[0].find("hit") != std::string::npos &&
@@ -1799,6 +1804,71 @@ void TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument() {
              viewport.lines()[30000].find("hit") != std::string::npos &&
              viewport.lines()[40000].find("hit") != std::string::npos,
          "redo should reapply sparse replace-all changes");
+
+  Expect(microide::editor::TextBuffer::snapshot_build_count() == 0,
+         "replace-all + undo + redo on a large document must never materialize the whole buffer");
+}
+
+// TD 022 (standing backlog #9): the single-caret edit funnel — character insert,
+// newline split, backspace join, multi-line paste, and a spanning range delete —
+// must stay affected-range-only on a large buffer (no TextBuffer::Snapshot()
+// whole-document materialization), and the full undo chain must restore the
+// original content exactly. Complements the multi-caret grouped-edit snapshot
+// guards in EditorMultiCaretTests.
+void TestTextViewportLargeBufferSingleCaretEditWorkoutAvoidsSnapshot() {
+  using microide::editor::TextBuffer;
+  TextViewport viewport;
+  std::string content;
+  content.reserve(50000 * 10);
+  for (int i = 0; i < 50000; ++i) {
+    content += "row ";
+    content += std::to_string(i);
+    content += '\n';
+  }
+  viewport.LoadContent(content, "/tmp/large-single-caret-workout.txt");
+  const std::size_t baseline_lines = viewport.lines().size();
+  constexpr std::size_t kMidLine = 25000;
+  const std::string original_mid = viewport.lines()[kMidLine];
+  const std::string original_before = viewport.lines()[kMidLine - 1];
+  const std::string original_after = viewport.lines()[kMidLine + 1];
+
+  TextBuffer::reset_snapshot_build_count();
+
+  viewport.MoveCursorTo(kMidLine, 0);
+  viewport.InsertText("Z");     // same-line insert (line-edit fast path)
+  viewport.InsertNewline();     // line split (+1)
+  viewport.Backspace();         // col-0 join back (-1)
+  viewport.InsertText("A\nB\n");  // multi-line paste (+2)
+  // Spanning range delete removing exactly the pasted "A\nB\n" (-2).
+  viewport.ReplaceRange(SelectionRange{.start = TextPosition{kMidLine, 1},
+                                       .end = TextPosition{kMidLine + 2, 0}},
+                        "", /*record_undo=*/true);
+
+  Expect(TextBuffer::snapshot_build_count() == 0,
+         "the single-caret edit workout must never materialize the whole buffer");
+  Expect(viewport.lines().size() == baseline_lines,
+         "the workout nets out to a single-character insert (line count unchanged)");
+  Expect(viewport.lines()[kMidLine] == "Z" + original_mid,
+         "the workout leaves only the single-character insert behind");
+  Expect(viewport.lines()[kMidLine - 1] == original_before &&
+             viewport.lines()[kMidLine + 1] == original_after,
+         "neighboring lines must be untouched by the mid-file workout");
+
+  while (viewport.Undo()) {
+  }
+  Expect(viewport.lines().size() == baseline_lines &&
+             viewport.lines()[kMidLine] == original_mid,
+         "draining undo must restore the original large-buffer content");
+  Expect(TextBuffer::snapshot_build_count() == 0,
+         "draining undo must never materialize the whole buffer");
+
+  while (viewport.Redo()) {
+  }
+  Expect(viewport.lines().size() == baseline_lines &&
+             viewport.lines()[kMidLine] == "Z" + original_mid,
+         "draining redo must reproduce the post-workout buffer");
+  Expect(TextBuffer::snapshot_build_count() == 0,
+         "draining redo must never materialize the whole buffer");
 }
 
 void TestTextViewportReplaceAllMultiMatchRespectsUnequalLengths() {
@@ -3595,6 +3665,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportTrivialWrappedLayoutFastPath);
   AddTest(tests, "TextViewport/ReplaceAllUndoRedoHandlesLargeSparseDocument",
           TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument);
+  AddTest(tests, "TextViewport/LargeBufferSingleCaretEditWorkoutAvoidsSnapshot",
+          TestTextViewportLargeBufferSingleCaretEditWorkoutAvoidsSnapshot);
   AddTest(tests, "TextViewport/ReplaceAllMultiMatchRespectsUnequalLengths",
           TestTextViewportReplaceAllMultiMatchRespectsUnequalLengths);
   AddTest(tests, "TextViewport/ReplaceAllUnicodeCaseInsensitive",

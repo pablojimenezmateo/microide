@@ -117,7 +117,7 @@ they land.
    contract suite (036), terminal stress suite (015), fuzz corpus seeding (052), shared
    `WaitUntil` polling helper (088) **[RESOLVED 2026-07-22 — see the Architecture lint /
    test infrastructure subsection]**, large-buffer edit perf scenario + direct-`Snapshot()`
-   lint (022), per-frame-prep counters (030).
+   lint (022) **[RESOLVED 2026-07-22 — same subsection]**, per-frame-prep counters (030).
 10. **Plugin UI features** — bottom-panel preview scroll (60), hit-region dispatch (61).
 
 **Platform passes (need a Windows/macOS host to build+verify):** 004/005/010/035 (Windows),
@@ -2681,13 +2681,13 @@ build and verify the target platform. Descriptions retained as intake for that p
 > not product defects: 020/058 (mechanical no-longjmp-across-C++-locals audit) needs
 > clang-tidy/AST tooling the repo doesn't wire up; 032/037 add architecture lints with
 > negative fixtures; 036 is a backend-independent watcher contract suite; 015 a terminal
-> lifecycle stress suite; 052 seeds fuzz corpora; 022 adds a large-buffer edit perf
-> scenario + a direct-`Snapshot()`-in-edit-paths lint; 030 adds per-frame-prep regression
+> lifecycle stress suite; 052 seeds fuzz corpora; 030 adds per-frame-prep regression
 > counters. (**088 RESOLVED 2026-07-22** — the ~12 duplicated fixed-sleep polling helpers now
-> delegate to one shared `tests::WaitUntil`; see its entry below.)
-> Each is a sizable mechanical pass; none fixes a live bug. Note: 022's *intent* (guard the
-> no-whole-buffer-snapshot invariant) is now partially served by the `TextBuffer::
-> snapshot_build_count()` seam added here and its use in the -068/-31/-083 regressions.
+> delegate to one shared `tests::WaitUntil`; **022 RESOLVED 2026-07-22** — the
+> no-whole-buffer-snapshot lint was modernized to the live `TextBuffer` APIs, its vacuous
+> meta-fixture was fixed, and runtime `snapshot_build_count()==0` guards now cover the
+> large-buffer edit funnel; see both entries below.)
+> Each remaining item is a sizable mechanical pass; none fixes a live bug.
 > Deferred to dedicated test-infra passes.
 
 - **020 / 058 — mechanical no-longjmp-across-C++-locals audit.** Needs a clang-tidy
@@ -2701,9 +2701,34 @@ build and verify the target platform. Descriptions retained as intake for that p
   reads, etc.).
 - **036 — one backend-independent watcher contract test suite** run against every
   backend (pairs with 006/010/080).
-- **022 — large-buffer insert/delete/undo perf scenario + a lint for direct
-  `document_->lines` copies** in mutation paths (the affected-range architecture is
-  already invariant-enforced).
+- **[RESOLVED 2026-07-22] 022 — large-buffer insert/delete/undo perf scenario + a lint for
+  direct `document_->lines` copies in mutation paths.** Three real gaps were found and closed:
+  (a) **the lint was stale** — `CheckTextViewportNoFullDocCopy` /
+  `CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot` only matched
+  `std::vector<std::string> x = document_->lines;` / `auto x = document_->lines;`, patterns
+  from the retired vector-of-strings document model that cannot fire now that
+  `document_->lines` is a `TextBuffer`; the rules now share one
+  `AppendFullDocumentMaterializationViolations` scan that also bans the live whole-buffer
+  materialization APIs (`.ToVector()`, `.Snapshot()`, snapshot-backed `.begin()`/`.end()`)
+  and the funnel widened to `ReplaceAllRanges` + `ApplyHistoryEntry` (undo/redo apply)
+  alongside `ReplaceAll`/`ApplyLineEdit`/`ApplyRangeEdit`;
+  (b) **the meta-fixture was vacuous** — it wrote `src/editor/TextViewport.cpp` while the
+  rules scan `src/editor/TextViewportEditEngine.cpp` (the target moved in f932b4a7), so the
+  fixture expectations passed via the could-not-locate-body violation without ever
+  exercising the pattern scan; the fixtures now target the scanned file, cover all three
+  pattern families, and add a clean positive-control fixture that must produce zero
+  violations (kills the vacuous-pass mode permanently);
+  (c) **no runtime guard on the large-buffer edit path** —
+  `TextViewport/ReplaceAllUndoRedoHandlesLargeSparseDocument` (50k lines) now asserts
+  `TextBuffer::snapshot_build_count() == 0` across replace-all + undo + redo, and the new
+  `TextViewport/LargeBufferSingleCaretEditWorkoutAvoidsSnapshot` drives the single-caret
+  funnel (char insert, newline split, col-0 join, multi-line paste, spanning range delete,
+  full undo/redo drain) on a 50k-line buffer asserting zero snapshots and exact round-trip —
+  complementing the existing multi-caret grouped-edit snapshot guards.
+  The perf-scenario half already exists in-tree: `mid_file_edit_latency_large_file`
+  (enter/backspace burst at line 25k of a 50k-line file) and `editor_moby_dick_workout`
+  (select-all/cut/paste/undo/redo with wall + allocation gates) are the large-buffer
+  insert/delete/undo wall-time oracles, so no new perf scenario was needed.
 - **030 — per-frame-prep regression counters** (see render section).
 - **015 — terminal lifecycle platform stress suite** (tab-close-during-output/exit,
   alt-screen shutdown, multi-terminal shutdown, open/close loops).

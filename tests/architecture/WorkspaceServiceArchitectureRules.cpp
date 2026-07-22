@@ -93,47 +93,49 @@ RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path&
   return result;
 }
 
-RuleResult CheckTextViewportNoFullDocCopy(const std::filesystem::path& repo_root) {
-  RuleResult result;
-  result.label = "TextViewport ReplaceAll full document copy";
-  result.hard_fail = true;
-  const std::filesystem::path path = repo_root / "src/editor/TextViewportEditEngine.cpp";
-  const std::string text = ReadText(path);
-  const std::size_t replace_all_pos = text.find("std::size_t TextViewport::ReplaceAll(");
-  if (replace_all_pos == std::string::npos) {
+namespace {
+
+// Shared scan for the no-whole-buffer-materialization invariant: within the body
+// of `signature`, flag every construct that materializes all of document_->lines.
+// The assignment forms guard a hypothetical return to the old vector<string>
+// document model; ToVector()/Snapshot()/begin()/end() are the live TextBuffer
+// APIs that copy every line and are banned in the edit-apply funnel (bounded
+// LineView/SliceLines/ReplaceLineRange are the sanctioned accessors there).
+void AppendFullDocumentMaterializationViolations(RuleResult& result,
+                                                 const std::filesystem::path& path,
+                                                 const std::string& text,
+                                                 std::string_view signature) {
+  const auto body_with_offset = ExtractMemberFunctionBodyWithOffset(text, signature);
+  if (!body_with_offset.has_value()) {
     result.violations.push_back(Violation{
         .path = path,
         .line = 1,
-        .message = "could not locate TextViewport::ReplaceAll body for invariant scan",
+        .message = std::string("could not locate body for ") + std::string(signature),
     });
-    return result;
+    return;
   }
-  const std::size_t body_start = text.find('{', replace_all_pos);
-  if (body_start == std::string::npos) {
-    result.violations.push_back(Violation{
-        .path = path,
-        .line = LineNumberAt(text, replace_all_pos),
-        .message = "could not locate ReplaceAll body start",
-    });
-    return result;
-  }
-  std::size_t depth = 1;
-  std::size_t body_end = body_start + 1;
-  for (; body_end < text.size() && depth > 0; ++body_end) {
-    if (text[body_end] == '{') {
-      ++depth;
-    } else if (text[body_end] == '}') {
-      --depth;
-    }
-  }
-  const std::string body = text.substr(body_start, body_end - body_start);
-  const auto is_code = BuildCodeMask(body);
-  const std::array<std::regex, 2> patterns = {
-      std::regex(R"(std::vector<std::string>\s+\w+\s*=\s*document_->lines\s*;)"),
-      std::regex(R"(auto\s+\w+\s*=\s*document_->lines\s*;)"),
+  struct ForbiddenPattern {
+    std::regex pattern;
+    std::string_view message;
   };
-  for (const auto& pattern : patterns) {
-    for (std::sregex_iterator it(body.begin(), body.end(), pattern), end; it != end; ++it) {
+  static const std::array<ForbiddenPattern, 5> kPatterns = {{
+      {std::regex(R"(std::vector<std::string>\s+\w+\s*=\s*document_->lines\s*;)"),
+       "edit path must not copy document_->lines into a full vector"},
+      {std::regex(R"(auto\s+\w+\s*=\s*document_->lines\s*;)"),
+       "edit path must not copy document_->lines into a full vector"},
+      {std::regex(R"(document_->lines\.ToVector\s*\()"),
+       "edit path must not materialize the whole document via ToVector()"},
+      {std::regex(R"(document_->lines\.Snapshot\s*\()"),
+       "edit path must not materialize the whole document via Snapshot()"},
+      {std::regex(R"(document_->lines\.(?:begin|end)\s*\()"),
+       "edit path must not iterate document_->lines via begin()/end() (snapshot-backed)"},
+  }};
+  const std::string& body = body_with_offset->first;
+  const std::size_t body_offset = body_with_offset->second;
+  const auto is_code = BuildCodeMask(body);
+  for (const ForbiddenPattern& forbidden : kPatterns) {
+    for (std::sregex_iterator it(body.begin(), body.end(), forbidden.pattern), end; it != end;
+         ++it) {
       const std::size_t local_start = static_cast<std::size_t>(it->position());
       const std::size_t local_len = static_cast<std::size_t>(it->length());
       bool in_code = true;
@@ -146,14 +148,27 @@ RuleResult CheckTextViewportNoFullDocCopy(const std::filesystem::path& repo_root
       if (!in_code) {
         continue;
       }
-      const std::size_t absolute = body_start + local_start;
       result.violations.push_back(Violation{
           .path = path,
-          .line = LineNumberAt(text, absolute),
-          .message = "ReplaceAll must not copy document_->lines into a full vector",
+          .line = LineNumberAt(text, body_offset + local_start),
+          .message = std::string(signature) + "...: " + std::string(forbidden.message),
       });
     }
   }
+}
+
+}  // namespace
+
+RuleResult CheckTextViewportNoFullDocCopy(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "TextViewport batch replace paths avoid full document materialization";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/editor/TextViewportEditEngine.cpp";
+  const std::string text = ReadText(path);
+  AppendFullDocumentMaterializationViolations(result, path, text,
+                                              "std::size_t TextViewport::ReplaceAll(");
+  AppendFullDocumentMaterializationViolations(
+      result, path, text, "std::optional<std::size_t> TextViewport::ReplaceAllRanges(");
   return result;
 }
 
@@ -164,48 +179,13 @@ RuleResult CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot(
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/editor/TextViewportEditEngine.cpp";
   const std::string text = ReadText(path);
-  const std::array<std::string_view, 2> signatures = {
+  const std::array<std::string_view, 3> signatures = {
       "bool TextViewport::ApplyLineEdit(",
       "bool TextViewport::ApplyRangeEdit(",
-  };
-  const std::array<std::regex, 2> patterns = {
-      std::regex(R"(std::vector<std::string>\s+\w+\s*=\s*document_->lines\s*;)"),
-      std::regex(R"(auto\s+\w+\s*=\s*document_->lines\s*;)"),
+      "void TextViewport::ApplyHistoryEntry(",
   };
   for (const std::string_view signature : signatures) {
-    const auto body_with_offset = ExtractMemberFunctionBodyWithOffset(text, signature);
-    if (!body_with_offset.has_value()) {
-      result.violations.push_back(Violation{
-          .path = path,
-          .line = 1,
-          .message = std::string("could not locate body for ") + std::string(signature),
-      });
-      continue;
-    }
-    const std::string& body = body_with_offset->first;
-    const std::size_t body_offset = body_with_offset->second;
-    const auto is_code = BuildCodeMask(body);
-    for (const auto& pattern : patterns) {
-      for (std::sregex_iterator it(body.begin(), body.end(), pattern), end; it != end; ++it) {
-        const std::size_t local_start = static_cast<std::size_t>(it->position());
-        const std::size_t local_len = static_cast<std::size_t>(it->length());
-        bool in_code = true;
-        for (std::size_t i = 0; i < local_len; ++i) {
-          if (local_start + i >= is_code.size() || !is_code[local_start + i]) {
-            in_code = false;
-            break;
-          }
-        }
-        if (!in_code) {
-          continue;
-        }
-        result.violations.push_back(Violation{
-            .path = path,
-            .line = LineNumberAt(text, body_offset + local_start),
-            .message = "ApplyLineEdit/ApplyRangeEdit must not snapshot-copy document_->lines",
-        });
-      }
-    }
+    AppendFullDocumentMaterializationViolations(result, path, text, signature);
   }
   return result;
 }

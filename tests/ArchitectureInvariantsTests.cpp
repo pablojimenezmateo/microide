@@ -262,11 +262,33 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
   WriteFile(root / "src/editor/IndentGuides.cpp", "// indent guides fixture\n");
   WriteFile(root / "src/editor/SnippetEngine.cpp", "// snippet engine fixture\n");
   WriteFile(root / "src/editor/FoldingModel.cpp", "void leak(lua_State* L){ (void)L; }\n");
-  WriteFile(root / "src/editor/TextViewport.cpp",
+  // Violating fixture for the TextViewport no-whole-buffer-materialization rules.
+  // Written to TextViewportEditEngine.cpp — the file the rules actually scan (a
+  // prior fixture wrote TextViewport.cpp, so the expectations passed vacuously via
+  // the could-not-locate-body violation without exercising the pattern scan).
+  // Covers all three pattern families: full-vector assignment, ToVector()/
+  // Snapshot() materialization, and begin()/end() snapshot-backed iteration.
+  WriteFile(root / "src/editor/TextViewportEditEngine.cpp",
             "std::size_t TextViewport::ReplaceAll(std::string_view, std::string_view) {\n"
             "  std::vector<std::string> before = document_->lines;\n"
             "  (void)before;\n"
             "  return 0;\n"
+            "}\n"
+            "std::optional<std::size_t> TextViewport::ReplaceAllRanges(int) {\n"
+            "  auto all = document_->lines.ToVector();\n"
+            "  return all.size();\n"
+            "}\n"
+            "bool TextViewport::ApplyLineEdit(std::size_t, std::size_t,\n"
+            "                                 const std::vector<std::string>&) {\n"
+            "  auto snap = document_->lines;\n"
+            "  return !snap.empty();\n"
+            "}\n"
+            "bool TextViewport::ApplyRangeEdit(int) {\n"
+            "  for (auto it = document_->lines.begin(); it != document_->lines.end(); ++it) {}\n"
+            "  return true;\n"
+            "}\n"
+            "void TextViewport::ApplyHistoryEntry(int) {\n"
+            "  (void)document_->lines.Snapshot();\n"
             "}\n");
   WriteFile(root / "tests/LegacySymbolFixture.cpp", "void X(){ WorkspacePersistenceLegacyFormat x; }\n");
 
@@ -320,19 +342,37 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
   Expect(!architecture::CheckRenderTuDoesNotMaterializeStrings(root).violations.empty(),
          "render materialization rule should catch string construction in render TU");
   Expect(!architecture::CheckTextViewportNoFullDocCopy(root).violations.empty(),
-         "TextViewport rule should catch full document copies");
+         "batch-replace rule should catch the full-vector copy and ToVector() materialization");
+  Expect(
+      !architecture::CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot(root).violations.empty(),
+      "apply-pipeline rule should catch snapshot copy, begin()/end() iteration, and Snapshot()");
 
-  WriteFile(root / "src/editor/TextViewport.cpp",
+  // Positive control: a clean fixture using only the bounded accessors must pass
+  // BOTH rules with zero violations. This is the vacuity guard — a missing file
+  // or unlocatable signature yields could-not-locate violations and fails here.
+  WriteFile(root / "src/editor/TextViewportEditEngine.cpp",
             "std::size_t TextViewport::ReplaceAll(std::string_view, std::string_view) {\n"
-            "  return 0;\n"
+            "  return document_->lines.size();\n"
             "}\n"
-            "bool TextViewport::ApplyLineEdit(std::size_t,std::size_t,const "
-            "std::vector<std::string>&) {\n"
-            "  auto snap = document_->lines;\n"
-            "  return !snap.empty();\n"
+            "std::optional<std::size_t> TextViewport::ReplaceAllRanges(int) {\n"
+            "  return document_->lines.LineView(0).size();\n"
+            "}\n"
+            "bool TextViewport::ApplyLineEdit(std::size_t, std::size_t,\n"
+            "                                 const std::vector<std::string>&) {\n"
+            "  return !document_->lines.empty();\n"
+            "}\n"
+            "bool TextViewport::ApplyRangeEdit(int) {\n"
+            "  document_->lines.ReplaceLineRange(0, 0, {});\n"
+            "  return true;\n"
+            "}\n"
+            "void TextViewport::ApplyHistoryEntry(int) {\n"
+            "  (void)document_->lines.SliceLines(0, 1);\n"
             "}\n");
-  Expect(!architecture::CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot(root).violations.empty(),
-         "ApplyLineEdit fixture should flag full document_->lines snapshots");
+  Expect(architecture::CheckTextViewportNoFullDocCopy(root).violations.empty(),
+         "batch-replace rule should accept bounded size/LineView accessors");
+  Expect(architecture::CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot(root)
+             .violations.empty(),
+         "apply-pipeline rule should accept bounded SliceLines/ReplaceLineRange edits");
 
   WriteFile(root / "src/workspace/RenderViewModelBuilder.cpp",
             "int Parse() { return static_cast<int>(std::stol(\"3\")); }\n");
