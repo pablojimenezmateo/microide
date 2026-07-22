@@ -121,7 +121,9 @@ they land.
    The persistence half stays deliberately unbuilt: ids only key modal dirty-prompt state,
    and a modal prompt never survives a session save. See the Tab identity subsection.]**
 9. **Test-infra sweeps** — architecture lints + negative fixtures (032/037), watcher
-   contract suite (036), terminal stress suite (015), fuzz corpus seeding (052), shared
+   contract suite (036), terminal stress suite (015), fuzz corpus seeding (052)
+   **[RESOLVED 2026-07-22 — 60 curated seeds across all six targets + fixed the silently
+   link-broken fuzz gate; see the test-infra subsection]**, shared
    `WaitUntil` polling helper (088) **[RESOLVED 2026-07-22 — see the Architecture lint /
    test infrastructure subsection]**, large-buffer edit perf scenario + direct-`Snapshot()`
    lint (022) **[RESOLVED 2026-07-22 — same subsection]**, per-frame-prep counters (030)
@@ -2725,11 +2727,12 @@ build and verify the target platform. Descriptions retained as intake for that p
 > not product defects: 020/058 (mechanical no-longjmp-across-C++-locals audit) needs
 > clang-tidy/AST tooling the repo doesn't wire up; 032/037 add architecture lints with
 > negative fixtures; 036 is a backend-independent watcher contract suite; 015 a terminal
-> lifecycle stress suite; 052 seeds fuzz corpora. (**088 RESOLVED 2026-07-22** — the ~12 duplicated fixed-sleep polling helpers now
+> lifecycle stress suite. (**088 RESOLVED 2026-07-22** — the ~12 duplicated fixed-sleep polling helpers now
 > delegate to one shared `tests::WaitUntil`; **022 RESOLVED 2026-07-22** — the
 > no-whole-buffer-snapshot lint was modernized to the live `TextBuffer` APIs, its vacuous
 > meta-fixture was fixed, and runtime `snapshot_build_count()==0` guards now cover the
-> large-buffer edit funnel; see both entries below.)
+> large-buffer edit funnel; **052 RESOLVED 2026-07-22** — 60 curated seeds committed across
+> all six fuzz targets and the silently link-broken fuzz gate fixed; see the entries below.)
 > Each remaining item is a sizable mechanical pass; none fixes a live bug.
 > Deferred to dedicated test-infra passes.
 
@@ -2776,9 +2779,42 @@ build and verify the target platform. Descriptions retained as intake for that p
   subsection for the full audit + the new steady-state guard).
 - **015 — terminal lifecycle platform stress suite** (tab-close-during-output/exit,
   alt-screen shutdown, multi-terminal shutdown, open/close loops).
-- **052 — seed the seed-light fuzz corpora** (PersistedRecordReader / GitBlameParser /
-  PluginDisplayListParse / SurfaceRasterDecode / DebugStateRecord); the
-  `run-checks.sh fuzz` runner landed (049).
+- **[RESOLVED 2026-07-22] 052 — seed the seed-light fuzz corpora.** The five named
+  targets had **zero committed seeds** (`.gitignore` excludes corpus contents via
+  `/tests/fuzz/corpora/*/*`, so the large on-disk corpora were local-only organic growth —
+  do not mistake local corpus size for committed coverage). 60 curated seeds are now
+  committed (`git add -f` past the ignore, descriptive `seed-*` names):
+  - **PersistedRecordReaderFuzz (18)** — generated with the production encoder
+    (`BuildPersistedRecordFile` + `PrimitiveWriter`), so seeds carry **valid CRC32C**
+    checksums — the checksum is a mutation barrier libFuzzer cannot cross on its own,
+    making valid files the seeds it cannot synthesize. Valid empty/all-primitives/
+    tagged-sections/multi-KB bodies plus systematic corruptions (truncation at every
+    framing boundary, bad magic, version 0/2 skew, crc mismatch). A scratch verifier
+    confirmed the valid seeds PARSE-OK and corruptions reject (and that the version gate
+    lives in `Decode`, not `ParsePersistedRecordFile`).
+  - **DebugStateRecordFuzz (3)** — encoded with the real `EncodeDebugStateRecord`:
+    default state, an everything-populated state (optionals present+absent, UTF-8 paths,
+    function breakpoints, launch configs, watch expressions, exception filters +
+    conditions map), and a mid-record truncation.
+  - **GitBlameParserFuzz (3)** — real `git blame --incremental` output captured from this
+    repository (multi-commit, small-file, and script shapes).
+  - **PluginDisplayListParseFuzz (7)** — follow the harness's arena-prefix + op-stream
+    byte layout: a fully-valid all-op-kinds list (validate + hash path), exact-boundary
+    zero-count slices, out-of-bounds text/point/image refs, and clip-stack
+    underflow/unclosed-push.
+  - **SurfaceRasterDecodeFuzz (9)** — small valid PNGs (RGB/RGBA/palette/grayscale/
+    interlaced) and JPEGs (baseline/progressive/grayscale) plus a mid-IDAT truncation.
+  - **SearchRegexFuzz (20, bonus)** — pattern|text pairs honoring the harness's
+    `size/2` split, covering classes, quantifiers (greedy/lazy/bounded), anchors,
+    alternation, backrefs (numbered + named), lookaround, `\p{L}` + UTF-8 subjects,
+    `\Q..\E`, `\K`, inline flags, and a nested-quantifier pathological case.
+  Found + fixed while validating: **the fuzz gate had been silently broken** —
+  `PersistedRecordReaderFuzz` failed to link (`PersistedRecordWriter.cpp` calls
+  `util::ResolveSymlinkTarget`, whose defining `src/util/TextFileIO.cpp` was missing from
+  the target's curated source list), which aborted `run-checks.sh fuzz` before ANY target
+  ran. Fixed in `CMakeLists.txt`; the full gate now builds all 10 targets and runs each
+  30 s against its corpus, crash-free. (The `run-checks.sh fuzz` runner itself landed
+  earlier as 049.)
 - **[RESOLVED 2026-07-22] 088 — replace duplicated fixed-sleep polling loops** with a
   shared WaitUntil helper. The suite had ~12 near-identical copy-pasted polling helpers
   (`PollUntil` in DebugServiceTests + WorkspaceDapClientTests, `PumpUntil`, `WaitFor` in

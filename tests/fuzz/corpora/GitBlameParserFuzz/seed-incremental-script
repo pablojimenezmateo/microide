@@ -1,0 +1,60 @@
+e252781bd11eae5cee60a779211b7330f756a30c 26 26 11
+author pablo
+author-mail <gef3233@gmail.com>
+author-time 1784298364
+author-tz +0200
+committer pablo
+committer-mail <gef3233@gmail.com>
+committer-time 1784298364
+committer-tz +0200
+summary perf(tests): shard the suite for parallel ctest + kill pathologically slow tests
+previous 4c8f898389f65a6bb154bddfe93acb668437f22c tools/run-checks.sh
+filename tools/run-checks.sh
+e252781bd11eae5cee60a779211b7330f756a30c 81 81 1
+previous 4c8f898389f65a6bb154bddfe93acb668437f22c tools/run-checks.sh
+filename tools/run-checks.sh
+e252781bd11eae5cee60a779211b7330f756a30c 111 111 1
+previous 4c8f898389f65a6bb154bddfe93acb668437f22c tools/run-checks.sh
+filename tools/run-checks.sh
+e252781bd11eae5cee60a779211b7330f756a30c 147 147 1
+previous 4c8f898389f65a6bb154bddfe93acb668437f22c tools/run-checks.sh
+filename tools/run-checks.sh
+3bf0e55f03a39979bbc275bfd9ef597cc69eab80 144 154 50
+author pablo
+author-mail <gef3233@gmail.com>
+author-time 1784285587
+author-tz +0200
+committer pablo
+committer-mail <gef3233@gmail.com>
+committer-time 1784285587
+committer-tz +0200
+summary fix: address the 2026-07-17 tech-debt audit — 34 fixes + deferred backlog
+previous 2611dfb010abf0e07c53eb2ca745537789ad4a30 tools/run-checks.sh
+filename tools/run-checks.sh
+3bf0e55f03a39979bbc275bfd9ef597cc69eab80 195 205 2
+previous 2611dfb010abf0e07c53eb2ca745537789ad4a30 tools/run-checks.sh
+filename tools/run-checks.sh
+3bf0e55f03a39979bbc275bfd9ef597cc69eab80 201 211 1
+previous 2611dfb010abf0e07c53eb2ca745537789ad4a30 tools/run-checks.sh
+filename tools/run-checks.sh
+3bf0e55f03a39979bbc275bfd9ef597cc69eab80 208 218 1
+previous 2611dfb010abf0e07c53eb2ca745537789ad4a30 tools/run-checks.sh
+filename tools/run-checks.sh
+2611dfb010abf0e07c53eb2ca745537789ad4a30 125 135 12
+author pablo
+author-mail <gef3233@gmail.com>
+author-time 1784223138
+author-tz +0200
+committer pablo
+committer-mail <gef3233@gmail.com>
+committer-time 1784223138
+committer-tz +0200
+summary fix: correctness + robustness tech-debt sweep (60 findings)
+previous 890baac9f3554ca54c37d3b5d0eaf3c2ed80aefe tools/run-checks.sh
+filename tools/run-checks.sh
+2611dfb010abf0e07c53eb2ca745537789ad4a30 138 148 6
+previous 890baac9f3554ca54c37d3b5d0eaf3c2ed80aefe tools/run-checks.sh
+filename tools/run-checks.sh
+2611dfb010abf0e07c53eb2ca745537789ad4a30 156 217 1
+previous 890baac9f3554ca54c37d3b5d0eaf3c2ed80aefe tools/run-checks.sh
+filename tools/run-checks.sh

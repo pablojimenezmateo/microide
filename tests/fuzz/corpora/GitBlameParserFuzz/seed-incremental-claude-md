@@ -1,0 +1,120 @@
+e252781bd11eae5cee60a779211b7330f756a30c 83 83 1
+author pablo
+author-mail <gef3233@gmail.com>
+author-time 1784298364
+author-tz +0200
+committer pablo
+committer-mail <gef3233@gmail.com>
+committer-time 1784298364
+committer-tz +0200
+summary perf(tests): shard the suite for parallel ctest + kill pathologically slow tests
+previous 4c8f898389f65a6bb154bddfe93acb668437f22c CLAUDE.md
+filename CLAUDE.md
+e252781bd11eae5cee60a779211b7330f756a30c 86 86 11
+previous 4c8f898389f65a6bb154bddfe93acb668437f22c CLAUDE.md
+filename CLAUDE.md
+372e8fc065097589aa6a2aceb4ecedd5ec4bdcb0 146 157 1
+author pablo
+author-mail <gef3233@gmail.com>
+author-time 1782977466
+author-tz +0200
+committer pablo
+committer-mail <gef3233@gmail.com>
+committer-time 1782977466
+committer-tz +0200
+summary refactor(lint): bring compare/merge render TUs under the render lint set
+previous 2967286671ed883388977a629086442a0d865a7e CLAUDE.md
+filename CLAUDE.md
+64d731d91af8418256fbe33cb5a1367a11448b39 167 178 1
+author Pablo Jimenez Mateo
+author-mail <pablojimenezmateo@gmail.com>
+author-time 1782758052
+author-tz +0200
+committer Pablo Jimenez Mateo
+committer-mail <pablojimenezmateo@gmail.com>
+committer-time 1782758052
+committer-tz +0200
+summary docs: add hero shot to README and ship showcase media
+previous a2e35856ff404f7bfc8225da8159d55e19eb2ab6 CLAUDE.md
+filename CLAUDE.md
+74ff8e79c20660936239fa32c8c41867abeb08f2 65 65 15
+author Pablo Jimenez Mateo
+author-mail <pablojimenezmateo@gmail.com>
+author-time 1782737085
+author-tz +0200
+committer Pablo Jimenez Mateo
+committer-mail <pablojimenezmateo@gmail.com>
+committer-time 1782737085
+committer-tz +0200
+summary perf(build): shared microide_core object library + ccache/lld/split-dwarf
+previous 4db6272eafbcee15394e5f2b3aaec83689c343bf CLAUDE.md
+filename CLAUDE.md
+74ff8e79c20660936239fa32c8c41867abeb08f2 134 145 1
+previous 4db6272eafbcee15394e5f2b3aaec83689c343bf CLAUDE.md
+filename CLAUDE.md
+4db6272eafbcee15394e5f2b3aaec83689c343bf 38 38 7
+author Pablo Jimenez Mateo
+author-mail <pablojimenezmateo@gmail.com>
+author-time 1782730652
+author-tz +0200
+committer Pablo Jimenez Mateo
+committer-mail <pablojimenezmateo@gmail.com>
+committer-time 1782730652
+committer-tz +0200
+summary perf(build): shared PCH (~15% faster test build); perf-compare fixture discovery; tooling robustness
+previous 9f40872512b18fda2483acc16230ca63e7c7c492 CLAUDE.md
+filename CLAUDE.md
+7db0393f529ef569cfddd3e96fcc3ede97a7676d 143 176 1
+author Pablo Jimenez Mateo
+author-mail <pablojimenezmateo@gmail.com>
+author-time 1782724684
+author-tz +0200
+committer Pablo Jimenez Mateo
+committer-mail <pablojimenezmateo@gmail.com>
+committer-time 1782724684
+committer-tz +0200
+summary feat: surface debugger as first-class feature; fix doc-drift; decompose PluginHost
+previous 738c9821679c49bb0bc9d7200dfbbd3f3c889716 CLAUDE.md
+filename CLAUDE.md
+de84c24c9f85172bd9335382a664a44a3da81767 144 177 1
+author pablo
+author-mail <gef3233@gmail.com>
+author-time 1781784422
+author-tz +0200
+committer pablo
+committer-mail <gef3233@gmail.com>
+committer-time 1781784422
+committer-tz +0200
+summary feat(control): headless agent-driving — deterministic + observable control
+previous ab33be67a5dbf0ad9e3fc9a2bfa015f7c4df18bc CLAUDE.md
+filename CLAUDE.md
+2c9a90cd186d10e50ba060f57d858bacc5e3413b 120 153 1
+author Pablo Jimenez Mateo
+author-mail <pablojimenezmateo@gmail.com>
+author-time 1781729374
+author-tz +0200
+committer Pablo Jimenez Mateo
+committer-mail <pablojimenezmateo@gmail.com>
+committer-time 1781729374
+committer-tz +0200
+summary feat(debug): move debug surfaces to a right-side pane
+previous cb63287b79e15cc794fc91cacaf7db6c63c37c95 CLAUDE.md
+filename CLAUDE.md
+f2c1c288d3a098092603eb6eaa035e967099c027 64 97 13
+author Pablo Jimenez Mateo
+author-mail <pablojimenezmateo@gmail.com>
+author-time 1781365634
+author-tz +0200
+committer Pablo Jimenez Mateo
+committer-mail <pablojimenezmateo@gmail.com>
+committer-time 1781365634
+committer-tz +0200
+summary feat(save): durable writes, save-time conflict guard, and non-blocking external-change banner
+previous 0457687812d86a9fb6f4dc1e1f21f547fc97ed08 CLAUDE.md
+filename CLAUDE.md
+95664bff6c634f506cee08276edb6e8207bf6af0 106 152 1
+author pablo
+author-mail <gef3233@gmail.com>
+author-time 1781184973
+author-tz +0200
+committer pablo

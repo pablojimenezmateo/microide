@@ -1,0 +1,11 @@
+52069b2858dc00b2e7e9defcfcd205c5ff3e3fc0 1 1 31
+author Pablo
+author-mail <pablo@heydolfin.com>
+author-time 1777381861
+author-tz +0200
+committer Pablo
+committer-mail <pablo@heydolfin.com>
+committer-time 1777381861
+committer-tz +0200
+summary Implement shared editor and persisted-state foundations
+filename src/persistence/PersistedRecordWriter.h

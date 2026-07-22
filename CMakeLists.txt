@@ -978,6 +978,7 @@ if(MICROIDE_FUZZ)
     src/persistence/PersistedRecordReader.cpp
     src/persistence/PersistedRecordWriter.cpp
     src/util/DurableFile.cpp
+    src/util/TextFileIO.cpp
     tests/fuzz/PersistedRecordReaderFuzz.cpp
   )
   microide_configure_fuzz_target(PersistedRecordReaderFuzz)
