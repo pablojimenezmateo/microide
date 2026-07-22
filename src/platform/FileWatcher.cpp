@@ -614,11 +614,9 @@ void FileTreeWatcher::SetRoots(std::vector<std::filesystem::path> roots) {
     }
     old_backend = InstallPreparedBackendLocked(std::move(prepared));
     if (capture_snapshot) {
-      snapshot_ = std::move(snapshot);
-      snapshot_valid_ = true;
+      snapshot_ = std::make_shared<const std::vector<TreeSnapshotEntry>>(std::move(snapshot));
     } else {
-      snapshot_.clear();
-      snapshot_valid_ = false;
+      snapshot_.reset();
     }
     pending_change_ = false;
     ResetNextPollAt();
@@ -629,8 +627,7 @@ void FileTreeWatcher::Clear() {
   std::unique_ptr<NativeBackend> old_backend;
   std::scoped_lock lock(mutex_);
   roots_.clear();
-  snapshot_.clear();
-  snapshot_valid_ = false;
+  snapshot_.reset();
   pending_change_ = false;
   polling_required_ = true;
   tree_too_large_ = false;
@@ -670,9 +667,8 @@ std::optional<std::chrono::milliseconds> FileTreeWatcher::NextPollDelay() const 
 
 bool FileTreeWatcher::Poll() {
   std::vector<std::filesystem::path> roots;
-  std::vector<TreeSnapshotEntry> previous_snapshot;
+  std::shared_ptr<const std::vector<TreeSnapshotEntry>> previous_snapshot;
   TreeTraversalFilter filter;
-  bool snapshot_valid = false;
   bool polling_required = true;
   bool pending_change = false;
   {
@@ -681,13 +677,13 @@ bool FileTreeWatcher::Poll() {
       return false;
     }
     roots = roots_;
-    previous_snapshot = snapshot_;
+    previous_snapshot = snapshot_;  // O(1) ref bump; the pointee is immutable
     filter = entry_filter_;
-    snapshot_valid = snapshot_valid_;
     polling_required = polling_required_;
     pending_change = pending_change_;
     pending_change_ = false;
   }
+  const bool snapshot_valid = previous_snapshot != nullptr;
 
   const std::size_t entry_budget = entry_budget_.load(std::memory_order_relaxed);
 
@@ -696,7 +692,7 @@ bool FileTreeWatcher::Poll() {
       return false;
     }
     bool snapshot_truncated = false;
-    const std::vector<TreeSnapshotEntry> current_snapshot =
+    std::vector<TreeSnapshotEntry> current_snapshot =
         CaptureTreeSnapshot(roots, filter, entry_budget, &snapshot_truncated);
     PreparedNativeBackend prepared = PrepareNativeBackend(roots, filter);
     if (snapshot_truncated) {
@@ -709,11 +705,10 @@ bool FileTreeWatcher::Poll() {
       return false;
     }
     if (too_large) {
-      snapshot_.clear();
-      snapshot_valid_ = false;
+      snapshot_.reset();
     } else {
-      snapshot_ = current_snapshot;
-      snapshot_valid_ = true;
+      snapshot_ =
+          std::make_shared<const std::vector<TreeSnapshotEntry>>(std::move(current_snapshot));
     }
     old_backend = InstallPreparedBackendLocked(std::move(prepared));
     ResetNextPollAt();
@@ -721,7 +716,7 @@ bool FileTreeWatcher::Poll() {
   }
 
   bool snapshot_truncated = false;
-  const std::vector<TreeSnapshotEntry> current_snapshot =
+  std::vector<TreeSnapshotEntry> current_snapshot =
       CaptureTreeSnapshot(roots, filter, entry_budget, &snapshot_truncated);
 
   PreparedNativeBackend prepared = PrepareNativeBackend(roots, filter);
@@ -730,8 +725,13 @@ bool FileTreeWatcher::Poll() {
   }
   const bool too_large = prepared.tree_too_large;
   // A truncated snapshot is unreliable (recursive_directory_iterator order is not
-  // stable), so never report a change off a partial walk.
-  const bool changed = !too_large && current_snapshot != previous_snapshot;
+  // stable), so never report a change off a partial walk. The compare runs
+  // unlocked against the shared immutable previous snapshot (an invalid previous
+  // snapshot compares as empty, matching the by-value member's semantics).
+  static const std::vector<TreeSnapshotEntry> kNoSnapshot;
+  const std::vector<TreeSnapshotEntry>& previous =
+      previous_snapshot != nullptr ? *previous_snapshot : kNoSnapshot;
+  const bool changed = !too_large && current_snapshot != previous;
 
   std::unique_ptr<NativeBackend> old_backend;
   std::scoped_lock lock(mutex_);
@@ -743,11 +743,10 @@ bool FileTreeWatcher::Poll() {
     return false;
   }
   if (too_large) {
-    snapshot_.clear();
-    snapshot_valid_ = false;
+    snapshot_.reset();
   } else {
-    snapshot_ = current_snapshot;
-    snapshot_valid_ = true;
+    snapshot_ =
+        std::make_shared<const std::vector<TreeSnapshotEntry>>(std::move(current_snapshot));
   }
   old_backend = InstallPreparedBackendLocked(std::move(prepared));
   ResetNextPollAt();

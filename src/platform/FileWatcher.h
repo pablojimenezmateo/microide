@@ -69,12 +69,16 @@ class FileTreeWatcher {
   mutable std::mutex mutex_;
   std::chrono::milliseconds poll_interval_;
   std::vector<std::filesystem::path> roots_;
-  std::vector<TreeSnapshotEntry> snapshot_;
+  // Immutable shared snapshot (nullptr = no valid snapshot). Poll() grabs a
+  // reference under the lock (O(1) ref bump), walks and compares unlocked, then
+  // swaps the freshly captured snapshot in under the lock (O(1) pointer swap).
+  // The previous by-value member forced two O(tree) deep copies per poll tick
+  // (copy-out for the compare, copy-in to store) on top of the walk itself.
+  std::shared_ptr<const std::vector<TreeSnapshotEntry>> snapshot_;
   TreeTraversalFilter entry_filter_;
   WakeCallback wake_callback_;
   std::unique_ptr<NativeBackend> native_backend_;
   bool defer_initial_snapshot_ = false;
-  bool snapshot_valid_ = false;
   bool pending_change_ = false;
   bool polling_required_ = true;
   bool tree_too_large_ = false;

@@ -104,7 +104,10 @@ they land.
    stop/terminate escalation (026). **[AUDITED 2026-07-20 — both already structurally
    satisfied in-tree; no change made. See the Debug/DAP subsection for the per-item audit.]**
 5. **Scanner/search incomplete-state plumbing** — surface complete/truncated/incomplete
-   status (008/033); targeted fallback rescan (009).
+   status (008/033) **[RESOLVED 2026-07-20 — scan-status taxonomy + finder/search
+   surfacing]**; targeted fallback rescan (009) **[CLOSED 2026-07-22 — incremental-hashing
+   half dispositioned WON'T-DO (semantically unsound for content-change detection), poll-tick
+   deep copies eliminated instead; see the scanner subsection]**.
 6. **LSP completeness** — resource ops + version-aware edits (011); explicit timeout result
    variants (012) **[RESOLVED 2026-07-20 — `LspResult<T>` outcome taxonomy; see the LSP
    feature-completeness subsection]**.
@@ -2499,18 +2502,17 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Scanner / search incomplete-state plumbing (land together):**
 
-> **[RESOLVED 2026-07-20 for 008/033's finder+search+taxonomy; directory-tree surfacing +
-> 009's incremental-hashing rewrite remain, with rationale below]** The scanner-status
-> taxonomy and its file-finder + project-search surfacing shipped (see the RESOLVED marker).
-> What remains is (a) directory-*tree* surfacing — deliberately not built, low value (the
-> tree is lazily expanded per-folder, so it never presents an authoritative "complete list"
-> the way the flat finder/search catalog does; its only realistic incompleteness is a
-> permission-denied folder rendering empty, which matches VSCode), and (b) 009's *incremental
-> directory hashing* — a behavior-risky native poll-loop rewrite on a surface that can't be
-> verified on this host. 009's user-facing half (a "banner" when the watcher gives up on a
-> too-large tree) is already covered: the watcher's initial-batch budget truncation flows
-> through `batch.truncated → FileIndex::scan_status().truncated_by_budget`, which the new
-> finder/search notes surface.
+> **[CLOSED 2026-07-22 — 008/033 RESOLVED 2026-07-20; 009's incremental-hashing half
+> dispositioned WON'T-DO with a corrected rationale, and the poll-tick deep copies were
+> eliminated instead]** The scanner-status taxonomy and its file-finder + project-search
+> surfacing shipped (see the RESOLVED marker). Directory-*tree* surfacing stays deliberately
+> not built, low value (the tree is lazily expanded per-folder, so it never presents an
+> authoritative "complete list" the way the flat finder/search catalog does; its only
+> realistic incompleteness is a permission-denied folder rendering empty, which matches
+> VSCode). 009's user-facing half (a "banner" when the watcher gives up on a too-large tree)
+> is covered: the watcher's initial-batch budget truncation flows through
+> `batch.truncated → FileIndex::scan_status().truncated_by_budget`, which the finder/search
+> notes surface.
 
 - **[RESOLVED 2026-07-20] 008 / 033 — surface a scanner result status** (complete /
   truncated_by_budget / permission_limited / error) and thread the incomplete-catalog
@@ -2539,15 +2541,33 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
     `ProjectFileScanner/ReportsPermissionLimited`,
     `FileIndex/ReplaceScannedFilesCarriesTruncation`, `FileFinder/ReportsTruncatedIndex`,
     `WorkspaceShell/ProjectSearchSurfacesIncompleteIndex`.
-- **009 — fallback watcher snapshots are expensive on huge trees;** degrade to
-  manual-refresh-with-banner + incremental directory hashing. **[PARTIAL/DEFERRED
-  2026-07-20]** The manual-refresh-*banner* half is effectively delivered by the 008/033
-  work above (the watcher's too-large state now surfaces as an incomplete-index note). The
-  *incremental directory hashing* half — replacing the poll loop's full `CaptureTreeSnapshot`
-  compare — stays deferred: it is a behavior-risky rewrite of `FileTreeWatcher::Poll` on a
-  native surface with no build/verify path on this host, and the worst case is already
-  bounded (a truncated snapshot flips to `tree_too_large` → polling stops, changes come only
-  via explicit refresh).
+- **[CLOSED 2026-07-22] 009 — fallback watcher snapshots are expensive on huge trees;**
+  degrade to manual-refresh-with-banner + incremental directory hashing. The
+  manual-refresh-*banner* half was delivered by the 008/033 work above (the watcher's
+  too-large state surfaces as an incomplete-index note). The *incremental directory
+  hashing* half is a definitive **WON'T-DO**, with a corrected and stronger rationale than
+  the earlier deferral: the 2026-07-22 audit found the poll loop is pure `std::filesystem`
+  and fully verifiable on this host (the old "can't verify" claim was wrong) — the real
+  blocker is **semantic**. `TreeSnapshotEntry` carries per-file `size` + `write_time`, so
+  the poll compare is the *content*-change detector on the fallback path; POSIX directory
+  mtimes do not change when a child file's content is edited in place, so an incremental
+  scheme that prunes descent by directory mtime would silently stop detecting external
+  file edits exactly when inotify is unavailable (breaking clean-buffer auto-reload and
+  search/index staleness). A sound incremental scheme must still stat every file — which
+  is precisely the cost being paid; there is no free lunch here, and VSCode's polling
+  fallback stats per-file too. The cost is also already triply bounded: polls run off the
+  shell thread (`SetBackgroundPoster` → `ProjectBackgroundExecutor::PostLatest`), a
+  truncated snapshot flips `tree_too_large` → polling stops (changes come only via
+  explicit refresh), and — shipped with this audit — `FileTreeWatcher::Poll` no longer
+  deep-copies the snapshot twice per tick. The snapshot member is now a
+  `shared_ptr<const vector<TreeSnapshotEntry>>`: Poll grabs a reference under the lock
+  (O(1) ref bump), walks and compares unlocked against the immutable pointee, and swaps
+  the new snapshot in with an O(1) pointer move — eliminating the O(tree) copy-out for
+  the compare and the O(tree) copy-in to store (both full path+metadata vector copies per
+  tick on large trees), and shrinking lock hold times contended by the shell thread's
+  `NextPollDelay`. Behavior is byte-identical (an invalid previous snapshot still
+  compares as empty). Covered by the existing watcher suites
+  (`Filesystem/FileWatcher*`, `FileIndexWatcher/*`, `ExternalRepoChange/*`).
 
 **LSP feature completeness:**
 
