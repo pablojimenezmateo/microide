@@ -513,8 +513,14 @@ void TextViewport::SetSecondaryCaretsWithRanges(std::vector<SelectionRange> rang
     if (!detail::ValidateRangeColumns(document_->lines, norm)) {
       continue;
     }
-    TextPosition anchor = norm.start;
-    TextPosition cursor_end = norm.end;
+    // Bounds-check via the normalized range, but keep the caret on the side the
+    // caller specified: `range.start` is the anchor and `range.end` is the caret.
+    // A leftward box drag (or a line-move restore of a caret-before-anchor
+    // secondary selection) passes an inverted range whose caret must stay at
+    // `range.end`; normalizing to max would strand every secondary caret on the
+    // opposite edge from the primary, breaking column alignment and shift-extension.
+    TextPosition anchor = range.start;
+    TextPosition cursor_end = range.end;
     anchor.column = TextLayout::ClampTextColumn(document_->lines.LineView(anchor.line), anchor.column);
     cursor_end.column =
         TextLayout::ClampTextColumn(document_->lines.LineView(cursor_end.line), cursor_end.column);

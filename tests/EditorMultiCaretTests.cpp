@@ -651,6 +651,35 @@ void TestSetBoxSelectionSelectsEachLineAcrossColumns() {
          "line 1 should select columns 1..4 with its caret at the caret column");
 }
 
+// A leftward (caret column < anchor column) box drag must keep every caret on
+// the caret column, aligned with the primary, not stranded on the anchor edge.
+// Regression: SetSecondaryCaretsWithRanges normalized each range and forced the
+// caret to the max column, so a backward drag put the primary at the left edge
+// while every secondary sat at the right edge — a broken, misaligned box.
+void TestSetBoxSelectionLeftwardKeepsCaretsOnCaretColumn() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdef\nghijkl\nmnopqr\n", "/tmp/mc-box-left.txt");
+
+  // Drag from anchor (0,4) leftward to caret (2,1): the caret column is 1.
+  viewport.SetBoxSelection(TextPosition{0, 4}, TextPosition{2, 1});
+
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 1,
+         "primary caret lands on the caret corner (column 1)");
+  const auto primary = viewport.selection_range();
+  Expect(primary.has_value() && primary->start == TextPosition{2, 1} &&
+             primary->end == TextPosition{2, 4},
+         "primary row still selects columns 1..4");
+
+  const auto ranges = viewport.secondary_caret_ranges();
+  Expect(ranges.size() == 2, "one secondary caret per other line");
+  Expect(ranges[0].position == TextPosition{0, 1} &&
+             ranges[0].selection_anchor == std::optional<TextPosition>(TextPosition{0, 4}),
+         "line 0 caret sits on the caret column (1), anchor on the far edge (4)");
+  Expect(ranges[1].position == TextPosition{1, 1} &&
+             ranges[1].selection_anchor == std::optional<TextPosition>(TextPosition{1, 4}),
+         "line 1 caret sits on the caret column (1), anchor on the far edge (4)");
+}
+
 // Lines shorter than both box columns collapse to a zero-width caret at
 // end-of-line instead of dropping out of the selection (matches VSCode).
 void TestSetBoxSelectionClampsShortLinesToEndOfLine() {
@@ -1007,6 +1036,8 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestPlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine);
   AddTest(tests, "EditorMultiCaret/SetBoxSelectionSelectsEachLineAcrossColumns",
           TestSetBoxSelectionSelectsEachLineAcrossColumns);
+  AddTest(tests, "EditorMultiCaret/SetBoxSelectionLeftwardKeepsCaretsOnCaretColumn",
+          TestSetBoxSelectionLeftwardKeepsCaretsOnCaretColumn);
   AddTest(tests, "EditorMultiCaret/SetBoxSelectionClampsShortLinesToEndOfLine",
           TestSetBoxSelectionClampsShortLinesToEndOfLine);
   AddTest(tests, "EditorMultiCaret/SetBoxSelectionEqualColumnsMakesPlainColumnCarets",
