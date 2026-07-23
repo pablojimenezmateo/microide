@@ -7,6 +7,7 @@
 #include "util/PerformanceTrace.h"
 #include "workspace/CompareMergeRender.h"
 #include "workspace/CompareTabReview.h"
+#include "workspace/PluginSurfacePreview.h"
 #include "workspace/SettingsOverlayService.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceOutputReference.h"
@@ -630,6 +631,22 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         if (Contains(tab.rect, x, y)) {
           return CursorKind::Pointer;
         }
+      }
+      return CursorKind::Default;
+    }
+    // Plugin surface preview: pointer over a published hit region (TD-2026-07-16-61).
+    if (context_.current_project_state.panel.content == PanelContentKind::PluginSurface) {
+      const auto& panel_state = context_.current_project_state.panel;
+      const auto* pres = context_.current_project_state.plugin_presentation_if_present();
+      const editor::SurfaceContent* content =
+          pres != nullptr ? pres->surfaces.Find(panel_state.surface_owner, panel_state.surface_id)
+                          : nullptr;
+      const SDL_FRect body = BottomPanelContentRect(layout);
+      if (content != nullptr && content->has_body() && Contains(body, x, y) &&
+          FindPluginSurfacePreviewHitRegion(*content, body,
+                                            static_cast<float>(panel_state.surface_scroll_y), x,
+                                            y) != nullptr) {
+        return CursorKind::Pointer;
       }
       return CursorKind::Default;
     }

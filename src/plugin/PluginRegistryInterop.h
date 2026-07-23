@@ -93,7 +93,7 @@ bool ExtractStatusItemUpdate(lua_State* state,
 // Operates on the order vector alone (the UI renders it; the worker-owned map is not
 // touched at runtime). `index` is a caller-owned id->position cache kept alongside the
 // order vector so a plugin firing frequent ctx.status.update calls resolves the target
-// in O(1) instead of rescanning a status registry capped at 100k items; it is rebuilt
+// in O(1) instead of rescanning a status registry capped at kMaxPluginStatusItems; it is rebuilt
 // lazily whenever the vector's size no longer matches (register/teardown). Returns true
 // when the target item existed and was changed.
 bool ApplyStatusItemUpdate(

@@ -435,7 +435,10 @@ bool RegisterStatusItem(
     }
     return false;
   }
-  if (ContributionLimitReached(status_items, error_message)) {
+  // Status items use the tighter refresh-budget-derived cap: the whole vector
+  // is re-resolved + sorted on the main thread per ctx.status.update
+  // (TD-2026-07-17-019; see PluginContributionLimits.h).
+  if (ContributionLimitReachedAt(status_items, kMaxPluginStatusItems, error_message)) {
     return false;
   }
   if (!IsValidIdentifier(contributed.id.substr(plugin->id.size() + 1))) {

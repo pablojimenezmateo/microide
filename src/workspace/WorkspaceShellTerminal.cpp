@@ -198,7 +198,12 @@ bool WorkspaceShell::BottomPanelShowsOutput() const {
 }
 
 bool WorkspaceShell::BottomPanelVisible() const {
-  return BottomPanelShowsTerminal() || BottomPanelShowsOutput();
+  // Must agree with the visibility PrepareFrameOnce feeds ComputeLayout
+  // (panel content != None): a PluginSurface panel is rendered and laid out,
+  // so the interactive paths (wheel, clicks, resize handle, cursor) must see
+  // it as visible too. It previously said Terminal-or-Output only, which left
+  // plugin surface previews painted but mouse-dead (TD-2026-07-16-60/61).
+  return context_.current_project_state.panel.content != PanelContentKind::None;
 }
 
 const render::TextRenderer& WorkspaceShell::PanelTextRenderer() const {

@@ -35,6 +35,7 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests);
 void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests);
 void RegisterPluginDecorationStoreTests(std::vector<TestCase>& tests);
 void RegisterPluginSurfaceStoreTests(std::vector<TestCase>& tests);
+void RegisterPluginSurfacePreviewTests(std::vector<TestCase>& tests);
 void RegisterPluginDisplayListTests(std::vector<TestCase>& tests);
 void RegisterEditorRowYLayoutTests(std::vector<TestCase>& tests);
 void RegisterEditorInsetLayoutTests(std::vector<TestCase>& tests);
@@ -394,6 +395,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterDiagnosticsStoreTests(tests);
   microide::tests::RegisterPluginDecorationStoreTests(tests);
   microide::tests::RegisterPluginSurfaceStoreTests(tests);
+  microide::tests::RegisterPluginSurfacePreviewTests(tests);
   microide::tests::RegisterPluginDisplayListTests(tests);
   microide::tests::RegisterEditorRowYLayoutTests(tests);
   microide::tests::RegisterEditorInsetLayoutTests(tests);

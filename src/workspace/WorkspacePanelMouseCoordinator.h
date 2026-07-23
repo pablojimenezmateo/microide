@@ -64,6 +64,11 @@ class PanelMouseCoordinator {
     std::function<void(std::size_t)> edit_debug_watch_expression;
     // Debug Breakpoints panel (Phase 7): toggle an exception-breakpoint filter.
     std::function<void(const std::string&)> toggle_debug_exception_filter;
+    // Plugin surface preview (TD-2026-07-16-60/61): resolve the active preview's
+    // content (null when none), and dispatch a hit-region command through the
+    // host's validated command runner (the same path code-lens clicks use).
+    std::function<const editor::SurfaceContent*()> active_plugin_surface;
+    std::function<void(const std::string&)> execute_command;
   };
 
   PanelMouseCoordinator(ProjectWorkspaceState& state,

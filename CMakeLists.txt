@@ -761,6 +761,7 @@ add_executable(microide_tests
   tests/DiagnosticsStoreTests.cpp
   tests/PluginDecorationStoreTests.cpp
   tests/PluginSurfaceStoreTests.cpp
+  tests/PluginSurfacePreviewTests.cpp
   tests/PluginDisplayListTests.cpp
   tests/EditorRowYLayoutTests.cpp
   tests/EditorInsetLayoutTests.cpp
@@ -1100,6 +1101,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     tests/perf/DebugPerfScenarios.cpp
     tests/perf/LspPerfScenarios.cpp
     tests/perf/TechDebtCoveragePerfScenarios.cpp
+    tests/perf/PluginCapPerfScenarios.cpp
     tests/perf/PerfMain.cpp
   )
 

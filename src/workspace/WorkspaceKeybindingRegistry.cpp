@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdint>
 #include <sstream>
+#include <unordered_map>
 
 #include "plugin/PluginHost.h"
 #include "util/StringUtil.h"
@@ -629,9 +631,15 @@ const KeybindingSpec* FindBuiltinKeybindingByKey(SDL_Keycode key,
 std::vector<ResolvedKeybinding> ResolveKeybindings(
     const plugin::PluginHost& plugin_host,
     const std::vector<std::string>& disabled_ids) {
+  return ResolveKeybindings(plugin_host.ContributedKeybindings(), disabled_ids);
+}
+
+std::vector<ResolvedKeybinding> ResolveKeybindings(
+    const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
+    const std::vector<std::string>& disabled_ids) {
   std::vector<ResolvedKeybinding> result;
   const auto builtin_specs = BuiltinKeybindingSpecs();
-  result.reserve(builtin_specs.size() + plugin_host.ContributedKeybindings().size());
+  result.reserve(builtin_specs.size() + contributed.size());
 
   const auto is_disabled = [&](std::string_view id) {
     return std::find(disabled_ids.begin(), disabled_ids.end(), id) != disabled_ids.end();
@@ -657,23 +665,35 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
 
   // Two bindings collide when they share a key + normalized modifiers and their
   // contexts overlap. A Global binding matches in every context (see FindKeybinding),
-  // so it overlaps any context; otherwise contexts must be equal.
-  const auto contexts_overlap = [](KeybindingContext a, KeybindingContext b) {
-    return a == b || a == KeybindingContext::Global || b == KeybindingContext::Global;
+  // so it overlaps any context; otherwise contexts must be equal. Resolved chords
+  // are indexed by (key, normalized mods) -> context bitmask so each contributed
+  // binding checks in O(1) instead of rescanning every prior binding (the old
+  // linear rescan made a cap-sized reload quadratic; TD-2026-07-17-019).
+  const auto chord_key = [](SDL_Keycode key, SDL_Keymod normalized_mods) {
+    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(key)) << 16) |
+           static_cast<std::uint16_t>(normalized_mods);
   };
+  const auto context_bit = [](KeybindingContext context) {
+    return static_cast<std::uint8_t>(1u << static_cast<unsigned>(context));
+  };
+  constexpr std::uint8_t kGlobalBit = 1u << static_cast<unsigned>(KeybindingContext::Global);
+  std::unordered_map<std::uint64_t, std::uint8_t> resolved_contexts;
+  resolved_contexts.reserve(result.size());
+  for (const ResolvedKeybinding& existing : result) {
+    resolved_contexts[chord_key(existing.key, NormalizedKeyModifiers(existing.modifiers))] |=
+        context_bit(existing.context);
+  }
   const auto conflicts_with_resolved = [&](SDL_Keycode key, SDL_Keymod mods,
                                            KeybindingContext context) {
-    const SDL_Keymod normalized = NormalizedKeyModifiers(mods);
-    for (const ResolvedKeybinding& existing : result) {
-      if (existing.key == key && NormalizedKeyModifiers(existing.modifiers) == normalized &&
-          contexts_overlap(existing.context, context)) {
-        return true;
-      }
+    const auto it = resolved_contexts.find(chord_key(key, NormalizedKeyModifiers(mods)));
+    if (it == resolved_contexts.end()) {
+      return false;
     }
-    return false;
+    return (it->second & kGlobalBit) != 0 || context == KeybindingContext::Global ||
+           (it->second & context_bit(context)) != 0;
   };
 
-  for (const auto& contrib : plugin_host.ContributedKeybindings()) {
+  for (const auto& contrib : contributed) {
     if (is_disabled(contrib.id)) {
       continue;
     }
@@ -709,6 +729,9 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     rb.modifiers = mods;
     rb.context = context;
     rb.from_plugin = true;
+    // Keep the conflict index in sync so a later plugin binding that collides
+    // with this accepted one is skipped, matching the old rescan-of-result.
+    resolved_contexts[chord_key(key, NormalizedKeyModifiers(mods))] |= context_bit(context);
     result.push_back(std::move(rb));
   }
 

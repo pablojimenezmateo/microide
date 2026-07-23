@@ -19,6 +19,7 @@
 #include "render/ScopedRenderClip.h"
 #include "render/SurfaceTextureCache.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/PluginSurfacePreview.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
@@ -40,7 +41,7 @@ void RenderRasterSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
                              const editor::RasterHandle& raster, float scroll_y,
                              render::SurfaceTextureCache& cache, render::TextRenderer& text_renderer,
                              const render::Theme& theme) {
-  constexpr float kPad = 8.0f;
+  constexpr float kPad = kPluginSurfacePreviewPadding;
   const render::SurfaceTextureCache::Entry* entry = cache.Lookup(raster.content_hash);
   if (entry == nullptr || entry->texture == nullptr) {
     text_renderer.DrawString(renderer, rect.x + kPad, rect.y + kPad, theme.text_muted, "Rendering…");
@@ -368,12 +369,21 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   // host owns scroll + clipping; the plugin only supplied data (display list or
   // raster handle). The surface content pointer is resolved by the builder.
   if (panel_vm.content == PanelContentKind::PluginSurface) {
-    const SDL_FRect body =
-        MakeRect(layout.bottom_panel.x, panel_header.y + panel_header.h, layout.bottom_panel.w,
-                 std::max(0.0f, layout.bottom_panel.h - panel_header.h));
+    const SDL_FRect body = BottomPanelContentRect(layout);
     FillRect(renderer, body, theme_.surface_background);
     RenderPluginSurfaceInto(renderer, body, panel_vm.plugin_surface,
                             panel_vm.plugin_surface_scroll_y);
+    // Pixel-unit scrollbar for an overflowing preview; the mouse coordinator
+    // computes the identical geometry for thumb grabs (TD-2026-07-16-60).
+    if (panel_vm.plugin_surface != nullptr && panel_vm.plugin_surface->has_body()) {
+      if (const auto geometry = MakeVerticalScrollbarGeometry(
+              body, PluginSurfacePreviewContentHeight(*panel_vm.plugin_surface), body.h,
+              panel_vm.plugin_surface_scroll_y);
+          geometry.has_value()) {
+        DrawScrollbar(renderer, theme_, geometry->track, geometry->thumb,
+                      context_.interaction_state.drag_target == DragTarget::BottomPanelScrollbar);
+      }
+    }
     return;
   }
 
@@ -565,7 +575,7 @@ void WorkspaceShell::RenderPluginSurfaceInto(SDL_Renderer* renderer, const SDL_F
   // Make any freshly decoded rasters available before we look them up.
   surface_texture_cache_.Upload(renderer);
 
-  constexpr float kPad = 8.0f;
+  constexpr float kPad = kPluginSurfacePreviewPadding;
   if (content == nullptr || !content->has_body()) {
     return;
   }

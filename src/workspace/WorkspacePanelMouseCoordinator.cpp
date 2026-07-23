@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "workspace/PluginSurfacePreview.h"
 #include "workspace/TerminalPanelService.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
@@ -69,6 +70,32 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
           line_count, panel_layout.scroll.visible_rows);
       state_.surface.focus = FocusTarget::Panel;
       return true;
+    }
+  }
+
+  // Plugin surface preview scrollbar: grab the pixel-unit thumb (TD-2026-07-16-60).
+  if (event.button.button == SDL_BUTTON_LEFT && operations_.bottom_panel_visible() &&
+      state_.panel.content == PanelContentKind::PluginSurface) {
+    if (const editor::SurfaceContent* content = operations_.active_plugin_surface();
+        content != nullptr && content->has_body()) {
+      const SDL_FRect body = operations_.bottom_panel_content_rect(layout);
+      if (const auto geometry = MakeVerticalScrollbarGeometry(
+              body, PluginSurfacePreviewContentHeight(*content), body.h,
+              static_cast<float>(state_.panel.surface_scroll_y));
+          geometry.has_value() && Contains(geometry->track, event.button.x, event.button.y)) {
+        interaction_state_.drag_target = DragTarget::BottomPanelScrollbar;
+        interaction_state_.drag_scrollbar_offset =
+            Contains(geometry->thumb, event.button.x, event.button.y)
+                ? static_cast<float>(event.button.y) - geometry->thumb.y
+                : geometry->thumb.h * 0.5f;
+        state_.panel.surface_scroll_y = std::clamp(
+            static_cast<int>(std::lround(
+                ScrollUnitsForPointer(*geometry, static_cast<float>(event.button.y),
+                                      interaction_state_.drag_scrollbar_offset))),
+            0, MaxPluginSurfacePreviewScroll(*content, body.h));
+        state_.surface.focus = FocusTarget::Panel;
+        return true;
+      }
     }
   }
 
@@ -173,6 +200,25 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
+  // Plugin surface preview: a left click inside a published hit region dispatches
+  // its command through the validated command runner — the same path code-lens
+  // clicks use, no bespoke callback registry (TD-2026-07-16-61).
+  if (state_.panel.content == PanelContentKind::PluginSurface) {
+    state_.surface.focus = FocusTarget::Panel;
+    if (const editor::SurfaceContent* content = operations_.active_plugin_surface();
+        content != nullptr && content->has_body()) {
+      const SDL_FRect body = operations_.bottom_panel_content_rect(layout);
+      if (Contains(body, event.button.x, event.button.y)) {
+        if (const editor::SurfaceHitRegion* region = FindPluginSurfacePreviewHitRegion(
+                *content, body, static_cast<float>(state_.panel.surface_scroll_y),
+                static_cast<float>(event.button.x), static_cast<float>(event.button.y))) {
+          operations_.execute_command(region->command);
+        }
+      }
+    }
+    return true;
+  }
+
   if (state_.panel.content != PanelContentKind::None) {
     state_.surface.focus = FocusTarget::Panel;
   }
@@ -220,6 +266,30 @@ bool PanelMouseCoordinator::HandleDrag(const SDL_Event& event,
   if (interaction_state_.drag_target != DragTarget::BottomPanelScrollbar ||
       !operations_.bottom_panel_visible()) {
     return false;
+  }
+
+  // Plugin surface preview scrollbar drag tracks in pixel units (TD-2026-07-16-60).
+  if (state_.panel.content == PanelContentKind::PluginSurface) {
+    const editor::SurfaceContent* content = operations_.active_plugin_surface();
+    if (content == nullptr || !content->has_body()) {
+      interaction_state_.drag_target = DragTarget::None;
+      return false;
+    }
+    const SDL_FRect body = operations_.bottom_panel_content_rect(layout);
+    const auto geometry = MakeVerticalScrollbarGeometry(
+        body, PluginSurfacePreviewContentHeight(*content), body.h,
+        static_cast<float>(state_.panel.surface_scroll_y));
+    if (!geometry.has_value()) {
+      interaction_state_.drag_target = DragTarget::None;
+      return false;
+    }
+    state_.panel.surface_scroll_y = std::clamp(
+        static_cast<int>(std::lround(
+            ScrollUnitsForPointer(*geometry, static_cast<float>(event.motion.y),
+                                  interaction_state_.drag_scrollbar_offset))),
+        0, MaxPluginSurfacePreviewScroll(*content, body.h));
+    state_.surface.focus = FocusTarget::Panel;
+    return true;
   }
 
   const std::size_t line_count = operations_.bottom_panel_line_count();
@@ -320,6 +390,24 @@ bool PanelMouseCoordinator::HandleWheel(const SDL_Event& event,
   if (!operations_.bottom_panel_visible() ||
       !Contains(layout.bottom_panel, event.wheel.mouse_x, event.wheel.mouse_y)) {
     return false;
+  }
+
+  // Plugin surface preview: pixel-scroll the content one text row per tick,
+  // clamped to the padded content height (TD-2026-07-16-60).
+  if (state_.panel.content == PanelContentKind::PluginSurface) {
+    if (const editor::SurfaceContent* content = operations_.active_plugin_surface();
+        content != nullptr && content->has_body()) {
+      const SDL_FRect body = operations_.bottom_panel_content_rect(layout);
+      const float line_height =
+          operations_.compute_bottom_panel_log_layout(layout, 0).line_height;
+      const float step = line_height > 0.0f ? line_height : 14.0f;
+      state_.panel.surface_scroll_y = std::clamp(
+          state_.panel.surface_scroll_y -
+              static_cast<int>(std::lround(static_cast<float>(vertical_ticks) * step)),
+          0, MaxPluginSurfacePreviewScroll(*content, body.h));
+    }
+    state_.surface.focus = FocusTarget::Panel;
+    return true;
   }
 
   const std::size_t line_count = operations_.bottom_panel_line_count();
@@ -457,6 +545,20 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
           .toggle_debug_exception_filter =
               [this](const std::string& filter_id) {
                 debug_service_.ToggleExceptionFilter(filter_id);
+              },
+          .active_plugin_surface =
+              [this]() -> const editor::SurfaceContent* {
+                const auto& panel = context_.current_project_state.panel;
+                const auto* pres =
+                    context_.current_project_state.plugin_presentation_if_present();
+                return pres != nullptr
+                           ? pres->surfaces.Find(panel.surface_owner, panel.surface_id)
+                           : nullptr;
+              },
+          .execute_command =
+              [this](const std::string& command) {
+                std::string error_message;
+                ExecuteCommandName(command, {}, ActionSource::Command, &error_message);
               },
       });
 }

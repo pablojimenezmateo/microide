@@ -1,0 +1,1 @@
+{"tolerances":{"alloc_p95_percent":20,"alloc_max_percent":50,"alloc_p50_percent":10,"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":8197,"p50_allocations":8197,"p95_allocations":8197,"p95_wall_ms":2.2896387499999999,"max_wall_ms":2.3750960000000001,"p50_wall_ms":1.8011705},"scenario":"plugin_status_items_resolve_at_cap"}

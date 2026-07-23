@@ -11,6 +11,7 @@
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/OverviewRuler.h"
+#include "workspace/PluginSurfacePreview.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceTextSearch.h"
 #include "render/ScopedRenderClip.h"
@@ -388,6 +389,22 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         tab_strip_service_.ComputeBottomPanelTabOverflowControls(
             project_state, panel_header, layout_mode_service_.CurrentMode(),
             prepare_cached_bottom_panel_vm_->tabs, output_channels_.Channels());
+  }
+  // 1b) Plugin-surface preview scroll clamp: normalize the stored pixel scroll
+  //     against the resolved layout so render consumes an already-clamped value
+  //     even after a republish shrinks the content or the panel resizes
+  //     (TD-2026-07-16-60). The VM copy is refreshed because it was built from
+  //     state before the layout was known.
+  if (panel_vm.content == PanelContentKind::PluginSurface &&
+      panel_vm.plugin_surface != nullptr) {
+    const float body_height =
+        std::max(0.0f, layout.bottom_panel.h - kWorkspaceBottomPanelHeaderHeight);
+    int& surface_scroll = project_state.panel.surface_scroll_y;
+    surface_scroll = std::clamp(
+        surface_scroll, 0,
+        MaxPluginSurfacePreviewScroll(*panel_vm.plugin_surface, body_height));
+    prepare_cached_bottom_panel_vm_->plugin_surface_scroll_y =
+        static_cast<float>(surface_scroll);
   }
   // 2) Overlay scroll clamp: the stored scroll row is normalized here so the
   //    overlay view model (and render) consume an already-clamped value.

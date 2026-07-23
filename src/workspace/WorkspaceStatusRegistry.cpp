@@ -25,8 +25,12 @@ StatusItemTone ToneFromString(std::string_view tone) {
 }  // namespace
 
 std::vector<StatusItemView> ResolveStatusItems(const plugin::PluginHost& plugin_host) {
+  return ResolveStatusItems(plugin_host.ContributedStatusItems());
+}
+
+std::vector<StatusItemView> ResolveStatusItems(
+    const std::vector<plugin::PluginHost::ContributedStatusItem>& contributions) {
   std::vector<StatusItemView> items;
-  const auto& contributions = plugin_host.ContributedStatusItems();
   if (contributions.empty()) {
     return items;  // No plugin contributes status items: zero allocation, no sort.
   }

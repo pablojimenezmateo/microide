@@ -502,7 +502,10 @@ std::vector<WorkspaceShell::VisibleStatusItem> WorkspaceShell::ComputeVisibleSta
     const float width = item_width(item);
     const float next_x = right_x - width;
     if (next_x < breadcrumb.x + kInset) {
-      continue;
+      // Out of room: stop, hiding every lower-priority item (VSCode semantics —
+      // no gap-filling with narrower items). Also bounds the per-paint scan by
+      // the bar width instead of the item count (TD-2026-07-17-019).
+      break;
     }
     visible.push_back(VisibleStatusItem{
         .item = item,

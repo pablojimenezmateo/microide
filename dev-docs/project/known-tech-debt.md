@@ -125,7 +125,10 @@ they land.
 7. **Plugin registry** — O(1) duplicate-id detection (077) **[RESOLVED 2026-07-18 — per-kind
    id index]**; per-field byte caps (018) **[RESOLVED 2026-07-19 — central ToHostString
    backstop + per-surface render caps; see the Plugin caps / policy subsection]**;
-   measured caps (019); `lua_State*` boundary refactor (22/020/058) **[RESOLVED 2026-07-23 —
+   measured caps (019) **[RESOLVED 2026-07-24 — caps re-derived from perf-runner-v1
+   measurements: status 1,024 (new dedicated cap), per-kind 100,000 → 16,384, plus the
+   O(N²) keybinding conflict scan and the unbounded status-bar right-loop scan fixed;
+   see the Plugin caps / policy subsection]**; `lua_State*` boundary refactor (22/020/058) **[RESOLVED 2026-07-23 —
    boundary verified already-clean + new hard lint `CheckLuaStaysBehindPluginBoundary`
    (transitive-include aware); the no-longjmp audit shipped as the AST-based
    `tools/audit-lua-longjmp.py`, tree clean over 142 raise-capable sites. See the
@@ -153,9 +156,15 @@ they land.
    **[RESOLVED 2026-07-22 — audited satisfied + added the missing steady-state guard; see
    the render subsection]**.
 10. **Plugin UI features** — bottom-panel preview scroll (60), hit-region dispatch (61).
+    **[CLUSTER COMPLETE 2026-07-24 — both RESOLVED; see the plugin-surface-preview
+    subsection under the 2026-07-16 deferred set. Bonus fix: `BottomPanelVisible()`
+    said Terminal-or-Output only, so a PluginSurface panel was rendered but
+    mouse-dead (wheel/clicks/resize/cursor all fell through).]**
 
-**Platform passes (need a Windows/macOS host to build+verify):** 004/005/010/035 (Windows),
-006/062 (macOS). See the Platform-specific subsection.
+**Platform passes — WON'T-DO (maintainer decision 2026-07-24):** 004/005/010/035 (Windows),
+006/062 (macOS) need a Windows/macOS host to build+verify and no such host is planned;
+dispositioned WON'T-DO rather than left dangling. Revisit only if a real Windows/macOS
+port effort starts. See the Platform-specific subsection.
 
 **Genuinely not worth (true WON'T-DO, do not re-file):** 048 (deliberate bounded explicit-
 save formatter), 003 (non-actionable, no live defect), 041/045/046/056/057/069/013/066/031/038
@@ -2698,9 +2707,9 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Plugin caps / policy:**
 
-> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 019 (re-derive
-> status/contribution caps from *measured* render/registry budgets — a measurement task) is
-> policy/tuning, not a defect. (**018 RESOLVED 2026-07-19** and **077 RESOLVED 2026-07-18** —
+> **[SUBSECTION COMPLETE 2026-07-24]** 019 (re-derive status/contribution caps from
+> *measured* render/registry budgets) **RESOLVED 2026-07-24** — see its entry below.
+> (**018 RESOLVED 2026-07-19** and **077 RESOLVED 2026-07-18** —
 > the O(N²) duplicate-id scan is now an O(1) per-kind id index; see its entry.)
 
 - **[RESOLVED 2026-07-19] 018 — per-field byte caps for every provider result surface.**
@@ -2727,8 +2736,36 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   `PluginHost/HoverResultIsByteCapped`, `PluginHost/DiagnosticMessageIsByteCapped`.
   (019 — re-deriving the *values* of these caps from measured render/registry budgets —
   remains a separate deferred measurement task.)
-- **019 — re-derive plugin status/contribution caps from measured render/registry
-  budgets** (a measurement task).
+- **[RESOLVED 2026-07-24] 019 — re-derive plugin status/contribution caps from measured render/registry
+  budgets.** Measured on perf-runner-v1 via two new pure resolve seams
+  (`ResolveStatusItems(vector)` in WorkspaceStatusRegistry,
+  `ResolveKeybindings(vector, disabled)` in WorkspaceKeybindingRegistry) driven by the
+  new baseline-gated perf scenarios `plugin_status_items_resolve_at_cap` /
+  `plugin_keybindings_resolve_at_cap` (tests/perf/PluginCapPerfScenarios.cpp), so a cap
+  raise without re-measurement or a regression in either seam trips the committed gate.
+  Derived values (full derivation comments in `plugin/PluginContributionLimits.h`):
+  - **`kMaxPluginStatusItems` = 1,024** (new, tighter): the status vector is fully
+    re-resolved (copy + parse + stable_sort) on the main thread per `ctx.status.update`;
+    measured ~1–2 µs/item → p50 ~1.8 ms at 1,024 vs ~160 ms (ten frames of stall per
+    update) at the old 100,000 ceiling. Wired via the new `ContributionLimitReachedAt`
+    in the status registration path.
+  - **`kMaxPluginContributionsPerKind` 100,000 → 16,384**: the heaviest per-reload
+    rebuild (keybinding chord parse + conflict check) measures p50 ~12 ms at 16,384;
+    memory amplification (host-side structs + strings the Lua cap doesn't count) drops
+    ~6x; ~10x headroom remains over the largest real contribution counts (VSCode-scale
+    snippet packs / command sets are low thousands).
+  Speed fixes landed with the measurement (both were budget-busters at any cap):
+  - `ResolveKeybindings`' conflict scan was O(N²) (each contributed binding rescanned
+    every resolved one) — now a hashed (key, normalized-mods) → context-bitmask index,
+    O(1) per binding with identical skip semantics (covered by the existing
+    conflict-shadowing keybinding tests + the gated scenario).
+  - `ComputeVisibleStatusItems`' right-aligned loop measured every remaining item after
+    space ran out (`continue`, gap-filling narrower low-priority items) — now `break`s
+    at the first non-fit (VSCode semantics: priority order authoritative), bounding the
+    per-paint scan by bar width instead of item count.
+  Cap-boundary regression: extended `PluginHost/ContributionLimitHelperBoundsEachKind`
+  with the status-cap boundary + a `static_assert` that the status cap stays below the
+  generic cap.
 - **[RESOLVED 2026-07-18] 077 — plugin contribution registration was O(N²)** via a
   linear `std::any_of` duplicate-id scan over the storage vector on every `add`. The
   five id-deduplicated kinds (task / language server / debug adapter / launch config /
@@ -3147,10 +3184,33 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
 - **TD-2026-07-16-39 — encoded raster surfaces publish layout dimensions before decode
   knows the real image size.** Dedicated cross-layer pass; related to the raster
   budget work (**TD-2026-07-17-043/092**, fixed).
-- **TD-2026-07-16-60 — bottom-panel plugin surface previews cannot scroll their own
-  content.** Dedicated UI-feature pass.
-- **TD-2026-07-16-61 — plugin surface hit regions are parsed and documented but never
-  dispatched.** Dedicated UI-feature pass.
+- **[RESOLVED 2026-07-24] TD-2026-07-16-60 — bottom-panel plugin surface previews cannot scroll their own
+  content.** The preview now scrolls host-side: wheel over the panel body moves
+  `panel.surface_scroll_y` one text row per tick, a pixel-unit scrollbar (same
+  `MakeVerticalScrollbarGeometry` as every other surface; thumb grab + drag via the
+  existing `DragTarget::BottomPanelScrollbar`) renders when the content overflows, and
+  frame prep clamps the stored scroll against the resolved layout (republish shrinks /
+  panel resize) before the render VM consumes it. All geometry lives in the shared
+  deterministic helper header `workspace/PluginSurfacePreview.h`
+  (`kPluginSurfacePreviewPadding`, `PluginSurfacePreviewContentHeight`,
+  `MaxPluginSurfacePreviewScroll`, `FindPluginSurfacePreviewHitRegion`) so render, mouse,
+  cursor, and prep agree byte-for-byte. Root cause the pass exposed:
+  `WorkspaceShell::BottomPanelVisible()` returned Terminal-or-Output only, while
+  `PrepareFrameOnce` fed `content != None` to `ComputeLayout` — a PluginSurface panel was
+  laid out and painted but invisible to every interactive path (wheel, clicks, resize
+  handle, cursor, and the event-side `CurrentWorkspaceLayout`). It now returns
+  `content != None`, matching the layout. Tests: `PluginSurfacePreview/*` (wheel scroll +
+  clamp, scrollbar press/drag/clamp, pure geometry mapping).
+- **[RESOLVED 2026-07-24] TD-2026-07-16-61 — plugin surface hit regions are parsed and documented but never
+  dispatched.** A left click inside the preview body now maps panel coordinates through
+  the body origin, content padding, and current scroll into content space, resolves the
+  topmost (last-published) hit region (`FindPluginSurfacePreviewHitRegion`; degenerate
+  rects never match), and dispatches its command through `ExecuteCommandName` — the same
+  validated path code-lens clicks use, exactly as `guidelines/plugins.md` documented. The
+  cursor shows Pointer over an active region. Inline anchored insets stay inert by
+  design. Tests: `PluginSurfacePreview/HitRegionClickDispatchesCommand` (scroll-aware
+  dispatch observable via `sidebar-toggle`, off-region click dispatches nothing) and
+  `HitRegionMappingIsScrollAndPaddingAware` (last-wins ordering, padding/scroll math).
 
 ### Fixed in the 2026-07-17 test-parallelism + slow-test pass
 

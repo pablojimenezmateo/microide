@@ -5,9 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace microide::plugin {
-class PluginHost;
-}  // namespace microide::plugin
+#include "plugin/PluginHost.h"
 
 namespace microide::workspace {
 
@@ -35,6 +33,13 @@ struct StatusItemView {
 
 // Returns plugin-contributed status items, sorted by alignment then priority descending.
 std::vector<StatusItemView> ResolveStatusItems(const plugin::PluginHost& plugin_host);
+
+// Pure seam for the copy + parse + stable_sort rebuild, taking the contributed
+// items directly. This is the per-revision main-thread cost that the status-item
+// contribution cap bounds (TD-2026-07-17-019); the perf harness measures it at
+// the cap through this overload.
+std::vector<StatusItemView> ResolveStatusItems(
+    const std::vector<plugin::PluginHost::ContributedStatusItem>& contributions);
 
 // Caches the resolved/sorted view so the per-frame render, hit-test, and hover
 // paths reuse a single build until the host's contributions change. `revision`

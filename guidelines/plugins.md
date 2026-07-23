@@ -397,6 +397,12 @@ Optional fields: `title`, `preview = "bottom"|"side"` (open it as a panel previe
 normal command path — no bespoke callback), and `anchor = { path, line }` (render
 it as an inline inset; see below). `ctx.surface.clear(id)` removes it.
 
+The bottom-panel preview is host-scrolled: an overflowing surface gets wheel
+scrolling and a scrollbar, and clicks/cursor map through the scroll offset into
+content-local coordinates before hit-region resolution (overlapping regions:
+last-published wins). Hit regions are content-local and only dispatch in the
+panel preview; inline anchored insets stay inert by design.
+
 All inputs are bounded before allocation (op/point/text/raster caps); oversize or
 malformed input is rejected, never clamped. The display-list op-buffer and the
 PNG decoder each have a libFuzzer target (`PluginDisplayListParseFuzz`,

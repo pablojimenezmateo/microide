@@ -7,11 +7,8 @@
 #include <string_view>
 #include <vector>
 
+#include "plugin/PluginHost.h"
 #include "workspace/WorkspaceActionTypes.h"
-
-namespace microide::plugin {
-class PluginHost;
-}  // namespace microide::plugin
 
 namespace microide::workspace {
 
@@ -52,6 +49,13 @@ struct ResolvedKeybinding {
 
 std::vector<ResolvedKeybinding> ResolveKeybindings(
     const plugin::PluginHost& plugin_host,
+    const std::vector<std::string>& disabled_ids = {});
+
+// Pure seam taking the contributed keybindings directly. This is the per-reload
+// rebuild whose cost the per-kind contribution cap bounds (TD-2026-07-17-019);
+// the perf harness measures it at the cap through this overload.
+std::vector<ResolvedKeybinding> ResolveKeybindings(
+    const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
     const std::vector<std::string>& disabled_ids = {});
 const ResolvedKeybinding* FindKeybinding(const std::vector<ResolvedKeybinding>& bindings,
                                           SDL_Keycode key,

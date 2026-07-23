@@ -578,6 +578,20 @@ void TestPluginContributionLimitHelperBoundsEachKind() {
 
   Expect(!microide::plugin::ContributionLimitReached<std::vector<int>>(nullptr, nullptr),
          "a null container is treated as not-at-cap");
+
+  // Status items carry a tighter, refresh-budget-derived cap (TD-2026-07-17-019):
+  // the vector is re-resolved + sorted on the main thread per ctx.status.update,
+  // so its ceiling is measured against that budget, not the generic memory bound.
+  static_assert(microide::plugin::kMaxPluginStatusItems <
+                microide::plugin::kMaxPluginContributionsPerKind);
+  std::vector<int> status_below(microide::plugin::kMaxPluginStatusItems - 1);
+  Expect(!microide::plugin::ContributionLimitReachedAt(
+             &status_below, microide::plugin::kMaxPluginStatusItems, &error),
+         "a status container below the status cap must accept further contributions");
+  std::vector<int> status_at_cap(microide::plugin::kMaxPluginStatusItems);
+  Expect(microide::plugin::ContributionLimitReachedAt(
+             &status_at_cap, microide::plugin::kMaxPluginStatusItems, &error),
+         "a status container at the status cap must refuse further contributions");
 }
 
 // Regression (UAF): QueryCompletions iterates the live completion_runtimes vector by
