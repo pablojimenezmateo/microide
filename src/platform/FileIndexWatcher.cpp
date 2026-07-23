@@ -307,6 +307,8 @@ struct FileIndexWatcher::Impl {
 
   // poll-fallback
   bool poll_mode = false;
+  bool force_poll = false;
+  std::chrono::milliseconds poll_interval{750};
   std::thread poll_worker;
   std::atomic<bool> stop_poll{false};
   std::thread initial_scan_worker;
@@ -785,9 +787,12 @@ struct FileIndexWatcher::Impl {
     snapshot = build_snapshot();
 
     while (!stop_poll.load(std::memory_order_acquire)) {
-      // Sleep 750ms in small increments to react to stop quickly
-      for (int i = 0; i < 15 && !stop_poll.load(std::memory_order_acquire); ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      // Sleep the configured interval in small slices to react to stop quickly.
+      const std::chrono::milliseconds interval = poll_interval;
+      constexpr std::chrono::milliseconds kSlice(25);
+      for (std::chrono::milliseconds waited(0);
+           waited < interval && !stop_poll.load(std::memory_order_acquire); waited += kSlice) {
+        std::this_thread::sleep_for(std::min(kSlice, interval - waited));
       }
       if (stop_poll.load(std::memory_order_acquire)) {
         break;
@@ -829,6 +834,8 @@ struct FileIndexWatcher::Impl {
 
   // poll-fallback
   bool poll_mode = false;
+  bool force_poll = false;
+  std::chrono::milliseconds poll_interval{750};
   std::thread poll_worker;
   std::atomic<bool> stop_poll{false};
   std::thread initial_scan_worker;
@@ -1041,8 +1048,12 @@ struct FileIndexWatcher::Impl {
     snapshot = build_snapshot();
 
     while (!stop_poll.load(std::memory_order_acquire)) {
-      for (int i = 0; i < 15 && !stop_poll.load(std::memory_order_acquire); ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      // Sleep the configured interval in small slices to react to stop quickly.
+      const std::chrono::milliseconds interval = poll_interval;
+      constexpr std::chrono::milliseconds kSlice(25);
+      for (std::chrono::milliseconds waited(0);
+           waited < interval && !stop_poll.load(std::memory_order_acquire); waited += kSlice) {
+        std::this_thread::sleep_for(std::min(kSlice, interval - waited));
       }
       if (stop_poll.load(std::memory_order_acquire)) {
         break;
@@ -1082,6 +1093,8 @@ struct FileIndexWatcher::Impl {
   bool native_active = false;
 
   bool poll_mode = false;
+  bool force_poll = false;
+  std::chrono::milliseconds poll_interval{750};
   std::thread poll_worker;
   std::atomic<bool> stop_poll{false};
   std::thread initial_scan_worker;
@@ -1340,8 +1353,12 @@ struct FileIndexWatcher::Impl {
     snapshot = build_snapshot();
 
     while (!stop_poll.load(std::memory_order_acquire)) {
-      for (int i = 0; i < 15 && !stop_poll.load(std::memory_order_acquire); ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      // Sleep the configured interval in small slices to react to stop quickly.
+      const std::chrono::milliseconds interval = poll_interval;
+      constexpr std::chrono::milliseconds kSlice(25);
+      for (std::chrono::milliseconds waited(0);
+           waited < interval && !stop_poll.load(std::memory_order_acquire); waited += kSlice) {
+        std::this_thread::sleep_for(std::min(kSlice, interval - waited));
       }
       if (stop_poll.load(std::memory_order_acquire)) {
         break;
@@ -1376,6 +1393,8 @@ struct FileIndexWatcher::Impl {
   std::size_t entry_budget = platform::kTreeTraversalEntryBudget;
   bool warned_fallback = false;
   bool poll_mode = false;
+  bool force_poll = false;
+  std::chrono::milliseconds poll_interval{750};
   std::thread poll_worker;
   std::atomic<bool> stop_poll{false};
 
@@ -1443,8 +1462,12 @@ struct FileIndexWatcher::Impl {
     snapshot = build_snapshot();
 
     while (!stop_poll.load(std::memory_order_acquire)) {
-      for (int i = 0; i < 15 && !stop_poll.load(std::memory_order_acquire); ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      // Sleep the configured interval in small slices to react to stop quickly.
+      const std::chrono::milliseconds interval = poll_interval;
+      constexpr std::chrono::milliseconds kSlice(25);
+      for (std::chrono::milliseconds waited(0);
+           waited < interval && !stop_poll.load(std::memory_order_acquire); waited += kSlice) {
+        std::this_thread::sleep_for(std::min(kSlice, interval - waited));
       }
       if (stop_poll.load(std::memory_order_acquire)) {
         break;
@@ -1548,6 +1571,14 @@ void FileIndexWatcher::SetEntryBudget(std::size_t max_entries) {
   impl_->entry_budget = max_entries;
 }
 
+void FileIndexWatcher::SetForcePollForTesting(bool force_poll) {
+  impl_->force_poll = force_poll;
+}
+
+void FileIndexWatcher::SetPollIntervalForTesting(std::chrono::milliseconds interval) {
+  impl_->poll_interval = std::max(interval, std::chrono::milliseconds(1));
+}
+
 bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
   Unwatch();
 
@@ -1582,16 +1613,18 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
   // set via the setters before this call and read race-free by those threads.
 
 #if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
-  // Try native backend
-  if (impl_->StartNative()) {
-    impl_->is_native.store(true, std::memory_order_release);
-    impl_->StartInitialScan();
-    return true;
-  }
-
-  if (!impl_->warned_fallback) {
-    impl_->warned_fallback = true;
-    SDL_Log("FileIndexWatcher: native file events unavailable, falling back to poll mode");
+  // Try native backend (unless a test forced the poll fallback so the
+  // backend-independent contract suite can exercise both paths on one host).
+  if (!impl_->force_poll) {
+    if (impl_->StartNative()) {
+      impl_->is_native.store(true, std::memory_order_release);
+      impl_->StartInitialScan();
+      return true;
+    }
+    if (!impl_->warned_fallback) {
+      impl_->warned_fallback = true;
+      SDL_Log("FileIndexWatcher: native file events unavailable, falling back to poll mode");
+    }
   }
 #endif
 

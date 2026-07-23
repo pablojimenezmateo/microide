@@ -807,6 +807,7 @@ add_executable(microide_tests
   tests/ProjectBackgroundExecutorTests.cpp
   tests/RenderViewModelBuilderTests.cpp
   tests/TerminalBackendTests.cpp
+  tests/TerminalLifecycleStressTests.cpp
   tests/TerminalSessionTests.cpp
   tests/ThemeTests.cpp
   tests/TestMain.cpp
@@ -838,6 +839,7 @@ add_executable(microide_tests
   tests/architecture/TerminalArchitectureRules.cpp
   tests/BackgroundTaskCounterTests.cpp
   tests/FileIndexWatcherTests.cpp
+  tests/FileIndexWatcherContractTests.cpp
   tests/PatternCacheTests.cpp
   tests/WorkspaceToolDownloaderTests.cpp
   tests/PersistedRecordDumpTests.cpp

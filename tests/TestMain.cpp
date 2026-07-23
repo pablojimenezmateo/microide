@@ -150,6 +150,8 @@ void RegisterPerfBaselineTests(std::vector<TestCase>& tests);
 void RegisterPerfHarnessIsolationTests(std::vector<TestCase>& tests);
 void RegisterBackgroundTaskCounterTests(std::vector<TestCase>& tests);
 void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests);
+void RegisterFileIndexWatcherContractTests(std::vector<TestCase>& tests);
+void RegisterTerminalLifecycleStressTests(std::vector<TestCase>& tests);
 void RegisterPatternCacheTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceToolDownloaderTests(std::vector<TestCase>& tests);
 void RegisterEditorEssentialsTests(std::vector<TestCase>& tests);
@@ -444,6 +446,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterProjectSearchServiceTests(tests);
   microide::tests::RegisterGitBlameServiceTests(tests);
   microide::tests::RegisterTerminalBackendTests(tests);
+  microide::tests::RegisterTerminalLifecycleStressTests(tests);
   microide::tests::RegisterTerminalSessionTests(tests);
   microide::tests::RegisterRegexUtilTests(tests);
   microide::tests::RegisterRuntimePathsTests(tests);
@@ -505,6 +508,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterPhase5Tests(tests);
   microide::tests::RegisterBackgroundTaskCounterTests(tests);
   microide::tests::RegisterFileIndexWatcherTests(tests);
+  microide::tests::RegisterFileIndexWatcherContractTests(tests);
   microide::tests::RegisterProjectChangeTests(tests);
   microide::tests::RegisterExternalRepoChangeTests(tests);
   microide::tests::RegisterPatternCacheTests(tests);

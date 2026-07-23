@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <functional>
@@ -55,6 +56,13 @@ class FileIndexWatcher {
   // trip truncation cheaply). Kept files past this count are dropped and the batch
   // is flagged truncated. Call before Watch(). Defaults to kTreeTraversalEntryBudget.
   void SetEntryBudget(std::size_t max_entries);
+
+  // Test seams for the backend-independent contract suite (TD-2026-07-17-036):
+  // force the poll fallback even where native events are available, and shorten
+  // the poll interval (default 750ms) so poll-backend contract runs stay fast.
+  // Call before Watch().
+  void SetForcePollForTesting(bool force_poll);
+  void SetPollIntervalForTesting(std::chrono::milliseconds interval);
 
   // Start watching root_path recursively. Immediately emits an initial IndexUpdateBatch
   // (is_initial=true) with all files found in the tree. Returns true on success.

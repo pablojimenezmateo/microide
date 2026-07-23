@@ -93,6 +93,16 @@ red on otherwise-correct code.
 - A fixed `sleep_for` is only acceptable for a genuine **timing-bound** assertion
   ("operation returns within N ms") or to defeat coarse filesystem mtime granularity
   before a synchronous sample — never to wait for a background event to land.
+- **Watcher backends share one contract suite** (`tests/FileIndexWatcherContractTests.cpp`,
+  TD-2026-07-17-036): behavioral changes to `FileIndexWatcher` belong there, asserted
+  through the `project::FileIndex` end state so they hold for every backend. Force the
+  poll fallback with `SetForcePollForTesting(true)` + a short `SetPollIntervalForTesting`;
+  a new platform backend must pass the suite unchanged.
+- **Terminal teardown paths are stress-covered with real PTYs**
+  (`tests/TerminalLifecycleStressTests.cpp`, TD-2026-07-17-015). The rest of the suite
+  runs placeholder terminals; if you touch backend/session shutdown (Stop, the signal
+  ladder, reader-thread lifetime), extend that suite — and remember its assertions only
+  bite fully under the sanitizers.
 
 ## UI And SDL Caveats
 

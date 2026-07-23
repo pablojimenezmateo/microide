@@ -136,7 +136,11 @@ they land.
    The persistence half stays deliberately unbuilt: ids only key modal dirty-prompt state,
    and a modal prompt never survives a session save. See the Tab identity subsection.]**
 9. **Test-infra sweeps** — architecture lints + negative fixtures (032/037), watcher
-   contract suite (036), terminal stress suite (015), fuzz corpus seeding (052)
+   contract suite (036) **[RESOLVED 2026-07-24 — backend-parametrized contract via
+   `SetForcePollForTesting`, FileIndex end-state oracle; see the test-infra subsection]**,
+   terminal stress suite (015) **[RESOLVED 2026-07-24 — real-PTY teardown stress:
+   stop-mid-flood/alt-screen/self-exit, open-close loop, concurrent destructor teardown;
+   same subsection]**, fuzz corpus seeding (052)
    **[RESOLVED 2026-07-22 — 60 curated seeds across all six targets + fixed the silently
    link-broken fuzz gate; see the test-infra subsection]**, shared
    `WaitUntil` polling helper (088) **[RESOLVED 2026-07-22 — see the Architecture lint /
@@ -2841,8 +2845,22 @@ build and verify the target platform. Descriptions retained as intake for that p
   render-TU project-state reads **[second lint delivered 2026-07-24 —
   `CheckRenderViewModelsOwnProjectState` with meta-fixtures + positive control, see
   TD-2026-07-16-26]**, etc.).
-- **036 — one backend-independent watcher contract test suite** run against every
-  backend (pairs with 006/010/080).
+- **[RESOLVED 2026-07-24] 036 — one backend-independent watcher contract test suite** run
+  against every backend (pairs with 006/010/080). `tests/FileIndexWatcherContractTests.cpp`:
+  one contract function (`RunWatcherContract`) executed per selectable backend — the host's
+  native backend and the shared poll fallback, forced via the new
+  `FileIndexWatcher::SetForcePollForTesting` seam. Because the backends emit
+  differently-shaped batches (native reports recursive directory deletes; poll diffs
+  per-file), the contract is stated through the consumer's end state: batches are applied
+  to a real `project::FileIndex` (the production apply hop) and assertions are about which
+  files the index ends up containing. Covered contract: initial batch (tracked files in,
+  gitignored trees out), create, modify (size convergence), fresh nested-subtree pickup,
+  in-tree rename, file delete, whole-directory delete, and gitignored churn staying
+  unindexed (sentinel-ordered absence check — no fixed sleeps). The poll cadence gained a
+  `SetPollIntervalForTesting` seam (production default stays 750ms; the contract runs at
+  25ms), so both backends complete the suite in ~0.3s. A macOS/Windows host (006/010) can
+  validate its native backend by running this suite unchanged. Drive-by fix: forcing the
+  poll fallback no longer logs the misleading "native file events unavailable" warning.
 - **[RESOLVED 2026-07-22] 022 — large-buffer insert/delete/undo perf scenario + a lint for
   direct `document_->lines` copies in mutation paths.** Three real gaps were found and closed:
   (a) **the lint was stale** — `CheckTextViewportNoFullDocCopy` /
@@ -2873,8 +2891,20 @@ build and verify the target platform. Descriptions retained as intake for that p
   insert/delete/undo wall-time oracles, so no new perf scenario was needed.
 - **[RESOLVED 2026-07-22] 030 — per-frame-prep regression counters** (see the render
   subsection for the full audit + the new steady-state guard).
-- **015 — terminal lifecycle platform stress suite** (tab-close-during-output/exit,
-  alt-screen shutdown, multi-terminal shutdown, open/close loops).
+- **[RESOLVED 2026-07-24] 015 — terminal lifecycle platform stress suite** (tab-close-
+  during-output/exit, alt-screen shutdown, multi-terminal shutdown, open/close loops).
+  `tests/TerminalLifecycleStressTests.cpp` (unix, real `/bin/sh` PTYs — the whole rest of
+  the suite runs placeholder terminals, so these are the only tests exercising the real
+  teardown paths): Stop() mid-flood (reader parked in read/poll with output always
+  pending), Stop() on the alternate screen (child never restores the primary screen),
+  Stop() after self-exit (exit-marker emission + already-dead reap), an 8-iteration
+  open/close loop on one session object alternating instant-exit children with floods
+  (verifies per-Start grid reset), and 6 concurrent flooding sessions torn down half via
+  explicit Stop() / half straight through the destructor (the shell's tab-close path —
+  `CloseTerminalTab` just erases the `TerminalTabState`, so destructor teardown IS the
+  tab-close lifecycle). Every wait is bounded (`WaitUntil`; the SIGHUP→SIGTERM→SIGKILL
+  ladder is ~325ms worst case) — the suite adds ~0.5s and its teeth are the sanitizer
+  runs (teardown races / fd leaks surface under TSAN/ASAN). Flake-checked 8× locally.
 - **[RESOLVED 2026-07-22] 052 — seed the seed-light fuzz corpora.** The five named
   targets had **zero committed seeds** (`.gitignore` excludes corpus contents via
   `/tests/fuzz/corpora/*/*`, so the large on-disk corpora were local-only organic growth —
