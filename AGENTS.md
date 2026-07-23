@@ -109,6 +109,13 @@ Hard-fail invariants (lint will reject the change):
   `WorkspaceShellRenderSidebar`, `WorkspaceShellRenderBottomPanel`, `WorkspaceShellHoverPopup`,
   `WorkspaceShellHoverTargets`, `DebugPaneRender`) consume view models built by `RenderViewModelBuilder`. Do not read
   `context_.current_project_state` or call `CurrentTextInputSurface(...)` from these files.
+- Render view models are owned/precomputed data, not live state pointers
+  (`CheckRenderViewModelsOwnProjectState`, TD-2026-07-17-084/26): `OverlayState` must not appear
+  in `RenderViewModelBuilder.h` at all, and a `ProjectWorkspaceState` pointer is allowed only in
+  the two documented escape hatches (`FrameSurfaceViewModel`, `SidebarSurfaceViewModel`) until
+  their own view-model passes land. The converted render TUs (`WorkspaceShellRenderOverlay`,
+  `WorkspaceShellRenderBottomPanel`, `WorkspaceShellRenderTextInput`, `WorkspaceShellHoverPopup`,
+  `WorkspaceShellHoverTargets`, `DebugPaneRender`) must not name either broad state type.
 
 Policy invariants (no automated lint, but reviewers will reject):
 

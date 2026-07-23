@@ -96,8 +96,17 @@ they land.
    **047/19** (compare/merge model build) WON'T-DO in this burndown (partial win — syntax is
    pinned main-thread — with high coupling risk on an unverifiable surface; the shipped
    PARTIAL already took the practical no-op-refresh win). See each item's entry for detail.
-2. **Render view-model build-out** — overlay view model owns state, no live pointers in
-   render TUs (084/26); + the residual commit-body sizing/scroll-clamp move-to-prep from 083.
+2. **Render view-model build-out — CLUSTER COMPLETE 2026-07-24.** Overlay view model fully
+   owned (084 **RESOLVED** — precomposed rows/labels + geometry, both live pointers deleted);
+   debug-pane + bottom-panel VMs converted to narrow typed pointers / prepared data and the
+   new ratchet lint `CheckRenderViewModelsOwnProjectState` freezes the remaining
+   `ProjectWorkspaceState*` escape hatches to exactly {FrameSurfaceViewModel,
+   SidebarSurfaceViewModel} (26 **RESOLVED** as a ratchet — the frame/sidebar TUs render live
+   editor viewports / write render-derived hit rects and stay documented escape hatches); the
+   083 residual (commit-body sizing/scroll-clamp) moved to frame prep
+   (`PrepareCommitBodyViewportForFrame`) **RESOLVED**. Bonus fix: the command palette /
+   launch-config picker query fields never rendered a caret or caret-relative scrolled text
+   (`BuildActiveTextInputVisual` lacked their cases). See the render subsection for detail.
 3. **Editor display-column unification** — one grapheme/visual-width service; inlay hints
    share it (021/023). **[RESOLVED 2026-07-17 — see the Editor / Unicode subsection]**
 4. **DAP lifecycle hardening** — session-generation + request-id gating (025), bounded
@@ -2402,14 +2411,10 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
 
 **Render view-model / string-allocation cleanup:**
 
-> **[DEFERRED 2026-07-17 — dedicated pass; see the Standing backlog above]** 084 (overlay view model holding live
-> `OverlayState*`/`ProjectWorkspaceState*` pointers + rebuilding labels in the render TU)
-> is the same render-view-model expansion class as the already-shipped 26/083 work but
-> for the overlay surface — a focused view-model build-out, not a hot bug (labels are
-> small). 029/030 (lint/regression-counter *test-infra* additions) are RESOLVED 2026-07-22
-> — see their entry below. The concrete
-> render hot-path perf win in this family was taken here: 083 (commit body now paints via
-> `LineView`, no whole-buffer `Snapshot()`). Deferred to a dedicated render-view-model pass.
+> **[CLUSTER COMPLETE 2026-07-24]** The render-view-model pass landed: 084 RESOLVED (overlay
+> model fully owned), the 083 residual RESOLVED (commit-body prep move), 26 RESOLVED as a
+> ratchet (see the entries below). 029/030 (lint/regression-counter *test-infra* additions)
+> were RESOLVED 2026-07-22.
 
 - **[RESOLVED 2026-07-17 — perf core] 083 — commit-body render mutates viewport state +
   `Snapshot()`s during paint.** `RenderCommitBodyField` now draws only the visible rows
@@ -2418,13 +2423,39 @@ Linux host), or a test-infra/coverage sweep — the kind the audit itself flagge
   an O(body) whole-buffer materialization every paint. Guarded by extending
   `WorkspaceShell/CommitWorkflowFieldsAreKeyboardEditable` (40-line body, only-viewport-in-
   frame) with a `TextBuffer::snapshot_build_count() == 0` assertion across the render.
-  Residual: the O(1) viewport size/scroll-clamp setters still run in paint — cheap, not a
-  perf issue; moving them into layout prep is architectural cleanup folded into 084's
-  render-view-model work, not tracked separately. `run-checks.sh tests` (3/3) green.
-- **084 — overlay view model holds live `OverlayState*`/`ProjectWorkspaceState*`
-  pointers and rebuilds labels in the render TU.** Expand into an owned/precomputed
-  row+string model; move label composition into `RenderViewModelBuilder`; add a
-  view-model-pointer lint. Same family as **TD-2026-07-16-26**.
+  Residual **[RESOLVED 2026-07-24]**: the viewport size/scroll-clamp setters moved out of
+  `RenderCommitBodyField` (now takes `const TextViewport&`) into the frame-prep member
+  `PrepareCommitBodyViewportForFrame` (WorkspaceShellCommitWorkflow.cpp), called from
+  `PrepareFrameOnce` when the git sidebar is visible. The shared constants
+  (`kCommitWorkflowBodyRows`, `kCommitWorkflowFieldInset` in CommitWorkflowLayout.h) keep
+  prep, render, and `GitSidebarCommitWorkflowHeight` geometry-identical.
+- **[RESOLVED 2026-07-24] 084 — overlay view model held live
+  `OverlayState*`/`ProjectWorkspaceState*` pointers and rebuilt labels in the render TU.**
+  `OverlaySurfaceViewModel` is now fully owned/precomputed
+  (`RenderViewModelBuilder::BuildOverlaySurfaceInto`, rebuild-in-place so the retained model
+  reuses row/label capacities): geometry (overlay rect passed in from the shell-owned
+  `ComputeOverlayRect`, `ScrollableListLayout`, clamped scroll), chrome text (title,
+  incomplete-index note + x, picker context/summary/hint, error, empty label), the visible
+  row window as pre-truncated `OverlayListRowViewModel`s (zero-copy views into frame-stable
+  state strings when they fit — asserted by pointer equality in the builder tests — else
+  copied into the model's `label_storage` blob via the deferred `OverlayLabelRef` scheme),
+  and an `OverlayFindWidgetViewModel` submodel for BufferSearch/Replace. Per-mode label
+  composition (project-search `path:line:col  preview`, completion `label  detail`, picker
+  primary/secondary with measured secondary width) moved into the builder;
+  `WorkspaceShellRenderOverlay.cpp` is a pure generic draw (474 → ~200 lines, no per-frame
+  `TruncateLabel`/concat allocations). The render-time `ClampOverlayScrollRow` state write
+  moved to `PrepareFrameOnce`. Query-field display text is composed in the builder via the
+  extracted free `workspace::ComputeSingleLineViewMetrics`
+  (src/workspace/SingleLineViewMetrics.{h,cpp}; the shell member now delegates), and
+  `OverlayListStartOffset` became a free per-mode function shared by builder and shell.
+  **Bonus bug fix:** the command palette and launch-config picker query fields never showed
+  a caret or caret-relative scrolled text — `BuildActiveTextInputVisual` had no cases for
+  their surfaces (and the old overlay render never requested their visual), so long queries
+  drew from the start with no cursor. Both surfaces are now wired like the commit picker
+  (new `TextInputSurfaceViewModel::{launch_config_picker_query,command_palette_query}`).
+  Lint: `CheckRenderViewModelsOwnProjectState` (see TD-2026-07-16-26). Regressions:
+  `RenderViewModelBuilder/Overlay{OwnsPickerRowsAndChrome,ComposesProjectSearchAndCompletion,
+  FindWidgetSubmodel}` + lint meta-fixtures with a zero-violation positive control.
 - **[RESOLVED 2026-07-22] 029 / 030 — expand render-string lint coverage + add per-frame-prep
   regression counters** (layout recompute / view-model build / frame-prep counts). An audit
   found both substantially shipped in-tree since filing: **029** — the render-string rules
@@ -2807,7 +2838,9 @@ build and verify the target platform. Descriptions retained as intake for that p
 - **037 — convert more policy invariants into narrow lint checks with failing
   negative fixtures** (no `lua_State*` outside LuaRuntime **[first lint delivered
   2026-07-23 — `CheckLuaStaysBehindPluginBoundary`, see TD-2026-07-16-22]**, no
-  render-TU project-state reads, etc.).
+  render-TU project-state reads **[second lint delivered 2026-07-24 —
+  `CheckRenderViewModelsOwnProjectState` with meta-fixtures + positive control, see
+  TD-2026-07-16-26]**, etc.).
 - **036 — one backend-independent watcher contract test suite** run against every
   backend (pairs with 006/010/080).
 - **[RESOLVED 2026-07-22] 022 — large-buffer insert/delete/undo perf scenario + a lint for
@@ -2925,7 +2958,8 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
 > above: 18→011 (LSP WorkspaceEdit async — RESOLVED, see TD-2026-07-16-18), 19→047 (compare/merge git blob async), 21→094-fixed
 > +cancellable-replace-all async, 22→020/058 (whole-plugin `lua_State*` boundary refactor —
 > **RESOLVED 2026-07-23**, boundary lint + AST longjmp audit),
-> 26→084 (render-TU project-state pointers), 38→082 (git patch serialize async), 39→raster
+> 26→084 (render-TU project-state pointers — **RESOLVED 2026-07-24** as a ratchet, see the
+> entry below), 38→082 (git patch serialize async), 39→raster
 > decode/layout ordering (raster budget 043/092 already fixed), 60/61 (bottom-panel plugin
 > preview scroll + hit-region dispatch — net-new plugin-UI features). Deferred to the same
 > dedicated passes as their 2026-07-17 counterparts. The one whole-buffer-copy hot path in
@@ -3004,8 +3038,21 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
   concrete lint 037 asked for ("no `lua_State*` outside the plugin boundary"). The
   raise-site half of the family is the AST audit under **TD-2026-07-17-020/058**
   (`tools/audit-lua-longjmp.py`, tree clean).
-- **TD-2026-07-16-26 — render view models smuggle mutable project-state pointers back
-  into render TUs.** Dedicated architecture pass. Same item as **TD-2026-07-17-084**.
+- **[RESOLVED 2026-07-24 — as a ratchet] TD-2026-07-16-26 — render view models smuggle
+  mutable project-state pointers back into render TUs.** Same pass as **TD-2026-07-17-084**.
+  The overlay VM lost both live pointers (fully owned model); `DebugPaneSurfaceViewModel`
+  now carries narrow per-mode const model pointers (`execution`/`variables`/`watch`/
+  `breakpoints`) instead of `ProjectWorkspaceState*`; `BottomPanelSurfaceViewModel` carries
+  prepared data (visible tabs + overflow filled in `PrepareFrameOnce` once the layout is
+  known, resolved `plugin_surface` pointer + scroll) and uses its own `focus` field.
+  The two remaining escape hatches — `FrameSurfaceViewModel` / `SidebarSurfaceViewModel` —
+  are deliberate: the frame TU renders live editor viewports (inherently live objects) and
+  the sidebar TU still computes render-derived hit rects (commit-workflow field rects,
+  icon-cache refresh) that belong to a future sidebar-prep pass. The new hard lint
+  `CheckRenderViewModelsOwnProjectState` freezes exactly that allowlist: `OverlayState` is
+  banned from `RenderViewModelBuilder.h` outright, `ProjectWorkspaceState` may appear only
+  inside those two structs, and the six converted render TUs must not name either type.
+  Meta-fixtures include a zero-violation positive control (no vacuous pass).
 - **[RESOLVED 2026-07-17] TD-2026-07-16-31 (== TD-2026-07-17-068's sibling) — merge
   result edit side effects snapshot the full buffer on each mutation.** The edit
   engine now stamps a whole-line-trimmed applied-edit line span (`AppliedEditLineSpan`,

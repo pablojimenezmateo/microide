@@ -52,36 +52,26 @@ std::string_view BuildProjectSearchResultLabel(std::size_t line,
   return label;
 }
 
-// Renders the multi-line commit body edit area (visible lines, selection, caret) and clamps
-// the body viewport's scroll so the caret row stays on screen. Writes the focused field's
-// caret rect to `caret_rect_out` so the caret-redraw path can target a tight dirty region.
+// Renders the multi-line commit body edit area (visible lines, selection, caret). The
+// viewport sizing + caret-keep-visible scroll clamp happen in frame prep
+// (PrepareCommitBodyViewportForFrame), so this is a pure draw of already-prepared
+// state (TD-2026-07-17-083 residual). Writes the focused field's caret rect to
+// `caret_rect_out` so the caret-redraw path can target a tight dirty region.
 void RenderCommitBodyField(const render::TextRenderer& tr, const render::Theme& theme,
-                           SDL_Renderer* renderer, editor::TextViewport& body,
+                           SDL_Renderer* renderer, const editor::TextViewport& body,
                            const SDL_FRect& field, int visible_rows, bool focused,
                            bool caret_visible, SDL_FRect* caret_rect_out) {
   const float line_height = tr.LineHeight();
-  const float char_width = std::max(1.0f, tr.CharWidth());
   const float text_x = field.x + 6.0f;
   const float top_y = field.y + 3.0f;
   const float avail_w = std::max(1.0f, field.w - 12.0f);
-
-  const std::size_t rows = static_cast<std::size_t>(std::max(1, visible_rows));
-  body.SetViewportSize(rows, static_cast<std::size_t>(std::max(1.0f, avail_w / char_width)));
-  std::size_t scroll = body.scroll_line();
-  const std::size_t caret_line_now = body.cursor_line();
-  if (caret_line_now < scroll) {
-    scroll = caret_line_now;
-  } else if (caret_line_now >= scroll + rows) {
-    scroll = caret_line_now - rows + 1;
-  }
-  body.SetScrollLine(scroll);
 
   // Draw only the visible rows via zero-copy LineView. TextBuffer::Snapshot() is a
   // whole-document materialization documented for cold paths; a large pasted commit
   // body must not pay an O(body) copy every paint. (TD-2026-07-17-083.)
   const editor::TextBuffer& body_lines = body.lines();
   const std::size_t line_count = body_lines.size();
-  scroll = body.scroll_line();
+  const std::size_t scroll = body.scroll_line();
   const std::optional<editor::SelectionRange> selection = body.selection_range();
   const std::size_t caret_line = body.cursor_line();
   const std::size_t caret_col = body.cursor_column();
@@ -484,7 +474,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           panel_focused && workflow.focus_field == CommitWorkflowFocusField::Body;
       const bool caret_on = CaretVisibleNow();
       workflow.caret_rect = SDL_FRect{};
-      const int body_rows = 4;
+      const int body_rows = kCommitWorkflowBodyRows;
       // Single source of truth for the panel geometry; GitSidebarCommitWorkflowHeight reserves
       // exactly CommitWorkflowLayout::total_height so the file list starts flush below.
       const CommitWorkflowLayout panel = ComputeCommitWorkflowLayout(

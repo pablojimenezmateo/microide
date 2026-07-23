@@ -370,6 +370,35 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     last_terminal_panel_rect_.reset();
   }
   prepared_frame_layout_ = layout;
+  // Frame-prep completions that need the resolved layout (TD-2026-07-17-084/083):
+  // the render TUs consume prepared data and no longer mutate state mid-paint.
+  // 1) Bottom-panel tab strip: prebuild the visible tabs + overflow controls once
+  //    per prepared frame instead of per RenderClip.
+  if (panel_vm.content != PanelContentKind::None) {
+    const SDL_FRect panel_header =
+        MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
+                 kWorkspaceBottomPanelHeaderHeight);
+    const auto measure = [this](std::string_view text) {
+      return text_renderer_.MeasureWidth(text);
+    };
+    prepare_cached_bottom_panel_vm_->tabs = tab_strip_service_.ComputeVisibleBottomPanelTabs(
+        project_state, panel_header, layout_mode_service_.CurrentMode(), measure,
+        output_channels_.Channels());
+    prepare_cached_bottom_panel_vm_->tab_overflow =
+        tab_strip_service_.ComputeBottomPanelTabOverflowControls(
+            project_state, panel_header, layout_mode_service_.CurrentMode(),
+            prepare_cached_bottom_panel_vm_->tabs, output_channels_.Channels());
+  }
+  // 2) Overlay scroll clamp: the stored scroll row is normalized here so the
+  //    overlay view model (and render) consume an already-clamped value.
+  if (project_state.overlay.visible) {
+    ClampOverlayScrollRow(ComputeOverlayRect(layout.editor_area));
+  }
+  // 3) Commit-draft body viewport sizing + caret-keep-visible scroll clamp (the
+  //    083 residual): moved out of RenderCommitBodyField so paint stays pure.
+  if (sidebar_vm.visible && sidebar_vm.mode == SidebarMode::Git) {
+    PrepareCommitBodyViewportForFrame(layout.sidebar);
+  }
   prepared_frame_draw_editor_caret_ =
       CaretVisibleNow() &&
       !(context_.text_input.active_surface == TextInputSurface::Editor &&
@@ -415,7 +444,14 @@ void WorkspaceShell::EnsureClipFrameAndOverlayViewModels(const WorkspaceLayout& 
   }
   clip_cached_frame_vm_.emplace(RenderViewModelBuilder(context_).BuildFrameSurface(layout));
   util::AddPerformanceCounter(util::PerfCounterId::RenderViewModelBuildFrameSurfaceCalls, 1);
-  clip_cached_overlay_vm_.emplace(RenderViewModelBuilder(context_).BuildOverlaySurface());
+  // Build the overlay model in place so the retained object keeps its row/label
+  // capacities across frames. The overlay card rect derivation stays shell-owned
+  // (it is shared with hit-testing and redraw-region computation).
+  if (!clip_cached_overlay_vm_.has_value()) {
+    clip_cached_overlay_vm_.emplace();
+  }
+  RenderViewModelBuilder(context_).BuildOverlaySurfaceInto(
+      *clip_cached_overlay_vm_, layout, ComputeOverlayRect(layout.editor_area), text_renderer_);
   util::AddPerformanceCounter(util::PerfCounterId::RenderViewModelBuildOverlaySurfaceCalls, 1);
   clip_frame_overlay_view_models_layout_ = layout;
   clip_frame_overlay_view_models_frame_id_ = prepared_frame_id_;

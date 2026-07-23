@@ -64,6 +64,7 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckNoStdStoInRenderOrBuilderTus", CheckNoStdStoInRenderOrBuilderTus},
       {"CheckStatusBarRefreshIsAsyncOnly", CheckStatusBarRefreshIsAsyncOnly},
       {"CheckSidebarSurfaceFallbackUsesStringView", CheckSidebarSurfaceFallbackUsesStringView},
+      {"CheckRenderViewModelsOwnProjectState", CheckRenderViewModelsOwnProjectState},
       {"CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings",
        CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings},
       {"CheckEditorViewModelStickyAndOccurrenceAreSpans",

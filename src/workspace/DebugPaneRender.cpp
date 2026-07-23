@@ -26,11 +26,9 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
     return;
   }
   const DebugPaneSurfaceViewModel& pane_vm = *prepare_cached_debug_pane_vm_;
-  if (!pane_vm.visible || layout.right_pane.w <= 0.0f || layout.right_pane.h <= 0.0f ||
-      pane_vm.project_state == nullptr) {
+  if (!pane_vm.visible || layout.right_pane.w <= 0.0f || layout.right_pane.h <= 0.0f) {
     return;
   }
-  ProjectWorkspaceState& project_state = *pane_vm.project_state;
 
   util::PerformanceTrace::Scope pane_scope("WorkspaceShell::RenderDebugPane");
 
@@ -100,15 +98,11 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
     }
   }
 
-  const DebugPaneMode mode = pane_vm.mode;
-  const DebugExecutionView* debug_view =
-      mode == DebugPaneMode::CallStack ? &project_state.debug_execution : nullptr;
-  const DebugVariablesModel* vars_model =
-      mode == DebugPaneMode::Variables ? &project_state.debug_variables : nullptr;
-  const DebugWatchModel* watch_model =
-      mode == DebugPaneMode::Watch ? &project_state.debug_watch : nullptr;
-  const DebugBreakpointsModel* breakpoints_model =
-      mode == DebugPaneMode::Breakpoints ? &project_state.debug_breakpoints_panel : nullptr;
+  // Narrow per-mode model pointers wired by the builder — no broad state access.
+  const DebugExecutionView* debug_view = pane_vm.execution;
+  const DebugVariablesModel* vars_model = pane_vm.variables;
+  const DebugWatchModel* watch_model = pane_vm.watch;
+  const DebugBreakpointsModel* breakpoints_model = pane_vm.breakpoints;
 
   const std::size_t line_count = DebugPaneActiveRowCount();
   const LogSurfaceLayout panel_layout = ComputeDebugPaneListLayout(layout, line_count);

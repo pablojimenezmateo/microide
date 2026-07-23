@@ -50,7 +50,9 @@ void TestBuilderConstructsAllSurfaceViewModels() {
   Expect(!frame_vm.compare_surface.has_value(),
          "BuildFrameSurface should not synthesize a compare surface for the default context");
 
-  const auto overlay_vm = builder.BuildOverlaySurface();
+  TextRenderer overlay_text_renderer;
+  microide::workspace::OverlaySurfaceViewModel overlay_vm;
+  builder.BuildOverlaySurfaceInto(overlay_vm, layout, layout.editor_area, overlay_text_renderer);
   Expect(!overlay_vm.visible, "default workspace context should not surface an overlay");
 
   const auto text_input_vm = builder.BuildTextInputSurface();
@@ -79,6 +81,157 @@ void TestBuilderConstructsAllSurfaceViewModels() {
       builder.BuildSettingsOverlay(layout, settings_service, settings_text_renderer);
   Expect(!settings_vm.visible,
          "BuildSettingsOverlay should report invisible when the service is closed");
+}
+
+// TD-2026-07-17-084: the overlay view model is fully owned/precomputed — labels
+// composed and truncated in the builder, geometry included, no live
+// OverlayState/ProjectWorkspaceState pointers for the render TU to chase.
+void TestBuildOverlaySurfaceOwnsPickerRowsAndChrome() {
+  WorkspaceContext context;
+  auto& palette = context.current_project_state.overlay.workflow.command_palette;
+  palette.items.push_back(microide::workspace::CommandPaletteItem{
+      .primary_label = "Open File",
+      .secondary_label = "Ctrl+O",
+      .search_text = "open file ctrl+o",
+  });
+  palette.items.push_back(microide::workspace::CommandPaletteItem{
+      .primary_label = "Save All",
+      .secondary_label = {},
+      .search_text = "save all",
+  });
+  palette.matches = {0, 1};
+  palette.selected_index = 1;
+  palette.summary_line = "2 of 2";
+  context.current_project_state.overlay.visible = true;
+  context.current_project_state.overlay.mode = microide::workspace::OverlayMode::CommandPalette;
+
+  RenderViewModelBuilder builder(context);
+  TextRenderer text_renderer;  // no-backend: deterministic 8px/char
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
+                                    LayoutModeInputs{}, true);
+  microide::workspace::OverlaySurfaceViewModel vm;
+  builder.BuildOverlaySurfaceInto(vm, layout, layout.editor_area, text_renderer);
+
+  Expect(vm.visible, "overlay VM should be visible");
+  Expect(vm.title == "Commands", "palette title should be prebuilt");
+  Expect(vm.has_query_field &&
+             vm.query_surface == microide::workspace::TextInputSurface::CommandPalette,
+         "palette VM should carry its query surface");
+  Expect(vm.query_display_text == "> ",
+         "an empty unfocused query shows the composed '> ' fallback");
+  Expect(vm.summary_line == "2 of 2", "summary should view the state-owned string");
+  Expect(!vm.hint.empty() && vm.hint_x > 0.0f, "picker hint should be prebuilt with its x");
+  Expect(vm.total_rows == 2 && vm.rows.size() == 2, "both matches fit the visible window");
+  Expect(vm.selected_row == 1, "selected row index should be forwarded");
+  Expect(vm.rows[0].primary == "Open File" && vm.rows[1].primary == "Save All",
+         "row primaries should be prebuilt");
+  // A fitting, state-stable label must be a zero-copy view into the state string.
+  Expect(vm.rows[0].primary.data() == palette.items[0].primary_label.data(),
+         "a fitting primary label should be a zero-copy view into state");
+  Expect(vm.rows[0].secondary == "Ctrl+O" && vm.rows[0].secondary_width > 0.0f,
+         "the accelerator column should be prebuilt with its measured width");
+  Expect(vm.rows[1].secondary.empty() && vm.rows[1].secondary_width == 0.0f,
+         "a row without an accelerator has no secondary column");
+
+  // The stored scroll row is clamped through the list layout.
+  context.current_project_state.overlay.scroll_row = 10000;
+  builder.BuildOverlaySurfaceInto(vm, layout, layout.editor_area, text_renderer);
+  Expect(vm.scroll_row == vm.list_layout.max_scroll,
+         "an out-of-range stored scroll row should be clamped by the builder");
+}
+
+void TestBuildOverlaySurfaceComposesProjectSearchAndCompletion() {
+  WorkspaceContext context;
+  auto& search = context.current_project_state.overlay.workflow.project_search;
+  project::ProjectSearchResult result;
+  result.relative_path = "src/a.cpp";
+  result.relative_path_string = "src/a.cpp";
+  result.line = 1;    // 0-based -> shown as 2
+  result.column = 4;  // 0-based -> shown as 5
+  result.preview = "hello world";
+  search.results.push_back(result);
+  search.selected_index = 0;
+  search.index_incomplete = true;
+  context.current_project_state.overlay.visible = true;
+  context.current_project_state.overlay.mode = microide::workspace::OverlayMode::ProjectSearch;
+
+  RenderViewModelBuilder builder(context);
+  TextRenderer text_renderer;
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
+                                    LayoutModeInputs{}, true);
+  microide::workspace::OverlaySurfaceViewModel vm;
+  builder.BuildOverlaySurfaceInto(vm, layout, layout.editor_area, text_renderer);
+
+  Expect(vm.title == "Project Search", "project search title should be prebuilt");
+  Expect(!vm.note.empty() && vm.note_x > 0.0f,
+         "an incomplete index should surface the right-aligned note");
+  Expect(vm.rows.size() == 1 && vm.rows[0].primary == "src/a.cpp:2:5  hello world",
+         "the result row label (path:line:col + preview) should be composed in the builder");
+  Expect(vm.summary_line == "1 / 1 results", "the selection summary should be composed");
+
+  // Completion popup: caret-anchored, label+detail joined, error in deleted tint.
+  auto& completion = context.current_project_state.overlay.workflow.completion;
+  completion.items.push_back(microide::workspace::CompletionSessionItem{
+      .label = "push_back",
+      .detail = "void(T&&)",
+  });
+  completion.error = "server offline";
+  context.current_project_state.overlay.mode = microide::workspace::OverlayMode::Completion;
+  builder.BuildOverlaySurfaceInto(vm, layout, layout.editor_area, text_renderer);
+  Expect(vm.caret_anchored, "completion popup renders caret-anchored");
+  Expect(vm.rows.size() == 1 && vm.rows[0].primary == "push_back  void(T&&)",
+         "completion label+detail should be joined in the builder");
+  Expect(vm.error_line == "server offline" && vm.error_at_title_row,
+         "the completion error draws at the title row in the deleted tint");
+}
+
+void TestBuildOverlaySurfaceFindWidgetSubmodel() {
+  WorkspaceContext context;
+  auto& buffer_search = context.current_project_state.overlay.workflow.buffer_search;
+  buffer_search.query.SetText("needle");
+  buffer_search.regex = true;
+  buffer_search.matches.push_back(microide::editor::SelectionRange{});
+  buffer_search.matches.push_back(microide::editor::SelectionRange{});
+  buffer_search.selected_index = 1;
+  context.current_project_state.overlay.visible = true;
+  context.current_project_state.overlay.mode = microide::workspace::OverlayMode::BufferReplace;
+
+  RenderViewModelBuilder builder(context);
+  TextRenderer text_renderer;
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
+                                    LayoutModeInputs{}, true);
+  microide::workspace::OverlaySurfaceViewModel vm;
+  builder.BuildOverlaySurfaceInto(vm, layout, layout.editor_area, text_renderer);
+
+  const auto& fw = vm.find_widget;
+  Expect(fw.replace_mode, "BufferReplace builds the replace-mode widget");
+  Expect(fw.regex && fw.has_matches && fw.has_query, "widget flags should be forwarded");
+  Expect(fw.count_text == "2/2", "the selected/total counter should be composed");
+  Expect(fw.search_display_text == "needle",
+         "the unfocused search field shows the raw query (zero-copy view)");
+  Expect(fw.search_display_text.data() == buffer_search.query.text().data(),
+         "the unfocused field text must be a view into state, not a copy");
+  Expect(fw.fw.widget.w > 0.0f, "the widget geometry should be computed in the builder");
+}
+
+// The debug pane view model forwards narrow per-mode model pointers, never the
+// broad project state (TD-2026-07-16-26 family).
+void TestBuildDebugPaneSurfaceWiresNarrowModelPointers() {
+  WorkspaceContext context;
+  context.current_project_state.debug_pane.visible = true;
+  context.current_project_state.debug_pane.mode = microide::workspace::DebugPaneMode::Variables;
+  RenderViewModelBuilder builder(context);
+  const auto vm = builder.BuildDebugPaneSurface();
+  Expect(vm.variables == &context.current_project_state.debug_variables,
+         "Variables mode wires the variables model");
+  Expect(vm.execution == nullptr && vm.watch == nullptr && vm.breakpoints == nullptr,
+         "inactive modes stay null");
+
+  context.current_project_state.debug_pane.mode = microide::workspace::DebugPaneMode::CallStack;
+  const auto stack_vm = builder.BuildDebugPaneSurface();
+  Expect(stack_vm.execution == &context.current_project_state.debug_execution,
+         "CallStack mode wires the execution view");
+  Expect(stack_vm.variables == nullptr, "the variables model is unwired outside its mode");
 }
 
 void TestBuildSidebarSurfaceFallbacksAreViewsIntoStableStorage() {
@@ -820,6 +973,14 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestComputeWelcomeLayoutProducesHitRegions);
   AddTest(tests, "RenderViewModelBuilder/ConstructsAllSurfaceViewModels",
           TestBuilderConstructsAllSurfaceViewModels);
+  AddTest(tests, "RenderViewModelBuilder/OverlayOwnsPickerRowsAndChrome",
+          TestBuildOverlaySurfaceOwnsPickerRowsAndChrome);
+  AddTest(tests, "RenderViewModelBuilder/OverlayComposesProjectSearchAndCompletion",
+          TestBuildOverlaySurfaceComposesProjectSearchAndCompletion);
+  AddTest(tests, "RenderViewModelBuilder/OverlayFindWidgetSubmodel",
+          TestBuildOverlaySurfaceFindWidgetSubmodel);
+  AddTest(tests, "RenderViewModelBuilder/DebugPaneWiresNarrowModelPointers",
+          TestBuildDebugPaneSurfaceWiresNarrowModelPointers);
   AddTest(tests, "RenderViewModelBuilder/SidebarFallbacksAreViewsIntoStableStorage",
           TestBuildSidebarSurfaceFallbacksAreViewsIntoStableStorage);
   AddTest(tests, "RenderViewModelBuilder/StatusBarSurfacesTooltipFromService",

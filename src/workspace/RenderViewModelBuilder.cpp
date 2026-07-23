@@ -14,6 +14,7 @@
 #include "util/StringUtil.h"
 
 #include "workspace/RecentsService.h"
+#include "workspace/SingleLineViewMetrics.h"
 #include "workspace/StatusBarService.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspaceUiText.h"
@@ -511,17 +512,465 @@ FrameSurfaceViewModel RenderViewModelBuilder::BuildFrameSurface(const WorkspaceL
   };
 }
 
-OverlaySurfaceViewModel RenderViewModelBuilder::BuildOverlaySurface() const {
-  return OverlaySurfaceViewModel{
-      .visible = context_.current_project_state.overlay.visible,
-      .mode = context_.current_project_state.overlay.mode,
-      .scroll_row = context_.current_project_state.overlay.scroll_row,
-      .current_surface = context_.text_input.active_surface,
-      .buffer_search_query_text =
-          context_.current_project_state.overlay.workflow.buffer_search.query.text(),
-      .state = &context_.current_project_state.overlay,
-      .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
+namespace {
+
+// Deferred reference into either OverlaySurfaceViewModel::label_storage (which may
+// reallocate while the model is being composed) or a frame-stable state string.
+// Resolved into string_views only after the blob stops growing.
+struct OverlayLabelRef {
+  static constexpr std::size_t kDirect = static_cast<std::size_t>(-1);
+  std::size_t offset = kDirect;
+  std::size_t length = 0;
+  std::string_view direct;
+
+  static OverlayLabelRef Direct(std::string_view view) {
+    OverlayLabelRef ref;
+    ref.direct = view;
+    return ref;
+  }
+  static OverlayLabelRef Owned(std::string& blob, std::string_view text) {
+    OverlayLabelRef ref;
+    ref.offset = blob.size();
+    ref.length = text.size();
+    blob.append(text);
+    return ref;
+  }
+  std::string_view Resolve(const std::string& blob) const {
+    if (offset == kDirect) {
+      return direct;
+    }
+    return std::string_view(blob).substr(offset, length);
+  }
+};
+
+// Truncates `text` to `max_width` and records it: a fitting, frame-stable string
+// stays a zero-copy direct view; anything truncated (the ephemeral scratch) or
+// unstable is copied into the blob.
+OverlayLabelRef AddTruncatedLabel(const render::TextRenderer& tr, std::string& blob,
+                                  std::string_view text, float max_width, bool stable) {
+  const std::string_view shown = tr.TruncateToWidthEphemeralView(text, max_width);
+  if (stable && shown.data() == text.data() && shown.size() == text.size()) {
+    return OverlayLabelRef::Direct(text);
+  }
+  return OverlayLabelRef::Owned(blob, shown);
+}
+
+struct OverlayRowRef {
+  OverlayLabelRef primary;
+  OverlayLabelRef secondary;
+  float secondary_width = 0.0f;
+};
+
+}  // namespace
+
+void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& out,
+                                                     const WorkspaceLayout& layout,
+                                                     const SDL_FRect& overlay_rect,
+                                                     const render::TextRenderer& tr) const {
+  const OverlayState& overlay = context_.current_project_state.overlay;
+  const TextInputSurface current_surface = context_.text_input.active_surface;
+
+  out.visible = overlay.visible;
+  out.mode = overlay.mode;
+  out.current_surface = current_surface;
+  out.buffer_search_query_text = overlay.workflow.buffer_search.query.text();
+  out.caret_anchored = overlay.mode == OverlayMode::Completion;
+  out.overlay_rect = overlay_rect;
+  out.total_rows = 0;
+  out.selected_row = 0;
+  out.title = {};
+  out.note = {};
+  out.note_x = 0.0f;
+  out.context_label = {};
+  out.has_query_field = false;
+  out.query_surface = TextInputSurface::None;
+  out.query_row_y = 0.0f;
+  out.query_display_text = {};
+  out.summary_line = {};
+  out.summary_y = 0.0f;
+  out.hint = {};
+  out.hint_x = 0.0f;
+  out.error_line = {};
+  out.error_at_title_row = false;
+  out.empty_label = {};
+  out.rows.clear();
+  out.label_storage.clear();
+  out.find_widget = OverlayFindWidgetViewModel{};
+  if (!out.visible) {
+    out.list_layout = ScrollableListLayout{};
+    return;
+  }
+
+  std::string& blob = out.label_storage;
+  const auto metrics_display = [&](const editor::SingleLineEditor& editor,
+                                   std::string_view prefix,
+                                   float available_width) -> std::string {
+    return ComputeSingleLineViewMetrics(tr, editor, prefix, available_width).displayed_text;
   };
+  // Focused fields show the caret-relative scrolled tail; unfocused fields (and an
+  // empty focused field) fall back to "<prefix><full text>" from the start.
+  const auto query_field_text = [&](TextInputSurface surface,
+                                    const editor::SingleLineEditor& editor,
+                                    float available_width) -> OverlayLabelRef {
+    if (current_surface == surface) {
+      if (std::string focused = metrics_display(editor, "> ", available_width);
+          !focused.empty()) {
+        return OverlayLabelRef::Owned(blob, focused);
+      }
+    }
+    const std::size_t offset = blob.size();
+    blob.append("> ");
+    blob.append(editor.text());
+    OverlayLabelRef ref;
+    ref.offset = offset;
+    ref.length = blob.size() - offset;
+    return ref;
+  };
+
+  // Find widget (compact non-modal card): its own submodel, no list chrome.
+  if (overlay.mode == OverlayMode::BufferSearch || overlay.mode == OverlayMode::BufferReplace) {
+    const BufferSearchState& buffer_search = overlay.workflow.buffer_search;
+    OverlayFindWidgetViewModel& fw_vm = out.find_widget;
+    fw_vm.replace_mode = overlay.mode == OverlayMode::BufferReplace;
+    fw_vm.fw = ComputeFindWidgetLayout(layout.editor_surface, fw_vm.replace_mode);
+    fw_vm.search_focused = current_surface == TextInputSurface::BufferSearch ||
+                           current_surface == TextInputSurface::BufferReplaceSearch;
+    fw_vm.replace_focused = current_surface == TextInputSurface::BufferReplaceReplace;
+    fw_vm.regex = buffer_search.regex;
+    fw_vm.has_matches = !buffer_search.matches.empty();
+    fw_vm.has_query = !buffer_search.query.text().empty();
+
+    OverlayLabelRef search_ref = OverlayLabelRef::Direct(buffer_search.query.text());
+    if (fw_vm.search_focused) {
+      if (std::string focused = metrics_display(buffer_search.query, "",
+                                                std::max(1.0f, fw_vm.fw.search_field.w - 12.0f));
+          !focused.empty()) {
+        search_ref = OverlayLabelRef::Owned(blob, focused);
+      }
+    }
+    OverlayLabelRef replace_ref = OverlayLabelRef::Direct(buffer_search.replace_text.text());
+    if (fw_vm.replace_focused) {
+      if (std::string focused = metrics_display(buffer_search.replace_text, "",
+                                                std::max(1.0f, fw_vm.fw.replace_field.w - 12.0f));
+          !focused.empty()) {
+        replace_ref = OverlayLabelRef::Owned(blob, focused);
+      }
+    }
+    OverlayLabelRef count_ref;
+    if (fw_vm.has_query) {
+      const std::size_t offset = blob.size();
+      if (fw_vm.has_matches) {
+        AppendUnsigned(blob, buffer_search.selected_index + 1);
+        blob += "/";
+        AppendUnsigned(blob, buffer_search.matches.size());
+      } else {
+        blob += "0/0";
+      }
+      count_ref.offset = offset;
+      count_ref.length = blob.size() - offset;
+    }
+    fw_vm.search_display_text = search_ref.Resolve(blob);
+    fw_vm.replace_display_text = replace_ref.Resolve(blob);
+    fw_vm.count_text = count_ref.Resolve(blob);
+    out.list_layout = ScrollableListLayout{};
+    return;
+  }
+
+  // Modal list overlays: shared geometry, then per-mode chrome + visible rows.
+  const std::size_t total_rows = [&]() -> std::size_t {
+    switch (overlay.mode) {
+      case OverlayMode::CommitPicker:
+        return overlay.workflow.compare_picker.matches.size();
+      case OverlayMode::LaunchConfigPicker:
+        return overlay.workflow.launch_config_picker.matches.size();
+      case OverlayMode::CommandPalette:
+        return overlay.workflow.command_palette.matches.size();
+      case OverlayMode::ProjectSearch:
+        return overlay.workflow.project_search.results.size();
+      case OverlayMode::Completion:
+        return overlay.workflow.completion.items.size();
+      case OverlayMode::CodeActions:
+        return overlay.workflow.code_actions.items.size();
+      case OverlayMode::FileFinder:
+      default:
+        return context_.current_project_state.file_finder.results().size();
+    }
+  }();
+  const std::size_t selected_index = [&]() -> std::size_t {
+    switch (overlay.mode) {
+      case OverlayMode::CommitPicker:
+        return overlay.workflow.compare_picker.selected_index;
+      case OverlayMode::LaunchConfigPicker:
+        return overlay.workflow.launch_config_picker.selected_index;
+      case OverlayMode::CommandPalette:
+        return overlay.workflow.command_palette.selected_index;
+      case OverlayMode::ProjectSearch:
+        return overlay.workflow.project_search.selected_index;
+      case OverlayMode::Completion:
+        return overlay.workflow.completion.selected_index;
+      case OverlayMode::CodeActions:
+        return overlay.workflow.code_actions.selected_index;
+      case OverlayMode::FileFinder:
+      default:
+        return context_.current_project_state.file_finder.selected_index();
+    }
+  }();
+
+  out.list_layout = ComputeScrollableListLayout(
+      overlay_rect, overlay_rect.y + OverlayListStartOffset(overlay.mode), total_rows,
+      overlay.scroll_row, 18.0f, 22.0f, 18.0f, 16.0f, 8.0f);
+  out.scroll_row = out.list_layout.scroll_row;
+  out.total_rows = total_rows;
+  out.selected_row = static_cast<int>(selected_index);
+
+  constexpr float kOverlayInset = 18.0f;
+  const float title_width = overlay_rect.w - kOverlayInset * 2.0f;
+  const float query_available = std::max(1.0f, overlay_rect.w - kOverlayInset * 2.0f);
+  const float row_width = out.list_layout.row_width;
+  const auto right_aligned_x = [&](std::string_view text) {
+    return overlay_rect.x + overlay_rect.w - kOverlayInset - tr.MeasureWidth(text);
+  };
+
+  OverlayLabelRef title_ref;
+  OverlayLabelRef note_ref;
+  OverlayLabelRef context_ref;
+  OverlayLabelRef query_ref;
+  OverlayLabelRef summary_ref;
+  OverlayLabelRef error_ref;
+  OverlayLabelRef empty_ref;
+  thread_local std::vector<OverlayRowRef> row_refs;
+  row_refs.clear();
+  thread_local std::string compose_scratch;
+
+  const int visible_rows = out.list_layout.visible_rows;
+  const auto for_visible = [&](auto&& emit_row) {
+    for (int row = 0; row < visible_rows; ++row) {
+      const std::size_t item_index =
+          static_cast<std::size_t>(out.scroll_row) + static_cast<std::size_t>(row);
+      if (item_index >= total_rows) {
+        break;
+      }
+      emit_row(item_index);
+    }
+  };
+  // Two-column picker rows: the muted right column keeps its measured width and
+  // the primary is pre-truncated to the space that remains (TD-2026-07-16-33
+  // still holds: only the VISIBLE window is materialized).
+  const auto emit_two_column_rows = [&](auto&& row_at) {
+    for_visible([&](std::size_t item_index) {
+      const auto [primary, secondary] = row_at(item_index);
+      OverlayRowRef row_ref;
+      if (!secondary.empty()) {
+        row_ref.secondary = OverlayLabelRef::Direct(secondary);
+        row_ref.secondary_width = tr.MeasureWidth(secondary) + 12.0f;
+      }
+      const float primary_width = std::max(20.0f, row_width - 12.0f - row_ref.secondary_width);
+      row_ref.primary = AddTruncatedLabel(tr, blob, primary, primary_width, /*stable=*/true);
+      row_refs.push_back(row_ref);
+    });
+  };
+
+  constexpr std::string_view kPickerHint = "↑↓ select · Enter choose · Esc cancel";
+  const auto fill_picker_chrome = [&](std::string_view title, std::string_view context_label,
+                                      const editor::SingleLineEditor& query,
+                                      TextInputSurface surface, std::string_view summary_line,
+                                      std::string_view empty_label, bool empty_label_stable) {
+    title_ref = OverlayLabelRef::Direct(title);
+    if (!context_label.empty()) {
+      context_ref = AddTruncatedLabel(tr, blob, context_label, title_width, /*stable=*/true);
+    }
+    out.has_query_field = true;
+    out.query_surface = surface;
+    out.query_row_y = overlay_rect.y + 52.0f;
+    query_ref = query_field_text(surface, query, query_available);
+    summary_ref = OverlayLabelRef::Direct(summary_line.empty() ? std::string_view("0 of 0")
+                                                               : summary_line);
+    out.summary_y = overlay_rect.y + 78.0f;
+    out.hint = kPickerHint;
+    out.hint_x = right_aligned_x(kPickerHint);
+    if (total_rows == 0) {
+      empty_ref = empty_label_stable ? OverlayLabelRef::Direct(empty_label)
+                                     : OverlayLabelRef::Owned(blob, empty_label);
+    }
+  };
+
+  switch (overlay.mode) {
+    case OverlayMode::ProjectSearch: {
+      const ProjectSearchState& search = overlay.workflow.project_search;
+      title_ref = OverlayLabelRef::Direct("Project Search");
+      // The candidate set came from the file index; if that index is only a prefix
+      // of the tree, some files were never searched — flag it (TD-2026-07-17-008/033).
+      if (search.index_incomplete) {
+        constexpr std::string_view kNote = "index incomplete — results may be partial";
+        note_ref = OverlayLabelRef::Direct(kNote);
+        out.note_x = right_aligned_x(kNote);
+      }
+      out.has_query_field = true;
+      out.query_surface = TextInputSurface::ProjectSearchOverlay;
+      out.query_row_y = overlay_rect.y + 44.0f;
+      query_ref = query_field_text(TextInputSurface::ProjectSearchOverlay, search.query,
+                                   query_available);
+      compose_scratch = search.results.empty()
+                            ? FormatEmptyState("results")
+                        : search.truncated
+                            ? BuildSelectionSummary(search.selected_index, search.results.size(),
+                                                    " shown (capped)")
+                            : BuildSelectionSummary(search.selected_index, search.results.size(),
+                                                    " results");
+      if (search.running) {
+        compose_scratch += BuildSearchProgressSuffix(search.searched_files, search.total_files);
+      }
+      summary_ref = OverlayLabelRef::Owned(blob, compose_scratch);
+      out.summary_y = overlay_rect.y + 62.0f;
+      for_visible([&](std::size_t item_index) {
+        const auto& result = search.results[item_index];
+        compose_scratch.clear();
+        if (result.relative_path_string.empty()) {
+          compose_scratch += result.relative_path.string();
+        } else {
+          compose_scratch += result.relative_path_string;
+        }
+        compose_scratch += ":";
+        AppendUnsigned(compose_scratch, result.line + 1);
+        compose_scratch += ":";
+        AppendUnsigned(compose_scratch, result.column + 1);
+        compose_scratch += "  ";
+        compose_scratch += tr.TruncateToWidthEphemeralView(result.preview,
+                                                           overlay_rect.w - 220.0f);
+        OverlayRowRef row_ref;
+        row_ref.primary =
+            AddTruncatedLabel(tr, blob, compose_scratch, row_width - 16.0f, /*stable=*/false);
+        row_refs.push_back(row_ref);
+      });
+      break;
+    }
+    case OverlayMode::CommitPicker: {
+      const ComparePickerState& picker = overlay.workflow.compare_picker;
+      compose_scratch = picker.loading ? std::string("Loading history…")
+                                       : FormatEmptyState("matching refs");
+      fill_picker_chrome(
+          picker.title.empty() ? std::string_view("Compare against") : picker.title,
+          picker.context_label, picker.query, TextInputSurface::CommitPicker,
+          picker.summary_line, compose_scratch, /*empty_label_stable=*/false);
+      emit_two_column_rows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
+        return {picker.matches[i].primary_label, picker.matches[i].secondary_label};
+      });
+      break;
+    }
+    case OverlayMode::LaunchConfigPicker: {
+      const LaunchConfigPickerState& picker = overlay.workflow.launch_config_picker;
+      compose_scratch = FormatEmptyState("launch configurations");
+      fill_picker_chrome(
+          picker.title.empty() ? std::string_view("Select Launch Configuration") : picker.title,
+          std::string_view{}, picker.query, TextInputSurface::LaunchConfigPicker,
+          picker.summary_line, compose_scratch, /*empty_label_stable=*/false);
+      emit_two_column_rows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
+        return {picker.matches[i].primary_label, picker.matches[i].secondary_label};
+      });
+      break;
+    }
+    case OverlayMode::CommandPalette: {
+      const CommandPaletteState& palette = overlay.workflow.command_palette;
+      compose_scratch = FormatEmptyState("commands");
+      fill_picker_chrome(palette.title.empty() ? std::string_view("Commands") : palette.title,
+                         std::string_view{}, palette.query, TextInputSurface::CommandPalette,
+                         palette.summary_line, compose_scratch, /*empty_label_stable=*/false);
+      emit_two_column_rows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
+        const CommandPaletteItem& item = palette.items[palette.matches[i]];
+        return {item.primary_label, item.secondary_label};
+      });
+      break;
+    }
+    case OverlayMode::Completion: {
+      const CompletionSessionState& completion = overlay.workflow.completion;
+      if (!completion.error.empty()) {
+        error_ref = AddTruncatedLabel(tr, blob, completion.error, overlay_rect.w - 36.0f,
+                                      /*stable=*/true);
+        out.error_at_title_row = true;
+      }
+      for_visible([&](std::size_t item_index) {
+        const CompletionSessionItem& item = completion.items[item_index];
+        OverlayRowRef row_ref;
+        if (item.detail.empty()) {
+          row_ref.primary =
+              AddTruncatedLabel(tr, blob, item.label, overlay_rect.w - 36.0f, /*stable=*/true);
+        } else {
+          compose_scratch.clear();
+          compose_scratch += item.label;
+          compose_scratch += "  ";
+          compose_scratch += item.detail;
+          row_ref.primary = AddTruncatedLabel(tr, blob, compose_scratch, overlay_rect.w - 36.0f,
+                                              /*stable=*/false);
+        }
+        row_refs.push_back(row_ref);
+      });
+      break;
+    }
+    case OverlayMode::CodeActions: {
+      const CodeActionSessionState& actions = overlay.workflow.code_actions;
+      title_ref = OverlayLabelRef::Direct("Code Actions");
+      // "Loading..." / "No code actions available" render in the list area, below
+      // the title, so they read as the menu's status rather than colliding with it.
+      if (!actions.error.empty()) {
+        error_ref =
+            AddTruncatedLabel(tr, blob, actions.error, overlay_rect.w - 36.0f, /*stable=*/true);
+      }
+      for_visible([&](std::size_t item_index) {
+        OverlayRowRef row_ref;
+        row_ref.primary = AddTruncatedLabel(tr, blob, actions.items[item_index].title,
+                                            overlay_rect.w - 36.0f, /*stable=*/true);
+        row_refs.push_back(row_ref);
+      });
+      break;
+    }
+    case OverlayMode::FileFinder:
+    default: {
+      const auto& finder = context_.current_project_state.file_finder;
+      title_ref = OverlayLabelRef::Direct("Find File");
+      // When the file index is only a prefix of a very large/deep/unreadable tree,
+      // say so on the title row (right-aligned) with the specific cause so the
+      // ranked list is never read as authoritative (TD-2026-07-17-008/033).
+      if (const std::string_view note = ScanIncompleteNote(finder.index_scan_status());
+          !note.empty()) {
+        note_ref = OverlayLabelRef::Direct(note);
+        out.note_x = right_aligned_x(note);
+      }
+      out.has_query_field = true;
+      out.query_surface = TextInputSurface::FileFinder;
+      out.query_row_y = overlay_rect.y + 44.0f;
+      query_ref =
+          query_field_text(TextInputSurface::FileFinder, finder.query_state(), query_available);
+      const auto& results = finder.results();
+      for_visible([&](std::size_t item_index) {
+        OverlayRowRef row_ref;
+        row_ref.primary = AddTruncatedLabel(tr, blob, results[item_index].path_string,
+                                            row_width - 16.0f, /*stable=*/true);
+        row_refs.push_back(row_ref);
+      });
+      if (results.empty()) {
+        compose_scratch = FormatEmptyState("matching files");
+        empty_ref = OverlayLabelRef::Owned(blob, compose_scratch);
+      }
+      break;
+    }
+  }
+
+  // The blob is complete: resolve every deferred reference into stable views.
+  out.title = title_ref.Resolve(blob);
+  out.note = note_ref.Resolve(blob);
+  out.context_label = context_ref.Resolve(blob);
+  out.query_display_text = query_ref.Resolve(blob);
+  out.summary_line = summary_ref.Resolve(blob);
+  out.error_line = error_ref.Resolve(blob);
+  out.empty_label = empty_ref.Resolve(blob);
+  out.rows.reserve(row_refs.size());
+  for (const OverlayRowRef& row_ref : row_refs) {
+    out.rows.push_back(OverlayListRowViewModel{
+        .primary = row_ref.primary.Resolve(blob),
+        .secondary = row_ref.secondary.Resolve(blob),
+        .secondary_width = row_ref.secondary_width,
+    });
+  }
 }
 
 TextInputSurfaceViewModel RenderViewModelBuilder::BuildTextInputSurface() const {
@@ -536,6 +985,10 @@ TextInputSurfaceViewModel RenderViewModelBuilder::BuildTextInputSurface() const 
       .project_search_edit_buffer =
           &context_.current_project_state.overlay.workflow.project_search.edit_buffer,
       .commit_picker_query = &context_.current_project_state.overlay.workflow.compare_picker.query,
+      .launch_config_picker_query =
+          &context_.current_project_state.overlay.workflow.launch_config_picker.query,
+      .command_palette_query =
+          &context_.current_project_state.overlay.workflow.command_palette.query,
       .file_finder_query = &context_.current_project_state.file_finder.query_state(),
   };
 }
@@ -615,13 +1068,20 @@ DebugPaneSurfaceViewModel RenderViewModelBuilder::BuildDebugPaneSurface() const 
       break;
   }
   const DebugPaneSurfaceSpec* spec = FindDebugPaneSurface(pane.mode);
+  const ProjectWorkspaceState& state = context_.current_project_state;
   return DebugPaneSurfaceViewModel{
       .visible = pane.visible,
       .mode = pane.mode,
       .scroll_row = scroll_row,
       .header_label = spec != nullptr ? spec->label : std::string_view{},
-      .focus = context_.current_project_state.surface.focus,
-      .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
+      .focus = state.surface.focus,
+      // Only the active mode's model is wired; the render TU draws whichever is
+      // non-null and never touches broad project state.
+      .execution = pane.mode == DebugPaneMode::CallStack ? &state.debug_execution : nullptr,
+      .variables = pane.mode == DebugPaneMode::Variables ? &state.debug_variables : nullptr,
+      .watch = pane.mode == DebugPaneMode::Watch ? &state.debug_watch : nullptr,
+      .breakpoints =
+          pane.mode == DebugPaneMode::Breakpoints ? &state.debug_breakpoints_panel : nullptr,
   };
 }
 
@@ -888,13 +1348,22 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
   const TabDragState& drag = context_.interaction_state.tab_drag;
   const TabSlideState& slide = context_.interaction_state.tab_slide;
   const bool sliding = slide.kind == TabDragKind::Terminal;
+  const PanelState& panel = context_.current_project_state.panel;
+  // Resolve the plugin content surface (Phase E0) here so the render TU paints a
+  // prebuilt pointer instead of walking owner/id through project state.
+  const editor::SurfaceContent* plugin_surface = nullptr;
+  if (panel.content == PanelContentKind::PluginSurface) {
+    if (const auto* pres = context_.current_project_state.plugin_presentation_if_present();
+        pres != nullptr) {
+      plugin_surface = pres->surfaces.Find(panel.surface_owner, panel.surface_id);
+    }
+  }
   return BottomPanelSurfaceViewModel{
-      .content = context_.current_project_state.panel.content,
-      .height = context_.current_project_state.panel.height,
-      .output_channel_id = context_.current_project_state.panel.output.channel_id,
+      .content = panel.content,
+      .height = panel.height,
+      .output_channel_id = panel.output.channel_id,
       .project_root = context_.current_project_state.root,
       .focus = context_.current_project_state.surface.focus,
-      .project_state = &context_.current_project_state,
       .tab_drag =
           BottomPanelTabDragViewModel{
               .active = drag.dragging && drag.kind == TabDragKind::Terminal,
@@ -904,6 +1373,10 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
               .sliding = sliding,
               .offsets = sliding ? slide.current : std::vector<float>{},
           },
+      // `tabs` / `tab_overflow` stay empty here; PrepareFrameOnce fills them once
+      // the frame layout (bottom-panel header rect) is known.
+      .plugin_surface = plugin_surface,
+      .plugin_surface_scroll_y = static_cast<float>(panel.surface_scroll_y),
   };
 }
 

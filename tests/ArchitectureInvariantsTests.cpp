@@ -200,8 +200,12 @@ void TestArchitectureFileSizes() {
              // ApplyRenameWorkspaceEdit resource_ops parameter + the PendingRenameSave
              // resource_ops field (the confirm prompt must stash the file ops with the
              // edits). The apply logic itself lives in LspService, not the shell.
+             // 1699: net -3 for TD-2026-07-17-084/083: the SingleLineViewMetrics struct
+             // moved to workspace/SingleLineViewMetrics.h (-4, replaced by a using alias)
+             // and the frame-prep PrepareCommitBodyViewportForFrame entry point (+1)
+             // that sizes/clamps the commit-draft body viewport before paint.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1702);
+                                                     1699);
            });
 
   AssertRuleResultsPass(results);
@@ -450,6 +454,37 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
             "std::span<const OccurrenceRange> occurrence_ranges; };\n");
   Expect(architecture::CheckEditorViewModelStickyAndOccurrenceAreSpans(root).violations.empty(),
          "editor view-model rule should pass on the span fixture");
+
+  // Render view-model state-pointer ratchet (TD-2026-07-17-084/26): OverlayState is
+  // banned outright in the view-model header, ProjectWorkspaceState is allowed only
+  // inside the two documented escape-hatch structs, and the converted render TUs
+  // must not name either broad state type.
+  WriteFile(root / "src/workspace/RenderViewModelBuilder.h",
+            "struct OverlaySurfaceViewModel { const OverlayState* state = nullptr; "
+            "ProjectWorkspaceState* project_state = nullptr; };\n");
+  Expect(architecture::CheckRenderViewModelsOwnProjectState(root).violations.size() == 2,
+         "view-model state rule should catch both the OverlayState pointer and the "
+         "non-allowlisted ProjectWorkspaceState pointer");
+  WriteFile(root / "src/workspace/WorkspaceShellRenderOverlay.cpp",
+            "void F(const ProjectWorkspaceState& s){ (void)s; }\n");
+  WriteFile(root / "src/workspace/DebugPaneRender.cpp",
+            "void G(const OverlayState& s){ (void)s; }\n");
+  Expect(architecture::CheckRenderViewModelsOwnProjectState(root).violations.size() == 4,
+         "view-model state rule should catch broad state type names in converted render TUs");
+  // Positive control: the allowlisted structs may carry the pointer, everything
+  // else owned — zero violations (kills the vacuous-pass mode).
+  WriteFile(root / "src/workspace/RenderViewModelBuilder.h",
+            "struct FrameSurfaceViewModel { ProjectWorkspaceState* project_state = nullptr; };\n"
+            "struct SidebarSurfaceViewModel { std::string_view query_fallback_text; "
+            "std::string_view replace_fallback_text; "
+            "ProjectWorkspaceState* project_state = nullptr; };\n"
+            "struct OverlaySurfaceViewModel { std::string label_storage; };\n");
+  WriteFile(root / "src/workspace/WorkspaceShellRenderOverlay.cpp",
+            "void F(const OverlaySurfaceViewModel& vm){ (void)vm; }\n");
+  WriteFile(root / "src/workspace/DebugPaneRender.cpp",
+            "void G(const DebugPaneSurfaceViewModel& vm){ (void)vm; }\n");
+  Expect(architecture::CheckRenderViewModelsOwnProjectState(root).violations.empty(),
+         "view-model state rule should pass on the owned-model + allowlisted-structs fixture");
 
   // Lua-behind-plugin-boundary rule (TD-2026-07-16-22). Fresh root: the shared
   // fixture tree above plants lua_State fixtures for other rules, which this

@@ -6,6 +6,16 @@
 
 namespace microide::workspace {
 
+// Visible body-field rows of the inline commit draft. Shared by the sidebar
+// render path, GitSidebarCommitWorkflowHeight, and the frame-prep viewport
+// sizing (PrepareCommitBodyViewportForFrame) so they can never drift apart.
+inline constexpr int kCommitWorkflowBodyRows = 4;
+
+// Horizontal inset of the commit draft fields inside the sidebar (matches the
+// sidebar's kSidebarInset). Used by frame prep to derive the body field width
+// without the full panel layout.
+inline constexpr float kCommitWorkflowFieldInset = 10.0f;
+
 // Pure geometry of the inline commit draft panel: the staged-summary header, the framed
 // subject/body fields, the pre-check/status lines, and the confirm button. Shared by the
 // sidebar render path (which draws and caches the rects) and GitSidebarCommitWorkflowHeight

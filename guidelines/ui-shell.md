@@ -34,6 +34,8 @@ Plugins may request contributions, but they do not own frame composition, paint 
 - Rendering stays host-owned.
 - Render functions consume typed POD-like view-model structs built by `RenderViewModelBuilder`. Do not call `WorkspaceShell` member functions, query coordinators, or read mutable shell state from inside a draw pass. The architectural-lint test rejects render TUs that read `context_.current_project_state` or call `CurrentTextInputSurface(...)`.
 - View models do not hold pointers or references to the shell, coordinators, or services. They contain exactly the fields the surface needs.
+- View models do not smuggle live project-state pointers either (`CheckRenderViewModelsOwnProjectState`): compose labels/rows in the builder (owned storage or frame-stable views) and pass narrow typed const pointers (a diagnostics store, a debug model) when live access is genuinely needed. Only `FrameSurfaceViewModel` and `SidebarSurfaceViewModel` still carry a `ProjectWorkspaceState*` escape hatch, pending their own passes.
+- Mutating state during paint is a defect: viewport sizing, scroll clamps, and strip/tab precomputation belong in `PrepareFrameOnce` (see `PrepareCommitBodyViewportForFrame`, the overlay scroll clamp, and the bottom-panel tab-strip fill).
 - Keep layout math, hover hit-testing, dirty-region invalidation, and interaction mapping explicit and reviewable.
 - Avoid hidden redraw side effects. Invalidation should happen through clear pathways.
 - Reuse host render primitives so the shell does not drift into many one-off drawing conventions.

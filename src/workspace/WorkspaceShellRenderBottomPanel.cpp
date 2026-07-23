@@ -74,11 +74,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                kWorkspaceBottomPanelHeaderHeight);
   const bool terminal_panel = panel_vm.content == PanelContentKind::Terminal;
   const bool output_panel = panel_vm.content == PanelContentKind::Output;
-  const std::vector<VisibleStripTab> visible_panel_tabs =
-      tab_strip_service_.ComputeVisibleBottomPanelTabs(
-          *panel_vm.project_state, panel_header, layout_mode_service_.CurrentMode(),
-          [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
-          output_channels_.Channels());
+  // Prebuilt by PrepareFrameOnce (which owns the state read + strip geometry).
+  const std::vector<VisibleStripTab>& visible_panel_tabs = panel_vm.tabs;
 
   const auto draw_tab_close_button = [&](const SDL_FRect& rect,
                                          SDL_Color color,
@@ -326,9 +323,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                   last_mouse_position_valid_ && Contains(new_tab_rect, last_mouse_x_, last_mouse_y_)
                       ? theme_.text_primary
                       : theme_.text_secondary);
-    const auto panel_overflow = tab_strip_service_.ComputeBottomPanelTabOverflowControls(
-        *panel_vm.project_state, panel_header, layout_mode_service_.CurrentMode(),
-        visible_panel_tabs, output_channels_.Channels());
+    const TabStripOverflowControls& panel_overflow = panel_vm.tab_overflow;
     DrawTabStripOverflowButton(
         text_renderer_, renderer, theme_, panel_overflow.left_button, /*point_right=*/false,
         panel_overflow.hidden_left,
@@ -371,19 +366,14 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
 
   // Phase E0: a plugin content surface replaces the terminal/output body. The
   // host owns scroll + clipping; the plugin only supplied data (display list or
-  // raster handle). Reached through the view model's project_state pointer (the
-  // sanctioned escape hatch), never the shell's live project state.
-  if (panel_vm.content == PanelContentKind::PluginSurface && panel_vm.project_state != nullptr) {
+  // raster handle). The surface content pointer is resolved by the builder.
+  if (panel_vm.content == PanelContentKind::PluginSurface) {
     const SDL_FRect body =
         MakeRect(layout.bottom_panel.x, panel_header.y + panel_header.h, layout.bottom_panel.w,
                  std::max(0.0f, layout.bottom_panel.h - panel_header.h));
     FillRect(renderer, body, theme_.surface_background);
-    const PanelState& panel = panel_vm.project_state->panel;
-    const auto* pres = panel_vm.project_state->plugin_presentation_if_present();
-    const editor::SurfaceContent* content =
-        pres != nullptr ? pres->surfaces.Find(panel.surface_owner, panel.surface_id) : nullptr;
-    RenderPluginSurfaceInto(renderer, body, content,
-                            static_cast<float>(panel.surface_scroll_y));
+    RenderPluginSurfaceInto(renderer, body, panel_vm.plugin_surface,
+                            panel_vm.plugin_surface_scroll_y);
     return;
   }
 
@@ -557,7 +547,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                   panel_layout.scroll.vertical_scrollbar->thumb,
                   context_.interaction_state.drag_target == DragTarget::BottomPanelScrollbar);
   }
-  if (panel_vm.project_state->surface.focus == FocusTarget::Panel) {
+  if (panel_vm.focus == FocusTarget::Panel) {
     DrawSurfaceFocusRing(renderer, layout.bottom_panel);
   }
 }

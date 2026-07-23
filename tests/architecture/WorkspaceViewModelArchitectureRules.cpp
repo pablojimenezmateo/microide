@@ -183,6 +183,99 @@ RuleResult CheckSidebarSurfaceFallbackUsesStringView(const std::filesystem::path
   return result;
 }
 
+RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& repo_root) {
+  // TD-2026-07-17-084/26: render view models must be owned/precomputed data, not
+  // live pointers into project state, and the converted render TUs must not name
+  // the broad state types at all. Two documented escape hatches remain until the
+  // editor-surface and sidebar view-model passes land: FrameSurfaceViewModel and
+  // SidebarSurfaceViewModel may still carry a ProjectWorkspaceState pointer (and
+  // their render TUs, WorkspaceShellRenderFrame.cpp / WorkspaceShellRenderSidebar
+  // .cpp, may dereference it). Nothing else may — this rule is the ratchet.
+  RuleResult result;
+  result.label = "render view models own their state (no OverlayState/ProjectWorkspaceState)";
+  result.hard_fail = true;
+
+  const std::filesystem::path header = repo_root / "src/workspace/RenderViewModelBuilder.h";
+  if (std::filesystem::exists(header)) {
+    const std::string text = ReadText(header);
+    // OverlayState must not appear anywhere in the view-model header: the overlay
+    // model is fully owned (TD-2026-07-17-084).
+    AppendCodeMaskRegexViolations(
+        result, header, text, std::regex(R"(\bOverlayState\b)"),
+        "render view models must not reference OverlayState (owned overlay model only)");
+    // ProjectWorkspaceState may appear only inside the two allowlisted structs.
+    const std::regex struct_decl(R"(\bstruct\s+([A-Za-z_][A-Za-z0-9_]*)\b[^;{]*\{)");
+    std::vector<std::pair<std::size_t, std::size_t>> allowed_ranges;
+    for (std::sregex_iterator it(text.begin(), text.end(), struct_decl), end; it != end; ++it) {
+      const std::string name = (*it)[1].str();
+      if (name != "FrameSurfaceViewModel" && name != "SidebarSurfaceViewModel") {
+        continue;
+      }
+      const std::size_t body_start = static_cast<std::size_t>(it->position() + it->length());
+      std::size_t depth = 1;
+      std::size_t cursor = body_start;
+      while (cursor < text.size() && depth > 0) {
+        if (text[cursor] == '{') {
+          ++depth;
+        } else if (text[cursor] == '}') {
+          --depth;
+        }
+        ++cursor;
+      }
+      if (depth == 0) {
+        allowed_ranges.emplace_back(body_start, cursor);
+      }
+    }
+    const std::regex state_token(R"(\bProjectWorkspaceState\b)");
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    for (std::sregex_iterator it(text.begin(), text.end(), state_token), end; it != end; ++it) {
+      const std::size_t pos = static_cast<std::size_t>(it->position());
+      if (pos < is_code.size() && !is_code[pos]) {
+        continue;  // comment or string literal
+      }
+      bool allowed = false;
+      for (const auto& [range_start, range_end] : allowed_ranges) {
+        if (pos >= range_start && pos < range_end) {
+          allowed = true;
+          break;
+        }
+      }
+      if (!allowed) {
+        result.violations.push_back(Violation{
+            .path = header,
+            .line = LineNumberAt(text, pos),
+            .message = "ProjectWorkspaceState may appear only inside FrameSurfaceViewModel / "
+                       "SidebarSurfaceViewModel (documented escape hatches); new view models "
+                       "must carry owned/precomputed data or narrow typed pointers",
+        });
+      }
+    }
+  }
+
+  // Converted render TUs: no broad state type names at all.
+  const std::array<std::string_view, 6> converted_tus = {
+      "src/workspace/WorkspaceShellRenderOverlay.cpp",
+      "src/workspace/WorkspaceShellRenderBottomPanel.cpp",
+      "src/workspace/WorkspaceShellRenderTextInput.cpp",
+      "src/workspace/WorkspaceShellHoverPopup.cpp",
+      "src/workspace/WorkspaceShellHoverTargets.cpp",
+      "src/workspace/DebugPaneRender.cpp",
+  };
+  const std::regex broad_state(R"(\b(ProjectWorkspaceState|OverlayState)\b)");
+  for (const std::string_view relative : converted_tus) {
+    const std::filesystem::path path = repo_root / relative;
+    if (!std::filesystem::exists(path)) {
+      continue;
+    }
+    const std::string text = ReadText(path);
+    AppendCodeMaskRegexViolations(
+        result, path, text, broad_state,
+        "converted render TUs consume owned view models and must not name "
+        "ProjectWorkspaceState/OverlayState");
+  }
+  return result;
+}
+
 RuleResult CheckEditorViewModelStickyAndOccurrenceAreSpans(const std::filesystem::path& repo_root) {
   // sticky_lines and occurrence_ranges are spans into thread_local builder caches. Reverting them
   // to owning std::vectors reintroduces the per-frame element copy that Finding 11 closed.

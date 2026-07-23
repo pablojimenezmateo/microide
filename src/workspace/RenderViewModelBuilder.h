@@ -11,6 +11,7 @@
 #include "workspace/DebugViewModel.h"
 #include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/NotificationService.h"
+#include "workspace/TabStripService.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/SettingsOverlayService.h"
@@ -26,7 +27,15 @@ namespace microide::render {
 class TextRenderer;
 }  // namespace microide::render
 
+namespace microide::editor {
+struct SurfaceContent;
+}  // namespace microide::editor
+
 namespace microide::workspace {
+
+class DebugVariablesModel;
+class DebugWatchModel;
+class DebugBreakpointsModel;
 
 /// Parses user/project `editor.fold.sticky_scroll.max_depth` setting (stored as string): 1..8.
 int ParseStickyScrollMaxDepthSetting(const std::optional<std::string>& value);
@@ -65,16 +74,74 @@ struct FrameSurfaceViewModel {
   ProjectWorkspaceState* project_state = nullptr;
 };
 
+// One prebuilt overlay list row (visible window only). Views point either into
+// state-owned strings that outlive the frame or into the view model's own
+// `label_storage` blob; both stay valid until the next BuildOverlaySurfaceInto.
+// `primary` is already truncated to its column width, so render just draws it.
+struct OverlayListRowViewModel {
+  std::string_view primary;
+  std::string_view secondary;    // right-aligned muted column; empty when absent
+  float secondary_width = 0.0f;  // measured width + trailing inset; 0 when absent
+};
+
+// Prebuilt model for the compact find/replace widget (BufferSearch/BufferReplace).
+struct OverlayFindWidgetViewModel {
+  FindWidgetLayout fw{};
+  bool replace_mode = false;
+  bool search_focused = false;
+  bool replace_focused = false;
+  bool regex = false;
+  bool has_matches = false;
+  bool has_query = false;
+  std::string_view search_display_text;   // caret-relative tail when focused
+  std::string_view replace_display_text;  // caret-relative tail when focused
+  std::string_view count_text;            // "n/m" or "0/0"; empty when no query
+};
+
+// Fully owned/precomputed overlay surface model (TD-2026-07-17-084): the render
+// TU consumes only this — geometry, prebuilt labels, and the visible row window —
+// and never dereferences live OverlayState / ProjectWorkspaceState.
 struct OverlaySurfaceViewModel {
   bool visible = false;
   OverlayMode mode = OverlayMode::FileFinder;
-  int scroll_row = 0;
+  int scroll_row = 0;  // clamped to the list layout
   TextInputSurface current_surface = TextInputSurface::None;
   // View into live SingleLineEditor state; valid for the duration of the frame the view model is
-  // used. Storing a view here keeps BuildOverlaySurface allocation-free per frame.
+  // used (consumed by the editor render path to seed match highlighting).
   std::string_view buffer_search_query_text;
-  const OverlayState* state = nullptr;
-  ProjectWorkspaceState* project_state = nullptr;
+
+  // Geometry (computed once at build; identical to what hit-testing derives).
+  bool caret_anchored = false;  // completion popup: no backdrop, plain card frame
+  SDL_FRect overlay_rect{};
+  ScrollableListLayout list_layout{};
+  std::size_t total_rows = 0;
+  int selected_row = 0;  // absolute selected index into the full list
+
+  // Prebuilt chrome text. Empty views mean "not drawn". All composed strings are
+  // backed by `label_storage` or by state strings stable for the frame.
+  std::string_view title;
+  std::string_view note;    // right-aligned note on the title row
+  float note_x = 0.0f;
+  std::string_view context_label;  // picker subtitle (pre-truncated)
+  bool has_query_field = false;
+  TextInputSurface query_surface = TextInputSurface::None;
+  float query_row_y = 0.0f;  // y of the query field row (absolute)
+  std::string_view query_display_text;
+  std::string_view summary_line;  // status line under the query field
+  float summary_y = 0.0f;         // absolute y of the summary/hint row
+  std::string_view hint;          // right-aligned picker key hint
+  float hint_x = 0.0f;
+  std::string_view error_line;     // completion/code-action error (pre-truncated)
+  bool error_at_title_row = false; // completion: error draws at the title row in the
+                                   // deleted tint; otherwise muted in the list area
+  std::string_view empty_label;    // drawn in the list area when total_rows == 0
+
+  std::vector<OverlayListRowViewModel> rows;  // visible window only
+  OverlayFindWidgetViewModel find_widget;     // valid in BufferSearch/BufferReplace
+
+  // Backing storage for composed/truncated labels above. Kept as a member so the
+  // cached view model reuses its capacity across frames.
+  std::string label_storage;
 };
 
 struct TextInputSurfaceViewModel {
@@ -86,6 +153,8 @@ struct TextInputSurfaceViewModel {
   const editor::SingleLineEditor* project_search_query = nullptr;
   const editor::SingleLineEditor* project_search_edit_buffer = nullptr;
   const editor::SingleLineEditor* commit_picker_query = nullptr;
+  const editor::SingleLineEditor* launch_config_picker_query = nullptr;
+  const editor::SingleLineEditor* command_palette_query = nullptr;
   const editor::SingleLineEditor* file_finder_query = nullptr;
 };
 
@@ -134,24 +203,33 @@ struct BottomPanelSurfaceViewModel {
   std::string output_channel_id;
   std::filesystem::path project_root;
   FocusTarget focus = FocusTarget::Sidebar;
-  // Live view into the current project state, so render TUs can drive
-  // `TabStripService` queries (which take ProjectWorkspaceState by const ref)
-  // without reaching into `context_.current_project_state` directly.
-  const ProjectWorkspaceState* project_state = nullptr;
   BottomPanelTabDragViewModel tab_drag;
+  // Prepared tab strip: PrepareFrameOnce fills these once the frame layout is
+  // known (the strip geometry needs the bottom-panel header rect), so the render
+  // TU draws prebuilt tabs instead of re-deriving them from project state.
+  std::vector<VisibleStripTab> tabs;
+  TabStripOverflowControls tab_overflow{};
+  // Resolved plugin content surface (PanelContentKind::PluginSurface only): the
+  // render TU paints this directly instead of resolving owner/id through state.
+  const editor::SurfaceContent* plugin_surface = nullptr;
+  float plugin_surface_scroll_y = 0.0f;
 };
 
 // Right-side debug pane surface (Call Stack / Variables / Watch / Breakpoints).
-// The backing models live on `project_state` and already hold prebuilt display
-// strings, so the view model only forwards the pointer + the active surface's
-// scroll and a static label string_view — no per-frame string materialization.
+// The backing models already hold prebuilt display strings, so the view model
+// forwards a narrow const pointer to the active mode's model (the others stay
+// null) + the surface's scroll and a static label — no per-frame string
+// materialization, and no broad project-state pointer.
 struct DebugPaneSurfaceViewModel {
   bool visible = false;
   DebugPaneMode mode = DebugPaneMode::CallStack;
   int scroll_row = 0;
   std::string_view header_label;
   FocusTarget focus = FocusTarget::Sidebar;
-  ProjectWorkspaceState* project_state = nullptr;
+  const DebugExecutionView* execution = nullptr;       // CallStack mode
+  const DebugVariablesModel* variables = nullptr;      // Variables mode
+  const DebugWatchModel* watch = nullptr;              // Watch mode
+  const DebugBreakpointsModel* breakpoints = nullptr;  // Breakpoints mode
 };
 
 struct HoverPopupViewModel {
@@ -307,7 +385,15 @@ class RenderViewModelBuilder {
   explicit RenderViewModelBuilder(const WorkspaceContext& context);
 
   FrameSurfaceViewModel BuildFrameSurface(const WorkspaceLayout& layout) const;
-  OverlaySurfaceViewModel BuildOverlaySurface() const;
+  /// Rebuilds `out` in place (clear+assign patterns) so the retained view model
+  /// reuses its row/label capacities across frames. `overlay_rect` is the
+  /// shell-computed overlay card rect for the current mode (caret-anchored,
+  /// centered menu, find widget, picker, or default), passed in because its
+  /// derivation is shared with hit-testing and stays shell-owned.
+  void BuildOverlaySurfaceInto(OverlaySurfaceViewModel& out,
+                               const WorkspaceLayout& layout,
+                               const SDL_FRect& overlay_rect,
+                               const render::TextRenderer& text_renderer) const;
   TextInputSurfaceViewModel BuildTextInputSurface() const;
   SidebarSurfaceViewModel BuildSidebarSurface() const;
   DebugPaneSurfaceViewModel BuildDebugPaneSurface() const;

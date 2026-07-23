@@ -438,6 +438,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellRenderStatusBar.cpp
   src/workspace/WorkspaceShellRenderSettingsOverlay.cpp
   src/workspace/WorkspaceShellRenderTextInput.cpp
+  src/workspace/SingleLineViewMetrics.cpp
   src/workspace/RenderViewModelBuilder.cpp
   src/workspace/WorkspaceShellHoverPopup.cpp
   src/workspace/WorkspaceShellHoverTargets.cpp

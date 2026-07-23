@@ -303,11 +303,8 @@
     std::optional<std::pair<std::size_t, std::size_t>> selection_bytes;
   };
 
-  struct SingleLineViewMetrics {
-    std::string displayed_text;
-    float cursor_x = 0.0f;
-    std::optional<std::pair<std::size_t, std::size_t>> selection_bytes;
-  };
+  // Shared with RenderViewModelBuilder (workspace/SingleLineViewMetrics.h).
+  using SingleLineViewMetrics = workspace::SingleLineViewMetrics;
 
   struct MergeSurfaceLayout {
     float line_height = 14.0f;
@@ -1127,6 +1124,7 @@
   bool CommitWorkflowOpen() const;
   bool RequestCommitWorkflowCommit();
   float GitSidebarCommitWorkflowHeight() const;
+  void PrepareCommitBodyViewportForFrame(const SDL_FRect& sidebar_rect);
   bool DiscardAllGitSidebarEntries();
   bool StageGitSidebarEntry(std::size_t entry_index);
   bool UnstageGitSidebarEntry(std::size_t entry_index);

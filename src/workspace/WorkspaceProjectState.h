@@ -58,6 +58,36 @@ enum class OverlayMode {
   CodeActions,
 };
 
+// Vertical offset (from the overlay card top) where the mode's scrollable list
+// starts. Shared by the shell's list-layout/hit-test helpers and
+// RenderViewModelBuilder so their geometry can never drift apart.
+inline float OverlayListStartOffset(OverlayMode mode) {
+  switch (mode) {
+    case OverlayMode::FileFinder:
+      return 74.0f;
+    case OverlayMode::BufferReplace:
+      return 106.0f;
+    case OverlayMode::Completion:
+      // The caret-anchored completion popup renders header-less, so the list starts
+      // near the top.
+      return 8.0f;
+    case OverlayMode::CodeActions:
+      // The centered code-action menu carries a title bar (but no query field), so
+      // the list starts just below the title.
+      return 40.0f;
+    case OverlayMode::CommitPicker:
+    case OverlayMode::LaunchConfigPicker:
+    case OverlayMode::CommandPalette:
+      // Picker carries a richer header (title + context subtitle + query field +
+      // result/hint line) so the list starts lower than the search overlays.
+      return 108.0f;
+    case OverlayMode::BufferSearch:
+    case OverlayMode::ProjectSearch:
+    default:
+      return 86.0f;
+  }
+}
+
 enum class PanelContentKind {
   None,
   Terminal,
