@@ -155,6 +155,82 @@ RuleResult CheckNoLegacyPersistenceSymbols(const std::filesystem::path& repo_roo
   return result;
 }
 
+RuleResult CheckReactivationDoesNotReloadPlugins(const std::filesystem::path& repo_root) {
+  // AGENTS.md policy invariant, now a narrow lint (TD-2026-07-17-037): project
+  // reactivation refresh uses the refresh_plugin_surfaces_for_reactivation seam
+  // and must never reload plugins (a reload tears down and re-runs every plugin
+  // on a plain project-tab switch). The reactivation path lives in
+  // ProjectCatalogService; a missing target file or a missing refresh-seam
+  // reference is a violation so a future move re-anchors the rule instead of
+  // letting it pass vacuously.
+  RuleResult result;
+  result.label = "project reactivation must refresh, not reload, plugins";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/workspace/ProjectCatalogService.cpp";
+  if (!std::filesystem::exists(path)) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = 1,
+        .message = "reactivation rule target moved — re-anchor to the TU hosting the "
+                   "project reactivation flow",
+    });
+    return result;
+  }
+  const std::string text = ReadText(path);
+  AppendCodeMaskRegexViolations(
+      result, path, text,
+      std::regex(R"(\b(?:ReloadPluginsForCurrentProject|reload_plugins_for_current_project)\b)"),
+      "project reactivation must not reload plugins; use the "
+      "refresh_plugin_surfaces_for_reactivation seam");
+  if (text.find("refresh_plugin_surfaces_for_reactivation") == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = 1,
+        .message = "reactivation refresh seam not found — if the flow moved, re-anchor this "
+                   "rule to the new TU",
+    });
+  }
+  return result;
+}
+
+RuleResult CheckNoFallbackEditorViewportSymbols(const std::filesystem::path& repo_root) {
+  // AGENTS.md policy invariant, now a narrow lint (TD-2026-07-17-037): the
+  // shell/project-level fallback editor viewport was deleted in the 2026-04-29
+  // cleanup — the active viewport resolves through EditorTabService::
+  // ActiveViewport(). Ban the deleted member spelling the same way the legacy
+  // persistence symbols are banned, so a same-name revival fails immediately.
+  // (A different-name revival stays reviewer-enforced; this is the ratchet for
+  // the explicit symbol the invariant names.)
+  RuleResult result;
+  result.label = "no fallback editor viewport symbols";
+  result.hard_fail = true;
+  for (const auto& root_dir : {repo_root / "src", repo_root / "tests", repo_root / "tools"}) {
+    if (!std::filesystem::exists(root_dir)) {
+      continue;
+    }
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root_dir)) {
+      if (!entry.is_regular_file()) {
+        continue;
+      }
+      const std::string ext = entry.path().extension().string();
+      if (ext != ".h" && ext != ".hpp" && ext != ".cpp" && ext != ".cc" && ext != ".cxx" &&
+          ext != ".inc") {
+        continue;
+      }
+      const std::string text = ReadText(entry.path());
+      for (const std::size_t pos : FindCodeLiteralOccurrences(text, "text_viewport_")) {
+        result.violations.push_back(Violation{
+            .path = entry.path(),
+            .line = LineNumberAt(text, pos),
+            .message = "the fallback editor viewport member was deleted intentionally; resolve "
+                       "the active viewport through EditorTabService::ActiveViewport()",
+        });
+      }
+    }
+  }
+  return result;
+}
+
 // Catches the anti-pattern where workspace code posts work to the background executor
 // and then immediately blocks on the resulting future — defeating the offload while
 // looking asynchronous.

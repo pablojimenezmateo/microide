@@ -48,6 +48,8 @@ RuleResult CheckNoStdStoInRenderOrBuilderTus(const std::filesystem::path& repo_r
 RuleResult CheckStatusBarRefreshIsAsyncOnly(const std::filesystem::path& repo_root);
 RuleResult CheckSidebarSurfaceFallbackUsesStringView(const std::filesystem::path& repo_root);
 RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& repo_root);
+RuleResult CheckReactivationDoesNotReloadPlugins(const std::filesystem::path& repo_root);
+RuleResult CheckNoFallbackEditorViewportSymbols(const std::filesystem::path& repo_root);
 RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(const std::filesystem::path& repo_root);
 RuleResult CheckEditorViewModelStickyAndOccurrenceAreSpans(const std::filesystem::path& repo_root);
 

@@ -404,31 +404,59 @@ RuleResult CheckPerClipRenderPathDoesNotRunFramePrep(const std::filesystem::path
 }
 
 RuleResult CheckPersistenceFileIoBoundary(const std::filesystem::path& repo_root) {
+  // TD-2026-07-17-032. Workspace-state persistence (project state, user config,
+  // session restore) routes through PersistenceService + PersistedRecordReader/
+  // Writer; general text file access goes through util/TextFileIO or
+  // platform-layer helpers. The previous incarnation of this rule matched raw
+  // streams only when a "workspace|session|config" literal appeared inside the
+  // open() argument on the same line, and exempted four file paths that no
+  // longer exist — i.e. it was vacuous. The precise, load-bearing form is an
+  // allowlist ratchet: raw file-stream I/O is banned in src/workspace/* except
+  // the enumerated TUs below, so any NEW direct open must either use a
+  // sanctioned seam or grow this list in review.
   RuleResult result;
-  result.label = "persistence file-io boundary";
+  result.label = "persistence file-io boundary (workspace raw-stream ratchet)";
   result.hard_fail = true;
-  const std::regex io_pattern(
-      R"(\b(std::ifstream|std::ofstream|std::fopen|fopen|open)\s*\([^;\n]*(workspace|session|config|conversation))");
+  // Each allowlisted TU opens files for a documented non-persisted-state purpose:
+  // - PersistenceService.cpp: the sanctioned home of persisted-state I/O (today it
+  //   routes through persistence/PersistedRecord{Reader,Writer}, but the seam is here).
+  // - ControlChannelService.cpp: control-spec snapshot read + response mirror
+  //   (external control channel artifacts, not workspace/session/config state).
+  // - LspService.cpp: server-requested WorkspaceEdit resource-op file creation
+  //   (project source files, not state).
+  constexpr std::array<std::string_view, 3> kAllowedFiles = {
+      "src/workspace/PersistenceService.cpp",
+      "src/workspace/ControlChannelService.cpp",
+      "src/workspace/LspService.cpp",
+  };
+  const std::regex io_pattern(R"(\b(?:std::)?(?:ifstream|ofstream|fstream|fopen)\b)");
 
-  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file()) {
       continue;
     }
     const std::string ext = entry.path().extension().string();
-    if (ext != ".h" && ext != ".hpp" && ext != ".cpp") {
+    if (ext != ".h" && ext != ".hpp" && ext != ".cpp" && ext != ".inc") {
       continue;
     }
     const std::string rel = entry.path().lexically_normal().lexically_relative(
                                 repo_root.lexically_normal()).generic_string();
-    if (rel.starts_with("src/persistence/") || rel == "src/workspace/WorkspacePersistenceService.h" ||
-        rel == "src/workspace/WorkspacePersistenceService.cpp" ||
-        rel == "src/workspace/WorkspacePersistenceLegacyImporter.cpp" ||
-        rel == "src/workspace/WorkspacePersistenceLegacyImporter.h") {
+    bool allowed = false;
+    for (const std::string_view allowed_file : kAllowedFiles) {
+      if (rel == allowed_file) {
+        allowed = true;
+        break;
+      }
+    }
+    if (allowed) {
       continue;
     }
     const std::string text = ReadText(entry.path());
-    AppendViolations(result, entry.path(), text, io_pattern,
-                     "workspace/session/config/conversation file I/O belongs in persistence services");
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, io_pattern,
+        "raw file-stream I/O in workspace code: persisted state routes through "
+        "PersistenceService/PersistedRecord{Reader,Writer}; other file access goes through "
+        "util/TextFileIO or platform helpers (or grow this rule's documented allowlist)");
   }
   return result;
 }

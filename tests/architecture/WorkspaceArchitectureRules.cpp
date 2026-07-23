@@ -43,6 +43,8 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckNoSynchronousSubprocessInWorkspace", CheckNoSynchronousSubprocessInWorkspace},
       {"CheckNoDirectGitRepositoryInWorkspace", CheckNoDirectGitRepositoryInWorkspace},
       {"CheckOverlayDismissalIsCentralized", CheckOverlayDismissalIsCentralized},
+      {"CheckReactivationDoesNotReloadPlugins", CheckReactivationDoesNotReloadPlugins},
+      {"CheckNoFallbackEditorViewportSymbols", CheckNoFallbackEditorViewportSymbols},
       {"CheckRenderTuDoesNotMaterializeStrings", CheckRenderTuDoesNotMaterializeStrings},
       {"CheckRenderTuDoesNotCallToStringOrFormat", CheckRenderTuDoesNotCallToStringOrFormat},
       {"CheckTextViewportNoFullDocCopy", CheckTextViewportNoFullDocCopy},

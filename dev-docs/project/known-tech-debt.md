@@ -135,7 +135,11 @@ they land.
    prompt-time stamping + confirm-time resolution + `DirtyPromptSurvivesTabShiftWhileOpen`.
    The persistence half stays deliberately unbuilt: ids only key modal dirty-prompt state,
    and a modal prompt never survives a session save. See the Tab identity subsection.]**
-9. **Test-infra sweeps** — architecture lints + negative fixtures (032/037), watcher
+9. **Test-infra sweeps — CLUSTER COMPLETE 2026-07-24.** Architecture lints + negative
+   fixtures (032/037) **[RESOLVED 2026-07-24 — 032: the vacuous persistence-I/O rule
+   rewritten as a workspace raw-stream allowlist ratchet (caught two dead `<fstream>`
+   includes); 037: reactivation-refresh + fallback-viewport-symbol lints added, stale-path
+   audit un-vacuated the status-bar async rule; see the test-infra subsection]**, watcher
    contract suite (036) **[RESOLVED 2026-07-24 — backend-parametrized contract via
    `SetForcePollForTesting`, FileIndex end-state oracle; see the test-infra subsection]**,
    terminal stress suite (015) **[RESOLVED 2026-07-24 — real-PTY teardown stress:
@@ -2836,15 +2840,43 @@ build and verify the target platform. Descriptions retained as intake for that p
   exemption in the regex lint is now verified fact, not convention. On-demand tool
   (needs `pip install clang==18.*` + libclang + `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`);
   deliberately not wired into ctest. Rerun after touching `src/plugin` raise paths.
-- **032 — architecture lint for direct persistence file I/O outside
-  `PersistenceService`** (hard to make precise by regex; the legacy-symbol ban
-  already guards the biggest regression; 050 retired the stale legacy-importer spec).
-- **037 — convert more policy invariants into narrow lint checks with failing
-  negative fixtures** (no `lua_State*` outside LuaRuntime **[first lint delivered
-  2026-07-23 — `CheckLuaStaysBehindPluginBoundary`, see TD-2026-07-16-22]**, no
-  render-TU project-state reads **[second lint delivered 2026-07-24 —
-  `CheckRenderViewModelsOwnProjectState` with meta-fixtures + positive control, see
-  TD-2026-07-16-26]**, etc.).
+- **[RESOLVED 2026-07-24] 032 — architecture lint for direct persistence file I/O outside
+  `PersistenceService`.** The pre-existing `CheckPersistenceFileIoBoundary` turned out to be
+  **vacuous**: its regex required a "workspace|session|config" literal inside the open()
+  argument on the same line, and all four of its exemption paths named files that no longer
+  exist (`src/persistence/` prefix aside, `WorkspacePersistenceService.*` and the deleted
+  legacy importer). Rewritten as the precise, load-bearing form the item doubted was
+  possible — an **allowlist ratchet**: raw file-stream I/O
+  (`ifstream/ofstream/fstream/fopen`, code-masked, `.h/.hpp/.cpp/.inc`) is banned across
+  `src/workspace/*` except three documented TUs (PersistenceService.cpp — the sanctioned
+  seam; ControlChannelService.cpp — control-spec artifacts; LspService.cpp — WorkspaceEdit
+  resource-op file creation). Any new direct open must use PersistedRecordReader/Writer,
+  util/TextFileIO, or platform helpers — or grow the reviewed allowlist. The rule
+  immediately caught (and this pass removed) two dead `<fstream>` includes left in
+  `WorkspaceShellProjectSearch.cpp` / `MergeResultValidation.cpp` by the async replace-all
+  move. Fixtures: non-allowlisted ofstream fires; record-writer rewrite + sanctioned-TU
+  stream pass (positive control).
+- **[RESOLVED 2026-07-24] 037 — convert more policy invariants into narrow lint checks with
+  failing negative fixtures.** Delivered across three passes: `CheckLuaStaysBehindPluginBoundary`
+  (2026-07-23, TD-2026-07-16-22), `CheckRenderViewModelsOwnProjectState` (2026-07-24,
+  TD-2026-07-16-26), and this pass — two more policy invariants from AGENTS.md became narrow
+  hard lints with negative fixtures + positive controls:
+  `CheckReactivationDoesNotReloadPlugins` (ProjectCatalogService must use the
+  `refresh_plugin_surfaces_for_reactivation` seam, never `ReloadPluginsForCurrentProject`;
+  a missing target file or missing seam reference fails loudly so a future move re-anchors
+  the rule) and `CheckNoFallbackEditorViewportSymbols` (bans the intentionally deleted
+  `text_viewport_` member spelling across src/tests/tools, mirroring the
+  legacy-persistence-symbol ban). This pass also ran a **stale-path audit** over every
+  `repo_root / "..."` literal in the rule sources, which caught a second vacuous rule:
+  `CheckStatusBarRefreshIsAsyncOnly` still scanned the retired `WorkspaceShellChrome.cpp`
+  and had silently passed since that TU was split — it now scans
+  `WorkspaceShellPresentation.cpp` + `StatusBarModelService.cpp` and treats a missing
+  target as a violation (the 022 fixture-path-drift lesson, now applied to rule targets,
+  not just fixtures). The invariants deliberately left reviewer-enforced are the
+  semantic ones a text lint cannot state precisely: single-line surfaces consuming
+  `SingleLineEditor` (any editing code looks alike textually), the plugin
+  reload/shutdown async-drain ordering, and "no equivalent under a new name" revivals —
+  the symbol ratchets catch same-name revivals, review catches renames.
 - **[RESOLVED 2026-07-24] 036 — one backend-independent watcher contract test suite** run
   against every backend (pairs with 006/010/080). `tests/FileIndexWatcherContractTests.cpp`:
   one contract function (`RunWatcherContract`) executed per selectable backend — the host's

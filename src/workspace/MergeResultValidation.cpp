@@ -1,6 +1,5 @@
 #include "workspace/MergeResultValidation.h"
 
-#include <fstream>
 
 #include "util/GitConflictMarkers.h"
 #include "util/TextFileIO.h"

@@ -122,12 +122,15 @@ Policy invariants (no automated lint, but reviewers will reject):
 - No project-level or shell-level fallback editor viewport. Resolve the active editor target
   through `EditorTabService::ActiveViewport()` (or equivalent typed accessor). The legacy symbols
   `text_viewport_` and `current_project_state_.text_viewport` were deleted intentionally; do not
-  reintroduce equivalents under a new name.
+  reintroduce equivalents under a new name. (The `text_viewport_` spelling itself is now
+  hard-linted by `CheckNoFallbackEditorViewportSymbols`; renamed revivals stay reviewer-enforced.)
 - No bespoke per-section parser for project state, user config, and session restore.
   These artifacts route through `PersistedRecordReader`/`PersistedRecordWriter`
   and `PersistenceService`. Add a typed record, do not hand-roll a text format.
 - No new direct file I/O for workspace/session/config/conversation state outside
-  `PersistenceService`.
+  `PersistenceService`. (Now hard-linted as a ratchet: `CheckPersistenceFileIoBoundary` bans
+  raw file streams across `src/workspace/*` outside a documented three-TU allowlist —
+  PersistenceService, ControlChannelService, LspService.)
 - No per-surface duplicate of single-line edit operations (insert, backspace, delete-forward,
   caret movement, selection, copy, cut, paste, select-all). Single-line surfaces consume
   `editor/SingleLineEditor.{h,cpp}` plus `editor/SingleLineKeyHandler.{h,cpp}`.
@@ -144,7 +147,8 @@ Policy invariants (no automated lint, but reviewers will reject):
   rendering or render-TU product logic.
 - Project reactivation paths do not reload plugins. Reactivation refresh uses
   `refresh_plugin_surfaces_for_reactivation` and must not call
-  `ReloadPluginsForCurrentProject`.
+  `ReloadPluginsForCurrentProject`. (Now hard-linted for the ProjectCatalogService flow by
+  `CheckReactivationDoesNotReloadPlugins`, with a loud-missing-target vacuity guard.)
 - Compare-surface rendering is structurally gated by `RenderViewModelBuilder` output. Render units
   must not inspect shell or project state to decide whether compare content renders.
 - Per-frame preparation work executes once per frame. Per-clip entry points must not rebuild frame

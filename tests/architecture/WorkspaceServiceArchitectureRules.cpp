@@ -491,31 +491,49 @@ RuleResult CheckStatusBarRefreshIsAsyncOnly(const std::filesystem::path& repo_ro
   RuleResult result;
   result.label = "RefreshStatusBar must not run synchronous git from the frame path";
   result.hard_fail = true;
-  const std::filesystem::path path = repo_root / "src/workspace/WorkspaceShellChrome.cpp";
-  if (!std::filesystem::exists(path)) {
-    return result;
-  }
-  const std::string text = ReadText(path);
-  const auto is_code = BuildCodeMask(text);
-  // Block any `repo.Execute(` or `git symbolic-ref` mention in the file. The IsValid() probe is
-  // still allowed because it is a filesystem-only check cached by status_bar_repo_cache_.
+  // The frame-path status-bar refresh spans two TUs: WorkspaceShell::RefreshStatusBar
+  // (WorkspaceShellPresentation.cpp, called from PrepareFrameOnce) and the model build
+  // it invokes (StatusBarModelService.cpp). This rule previously scanned the retired
+  // WorkspaceShellChrome.cpp and silently passed once that file was split up — a
+  // missing target is now a violation so a future rename fails loudly instead of
+  // going vacuous (the 022 fixture-path-drift lesson).
+  const std::array<std::string_view, 2> targets = {
+      "src/workspace/WorkspaceShellPresentation.cpp",
+      "src/workspace/StatusBarModelService.cpp",
+  };
+  // Block any `repo.Execute(` or `git symbolic-ref` mention in the files. The IsValid() probe is
+  // still allowed because it is a filesystem-only check cached by the model service.
   const std::array<std::regex, 3> patterns = {
       std::regex(R"(\brepo\.Execute\s*\()"),
       std::regex(R"(\.Execute\s*\(\s*\{\s*\"symbolic-ref\")"),
       std::regex(R"(\bResolveBranchLabel\s*\()"),
   };
-  for (const auto& pattern : patterns) {
-    for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
-      const auto pos = static_cast<std::size_t>(it->position());
-      if (pos < is_code.size() && !is_code[pos]) {
-        continue;
-      }
+  for (const std::string_view relative : targets) {
+    const std::filesystem::path path = repo_root / relative;
+    if (!std::filesystem::exists(path)) {
       result.violations.push_back(Violation{
           .path = path,
-          .line = LineNumberAt(text, pos),
-          .message = "RefreshStatusBar must not synchronously run git; the branch label is "
-                     "populated by the async sidebar git refresh path",
+          .line = 1,
+          .message = "status-bar async rule target moved — re-anchor the rule to the TU that "
+                     "now hosts the frame-path status-bar refresh",
       });
+      continue;
+    }
+    const std::string text = ReadText(path);
+    const auto is_code = BuildCodeMask(text);
+    for (const auto& pattern : patterns) {
+      for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
+        const auto pos = static_cast<std::size_t>(it->position());
+        if (pos < is_code.size() && !is_code[pos]) {
+          continue;
+        }
+        result.violations.push_back(Violation{
+            .path = path,
+            .line = LineNumberAt(text, pos),
+            .message = "RefreshStatusBar must not synchronously run git; the branch label is "
+                       "populated by the async sidebar git refresh path",
+        });
+      }
     }
   }
   return result;

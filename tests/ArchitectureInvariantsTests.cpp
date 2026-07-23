@@ -391,14 +391,22 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
   Expect(architecture::CheckNoStdStoInRenderOrBuilderTus(root).violations.empty(),
          "std::sto* rule should accept the util::ParseInt rewrite");
 
-  WriteFile(root / "src/workspace/WorkspaceShellChrome.cpp",
+  // Status-bar async rule: re-anchored to the TUs that actually host the
+  // frame-path refresh (the retired WorkspaceShellChrome.cpp target made it
+  // silently vacuous), with the missing-target case failing loudly.
+  WriteFile(root / "src/workspace/WorkspaceShellPresentation.cpp",
             "std::string F(const Repo& repo) { return repo.Execute({\"symbolic-ref\"}).output; }\n");
+  WriteFile(root / "src/workspace/StatusBarModelService.cpp", "// clean model-build fixture\n");
   Expect(!architecture::CheckStatusBarRefreshIsAsyncOnly(root).violations.empty(),
-         "status-bar rule should catch synchronous repo.Execute in WorkspaceShellChrome.cpp");
-  WriteFile(root / "src/workspace/WorkspaceShellChrome.cpp",
+         "status-bar rule should catch synchronous repo.Execute in the frame-path TU");
+  WriteFile(root / "src/workspace/WorkspaceShellPresentation.cpp",
             "std::string F() { return std::string(\"async-only\"); }\n");
   Expect(architecture::CheckStatusBarRefreshIsAsyncOnly(root).violations.empty(),
-         "status-bar rule should pass on async-only fixture");
+         "status-bar rule should pass on async-only fixtures for both target TUs");
+  std::filesystem::remove(root / "src/workspace/StatusBarModelService.cpp");
+  Expect(!architecture::CheckStatusBarRefreshIsAsyncOnly(root).violations.empty(),
+         "a moved/renamed status-bar rule target must fail loudly, not pass vacuously");
+  WriteFile(root / "src/workspace/StatusBarModelService.cpp", "// clean model-build fixture\n");
 
   WriteFile(root / "src/workspace/RenderViewModelBuilder.h",
             "struct SidebarSurfaceViewModel { std::string query_fallback_text; "
@@ -485,6 +493,46 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
             "void G(const DebugPaneSurfaceViewModel& vm){ (void)vm; }\n");
   Expect(architecture::CheckRenderViewModelsOwnProjectState(root).violations.empty(),
          "view-model state rule should pass on the owned-model + allowlisted-structs fixture");
+
+  // Persistence file-I/O ratchet (TD-2026-07-17-032): raw streams in a workspace
+  // TU outside the documented allowlist fail; the sanctioned service TU and
+  // stream-free code pass (positive control against a vacuous rewrite).
+  WriteFile(root / "src/workspace/SomeStateSaver.cpp",
+            "void Save(const std::filesystem::path& p){ std::ofstream out(p); out << 1; }\n");
+  Expect(!architecture::CheckPersistenceFileIoBoundary(root).violations.empty(),
+         "persistence I/O rule should catch a raw ofstream in a non-allowlisted workspace TU");
+  WriteFile(root / "src/workspace/SomeStateSaver.cpp",
+            "void Save(persistence::PersistedRecordWriter& writer){ writer.Commit(); }\n");
+  WriteFile(root / "src/workspace/PersistenceService.cpp",
+            "void G(const std::filesystem::path& p){ std::ifstream in(p); (void)in; }\n");
+  Expect(architecture::CheckPersistenceFileIoBoundary(root).violations.empty(),
+         "persistence I/O rule should accept the record-writer rewrite and the sanctioned "
+         "PersistenceService TU");
+
+  // Reactivation must refresh, not reload, plugins (TD-2026-07-17-037).
+  WriteFile(root / "src/workspace/ProjectCatalogService.cpp",
+            "void Reactivate(){ ReloadPluginsForCurrentProject(); }\n");
+  Expect(!architecture::CheckReactivationDoesNotReloadPlugins(root).violations.empty(),
+         "reactivation rule should catch a plugin reload in the reactivation TU");
+  WriteFile(root / "src/workspace/ProjectCatalogService.cpp",
+            "void Reactivate(){ operations_.refresh_plugin_surfaces_for_reactivation(); }\n");
+  Expect(architecture::CheckReactivationDoesNotReloadPlugins(root).violations.empty(),
+         "reactivation rule should accept the refresh-seam rewrite");
+  std::filesystem::remove(root / "src/workspace/ProjectCatalogService.cpp");
+  Expect(!architecture::CheckReactivationDoesNotReloadPlugins(root).violations.empty(),
+         "a moved reactivation TU must fail loudly, not pass vacuously");
+  WriteFile(root / "src/workspace/ProjectCatalogService.cpp",
+            "void Reactivate(){ operations_.refresh_plugin_surfaces_for_reactivation(); }\n");
+
+  // Fallback editor-viewport symbol ban (TD-2026-07-17-037).
+  WriteFile(root / "src/workspace/SomeShellState.h",
+            "struct S { editor::TextViewport* text_viewport_ = nullptr; };\n");
+  Expect(!architecture::CheckNoFallbackEditorViewportSymbols(root).violations.empty(),
+         "viewport-symbol rule should catch a revived fallback viewport member");
+  WriteFile(root / "src/workspace/SomeShellState.h",
+            "struct S { };  // active viewport resolves through EditorTabService\n");
+  Expect(architecture::CheckNoFallbackEditorViewportSymbols(root).violations.empty(),
+         "viewport-symbol rule should pass once the member is gone");
 
   // Lua-behind-plugin-boundary rule (TD-2026-07-16-22). Fresh root: the shared
   // fixture tree above plants lua_State fixtures for other rules, which this
