@@ -8,6 +8,41 @@
 
 namespace microide::workspace {
 
+// Match navigation and the Alt+R regex toggle behave identically in the find
+// widget and the find-and-replace widget. They used to be two copies of the same
+// switch arms, so a fix to one silently left the other behind. Anything not
+// handled here falls through to the focused single-line field, which is also the
+// correct behavior for a plain `r`.
+bool KeyInputCoordinator::HandleSharedBufferSearchKey(const SDL_KeyboardEvent& event,
+                                                      SDL_Keymod modifiers) {
+  switch (event.key) {
+    case SDLK_UP:
+      operations_.move_buffer_search_selection(-1);
+      return true;
+    case SDLK_DOWN:
+      operations_.move_buffer_search_selection(1);
+      return true;
+    case SDLK_PAGEUP:
+      operations_.move_buffer_search_selection(-kListPageStep);
+      return true;
+    case SDLK_PAGEDOWN:
+      operations_.move_buffer_search_selection(kListPageStep);
+      return true;
+    case SDLK_R:
+      // Alt+R toggles regex mode (VSCode's find-widget shortcut); a plain `r`
+      // still types into the focused field via the default text-input path.
+      if (modifiers & SDL_KMOD_ALT) {
+        state_.overlay.workflow.buffer_search.regex =
+            !state_.overlay.workflow.buffer_search.regex;
+        operations_.refresh_buffer_search();
+        return true;
+      }
+      return operations_.text_input_handle_single_line_key_down(event, modifiers);
+    default:
+      return operations_.text_input_handle_single_line_key_down(event, modifiers);
+  }
+}
+
 bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
                                                SDL_Keymod modifiers) {
   if (state_.overlay.mode == OverlayMode::CommitPicker) {
@@ -67,30 +102,8 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
         // the widget open, VSCode-style, instead of jumping + dismissing.
         operations_.move_buffer_search_selection((modifiers & SDL_KMOD_SHIFT) ? -1 : 1);
         return true;
-      case SDLK_UP:
-        operations_.move_buffer_search_selection(-1);
-        return true;
-      case SDLK_DOWN:
-        operations_.move_buffer_search_selection(1);
-        return true;
-      case SDLK_PAGEUP:
-        operations_.move_buffer_search_selection(-kListPageStep);
-        return true;
-      case SDLK_PAGEDOWN:
-        operations_.move_buffer_search_selection(kListPageStep);
-        return true;
-      case SDLK_R:
-        // Alt+R toggles regex mode (VSCode's find-widget shortcut); a plain `r`
-        // still types into the focused field via the default text-input path.
-        if (modifiers & SDL_KMOD_ALT) {
-          state_.overlay.workflow.buffer_search.regex =
-              !state_.overlay.workflow.buffer_search.regex;
-          operations_.refresh_buffer_search();
-          return true;
-        }
-        return operations_.text_input_handle_single_line_key_down(event, modifiers);
       default:
-        return operations_.text_input_handle_single_line_key_down(event, modifiers);
+        return HandleSharedBufferSearchKey(event, modifiers);
     }
   }
 
@@ -116,30 +129,8 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
           operations_.replace_current_buffer_search_match();
         }
         return true;
-      case SDLK_UP:
-        operations_.move_buffer_search_selection(-1);
-        return true;
-      case SDLK_DOWN:
-        operations_.move_buffer_search_selection(1);
-        return true;
-      case SDLK_PAGEUP:
-        operations_.move_buffer_search_selection(-kListPageStep);
-        return true;
-      case SDLK_PAGEDOWN:
-        operations_.move_buffer_search_selection(kListPageStep);
-        return true;
-      case SDLK_R:
-        // Alt+R toggles regex mode (VSCode's find-widget shortcut); a plain `r`
-        // still types into the focused field via the default text-input path.
-        if (modifiers & SDL_KMOD_ALT) {
-          state_.overlay.workflow.buffer_search.regex =
-              !state_.overlay.workflow.buffer_search.regex;
-          operations_.refresh_buffer_search();
-          return true;
-        }
-        return operations_.text_input_handle_single_line_key_down(event, modifiers);
       default:
-        return operations_.text_input_handle_single_line_key_down(event, modifiers);
+        return HandleSharedBufferSearchKey(event, modifiers);
     }
   }
 

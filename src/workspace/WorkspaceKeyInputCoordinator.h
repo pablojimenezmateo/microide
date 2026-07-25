@@ -218,6 +218,9 @@ class KeyInputCoordinator {
   bool DispatchResolvedKeybinding(const ResolvedKeybinding& binding, ActionSource source);
   bool HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleOverlayKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
+  // Match navigation + Alt+R regex toggle, shared by the find and
+  // find-and-replace widgets (see the definition for why it is factored out).
+  bool HandleSharedBufferSearchKey(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleSidebarKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
