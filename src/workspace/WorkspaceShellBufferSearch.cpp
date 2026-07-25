@@ -18,7 +18,8 @@ namespace {
 // runs over the whole '\n'-joined buffer, not per line, so multi-line patterns work.
 util::CompiledRegex CompileBufferSearchRegex(const std::string& query) {
   const std::uint32_t options =
-      (UsesCaseSensitiveLiteralMatch(query) ? 0u : PCRE2_CASELESS) | PCRE2_MULTILINE;
+      util::SearchRegexCompileOptions(query, UsesCaseSensitiveLiteralMatch(query)) |
+      PCRE2_MULTILINE;
   return util::CompiledRegex(query, options);
 }
 

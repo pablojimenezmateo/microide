@@ -226,6 +226,44 @@ void TestProjectSearchServiceRegexModeAndInvalidRegex() {
   Expect(invalid_regex.results.empty(), "invalid regex project search should not publish matches");
 }
 
+// A case-insensitive REGEX search must fold Unicode case the same way the literal
+// path already does. PCRE2_CASELESS on its own (no PCRE2_UTF) folds ASCII and
+// nothing else, so the identical query used to match case-insensitively as a
+// literal and case-sensitively as a regex.
+void TestProjectSearchServiceRegexCaseInsensitiveFoldsNonAscii() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  // Greek delta and Cyrillic de, lowercase in the file, uppercase in the query.
+  WriteFile(root / "greek.txt", "value δelta here\n");
+  WriteFile(root / "cyrillic.txt", "value дom here\n");
+
+  ProjectSearchOptions options;
+  options.pattern_mode = ProjectSearchPatternMode::Regex;
+  options.case_mode = ProjectSearchCaseMode::Insensitive;
+
+  const auto greek = RunProjectSearch(root, "Δelta", options);
+  Expect(greek.finished && greek.error.empty(), "non-ASCII regex search should finish cleanly");
+  Expect(greek.results.size() == 1,
+         "a case-insensitive regex search for Δ must find δ, matching the literal path");
+
+  const auto cyrillic = RunProjectSearch(root, "Дom", options);
+  Expect(cyrillic.finished && cyrillic.error.empty(), "Cyrillic regex search should finish");
+  Expect(cyrillic.results.size() == 1,
+         "a case-insensitive regex search for Д must find д");
+
+  // The literal path is the reference behavior these must agree with.
+  ProjectSearchOptions literal_options;
+  literal_options.case_mode = ProjectSearchCaseMode::Insensitive;
+  const auto literal = RunProjectSearch(root, "Δelta", literal_options);
+  Expect(literal.results.size() == greek.results.size(),
+         "regex and literal case-insensitive search must agree on non-ASCII case folding");
+
+  // An ASCII query keeps the fast byte-oriented path and must be unaffected.
+  const auto ascii = RunProjectSearch(root, "v.lue", options);
+  Expect(ascii.finished && ascii.results.size() == 2,
+         "an ASCII regex query must still match both files");
+}
+
 void TestProjectSearchServiceRegexEmptyMatchDoesNotHideRealMatch() {
   // Regression: the empty-match branch used to advance one byte and abandon the
   // offset entirely. For an alternation whose earlier branch matches empty at the
@@ -722,6 +760,8 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServiceNormalizesPreviewWhitespace);
   AddTest(tests, "ProjectSearchService/RegexModeAndInvalidRegex",
           TestProjectSearchServiceRegexModeAndInvalidRegex);
+  AddTest(tests, "ProjectSearchService/RegexCaseInsensitiveFoldsNonAscii",
+          TestProjectSearchServiceRegexCaseInsensitiveFoldsNonAscii);
   AddTest(tests, "ProjectSearchService/RegexEmptyMatchDoesNotHideRealMatch",
           TestProjectSearchServiceRegexEmptyMatchDoesNotHideRealMatch);
   AddTest(tests, "ProjectSearchService/RegexFindNextIsCancellable",

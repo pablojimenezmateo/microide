@@ -274,8 +274,8 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
       return SearchCompletion{.error = "Project search query is empty"};
     }
 
-    const uint32_t regex_options = UsesCaseSensitiveSearch(query, options.case_mode) ? 0u
-                                                                                      : PCRE2_CASELESS;
+    const uint32_t regex_options = util::SearchRegexCompileOptions(
+        query, UsesCaseSensitiveSearch(query, options.case_mode));
     regex_pattern.emplace(query, regex_options, "Invalid project search pattern");
     if (!regex_pattern->valid()) {
       return SearchCompletion{.error = regex_pattern->error()};

@@ -35,6 +35,41 @@ struct RegexMatchRange {
   std::size_t end = 0;
 };
 
+// Compile options for a user-facing SEARCH pattern (project-wide, in-file, and
+// replace all share this), given whether the search is case sensitive.
+//
+// The literal search path folds Unicode case — `Δ` finds `δ`, `É` finds `é` (see
+// util::Utf8CaseFold) — but the regex path only ever passed PCRE2_CASELESS,
+// which without PCRE2_UTF folds ASCII and nothing else. So the SAME query
+// matched case-insensitively as a literal and case-sensitively as a regex.
+//
+// Turning UTF/UCP on unconditionally would slow the dominant path: essentially
+// every real query is ASCII, where PCRE2_CASELESS alone is already exactly
+// right and byte-oriented matching is faster. So enable Unicode handling only
+// when it can change the answer — a case-insensitive search whose query
+// actually carries a non-ASCII byte.
+//
+// PCRE2_MATCH_INVALID_UTF (PCRE2 >= 10.34) comes along for the ride whenever UTF
+// is on: search subjects are arbitrary file bytes, and without it a single
+// invalid byte makes pcre2_match refuse the whole line, silently hiding matches
+// elsewhere in it.
+inline std::uint32_t SearchRegexCompileOptions(std::string_view query, bool case_sensitive) {
+  if (case_sensitive) {
+    return 0u;
+  }
+  const bool query_has_non_ascii =
+      std::any_of(query.begin(), query.end(),
+                  [](char c) { return static_cast<unsigned char>(c) >= 0x80; });
+  if (!query_has_non_ascii) {
+    return PCRE2_CASELESS;
+  }
+#ifdef PCRE2_MATCH_INVALID_UTF
+  return PCRE2_CASELESS | PCRE2_UTF | PCRE2_UCP | PCRE2_MATCH_INVALID_UTF;
+#else
+  return PCRE2_CASELESS | PCRE2_UTF | PCRE2_UCP;
+#endif
+}
+
 inline std::string BuildRegexErrorMessage(std::string_view prefix,
                                           int error_code,
                                           PCRE2_SIZE error_offset) {

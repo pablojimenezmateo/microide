@@ -515,7 +515,7 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   // thread-safe-const value shared read-only by the background job.
   std::shared_ptr<util::CompiledRegex> regex;
   if (regex_mode) {
-    const uint32_t regex_options = case_sensitive ? 0u : PCRE2_CASELESS;
+    const uint32_t regex_options = util::SearchRegexCompileOptions(query, case_sensitive);
     regex = std::make_shared<util::CompiledRegex>(query, regex_options,
                                                   "Invalid project search pattern");
     if (!regex->valid()) {
