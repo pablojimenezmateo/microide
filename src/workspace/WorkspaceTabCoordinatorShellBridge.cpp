@@ -92,7 +92,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .apply_detected_indent_on_open =
               [this](editor::TextViewport& viewport) { ApplyDetectedIndentOnOpen(viewport); },
           .make_editor_tab_state =
-              [this](const editor::TextViewport& viewport) { return MakeEditorTabState(viewport); },
+              [](const editor::TextViewport& viewport) { return MakeEditorTabState(viewport); },
           .editor_view_path =
               [this](const TabEntry::EditorTabState& editor_state) {
                 return EditorViewPath(editor_state);

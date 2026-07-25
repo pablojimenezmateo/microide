@@ -30,11 +30,9 @@ std::optional<std::size_t> BottomPanelLineIndexAtPoint(
 }  // namespace
 
 PanelMouseCoordinator::PanelMouseCoordinator(ProjectWorkspaceState& state,
-                                             MenuSurfaceState& menu_state,
                                              InteractionState& interaction_state,
                                              Operations operations)
     : state_(state),
-      menu_state_(menu_state),
       interaction_state_(interaction_state),
       operations_(std::move(operations)) {}
 
@@ -450,11 +448,11 @@ bool PanelMouseCoordinator::HandleMouseCaptureButton(const SDL_Event& event, boo
 PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
   auto terminal_panel = MakeTerminalPanelService();
   return PanelMouseCoordinator(
-      context_.current_project_state, context_.menu_state, context_.interaction_state,
+      context_.current_project_state, context_.interaction_state,
       PanelMouseCoordinator::Operations{
           .bottom_panel_visible = [this]() { return BottomPanelVisible(); },
           .bottom_panel_resize_handle_rect =
-              [this](const WorkspaceLayout& layout) { return BottomPanelResizeHitRect(layout); },
+              [](const WorkspaceLayout& layout) { return BottomPanelResizeHitRect(layout); },
           .compute_bottom_panel_log_layout =
               [this](const WorkspaceLayout& layout, std::size_t line_count) {
                 return ComputeBottomPanelLogLayout(layout, line_count);
@@ -481,7 +479,7 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
           .open_anchored_menu =
               [this](MenuId id, const SDL_FRect& rect) { MakeMenuCoordinator().OpenAnchoredMenu(id, rect); },
           .bottom_panel_content_rect =
-              [this](const WorkspaceLayout& layout) { return BottomPanelContentRect(layout); },
+              [](const WorkspaceLayout& layout) { return BottomPanelContentRect(layout); },
           .read_primary_selection_text =
               [terminal_panel]() mutable { return terminal_panel.ReadPrimarySelectionText(); },
           .clear_terminal_selection =

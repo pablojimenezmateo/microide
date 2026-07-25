@@ -632,7 +632,15 @@ endif()
 # only: the test binary's per-file Register*Tests entry points are declared in a
 # header each TU deliberately does not include, so -Wmissing-declarations is all
 # noise there.
-set(MICROIDE_EXTRA_WARNINGS -Wduplicated-cond -Wmissing-declarations)
+#
+# -Wduplicated-cond is GCC-only; clang rejects the flag with
+# -Wunknown-warning-option, which -Werror would turn into a hard build failure —
+# and the sanitizer presets build with clang. Keep the GCC-only flags behind the
+# compiler check; -Wmissing-declarations exists in both.
+set(MICROIDE_EXTRA_WARNINGS -Wmissing-declarations)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  list(APPEND MICROIDE_EXTRA_WARNINGS -Wduplicated-cond)
+endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide_core PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers ${MICROIDE_EXTRA_WARNINGS})

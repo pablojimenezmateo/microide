@@ -618,7 +618,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         editor::ParseDiagnosticSeverity(
             GetSettingValue("diagnostics.min_severity").value_or("hint"));
     const auto diagnostics_for_viewport =
-        [this, &project_state, diagnostics_min_severity](const editor::TextViewport& viewport)
+        [&project_state, diagnostics_min_severity](const editor::TextViewport& viewport)
         -> std::span<const editor::PublishedDiagnostic> {
       if (viewport.path().empty()) {
         return {};

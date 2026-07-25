@@ -72,7 +72,6 @@ class PanelMouseCoordinator {
   };
 
   PanelMouseCoordinator(ProjectWorkspaceState& state,
-                        MenuSurfaceState& menu_state,
                         InteractionState& interaction_state,
                         Operations operations);
 
@@ -94,7 +93,6 @@ class PanelMouseCoordinator {
   TerminalTabState* ActivePanelTerminalTab();
 
   ProjectWorkspaceState& state_;
-  MenuSurfaceState& menu_state_;
   InteractionState& interaction_state_;
   Operations operations_;
 };

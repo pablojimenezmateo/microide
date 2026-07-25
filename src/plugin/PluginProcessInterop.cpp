@@ -258,6 +258,39 @@ const char* CheckProcessCapability(const PluginFsContext& fs, const ProcessRunAr
 
 }  // namespace
 
+// The two process entry points (`process.run`, `process.run_async`) ran the child
+// with a byte-identical option block and pushed a byte-identical result table.
+// Both are security-relevant (the sandbox and the capability-checked argv/cwd
+// flow through here), so a divergence between the copies would be exactly the
+// kind that goes unnoticed.
+static platform::SubprocessResult RunPluginSubprocess(const PluginFsContext& fs,
+                                                      ProcessRunArgs& parsed) {
+  return platform::RunSubprocess(
+      parsed.argv, platform::SubprocessOptions{
+                       .cwd = parsed.cwd,
+                       .stdin_text = parsed.stdin_text,
+                       .environment_overrides = std::move(parsed.environment_overrides),
+                       .capture_stdout = true,
+                       .capture_stderr = true,
+                       .timeout_ms = kPluginProcessTimeoutMs,
+                       .sandbox = MakeSandbox(fs),
+                   });
+}
+
+// Pushes { exit_code, ok, stdout, stderr }. Only Lua stack calls, so it holds no
+// non-trivially-destructible local that a Lua memory error could longjmp over.
+static void PushProcessResultTable(lua_State* state, const platform::SubprocessResult& result) {
+  lua_createtable(state, 0, 4);
+  lua_pushinteger(state, result.exit_code);
+  lua_setfield(state, -2, "exit_code");
+  lua_pushboolean(state, result.exit_code == 0 ? 1 : 0);
+  lua_setfield(state, -2, "ok");
+  lua_pushlstring(state, result.stdout_text.c_str(), result.stdout_text.size());
+  lua_setfield(state, -2, "stdout");
+  lua_pushlstring(state, result.stderr_text.c_str(), result.stderr_text.size());
+  lua_setfield(state, -2, "stderr");
+}
+
 int LuaProcessRun(lua_State* state, const PluginFsContext& fs) {
   const char* error = nullptr;
   {
@@ -267,25 +300,8 @@ int LuaProcessRun(lua_State* state, const PluginFsContext& fs) {
       error = CheckProcessCapability(fs, parsed);
     }
     if (error == nullptr) {
-      const platform::SubprocessResult result = platform::RunSubprocess(
-          parsed.argv, platform::SubprocessOptions{
-                           .cwd = parsed.cwd,
-                           .stdin_text = parsed.stdin_text,
-                           .environment_overrides = std::move(parsed.environment_overrides),
-                           .capture_stdout = true,
-                           .capture_stderr = true,
-                           .timeout_ms = kPluginProcessTimeoutMs,
-                           .sandbox = MakeSandbox(fs),
-                       });
-      lua_createtable(state, 0, 4);
-      lua_pushinteger(state, result.exit_code);
-      lua_setfield(state, -2, "exit_code");
-      lua_pushboolean(state, result.exit_code == 0 ? 1 : 0);
-      lua_setfield(state, -2, "ok");
-      lua_pushlstring(state, result.stdout_text.c_str(), result.stdout_text.size());
-      lua_setfield(state, -2, "stdout");
-      lua_pushlstring(state, result.stderr_text.c_str(), result.stderr_text.size());
-      lua_setfield(state, -2, "stderr");
+      const platform::SubprocessResult result = RunPluginSubprocess(fs, parsed);
+      PushProcessResultTable(state, result);
       return 1;
     }
   }
@@ -317,26 +333,9 @@ int LuaProcessRunAsync(lua_State* state, const PluginFsContext& fs) {
       // callback on its first instruction. PCallNested is also protected, so a
       // callback error cannot longjmp over the C++ locals (`parsed`, `result`)
       // still alive here.
-      const platform::SubprocessResult result = platform::RunSubprocess(
-          parsed.argv, platform::SubprocessOptions{
-                           .cwd = parsed.cwd,
-                           .stdin_text = parsed.stdin_text,
-                           .environment_overrides = std::move(parsed.environment_overrides),
-                           .capture_stdout = true,
-                           .capture_stderr = true,
-                           .timeout_ms = kPluginProcessTimeoutMs,
-                           .sandbox = MakeSandbox(fs),
-                       });
+      const platform::SubprocessResult result = RunPluginSubprocess(fs, parsed);
       lua_pushvalue(state, 3);
-      lua_createtable(state, 0, 4);
-      lua_pushinteger(state, result.exit_code);
-      lua_setfield(state, -2, "exit_code");
-      lua_pushboolean(state, result.exit_code == 0 ? 1 : 0);
-      lua_setfield(state, -2, "ok");
-      lua_pushlstring(state, result.stdout_text.c_str(), result.stdout_text.size());
-      lua_setfield(state, -2, "stdout");
-      lua_pushlstring(state, result.stderr_text.c_str(), result.stderr_text.size());
-      lua_setfield(state, -2, "stderr");
+      PushProcessResultTable(state, result);
       LuaRuntime* runtime = *static_cast<LuaRuntime**>(lua_getextraspace(state));
       callback_failed = runtime == nullptr || !runtime->PCallNested(1, 0, &callback_error);
     }

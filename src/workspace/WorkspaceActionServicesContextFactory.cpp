@@ -531,7 +531,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
                 return RunAllDiscoveredTests(error_message);
               },
           .request_inline_completion =
-              [this](std::string* error_message) {
+              [](std::string* error_message) {
                 if (error_message != nullptr) {
                   *error_message = "Inline completion is retired";
                 }

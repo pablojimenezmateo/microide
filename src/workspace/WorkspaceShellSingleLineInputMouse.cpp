@@ -17,10 +17,8 @@ namespace microide::workspace {
 namespace {
 
 constexpr float kSingleLineInputTextPadX = 6.0f;
-constexpr float kOverlayInset = 18.0f;
 constexpr float kOverlayFieldOuterPad = 12.0f;
 constexpr float kOverlayFieldHeight = 18.0f;
-constexpr float kSidebarSearchTextPadX = 6.0f;
 
 // Sets caret to byte_offset, then either anchors a selection (extend=true) or
 // clears any existing selection (extend=false). Mirrors editor convention so

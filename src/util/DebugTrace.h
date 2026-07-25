@@ -5,7 +5,7 @@
 
 namespace microide::util {
 
-class JsonValue;
+struct JsonValue;
 
 // Diagnostic tracer for the debugger / DAP subsystem. Modeled on StartupTrace:
 // a process-global, lazily-initialized sink that is silent unless explicitly

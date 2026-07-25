@@ -519,6 +519,38 @@ std::vector<PluginHost::AnnotationLine> QueryAnnotations(
   return lines;
 }
 
+// Decodes the session table a `login`/`refresh` auth-provider callback left on
+// the Lua stack top. Both call sites carried a byte-identical copy of this
+// (including the scope-count cap), differing only in whether an absent `id`
+// falls back to the session id being refreshed — a divergence risk on a
+// security-relevant path. Leaves the stack depth unchanged.
+static void ReadAuthSessionTable(lua_State* state, std::string_view fallback_id,
+                          PluginHost::AuthSessionData* session) {
+  if (!lua_istable(state, -1)) {
+    return;
+  }
+  session->id = lua_interop::ReadStringField(state, -1, "id");
+  if (session->id.empty() && !fallback_id.empty()) {
+    session->id = std::string(fallback_id);
+  }
+  session->account = lua_interop::ReadStringField(state, -1, "account");
+  session->access_token = lua_interop::ReadStringField(state, -1, "access_token");
+  lua_interop::GetFieldProtected(state, -1, "scopes");
+  if (lua_istable(state, -1)) {
+    const int scopes_index = lua_absindex(state, -1);
+    const lua_Integer scopes_count = std::min<lua_Integer>(
+        static_cast<lua_Integer>(lua_rawlen(state, scopes_index)), kMaxAuthScopes);
+    for (lua_Integer i = 1; i <= scopes_count; ++i) {
+      lua_rawgeti(state, scopes_index, i);
+      if (lua_isstring(state, -1)) {
+        session->scopes.emplace_back(lua_tostring(state, -1));
+      }
+      lua_pop(state, 1);
+    }
+  }
+  lua_pop(state, 1);
+}
+
 bool LoginAuthProvider(
     std::string_view provider_id,
     const std::vector<std::string>& scopes,
@@ -559,28 +591,11 @@ bool LoginAuthProvider(
     }
     return false;
   }
-  if (lua_istable(state, -1)) {
-    session->id = lua_interop::ReadStringField(state, -1, "id");
-    session->account = lua_interop::ReadStringField(state, -1, "account");
-    session->access_token = lua_interop::ReadStringField(state, -1, "access_token");
-    lua_interop::GetFieldProtected(state, -1, "scopes");
-    if (lua_istable(state, -1)) {
-      const int scopes_index = lua_absindex(state, -1);
-      const lua_Integer scopes_count = std::min<lua_Integer>(
-          static_cast<lua_Integer>(lua_rawlen(state, scopes_index)), kMaxAuthScopes);
-      for (lua_Integer i = 1; i <= scopes_count; ++i) {
-        lua_rawgeti(state, scopes_index, i);
-        if (lua_isstring(state, -1)) {
-          session->scopes.emplace_back(lua_tostring(state, -1));
-        }
-        lua_pop(state, 1);
-      }
-    }
-    lua_pop(state, 1);
-  }
+  ReadAuthSessionTable(state, std::string_view{}, session);
   lua_pop(state, 1);
   return !session->id.empty();
 }
+
 
 bool RefreshAuthSession(
     std::string_view provider_id,
@@ -620,28 +635,7 @@ bool RefreshAuthSession(
     }
     return false;
   }
-  if (lua_istable(state, -1)) {
-    session->id = lua_interop::ReadStringField(state, -1, "id");
-    if (session->id.empty()) {
-      session->id = std::string(session_id);
-    }
-    session->account = lua_interop::ReadStringField(state, -1, "account");
-    session->access_token = lua_interop::ReadStringField(state, -1, "access_token");
-    lua_interop::GetFieldProtected(state, -1, "scopes");
-    if (lua_istable(state, -1)) {
-      const int scopes_index = lua_absindex(state, -1);
-      const lua_Integer scopes_count = std::min<lua_Integer>(
-          static_cast<lua_Integer>(lua_rawlen(state, scopes_index)), kMaxAuthScopes);
-      for (lua_Integer i = 1; i <= scopes_count; ++i) {
-        lua_rawgeti(state, scopes_index, i);
-        if (lua_isstring(state, -1)) {
-          session->scopes.emplace_back(lua_tostring(state, -1));
-        }
-        lua_pop(state, 1);
-      }
-    }
-    lua_pop(state, 1);
-  }
+  ReadAuthSessionTable(state, session_id, session);
   lua_pop(state, 1);
   return !session->id.empty();
 }

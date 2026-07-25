@@ -1,6 +1,7 @@
 #include "terminal/TerminalSessionInputEncoding.h"
 
 #include "terminal/TerminalMouseEncoder.h"
+#include "util/StringUtil.h"
 
 #include <string>
 
@@ -15,28 +16,11 @@ int ModifierParam(const TerminalSession::KeyPress& press) {
          (press.super ? 8 : 0);
 }
 
-void AppendUtf8(std::string& out, char32_t codepoint) {
-  // Reject unencodable scalars (surrogates, above U+10FFFF) so an invalid
-  // codepoint from SDL or a test seam never sends malformed UTF-8 to the child.
-  if (codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
-    codepoint = 0xFFFD;
-  }
-  if (codepoint <= 0x7F) {
-    out.push_back(static_cast<char>(codepoint));
-  } else if (codepoint <= 0x7FF) {
-    out.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
-    out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
-  } else if (codepoint <= 0xFFFF) {
-    out.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
-    out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
-    out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
-  } else {
-    out.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
-    out.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
-    out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
-    out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
-  }
-}
+// util::AppendUtf8 is the single UTF-8 encoder (it applies the same
+// surrogate/out-of-range folding to U+FFFD this file used to duplicate), so an
+// invalid codepoint from SDL or a test seam can never send malformed bytes to
+// the child.
+using util::AppendUtf8;
 
 // CSI-u functional encoding: ESC [ <codepoint> [; <mod>] u
 std::string CsiU(char32_t codepoint, int modifier_param) {

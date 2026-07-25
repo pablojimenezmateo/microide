@@ -85,8 +85,14 @@ bool AsciiGlyphAtlas::EnsureSlotFilled(std::size_t index, char ch) {
   SDL_SetSurfaceBlendMode(glyph, SDL_BLENDMODE_NONE);
   const int w = std::min(glyph->w, reserved_slot_width_);
   const int h = std::min(glyph->h, font_height_px_);
+  // Clip on the SOURCE rect. SDL_BlitSurface ignores dstrect's width/height (it
+  // takes the size from the source), so passing a null srcrect made the clamps
+  // above dead code: a rendered glyph wider than the measured advance + 2 px of
+  // headroom — real for italic or overhanging glyphs — blitted straight over the
+  // start of the NEXT slot, corrupting that character in the atlas.
+  SDL_Rect src{0, 0, w, h};
   SDL_Rect dst{slot.x, 0, w, h};
-  const bool blitted = SDL_BlitSurface(glyph, nullptr, atlas_, &dst);
+  const bool blitted = SDL_BlitSurface(glyph, &src, atlas_, &dst);
   SDL_DestroySurface(glyph);
   if (!blitted) {
     slot.failed = true;

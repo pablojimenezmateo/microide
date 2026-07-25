@@ -10,7 +10,7 @@
 
 namespace microide::workspace {
 
-class ProjectWorkspaceState;
+struct ProjectWorkspaceState;
 
 class PromptSurfaceService {
  public:

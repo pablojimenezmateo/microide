@@ -509,6 +509,32 @@ struct GroupTabRef {
   std::size_t tab_index = 0;
 };
 
+// Ghost text (Copilot-style inline suggestion). At most one is live at a time
+// (single owner, last writer wins). The host validates the anchor against the
+// live caret before storing and clears it synchronously on any
+// edit/caret/focus/buffer change, so it never renders stale. `lines[0]` is the
+// caret-line tail inserted at `anchor_column`; `lines[1..]` are the dimmed rows
+// shown below. Split once at publish; the renderer hands out views into `lines`,
+// never copies per frame.
+//
+// Deliberately at NAMESPACE scope rather than nested inside
+// ProjectWorkspaceState::PluginEditorPresentation. A class nested in a
+// still-incomplete enclosing class does not have its default-member-initializers
+// parsed yet, so clang evaluates `std::is_constructible_v<GhostText>` as FALSE
+// while instantiating the enclosing `std::optional<GhostText>` and caches that
+// answer — `ghost_text.emplace()` then fails to compile under clang (GCC
+// re-evaluates later and accepts it). Keeping it out here makes the type
+// complete before any optional over it is instantiated.
+struct PluginGhostText {
+  std::string owner;                   // publishing plugin id
+  std::filesystem::path path;          // normalized target buffer
+  std::size_t anchor_line = 0;         // 0-based caret line it was computed for
+  std::size_t anchor_column = 0;       // 0-based caret column (byte) = insert point
+  std::uint64_t content_revision = 0;  // viewport rev at store time (staleness)
+  std::vector<std::string> lines;
+  bool empty() const { return lines.empty(); }
+};
+
 struct ProjectWorkspaceState {
   std::filesystem::path root;
   bool initialized = false;
@@ -580,22 +606,9 @@ struct ProjectWorkspaceState {
   struct PluginEditorPresentation {
     editor::PluginDecorationStore decorations;
     editor::PluginSurfaceStore surfaces;
-    // Ghost text (Copilot-style inline suggestion). At most one is live at a
-    // time (single owner, last writer wins). The host validates the anchor
-    // against the live caret before storing and clears it synchronously on any
-    // edit/caret/focus/buffer change, so it never renders stale. `lines[0]` is
-    // the caret-line tail inserted at `anchor_column`; `lines[1..]` are the
-    // dimmed rows shown below. Split once at publish; the renderer hands out
-    // views into `lines`, never copies per frame.
-    struct GhostText {
-      std::string owner;                   // publishing plugin id
-      std::filesystem::path path;          // normalized target buffer
-      std::size_t anchor_line = 0;         // 0-based caret line it was computed for
-      std::size_t anchor_column = 0;       // 0-based caret column (byte) = insert point
-      std::uint64_t content_revision = 0;  // viewport rev at store time (staleness)
-      std::vector<std::string> lines;
-      bool empty() const { return lines.empty(); }
-    };
+    // See PluginGhostText above; aliased here so the historical
+    // PluginEditorPresentation::GhostText spelling keeps resolving.
+    using GhostText = PluginGhostText;
     std::optional<GhostText> ghost_text;
   };
   std::unique_ptr<PluginEditorPresentation> plugin_presentation;

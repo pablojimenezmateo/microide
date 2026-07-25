@@ -901,7 +901,7 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .execute_selected_code_action =
               [this]() { return assist_service_.ExecuteSelectedCodeAction(); },
           .request_inline_completion =
-              [this](std::string* error_message) {
+              [](std::string* error_message) {
                 // Ghost text is published reactively by plugins; there is no
                 // host-driven manual request. Report unavailable so the action
                 // surfaces a clear message rather than silently doing nothing.
