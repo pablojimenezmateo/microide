@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [Unreleased]
+
+A cross-subsystem review sweep. No public API or persisted-format changes.
+
+### Fixed
+
+- **Syntax highlighting no longer disappears on lines with invalid UTF-8.** A
+  Latin-1 source file, or a single mis-encoded byte in an otherwise-UTF-8 file,
+  silently rendered that entire line unhighlighted.
+- **Case-insensitive regex search now folds Unicode case**, matching what literal
+  search already did. Searching `Δ` finds `δ`, `É` finds `é`. ASCII queries keep
+  the faster byte-oriented path.
+- **Boolean settings honour `FALSE` and `no`.** A setting written as `FALSE` (any
+  casing) or `no` read as *enabled* — the opposite of what was written.
+- **Glyph rendering.** A character rendered wider than its measured advance could
+  overwrite its neighbour in the glyph atlas, corrupting that character.
+- **Reference snippets from large files** (Assist) returned extra unrelated lines
+  and read the whole file instead of stopping at the requested range.
+
+### Changed
+
+- **Faster diffs.** Hunk alignment — the dominant phase of building a comparison
+  — is ~39% faster on a diff with several thousand modified lines, via reused
+  per-thread working buffers, a rolling-row token LCS, and skipping line-pair
+  similarity work that cannot affect the result.
+- **Faster whole-document operations.** Save, in-file find, replace-all, JSON
+  formatting, compare review, and LSP sync now take the document straight from
+  the piece tree in one walk, instead of first materializing one heap-allocated
+  string per line.
+- **Project indexing** does less work per filesystem entry (allocation-free path
+  containment).
+
 ## [2.7.2] - 2026-07-19
 
 A **search, compare, and editor** cycle on top of 2.7.1. Find & replace
