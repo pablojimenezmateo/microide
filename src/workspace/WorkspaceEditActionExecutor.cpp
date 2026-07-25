@@ -94,19 +94,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
         context_.Notify(NotificationService::Tone::Warning, "No active buffer to format");
         return DispatchResult::Handled;
       }
-      // Join the buffer into one contiguous string via zero-copy line views.
-      const editor::TextBuffer& lines = viewport->lines();
-      const std::size_t line_count = lines.LineCount();
+      // The piece tree already holds the document '\n'-joined, so take it in one
+      // walk rather than two tree descents per line (which also materializes
+      // every piece-spanning line into the per-line cache on the way).
       std::string source;
-      {
-        std::size_t total = 0;
-        for (std::size_t i = 0; i < line_count; ++i) total += lines.LineView(i).size() + 1;
-        source.reserve(total);
-        for (std::size_t i = 0; i < line_count; ++i) {
-          if (i != 0) source.push_back('\n');
-          source.append(lines.LineView(i));
-        }
-      }
+      viewport->lines().AppendWholeText(source);
       // Indentation follows the buffer's own editor settings (VSCode-style).
       const std::string indent_unit = viewport->soft_tabs()
                                           ? std::string(viewport->indent_width(), ' ')
