@@ -317,6 +317,37 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Debugger",
       },
       SettingSpec{
+          .id = "plugins.inline_surfaces",
+          .label = "Inline Plugin Surfaces",
+          .description = "Let plugins render a content surface inset directly below the line it is "
+                         "anchored to, instead of only in the sidebar or bottom panel. Off by "
+                         "default; when off, no inset row gaps are laid out and the editor's row "
+                         "geometry stays on its fast path.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = false,
+          .default_int = 0,
+          .default_float = 0.0f,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Plugins",
+      },
+      SettingSpec{
+          .id = "plugins.code_lens_above",
+          .label = "Code Lenses Above The Line",
+          .description = "Render plugin code lenses as a strip inset above their line, the way "
+                         "VSCode does, instead of as an end-of-line annotation. Off by default; "
+                         "when off, lenses stay inline and no inset row gaps are laid out.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = false,
+          .default_int = 0,
+          .default_float = 0.0f,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Plugins",
+      },
+      SettingSpec{
           .id = "plugins.ghost_text",
           .label = "Inline Suggestions (Ghost Text)",
           .description = "Let plugins (e.g. a Copilot bridge) show dimmed inline AI suggestions at "

@@ -431,6 +431,119 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
   return result;
 }
 
+// Every bool-typed setting the code READS must be declared in
+// WorkspaceSettingsRegistry. An unregistered key is not a compile error and not a
+// runtime error — it simply reads as its default forever, so the feature it gates
+// is invisible in the Settings overlay, absent from the docs, and reachable only
+// by hand-editing a config file with a key name found in a source comment. Two
+// shipped plugin-rendering toggles (plugins.inline_surfaces, plugins.code_lens_above)
+// were in exactly that state.
+//
+// Scans the balanced argument list of each Setting* read helper for its first
+// dotted string literal, code-masked so comments and unrelated literals are not
+// mistaken for call sites.
+RuleResult CheckSettingsReadAreRegistered(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "settings read in code must be declared in the settings registry";
+  result.hard_fail = true;
+
+  const std::filesystem::path registry_path =
+      repo_root / "src/workspace/WorkspaceSettingsRegistry.cpp";
+  const std::string registry_text = ReadText(registry_path);
+  if (registry_text.empty()) {
+    result.violations.push_back(Violation{
+        .path = registry_path,
+        .line = 1,
+        .message = "rule target moved — the settings registry could not be read; re-anchor "
+                   "CheckSettingsReadAreRegistered",
+    });
+    return result;
+  }
+  // Declared ids: `.id = "..."` entries.
+  std::vector<std::string> declared;
+  const std::regex declared_pattern(R"RX(\.id\s*=\s*"([a-z][a-z0-9_.]*)")RX");
+  for (std::sregex_iterator it(registry_text.begin(), registry_text.end(), declared_pattern), last;
+       it != last; ++it) {
+    declared.push_back((*it)[1].str());
+  }
+  if (declared.empty()) {
+    result.violations.push_back(Violation{
+        .path = registry_path,
+        .line = 1,
+        .message = "rule target moved — no setting declarations found; re-anchor "
+                   "CheckSettingsReadAreRegistered",
+    });
+    return result;
+  }
+
+  const std::regex read_pattern(
+      R"(\b(SettingFlagEnabled|SettingEnabled|SettingOn|SettingBoolIsOn)\s*\()");
+  const std::regex literal_pattern(R"RX("([a-z][a-z0-9_.]*)")RX");
+  std::size_t scanned_reads = 0;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::filesystem::path extension = entry.path().extension();
+    if (extension != ".cpp" && extension != ".h" && extension != ".inc") {
+      continue;
+    }
+    if (entry.path().filename() == "WorkspaceSettingsRegistry.cpp") {
+      continue;  // the declarations themselves
+    }
+    const std::string text = ReadText(entry.path());
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    for (std::sregex_iterator it(text.begin(), text.end(), read_pattern), last; it != last; ++it) {
+      const std::size_t open_paren = static_cast<std::size_t>(it->position() + it->length()) - 1;
+      if (open_paren >= is_code.size() || !is_code[open_paren]) {
+        continue;
+      }
+      std::size_t depth = 0;
+      std::size_t close_paren = open_paren;
+      for (std::size_t i = open_paren; i < text.size(); ++i) {
+        if (text[i] == '(') {
+          ++depth;
+        } else if (text[i] == ')') {
+          if (--depth == 0) {
+            close_paren = i;
+            break;
+          }
+        }
+      }
+      const std::string call = text.substr(open_paren, close_paren - open_paren + 1);
+      std::smatch key_match;
+      if (!std::regex_search(call, key_match, literal_pattern)) {
+        continue;  // reads a value held in a variable; nothing to check
+      }
+      const std::string key = key_match[1].str();
+      if (key.find('.') == std::string::npos) {
+        continue;  // not a dotted setting id
+      }
+      ++scanned_reads;
+      if (std::find(declared.begin(), declared.end(), key) != declared.end()) {
+        continue;
+      }
+      result.violations.push_back(Violation{
+          .path = entry.path(),
+          .line = LineNumberAt(text, open_paren),
+          .message = "setting `" + key +
+                     "` is read here but not declared in WorkspaceSettingsRegistry — it will read "
+                       "as its default forever and stay invisible in the Settings overlay",
+      });
+    }
+  }
+
+  if (scanned_reads == 0) {
+    result.violations.push_back(Violation{
+        .path = repo_root / "src/workspace",
+        .line = 1,
+        .message = "rule target moved — no literal-keyed settings reads found to scan; re-anchor "
+                   "CheckSettingsReadAreRegistered",
+    });
+  }
+  return result;
+}
+
 std::vector<RuleResult> RunTerminalArchitectureRules(const std::filesystem::path& repo_root) {
   return {
       CheckTerminalSessionTuSize(repo_root),
@@ -445,6 +558,7 @@ std::vector<RuleResult> RunTerminalArchitectureRules(const std::filesystem::path
       CheckArchitectureRulesTuSize(repo_root),
       CheckWorkspaceArchitectureRulesDispatcherSize(repo_root),
       CheckDescriptorCreationIsCloseOnExec(repo_root),
+      CheckSettingsReadAreRegistered(repo_root),
   };
 }
 
