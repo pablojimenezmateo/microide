@@ -83,6 +83,21 @@ class PieceTree {
   // Total bytes of the logical document (lines joined by '\n').
   std::size_t ByteSize() const noexcept { return TreeLength(root_); }
 
+  // Append the whole document ('\n'-joined, exactly the tree's own
+  // representation) to `out`. One pruned in-order walk with a memcpy per piece.
+  // Prefer this over looping LineView to build whole-buffer text: that costs two
+  // tree descents per line and, for lines that span pieces, materializes them
+  // into the per-line cache — a second full copy of the document retained until
+  // the next mutation.
+  void AppendWholeText(std::string& out) const {
+    const std::uint32_t bytes = TreeLength(root_);
+    if (bytes == 0) {
+      return;
+    }
+    out.reserve(out.size() + bytes);
+    CopyRange(0, bytes, out);
+  }
+
   // Testing seam: force the add-buffer compaction that InsertText performs
   // automatically when the append-only add_ buffer would overflow the 32-bit
   // offset space. Content and line count are invariant across a compaction; the

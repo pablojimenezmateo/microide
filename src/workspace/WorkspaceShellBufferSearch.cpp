@@ -36,20 +36,13 @@ editor::SelectionRange WholeDocumentRange(const editor::TextViewport& viewport) 
 // The whole buffer as one '\n'-joined string (the buffer is internally
 // CRLF-normalized, so this contains only '\n' line breaks).
 std::string BuildWholeBufferContent(const editor::TextViewport& viewport) {
-  const editor::TextBuffer& buffer = viewport.lines();
-  const std::size_t line_count = buffer.LineCount();
-  std::size_t total = 0;
-  for (std::size_t i = 0; i < line_count; ++i) {
-    total += buffer.LineLength(i) + 1;
-  }
+  // The piece tree already stores exactly this: the document '\n'-joined. One
+  // walk with a memcpy per piece, instead of two tree descents per line plus a
+  // per-line cache entry for every line that spans pieces (which, on a heavily
+  // edited buffer, retained a second full copy of the document until the next
+  // mutation).
   std::string content;
-  content.reserve(total);
-  for (std::size_t i = 0; i < line_count; ++i) {
-    content.append(buffer.LineView(i));
-    if (i + 1 < line_count) {
-      content.push_back('\n');
-    }
-  }
+  viewport.lines().AppendWholeText(content);
   return content;
 }
 

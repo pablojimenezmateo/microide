@@ -88,6 +88,17 @@ class TextBuffer {
   // Full materialized copy of the document.
   std::vector<std::string> ToVector() const { return tree_.ToVector(); }
 
+  // The whole document as one '\n'-joined string, appended to `out`.
+  //
+  // This is what the piece tree already stores, so it is a single tree walk with
+  // one memcpy per piece. Building the same string by looping LineView costs a
+  // pair of binary searches per line AND, on a heavily edited buffer, populates
+  // the piece tree's per-line materialization cache with a second full copy of
+  // the document that is retained until the next mutation.
+  void AppendWholeText(std::string& out) const {
+    tree_.AppendWholeText(out);
+  }
+
   // Whole-document bridge for inherently O(n) cold paths (see class comment).
   // Prefer LineView for anything per-line or hot.
   const std::vector<std::string>& Snapshot() const {

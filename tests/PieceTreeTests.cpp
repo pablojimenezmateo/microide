@@ -321,6 +321,49 @@ void TestPieceTreeLiveDocumentByteCeiling() {
   Expect(tree.LineCount() == at_cap.size() - 1, "the delete applied");
 }
 
+// AppendWholeText must be byte-identical to the '\n'-join of every line — that
+// is the contract the in-file find/replace surface relies on, and it replaced a
+// hand-rolled per-line join. Exercised on a tree that has been mid-line edited
+// so lines genuinely span pieces (the case where the per-line path also had to
+// materialize into the line cache).
+void TestPieceTreeAppendWholeTextMatchesLineJoin() {
+  const auto join = [](const PieceTree& tree) {
+    std::string joined;
+    for (std::size_t i = 0; i < tree.LineCount(); ++i) {
+      if (i != 0) {
+        joined.push_back('\n');
+      }
+      joined.append(tree.LineView(i));
+    }
+    return joined;
+  };
+
+  PieceTree empty;
+  std::string out;
+  empty.AppendWholeText(out);
+  Expect(out == join(empty), "empty document: whole text matches the line join");
+
+  PieceTree tree({"alpha", "", "gamma delta", "epsilon"});
+  out.clear();
+  tree.AppendWholeText(out);
+  Expect(out == join(tree), "fresh document: whole text matches the line join");
+  Expect(out.size() == tree.ByteSize(), "whole text length equals ByteSize()");
+
+  // Force lines to span multiple pieces.
+  tree.InsertTextForTesting(2, "XYZ");
+  tree.InsertTextForTesting(15, "-mid-");
+  tree.InsertLine(1, "inserted");
+  out.clear();
+  tree.AppendWholeText(out);
+  Expect(out == join(tree), "after mid-line edits: whole text still matches the line join");
+  Expect(out.size() == tree.ByteSize(), "whole text length still equals ByteSize()");
+
+  // Appends rather than assigns: an existing prefix must survive.
+  std::string prefixed = "PREFIX:";
+  tree.AppendWholeText(prefixed);
+  Expect(prefixed == "PREFIX:" + out, "AppendWholeText appends, it does not overwrite");
+}
+
 }  // namespace
 
 void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
@@ -332,6 +375,8 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PieceTree/SliceLines", TestPieceTreeSliceLines);
   AddTest(tests, "PieceTree/SliceLinesEquivalence", TestPieceTreeSliceLinesEquivalence);
   AddTest(tests, "PieceTree/ResetFromTextMatchesReset", TestPieceTreeResetFromTextMatchesReset);
+  AddTest(tests, "PieceTree/AppendWholeTextMatchesLineJoin",
+          TestPieceTreeAppendWholeTextMatchesLineJoin);
   AddTest(tests, "PieceTree/SpanningLineViewStableAcrossReReads",
           TestPieceTreeSpanningLineViewStableAcrossReReads);
 }
