@@ -36,7 +36,10 @@ bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platfor
   // (lexically_relative would yield a "../…" relative that RelativeToRoot used to
   // accept). Reject it outright so a watcher/scanner/helper event for an
   // out-of-root file cannot pass the filter and feed out-of-root indexing.
-  if (!util::PathEqualsOrWithin(normalized_path, root_)) {
+  // Both sides are already normalized (normalized_path just above, root_ in the
+  // constructor), so use the allocation-free variant: this runs once per
+  // filesystem entry of every index walk.
+  if (!util::NormalizedPathEqualsOrWithin(normalized_path, root_)) {
     return false;
   }
 

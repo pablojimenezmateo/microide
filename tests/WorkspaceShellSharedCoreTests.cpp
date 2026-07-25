@@ -634,6 +634,39 @@ void TestWorkspaceSharedPathMutationHelpers() {
   Expect(PathEqualsOrWithin(std::filesystem::path("a/b/c.cpp"), std::filesystem::path("a/b")),
          "relative (non-absolute) paths should resolve lexically without cwd");
 
+  // NormalizedPathEqualsOrWithin is the allocation-free variant used by the
+  // per-entry project traversal filter. It must agree with the general helper on
+  // every already-normalized input — including the sibling-prefix trap ("/tmp/pro"
+  // is a string prefix of "/tmp/project" but not a parent of it) and a "." root,
+  // whose members are spelled without any "./" prefix once normalized.
+  {
+    using microide::util::NormalizedPathEqualsOrWithin;
+    const auto same = [](const std::filesystem::path& c, const std::filesystem::path& r) {
+      return NormalizedPathEqualsOrWithin(c, r) == PathEqualsOrWithin(c, r);
+    };
+    Expect(NormalizedPathEqualsOrWithin(nested, root), "normalized variant detects nesting");
+    Expect(NormalizedPathEqualsOrWithin(root, root), "normalized variant matches the root");
+    Expect(!NormalizedPathEqualsOrWithin(std::filesystem::path("/tmp/projectile/x.cpp"), root),
+           "a sibling sharing a string prefix must not count as nested");
+    Expect(same(std::filesystem::path("/tmp/projectile/x.cpp"), root), "sibling-prefix agrees");
+    Expect(same(nested, root), "nested agrees");
+    Expect(same(root, root), "identity agrees");
+    Expect(same(std::filesystem::path("/tmp"), root), "parent-of-root agrees");
+    Expect(same(std::filesystem::path{}, root), "empty candidate agrees");
+    Expect(same(nested, std::filesystem::path{}), "empty root agrees");
+    Expect(same(std::filesystem::path("a/b/c.cpp"), std::filesystem::path("a/b")),
+           "relative nesting agrees");
+    Expect(same(std::filesystem::path("a/b/c.cpp"), std::filesystem::path(".")),
+           "a '.' root agrees for a relative member");
+    Expect(same(std::filesystem::path("../out/x"), std::filesystem::path(".")),
+           "a '.' root agrees for a path climbing out");
+    Expect(same(std::filesystem::path("/abs/x"), std::filesystem::path(".")),
+           "a '.' root agrees for an absolute path");
+    Expect(NormalizedPathEqualsOrWithin(std::filesystem::path("/tmp/x"),
+                                        std::filesystem::path("/")),
+           "a '/' root contains every absolute path");
+  }
+
   Expect(ReplacePathPrefix(nested, root / "src", root / "lib") ==
              std::filesystem::path("/tmp/project/lib/main.cpp"),
          "path prefix replacement should preserve the relative suffix");

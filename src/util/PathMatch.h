@@ -15,6 +15,54 @@ namespace microide::util {
   return a == b || a.lexically_normal() == b.lexically_normal();
 }
 
+// True when `candidate` is `root` itself or a path nested under it, for inputs the
+// caller has ALREADY normalized. Allocation-free: it answers with a prefix compare
+// on the two native strings instead of building the `lexically_normal()` /
+// `lexically_relative()` / `generic_string()` temporaries the general entry point
+// below needs (four allocations per call). Use it wherever the containment check
+// sits in a per-entry loop — the project traversal filter runs it once per
+// filesystem entry of every index walk.
+//
+// Passing a NON-normalized path here is a caller bug, not UB: the answer then
+// simply reflects the textual form ("a/./b" is not seen as within "a/b").
+[[nodiscard]] inline bool NormalizedPathEqualsOrWithin(const std::filesystem::path& candidate,
+                                                       const std::filesystem::path& root) {
+  const std::filesystem::path::string_type& candidate_text = candidate.native();
+  const std::filesystem::path::string_type& root_text = root.native();
+  if (candidate_text.empty() || root_text.empty()) {
+    return false;
+  }
+  if (candidate_text == root_text) {
+    return true;
+  }
+  const auto is_separator = [](std::filesystem::path::value_type c) {
+#ifdef _WIN32
+    return c == L'\\' || c == L'/';
+#else
+    return c == '/';
+#endif
+  };
+  // A "." root is the current directory, whose members are spelled without any
+  // "./" prefix once normalized ("./x" normalizes to "x"), so the prefix compare
+  // below would miss them. Every relative path that does not climb out is within.
+  if (root_text.size() == 1 && root_text[0] == '.') {
+    if (candidate.is_absolute()) {
+      return false;
+    }
+    const bool climbs_out = candidate_text.size() >= 2 && candidate_text[0] == '.' &&
+                            candidate_text[1] == '.' &&
+                            (candidate_text.size() == 2 || is_separator(candidate_text[2]));
+    return !climbs_out;
+  }
+  if (candidate_text.size() <= root_text.size() ||
+      candidate_text.compare(0, root_text.size(), root_text) != 0) {
+    return false;
+  }
+  // A root that already ends in a separator ("/", "C:\") needs no extra one; any
+  // other root must be followed by a separator so "/a/bc" is not "within" "/a/b".
+  return is_separator(root_text.back()) || is_separator(candidate_text[root_text.size()]);
+}
+
 // True when `candidate` is `root` itself or a path nested under it. Purely
 // lexical: it never touches the filesystem (no symlink resolution, no cwd
 // dependency), which keeps it cheap enough for hot path-prefix scans in the
@@ -80,7 +128,9 @@ namespace microide::util {
   const std::filesystem::path normalized_path = path.lexically_normal();
   const std::filesystem::path normalized_old_prefix = old_prefix.lexically_normal();
   const std::filesystem::path normalized_new_prefix = new_prefix.lexically_normal();
-  if (!PathEqualsOrWithin(normalized_path, normalized_old_prefix)) {
+  // The inputs are normalized right here, so use the variant that does not
+  // normalize them a second time.
+  if (!NormalizedPathEqualsOrWithin(normalized_path, normalized_old_prefix)) {
     return normalized_path;
   }
   if (normalized_path == normalized_old_prefix) {
