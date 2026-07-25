@@ -3,6 +3,8 @@
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <unistd.h>
+
+#include "util/PosixPipe.h"
 #endif
 
 #include <mutex>
@@ -33,17 +35,14 @@ class WakePipe {
       return;
     }
     int fds[2] = {-1, -1};
-    if (::pipe(fds) != 0) {
+    // Non-blocking so a wake never parks the producer and Drain() can empty the
+    // pipe without blocking; close-on-exec so a concurrent fork+exec cannot pin
+    // these ends open. MakeCloexecPipe sets both atomically where the platform
+    // allows — the previous pipe()+F_SETFD here left a window in which a racing
+    // fork inherited the self-pipe.
+    if (!MakeCloexecPipe(fds, /*nonblocking=*/true)) {
       return;
     }
-    ::fcntl(fds[0], F_SETFL, O_NONBLOCK);
-    ::fcntl(fds[1], F_SETFL, O_NONBLOCK);
-    // Close-on-exec: a concurrent fork+exec (terminal shell, git, LSP/DAP adapter)
-    // must not inherit this self-pipe's read/write ends and pin them open, matching
-    // the CLOEXEC hygiene every other fd-opening site in the tree enforces. F_SETFD
-    // is a distinct flag space from the O_NONBLOCK F_SETFL above, so both are needed.
-    ::fcntl(fds[0], F_SETFD, FD_CLOEXEC);
-    ::fcntl(fds[1], F_SETFD, FD_CLOEXEC);
     read_fd_ = fds[0];
     write_fd_ = fds[1];
 #endif

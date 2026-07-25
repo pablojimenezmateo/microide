@@ -22,6 +22,8 @@
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
 #endif
+
+#include "util/PosixPipe.h"
 #endif
 
 #include <SDL3/SDL.h>
@@ -557,13 +559,11 @@ bool ControlSocketServer::Start(const std::filesystem::path& socket_path) {
   }
   SetNonBlocking(fd);
 
-  if (::pipe2(impl_->wake_pipe, O_CLOEXEC) != 0) {
+  if (!util::MakeCloexecPipe(impl_->wake_pipe, /*nonblocking=*/true)) {
     ::close(fd);
     ::unlink(path_string.c_str());
     return false;
   }
-  SetNonBlocking(impl_->wake_pipe[0]);
-  SetNonBlocking(impl_->wake_pipe[1]);
 
   impl_->listen_fd = fd;
   impl_->socket_path = socket_path;

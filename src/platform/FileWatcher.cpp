@@ -21,6 +21,10 @@
 #include <windows.h>
 #endif
 
+#if defined(__unix__) || defined(__APPLE__)
+#include "util/PosixPipe.h"
+#endif
+
 namespace microide::platform {
 
 namespace {
@@ -32,21 +36,7 @@ void CloseIfValid(int fd) {
   }
 }
 
-// Create the control pipe close-on-exec. Without CLOEXEC an unrelated child that
-// another thread fork()+exec()s inherits and holds these fds open for its whole
-// lifetime — the same inherited-pipe hazard Subprocess/AsyncSubprocess guard.
-bool MakeCloexecPipe(int fds[2]) {
-#if defined(__linux__)
-  return pipe2(fds, O_CLOEXEC) == 0;
-#else
-  if (pipe(fds) != 0) {
-    return false;
-  }
-  (void)fcntl(fds[0], F_SETFD, fcntl(fds[0], F_GETFD, 0) | FD_CLOEXEC);
-  (void)fcntl(fds[1], F_SETFD, fcntl(fds[1], F_GETFD, 0) | FD_CLOEXEC);
-  return true;
-#endif
-}
+using microide::util::MakeCloexecPipe;
 #endif
 
 PathType PathTypeFromStatus(const std::filesystem::file_status& status) {

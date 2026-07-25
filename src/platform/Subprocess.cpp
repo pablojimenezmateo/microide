@@ -12,6 +12,8 @@
 #include <poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#include "util/PosixPipe.h"
 #elif defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -103,17 +105,9 @@ bool OpenPipe(bool enabled, std::array<UniqueFd, 2>* pipe_fds) {
   // via dup2 onto fds 0/1/2, which clears CLOEXEC on those duplicates, so the child
   // keeps working while every stray inherited copy auto-closes at exec.
   int raw_pipe[2] = {-1, -1};
-#if defined(__linux__)
-  if (pipe2(raw_pipe, O_CLOEXEC) != 0) {
+  if (!microide::util::MakeCloexecPipe(raw_pipe)) {
     return false;
   }
-#else
-  if (pipe(raw_pipe) != 0) {
-    return false;
-  }
-  (void)fcntl(raw_pipe[0], F_SETFD, fcntl(raw_pipe[0], F_GETFD, 0) | FD_CLOEXEC);
-  (void)fcntl(raw_pipe[1], F_SETFD, fcntl(raw_pipe[1], F_GETFD, 0) | FD_CLOEXEC);
-#endif
   (*pipe_fds)[0].Reset(raw_pipe[0]);
   (*pipe_fds)[1].Reset(raw_pipe[1]);
   return true;

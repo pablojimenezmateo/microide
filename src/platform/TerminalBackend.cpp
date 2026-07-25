@@ -30,6 +30,8 @@
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#include "util/PosixPipe.h"
 #elif defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -183,7 +185,7 @@ class PosixTerminalBackend final : public TerminalBackend {
     // CLOEXEC both wake-pipe ends: they must not leak into subprocesses forked
     // by other threads while the terminal is live (same hazard as the PTY fds).
     int wake_pipe[2] = {-1, -1};
-    if (pipe2(wake_pipe, O_CLOEXEC | O_NONBLOCK) != 0) {
+    if (!util::MakeCloexecPipe(wake_pipe, /*nonblocking=*/true)) {
       close(master_fd);
       RequestTerminalChildShutdown(child_pid);
       return TerminalStartResult{

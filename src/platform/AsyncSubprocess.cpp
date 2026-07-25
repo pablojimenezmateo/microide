@@ -13,6 +13,8 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+
+#include "util/PosixPipe.h"
 #elif defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -25,21 +27,7 @@ namespace microide::platform {
 
 #if defined(__unix__) || defined(__APPLE__)
 
-namespace {
-// Create a pipe whose fds are close-on-exec, atomically where possible.
-bool MakeCloexecPipe(int fds[2]) {
-#if defined(__linux__)
-  return pipe2(fds, O_CLOEXEC) == 0;
-#else
-  if (pipe(fds) != 0) {
-    return false;
-  }
-  (void)fcntl(fds[0], F_SETFD, fcntl(fds[0], F_GETFD, 0) | FD_CLOEXEC);
-  (void)fcntl(fds[1], F_SETFD, fcntl(fds[1], F_GETFD, 0) | FD_CLOEXEC);
-  return true;
-#endif
-}
-}  // namespace
+using microide::util::MakeCloexecPipe;
 
 struct AsyncSubprocess::Impl {
   std::mutex state_mutex;
