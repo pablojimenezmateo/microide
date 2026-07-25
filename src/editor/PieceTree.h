@@ -198,7 +198,22 @@ class PieceTree {
   // backing buffer; otherwise return an empty optional-substitute via `ok`.
   std::string_view TryViewRange(std::uint32_t pos, std::uint32_t length, bool& ok) const;
 
-  void BumpRevision() { line_view_cache_.clear(); }
+  // Byte offset of line `line`'s first byte, memoized for the immediately
+  // preceding query. Every caller reads lines in ascending order (the render
+  // loop over the viewport, whole-buffer serialization, search, save), and
+  // LineView/LineLength each need BOTH LineStartByte(index) and
+  // LineStartByte(index + 1) -- so caching the second one turns the next line's
+  // two tree descents into one. Valid for the current revision only.
+  std::uint32_t LineStartByteMemoized(std::size_t line) const;
+
+  // THE single revision-invalidation point. Every derived cache below must be
+  // reset here, and every mutation must route through it — RebuildFromOriginal
+  // used to clear `line_view_cache_` inline instead, which is exactly how a
+  // second cache silently ends up half-invalidated.
+  void BumpRevision() {
+    line_view_cache_.clear();
+    cached_line_start_index_ = kNoCachedLine;
+  }
 
   std::string original_;
   std::string add_;
@@ -220,6 +235,12 @@ class PieceTree {
 
   // Spanning-line materialization, valid for the current revision only.
   mutable std::unordered_map<std::size_t, std::string> line_view_cache_;
+
+  // Sequential line-start memo (see LineStartByteMemoized). kNoCachedLine marks
+  // "empty" — a real line index can never equal it.
+  static constexpr std::size_t kNoCachedLine = std::numeric_limits<std::size_t>::max();
+  mutable std::size_t cached_line_start_index_ = kNoCachedLine;
+  mutable std::uint32_t cached_line_start_byte_ = 0;
 };
 
 }  // namespace microide::editor

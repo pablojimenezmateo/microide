@@ -366,7 +366,87 @@ void TestPieceTreeAppendWholeTextMatchesLineJoin() {
 
 }  // namespace
 
+// LineView/LineLength memoize the byte offset of the last line start they
+// resolved, so an ascending walk costs one tree descent per line instead of two.
+// The hazard that buys is a stale memo surviving a mutation: reads after an edit
+// would then resolve line starts against the OLD document layout.
+//
+// Priming matters, and is subtle: LineView(i) asks for start(i) then start(i+1),
+// so it leaves the memo holding i + 1. A test that mutates and then reads from
+// line 0 upward never consults a stale entry (index 0 misses, and every later
+// index is re-primed on the way). Each case below therefore primes a specific
+// index, mutates in a way that MOVES that index's start byte, and reads exactly
+// that index first. Verified to fail if BumpRevision stops clearing the memo.
+void TestPieceTreeLineStartMemoInvalidation() {
+  const std::vector<std::string> base = {"alpha", "bravo", "charlie", "delta", "echo"};
+
+  // 1. Insertion before the memoized index shifts its start byte.
+  {
+    PieceTree tree(base);
+    (void)tree.LineView(1);            // memo now holds index 2
+    tree.InsertLine(0, "prefix-line");  // every start shifts right
+    Expect(tree.LineView(2) == "bravo",
+           "an insert before the memoized line must invalidate its cached start");
+  }
+
+  // 2. Deletion before the memoized index shifts it the other way.
+  {
+    PieceTree tree(base);
+    (void)tree.LineView(2);  // memo now holds index 3
+    tree.EraseLine(0);
+    Expect(tree.LineView(3) == "echo",
+           "an erase before the memoized line must invalidate its cached start");
+  }
+
+  // 3. An in-place edit that CHANGES LENGTH moves every following start.
+  {
+    PieceTree tree(base);
+    (void)tree.LineView(1);  // memo now holds index 2
+    tree.SetLine(0, "a-much-longer-first-line");
+    Expect(tree.LineView(2) == "charlie",
+           "a length-changing edit must invalidate the cached start after it");
+  }
+
+  // 4. LineLength primes and reads the same memo as LineView.
+  {
+    PieceTree tree(base);
+    (void)tree.LineLength(1);  // memo now holds index 2
+    tree.InsertLine(0, "prefix-line");
+    Expect(tree.LineLength(2) == 5, "LineLength must not read a stale cached start");
+  }
+
+  // 5. Reset / ResetFromText rebuild through RebuildFromOriginal rather than the
+  //    normal mutation path — the path that used to clear the spanning-line cache
+  //    inline instead of via BumpRevision.
+  {
+    PieceTree tree(base);
+    (void)tree.LineView(1);  // memo now holds index 2
+    tree.Reset({"x", "much longer second line here", "z"});
+    Expect(tree.LineView(2) == "z", "Reset must invalidate the line-start memo");
+  }
+  {
+    PieceTree tree(base);
+    (void)tree.LineView(1);  // memo now holds index 2
+    tree.ResetFromText("one\ntwo-is-much-longer\nthree");
+    Expect(tree.LineView(2) == "three", "ResetFromText must invalidate the line-start memo");
+  }
+
+  // 6. Out-of-order reads must be correct too: the memo holds a single entry, so
+  //    a jumping walk misses it constantly and must fall back to a real descent.
+  {
+    PieceTree tree(base);
+    for (const std::size_t index : {std::size_t{4}, std::size_t{0}, std::size_t{3},
+                                    std::size_t{1}, std::size_t{4}, std::size_t{2}}) {
+      Expect(tree.LineView(index) == base[index],
+             "out-of-order reads must resolve independently of the memo");
+      Expect(tree.LineLength(index) == base[index].size(),
+             "out-of-order LineLength must agree");
+    }
+  }
+}
+
 void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PieceTree/LineStartMemoInvalidation", TestPieceTreeLineStartMemoInvalidation);
   AddTest(tests, "PieceTree/LiveDocumentByteCeiling", TestPieceTreeLiveDocumentByteCeiling);
   AddTest(tests, "PieceTree/BasicSemantics", TestPieceTreeBasicSemantics);
   AddTest(tests, "PieceTree/AddBufferCompaction", TestPieceTreeAddBufferCompaction);

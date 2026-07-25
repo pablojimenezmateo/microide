@@ -69,7 +69,7 @@ void PieceTree::RebuildFromOriginal() {
   free_list_.clear();
   root_ = kNull;
   priority_state_ = 0x9e3779b9u;
-  line_view_cache_.clear();
+  BumpRevision();
   if (!original_.empty()) {
     root_ = Allocate(kOriginal, 0, static_cast<std::uint32_t>(original_.size()));
   }
@@ -288,6 +288,16 @@ std::uint32_t PieceTree::LineStartByte(std::size_t line) const {
   return acc;  // unreachable for valid input
 }
 
+std::uint32_t PieceTree::LineStartByteMemoized(std::size_t line) const {
+  if (line == cached_line_start_index_) {
+    return cached_line_start_byte_;
+  }
+  const std::uint32_t start = LineStartByte(line);
+  cached_line_start_index_ = line;
+  cached_line_start_byte_ = start;
+  return start;
+}
+
 void PieceTree::CopyRange(std::uint32_t pos, std::uint32_t length, std::string& out) const {
   if (length == 0) return;
   const std::uint32_t end = pos + length;
@@ -351,9 +361,12 @@ std::string_view PieceTree::TryViewRange(std::uint32_t pos, std::uint32_t length
 }
 
 std::string_view PieceTree::LineView(std::size_t index) const {
-  const std::uint32_t start = LineStartByte(index);
+  // Ask for index + 1 LAST so the memo is left holding it: the next call in an
+  // ascending walk is LineView(index + 1), which then needs zero descents to
+  // find its start.
+  const std::uint32_t start = LineStartByteMemoized(index);
   const std::uint32_t end =
-      (index + 1 < line_count_) ? LineStartByte(index + 1) - 1 : ByteSize();
+      (index + 1 < line_count_) ? LineStartByteMemoized(index + 1) - 1 : ByteSize();
   const std::uint32_t length = end - start;
   bool ok = false;
   const std::string_view view = TryViewRange(start, length, ok);
@@ -371,9 +384,9 @@ std::string_view PieceTree::LineView(std::size_t index) const {
 }
 
 std::size_t PieceTree::LineLength(std::size_t index) const {
-  const std::uint32_t start = LineStartByte(index);
+  const std::uint32_t start = LineStartByteMemoized(index);
   const std::uint32_t end =
-      (index + 1 < line_count_) ? LineStartByte(index + 1) - 1 : ByteSize();
+      (index + 1 < line_count_) ? LineStartByteMemoized(index + 1) - 1 : ByteSize();
   return end - start;
 }
 
