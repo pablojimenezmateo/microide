@@ -12,6 +12,17 @@ A cross-subsystem review sweep. No public API or persisted-format changes.
 
 ### Fixed
 
+- **The control channel's client socket leaked into every spawned process.** It
+  was created without close-on-exec, so terminal shells, LSP servers, DAP
+  adapters, git, and plugin-launched tools all inherited a live connected handle
+  to the interface that drives the editor headlessly.
+- **Text handling no longer depends on the process locale.** Word boundaries,
+  token classification, command parsing, and terminal escape parsing used
+  `<cctype>`, which is locale-sensitive for bytes >= 0x80 — and SDL changes the
+  process locale behind our back. JSON numbers were affected the same way: on a
+  comma-decimal locale, doubles were written as `1,5` (malformed JSON to every
+  LSP/DAP peer) and `1.5` failed to parse, silently resetting float settings and
+  persisted pane splits to defaults.
 - **Syntax highlighting no longer disappears on lines with invalid UTF-8.** A
   Latin-1 source file, or a single mis-encoded byte in an otherwise-UTF-8 file,
   silently rendered that entire line unhighlighted.
@@ -27,6 +38,18 @@ A cross-subsystem review sweep. No public API or persisted-format changes.
 
 ### Changed
 
+- **Much faster terminal output.** Runs of plain printable text are now written
+  to the grid in bulk instead of one byte at a time through the full escape
+  parser: 3-4x on build logs and compiler diagnostics, ~1.7x on mixed
+  CJK/Unicode output.
+- **Faster file finder.** Candidates are rejected on a character bitmask before
+  the subsequence scan, cutting per-keystroke work 2.4-4x on a large project.
+- **Faster diffs, again.** Lines are interned to integer ids before the LCS, so
+  the table compares an integer per cell instead of re-running a full string
+  compare: ~2x normally and ~9x with "ignore whitespace" enabled.
+- **Faster editor scrolling and whole-file reads.** The document model memoizes
+  the last line offset it resolved, roughly halving the tree lookups an
+  in-order walk needs (~2x on viewport rendering and full-buffer scans).
 - **Faster diffs.** Hunk alignment — the dominant phase of building a comparison
   — is ~39% faster on a diff with several thousand modified lines, via reused
   per-thread working buffers, a rolling-row token LCS, and skipping line-pair
