@@ -108,21 +108,23 @@ std::string GitSidebarWorkflowSummaryLine(const GitSidebarState& git_state,
       line += "  ·  ";
     }
     AppendUnsigned(line, counts.staged);
-    line += counts.staged == 1 ? " staged" : " staged";
+    // No plural form: these read as "3 staged", not "3 stageds". (The conflicts
+    // count above is the only one that genuinely pluralizes.)
+    line += " staged";
   }
   if (counts.changed > 0) {
     if (!line.empty()) {
       line += "  ·  ";
     }
     AppendUnsigned(line, counts.changed);
-    line += counts.changed == 1 ? " unstaged" : " unstaged";
+    line += " unstaged";
   }
   if (counts.untracked > 0) {
     if (!line.empty()) {
       line += "  ·  ";
     }
     AppendUnsigned(line, counts.untracked);
-    line += counts.untracked == 1 ? " untracked" : " untracked";
+    line += " untracked";
   }
   // Outgoing is intentionally excluded: it has its own section with a count, so
   // surfacing it again in the working-tree summary is redundant. A tree with only

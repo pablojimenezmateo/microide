@@ -1165,7 +1165,9 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
 // the background highlight worker. Main-thread readers (render/compare paths)
 // never run concurrently with a reload — both are on the main thread — so they
 // read lock-free; the worker takes a shared lock for the duration of a batch.
-std::shared_mutex& RegistryMutex() {
+// static: TU-local, so the symbol does not leak into the link namespace where an
+// identically-named helper elsewhere would be an ODR hazard.
+static std::shared_mutex& RegistryMutex() {
   static std::shared_mutex mutex;
   return mutex;
 }

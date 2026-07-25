@@ -110,6 +110,11 @@ void SerialWorkQueue::PostLatest(std::string key, std::function<void()> task, Sh
     auto [map_it, inserted] = keyed_index_.try_emplace(key);
     if (!inserted) {
       queue_.erase(map_it->second);
+      // Retarget the slot immediately: ShedIfOverBudgetLocked below walks the queue
+      // and compares each node against the index entry for its key, and comparing a
+      // just-erased list iterator is undefined. end() is a stable, comparable value
+      // that matches no live node, and the real node is stored a few lines down.
+      map_it->second = queue_.end();
       if (hooks_.on_complete) {
         hooks_.on_complete();
       }

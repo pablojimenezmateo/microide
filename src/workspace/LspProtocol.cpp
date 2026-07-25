@@ -117,8 +117,8 @@ constexpr int kMaxDocumentSymbolDepth = 64;
 // `remaining` is a shared total-node budget: a server can stay under the depth
 // cap yet pack millions of siblings/children into the tree, so bound the total
 // count of materialized nodes across the whole recursion, not just the depth.
-LspClient::DocumentSymbol ParseDocumentSymbolAtDepth(const JsonValue& value, int depth,
-                                                     std::size_t& remaining) {
+static LspClient::DocumentSymbol ParseDocumentSymbolAtDepth(const JsonValue& value, int depth,
+                                                            std::size_t& remaining) {
   LspClient::DocumentSymbol symbol;
   symbol.name = value["name"].AsString();
   symbol.detail = value["detail"].AsString();

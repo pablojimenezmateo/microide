@@ -624,8 +624,18 @@ if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
   target_compile_definitions(microide_core PRIVATE MICROIDE_HAS_SDL3_TTF=1)
   target_link_libraries(microide_core PRIVATE ${MICROIDE_SDL3_TTF_TARGET})
 endif()
+# High-signal warning classes beyond -Wall/-Wextra, kept as a ratchet: each one
+# found a real defect in the 2026-07-25 sweep and the tree is currently clean of
+# them. -Wmissing-declarations catches a TU-local helper that accidentally kept
+# external linkage (an ODR hazard and a missed-inlining signal);
+# -Wduplicated-cond catches a copy-pasted branch condition. Production targets
+# only: the test binary's per-file Register*Tests entry points are declared in a
+# header each TU deliberately does not include, so -Wmissing-declarations is all
+# noise there.
+set(MICROIDE_EXTRA_WARNINGS -Wduplicated-cond -Wmissing-declarations)
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(microide_core PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
+  target_compile_options(microide_core PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers ${MICROIDE_EXTRA_WARNINGS})
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide_core PRIVATE -Werror)
   endif()
@@ -682,7 +692,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   # pervasively and intentionally omits trailing fields (they zero-initialize). The
   # -Wextra sub-warning flags every such site as a false positive, so disable it
   # rather than litter hundreds of call sites with explicit zero-inits.
-  target_compile_options(microide PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
+  target_compile_options(microide PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers ${MICROIDE_EXTRA_WARNINGS})
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide PRIVATE -Werror)
   endif()

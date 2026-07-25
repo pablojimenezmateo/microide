@@ -97,19 +97,20 @@ LineTokenKind ClassifyCodepoint(std::string_view text, std::size_t offset) {
   return LineTokenKind::Symbol;
 }
 
-std::vector<std::size_t> BuildUtf8Offsets(std::string_view text) {
-  std::vector<std::size_t> offsets;
+void BuildUtf8OffsetsInto(std::string_view text, std::vector<std::size_t>& offsets) {
+  offsets.clear();
   offsets.reserve(text.size() + 1);
   for (std::size_t offset = 0; offset < text.size();) {
     offsets.push_back(offset);
     offset += util::Utf8SequenceLength(text, offset);
   }
   offsets.push_back(text.size());
-  return offsets;
 }
 
-TokenizedLine TokenizeLine(std::string_view text) {
-  TokenizedLine tokenized;
+void TokenizeLineInto(std::string_view text, TokenizedLine& tokenized) {
+  tokenized.tokens.clear();
+  tokenized.significant_token_indices.clear();
+  tokenized.significant_token_bytes = 0;
   tokenized.text = text;
   // Tokens are grouped runs (only symbols are per-codepoint), so the count is
   // well below the byte length. Reserving one token per byte over-allocates
@@ -136,7 +137,38 @@ TokenizedLine TokenizeLine(std::string_view text) {
       tokenized.significant_token_bytes += offset - start;
     }
   }
+}
+
+TokenizedLine TokenizeLine(std::string_view text) {
+  TokenizedLine tokenized;
+  TokenizeLineInto(text, tokenized);
   return tokenized;
+}
+
+// Per-thread scratch for the intraline (per-Modified-row) refinement. Each of
+// these buffers used to be a fresh heap vector per row — token vectors, changed
+// flags, the LCS DP matrix (up to kMaxIntralineLcsMatrixCells entries), and the
+// codepoint offset tables — roughly a dozen allocations for every modified line
+// of every diff. Refinement is strictly per-row and never re-entrant, so one
+// arena per thread reuses the capacity across the whole file.
+//
+// The changed-flag vectors are `char`, not `vector<bool>`: the bit-packed
+// specialization cannot be memset-filled and costs a shift/mask on every access
+// in the DP backtrack.
+struct IntralineScratch {
+  TokenizedLine left_tokens;
+  TokenizedLine right_tokens;
+  std::vector<std::size_t> left_offsets;
+  std::vector<std::size_t> right_offsets;
+  std::vector<char> left_changed;
+  std::vector<char> right_changed;
+  std::vector<std::size_t> token_dp;
+  std::vector<int> codepoint_dp;
+};
+
+IntralineScratch& Scratch() {
+  thread_local IntralineScratch scratch;
+  return scratch;
 }
 
 // Sum of significant (non-whitespace) token bytes for `text`, matching
@@ -451,12 +483,12 @@ bool Utf8CodepointEquals(std::string_view left,
          left.substr(left_start, left_length) == right.substr(right_start, left_length);
 }
 
-std::vector<CompareTextSpan> BuildSpansFromChangedCodepoints(
-    const std::vector<std::size_t>& offsets,
-    const std::vector<bool>& changed) {
-  std::vector<CompareTextSpan> spans;
+void BuildSpansFromChangedCodepointsInto(const std::vector<std::size_t>& offsets,
+                                         const std::vector<char>& changed,
+                                         std::vector<CompareTextSpan>& spans) {
+  spans.clear();
   if (offsets.size() < 2 || changed.empty()) {
-    return spans;
+    return;
   }
 
   std::size_t index = 0;
@@ -474,14 +506,14 @@ std::vector<CompareTextSpan> BuildSpansFromChangedCodepoints(
         .end = offsets[index],
     });
   }
-  return spans;
 }
 
-std::vector<CompareTextSpan> BuildSpansFromChangedTokens(const TokenizedLine& line,
-                                                         const std::vector<bool>& changed) {
-  std::vector<CompareTextSpan> spans;
+void BuildSpansFromChangedTokensInto(const TokenizedLine& line,
+                                     const std::vector<char>& changed,
+                                     std::vector<CompareTextSpan>& spans) {
+  spans.clear();
   if (line.tokens.empty() || changed.empty()) {
-    return spans;
+    return;
   }
 
   std::size_t index = 0;
@@ -499,25 +531,25 @@ std::vector<CompareTextSpan> BuildSpansFromChangedTokens(const TokenizedLine& li
         .end = line.tokens[index - 1].end,
     });
   }
-  return spans;
 }
 
-std::vector<CompareTextSpan> TrimSpansToByteWindow(const std::vector<CompareTextSpan>& spans,
-                                                   std::size_t start,
-                                                   std::size_t end) {
-  std::vector<CompareTextSpan> trimmed;
-  trimmed.reserve(spans.size());
-  for (const auto& span : spans) {
+// Clips in place: the trimmed set is a subsequence of the input (each surviving
+// span keeps or shrinks its bounds, never splits), so a single forward compaction
+// pass replaces the allocate-a-new-vector-per-row shape.
+void TrimSpansToByteWindowInPlace(std::vector<CompareTextSpan>& spans, std::size_t start,
+                                  std::size_t end) {
+  std::size_t out = 0;
+  for (const CompareTextSpan& span : spans) {
     if (span.end <= start || span.start >= end) {
       continue;
     }
     const std::size_t clipped_start = std::max(span.start, start);
     const std::size_t clipped_end = std::min(span.end, end);
     if (clipped_end > clipped_start) {
-      trimmed.push_back(CompareTextSpan{clipped_start, clipped_end});
+      spans[out++] = CompareTextSpan{clipped_start, clipped_end};
     }
   }
-  return trimmed;
+  spans.resize(out);
 }
 
 void TrimChangedSpansToSharedEdges(CompareRow& row) {
@@ -525,8 +557,11 @@ void TrimChangedSpansToSharedEdges(CompareRow& row) {
     return;
   }
 
-  const std::vector<std::size_t> left_offsets = BuildUtf8Offsets(row.left_text);
-  const std::vector<std::size_t> right_offsets = BuildUtf8Offsets(row.right_text);
+  IntralineScratch& scratch = Scratch();
+  std::vector<std::size_t>& left_offsets = scratch.left_offsets;
+  std::vector<std::size_t>& right_offsets = scratch.right_offsets;
+  BuildUtf8OffsetsInto(row.left_text, left_offsets);
+  BuildUtf8OffsetsInto(row.right_text, right_offsets);
   const std::size_t left_count = left_offsets.size() - 1;
   const std::size_t right_count = right_offsets.size() - 1;
 
@@ -546,28 +581,33 @@ void TrimChangedSpansToSharedEdges(CompareRow& row) {
     --right_suffix;
   }
 
-  row.left_changed_spans = TrimSpansToByteWindow(row.left_changed_spans, left_offsets[prefix],
-                                                 left_offsets[left_suffix]);
-  row.right_changed_spans = TrimSpansToByteWindow(row.right_changed_spans, right_offsets[prefix],
-                                                  right_offsets[right_suffix]);
+  TrimSpansToByteWindowInPlace(row.left_changed_spans, left_offsets[prefix],
+                               left_offsets[left_suffix]);
+  TrimSpansToByteWindowInPlace(row.right_changed_spans, right_offsets[prefix],
+                               right_offsets[right_suffix]);
 }
 
 bool PopulateTokenChangedSpans(CompareRow& row) {
-  const TokenizedLine left = TokenizeLine(row.left_text);
-  const TokenizedLine right = TokenizeLine(row.right_text);
+  IntralineScratch& scratch = Scratch();
+  TokenizedLine& left = scratch.left_tokens;
+  TokenizedLine& right = scratch.right_tokens;
+  TokenizeLineInto(row.left_text, left);
+  TokenizeLineInto(row.right_text, right);
   if (left.tokens.size() < 2 || right.tokens.size() < 2 ||
       ProductExceeds(left.tokens.size() + 1, right.tokens.size() + 1, kMaxIntralineLcsMatrixCells)) {
     return false;
   }
 
-  std::vector<bool> left_changed(left.tokens.size(), true);
-  std::vector<bool> right_changed(right.tokens.size(), true);
+  std::vector<char>& left_changed = scratch.left_changed;
+  std::vector<char>& right_changed = scratch.right_changed;
+  left_changed.assign(left.tokens.size(), 1);
+  right_changed.assign(right.tokens.size(), 1);
 
   std::size_t prefix = 0;
   while (prefix < left.tokens.size() && prefix < right.tokens.size() &&
          TokenEquals(left.text, left.tokens[prefix], right.text, right.tokens[prefix])) {
-    left_changed[prefix] = false;
-    right_changed[prefix] = false;
+    left_changed[prefix] = 0;
+    right_changed[prefix] = 0;
     ++prefix;
   }
 
@@ -578,8 +618,8 @@ bool PopulateTokenChangedSpans(CompareRow& row) {
                      right.tokens[right_suffix - 1])) {
     --left_suffix;
     --right_suffix;
-    left_changed[left_suffix] = false;
-    right_changed[right_suffix] = false;
+    left_changed[left_suffix] = 0;
+    right_changed[right_suffix] = 0;
   }
 
   const std::size_t left_middle_count = left_suffix - prefix;
@@ -590,12 +630,13 @@ bool PopulateTokenChangedSpans(CompareRow& row) {
     return true;
   }
   if (left_middle_count == 0 || right_middle_count == 0) {
-    row.left_changed_spans = BuildSpansFromChangedTokens(left, left_changed);
-    row.right_changed_spans = BuildSpansFromChangedTokens(right, right_changed);
+    BuildSpansFromChangedTokensInto(left, left_changed, row.left_changed_spans);
+    BuildSpansFromChangedTokensInto(right, right_changed, row.right_changed_spans);
     return true;
   }
 
-  std::vector<std::size_t> dp((left_middle_count + 1) * (right_middle_count + 1), 0);
+  std::vector<std::size_t>& dp = scratch.token_dp;
+  dp.assign((left_middle_count + 1) * (right_middle_count + 1), 0);
   auto at = [&](std::size_t i, std::size_t j) -> std::size_t& {
     return dp[i * (right_middle_count + 1) + j];
   };
@@ -622,8 +663,8 @@ bool PopulateTokenChangedSpans(CompareRow& row) {
       const std::size_t diagonal =
           TokenMatchWeight(left.tokens[left_index]) + at(i + 1, j + 1);
       if (diagonal >= skip_left && diagonal >= skip_right && at(i, j) == diagonal) {
-        left_changed[left_index] = false;
-        right_changed[right_index] = false;
+        left_changed[left_index] = 0;
+        right_changed[right_index] = 0;
         ++i;
         ++j;
         continue;
@@ -637,8 +678,8 @@ bool PopulateTokenChangedSpans(CompareRow& row) {
     }
   }
 
-  row.left_changed_spans = BuildSpansFromChangedTokens(left, left_changed);
-  row.right_changed_spans = BuildSpansFromChangedTokens(right, right_changed);
+  BuildSpansFromChangedTokensInto(left, left_changed, row.left_changed_spans);
+  BuildSpansFromChangedTokensInto(right, right_changed, row.right_changed_spans);
   return !(row.left_changed_spans.empty() && row.right_changed_spans.empty());
 }
 
@@ -646,19 +687,24 @@ void PopulateCodepointChangedSpans(CompareRow& row) {
   row.left_changed_spans.clear();
   row.right_changed_spans.clear();
 
-  const std::vector<std::size_t> left_offsets = BuildUtf8Offsets(row.left_text);
-  const std::vector<std::size_t> right_offsets = BuildUtf8Offsets(row.right_text);
+  IntralineScratch& scratch = Scratch();
+  std::vector<std::size_t>& left_offsets = scratch.left_offsets;
+  std::vector<std::size_t>& right_offsets = scratch.right_offsets;
+  BuildUtf8OffsetsInto(row.left_text, left_offsets);
+  BuildUtf8OffsetsInto(row.right_text, right_offsets);
   const std::size_t left_count = left_offsets.size() - 1;
   const std::size_t right_count = right_offsets.size() - 1;
-  std::vector<bool> left_changed(left_count, true);
-  std::vector<bool> right_changed(right_count, true);
+  std::vector<char>& left_changed = scratch.left_changed;
+  std::vector<char>& right_changed = scratch.right_changed;
+  left_changed.assign(left_count, 1);
+  right_changed.assign(right_count, 1);
 
   std::size_t prefix = 0;
   while (prefix < left_count && prefix < right_count &&
          Utf8CodepointEquals(row.left_text, left_offsets, prefix, row.right_text, right_offsets,
                              prefix)) {
-    left_changed[prefix] = false;
-    right_changed[prefix] = false;
+    left_changed[prefix] = 0;
+    right_changed[prefix] = 0;
     ++prefix;
   }
 
@@ -669,8 +715,8 @@ void PopulateCodepointChangedSpans(CompareRow& row) {
                              right_offsets, right_suffix - 1)) {
     --left_suffix;
     --right_suffix;
-    left_changed[left_suffix] = false;
-    right_changed[right_suffix] = false;
+    left_changed[left_suffix] = 0;
+    right_changed[right_suffix] = 0;
   }
 
   const std::size_t left_middle_count = left_suffix - prefix;
@@ -678,7 +724,8 @@ void PopulateCodepointChangedSpans(CompareRow& row) {
   if (left_middle_count > 0 && right_middle_count > 0 &&
       !ProductExceeds(left_middle_count + 1, right_middle_count + 1,
                       kMaxIntralineLcsMatrixCells)) {
-    std::vector<int> dp((left_middle_count + 1) * (right_middle_count + 1), 0);
+    std::vector<int>& dp = scratch.codepoint_dp;
+    dp.assign((left_middle_count + 1) * (right_middle_count + 1), 0);
     auto at = [&](std::size_t i, std::size_t j) -> int& {
       return dp[i * (right_middle_count + 1) + j];
     };
@@ -699,8 +746,8 @@ void PopulateCodepointChangedSpans(CompareRow& row) {
     while (i < left_middle_count && j < right_middle_count) {
       if (Utf8CodepointEquals(row.left_text, left_offsets, prefix + i, row.right_text,
                               right_offsets, prefix + j)) {
-        left_changed[prefix + i] = false;
-        right_changed[prefix + j] = false;
+        left_changed[prefix + i] = 0;
+        right_changed[prefix + j] = 0;
         ++i;
         ++j;
       } else if (at(i + 1, j) >= at(i, j + 1)) {
@@ -711,8 +758,8 @@ void PopulateCodepointChangedSpans(CompareRow& row) {
     }
   }
 
-  row.left_changed_spans = BuildSpansFromChangedCodepoints(left_offsets, left_changed);
-  row.right_changed_spans = BuildSpansFromChangedCodepoints(right_offsets, right_changed);
+  BuildSpansFromChangedCodepointsInto(left_offsets, left_changed, row.left_changed_spans);
+  BuildSpansFromChangedCodepointsInto(right_offsets, right_changed, row.right_changed_spans);
 }
 
 void PopulateChangedSpans(CompareRow& row, CompareBuildProfile* profile,

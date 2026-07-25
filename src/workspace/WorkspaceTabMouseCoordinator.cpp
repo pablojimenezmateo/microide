@@ -44,9 +44,9 @@ std::size_t StripInsertionSlot(const SDL_FRect& strip,
   return std::min(item_count, last.index + 1);
 }
 
-std::size_t MoveTargetIndexForInsertion(std::size_t insertion_slot,
-                                        std::size_t active_index,
-                                        std::size_t item_count) {
+static std::size_t MoveTargetIndexForInsertion(std::size_t insertion_slot,
+                                               std::size_t active_index,
+                                               std::size_t item_count) {
   if (item_count == 0) {
     return 0;
   }
