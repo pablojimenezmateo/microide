@@ -1022,6 +1022,11 @@ if(MICROIDE_FUZZ)
   microide_configure_fuzz_target(PieceTreeEquivalenceFuzz)
 
   add_executable(SearchRegexFuzz
+    # RegexUtil.h's empty-match advance steps whole UTF-8 characters, so it needs
+    # StringUtil's NextUtf8Boundary. Fuzz targets list explicit sources rather than
+    # linking microide_core, so a new header dependency has to be added here or the
+    # target fails to link — and nothing in the default build flow builds it.
+    src/util/StringUtil.cpp
     tests/fuzz/SearchRegexFuzz.cpp
   )
   target_link_libraries(SearchRegexFuzz PRIVATE ${MICROIDE_PCRE2_TARGET})

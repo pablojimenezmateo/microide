@@ -18,6 +18,8 @@
 #include <utility>
 #include <vector>
 
+#include "util/StringUtil.h"
+
 namespace microide::util {
 
 // Caps applied to every match so a user- or plugin-supplied pattern with
@@ -121,7 +123,7 @@ class CompiledRegex {
   CompiledRegex() = default;
 
   CompiledRegex(std::string_view pattern, uint32_t options, std::string error_prefix = {})
-      : error_prefix_(std::move(error_prefix)) {
+      : utf_mode_((options & PCRE2_UTF) != 0), error_prefix_(std::move(error_prefix)) {
     if (pattern.empty()) {
       return;
     }
@@ -157,6 +159,10 @@ class CompiledRegex {
 
   bool valid() const { return code_ != nullptr; }
   const std::string& error() const { return error_; }
+  // True when the pattern was compiled with PCRE2_UTF, i.e. PCRE2 interprets the
+  // subject as UTF-8 and a start offset must land on a character boundary.
+  // Without UTF, matching is byte-oriented and every byte is a legal offset.
+  bool utf_mode() const { return utf_mode_; }
 
   RegexMatchData CreateMatchData() const {
     return RegexMatchData(valid() ? pcre2_match_data_create_from_pattern(code_.get(), nullptr)
@@ -263,6 +269,7 @@ class CompiledRegex {
   }
 
  private:
+  bool utf_mode_ = false;
   std::shared_ptr<pcre2_code> code_;
   std::shared_ptr<pcre2_match_context> match_context_;
   std::string error_prefix_;
@@ -332,8 +339,30 @@ inline bool FindNextRegexMatchInLine(const CompiledRegex& pattern,
         *search_from = anchored.end;
         return true;
       }
-      // No non-empty match here; skip the pure empty match and advance one byte.
-      *search_from = range.end < line.size() ? range.end + 1 : line.size() + 1;
+      // No non-empty match here; skip the pure empty match and advance.
+      //
+      // The step must be a whole CHARACTER under PCRE2_UTF, not one byte. A byte
+      // step lands inside a multi-byte sequence, and pcre2_match then rejects the
+      // start offset with PCRE2_ERROR_BADUTFOFFSET — which the `rc < 0` arm above
+      // treats as "line exhausted", silently dropping every remaining match on
+      // the line. PCRE2_MATCH_INVALID_UTF (>= 10.34) happens to tolerate such an
+      // offset and masks this, but the compile-options fallback above deliberately
+      // supports older PCRE2 without it, where a case-insensitive non-ASCII query
+      // that can match empty returned ZERO matches from the first multi-byte
+      // character onward. Stepping by character is also strictly cheaper: it skips
+      // the 1-3 continuation-byte offsets that can never begin a match anyway.
+      if (range.end >= line.size()) {
+        *search_from = line.size() + 1;
+      } else if (pattern.utf_mode()) {
+        // NextUtf8Boundary advances ONE character from a boundary offset, which
+        // range.end is (PCRE2 in UTF mode only reports character boundaries).
+        // Passing range.end + 1 would start the scan mid-sequence, where the
+        // lead-byte classifier sees a continuation byte and falls back to a
+        // 1-byte step — landing mid-character again.
+        *search_from = NextUtf8Boundary(line, range.end);
+      } else {
+        *search_from = range.end + 1;  // byte-oriented: every offset is legal
+      }
       continue;
     }
 

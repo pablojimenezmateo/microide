@@ -3,7 +3,9 @@
 #include "util/RegexUtil.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
+#include <utility>
 #include <string_view>
 #include <vector>
 
@@ -164,7 +166,105 @@ void TestRegexUtilFindNextRegexMatchInLine() {
 
 }  // namespace
 
+// The empty-match advance in FindNextRegexMatchInLine must step a whole
+// CHARACTER when the pattern is compiled with PCRE2_UTF, not one byte.
+//
+// A byte step lands inside a multi-byte sequence; pcre2_match then rejects that
+// start offset with PCRE2_ERROR_BADUTFOFFSET, which the loop's `rc < 0` arm
+// treats as "line exhausted" — silently dropping every remaining match on the
+// line. PCRE2_MATCH_INVALID_UTF (>= 10.34) tolerates such an offset and masks
+// the bug, but SearchRegexCompileOptions deliberately falls back to plain
+// UTF|UCP on older PCRE2, and there a case-insensitive non-ASCII query that can
+// match empty returned ZERO matches from the first multi-byte character onward.
+//
+// So this asserts BOTH option sets explicitly. The second one is the older-PCRE2
+// fallback, which is otherwise unreachable (and therefore untestable) on a host
+// whose PCRE2 defines PCRE2_MATCH_INVALID_UTF.
+void TestRegexUtilEmptyMatchAdvanceStepsWholeCharacters() {
+  using microide::util::CompiledRegex;
+  using microide::util::FindNextRegexMatchInLine;
+
+  // Targets deliberately sit immediately after multi-byte characters, so a
+  // mid-sequence start offset is reached before any of them.
+  const std::string line = "\xE6\x97\xA5" "aa" "\xE6\x9C\xAC" "aa" "\xE8\xAA\x9E" "aa";
+  const std::vector<std::pair<std::size_t, std::size_t>> expected = {{3, 5}, {8, 10}, {13, 15}};
+
+  const auto collect = [&](const std::string& pattern, std::uint32_t options) {
+    CompiledRegex regex(pattern, options, "bad pattern");
+    Expect(regex.valid(), "fixture pattern should compile");
+    Expect(regex.utf_mode() == ((options & PCRE2_UTF) != 0),
+           "utf_mode() must report whether PCRE2_UTF was requested");
+    auto match_data = regex.CreateMatchData();
+    std::vector<std::pair<std::size_t, std::size_t>> found;
+    std::size_t from = 0;
+    std::size_t start = 0;
+    std::size_t end = 0;
+    while (FindNextRegexMatchInLine(regex, line, &from, &match_data, &start, &end)) {
+      found.emplace_back(start, end);
+      if (found.size() > 8) {
+        break;  // runaway guard
+      }
+    }
+    return found;
+  };
+
+  // `é?|aa` matches EMPTY at offset 0, so the advance runs before any real match.
+  const std::string pattern = "\xC3\xA9?|aa";
+
+  std::uint32_t with_invalid_utf = PCRE2_CASELESS | PCRE2_UTF | PCRE2_UCP;
+#ifdef PCRE2_MATCH_INVALID_UTF
+  with_invalid_utf |= PCRE2_MATCH_INVALID_UTF;
+#endif
+  Expect(collect(pattern, with_invalid_utf) == expected,
+         "every match must be found under the current PCRE2 option set");
+
+  // The older-PCRE2 fallback: UTF without MATCH_INVALID_UTF. This is the
+  // configuration where a byte-wise advance silently returned no matches at all.
+  Expect(collect(pattern, PCRE2_CASELESS | PCRE2_UTF | PCRE2_UCP) == expected,
+         "every match must be found without PCRE2_MATCH_INVALID_UTF too — a byte-wise "
+         "advance yields BADUTFOFFSET there and drops the rest of the line");
+
+  // Non-UTF (byte-oriented) matching must KEEP its 1-byte advance. Without
+  // PCRE2_UTF, PCRE2 may legally start a match at any byte — including one that
+  // happens to be a UTF-8 continuation byte — so stepping to a character
+  // boundary would skip over real matches in binary / Latin-1 / mixed-encoding
+  // content, which project search does scan.
+  Expect(collect("x?|aa", PCRE2_CASELESS) == expected,
+         "byte-oriented matching must still find every match");
+
+  // The load-bearing case for that guard: the only match begins at offset 2,
+  // which is the THIRD byte of the leading 3-byte character. A character-wise
+  // advance from offset 0 jumps straight to 3 and misses it entirely.
+  {
+    const std::string binary_line = "\xE6\x97\xA5" "aa";  // match "\xA5a" starts at byte 2
+    CompiledRegex regex("x?|\xA5" "a", PCRE2_CASELESS, "bad pattern");
+    Expect(regex.valid(), "byte-oriented fixture pattern should compile");
+    Expect(!regex.utf_mode(), "the byte-oriented fixture must not be in UTF mode");
+    auto match_data = regex.CreateMatchData();
+    std::size_t from = 0;
+    std::size_t start = 0;
+    std::size_t end = 0;
+    Expect(FindNextRegexMatchInLine(regex, binary_line, &from, &match_data, &start, &end),
+           "a byte-oriented match starting mid-sequence must be found");
+    Expect(start == 2 && end == 4,
+           "byte-oriented advance must not skip a match that begins on a continuation byte");
+  }
+
+  // A pattern that ONLY matches empty yields no matches and still terminates.
+  CompiledRegex empty_only("\xC3\xA9*", with_invalid_utf, "bad");
+  Expect(empty_only.valid(), "empty-only pattern should compile");
+  auto empty_data = empty_only.CreateMatchData();
+  std::size_t from = 0;
+  std::size_t s0 = 0;
+  std::size_t e0 = 0;
+  Expect(!FindNextRegexMatchInLine(empty_only, line, &from, &empty_data, &s0, &e0),
+         "a pattern matching only empty should report no matches");
+  Expect(from > line.size(), "the scan must run to completion rather than stalling");
+}
+
 void RegisterRegexUtilTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RegexUtil/EmptyMatchAdvanceStepsWholeCharacters",
+          TestRegexUtilEmptyMatchAdvanceStepsWholeCharacters);
   AddTest(tests, "RegexUtil/SubstituteIntoCaptureGroups",
           TestRegexUtilSubstituteIntoCaptureGroups);
   AddTest(tests, "RegexUtil/SubstituteIntoCaselessAndEscapes",
