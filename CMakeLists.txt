@@ -824,6 +824,7 @@ add_executable(microide_tests
   tests/TaskExecutorTests.cpp
   tests/MainThreadMailboxTests.cpp
   tests/SerialWorkQueueTests.cpp
+  tests/WakePipeTests.cpp
   tests/GenerationTests.cpp
   tests/ProjectBackgroundExecutorTests.cpp
   tests/RenderViewModelBuilderTests.cpp
