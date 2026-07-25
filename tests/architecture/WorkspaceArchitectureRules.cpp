@@ -38,6 +38,8 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckNoSynchronousSubprocessWaitInWorkspace", CheckNoSynchronousSubprocessWaitInWorkspace},
       {"CheckLspDidOpenIsNonBlocking", CheckLspDidOpenIsNonBlocking},
       {"CheckTextViewportNoCombinedLayoutRevision", CheckTextViewportNoCombinedLayoutRevision},
+      {"CheckTextViewportSpecialMembersCoverEveryField",
+       CheckTextViewportSpecialMembersCoverEveryField},
       {"CheckNoLegacyPersistenceSymbols", CheckNoLegacyPersistenceSymbols},
       {"CheckNoExecutorPostThenFutureGetInWorkspace", CheckNoExecutorPostThenFutureGetInWorkspace},
       {"CheckNoSynchronousSubprocessInWorkspace", CheckNoSynchronousSubprocessInWorkspace},

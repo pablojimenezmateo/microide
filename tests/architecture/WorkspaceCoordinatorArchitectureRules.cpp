@@ -7,6 +7,9 @@
 #include <filesystem>
 #include <fstream>
 #include <regex>
+#include <set>
+#include <string>
+#include <string_view>
 
 namespace microide::tests::architecture {
 
@@ -346,6 +349,124 @@ RuleResult CheckNoDirectGitRepositoryInWorkspace(const std::filesystem::path& re
     AppendCodeMaskRegexViolations(
         result, entry.path(), text, pattern,
         "workspace code must use GitRepositoryService instead of constructing GitRepository");
+  }
+  return result;
+}
+
+// TextViewport hand-writes its copy constructor, move constructor and move
+// assignment, each enumerating every one of its ~40 members. Adding a member to
+// the header and forgetting one of those three lists compiles cleanly and
+// silently drops that member's state on any copy/move of a viewport — the shape
+// of bug that surfaces much later as "my folds/undo/highlight cache reset when I
+// split the editor". The lists cannot be replaced with `= default` because the
+// copy deliberately nulls folding_model_ and re-invalidates the visual-column
+// cache, so this lint keeps them honest instead: every member declared in the
+// private section must appear in all three.
+RuleResult CheckTextViewportSpecialMembersCoverEveryField(
+    const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "TextViewport copy/move cover every member";
+  result.hard_fail = true;
+  const std::filesystem::path header = repo_root / "src/editor/TextViewport.h";
+  const std::filesystem::path source = repo_root / "src/editor/TextViewport.cpp";
+  if (!std::filesystem::exists(header) || !std::filesystem::exists(source)) {
+    result.violations.push_back(Violation{
+        .path = header,
+        .line = 1,
+        .message = "TextViewport.h/.cpp not found; this lint's target moved and it is now "
+                   "vacuous — repoint it or delete it",
+    });
+    return result;
+  }
+
+  const std::string header_text = ReadText(header);
+  const std::vector<bool> header_code = BuildCodeMask(header_text);
+  // Members are the trailing-underscore identifiers declared in the private
+  // section: `<type> name_ = init;` / `<type> name_;`. Restrict the scan to the
+  // private section so trailing-underscore uses inside inline accessors above it
+  // (`return cursor_line_;`) are not mistaken for declarations.
+  const std::size_t private_at = header_text.find("\n private:");
+  if (private_at == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = header,
+        .line = 1,
+        .message = "TextViewport.h has no ` private:` section; this lint can no longer find "
+                   "the member list — repoint it",
+    });
+    return result;
+  }
+
+  std::set<std::string> declared;
+  const std::regex member_pattern(R"(^\s{2}(?:mutable\s+)?[A-Za-z_][\w:<>,\s\*&]*?\b(\w+_)\s*(?:=[^;]*)?;\s*$)");
+  std::size_t line_start = private_at + 1;
+  while (line_start < header_text.size()) {
+    std::size_t line_end = header_text.find('\n', line_start);
+    if (line_end == std::string::npos) {
+      line_end = header_text.size();
+    }
+    if (header_code.empty() || (line_start < header_code.size() && header_code[line_start])) {
+      const std::string line = header_text.substr(line_start, line_end - line_start);
+      std::smatch match;
+      // Skip member-function declarations (they carry a parameter list).
+      if (line.find('(') == std::string::npos && std::regex_match(line, match, member_pattern)) {
+        declared.insert(match[1].str());
+      }
+    }
+    line_start = line_end + 1;
+  }
+  if (declared.size() < 20) {
+    result.violations.push_back(Violation{
+        .path = header,
+        .line = 1,
+        .message = "TextViewport member scan found only " + std::to_string(declared.size()) +
+                   " members; the declaration shape changed and this lint has gone vacuous — "
+                   "fix the scan rather than deleting the rule",
+    });
+    return result;
+  }
+
+  const std::string source_text = ReadText(source);
+  struct Region {
+    std::string_view label;
+    std::string_view signature;
+  };
+  const std::array<Region, 3> regions = {
+      Region{"copy constructor", "TextViewport::TextViewport(const TextViewport& other)"},
+      Region{"move constructor", "TextViewport::TextViewport(TextViewport&& other) noexcept"},
+      Region{"move assignment",
+             "TextViewport& TextViewport::operator=(TextViewport&& other) noexcept"},
+  };
+
+  for (const Region& region : regions) {
+    const std::size_t begin = source_text.find(region.signature);
+    if (begin == std::string::npos) {
+      result.violations.push_back(Violation{
+          .path = source,
+          .line = 1,
+          .message = std::string("TextViewport ") + std::string(region.label) +
+                     " not found at its expected signature; this lint has gone vacuous — "
+                     "repoint it",
+      });
+      continue;
+    }
+    // The region runs to the next blank line followed by a top-level definition;
+    // searching to the next "\n}\n" is enough because none of the three bodies
+    // contains a top-level-column closing brace before its own.
+    const std::size_t end = source_text.find("\n}\n", begin);
+    const std::string body =
+        source_text.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+    for (const std::string& member : declared) {
+      if (body.find(member) == std::string::npos) {
+        result.violations.push_back(Violation{
+            .path = source,
+            .line = LineNumberAt(source_text, begin),
+            .message = "TextViewport " + std::string(region.label) + " does not mention `" +
+                       member +
+                       "`; every member must be copied/moved explicitly or its state is "
+                       "silently dropped (see the note on this rule)",
+        });
+      }
+    }
   }
   return result;
 }
