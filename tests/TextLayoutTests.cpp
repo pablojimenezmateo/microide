@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "editor/TextLayout.h"
+#include "editor/TextLayoutCache.h"
 
 #include <cstddef>
 #include <string>
@@ -110,7 +111,57 @@ void TestResolveVisualColumnMatchesTextLayout() {
 
 }  // namespace
 
+// TextLayoutCache::InvalidateAll documents that it "wipes every cache + every
+// cache key", and TextViewport's copy and move constructors call it precisely to
+// hand the new viewport clean derived state. It had drifted from that contract:
+// it left the visible-line layout LRU populated, because the visible-line half
+// of the wipe was duplicated in ClearVisibleLineAndMaxColumns rather than shared.
+//
+// The visible-line cache is keyed on {line_index, horizontal_scroll,
+// visible_columns, tab_size} and NOT on the content revision, so anything that
+// claims to wipe it has to actually do so — a retained entry serves the layout of
+// a line that no longer exists.
+void TestTextLayoutCacheInvalidateAllClearsVisibleLineCache() {
+  const std::vector<std::string> lines = {"alpha alpha", "bravo bravo", "charlie charlie"};
+  microide::editor::TextLayoutCache cache;
+
+  // Warm the visible-line LRU.
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize);
+  }
+  cache.ResetStats();
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize);
+  }
+  Expect(cache.stats().visible_line_hits == lines.size(),
+         "the warmed visible-line cache should serve every repeat query from cache");
+
+  // After InvalidateAll every one of those keys must miss again.
+  cache.InvalidateAll();
+  cache.ResetStats();
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize);
+  }
+  Expect(cache.stats().visible_line_queries == lines.size(),
+         "every line should be queried again after InvalidateAll");
+  Expect(cache.stats().visible_line_hits == 0,
+         "InvalidateAll must clear the visible-line cache — it documents wiping EVERY cache, "
+         "and the viewport copy/move constructors depend on that");
+
+  // ClearVisibleLineAndMaxColumns keeps doing the same thing on its own.
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize);
+  }
+  cache.ClearVisibleLineAndMaxColumns();
+  cache.ResetStats();
+  (void)cache.VisibleLineLayoutRefCached(lines, 0, 0, 40, kTabSize);
+  Expect(cache.stats().visible_line_hits == 0,
+         "ClearVisibleLineAndMaxColumns must still clear the visible-line cache");
+}
+
 void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextLayoutCache/InvalidateAllClearsVisibleLineCache",
+          TestTextLayoutCacheInvalidateAllClearsVisibleLineCache);
   AddTest(tests, "TextLayout/AdvanceVisualColumnTabStops", TestAdvanceVisualColumnTabStops);
   AddTest(tests, "TextLayout/VisualColumnMapMatchesDirectWalk",
           TestVisualColumnMapMatchesDirectWalk);

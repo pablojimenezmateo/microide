@@ -546,11 +546,13 @@ bool TextLayoutCache::has_wrapped_line_row_offsets(std::size_t lines_size) const
 }
 
 void TextLayoutCache::InvalidateAll() {
-  cached_max_visual_columns_.reset();
-  cached_max_visual_columns_line_index_.reset();
-  cached_visual_line_columns_.clear();
-  cached_max_visual_columns_tab_size_ = 0;
-  cached_max_visual_columns_content_revision_ = 0;
+  // Delegate the visible-line + max-columns half rather than repeating it. These
+  // two functions shared five lines verbatim, and InvalidateAll had drifted from
+  // its own contract: it documented "wipes every cache + every cache key" but
+  // left visible_line_cache_/_order_ populated. TextViewport's copy and move
+  // constructors call this precisely to hand the new viewport clean derived
+  // state, so "every cache" has to actually mean every cache.
+  ClearVisibleLineAndMaxColumns();
   wrapped_row_layouts_.clear();
   wrapped_line_row_offsets_.clear();
   wrapped_row_layouts_tab_size_ = 0;
