@@ -1,5 +1,7 @@
 #include "project/FileIndex.h"
 
+#include "util/PathMatch.h"
+
 #include <algorithm>
 #include <mutex>
 #include <shared_mutex>
@@ -401,10 +403,11 @@ bool FileIndex::RemoveProjectFileLocked(const std::filesystem::path& relative_pa
 bool FileIndex::RemoveProjectSubtreeLocked(const std::filesystem::path& relative_dir) {
   const std::size_t before = files_.size();
   std::erase_if(files_, [&relative_dir](const ProjectFile& file) {
-    // lexically_relative returns a path with no leading ".." exactly when file is at
-    // or below relative_dir (the directory's own path yields ".", still under it).
-    const std::filesystem::path rel = file.relative_path.lexically_relative(relative_dir);
-    return !rel.empty() && *rel.begin() != "..";
+    // Both sides are already-normalized project-relative paths, so "at or below" is
+    // a string-prefix question. The previous lexically_relative form answered the
+    // same question but built a temporary path for EVERY indexed file on every
+    // directory removal; the shared helper is allocation-free.
+    return util::NormalizedPathEqualsOrWithin(file.relative_path, relative_dir);
   });
   return files_.size() != before;
 }
