@@ -135,6 +135,64 @@ static_asserted the two constant pairs that must stay equal
   (`FileIndexWatcherContractTests`, incl. the new startup-window case) is written to run
   unchanged against any backend, so validating them is a build away.
 
+### Cross-subsystem sweep (TD-2026-07-25-1xx)
+
+A per-subsystem pass over `util`, `platform`, `terminal`, `editor`, `render`, `compare`,
+`project`, `plugin`, `persistence`/`app`, and `workspace`, run with five different lenses
+(correctness, allocation/perf, dedup, portability/toolchain, and mechanical sweeps). The
+fixed findings are in the commit log from `15da5265` onward and include: a
+`ReadFileLineWindow` bug that returned garbage extra lines and streamed whole files;
+syntax highlighting silently disabled on any line with an invalid UTF-8 byte;
+case-insensitive **regex** search not folding Unicode case (while literal search did);
+`SettingFlagEnabled` being case-sensitive and not recognizing `no`; an `AsciiGlyphAtlas`
+blit that could bleed a wide glyph into the next slot; the whole tree failing to compile
+under clang; and ~39% off the dominant hunk-alignment phase of a diff build. Two
+mechanical sweeps came back clean and are worth repeating: the suite passes under
+`-D_GLIBCXX_ASSERTIONS` (no out-of-bounds container access anywhere), and GCC and clang
+both build `-Werror`-clean. What is left open:
+
+- **TD-2026-07-25-101 — regex search is Unicode-aware only for case folding, not for
+  pattern semantics. OPEN (needs a product decision).**
+  `util::SearchRegexCompileOptions` now adds `PCRE2_UTF|PCRE2_UCP` when a
+  case-insensitive query carries a non-ASCII byte, which fixes the concrete bug (`Δ` did
+  not find `δ` in regex mode even though it did in literal mode). It deliberately does
+  NOT turn UTF on for ASCII queries, because every realistic query is ASCII and
+  byte-oriented matching is the faster path — speed is the stated first priority.
+  The consequence is that `.`, `\w`, `\b` and friends match **bytes** for an ASCII
+  query and **codepoints** for a non-ASCII one. VSCode (JS regex / ripgrep) is
+  consistently codepoint-oriented. Making microide match would mean always compiling with
+  `PCRE2_UTF|PCRE2_UCP|PCRE2_MATCH_INVALID_UTF`, at a measurable cost on project-wide
+  search over a large tree. That trade is the user's call, not a silent default: raise it
+  before changing, and measure `search_*` scenarios if it is taken.
+
+- **TD-2026-07-25-102 — `platform/ControlSocketServer.cpp` still cannot compile on macOS.
+  OPEN (platform, same category as 002).**
+  The pipe-creation sites across `platform`/`util` now share `util::MakeCloexecPipe`,
+  which picks `pipe2` on Linux and `pipe()+fcntl` elsewhere — that closed the `pipe2`
+  half of the problem for `TerminalBackend` and `ControlSocketServer`. But
+  `ControlSocketServer` also calls `accept4(...)` and passes `SOCK_CLOEXEC` to
+  `socket()`, both Linux-only, from inside a `__unix__ || __APPLE__` block. The same
+  shim treatment applies (accept + `F_SETFD` fallback) but it is unverifiable here.
+
+- **TD-2026-07-25-103 — the four per-platform `FileIndexWatcher::Impl` structs still
+  duplicate their poll-fallback field block. OPEN (deliberately deferred).**
+  TD-2026-07-25-002 collapsed the poll *worker*; each `Impl` still repeats the same seven
+  members (`poll_mode`, `force_poll`, `poll_interval`, `poll_worker`, `stop_poll`,
+  `initial_scan_worker`, `stop_initial_scan`) plus an identical `StopInitialScan()`.
+  Folding them into a shared `PollFallbackState` member would touch every reference by
+  name across three platform blocks that do not compile on this host — a poor
+  risk/reward until 002/102 are unblocked.
+
+- **TD-2026-07-25-104 — `TextLayoutCache::VisibleLineLayoutRefCached` hands out a
+  reference into an evictable cache. OPEN (latent; no known trigger).**
+  The returned `const LayoutLine&` points into `visible_line_cache_`, whose FIFO eviction
+  `erase`s entries once `kVisibleLineCacheLimit` is reached. A caller that holds the
+  reference across a later query for a different line can therefore be left dangling.
+  No current caller does — the limit exceeds the visible row count, so a single frame
+  never evicts what it is still reading — but nothing enforces that. Either raise it to a
+  documented invariant with a lint, or return a stable handle/index instead of a
+  reference.
+
 ### ⏭️ Standing backlog — deferred to dedicated passes (revisit; NOT dropped)
 
 The 2026-07-17 correctness/perf burndown implemented the concrete, self-contained wins
