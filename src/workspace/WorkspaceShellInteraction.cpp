@@ -315,7 +315,7 @@ std::optional<std::string> WorkspaceShell::SelectionTextWithContext() {
     if (enclosing.has_value() && enclosing->opener_line < start_line &&
         enclosing->opener_line < viewport->lines().size()) {
       const std::string opener =
-          util::TrimAsciiWhitespace(viewport->lines()[enclosing->opener_line]);
+          util::TrimAsciiWhitespace(viewport->lines().LineView(enclosing->opener_line));
       if (!opener.empty()) {
         result += "// context: ";
         result += opener;

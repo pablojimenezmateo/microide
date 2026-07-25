@@ -1141,14 +1141,14 @@ LspService::DiskEditResult LspService::RunClosedFileEdits(
       }
       if (pos.line == line_count && pos.column == 0) {
         const std::size_t last = line_count - 1;
-        return editor::TextPosition{last, scratch.lines()[last].size()};
+        return editor::TextPosition{last, scratch.lines().LineLength(last)};
       }
       if (pos.line >= line_count) {
         *ok = false;
         return pos;
       }
       pos.column = lsp_encoding::LspCharacterToByteColumn(
-          std::string_view(scratch.lines()[pos.line]), pos.column, encoding);
+          scratch.lines().LineView(pos.line), pos.column, encoding);
       return pos;
     };
 

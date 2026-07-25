@@ -379,7 +379,7 @@ void RestoreSelectionAcrossLines(TextViewport& viewport,
     last_line = viewport.line_count() - 1;
   }
   viewport.MoveCursorTo(first_line, 0, /*extend_selection=*/false);
-  viewport.MoveCursorTo(last_line, viewport.lines()[last_line].size(),
+  viewport.MoveCursorTo(last_line, viewport.lines().LineLength(last_line),
                         /*extend_selection=*/true);
 }
 
@@ -402,7 +402,7 @@ void RestoreCaretsAfterIndentEdit(TextViewport& viewport,
       result = shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
     }
     if (line < viewport.line_count()) {
-      result = std::min(result, viewport.lines()[line].size());
+      result = std::min(result, viewport.lines().LineLength(line));
     }
     return result;
   };

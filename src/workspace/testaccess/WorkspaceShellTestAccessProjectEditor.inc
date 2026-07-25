@@ -670,6 +670,18 @@
     }
     return changed;
   }
+  // Whether the project file index currently holds `relative_path`. Lets a test
+  // assert the observable end state of an index mutation instead of the
+  // ApplyBatch "changed" bit, which is legitimately false when the live
+  // filesystem watcher applied the same entry first.
+  static bool ProjectFileIndexContains(const WorkspaceShell& shell,
+                                       const std::filesystem::path& relative_path) {
+    const std::vector<project::ProjectFile> files =
+        shell.context_.current_project_state.file_index.Snapshot();
+    return std::any_of(files.begin(), files.end(), [&](const project::ProjectFile& file) {
+      return file.relative_path == relative_path;
+    });
+  }
   static bool PluginHostEnabled(const WorkspaceShell& shell) {
     return shell.plugin_runtime_.Host().enabled();
   }

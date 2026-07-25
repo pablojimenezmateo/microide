@@ -1173,7 +1173,7 @@ bool WorkspaceShell::ApplyPluginWorkspaceEdit(
     if (line >= line_count) {
       line = line_count - 1;
     }
-    const std::size_t line_length = viewport->lines()[line].size();
+    const std::size_t line_length = viewport->lines().LineLength(line);
     std::size_t column = one_based_column >= 1 ? one_based_column - 1 : 0;
     if (column > line_length) {
       column = line_length;
@@ -1372,7 +1372,7 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
         return pos;
       }
       pos.column = lsp_encoding::LspCharacterToByteColumn(
-          std::string_view(viewport->lines()[pos.line]), pos.column, vp_encoding);
+          viewport->lines().LineView(pos.line), pos.column, vp_encoding);
       return pos;
     };
     bool group_ok = true;

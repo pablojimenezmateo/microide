@@ -3782,10 +3782,27 @@ void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
   WriteFile(absolute_injected, "needle\n");
   const platform::IndexUpdateBatch create_batch =
       BuildInjectedCreateBatch(root, relative_injected);
-  Expect(WorkspaceShellTestAccess::ApplyFileIndexBatchForTesting(shell, create_batch),
-         "injected create batch should mutate the file index");
-  Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false),
-         "injected create batch should flow through project reload plumbing");
+  // The batch may legitimately report "no change": OpenProjectTab starts a live
+  // filesystem watcher on `root`, and if its thread is scheduled between the
+  // WriteFile above and this call it applies its own CreatedOrModified for the
+  // same path first. BuildInjectedCreateBatch stats the real file, so the two
+  // entries carry identical mtime+size and UpsertProjectFileLocked correctly
+  // dedups the second to a no-op. Assert the observable end state — the entry is
+  // in the index — rather than the internal changed bit, which is what the
+  // delete half of this test below already does. (Asserting the bit made this
+  // test fail under heavy parallel load, where the watcher wins the race.)
+  const bool create_changed =
+      WorkspaceShellTestAccess::ApplyFileIndexBatchForTesting(shell, create_batch);
+  Expect(WorkspaceShellTestAccess::ProjectFileIndexContains(shell, relative_injected),
+         "injected create batch should leave the new entry in the file index");
+  if (create_changed) {
+    Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false),
+           "injected create batch should flow through project reload plumbing");
+  } else {
+    // The watcher already flagged the change and the shell may have consumed the
+    // flag; drain whatever is pending so the finder/search below see the entry.
+    WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
+  }
 
   Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell),
          "injected create batch fixture should open file finder");

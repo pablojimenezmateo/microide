@@ -116,6 +116,14 @@ class TextBuffer {
   static std::size_t snapshot_build_count() { return s_snapshot_builds_; }
   static void reset_snapshot_build_count() { s_snapshot_builds_ = 0; }
 
+  // Number of lines currently materialized by the `operator[]`/front/back
+  // compatibility accessors. Every entry is a full heap copy of a line that the
+  // piece tree already stores, retained until the next mutation — so a per-line
+  // hot path that reaches for `operator[]` instead of `LineView` quietly
+  // accumulates a second copy of every line it touches. Exposed so a test can
+  // pin "this render path stays zero-copy" rather than trusting the convention.
+  std::size_t materialized_line_count() const { return line_cache_.size(); }
+
   // --- Mutate ---
   // Universal primitive: erase `removed` lines starting at `start`, then insert
   // `inserted` at `start`. Mirrors the undo-entry apply model.

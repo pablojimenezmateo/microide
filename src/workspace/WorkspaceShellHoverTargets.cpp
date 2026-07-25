@@ -584,7 +584,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
   if (!hovered_line.has_value() || *hovered_line >= viewport.lines().size()) {
     return std::nullopt;
   }
-  const std::string_view line_text = viewport.lines()[*hovered_line];
+  const std::string_view line_text = viewport.lines().LineView(*hovered_line);
   if (line_text.empty() || line_text.size() > kMaxHoverResolveLineBytes) {
     return std::nullopt;
   }

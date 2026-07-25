@@ -192,7 +192,7 @@ void RefillOccurrenceSeedCache(const editor::TextViewport& viewport,
   std::size_t seed_start = seed->start.column;
   std::size_t seed_end = seed->end.column;
   if (seed_start >= seed_end || seed_line >= viewport.lines().size() ||
-      seed_end > viewport.lines()[seed_line].size()) {
+      seed_end > viewport.lines().LineLength(seed_line)) {
     // A stale selection anchor column can outlive a content shrink, leaving
     // seed_start/seed_end past the line length; guard before substr (which throws
     // std::out_of_range when pos > size) and to avoid seeding a truncated needle.
@@ -205,7 +205,8 @@ void RefillOccurrenceSeedCache(const editor::TextViewport& viewport,
   seed_cache.seed_start = seed_start;
   seed_cache.seed_end = seed_end;
 
-  seed_cache.needle = viewport.lines()[seed_line].substr(seed_start, seed_end - seed_start);
+  seed_cache.needle =
+      viewport.lines().LineView(seed_line).substr(seed_start, seed_end - seed_start);
 
   seed_cache.lowered_needle.clear();
   if (!occurrences_case_sensitive) {
@@ -272,7 +273,7 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
   const auto& lines = viewport.lines();
   const std::string_view needle_view(needle.data(), needle.size());
 
-  auto append_occurrences = [&](std::size_t line_index, const std::string& haystack) {
+  auto append_occurrences = [&](std::size_t line_index, std::string_view haystack) {
     const auto emit = [&](std::size_t match_start, std::size_t match_end) {
       const bool primary = line_index == seed_line && match_start == seed_start &&
                            match_end == seed_end;
@@ -313,7 +314,7 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
     if (line_index >= lines.size()) {
       continue;
     }
-    append_occurrences(line_index, lines[line_index]);
+    append_occurrences(line_index, lines.LineView(line_index));
   }
 }
 
