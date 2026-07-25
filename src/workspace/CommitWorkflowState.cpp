@@ -3,14 +3,11 @@
 namespace microide::workspace {
 
 std::string CommitWorkflowBodyText(const editor::TextViewport& viewport) {
+  // The piece tree already stores the body '\n'-joined; taking it directly skips
+  // the Snapshot() vector-of-strings (one allocation per line) this used to
+  // materialize just to re-join it.
   std::string body;
-  const auto& lines = viewport.lines().Snapshot();
-  for (std::size_t line = 0; line < lines.size(); ++line) {
-    if (line > 0) {
-      body.push_back('\n');
-    }
-    body += lines[line];
-  }
+  viewport.lines().AppendWholeText(body);
   return body;
 }
 
