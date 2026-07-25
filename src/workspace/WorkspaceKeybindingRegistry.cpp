@@ -673,6 +673,11 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(key)) << 16) |
            static_cast<std::uint16_t>(normalized_mods);
   };
+  // The context set is packed into a uint8 bitmask; adding a 9th context would
+  // silently shift bits out and make every binding past it look conflict-free.
+  static_assert(static_cast<unsigned>(KeybindingContext::Terminal) < 8,
+                "KeybindingContext no longer fits the uint8 conflict-index bitmask — widen "
+                "the mask type in ResolveKeybindings");
   const auto context_bit = [](KeybindingContext context) {
     return static_cast<std::uint8_t>(1u << static_cast<unsigned>(context));
   };

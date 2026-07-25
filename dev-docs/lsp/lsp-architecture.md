@@ -207,6 +207,14 @@ backstops: bounded message/read-buffer sizes with oversized-frame skip-and-resyn
   no staging residue), validate-first atomicity + root containment, and the
   versioned-edit gate (`ServerApplyEdit*` tests); the op/version parsing itself is
   covered by `LspProtocol/ParsesWorkspaceEditResourceOps`.
+- `LspResourceOpsTests` — `LspService::ApplyWorkspaceResourceOps` in isolation
+  (no shell, no server): apply order, the simulated-existence overlay
+  (create-then-rename, delete-then-create), ignore-option no-ops, `overwrite`
+  beating `ignoreIfExists`, project-root containment (incl. `..` traversal),
+  non-recursive directory-delete refusal, staged-backup disposal, and the
+  rollback journal — a mid-batch I/O failure restores a staged delete
+  byte-identically. Also pins that the tab/diagnostic reconcile hooks fire in
+  APPLY order rather than grouped by op kind.
 - `Phase5Tests` / `WorkspaceShellPluginTests` — end-to-end through a Python
   fake server (diagnostics, hover, outline, format, rename, semantic overlay).
 - `LspRealServerE2ETests` — **opt-in** end-to-end against real clangd (skips when

@@ -573,6 +573,10 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
   out.visible = overlay.visible;
   out.mode = overlay.mode;
   out.current_surface = current_surface;
+  // Seeded from state so the field is never stale on the paths that return before
+  // the list layout computes it (hidden overlay, find widget); the list-overlay
+  // path below replaces it with the layout-clamped row.
+  out.scroll_row = overlay.scroll_row;
   out.buffer_search_query_text = overlay.workflow.buffer_search.query.text();
   out.caret_anchored = overlay.mode == OverlayMode::Completion;
   out.overlay_rect = overlay_rect;
@@ -888,19 +892,22 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
                                       /*stable=*/true);
         out.error_at_title_row = true;
       }
+      // Rows truncate to the row column (which already excludes the scrollbar
+      // gutter when the list overflows), matching every other single-column mode
+      // — the card-relative width would let a long label run under the scrollbar.
       for_visible([&](std::size_t item_index) {
         const CompletionSessionItem& item = completion.items[item_index];
         OverlayRowRef row_ref;
         if (item.detail.empty()) {
           row_ref.primary =
-              AddTruncatedLabel(tr, blob, item.label, overlay_rect.w - 36.0f, /*stable=*/true);
+              AddTruncatedLabel(tr, blob, item.label, row_width - 16.0f, /*stable=*/true);
         } else {
           compose_scratch.clear();
           compose_scratch += item.label;
           compose_scratch += "  ";
           compose_scratch += item.detail;
-          row_ref.primary = AddTruncatedLabel(tr, blob, compose_scratch, overlay_rect.w - 36.0f,
-                                              /*stable=*/false);
+          row_ref.primary =
+              AddTruncatedLabel(tr, blob, compose_scratch, row_width - 16.0f, /*stable=*/false);
         }
         row_refs.push_back(row_ref);
       });
@@ -918,7 +925,7 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
       for_visible([&](std::size_t item_index) {
         OverlayRowRef row_ref;
         row_ref.primary = AddTruncatedLabel(tr, blob, actions.items[item_index].title,
-                                            overlay_rect.w - 36.0f, /*stable=*/true);
+                                            row_width - 16.0f, /*stable=*/true);
         row_refs.push_back(row_ref);
       });
       break;

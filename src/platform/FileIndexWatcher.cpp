@@ -224,6 +224,122 @@ IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
   return batch;
 }
 
+// One tree walk producing the poll backend's snapshot (relative path -> mtime+size).
+// Filtering is deliberately identical to CollectTrackedCreations (directory prune,
+// tracked-relative check, file-level ignore), so a baseline seeded from an initial
+// batch and a snapshot taken here describe the same file set.
+detail::FileIndexSnapshot BuildPollSnapshot(const std::filesystem::path& root,
+                                            const std::vector<std::string>& exclude_globs) {
+  detail::FileIndexSnapshot result;
+  project::ProjectTraversalFilter filter(root, exclude_globs);
+  std::error_code error;
+  constexpr auto opts = std::filesystem::directory_options::skip_permission_denied;
+  for (std::filesystem::recursive_directory_iterator it(root, opts, error), end;
+       !error && it != end; it.increment(error)) {
+    std::error_code status_error;
+    const auto status = it->status(status_error);
+    if (status_error) {
+      continue;
+    }
+    if (std::filesystem::is_directory(status) && ShouldSkipWatchedDirectory(it->path(), &filter)) {
+      it.disable_recursion_pending();
+      continue;
+    }
+    if (!std::filesystem::is_regular_file(status)) {
+      continue;
+    }
+    const std::filesystem::path abs_path = it->path().lexically_normal();
+    std::filesystem::path rel;
+    if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
+      continue;
+    }
+    if (!filter.Includes(abs_path, platform::PathType::RegularFile)) {
+      continue;
+    }
+    std::error_code mtime_error;
+    const auto mtime = std::filesystem::last_write_time(abs_path, mtime_error);
+    std::error_code size_error;
+    const auto sz = std::filesystem::file_size(abs_path, size_error);
+    result[rel] = {mtime_error ? std::filesystem::file_time_type{} : mtime,
+                   size_error ? 0 : sz};
+  }
+  return result;
+}
+
+// The poll fallback, shared by every backend (the four per-platform Impls carried
+// byte-identical copies of this loop).
+//
+// It emits the INITIAL batch itself and seeds its diff baseline from that same
+// walk. That single-walk ownership is load-bearing, not a tidy-up: the initial
+// scan used to run on its own thread while the poll worker took a second,
+// independent baseline walk, so a file created between the two walks was absent
+// from the initial batch AND already present in the baseline — no diff would ever
+// report it and it stayed invisible to the index for the life of the watch (a
+// file deleted in that window stayed in the index forever, symmetrically). The
+// window is normally sub-millisecond, which is why it only ever surfaced as a
+// rare flake in the poll-backend contract test under load.
+void RunPollFallbackWorker(const std::filesystem::path& root,
+                           const std::vector<std::string>& exclude_globs,
+                           std::size_t entry_budget,
+                           std::chrono::milliseconds poll_interval,
+                           const std::atomic<bool>& stop_poll,
+                           const FileIndexWatcher::Callback& callback) {
+  // ONE walk feeds both outputs. The baseline is the full snapshot (budget-free,
+  // as the poll baseline has always been) while the initial batch it derives is
+  // entry-budgeted, so a tree past the budget still reports only `entry_budget`
+  // files and the later diffs do not smuggle the remainder in one interval later.
+  detail::FileIndexSnapshot snapshot = BuildPollSnapshot(root, exclude_globs);
+  if (stop_poll.load(std::memory_order_acquire)) {
+    return;
+  }
+  IndexUpdateBatch initial;
+  initial.is_initial = true;
+  initial.truncated = snapshot.size() > entry_budget;
+  initial.changes.reserve(std::min(snapshot.size(), entry_budget));
+  for (const auto& [relative_path, meta] : snapshot) {
+    if (initial.changes.size() >= entry_budget) {
+      break;
+    }
+    IndexUpdateBatch::Change change;
+    change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
+    change.entry.relative_path = relative_path;
+    change.entry.mtime = meta.first;
+    change.entry.size = meta.second;
+    initial.changes.push_back(std::move(change));
+  }
+  if (callback) {
+    callback(std::move(initial));
+  }
+
+  while (!stop_poll.load(std::memory_order_acquire)) {
+    // Sleep the configured interval in slices so a stop request is noticed
+    // promptly. The slice is capped at the interval so a short test interval
+    // stays responsive without making the production 750ms cadence pay extra
+    // idle wakeups.
+    const std::chrono::milliseconds slice =
+        std::min(poll_interval, std::chrono::milliseconds(50));
+    for (std::chrono::milliseconds waited(0);
+         waited < poll_interval && !stop_poll.load(std::memory_order_acquire); waited += slice) {
+      std::this_thread::sleep_for(std::min(slice, poll_interval - waited));
+    }
+    if (stop_poll.load(std::memory_order_acquire)) {
+      break;
+    }
+
+    detail::FileIndexSnapshot current = BuildPollSnapshot(root, exclude_globs);
+    std::vector<IndexUpdateBatch::Change> changes =
+        detail::BuildPollSnapshotDiff(snapshot, current);
+    snapshot = std::move(current);
+
+    if (!changes.empty() && callback) {
+      IndexUpdateBatch batch;
+      batch.is_initial = false;
+      batch.changes = std::move(changes);
+      callback(std::move(batch));
+    }
+  }
+}
+
 // Append creations for the pre-existing files inside a directory that was created or
 // moved into the tree: inotify emits no per-file events for them, so without this
 // bounded walk they never enter the index until a full rescan.
@@ -734,85 +850,11 @@ struct FileIndexWatcher::Impl {
     poll_mode = true;
     stop_poll.store(false, std::memory_order_release);
     // Take initial snapshot
-    poll_worker = std::thread([this]() { PollWorkerMain(); });
+    poll_worker = std::thread([this]() {
+      RunPollFallbackWorker(root, exclude_globs, entry_budget, poll_interval, stop_poll, callback);
+    });
   }
 
-  void PollWorkerMain() {
-    // Build initial snapshot: map relative_path -> mtime+size
-    std::map<std::filesystem::path, std::pair<std::filesystem::file_time_type, std::uintmax_t>>
-        snapshot;
-
-    auto build_snapshot =
-        [&]() -> std::map<std::filesystem::path,
-                          std::pair<std::filesystem::file_time_type, std::uintmax_t>> {
-      std::map<std::filesystem::path,
-               std::pair<std::filesystem::file_time_type, std::uintmax_t>>
-          result;
-      project::ProjectTraversalFilter filter(root, exclude_globs);
-      std::error_code error;
-      constexpr auto opts = std::filesystem::directory_options::skip_permission_denied;
-      for (std::filesystem::recursive_directory_iterator it(root, opts, error), end;
-           !error && it != end; it.increment(error)) {
-        std::error_code status_error;
-        const auto status = it->status(status_error);
-        if (status_error) {
-          continue;
-        }
-        if (std::filesystem::is_directory(status) &&
-            ShouldSkipWatchedDirectory(it->path(), &filter)) {
-          it.disable_recursion_pending();
-          continue;
-        }
-        if (!std::filesystem::is_regular_file(status)) {
-          continue;
-        }
-        const std::filesystem::path abs_path = it->path().lexically_normal();
-        std::filesystem::path rel;
-        if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
-          continue;
-        }
-        if (!filter.Includes(abs_path, platform::PathType::RegularFile)) {
-          continue;
-        }
-        std::error_code mtime_error;
-        const auto mtime = std::filesystem::last_write_time(abs_path, mtime_error);
-        std::error_code size_error;
-        const auto sz = std::filesystem::file_size(abs_path, size_error);
-        result[rel] = {mtime_error ? std::filesystem::file_time_type{} : mtime,
-                       size_error ? 0 : sz};
-      }
-      return result;
-    };
-
-    snapshot = build_snapshot();
-
-    while (!stop_poll.load(std::memory_order_acquire)) {
-      // Sleep the configured interval in small slices to react to stop quickly.
-      const std::chrono::milliseconds interval = poll_interval;
-      constexpr std::chrono::milliseconds kSlice(25);
-      for (std::chrono::milliseconds waited(0);
-           waited < interval && !stop_poll.load(std::memory_order_acquire); waited += kSlice) {
-        std::this_thread::sleep_for(std::min(kSlice, interval - waited));
-      }
-      if (stop_poll.load(std::memory_order_acquire)) {
-        break;
-      }
-
-      auto current = build_snapshot();
-
-      std::vector<IndexUpdateBatch::Change> changes =
-          detail::BuildPollSnapshotDiff(snapshot, current);
-
-      snapshot = std::move(current);
-
-      if (!changes.empty() && callback) {
-        IndexUpdateBatch batch;
-        batch.is_initial = false;
-        batch.changes = std::move(changes);
-        callback(std::move(batch));
-      }
-    }
-  }
 };
 
 #elif defined(__APPLE__)
@@ -996,83 +1038,11 @@ struct FileIndexWatcher::Impl {
   void StartPollFallback() {
     poll_mode = true;
     stop_poll.store(false, std::memory_order_release);
-    poll_worker = std::thread([this]() { PollWorkerMain(); });
+    poll_worker = std::thread([this]() {
+      RunPollFallbackWorker(root, exclude_globs, entry_budget, poll_interval, stop_poll, callback);
+    });
   }
 
-  void PollWorkerMain() {
-    std::map<std::filesystem::path, std::pair<std::filesystem::file_time_type, std::uintmax_t>>
-        snapshot;
-
-    auto build_snapshot =
-        [&]() -> std::map<std::filesystem::path,
-                          std::pair<std::filesystem::file_time_type, std::uintmax_t>> {
-      std::map<std::filesystem::path,
-               std::pair<std::filesystem::file_time_type, std::uintmax_t>>
-          result;
-      project::ProjectTraversalFilter filter(root, exclude_globs);
-      std::error_code error;
-      constexpr auto opts = std::filesystem::directory_options::skip_permission_denied;
-      for (std::filesystem::recursive_directory_iterator it(root, opts, error), end;
-           !error && it != end; it.increment(error)) {
-        std::error_code status_error;
-        const auto status = it->status(status_error);
-        if (status_error) {
-          continue;
-        }
-        if (std::filesystem::is_directory(status) &&
-            ShouldSkipWatchedDirectory(it->path(), &filter)) {
-          it.disable_recursion_pending();
-          continue;
-        }
-        if (!std::filesystem::is_regular_file(status)) {
-          continue;
-        }
-        const std::filesystem::path abs_path = it->path().lexically_normal();
-        std::filesystem::path rel;
-        if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
-          continue;
-        }
-        if (!filter.Includes(abs_path, platform::PathType::RegularFile)) {
-          continue;
-        }
-        std::error_code mtime_error;
-        const auto mtime = std::filesystem::last_write_time(abs_path, mtime_error);
-        std::error_code size_error;
-        const auto sz = std::filesystem::file_size(abs_path, size_error);
-        result[rel] = {mtime_error ? std::filesystem::file_time_type{} : mtime,
-                       size_error ? 0 : sz};
-      }
-      return result;
-    };
-
-    snapshot = build_snapshot();
-
-    while (!stop_poll.load(std::memory_order_acquire)) {
-      // Sleep the configured interval in small slices to react to stop quickly.
-      const std::chrono::milliseconds interval = poll_interval;
-      constexpr std::chrono::milliseconds kSlice(25);
-      for (std::chrono::milliseconds waited(0);
-           waited < interval && !stop_poll.load(std::memory_order_acquire); waited += kSlice) {
-        std::this_thread::sleep_for(std::min(kSlice, interval - waited));
-      }
-      if (stop_poll.load(std::memory_order_acquire)) {
-        break;
-      }
-
-      auto current = build_snapshot();
-      std::vector<IndexUpdateBatch::Change> changes =
-          detail::BuildPollSnapshotDiff(snapshot, current);
-
-      snapshot = std::move(current);
-
-      if (!changes.empty() && callback) {
-        IndexUpdateBatch batch;
-        batch.is_initial = false;
-        batch.changes = std::move(changes);
-        callback(std::move(batch));
-      }
-    }
-  }
 };
 
 #elif defined(_WIN32)
@@ -1301,83 +1271,11 @@ struct FileIndexWatcher::Impl {
   void StartPollFallback() {
     poll_mode = true;
     stop_poll.store(false, std::memory_order_release);
-    poll_worker = std::thread([this]() { PollWorkerMain(); });
+    poll_worker = std::thread([this]() {
+      RunPollFallbackWorker(root, exclude_globs, entry_budget, poll_interval, stop_poll, callback);
+    });
   }
 
-  void PollWorkerMain() {
-    std::map<std::filesystem::path, std::pair<std::filesystem::file_time_type, std::uintmax_t>>
-        snapshot;
-
-    auto build_snapshot =
-        [&]() -> std::map<std::filesystem::path,
-                          std::pair<std::filesystem::file_time_type, std::uintmax_t>> {
-      std::map<std::filesystem::path,
-               std::pair<std::filesystem::file_time_type, std::uintmax_t>>
-          result;
-      project::ProjectTraversalFilter filter(root, exclude_globs);
-      std::error_code error;
-      constexpr auto opts = std::filesystem::directory_options::skip_permission_denied;
-      for (std::filesystem::recursive_directory_iterator it(root, opts, error), end;
-           !error && it != end; it.increment(error)) {
-        std::error_code status_error;
-        const auto status = it->status(status_error);
-        if (status_error) {
-          continue;
-        }
-        if (std::filesystem::is_directory(status) &&
-            ShouldSkipWatchedDirectory(it->path(), &filter)) {
-          it.disable_recursion_pending();
-          continue;
-        }
-        if (!std::filesystem::is_regular_file(status)) {
-          continue;
-        }
-        const std::filesystem::path abs_path = it->path().lexically_normal();
-        std::filesystem::path rel;
-        if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
-          continue;
-        }
-        if (!filter.Includes(abs_path, platform::PathType::RegularFile)) {
-          continue;
-        }
-        std::error_code mtime_error;
-        const auto mtime = std::filesystem::last_write_time(abs_path, mtime_error);
-        std::error_code size_error;
-        const auto sz = std::filesystem::file_size(abs_path, size_error);
-        result[rel] = {mtime_error ? std::filesystem::file_time_type{} : mtime,
-                       size_error ? 0 : sz};
-      }
-      return result;
-    };
-
-    snapshot = build_snapshot();
-
-    while (!stop_poll.load(std::memory_order_acquire)) {
-      // Sleep the configured interval in small slices to react to stop quickly.
-      const std::chrono::milliseconds interval = poll_interval;
-      constexpr std::chrono::milliseconds kSlice(25);
-      for (std::chrono::milliseconds waited(0);
-           waited < interval && !stop_poll.load(std::memory_order_acquire); waited += kSlice) {
-        std::this_thread::sleep_for(std::min(kSlice, interval - waited));
-      }
-      if (stop_poll.load(std::memory_order_acquire)) {
-        break;
-      }
-
-      auto current = build_snapshot();
-      std::vector<IndexUpdateBatch::Change> changes =
-          detail::BuildPollSnapshotDiff(snapshot, current);
-
-      snapshot = std::move(current);
-
-      if (!changes.empty() && callback) {
-        IndexUpdateBatch batch;
-        batch.is_initial = false;
-        batch.changes = std::move(changes);
-        callback(std::move(batch));
-      }
-    }
-  }
 };
 
 #else
@@ -1410,83 +1308,11 @@ struct FileIndexWatcher::Impl {
   void StartPollFallback() {
     poll_mode = true;
     stop_poll.store(false, std::memory_order_release);
-    poll_worker = std::thread([this]() { PollWorkerMain(); });
+    poll_worker = std::thread([this]() {
+      RunPollFallbackWorker(root, exclude_globs, entry_budget, poll_interval, stop_poll, callback);
+    });
   }
 
-  void PollWorkerMain() {
-    std::map<std::filesystem::path, std::pair<std::filesystem::file_time_type, std::uintmax_t>>
-        snapshot;
-
-    auto build_snapshot =
-        [&]() -> std::map<std::filesystem::path,
-                          std::pair<std::filesystem::file_time_type, std::uintmax_t>> {
-      std::map<std::filesystem::path,
-               std::pair<std::filesystem::file_time_type, std::uintmax_t>>
-          result;
-      project::ProjectTraversalFilter filter(root, exclude_globs);
-      std::error_code error;
-      constexpr auto opts = std::filesystem::directory_options::skip_permission_denied;
-      for (std::filesystem::recursive_directory_iterator it(root, opts, error), end;
-           !error && it != end; it.increment(error)) {
-        std::error_code status_error;
-        const auto status = it->status(status_error);
-        if (status_error) {
-          continue;
-        }
-        if (std::filesystem::is_directory(status) &&
-            ShouldSkipWatchedDirectory(it->path(), &filter)) {
-          it.disable_recursion_pending();
-          continue;
-        }
-        if (!std::filesystem::is_regular_file(status)) {
-          continue;
-        }
-        const std::filesystem::path abs_path = it->path().lexically_normal();
-        std::filesystem::path rel;
-        if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
-          continue;
-        }
-        if (!filter.Includes(abs_path, platform::PathType::RegularFile)) {
-          continue;
-        }
-        std::error_code mtime_error;
-        const auto mtime = std::filesystem::last_write_time(abs_path, mtime_error);
-        std::error_code size_error;
-        const auto sz = std::filesystem::file_size(abs_path, size_error);
-        result[rel] = {mtime_error ? std::filesystem::file_time_type{} : mtime,
-                       size_error ? 0 : sz};
-      }
-      return result;
-    };
-
-    snapshot = build_snapshot();
-
-    while (!stop_poll.load(std::memory_order_acquire)) {
-      // Sleep the configured interval in small slices to react to stop quickly.
-      const std::chrono::milliseconds interval = poll_interval;
-      constexpr std::chrono::milliseconds kSlice(25);
-      for (std::chrono::milliseconds waited(0);
-           waited < interval && !stop_poll.load(std::memory_order_acquire); waited += kSlice) {
-        std::this_thread::sleep_for(std::min(kSlice, interval - waited));
-      }
-      if (stop_poll.load(std::memory_order_acquire)) {
-        break;
-      }
-
-      auto current = build_snapshot();
-      std::vector<IndexUpdateBatch::Change> changes =
-          detail::BuildPollSnapshotDiff(snapshot, current);
-
-      snapshot = std::move(current);
-
-      if (!changes.empty() && callback) {
-        IndexUpdateBatch batch;
-        batch.is_initial = false;
-        batch.changes = std::move(changes);
-        callback(std::move(batch));
-      }
-    }
-  }
 };
 
 #endif
@@ -1628,7 +1454,10 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
   }
 #endif
 
-  impl_->StartInitialScan();
+  // Poll fallback: the poll worker owns the initial batch too. Starting a separate
+  // initial-scan thread here would race it — a file created between the two walks
+  // would be missing from the initial batch and already present in the poll
+  // baseline, so no diff would ever surface it (see RunPollFallbackWorker).
   impl_->StartPollFallback();
   return true;
 }

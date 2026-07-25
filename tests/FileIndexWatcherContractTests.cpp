@@ -168,6 +168,58 @@ void RunWatcherContract(bool force_poll) {
          "watcher contract: gitignored churn stays out of the index");
 }
 
+// Startup-window regression: files created WHILE the watcher is coming up must
+// still reach the index. The poll fallback used to take two independent tree
+// walks — one for the initial batch (on its own thread) and one to seed the diff
+// baseline — so a file created between them was missing from the initial batch
+// and already present in the baseline, and no later diff would ever mention it.
+// Creating a burst of files immediately after Watch() returns lands squarely in
+// that window; with a single-walk startup every one of them is either in the
+// initial batch or reported by the first diff.
+void RunWatcherStartupWindowContract(bool force_poll) {
+  WatcherContractFixture fixture(force_poll);
+  const fs::path& root = fixture.temp.path();
+
+  // Enough pre-existing files that the startup walk takes real time, widening the
+  // window a racing create can land in.
+  for (int i = 0; i < 400; ++i) {
+    WriteFile(root / ("seed-" + std::to_string(i) + ".txt"), "seed\n");
+  }
+
+  Expect(fixture.watcher.Watch(root), "startup-window contract: Watch should start");
+  // No wait for the initial batch: create immediately, racing the startup walk.
+  std::vector<std::string> racing;
+  racing.reserve(64);
+  for (int i = 0; i < 64; ++i) {
+    const std::string name = "racing-" + std::to_string(i) + ".txt";
+    WriteFile(root / name, "racing\n");
+    racing.push_back(name);
+  }
+
+  const bool all_indexed = WaitUntil(
+      [&] {
+        for (const std::string& name : racing) {
+          if (!fixture.IndexHas(name.c_str())) {
+            return false;
+          }
+        }
+        return true;
+      },
+      std::chrono::seconds(10), std::chrono::milliseconds(5), [&] { fixture.Pump(); });
+  if (!all_indexed) {
+    std::string missing;
+    for (const std::string& name : racing) {
+      if (!fixture.IndexHas(name.c_str())) {
+        missing += name;
+        missing += ' ';
+      }
+    }
+    Expect(false, "startup-window contract: files created during watcher startup were "
+                  "never indexed: " + missing);
+  }
+  Expect(fixture.saw_initial, "startup-window contract: an is_initial batch still arrives");
+}
+
 void TestFileIndexWatcherContractNativeBackend() {
   // Runs against the host's preferred backend (native where available; the
   // watcher's own graceful fallback otherwise — the contract holds either way).
@@ -185,6 +237,10 @@ void RegisterFileIndexWatcherContractTests(std::vector<TestCase>& tests) {
           TestFileIndexWatcherContractNativeBackend);
   AddTest(tests, "FileIndexWatcherContract/PollBackend",
           TestFileIndexWatcherContractPollBackend);
+  AddTest(tests, "FileIndexWatcherContract/NativeBackendStartupWindow",
+          [] { RunWatcherStartupWindowContract(/*force_poll=*/false); });
+  AddTest(tests, "FileIndexWatcherContract/PollBackendStartupWindow",
+          [] { RunWatcherStartupWindowContract(/*force_poll=*/true); });
 }
 
 }  // namespace microide::tests

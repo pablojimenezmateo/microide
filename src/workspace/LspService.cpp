@@ -1437,12 +1437,16 @@ LspService::ResourceOpsResult LspService::ApplyWorkspaceResourceOps(
     }
   };
 
-  struct AppliedRename {
-    fs::path from;
-    fs::path to;
+  // Reconcile actions are recorded in APPLY ORDER, not grouped by kind: a batch
+  // like [delete B, rename A->B] must close B's tabs before A's tabs are
+  // retargeted onto B, or the retargeted tab (and its unsaved contents) is closed
+  // by the reconcile of an op that ran earlier.
+  struct AppliedReconcile {
+    bool is_rename = false;
+    fs::path from;  // rename source / delete target
+    fs::path to;    // rename destination; empty for delete
   };
-  std::vector<AppliedRename> applied_renames;
-  std::vector<fs::path> applied_deletes;
+  std::vector<AppliedReconcile> applied_reconciles;
   fs::path last_mutated;
   bool any_applied = false;
   for (std::size_t i = 0; i < ops.size(); ++i) {
@@ -1502,7 +1506,7 @@ LspService::ResourceOpsResult LspService::ApplyWorkspaceResourceOps(
           break;
         }
         journal.push_back({JournalEntry::Undo::RenameBack, dest, target});
-        applied_renames.push_back({target, dest});
+        applied_reconciles.push_back({/*is_rename=*/true, target, dest});
         last_mutated = dest;
         break;
       }
@@ -1514,7 +1518,7 @@ LspService::ResourceOpsResult LspService::ApplyWorkspaceResourceOps(
         }
         journal.push_back({JournalEntry::Undo::RestoreStaged, target, *staged});
         staged_disposals.push_back(*staged);
-        applied_deletes.push_back(target);
+        applied_reconciles.push_back({/*is_rename=*/false, target, {}});
         last_mutated = target.parent_path();
         break;
       }
@@ -1536,14 +1540,13 @@ LspService::ResourceOpsResult LspService::ApplyWorkspaceResourceOps(
   // --- The batch landed: reconcile shell state per op, dispose the staged
   // backups (off the shell thread when possible — a staged directory removal can
   // be slow), and refresh the project views once.
-  for (const AppliedRename& rename : applied_renames) {
-    if (operations_.reconcile_tabs_after_resource_rename) {
-      operations_.reconcile_tabs_after_resource_rename(rename.from, rename.to);
-    }
-  }
-  for (const fs::path& deleted : applied_deletes) {
-    if (operations_.reconcile_tabs_after_resource_delete) {
-      operations_.reconcile_tabs_after_resource_delete(deleted);
+  for (const AppliedReconcile& action : applied_reconciles) {
+    if (action.is_rename) {
+      if (operations_.reconcile_tabs_after_resource_rename) {
+        operations_.reconcile_tabs_after_resource_rename(action.from, action.to);
+      }
+    } else if (operations_.reconcile_tabs_after_resource_delete) {
+      operations_.reconcile_tabs_after_resource_delete(action.from);
     }
   }
   if (!staged_disposals.empty()) {

@@ -785,6 +785,7 @@ add_executable(microide_tests
   tests/GitSidebarCommandCenterTests.cpp
   tests/WorkspaceLspClientTests.cpp
   tests/LspProtocolTests.cpp
+  tests/LspResourceOpsTests.cpp
   tests/LspPositionEncodingTests.cpp
   tests/LspRealServerE2ETests.cpp
   tests/WorkspaceDapClientTests.cpp
