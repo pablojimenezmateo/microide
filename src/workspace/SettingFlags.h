@@ -11,15 +11,19 @@
 namespace microide::workspace {
 
 // Single source of truth for interpreting a bool-typed setting value. A setting
-// reads as enabled unless its value is one of the falsey tokens ("false", "0",
-// or "off"); an absent value yields `default_value`. Header-only and inline so
-// the per-frame setting checks stay zero call overhead.
+// reads as enabled unless its value is one of the falsey tokens; an absent value
+// yields `default_value`. Header-only and inline so the per-frame setting checks
+// stay zero call overhead, and util::IsFalseyToken is allocation-free.
+//
+// The token set comes from util so the settings path and the env-var tracing
+// switches cannot drift. It previously had its own case-SENSITIVE list that also
+// omitted "no", so `FALSE` and `no` both read as ENABLED.
 [[nodiscard]] inline bool SettingFlagEnabled(const std::optional<std::string>& value,
                                              bool default_value = false) {
   if (!value.has_value()) {
     return default_value;
   }
-  return *value != "false" && *value != "0" && *value != "off";
+  return !util::IsFalseyToken(*value);
 }
 
 // Upper bounds for TD-2026-07-17A-106. `.gitignore` file loading skips files above

@@ -39,11 +39,10 @@ std::string EnvSinkPath() {
   if (value == nullptr || value[0] == '\0') {
     return {};
   }
-  const std::string normalized = ToLowerAscii(value);
-  if (normalized == "0" || normalized == "false" || normalized == "no" || normalized == "off") {
+  if (IsFalseyToken(value)) {
     return {};
   }
-  if (normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on") {
+  if (IsTruthyToken(value)) {
     return kDefaultPath;
   }
   return value;

@@ -33,10 +33,7 @@ bool ParseEnabledValue(const char* value) {
   if (value == nullptr || value[0] == '\0') {
     return false;
   }
-
-  const std::string normalized = ToLowerAscii(value);
-  return normalized != "0" && normalized != "false" && normalized != "no" &&
-         normalized != "off";
+  return !IsFalseyToken(value);
 }
 
 double ParseMinimumDurationMs(const char* value) {

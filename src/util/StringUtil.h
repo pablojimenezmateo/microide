@@ -34,6 +34,54 @@ char32_t DecodeUtf8Codepoint(std::string_view glyph);
 // Append the UTF-8 encoding of `codepoint` to `out`. Codepoints above U+10FFFF
 // are encoded as written (callers are expected to pass valid scalar values).
 void AppendUtf8(std::string& out, char32_t codepoint);
+
+namespace detail {
+[[nodiscard]] inline bool EqualsAsciiCaseInsensitive(std::string_view text,
+                                                     std::string_view lowercase_token) {
+  if (text.size() != lowercase_token.size()) {
+    return false;
+  }
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    const char c = text[i];
+    const char folded = (c >= 'A' && c <= 'Z') ? static_cast<char>(c + ('a' - 'A')) : c;
+    if (folded != lowercase_token[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+}  // namespace detail
+
+// The single definition of a "falsey" configuration token, shared by env-var
+// tracing switches and bool-typed settings. Four sites each carried their own
+// list and they had drifted: the settings path was case SENSITIVE and did not
+// recognize "no", so `editor.wrap = FALSE` and `= no` both read as ENABLED —
+// the opposite of what the user wrote.
+//
+// Allocation-free (the previous ToLowerAscii-based copies allocated a string per
+// call), so it stays usable from the per-frame setting checks.
+[[nodiscard]] inline bool IsFalseyToken(std::string_view text) {
+  if (text.size() > 5) {
+    return false;  // no falsey token is longer than "false"
+  }
+  return detail::EqualsAsciiCaseInsensitive(text, "0") ||
+         detail::EqualsAsciiCaseInsensitive(text, "false") ||
+         detail::EqualsAsciiCaseInsensitive(text, "no") ||
+         detail::EqualsAsciiCaseInsensitive(text, "off");
+}
+
+// The matching "explicitly truthy" set. Note this is NOT `!IsFalseyToken`: a
+// value like a file path is neither, and callers that accept an arbitrary
+// payload (e.g. MICROIDE_DAP_LOG=/tmp/x.log) need to tell the two apart.
+[[nodiscard]] inline bool IsTruthyToken(std::string_view text) {
+  if (text.size() > 4) {
+    return false;
+  }
+  return detail::EqualsAsciiCaseInsensitive(text, "1") ||
+         detail::EqualsAsciiCaseInsensitive(text, "true") ||
+         detail::EqualsAsciiCaseInsensitive(text, "yes") ||
+         detail::EqualsAsciiCaseInsensitive(text, "on");
+}
 // Terminal display column width of a codepoint: 0 for zero-width / combining
 // marks, 2 for East Asian wide / fullwidth / emoji-presentation codepoints, and
 // 1 otherwise. Matches the layout assumptions of common `wcwidth`/unicode-width

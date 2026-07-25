@@ -447,6 +447,37 @@ void TestStringUtilUnicodeCaseFold() {
 
 }  // namespace
 
+// The falsey/truthy token sets are shared by the env-var tracing switches and by
+// bool-typed settings (workspace::SettingFlagEnabled). Before consolidation the
+// settings copy was case-SENSITIVE and omitted "no", so `FALSE` and `no` both
+// read as ENABLED — the opposite of what the user wrote.
+void TestStringUtilConfigTokenSets() {
+  using microide::util::IsFalseyToken;
+  using microide::util::IsTruthyToken;
+
+  for (const std::string_view falsey : {"0", "false", "no", "off", "FALSE", "No", "Off", "OFF"}) {
+    Expect(IsFalseyToken(falsey),
+           std::string("`") + std::string(falsey) + "` must read as falsey in any casing");
+    Expect(!IsTruthyToken(falsey),
+           std::string("`") + std::string(falsey) + "` must not also read as truthy");
+  }
+  for (const std::string_view truthy : {"1", "true", "yes", "on", "TRUE", "Yes", "ON"}) {
+    Expect(IsTruthyToken(truthy),
+           std::string("`") + std::string(truthy) + "` must read as truthy in any casing");
+    Expect(!IsFalseyToken(truthy),
+           std::string("`") + std::string(truthy) + "` must not also read as falsey");
+  }
+  // Neither set: an arbitrary payload (a log path, a mode name) is not a boolean.
+  // Callers that accept such values rely on the two predicates being distinct.
+  for (const std::string_view other : {"", "word", "/tmp/dap.log", "offset", "nope", "falsey"}) {
+    Expect(!IsFalseyToken(other) && !IsTruthyToken(other),
+           std::string("`") + std::string(other) + "` is neither falsey nor truthy");
+  }
+  // SettingFlagEnabled is "enabled unless falsey", so a non-boolean payload
+  // ("word" for editor.wrap) stays enabled.
+  Expect(!IsFalseyToken("word"), "a non-boolean setting payload must not read as disabled");
+}
+
 void RegisterStringUtilTests(std::vector<TestCase>& tests) {
   AddTest(tests, "StringUtil/UnicodeCaseFold", TestStringUtilUnicodeCaseFold);
   AddTest(tests, "StringUtil/AppendUtf8EncodesAllSequenceLengths",
@@ -478,6 +509,7 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
           TestStringUtilJoinLinesHonorsSeparatorsAndEmptyInput);
   AddTest(tests, "StringUtil/LineEndingHelpersRoundTrip",
           TestStringUtilLineEndingHelpersRoundTrip);
+  AddTest(tests, "StringUtil/ConfigTokenSets", TestStringUtilConfigTokenSets);
   AddTest(tests, "StringUtil/CompareModelHandlesCrLfInputViaSharedSplitter",
           TestCompareModelHandlesCrLfInputViaSharedSplitter);
 }
