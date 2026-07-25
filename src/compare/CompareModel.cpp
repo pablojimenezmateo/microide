@@ -265,27 +265,38 @@ std::size_t CommonSignificantTokenBytes(const TokenizedLine& left, const Tokeniz
     return 0;
   }
 
-  // Reuse the caller-owned scratch (assign re-zeroes the boundary that value-init
-  // provided), so a dense modified hunk that calls this up to left*right times no
-  // longer mallocs a throwaway DP buffer per pair.
-  dp.assign((left_count + 1) * (right_count + 1), 0);
-  auto at = [&](std::size_t i, std::size_t j) -> std::size_t& {
-    return dp[i * (right_count + 1) + j];
-  };
+  // Only at(0, 0) is ever read — there is no backtrack — and every cell depends
+  // solely on the row below it, so ONE rolling row suffices. That turns the
+  // working set from O(left * right) into O(right) and, more importantly, shrinks
+  // the per-pair re-zero from up to kMaxIntralineLcsMatrixCells words to
+  // right_count + 1. This runs up to left_lines * right_lines times per hunk, so
+  // the full matrix was memsetting tens of MB across a dense diff.
+  //
+  // dp[j] holds at(i + 1, j) on entry to row i and at(i, j) on exit. Walking j
+  // downward means dp[j + 1] has already been overwritten with at(i, j + 1), so
+  // the diagonal at(i + 1, j + 1) is carried in `diagonal` instead of read back.
+  dp.assign(right_count + 1, 0);
 
   for (std::size_t i = left_count; i-- > 0;) {
+    const LineToken& left_token = left.tokens[left.significant_token_indices[i]];
+    const std::size_t left_length = left_token.end - left_token.start;
+    const std::string_view left_text = left.text.substr(left_token.start, left_length);
+    std::size_t diagonal = 0;  // at(i + 1, right_count) is always 0
     for (std::size_t j = right_count; j-- > 0;) {
-      const LineToken& left_token = left.tokens[left.significant_token_indices[i]];
       const LineToken& right_token = right.tokens[right.significant_token_indices[j]];
-      if (TokenEquals(left.text, left_token, right.text, right_token)) {
-        at(i, j) = (left_token.end - left_token.start) + at(i + 1, j + 1);
-      } else {
-        at(i, j) = std::max(at(i + 1, j), at(i, j + 1));
-      }
+      const std::size_t below = dp[j];  // at(i + 1, j), not yet overwritten
+      const std::size_t length = right_token.end - right_token.start;
+      const std::size_t value =
+          (length == left_length &&
+           right.text.compare(right_token.start, length, left_text) == 0)
+              ? left_length + diagonal
+              : std::max(below, dp[j + 1]);  // dp[j + 1] is already at(i, j + 1)
+      diagonal = below;
+      dp[j] = value;
     }
   }
 
-  return at(0, 0);
+  return dp[0];
 }
 
 std::size_t LineMatchWeight(std::string_view text,
@@ -383,6 +394,16 @@ void AlignHunkLinesInto(const std::vector<std::string_view>& deleted_lines,
   TokenizeLinesInto(deleted_lines, left_tokenized);
   TokenizeLinesInto(inserted_lines, right_tokenized);
 
+  // Whether a Pair is reachable at all for this hunk shape. CanPairAlignedLines
+  // rejects 1-vs-many and many-vs-1 purely on the counts, so for those hunks the
+  // similarity of every cell is computed and then discarded — an entire hunk of
+  // O(tokens^2) token-LCS runs for nothing. Hoist that decision out of the loop.
+  const bool pairing_possible = !((left_count == 1 && right_count > 1) ||
+                                  (right_count == 1 && left_count > 1));
+  // The 1x1 hunk always pairs and feeds the exact similarity into
+  // AlignmentPairCost, so the cheap-bound skip below must not apply to it.
+  const bool similarity_gates_pairing = !(left_count == 1 && right_count == 1);
+
   // Compute similarities lazily: -1 means "not yet computed".
   std::vector<double>& similarity = scratch.similarity;
   similarity.assign(left_count * right_count, -1.0);
@@ -390,7 +411,26 @@ void AlignHunkLinesInto(const std::vector<std::string_view>& deleted_lines,
   auto similarity_at = [&](std::size_t i, std::size_t j) -> double {
     double& val = similarity[i * right_count + j];
     if (val < 0.0) {
-      val = LineSimilarity(left_tokenized[i], right_tokenized[j], common_token_scratch);
+      const TokenizedLine& left_line = left_tokenized[i];
+      const TokenizedLine& right_line = right_tokenized[j];
+      // common_bytes can never exceed min(left_bytes, right_bytes), so
+      //   similarity <= 2 * min / (left + right).
+      // When that ceiling cannot reach the 0.35 pairing gate the exact value is
+      // never read (the Pair branch is skipped), so the O(tokens^2) LCS below is
+      // pure waste. Lines of very different length — the common shape in a real
+      // hunk — are rejected here in a few instructions.
+      const std::size_t left_bytes = left_line.significant_token_bytes;
+      const std::size_t right_bytes = right_line.significant_token_bytes;
+      const std::size_t total_bytes = left_bytes + right_bytes;
+      if (similarity_gates_pairing && total_bytes > 0) {
+        const double ceiling = (2.0 * static_cast<double>(std::min(left_bytes, right_bytes))) /
+                               static_cast<double>(total_bytes);
+        if (ceiling < 0.35) {
+          val = ceiling;
+          return val;
+        }
+      }
+      val = LineSimilarity(left_line, right_line, common_token_scratch);
     }
     return val;
   };
@@ -445,8 +485,8 @@ void AlignHunkLinesInto(const std::vector<std::string_view>& deleted_lines,
         }
       };
 
-      const double pair_similarity = similarity_at(i, j);
-      if (CanPairAlignedLines(pair_similarity, left_count, right_count)) {
+      const double pair_similarity = pairing_possible ? similarity_at(i, j) : 0.0;
+      if (pairing_possible && CanPairAlignedLines(pair_similarity, left_count, right_count)) {
         consider(AlignmentPairCost(pair_similarity) + at(i + 1, j + 1), HunkAlignmentKind::Pair,
                  pair_similarity);
       }
