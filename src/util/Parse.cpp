@@ -7,6 +7,8 @@
 #include <limits>
 #include <string>
 
+#include "util/StringUtil.h"
+
 namespace microide::util {
 
 namespace {
@@ -40,7 +42,7 @@ std::optional<T> ParseRealExact(std::string_view text, Convert convert) {
   // all three, making ParseFloat/ParseDouble laxer than ParseInt for the same token.
   {
     const char first = text.front();
-    if (std::isspace(static_cast<unsigned char>(first)) != 0 || first == '+') {
+    if (IsAsciiSpace(static_cast<unsigned char>(first)) != 0 || first == '+') {
       return std::nullopt;
     }
     std::string_view body = text;

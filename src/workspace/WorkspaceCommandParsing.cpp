@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "util/Parse.h"
+#include "util/StringUtil.h"
 
 namespace microide::workspace {
 
@@ -132,7 +133,7 @@ ParsedCommandLine ParseCommandLine(std::string_view input) {
       continue;
     }
 
-    if (std::isspace(static_cast<unsigned char>(c))) {
+    if (util::IsAsciiSpace(static_cast<unsigned char>(c))) {
       flush_token();
       parsed.trailing_space = true;
       continue;
@@ -185,7 +186,7 @@ bool CommandArgNeedsQuoting(std::string_view argument) {
   }
 
   return std::any_of(argument.begin(), argument.end(), [](unsigned char c) {
-    return !std::isalnum(c) && c != '_' && c != '-' && c != '.' && c != '/' && c != ':';
+    return !util::IsAsciiAlnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' && c != '.' && c != '/' && c != ':';
   });
 }
 

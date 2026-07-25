@@ -39,7 +39,7 @@ void TextViewport::InsertCharacter(char character) {
   const std::string text(1, character);
   const CoalesceHint hint{
       .kind = CoalesceKind::Insert,
-      .changed_is_space = std::isspace(static_cast<unsigned char>(character)) != 0,
+      .changed_is_space = util::IsAsciiSpace(static_cast<unsigned char>(character)) != 0,
   };
   (void)ApplyRangeEdit(range, text, true, hint);
 }
@@ -126,7 +126,7 @@ void TextViewport::Backspace() {
         .kind = CoalesceKind::DeleteBackward,
         .changed_is_space =
             erase_start < line.size() &&
-            std::isspace(static_cast<unsigned char>(line[erase_start])) != 0,
+            util::IsAsciiSpace(static_cast<unsigned char>(line[erase_start])) != 0,
     };
     (void)ApplyRangeEdit(
         SelectionRange{
@@ -169,7 +169,7 @@ void TextViewport::DeleteForward() {
     const std::size_t erase_end = TextLayout::NextTextColumn(line, cursor_column_);
     const CoalesceHint hint{
         .kind = CoalesceKind::DeleteForward,
-        .changed_is_space = std::isspace(static_cast<unsigned char>(line[cursor_column_])) != 0,
+        .changed_is_space = util::IsAsciiSpace(static_cast<unsigned char>(line[cursor_column_])) != 0,
     };
     (void)ApplyRangeEdit(
         SelectionRange{

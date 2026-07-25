@@ -19,7 +19,7 @@ namespace {
 
 bool IsBlankOrWhitespace(std::string_view text) {
   for (const char ch : text) {
-    if (std::isspace(static_cast<unsigned char>(ch)) == 0) {
+    if (util::IsAsciiSpace(static_cast<unsigned char>(ch)) == 0) {
       return false;
     }
   }

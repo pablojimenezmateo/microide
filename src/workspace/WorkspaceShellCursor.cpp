@@ -11,6 +11,7 @@
 #include "workspace/SettingsOverlayService.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceOutputReference.h"
+#include "util/StringUtil.h"
 
 namespace microide::workspace {
 
@@ -1253,7 +1254,7 @@ char WorkspaceShell::KeycodeToAscii(SDL_Keycode keycode, SDL_Keymod modifiers) {
 
   if (keycode >= SDLK_A && keycode <= SDLK_Z) {
     const char base = static_cast<char>('a' + (keycode - SDLK_A));
-    return shift ? static_cast<char>(std::toupper(static_cast<unsigned char>(base))) : base;
+    return shift ? util::ToUpperAsciiChar(static_cast<char>(base)) : base;
   }
 
   if (keycode >= SDLK_0 && keycode <= SDLK_9) {

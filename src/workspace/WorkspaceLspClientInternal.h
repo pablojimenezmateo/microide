@@ -30,6 +30,7 @@
 #include "util/StartupTrace.h"
 #include "workspace/LspClientTrace.h"
 #include "workspace/LspMessageFraming.h"
+#include "util/StringUtil.h"
 
 namespace microide::workspace {
 
@@ -279,7 +280,7 @@ struct LspClient::Impl {
 
   static int ExtractIndexedCount(std::string_view text) {
     for (std::size_t i = 0; i < text.size(); ++i) {
-      if (!std::isdigit(static_cast<unsigned char>(text[i]))) {
+      if (!util::IsAsciiDigit(static_cast<unsigned char>(text[i]))) {
         continue;
       }
       // Accumulate in 64-bit and saturate: the digit run comes from
@@ -289,7 +290,7 @@ struct LspClient::Impl {
       std::int64_t value = 0;
       std::size_t cursor = i;
       while (cursor < text.size() &&
-             std::isdigit(static_cast<unsigned char>(text[cursor]))) {
+             util::IsAsciiDigit(static_cast<unsigned char>(text[cursor]))) {
         value = value * 10 + (text[cursor] - '0');
         if (value > std::numeric_limits<int>::max()) {
           value = std::numeric_limits<int>::max();

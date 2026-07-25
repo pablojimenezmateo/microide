@@ -16,6 +16,7 @@
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
+#include "util/StringUtil.h"
 #endif
 
 namespace microide::terminal {
@@ -50,7 +51,7 @@ std::string LocalHostNameLower() {
     name.resize(dot);
   }
   for (char& ch : name) {
-    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    ch = util::ToLowerAsciiChar(static_cast<char>(ch));
   }
   return name;
 #else
@@ -67,7 +68,7 @@ bool Osc7HostIsLocal(std::string_view host) {
   }
   std::string host_lower(host);
   for (char& ch : host_lower) {
-    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    ch = util::ToLowerAsciiChar(static_cast<char>(ch));
   }
   if (const std::size_t dot = host_lower.find('.'); dot != std::string::npos) {
     host_lower.resize(dot);

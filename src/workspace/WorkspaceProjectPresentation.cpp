@@ -46,7 +46,7 @@ std::string ProjectStateDirectoryName(const std::filesystem::path& project_root)
   std::string sanitized;
   sanitized.reserve(label.size());
   for (const unsigned char c : label) {
-    if (std::isalnum(c) != 0 || c == '-' || c == '_') {
+    if (util::IsAsciiAlnum(static_cast<unsigned char>(c)) != 0 || c == '-' || c == '_') {
       sanitized.push_back(static_cast<char>(c));
     } else {
       sanitized.push_back('-');

@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <string>
 #include <vector>
+#include "util/StringUtil.h"
 
 namespace microide::terminal {
 
@@ -30,7 +31,7 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     }
   }
   char prefix = '\0';
-  if (!body.empty() && !std::isdigit(static_cast<unsigned char>(body.front())) &&
+  if (!body.empty() && !util::IsAsciiDigit(static_cast<unsigned char>(body.front())) &&
       body.front() != ';') {
     prefix = body.front();
     body.remove_prefix(1);

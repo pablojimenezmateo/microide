@@ -24,6 +24,7 @@
 #include "render/RendererInfo.h"
 #include "util/PerformanceCounters.h"
 #include "util/StartupTrace.h"
+#include "util/StringUtil.h"
 
 namespace microide::render {
 
@@ -432,7 +433,7 @@ std::string NormalizeFontToken(std::string_view text) {
     if (c == ' ' || c == '-' || c == '_' || c == '.') {
       continue;
     }
-    out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    out.push_back(util::ToLowerAsciiChar(static_cast<char>(c)));
   }
   return out;
 }
@@ -479,13 +480,13 @@ std::vector<std::string> StyleSubWords(std::string_view segment) {
     if (!current.empty() && i > 0) {
       const unsigned char prev = static_cast<unsigned char>(segment[i - 1]);
       const unsigned char cur = static_cast<unsigned char>(raw);
-      const bool camel = std::islower(prev) && std::isupper(cur);
-      const bool digit_edge = std::isalpha(prev) && std::isdigit(cur);
+      const bool camel = util::IsAsciiLower(static_cast<unsigned char>(prev)) && util::IsAsciiUpper(static_cast<unsigned char>(cur));
+      const bool digit_edge = util::IsAsciiAlpha(static_cast<unsigned char>(prev)) && util::IsAsciiDigit(static_cast<unsigned char>(cur));
       if (camel || digit_edge) {
         flush();
       }
     }
-    current.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(raw))));
+    current.push_back(util::ToLowerAsciiChar(static_cast<char>(raw)));
   }
   flush();
   return words;
@@ -546,8 +547,8 @@ std::string FontDisplayNameFromStem(std::string_view stem) {
     if (i > 0 && c != ' ' && base[i - 1] != ' ') {
       const unsigned char prev = static_cast<unsigned char>(base[i - 1]);
       const unsigned char cur = static_cast<unsigned char>(c);
-      const bool camel = std::islower(prev) && std::isupper(cur);
-      const bool digit_edge = std::isalpha(prev) && std::isdigit(cur);
+      const bool camel = util::IsAsciiLower(static_cast<unsigned char>(prev)) && util::IsAsciiUpper(static_cast<unsigned char>(cur));
+      const bool digit_edge = util::IsAsciiAlpha(static_cast<unsigned char>(prev)) && util::IsAsciiDigit(static_cast<unsigned char>(cur));
       if (camel || digit_edge) {
         out.push_back(' ');
       }
@@ -692,13 +693,13 @@ std::vector<std::string> SdlTtfTextBackend::AvailableFontFamilies() const {
   const auto ci_less = [](const std::string& a, const std::string& b) {
     return std::lexicographical_compare(
         a.begin(), a.end(), b.begin(), b.end(), [](unsigned char x, unsigned char y) {
-          return std::tolower(x) < std::tolower(y);
+          return util::ToLowerAsciiChar(static_cast<char>(x)) < util::ToLowerAsciiChar(static_cast<char>(y));
         });
   };
   const auto ci_equal = [](const std::string& a, const std::string& b) {
     return a.size() == b.size() &&
            std::equal(a.begin(), a.end(), b.begin(), [](unsigned char x, unsigned char y) {
-             return std::tolower(x) == std::tolower(y);
+             return util::ToLowerAsciiChar(static_cast<char>(x)) == util::ToLowerAsciiChar(static_cast<char>(y));
            });
   };
   std::sort(families.begin(), families.end(), ci_less);

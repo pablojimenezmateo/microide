@@ -8,6 +8,7 @@
 
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceProjectPresentation.h"
+#include "util/StringUtil.h"
 
 namespace microide::workspace {
 namespace {
@@ -54,8 +55,8 @@ std::uint64_t HashMix(std::uint64_t hash, std::string_view text) {
 
 std::string TabStripService::BuildProjectBadgeText(std::string_view label) const {
   for (const unsigned char ch : label) {
-    if (std::isalnum(ch) != 0) {
-      return std::string(1, static_cast<char>(std::toupper(ch)));
+    if (util::IsAsciiAlnum(static_cast<unsigned char>(ch)) != 0) {
+      return std::string(1, util::ToUpperAsciiChar(static_cast<char>(ch)));
     }
   }
   return "P";

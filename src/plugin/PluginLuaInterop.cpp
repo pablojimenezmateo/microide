@@ -17,7 +17,7 @@ bool IsValidIdentifier(std::string_view value) {
     return false;
   }
   return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
-    return std::isalnum(ch) || ch == '.' || ch == '-' || ch == '_';
+    return util::IsAsciiAlnum(static_cast<unsigned char>(ch)) || ch == '.' || ch == '-' || ch == '_';
   });
 }
 

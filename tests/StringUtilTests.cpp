@@ -478,7 +478,77 @@ void TestStringUtilConfigTokenSets() {
   Expect(!IsFalseyToken("word"), "a non-boolean setting payload must not read as disabled");
 }
 
+// The ASCII classifiers replaced `<cctype>` at every byte-scanning call site.
+// Two properties have to hold for that swap to be safe: they must agree with the
+// "C" locale over the ASCII range (so no parser changed meaning), and they must
+// reject every byte >= 0x80 (so UTF-8 continuation bytes can never be classified
+// as word/identifier content the way a non-C locale's `isalnum` would).
+void TestStringUtilAsciiClassifiersAreLocaleIndependent() {
+  using microide::util::IsAsciiAlnum;
+  using microide::util::IsAsciiAlpha;
+  using microide::util::IsAsciiDigit;
+  using microide::util::IsAsciiHexDigit;
+  using microide::util::IsAsciiLower;
+  using microide::util::IsAsciiSpace;
+  using microide::util::IsAsciiUpper;
+  using microide::util::ToLowerAsciiChar;
+  using microide::util::ToUpperAsciiChar;
+
+  // Exact "C" locale isspace set: space plus \t \n \v \f \r.
+  for (int c = 0; c < 256; ++c) {
+    const auto byte = static_cast<unsigned char>(c);
+    const bool expected_space = (c == ' ' || (c >= 0x09 && c <= 0x0D));
+    Expect(IsAsciiSpace(byte) == expected_space, "IsAsciiSpace matches the C-locale isspace set");
+    Expect(IsAsciiDigit(byte) == (c >= '0' && c <= '9'), "IsAsciiDigit covers 0-9 only");
+    Expect(IsAsciiUpper(byte) == (c >= 'A' && c <= 'Z'), "IsAsciiUpper covers A-Z only");
+    Expect(IsAsciiLower(byte) == (c >= 'a' && c <= 'z'), "IsAsciiLower covers a-z only");
+    Expect(IsAsciiAlpha(byte) == (IsAsciiUpper(byte) || IsAsciiLower(byte)),
+           "IsAsciiAlpha is the union of the two letter ranges");
+    Expect(IsAsciiAlnum(byte) == (IsAsciiAlpha(byte) || IsAsciiDigit(byte)),
+           "IsAsciiAlnum is letters plus digits");
+  }
+
+  // No byte outside ASCII is ever classified as content. This is the property a
+  // locale-sensitive `<cctype>` could violate (e.g. Latin-1 letters under a
+  // non-C locale), which would silently move word/identifier boundaries.
+  for (int c = 0x80; c < 256; ++c) {
+    const auto byte = static_cast<unsigned char>(c);
+    Expect(!IsAsciiSpace(byte) && !IsAsciiAlnum(byte) && !IsAsciiHexDigit(byte),
+           "bytes >= 0x80 are never space/alnum/hex regardless of process locale");
+    Expect(ToLowerAsciiChar(static_cast<char>(byte)) == static_cast<char>(byte) &&
+               ToUpperAsciiChar(static_cast<char>(byte)) == static_cast<char>(byte),
+           "case mapping leaves non-ASCII bytes untouched (no signed-char UB)");
+  }
+
+  Expect(IsAsciiHexDigit('0') && IsAsciiHexDigit('f') && IsAsciiHexDigit('F') &&
+             !IsAsciiHexDigit('g'),
+         "IsAsciiHexDigit covers both hex letter cases");
+  Expect(ToLowerAsciiChar('Q') == 'q' && ToLowerAsciiChar('q') == 'q',
+         "ToLowerAsciiChar is idempotent over the letter range");
+  Expect(ToUpperAsciiChar('q') == 'Q' && ToUpperAsciiChar('Q') == 'Q',
+         "ToUpperAsciiChar is idempotent over the letter range");
+}
+
+void TestStringUtilContainsCaseInsensitiveAscii() {
+  using microide::util::ContainsCaseInsensitiveAscii;
+  Expect(ContainsCaseInsensitiveAscii("Editor Wrap", "wrap"), "matches ignoring case");
+  Expect(ContainsCaseInsensitiveAscii("Editor Wrap", "EDITOR"), "matches an uppercase needle");
+  Expect(ContainsCaseInsensitiveAscii("abc", ""), "an empty needle always matches");
+  Expect(ContainsCaseInsensitiveAscii("abc", "abc"), "a whole-string needle matches");
+  Expect(!ContainsCaseInsensitiveAscii("abc", "abcd"), "an over-long needle cannot match");
+  Expect(!ContainsCaseInsensitiveAscii("", "a"), "an empty haystack matches nothing");
+  // The first-byte fast reject must not skip a later occurrence: 'a' appears
+  // three times before the only real match.
+  Expect(ContainsCaseInsensitiveAscii("ax ay aZq", "azq"),
+         "a repeated first byte does not hide a later match");
+  Expect(!ContainsCaseInsensitiveAscii("aaaa", "aab "), "a near-miss tail still rejects");
+}
+
 void RegisterStringUtilTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "StringUtil/AsciiClassifiersAreLocaleIndependent",
+          TestStringUtilAsciiClassifiersAreLocaleIndependent);
+  AddTest(tests, "StringUtil/ContainsCaseInsensitiveAscii",
+          TestStringUtilContainsCaseInsensitiveAscii);
   AddTest(tests, "StringUtil/UnicodeCaseFold", TestStringUtilUnicodeCaseFold);
   AddTest(tests, "StringUtil/AppendUtf8EncodesAllSequenceLengths",
           TestStringUtilAppendUtf8EncodesAllSequenceLengths);

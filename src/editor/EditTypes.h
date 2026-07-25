@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cstddef>
 #include <string>
+#include "util/StringUtil.h"
 
 namespace microide::editor {
 
@@ -10,7 +11,7 @@ namespace microide::editor {
 // underscore. Matches the convention used by selection-by-word and
 // occurrence-highlight seeding.
 inline bool IsIdentifierByte(char c) {
-  return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+  return util::IsAsciiAlnum(static_cast<unsigned char>(c)) || c == '_';
 }
 
 

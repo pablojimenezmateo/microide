@@ -35,6 +35,54 @@ char32_t DecodeUtf8Codepoint(std::string_view glyph);
 // are encoded as written (callers are expected to pass valid scalar values).
 void AppendUtf8(std::string& out, char32_t codepoint);
 
+// Locale-independent ASCII character classification.
+//
+// These replace `<cctype>` (`std::isspace`, `std::isalnum`, `std::tolower`, …)
+// at every byte-scanning call site in the tree. Three reasons:
+//
+//  1. Correctness. `<cctype>` is locale-SENSITIVE for bytes >= 0x80, so a
+//     UTF-8 continuation byte could classify as alphanumeric under a non-C
+//     locale and flip word-motion / token / identifier boundaries at runtime.
+//     SDL and the platform layer both call `setlocale`, so the process locale
+//     is not ours to assume.
+//  2. Defined behavior. `std::tolower(char)` is UB when `char` is signed and
+//     the value is negative (i.e. any non-ASCII byte) unless cast to
+//     `unsigned char` first — a cast several call sites were missing.
+//  3. Speed. glibc implements these as a `__ctype_b_loc()` TLS load plus a
+//     table indirection *per call*; these are 2-3 compare-and-branch ops that
+//     inline and vectorize inside the per-byte loops that dominate the diff
+//     tokenizer, word motion, and command parsing.
+//
+// `IsAsciiSpace` reproduces the "C" locale `isspace` set exactly: space plus
+// 0x09..0x0D (\t \n \v \f \r).
+[[nodiscard]] inline constexpr bool IsAsciiSpace(unsigned char c) {
+  return c == ' ' || (c >= 0x09 && c <= 0x0D);
+}
+[[nodiscard]] inline constexpr bool IsAsciiDigit(unsigned char c) {
+  return c >= '0' && c <= '9';
+}
+[[nodiscard]] inline constexpr bool IsAsciiUpper(unsigned char c) {
+  return c >= 'A' && c <= 'Z';
+}
+[[nodiscard]] inline constexpr bool IsAsciiLower(unsigned char c) {
+  return c >= 'a' && c <= 'z';
+}
+[[nodiscard]] inline constexpr bool IsAsciiAlpha(unsigned char c) {
+  return IsAsciiUpper(c) || IsAsciiLower(c);
+}
+[[nodiscard]] inline constexpr bool IsAsciiAlnum(unsigned char c) {
+  return IsAsciiAlpha(c) || IsAsciiDigit(c);
+}
+[[nodiscard]] inline constexpr bool IsAsciiHexDigit(unsigned char c) {
+  return IsAsciiDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+[[nodiscard]] inline constexpr char ToLowerAsciiChar(char c) {
+  return IsAsciiUpper(static_cast<unsigned char>(c)) ? static_cast<char>(c + ('a' - 'A')) : c;
+}
+[[nodiscard]] inline constexpr char ToUpperAsciiChar(char c) {
+  return IsAsciiLower(static_cast<unsigned char>(c)) ? static_cast<char>(c - ('a' - 'A')) : c;
+}
+
 namespace detail {
 [[nodiscard]] inline bool EqualsAsciiCaseInsensitive(std::string_view text,
                                                      std::string_view lowercase_token) {
@@ -42,9 +90,7 @@ namespace detail {
     return false;
   }
   for (std::size_t i = 0; i < text.size(); ++i) {
-    const char c = text[i];
-    const char folded = (c >= 'A' && c <= 'Z') ? static_cast<char>(c + ('a' - 'A')) : c;
-    if (folded != lowercase_token[i]) {
+    if (ToLowerAsciiChar(text[i]) != lowercase_token[i]) {
       return false;
     }
   }

@@ -88,10 +88,10 @@ LineTokenKind ClassifyCodepoint(std::string_view text, std::size_t offset) {
   if (byte > 0x7F) {
     return LineTokenKind::Word;
   }
-  if (std::isspace(byte) != 0) {
+  if (util::IsAsciiSpace(static_cast<unsigned char>(byte)) != 0) {
     return LineTokenKind::Whitespace;
   }
-  if (std::isalnum(byte) != 0 || byte == '_') {
+  if (util::IsAsciiAlnum(static_cast<unsigned char>(byte)) != 0 || byte == '_') {
     return LineTokenKind::Word;
   }
   return LineTokenKind::Symbol;
@@ -1186,11 +1186,11 @@ bool LinesEqualIgnoringWhitespace(std::string_view left, std::string_view right)
   std::size_t left_index = 0;
   std::size_t right_index = 0;
   while (left_index < left.size() || right_index < right.size()) {
-    while (left_index < left.size() && std::isspace(static_cast<unsigned char>(left[left_index])) != 0) {
+    while (left_index < left.size() && util::IsAsciiSpace(static_cast<unsigned char>(left[left_index])) != 0) {
       ++left_index;
     }
     while (right_index < right.size() &&
-           std::isspace(static_cast<unsigned char>(right[right_index])) != 0) {
+           util::IsAsciiSpace(static_cast<unsigned char>(right[right_index])) != 0) {
       ++right_index;
     }
     if (left_index >= left.size() || right_index >= right.size()) {

@@ -802,10 +802,10 @@ bool ParseKeyChord(std::string_view chord, SDL_Keycode* key_out, SDL_Keymod* mod
   // returns SCANCODE_UNKNOWN and the whole binding is silently dropped.
   std::string sdl_scancode_name = remaining;
   for (char& character : sdl_scancode_name) {
-    character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+    character = util::ToUpperAsciiChar(static_cast<char>(character));
   }
 
-  if (lower_key.size() == 1 && std::isalpha(static_cast<unsigned char>(lower_key[0]))) {
+  if (lower_key.size() == 1 && util::IsAsciiAlpha(static_cast<unsigned char>(lower_key[0]))) {
     // Single letter: map to SDL keycode via scancode.
     const SDL_Scancode sc = SDL_GetScancodeFromName(sdl_scancode_name.c_str());
     if (sc == SDL_SCANCODE_UNKNOWN) {
@@ -820,7 +820,7 @@ bool ParseKeyChord(std::string_view chord, SDL_Keycode* key_out, SDL_Keymod* mod
   if (lower_key.size() >= 2 && lower_key[0] == 'f') {
     bool all_digits = true;
     for (std::size_t i = 1; i < lower_key.size(); ++i) {
-      if (!std::isdigit(static_cast<unsigned char>(lower_key[i]))) {
+      if (!util::IsAsciiDigit(static_cast<unsigned char>(lower_key[i]))) {
         all_digits = false;
         break;
       }

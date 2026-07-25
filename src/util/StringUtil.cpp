@@ -498,18 +498,25 @@ bool ContainsCaseInsensitiveAscii(std::string_view haystack, std::string_view ne
   if (needle.size() > haystack.size()) {
     return false;
   }
-  const auto lower = [](char c) {
-    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  };
-  for (std::size_t i = 0; i + needle.size() <= haystack.size(); ++i) {
-    bool match = true;
-    for (std::size_t j = 0; j < needle.size(); ++j) {
-      if (lower(haystack[i + j]) != lower(needle[j])) {
-        match = false;
+  // Scan for a first-byte hit before entering the O(needle) compare. The naive
+  // nested loop re-entered the inner loop (and re-folded needle[0]) at every
+  // haystack position; the settings/font filters run this over every row on each
+  // keystroke, so the first-byte reject is the case that has to be tight.
+  const char first_lower = ToLowerAsciiChar(needle[0]);
+  const char first_upper = ToUpperAsciiChar(needle[0]);
+  const std::size_t last = haystack.size() - needle.size();
+  for (std::size_t i = 0; i <= last; ++i) {
+    const char c = haystack[i];
+    if (c != first_lower && c != first_upper) {
+      continue;
+    }
+    std::size_t j = 1;
+    for (; j < needle.size(); ++j) {
+      if (ToLowerAsciiChar(haystack[i + j]) != ToLowerAsciiChar(needle[j])) {
         break;
       }
     }
-    if (match) {
+    if (j == needle.size()) {
       return true;
     }
   }
@@ -520,14 +527,14 @@ std::vector<std::string_view> SplitAsciiWhitespace(std::string_view text) {
   std::vector<std::string_view> parts;
   std::size_t index = 0;
   while (index < text.size()) {
-    while (index < text.size() && std::isspace(static_cast<unsigned char>(text[index])) != 0) {
+    while (index < text.size() && IsAsciiSpace(static_cast<unsigned char>(text[index]))) {
       ++index;
     }
     if (index >= text.size()) {
       break;
     }
     const std::size_t start = index;
-    while (index < text.size() && std::isspace(static_cast<unsigned char>(text[index])) == 0) {
+    while (index < text.size() && !IsAsciiSpace(static_cast<unsigned char>(text[index]))) {
       ++index;
     }
     parts.push_back(text.substr(start, index - start));
@@ -574,7 +581,7 @@ std::string CollapseAsciiWhitespace(std::string_view text) {
   collapsed.reserve(text.size());
   bool saw_whitespace = false;
   for (unsigned char c : text) {
-    if (std::isspace(c)) {
+    if (IsAsciiSpace(c)) {
       saw_whitespace = !collapsed.empty();
       continue;
     }
@@ -599,7 +606,7 @@ std::string CollapseAsciiWhitespaceTrackingMatch(std::string_view text,
   std::size_t mapped_end = std::string::npos;
   for (std::size_t i = 0; i < text.size(); ++i) {
     const unsigned char c = static_cast<unsigned char>(text[i]);
-    if (std::isspace(c)) {
+    if (IsAsciiSpace(c)) {
       saw_whitespace = !collapsed.empty();
       // A boundary landing on whitespace maps to where the next emitted byte
       // (or pending space) will sit.
@@ -650,11 +657,11 @@ std::string CollapseAsciiWhitespaceTrackingMatch(std::string_view text,
 
 std::string TrimAsciiWhitespace(std::string_view text) {
   std::size_t start = 0;
-  while (start < text.size() && std::isspace(static_cast<unsigned char>(text[start]))) {
+  while (start < text.size() && IsAsciiSpace(static_cast<unsigned char>(text[start]))) {
     ++start;
   }
   std::size_t end = text.size();
-  while (end > start && std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+  while (end > start && IsAsciiSpace(static_cast<unsigned char>(text[end - 1]))) {
     --end;
   }
   return std::string(text.substr(start, end - start));

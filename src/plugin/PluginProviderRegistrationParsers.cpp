@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "plugin/PluginLuaInterop.h"
+#include "util/StringUtil.h"
 
 namespace microide::plugin::registration_parsers {
 namespace {
@@ -191,7 +192,7 @@ bool ParseToolRegistration(lua_State* state,
   const auto is_hex_sha256 = [](std::string_view value) {
     if (value.size() != 64) return false;
     for (const char c : value) {
-      if (std::isxdigit(static_cast<unsigned char>(c)) == 0) return false;
+      if (util::IsAsciiHexDigit(static_cast<unsigned char>(c)) == 0) return false;
     }
     return true;
   };
@@ -205,7 +206,7 @@ bool ParseToolRegistration(lua_State* state,
   // compares against `ComputeSha256Blocking`, which returns lowercase. An
   // uppercase expected digest would otherwise fail verification for a correct file.
   for (char& c : *sha256_opt) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    c = util::ToLowerAsciiChar(static_cast<char>(c));
   }
   std::string label;
   if (auto value = ReadStringField(state, 1, "label")) label = std::move(*value);

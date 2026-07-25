@@ -37,7 +37,7 @@ std::string FirstLine(std::string_view text) {
 }
 
 bool IsTerminalUrlTerminator(char character) {
-  return std::isspace(static_cast<unsigned char>(character)) != 0 || character == '"' ||
+  return util::IsAsciiSpace(static_cast<unsigned char>(character)) != 0 || character == '"' ||
          character == '\'' || character == '<' || character == '>';
 }
 
@@ -88,7 +88,7 @@ std::optional<std::string> TerminalUrlAtColumn(std::string_view text, std::size_
   // or `File://…` links were never detected.
   std::string lowered(text);
   for (char& ch : lowered) {
-    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    ch = util::ToLowerAsciiChar(static_cast<char>(ch));
   }
   const std::string_view lowered_view(lowered);
 

@@ -13,7 +13,7 @@ namespace microide::editor {
 namespace {
 
 bool IsDigit(char ch) {
-  return std::isdigit(static_cast<unsigned char>(ch)) != 0;
+  return util::IsAsciiDigit(static_cast<unsigned char>(ch)) != 0;
 }
 
 // Hard caps so a hostile or pathological snippet body cannot signed-overflow the

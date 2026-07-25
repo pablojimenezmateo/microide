@@ -3,13 +3,14 @@
 #include <cctype>
 
 #include "util/Hex.h"
+#include "util/StringUtil.h"
 
 namespace microide::workspace {
 
 namespace {
 
 bool IsUnreservedUriByte(unsigned char ch) {
-  return std::isalnum(ch) != 0 || ch == '-' || ch == '_' || ch == '.' || ch == '~' || ch == '/';
+  return util::IsAsciiAlnum(static_cast<unsigned char>(ch)) != 0 || ch == '-' || ch == '_' || ch == '.' || ch == '~' || ch == '/';
 }
 
 }  // namespace
@@ -69,7 +70,7 @@ std::optional<std::filesystem::path> PathFromFileUri(std::string_view uri) {
   }
 #ifdef _WIN32
   if (decoded->size() >= 3 && (*decoded)[0] == '/' &&
-      std::isalpha(static_cast<unsigned char>((*decoded)[1])) != 0 && (*decoded)[2] == ':') {
+      util::IsAsciiAlpha(static_cast<unsigned char>((*decoded)[1])) != 0 && (*decoded)[2] == ':') {
     decoded->erase(decoded->begin());
   }
 #endif

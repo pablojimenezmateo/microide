@@ -9,6 +9,7 @@
 #include "util/DurableFile.h"
 #include "util/Sha256.h"
 #include "workspace/FileUri.h"
+#include "util/StringUtil.h"
 
 namespace microide::workspace {
 
@@ -66,7 +67,7 @@ std::optional<std::filesystem::path> ResolveToolSourcePath(const std::string& ur
 // (`ComputeSha256Blocking` already returns lowercase; manifests may be uppercase).
 std::string LowercaseDigest(std::string digest) {
   for (char& c : digest) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    c = util::ToLowerAsciiChar(static_cast<char>(c));
   }
   return digest;
 }
@@ -111,7 +112,7 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
   // normalize once here to cover every comparison below.
   std::string expected_sha256 = expected_sha256_in;
   for (char& c : expected_sha256) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    c = util::ToLowerAsciiChar(static_cast<char>(c));
   }
 
   const std::filesystem::path cached_path = cache_dir_ / tool_id;

@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "platform/Subprocess.h"
+#include "util/StringUtil.h"
 
 namespace microide::platform {
 
@@ -50,10 +51,10 @@ bool IsAllowedUrlScheme(std::string_view url) {
   scheme.reserve(colon);
   for (std::size_t i = 0; i < colon; ++i) {
     const unsigned char ch = static_cast<unsigned char>(url[i]);
-    if (!(std::isalnum(ch) || ch == '+' || ch == '-' || ch == '.')) {
+    if (!(util::IsAsciiAlnum(static_cast<unsigned char>(ch)) || ch == '+' || ch == '-' || ch == '.')) {
       return false;
     }
-    scheme.push_back(static_cast<char>(std::tolower(ch)));
+    scheme.push_back(util::ToLowerAsciiChar(static_cast<char>(ch)));
   }
   return scheme == "http" || scheme == "https" || scheme == "mailto";
 }
