@@ -961,25 +961,77 @@ std::vector<DiffOp> BuildExactLineOps(std::span<const std::string_view> left_lin
                                            line_occurrences[left_lines[i]]);
   }
 
-  std::vector<std::size_t> dp((left_count + 1) * (right_count + 1), 0);
-  auto at = [&](std::size_t i, std::size_t j) -> std::size_t& {
-    return dp[i * (right_count + 1) + j];
-  };
-
-  for (std::size_t i = left_count; i-- > 0;) {
-    for (std::size_t j = right_count; j-- > 0;) {
-      std::size_t best = std::max(at(i + 1, j), at(i, j + 1));
-      if (LinesEqualForDiff(left_lines[i], right_lines[j], options)) {
-        best = std::max(best, left_match_weight[i] + at(i + 1, j + 1));
+  // Intern each line to an equality-class id before the DP. The table below is
+  // bounded at kMaxLineLcsMatrixCells (250k) cells, and the loop used to call
+  // LinesEqualForDiff at EVERY one of them — a full memcmp over the line, or
+  // under ignore_whitespace a two-cursor whitespace-skipping walk. Hashing each
+  // line once (O(N + M)) turns all of that into an integer compare. The ids
+  // reproduce LinesEqualForDiff exactly because it is a genuine equivalence
+  // relation either way: exact byte equality, or equality after removing every
+  // whitespace byte (`==` implies the whitespace-insensitive form, so the
+  // ignore_whitespace case is not a union of two relations).
+  std::vector<std::uint32_t> left_ids(left_count);
+  std::vector<std::uint32_t> right_ids(right_count);
+  if (options.ignore_whitespace) {
+    // Normalizing needs owned keys, so this path allocates one string per
+    // DISTINCT line rather than per cell.
+    std::unordered_map<std::string, std::uint32_t> ids;
+    ids.reserve(left_count + right_count);
+    std::string key;
+    const auto intern = [&](std::string_view line) {
+      key.clear();
+      for (const char c : line) {
+        if (!util::IsAsciiSpace(static_cast<unsigned char>(c))) {
+          key.push_back(c);
+        }
       }
-      at(i, j) = best;
+      return ids.try_emplace(key, static_cast<std::uint32_t>(ids.size())).first->second;
+    };
+    for (std::size_t i = 0; i < left_count; ++i) left_ids[i] = intern(left_lines[i]);
+    for (std::size_t j = 0; j < right_count; ++j) right_ids[j] = intern(right_lines[j]);
+  } else {
+    // Exact equality: the views already key the map, so this allocates nothing
+    // beyond the table itself.
+    std::unordered_map<std::string_view, std::uint32_t> ids;
+    ids.reserve(left_count + right_count);
+    for (std::size_t i = 0; i < left_count; ++i) {
+      left_ids[i] = ids.try_emplace(left_lines[i], static_cast<std::uint32_t>(ids.size()))
+                        .first->second;
+    }
+    for (std::size_t j = 0; j < right_count; ++j) {
+      right_ids[j] = ids.try_emplace(right_lines[j], static_cast<std::uint32_t>(ids.size()))
+                         .first->second;
+    }
+  }
+
+  const std::size_t stride = right_count + 1;
+  std::vector<std::size_t> dp((left_count + 1) * stride, 0);
+  auto at = [&](std::size_t i, std::size_t j) -> std::size_t& { return dp[i * stride + j]; };
+
+  // Row-pointer walk: `at()` recomputed `i * stride + j` for each of the four
+  // accesses per cell. Hoisting the two rows out of the inner loop leaves one
+  // add per access.
+  for (std::size_t i = left_count; i-- > 0;) {
+    std::size_t* row = dp.data() + i * stride;
+    const std::size_t* next_row = row + stride;
+    const std::uint32_t left_id = left_ids[i];
+    const std::size_t weight = left_match_weight[i];
+    for (std::size_t j = right_count; j-- > 0;) {
+      std::size_t best = std::max(next_row[j], row[j + 1]);
+      if (left_id == right_ids[j]) {
+        const std::size_t diagonal = weight + next_row[j + 1];
+        if (diagonal > best) {
+          best = diagonal;
+        }
+      }
+      row[j] = best;
     }
   }
 
   std::size_t i = 0;
   std::size_t j = 0;
   while (i < left_count && j < right_count) {
-    if (LinesEqualForDiff(left_lines[i], right_lines[j], options)) {
+    if (left_ids[i] == right_ids[j]) {
       const std::size_t diagonal = left_match_weight[i] + at(i + 1, j + 1);
       if (diagonal >= at(i + 1, j) && diagonal >= at(i, j + 1) && at(i, j) == diagonal) {
         ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i], right_lines[j]});

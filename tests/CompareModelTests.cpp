@@ -1004,7 +1004,144 @@ void TestCompareIntralineBudgetBoundsLargeModifiedHunk() {
 
 }  // namespace
 
+// The line-diff LCS interns each line to an integer equality-class id instead of
+// calling LinesEqualForDiff at every one of its (up to 250k) table cells. That is
+// only sound because LinesEqualForDiff is a true equivalence relation. This
+// fuzzes the interned ids against the predicate they replaced over randomized
+// line sets built to collide: whitespace-only differences, whitespace-only
+// lines, empty lines, and lines that are equal ignoring whitespace but differ
+// byte-wise (and vice versa).
+void TestCompareLineEqualityInterningMatchesPredicate() {
+  // The predicate the ids must reproduce, restated independently of the
+  // implementation: remove every ASCII whitespace byte, then compare.
+  const auto strip = [](std::string_view line) {
+    std::string out;
+    for (const char c : line) {
+      if (!microide::util::IsAsciiSpace(static_cast<unsigned char>(c))) {
+        out.push_back(c);
+      }
+    }
+    return out;
+  };
+
+  const std::vector<std::string> alphabet = {
+      "alpha", " alpha", "alpha ", "  alpha  ", "a l p h a", "alpha\t", "\talpha",
+      "beta",  "beta ",  "",       " ",         "\t",        "  ",      "a",
+      "ab",    "a b",    " a b ",  "b a",       "alphabeta", "alpha beta",
+  };
+
+  std::uint64_t state = 0x243F6A8885A308D3ull;
+  const auto next = [&state]() {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return state;
+  };
+
+  for (int trial = 0; trial < 60; ++trial) {
+    std::string left_text;
+    std::string right_text;
+    std::vector<std::string> left_lines;
+    std::vector<std::string> right_lines;
+    const std::size_t count = 3 + (next() % 10);
+    for (std::size_t i = 0; i < count; ++i) {
+      left_lines.push_back(alphabet[next() % alphabet.size()]);
+      right_lines.push_back(alphabet[next() % alphabet.size()]);
+      if (i != 0) {
+        left_text += '\n';
+        right_text += '\n';
+      }
+      left_text += left_lines.back();
+      right_text += right_lines.back();
+    }
+
+    for (const bool ignore_whitespace : {false, true}) {
+      CompareBuildOptions options;
+      options.ignore_whitespace = ignore_whitespace;
+      const CompareModel model = BuildCompareModel(left_text, right_text, options);
+
+      // Every row the diff calls Unchanged must genuinely satisfy the predicate,
+      // and every row it calls changed must genuinely violate it. A wrong id
+      // (two distinct lines sharing one, or one line split across two) shows up
+      // here as an Unchanged row whose sides are not equal, or the reverse.
+      for (const CompareRow& row : model.rows) {
+        if (row.kind != CompareRowKind::Unchanged) {
+          continue;
+        }
+        const bool equal = ignore_whitespace
+                               ? strip(row.left_text) == strip(row.right_text)
+                               : row.left_text == row.right_text;
+        Expect(equal,
+               ignore_whitespace
+                   ? "an Unchanged row must be equal after stripping whitespace"
+                   : "an Unchanged row must be byte-identical when whitespace matters");
+      }
+    }
+  }
+
+  // Directed cases the random alphabet may under-sample.
+  {
+    CompareBuildOptions ignore_ws;
+    ignore_ws.ignore_whitespace = true;
+    // Equal ignoring whitespace but byte-different: one id under ignore_ws, two without.
+    const CompareModel folded = BuildCompareModel("x\n a b \ny", "x\nab\ny", ignore_ws);
+    Expect(folded.rows.size() == 3, "whitespace-folded lines align one-to-one");
+    for (const CompareRow& row : folded.rows) {
+      Expect(row.kind == CompareRowKind::Unchanged,
+             "lines equal after whitespace removal are Unchanged under ignore_whitespace");
+    }
+    const CompareModel exact = BuildCompareModel("x\n a b \ny", "x\nab\ny", CompareBuildOptions{});
+    Expect(std::any_of(exact.rows.begin(), exact.rows.end(),
+                       [](const CompareRow& row) { return row.kind != CompareRowKind::Unchanged; }),
+           "the same pair must NOT collapse when whitespace is significant");
+
+    // A whitespace-only line and an empty line strip to the same key.
+    const CompareModel blanks = BuildCompareModel("a\n   \nb", "a\n\nb", ignore_ws);
+    Expect(blanks.rows.size() == 3, "a blank and a whitespace-only line align");
+    for (const CompareRow& row : blanks.rows) {
+      Expect(row.kind == CompareRowKind::Unchanged,
+             "whitespace-only vs empty is Unchanged under ignore_whitespace");
+    }
+
+    // The converse direction — a too-FINE key. Assertions that only check
+    // "Unchanged rows really are equal" catch an id that merges two classes but
+    // not one that splits a class in two (which instead turns Unchanged rows
+    // into spurious Modified/Added/Deleted).
+    //
+    // This must also reach the interned DP, which is easy to miss: BuildLineDiffOps
+    // trims the common prefix and suffix with LinesEqualForDiff directly, so a
+    // document whose every line is whitespace-equal never enters BuildExactLineOps
+    // at all. Real differences at the second and second-to-last lines stop both
+    // trims, leaving the whitespace-only variants in the middle for the DP.
+    //
+    // Every in-line ASCII whitespace class is represented in the middle block:
+    // tab, vertical tab, and form feed. (CR is deliberately absent — the line
+    // decoder treats it as a line TERMINATOR, so it can never appear inside a
+    // line view; IsAsciiSpace covering it is harmless but untestable here.)
+    // Stripping only the space splits these into separate ids and the middle
+    // rows stop aligning.
+    const std::string fine_left =
+        "shared-head\nLEFT-ONLY-A\n\tws-alpha\n a\tb \nx\x0by\nu\x0cv\n"
+        "LEFT-ONLY-B\nshared-tail";
+    const std::string fine_right =
+        "shared-head\nRIGHT-ONLY-A\nws-alpha\n  a b\nx y\nu  v\n"
+        "RIGHT-ONLY-B\nshared-tail";
+    const CompareModel fine = BuildCompareModel(fine_left, fine_right, ignore_ws);
+    int folded_unchanged = 0;
+    for (const CompareRow& row : fine.rows) {
+      if (row.kind == CompareRowKind::Unchanged && row.left_text != row.right_text) {
+        ++folded_unchanged;
+      }
+    }
+    Expect(folded_unchanged == 4,
+           "all four whitespace-only-variant middle lines must fold to Unchanged — "
+           "every in-line whitespace class has to be stripped, not just the space");
+  }
+}
+
 void RegisterCompareModelTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "CompareModel/LineEqualityInterningMatchesPredicate",
+          TestCompareLineEqualityInterningMatchesPredicate);
   AddTest(tests, "Compare/IntralineBudgetBoundsLargeModifiedHunk",
           TestCompareIntralineBudgetBoundsLargeModifiedHunk);
   AddTest(tests, "Compare/ManyTokenLineBoundsAlignmentDp",
