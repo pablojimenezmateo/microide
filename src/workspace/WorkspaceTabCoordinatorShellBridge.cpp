@@ -24,7 +24,7 @@ namespace microide::workspace {
 namespace {
 
 std::string SerializeViewportText(const editor::TextViewport& viewport) {
-  return util::SerializeLines(viewport.lines().Snapshot(), viewport.line_ending());
+  return util::SerializeLinesStreaming(editor::LineSpan(viewport.lines()), viewport.line_ending());
 }
 
 void RestoreViewportText(editor::TextViewport& viewport, std::string_view text) {

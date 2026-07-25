@@ -27,6 +27,7 @@ RuleResult CheckNoSynchronousSubprocessWaitInWorkspace(const std::filesystem::pa
 RuleResult CheckLspDidOpenIsNonBlocking(const std::filesystem::path& repo_root);
 RuleResult CheckTextViewportNoCombinedLayoutRevision(const std::filesystem::path& repo_root);
 RuleResult CheckTextViewportSpecialMembersCoverEveryField(const std::filesystem::path& repo_root);
+RuleResult CheckSerializeLinesDoesNotMaterializeSnapshot(const std::filesystem::path& repo_root);
 RuleResult CheckNoLegacyPersistenceSymbols(const std::filesystem::path& repo_root);
 RuleResult CheckNoExecutorPostThenFutureGetInWorkspace(const std::filesystem::path& repo_root);
 RuleResult CheckNoSynchronousSubprocessInWorkspace(const std::filesystem::path& repo_root);

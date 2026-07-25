@@ -40,6 +40,8 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckTextViewportNoCombinedLayoutRevision", CheckTextViewportNoCombinedLayoutRevision},
       {"CheckTextViewportSpecialMembersCoverEveryField",
        CheckTextViewportSpecialMembersCoverEveryField},
+      {"CheckSerializeLinesDoesNotMaterializeSnapshot",
+       CheckSerializeLinesDoesNotMaterializeSnapshot},
       {"CheckNoLegacyPersistenceSymbols", CheckNoLegacyPersistenceSymbols},
       {"CheckNoExecutorPostThenFutureGetInWorkspace", CheckNoExecutorPostThenFutureGetInWorkspace},
       {"CheckNoSynchronousSubprocessInWorkspace", CheckNoSynchronousSubprocessInWorkspace},

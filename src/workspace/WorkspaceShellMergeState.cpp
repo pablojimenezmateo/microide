@@ -475,7 +475,8 @@ void WorkspaceShell::RefreshMergeTabDerivedState(MergeTabState& merge_tab) const
   merge_tab.result_viewport.SetDirty(
       !merge_tab.persisted_output_baseline.has_value() ||
       *merge_tab.persisted_output_baseline !=
-          util::SerializeLines(merge_tab.result_viewport.lines().Snapshot(), merge_tab.result_line_ending));
+          util::SerializeLinesStreaming(editor::LineSpan(merge_tab.result_viewport.lines()),
+                                    merge_tab.result_line_ending));
   merge_tab.conflicts = BuildMergeTrackedConflicts(merge_tab.model);
   merge_tab.hover_state.reset();
   merge_tab.max_visual_columns =

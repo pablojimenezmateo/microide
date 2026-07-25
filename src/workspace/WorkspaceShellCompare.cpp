@@ -84,7 +84,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   std::string right_content;
   if (compare_tab.right_ref == "WORKTREE") {
     if (compare_tab.right_viewport.dirty()) {
-      right_content = util::SerializeLines(compare_tab.right_viewport.lines().Snapshot(),
+      right_content = util::SerializeLinesStreaming(editor::LineSpan(compare_tab.right_viewport.lines()),
                                            compare_tab.right_viewport.line_ending());
     } else {
       // Only a truly-absent worktree file maps to empty; an unreadable or binary
@@ -481,7 +481,7 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
       compare_tab.derived_ignore_whitespace != ignore_whitespace;
   if (content_changed) {
     const std::string right_content =
-        util::SerializeLines(compare_tab.right_viewport.lines().Snapshot(), right_line_ending);
+        util::SerializeLinesStreaming(editor::LineSpan(compare_tab.right_viewport.lines()), right_line_ending);
     compare_tab.model = compare::BuildCompareModel(compare_tab.left_content, right_content,
                                                    compare_tab.build_options);
     ++compare_tab.model_revision;

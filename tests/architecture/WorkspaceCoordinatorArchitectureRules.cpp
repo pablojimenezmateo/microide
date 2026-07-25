@@ -471,4 +471,61 @@ RuleResult CheckTextViewportSpecialMembersCoverEveryField(
   return result;
 }
 
+// util::SerializeLinesStreaming exists precisely so a whole-document payload is
+// built straight from the TextBuffer's zero-copy LineView, instead of first
+// materializing Snapshot() — a vector<std::string> with one heap allocation per
+// line — and then joining it. Its own comment already said "use this instead of
+// SerializeLines(buffer.Snapshot(), ...)", but that was advisory and eight call
+// sites (save, compare review, merge result, LSP sync) had drifted back onto the
+// slow path. This makes the advice enforceable.
+RuleResult CheckSerializeLinesDoesNotMaterializeSnapshot(
+    const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "whole-document serialization streams instead of Snapshot()";
+  result.hard_fail = true;
+  const std::filesystem::path src_dir = repo_root / "src";
+  if (!std::filesystem::exists(src_dir)) {
+    result.violations.push_back(Violation{
+        .path = src_dir, .line = 1,
+        .message = "src/ not found; this lint has gone vacuous — repoint it"});
+    return result;
+  }
+
+  // `SerializeLines(` ... `Snapshot()` on the same logical call. The call is
+  // sometimes wrapped across two lines, so match on the whole file text with the
+  // comment mask applied, bounded so it cannot run past the call.
+  const std::regex pattern(R"(SerializeLines\([^;]{0,160}?Snapshot\(\))");
+  std::size_t scanned = 0;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(src_dir)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::string ext = entry.path().extension().string();
+    if (ext != ".cpp" && ext != ".h" && ext != ".inc") {
+      continue;
+    }
+    // The helper's own documentation names the discouraged form.
+    if (entry.path().filename() == "StringUtil.h") {
+      continue;
+    }
+    ++scanned;
+    const std::string text = ReadText(entry.path());
+    if (text.find("Snapshot()") == std::string::npos) {
+      continue;
+    }
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, pattern,
+        "build whole-document text with util::SerializeLinesStreaming("
+        "editor::LineSpan(buffer), ending) — SerializeLines(buffer.Snapshot(), ...) "
+        "materializes a vector<std::string> with one allocation per line first");
+  }
+  if (scanned < 100) {
+    result.violations.push_back(Violation{
+        .path = src_dir, .line = 1,
+        .message = "scanned only " + std::to_string(scanned) +
+                   " source files; this lint's traversal broke and it has gone vacuous"});
+  }
+  return result;
+}
+
 }  // namespace microide::tests::architecture
