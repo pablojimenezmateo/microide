@@ -25,7 +25,18 @@ namespace microide::editor::runtime_syntax {
 namespace {
 
 constexpr std::size_t kSignatureDetectLineLimit = 64;
+// PCRE2_MATCH_INVALID_UTF (PCRE2 >= 10.34) makes a subject containing invalid
+// UTF-8 matchable: PCRE2 treats each bad byte as an unmatchable barrier instead
+// of failing the whole call. Without it every pcre2_match against such a line
+// returns PCRE2_ERROR_UTF8_ERR*, which the search helpers below read as "no
+// match" — so one stray byte (a Latin-1 source file, a binary-ish fixture, a
+// mis-encoded comment) silently dropped ALL syntax highlighting for that line.
+// The text reader only rejects embedded NULs, so such buffers do reach here.
+#ifdef PCRE2_MATCH_INVALID_UTF
+constexpr uint32_t kRegexCompileOptions = PCRE2_UTF | PCRE2_UCP | PCRE2_MATCH_INVALID_UTF;
+#else
 constexpr uint32_t kRegexCompileOptions = PCRE2_UTF | PCRE2_UCP;
+#endif
 
 // Materialize at most kSignatureDetectLineLimit head lines from `lines`.
 // DetectDefinitionId inspects no further (see the line_limit clamp in its

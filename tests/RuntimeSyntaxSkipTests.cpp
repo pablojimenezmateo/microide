@@ -182,6 +182,25 @@ void TestUtf8NextToEscapeStaysString() {
   ExpectKinds("\"\xc3\xa9\\\"x\"", "SSSSSSS");
 }
 
+// A line carrying bytes that are not valid UTF-8 (a Latin-1 file, a stray byte in
+// an otherwise-UTF-8 source — both of which the text reader happily loads, since it
+// only rejects embedded NULs) must still be highlighted. The patterns compile with
+// PCRE2_UTF, and without PCRE2_MATCH_INVALID_UTF every pcre2_match against such a
+// subject returns PCRE2_ERROR_UTF8_ERR* — a negative rc that the search helpers
+// treat as "no match", silently dropping ALL highlighting for the line.
+void TestInvalidUtf8LineStillHighlights() {
+  ScopedGoldGrammar grammar;
+  // 0xE9 is é in Latin-1 and an invalid UTF-8 lead byte (it announces a 3-byte
+  // sequence but is followed by ASCII).
+  const std::string line = "\"a\xe9?b\"";
+  const std::string rendered = RenderKinds(line);
+  Expect(rendered.size() == line.size(),
+         "every byte of an invalid-UTF-8 line must receive a token kind");
+  Expect(rendered == std::string(line.size(), 'S'),
+         std::string("an invalid UTF-8 byte must not disable highlighting for the whole "
+                     "line: got '") + rendered + "'");
+}
+
 // Stress/liveness guard for the pathological re-scan shape the tech-debt entry
 // describes: a single string with many `${}` interpolations makes the string
 // region's end+skip search re-run at each `}`. This must still terminate with the
@@ -257,6 +276,8 @@ void RegisterRuntimeSyntaxSkipTests(std::vector<TestCase>& tests) {
           TestCaretAnchoredSkipDoesNotMaskMidLine);
   AddTest(tests, "RuntimeSyntaxSkip/Utf8NextToEscapeStaysString",
           TestUtf8NextToEscapeStaysString);
+  AddTest(tests, "RuntimeSyntaxSkip/InvalidUtf8LineStillHighlights",
+          TestInvalidUtf8LineStillHighlights);
   AddTest(tests, "RuntimeSyntaxSkip/ManyInterpolationsTerminateWithStringClosed",
           TestManyInterpolationsTerminateWithStringClosed);
 }
