@@ -320,6 +320,117 @@ RuleResult CheckWorkspaceArchitectureRulesDispatcherSize(
   return result;
 }
 
+// Every descriptor the editor opens must be close-on-exec, set ATOMICALLY at
+// creation. The editor spawns a lot of children — terminal shells, LSP servers,
+// DAP adapters, git, plugin-launched tools — and any descriptor without the flag
+// is inherited by all of them. For the control socket in particular that is a
+// containment hole, not just a leak: the control channel is the interface that
+// drives the editor headlessly, so a child would hold a live handle to it.
+//
+// A separate fcntl(F_SETFD) after the fact is NOT equivalent: another thread can
+// fork/exec in the window between the two calls. This rule therefore requires
+// the flag on the creating call itself.
+//
+// Matches are code-masked (BuildCodeMask) so occurrences inside string literals
+// and comments — a syntax-highlight rule table naming `open(`, a settings/man-page
+// string naming `socket(` — are not mistaken for call sites. The flag is searched
+// for across the whole call expression, so a wrapped multi-line call still passes.
+//
+// Anchored on a required-presence count so the rule cannot go vacuous if these
+// files move or are renamed.
+RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "descriptor creation must request close-on-exec atomically";
+  result.hard_fail = true;
+
+  struct Form {
+    std::regex pattern;
+    std::string_view flag;
+    std::string_view advice;
+  };
+  const std::array<Form, 5> forms = {
+      Form{std::regex(R"((^|[^\w:])(::)?socket\s*\()"), "SOCK_CLOEXEC",
+           "pass SOCK_CLOEXEC in socket()'s type argument"},
+      Form{std::regex(R"((^|[^\w:])(::)?accept4\s*\()"), "SOCK_CLOEXEC",
+           "pass SOCK_CLOEXEC to accept4() (and never plain accept())"},
+      Form{std::regex(R"((^|[^\w:])(::)?openat?\s*\()"), "O_CLOEXEC",
+           "pass O_CLOEXEC in open()'s flags"},
+      Form{std::regex(R"((^|[^\w:])(::)?pipe2\s*\()"), "O_CLOEXEC", "pass O_CLOEXEC to pipe2()"},
+      Form{std::regex(R"((^|[^\w:])(::)?inotify_init1\s*\()"), "IN_CLOEXEC",
+           "pass IN_CLOEXEC to inotify_init1()"},
+  };
+
+  std::size_t scanned_creation_sites = 0;
+  for (const std::filesystem::path& dir : {repo_root / "src"}) {
+    if (!std::filesystem::exists(dir)) {
+      continue;
+    }
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(dir)) {
+      if (!entry.is_regular_file()) {
+        continue;
+      }
+      const std::filesystem::path extension = entry.path().extension();
+      if (extension != ".cpp" && extension != ".h" && extension != ".inc") {
+        continue;
+      }
+      const std::string text = ReadText(entry.path());
+      const std::vector<bool> is_code = BuildCodeMask(text);
+      for (const Form& form : forms) {
+        for (std::sregex_iterator it(text.begin(), text.end(), form.pattern), last; it != last;
+             ++it) {
+          // The open paren is the final character of every pattern above; require
+          // it to be real code so string/comment occurrences are skipped.
+          const std::size_t open_paren =
+              static_cast<std::size_t>(it->position() + it->length()) - 1;
+          if (open_paren >= is_code.size() || !is_code[open_paren]) {
+            continue;
+          }
+          ++scanned_creation_sites;
+          // Scan the balanced argument list, so a call wrapped across lines is
+          // still judged on its whole flag expression.
+          std::size_t depth = 0;
+          std::size_t close_paren = open_paren;
+          for (std::size_t i = open_paren; i < text.size(); ++i) {
+            if (text[i] == '(') {
+              ++depth;
+            } else if (text[i] == ')') {
+              if (--depth == 0) {
+                close_paren = i;
+                break;
+              }
+            }
+          }
+          const std::string call = text.substr(open_paren, close_paren - open_paren + 1);
+          if (call.find(form.flag) != std::string::npos) {
+            continue;
+          }
+          result.violations.push_back(Violation{
+              .path = entry.path(),
+              .line = LineNumberAt(text, open_paren),
+              .message = std::string("descriptor created without close-on-exec: ") +
+                         std::string(form.advice) +
+                         " — an unflagged descriptor is inherited by every child process the "
+                         "editor spawns",
+          });
+        }
+      }
+    }
+  }
+
+  // Loud-missing-target guard: if the scan finds no creation sites at all, the
+  // rule has been hollowed out (files moved, spellings changed) and would pass
+  // vacuously forever.
+  if (scanned_creation_sites == 0) {
+    result.violations.push_back(Violation{
+        .path = repo_root / "src/platform",
+        .line = 1,
+        .message = "rule target moved — no descriptor-creating calls found to scan; re-anchor "
+                   "CheckDescriptorCreationIsCloseOnExec",
+    });
+  }
+  return result;
+}
+
 std::vector<RuleResult> RunTerminalArchitectureRules(const std::filesystem::path& repo_root) {
   return {
       CheckTerminalSessionTuSize(repo_root),
@@ -333,6 +444,7 @@ std::vector<RuleResult> RunTerminalArchitectureRules(const std::filesystem::path
       CheckArchitectureInvariantsDispatcherSize(repo_root),
       CheckArchitectureRulesTuSize(repo_root),
       CheckWorkspaceArchitectureRulesDispatcherSize(repo_root),
+      CheckDescriptorCreationIsCloseOnExec(repo_root),
   };
 }
 

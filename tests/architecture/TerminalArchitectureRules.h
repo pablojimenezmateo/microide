@@ -18,6 +18,7 @@ RuleResult CheckTerminalSessionSplitTranslationUnits(const std::filesystem::path
 RuleResult CheckArchitectureInvariantsDispatcherSize(const std::filesystem::path& repo_root);
 RuleResult CheckArchitectureRulesTuSize(const std::filesystem::path& repo_root);
 RuleResult CheckWorkspaceArchitectureRulesDispatcherSize(const std::filesystem::path& repo_root);
+RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& repo_root);
 
 std::vector<RuleResult> RunTerminalArchitectureRules(const std::filesystem::path& repo_root);
 

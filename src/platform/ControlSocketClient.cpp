@@ -39,7 +39,16 @@ bool ControlSocketClient::Connect(const std::filesystem::path& socket_path) {
   if (path_string.empty() || path_string.size() + 1 > sizeof(sockaddr_un::sun_path)) {
     return false;
   }
-  const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+  // SOCK_CLOEXEC, atomically at creation. Without it this fd is inherited by
+  // every process the editor later spawns — terminal shells, LSP servers, DAP
+  // adapters, git, plugin-launched tools. That is both an fd leak into each
+  // child and a containment hole: the control channel is the interface that
+  // drives the editor headlessly, so a child would hold a live connected handle
+  // to it. It also keeps the peer from seeing EOF for as long as any child
+  // survives. Every other fd-creating call in the tree already does this
+  // (including all three on the server side of this same socket); this was the
+  // only one that did not.
+  const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
   if (fd < 0) {
     return false;
   }
