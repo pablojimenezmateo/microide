@@ -1,8 +1,10 @@
 #include "TestSupport.h"
 
 #include "util/JsonValue.h"
+#include "util/Parse.h"
 #include "util/StringUtil.h"
 
+#include <clocale>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -285,7 +287,75 @@ void TestStructuralEqualityIsOrderIndependentAndDeep() {
 
 }  // namespace
 
+// Number formatting and parsing must not read the decimal separator from
+// LC_NUMERIC. The process locale is not ours to control — SDL's X11 toolkit
+// backend calls `setlocale(LC_ALL, "")` when it creates a window and only
+// restores it on destroy — so a comma-decimal user environment used to make
+// `SerializeJson` emit `1,5` (malformed JSON on the wire to every LSP/DAP peer)
+// and `ParseDouble` reject `1.5` outright.
+void TestNumberFormattingIsLocaleIndependent() {
+  using microide::util::JsonValue;
+  using microide::util::ParseDouble;
+  using microide::util::ParseJson;
+  using microide::util::SerializeJson;
+
+  const auto check = [](const char* where) {
+    // Serialize: no comma may appear in a bare number, and the value must
+    // round-trip bit-exactly through the parser.
+    for (const double d : {1.5, 0.1, -2.25, 1e-9, 1e20, 3.14159265358979}) {
+      const std::string text = SerializeJson(JsonValue(d));
+      Expect(text.find(',') == std::string::npos,
+             std::string(where) + ": serialized double must not use a comma separator");
+      const auto reparsed = ParseJson(text);
+      Expect(reparsed.has_value() && reparsed->AsDouble() == d,
+             std::string(where) + ": serialized double must round-trip exactly");
+    }
+    // Parse: a dot-decimal literal must be accepted whatever LC_NUMERIC says.
+    const auto parsed = ParseDouble("1.5");
+    Expect(parsed.has_value() && *parsed == 1.5,
+           std::string(where) + ": '1.5' must parse under any locale");
+    const auto in_json = ParseJson("{\"x\":2.5}");
+    Expect(in_json.has_value() && (*in_json)["x"].AsDouble() == 2.5,
+           std::string(where) + ": a JSON double must parse under any locale");
+  };
+
+  check("C locale");
+
+  // Repeat under a comma-decimal locale where the host has one generated. This
+  // is the configuration that actually broke; skip cleanly where it is absent
+  // (the C-locale assertions above still pin the shortest-round-trip form).
+  const char* const saved = std::setlocale(LC_NUMERIC, nullptr);
+  const std::string restore = saved != nullptr ? saved : "C";
+  for (const char* candidate :
+       {"de_DE.UTF-8", "fr_FR.UTF-8", "es_ES.UTF-8", "it_IT.UTF-8", "de_DE.utf8"}) {
+    if (std::setlocale(LC_NUMERIC, candidate) == nullptr) {
+      continue;
+    }
+    check(candidate);
+    break;
+  }
+  std::setlocale(LC_NUMERIC, restore.c_str());
+}
+
+// The shortest-round-trip form is the point of using to_chars over "%.17g":
+// `0.1` must serialize as `0.1`, not as `0.10000000000000001`. Every JSON byte
+// written here goes out over an LSP/DAP socket, so this is payload size on the
+// hot path, not cosmetics.
+void TestDoubleSerializesInShortestRoundTripForm() {
+  using microide::util::JsonValue;
+  using microide::util::SerializeJson;
+  Expect(SerializeJson(JsonValue(0.1)) == "0.1", "0.1 serializes as `0.1`");
+  Expect(SerializeJson(JsonValue(1.5)) == "1.5", "1.5 serializes as `1.5`");
+  Expect(SerializeJson(JsonValue(2.0)) == "2", "an integral double drops the fraction");
+  Expect(SerializeJson(JsonValue(1.0 / 3.0)).size() <= 20,
+         "a repeating fraction stays in shortest form");
+}
+
 void RegisterJsonValueTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "JsonValue/NumberFormattingIsLocaleIndependent",
+          TestNumberFormattingIsLocaleIndependent);
+  AddTest(tests, "JsonValue/DoubleSerializesInShortestRoundTripForm",
+          TestDoubleSerializesInShortestRoundTripForm);
   AddTest(tests, "JsonValue/StructuralEqualityIsOrderIndependentAndDeep",
           TestStructuralEqualityIsOrderIndependentAndDeep);
   AddTest(tests, "JsonValue/RawControlCharsInStringRejected",

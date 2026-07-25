@@ -350,9 +350,18 @@ void AppendValue(std::string& out, const JsonValue& val, int depth = 0) {
     // rejects, and serialization has no error channel to report it. Emit `null`,
     // matching JSON.stringify convention, so a stray NaN cannot corrupt a message.
     if (!std::isfinite(d)) { out += "null"; return; }
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%.17g", d);
-    out += buf;
+    // to_chars, NOT snprintf("%.17g"). printf's float conversions take the
+    // decimal separator from LC_NUMERIC, and the process locale is not ours to
+    // control (SDL's X11 toolkit backend calls `setlocale(LC_ALL, "")`), so a
+    // comma-decimal locale would emit `1,5` — malformed JSON on the wire to
+    // every LSP server, DAP adapter, and control-channel client. to_chars is
+    // locale-independent by definition. It is also faster and produces the
+    // shortest round-trip form, so `0.1` serializes as `0.1` rather than
+    // `%.17g`'s `0.10000000000000001`.
+    char buf[40];
+    const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), d);
+    (void)ec;  // shortest round-trip for a finite double always fits in 40 bytes
+    out.append(buf, static_cast<std::size_t>(ptr - buf));
     return;
   }
   if (val.IsString()) {
