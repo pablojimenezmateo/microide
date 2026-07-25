@@ -139,12 +139,6 @@ void TokenizeLineInto(std::string_view text, TokenizedLine& tokenized) {
   }
 }
 
-TokenizedLine TokenizeLine(std::string_view text) {
-  TokenizedLine tokenized;
-  TokenizeLineInto(text, tokenized);
-  return tokenized;
-}
-
 // Per-thread scratch for the intraline (per-Modified-row) refinement. Each of
 // these buffers used to be a fresh heap vector per row — token vectors, changed
 // flags, the LCS DP matrix (up to kMaxIntralineLcsMatrixCells entries), and the
@@ -169,6 +163,44 @@ struct IntralineScratch {
 IntralineScratch& Scratch() {
   thread_local IntralineScratch scratch;
   return scratch;
+}
+
+// Per-thread scratch for hunk alignment, the other per-hunk allocation cluster:
+// two TokenizedLine-per-line vectors (two heap blocks *each*), the lazily-filled
+// similarity matrix, and the DP cost/choice matrices. Disjoint from
+// IntralineScratch above — alignment finishes before row refinement starts, but
+// keeping them separate means neither can ever clobber the other.
+//
+// The tokenized vectors are only ever GROWN (never resized down), so each
+// element keeps the token-vector capacity it reached on an earlier hunk; only
+// the first `count` entries of each are live in any one call.
+struct HunkAlignScratch {
+  std::vector<std::string_view> deleted_lines;
+  std::vector<std::string_view> inserted_lines;
+  std::vector<HunkAlignmentKind> alignment;
+  std::vector<TokenizedLine> left_tokenized;
+  std::vector<TokenizedLine> right_tokenized;
+  std::vector<double> similarity;
+  std::vector<double> dp;
+  std::vector<HunkAlignmentKind> choice;
+  std::vector<std::size_t> common_tokens;
+};
+
+HunkAlignScratch& HunkScratch() {
+  thread_local HunkAlignScratch scratch;
+  return scratch;
+}
+
+// Grow-only tokenization into a reused vector: entries past `count` keep their
+// (now stale) contents and, crucially, their heap capacity for the next hunk.
+void TokenizeLinesInto(const std::vector<std::string_view>& lines,
+                       std::vector<TokenizedLine>& out) {
+  if (out.size() < lines.size()) {
+    out.resize(lines.size());
+  }
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    TokenizeLineInto(lines[i], out[i]);
+  }
 }
 
 // Sum of significant (non-whitespace) token bytes for `text`, matching
@@ -308,19 +340,21 @@ bool CanPairAlignedLines(double similarity,
   return similarity >= 0.35;
 }
 
-std::vector<HunkAlignmentKind> AlignHunkLines(const std::vector<std::string_view>& deleted_lines,
-                                              const std::vector<std::string_view>& inserted_lines,
-                                              CompareBuildProfile* profile) {
+void AlignHunkLinesInto(const std::vector<std::string_view>& deleted_lines,
+                        const std::vector<std::string_view>& inserted_lines,
+                        CompareBuildProfile* profile,
+                        std::vector<HunkAlignmentKind>& alignment) {
   const std::size_t left_count = deleted_lines.size();
   const std::size_t right_count = inserted_lines.size();
-  std::vector<HunkAlignmentKind> alignment;
+  HunkAlignScratch& scratch = HunkScratch();
+  alignment.clear();
   if (left_count == 0) {
     alignment.assign(right_count, HunkAlignmentKind::Insert);
-    return alignment;
+    return;
   }
   if (right_count == 0) {
     alignment.assign(left_count, HunkAlignmentKind::Delete);
-    return alignment;
+    return;
   }
   if (ProductExceeds(left_count + 1, right_count + 1, kMaxHunkAlignmentMatrixCells)) {
     if (profile != nullptr) {
@@ -338,32 +372,21 @@ std::vector<HunkAlignmentKind> AlignHunkLines(const std::vector<std::string_view
     alignment.insert(alignment.end(), paired, HunkAlignmentKind::Pair);
     alignment.insert(alignment.end(), left_count - paired, HunkAlignmentKind::Delete);
     alignment.insert(alignment.end(), right_count - paired, HunkAlignmentKind::Insert);
-    return alignment;
+    return;
   }
   if (profile != nullptr) {
     ++profile->exact_hunk_alignment_calls;
   }
 
-  const std::vector<TokenizedLine> left_tokenized = [&] {
-    std::vector<TokenizedLine> lines;
-    lines.reserve(left_count);
-    for (const auto& line : deleted_lines) {
-      lines.push_back(TokenizeLine(line));
-    }
-    return lines;
-  }();
-  const std::vector<TokenizedLine> right_tokenized = [&] {
-    std::vector<TokenizedLine> lines;
-    lines.reserve(right_count);
-    for (const auto& line : inserted_lines) {
-      lines.push_back(TokenizeLine(line));
-    }
-    return lines;
-  }();
+  std::vector<TokenizedLine>& left_tokenized = scratch.left_tokenized;
+  std::vector<TokenizedLine>& right_tokenized = scratch.right_tokenized;
+  TokenizeLinesInto(deleted_lines, left_tokenized);
+  TokenizeLinesInto(inserted_lines, right_tokenized);
 
   // Compute similarities lazily: -1 means "not yet computed".
-  std::vector<double> similarity(left_count * right_count, -1.0);
-  std::vector<std::size_t> common_token_scratch;
+  std::vector<double>& similarity = scratch.similarity;
+  similarity.assign(left_count * right_count, -1.0);
+  std::vector<std::size_t>& common_token_scratch = scratch.common_tokens;
   auto similarity_at = [&](std::size_t i, std::size_t j) -> double {
     double& val = similarity[i * right_count + j];
     if (val < 0.0) {
@@ -372,9 +395,10 @@ std::vector<HunkAlignmentKind> AlignHunkLines(const std::vector<std::string_view
     return val;
   };
 
-  std::vector<double> dp((left_count + 1) * (right_count + 1), 0.0);
-  std::vector<HunkAlignmentKind> choice((left_count + 1) * (right_count + 1),
-                                        HunkAlignmentKind::Pair);
+  std::vector<double>& dp = scratch.dp;
+  std::vector<HunkAlignmentKind>& choice = scratch.choice;
+  dp.assign((left_count + 1) * (right_count + 1), 0.0);
+  choice.assign((left_count + 1) * (right_count + 1), HunkAlignmentKind::Pair);
   auto at = [&](std::size_t i, std::size_t j) -> double& {
     return dp[i * (right_count + 1) + j];
   };
@@ -464,8 +488,6 @@ std::vector<HunkAlignmentKind> AlignHunkLines(const std::vector<std::string_view
         break;
     }
   }
-
-  return alignment;
 }
 
 bool Utf8CodepointEquals(std::string_view left,
@@ -1319,8 +1341,11 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
     }
 
     const int hunk_start = static_cast<int>(model.rows.size());
-    std::vector<std::string_view> deleted_lines;
-    std::vector<std::string_view> inserted_lines;
+    HunkAlignScratch& hunk_scratch = HunkScratch();
+    std::vector<std::string_view>& deleted_lines = hunk_scratch.deleted_lines;
+    std::vector<std::string_view>& inserted_lines = hunk_scratch.inserted_lines;
+    deleted_lines.clear();
+    inserted_lines.clear();
     while (op_index < ops.size() && ops[op_index].kind != DiffOpKind::Equal) {
       if (ops[op_index].kind == DiffOpKind::Delete) {
         deleted_lines.push_back(ops[op_index].text);
@@ -1333,8 +1358,8 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
 
     const int hunk_index = static_cast<int>(model.hunks.size());
     const Clock::time_point hunk_alignment_start = Clock::now();
-    const std::vector<HunkAlignmentKind> alignment =
-        AlignHunkLines(deleted_lines, inserted_lines, &profile);
+    std::vector<HunkAlignmentKind>& alignment = hunk_scratch.alignment;
+    AlignHunkLinesInto(deleted_lines, inserted_lines, &profile, alignment);
     profile.hunk_alignment_ns += DurationNs(hunk_alignment_start, Clock::now());
 
     std::size_t deleted_index = 0;
