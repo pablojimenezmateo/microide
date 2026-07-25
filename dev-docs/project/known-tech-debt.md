@@ -72,6 +72,69 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
+### Post-merge review pass (TD-2026-07-25-*)
+
+Full review of the `td/wait-until-helper-088` branch before it merged to `main`
+(commit `5b35124a`), plus a follow-up dedup/perf pass. Three real defects were found
+and fixed there (poll-watcher startup race that permanently lost files, LSP
+resource-op reconcile running grouped by kind instead of apply order, and
+completion/code-action rows losing their scrollbar-aware truncation); the dedup pass
+collapsed the 3× duplicated LSP resource-op URI flattening + version gate into
+`workspace/LspWorkspaceEditOps`, replaced the poll worker's slice-sleep with a
+condition-variable wait (~15 idle wakeups per 750 ms interval → 1), disposed staged
+file backups synchronously so they cannot be indexed during the async window, and
+static_asserted the two constant pairs that must stay equal
+(`KeybindingContext` vs the uint8 conflict-index bitmask; `kSidebarInset` vs
+`kCommitWorkflowFieldInset`). What is left open:
+
+- **TD-2026-07-25-001 — `snippet_many_mirror_edit` regressed ~7.6% p50 from code
+  layout, not from any semantic change. OPEN (needs direct profiling).**
+  `tools/perf-compare.py origin/main` over all 89 scenarios showed a balanced picture
+  (mean p50 delta **+0.45%**, 42 slower / 45 faster) with real wins — `file_finder_cold`
+  −5.2% p50 / −11.2% p95, plus `lsp_message_framing`, `lsp_publish_diagnostics_parse`,
+  `review_comments_registry_lookup`, `dap_protocol_encode_decode`. Every flagged
+  regression except one dissolved when re-measured at 25 iterations (5 iterations is
+  too few for scenarios whose p50 and p95 differ 6×). The survivor is
+  `snippet_many_mirror_edit`: **+7.6% p50 / +9.8% p95**, reproducible across three
+  independent runs.
+
+  It is **not** a semantic regression. The scenario exercises only
+  `editor::TextViewport` + `editor::SnippetEngine`; the branch changed **zero** files
+  under `src/editor/`, and the allocation counts are byte-identical on both sides
+  (365,283). Bisecting with `tools/perf-compare.py 8d548ce4` puts it in the
+  render-view-model commit (`1ab136dd`) onward — i.e. it tracks that commit's
+  redistribution of `microide_core`'s TU set (the new `SingleLineViewMetrics.cpp` TU
+  plus ±500 lines moved into `RenderViewModelBuilder.cpp`), which shifts LTO
+  inlining/code layout for unrelated hot loops. This is exactly the residual class
+  `dev-docs/performance/perf-harness.md` warns about ("LTO can recover some inlining
+  loss, but residual regressions still need direct profiling and explicit
+  fix-or-accept decisions"). `menu_popup_hover_rows` (+7.7% p50 / +0.3% p95) and
+  `editor_surround_multi_caret` (+5.1% p50 / +0.5% p95) sit just under the reporting
+  bar in the same direction and are probably the same effect.
+
+  **Accepted for now**, not silently: the absolute cost is ~3.5 ms across 30 full
+  150-mirror snippet expansions (~0.1 ms each, not user-perceptible), and it is far
+  inside the committed gate (50.1 ms vs a 42.7 ms baseline at a 75% p50 tolerance).
+  Closing it properly needs a profiler to attribute the moved instructions, and this
+  host cannot run `perf`/`valgrind` (`perf_event_paranoid=4` — see
+  `dev-docs/performance/runtime-profiling.md`). Revisit with a hot/cold layout or
+  `__attribute__((hot))` experiment on the snippet remap loop, or on a host where
+  profiling is available. Do NOT rebaseline the scenario to hide it.
+
+- **TD-2026-07-25-002 — the macOS / Windows / generic poll-fallback backends carry the
+  reviewed poll rewrite unverified. OPEN (platform, same category as 004/005/010/035).**
+  `FileIndexWatcher.cpp` holds four per-platform `Impl` structs that each carried a
+  byte-identical copy of the poll worker. The review collapsed them into one shared
+  `RunPollFallbackWorker` + `BuildPollSnapshot` + `PollStopSignal` (which is where the
+  startup-race fix lives), so the macOS/Windows/generic Impls now differ from the Linux
+  one only in the three mechanical lines that declare and drive `stop_poll`. Only the
+  Linux backend compiles and runs here, so the other three are reviewed-but-unbuilt.
+  The shared code is platform-neutral (`std::filesystem` + `std::condition_variable`),
+  so the risk is a build break rather than a behavior difference — but it is real until
+  someone builds on those hosts. The backend-independent contract suite
+  (`FileIndexWatcherContractTests`, incl. the new startup-window case) is written to run
+  unchanged against any backend, so validating them is a build away.
+
 ### ⏭️ Standing backlog — deferred to dedicated passes (revisit; NOT dropped)
 
 The 2026-07-17 correctness/perf burndown implemented the concrete, self-contained wins

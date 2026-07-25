@@ -1,5 +1,7 @@
 #include "workspace/LspService.h"
 
+#include "workspace/LspWorkspaceEditOps.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -1256,13 +1258,7 @@ bool LspService::ApplyFullWorkspaceEdit(const std::vector<CodeActionEdit>& edits
 
 bool LspService::WorkspaceEditVersionsCurrent(const LspClient& client,
                                               const LspClient::WorkspaceEdit& edit) {
-  for (const auto& [uri, expected] : edit.expected_versions) {
-    const std::optional<int> tracked = client.TrackedDocumentVersion(uri);
-    if (tracked.has_value() && *tracked != expected) {
-      return false;
-    }
-  }
-  return true;
+  return lsp_workspace_edit::VersionsCurrent(client, edit);
 }
 
 LspService::ResourceOpsResult LspService::ApplyWorkspaceResourceOps(
@@ -1549,11 +1545,24 @@ LspService::ResourceOpsResult LspService::ApplyWorkspaceResourceOps(
       operations_.reconcile_tabs_after_resource_delete(action.from);
     }
   }
-  if (!staged_disposals.empty()) {
+  // A staged FILE is one unlink — do it here, before the view refresh below, so
+  // the hidden staging entry can never be walked into the file index and shown in
+  // the tree/finder. Only a staged DIRECTORY (arbitrarily deep remove_all) is
+  // worth an off-thread hop, and directory ops are the rare case.
+  std::vector<fs::path> slow_disposals;
+  for (fs::path& staged : staged_disposals) {
+    std::error_code ec;
+    if (fs::is_directory(staged, ec)) {
+      slow_disposals.push_back(std::move(staged));
+      continue;
+    }
+    fs::remove(staged, ec);
+  }
+  if (!slow_disposals.empty()) {
     if (operations_.dispose_staged_paths_async) {
-      operations_.dispose_staged_paths_async(std::move(staged_disposals));
+      operations_.dispose_staged_paths_async(std::move(slow_disposals));
     } else {
-      for (const fs::path& staged : staged_disposals) {
+      for (const fs::path& staged : slow_disposals) {
         std::error_code ec;
         fs::remove_all(staged, ec);
       }
@@ -1579,42 +1588,12 @@ bool LspService::ApplyServerWorkspaceEdit(LspClient& client, LspClient::Workspac
   // whose op list we cannot fully honor would leave the workspace inconsistent.
   bool any_resource_applied = false;
   if (!edit.resource_ops.empty()) {
-    const auto to_host_kind = [](LspClient::WorkspaceEdit::ResourceOp::Kind kind) {
-      switch (kind) {
-        case LspClient::WorkspaceEdit::ResourceOp::Kind::Create:
-          return WorkspaceResourceOp::Kind::Create;
-        case LspClient::WorkspaceEdit::ResourceOp::Kind::Rename:
-          return WorkspaceResourceOp::Kind::Rename;
-        case LspClient::WorkspaceEdit::ResourceOp::Kind::Delete:
-          return WorkspaceResourceOp::Kind::Delete;
-      }
-      return WorkspaceResourceOp::Kind::Create;
-    };
-    std::vector<WorkspaceResourceOp> ops;
-    ops.reserve(edit.resource_ops.size());
-    for (const auto& op : edit.resource_ops) {
-      const std::optional<std::filesystem::path> op_path = PathFromFileUri(op.uri);
-      std::optional<std::filesystem::path> op_new_path;
-      if (op.kind == LspClient::WorkspaceEdit::ResourceOp::Kind::Rename) {
-        op_new_path = PathFromFileUri(op.new_uri);
-        if (!op_new_path.has_value()) {
-          return false;
-        }
-      }
-      if (!op_path.has_value()) {
-        return false;
-      }
-      ops.push_back(WorkspaceResourceOp{
-          .kind = to_host_kind(op.kind),
-          .path = *op_path,
-          .new_path = op_new_path.value_or(std::filesystem::path{}),
-          .overwrite = op.overwrite,
-          .ignore_if_exists = op.ignore_if_exists,
-          .ignore_if_not_exists = op.ignore_if_not_exists,
-          .recursive = op.recursive,
-      });
+    const std::optional<std::vector<WorkspaceResourceOp>> ops =
+        lsp_workspace_edit::FlattenResourceOps(edit.resource_ops);
+    if (!ops.has_value()) {
+      return false;
     }
-    const ResourceOpsResult ops_result = ApplyWorkspaceResourceOps(ops);
+    const ResourceOpsResult ops_result = ApplyWorkspaceResourceOps(*ops);
     if (!ops_result.ok) {
       return false;
     }

@@ -20,6 +20,13 @@ using namespace detail;
 namespace {
 
 constexpr float kSidebarInset = 10.0f;
+// Frame prep derives the commit-draft body field width from the sidebar width and
+// its own copy of this inset (it has no panel layout to read). If the two ever
+// drift, the viewport is sized for a different width than the field is drawn at
+// and the body's wrap/scroll silently disagrees with what is painted.
+static_assert(kSidebarInset == kCommitWorkflowFieldInset,
+              "PrepareCommitBodyViewportForFrame sizes the commit body field with "
+              "kCommitWorkflowFieldInset; keep it equal to the sidebar inset");
 constexpr float kTreeIndentWidth = kWorkspaceSidebarTreeIndentWidth;
 constexpr float kTreeChevronSlotWidth = kWorkspaceSidebarTreeChevronSlotWidth;
 

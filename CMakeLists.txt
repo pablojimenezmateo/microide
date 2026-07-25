@@ -535,6 +535,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/LspPositionEncoding.cpp
   src/workspace/LspProtocol.cpp
   src/workspace/LspService.cpp
+  src/workspace/LspWorkspaceEditOps.cpp
   src/workspace/WorkspaceLspClient.cpp
   src/workspace/WorkspaceLspClientRequests.cpp
   src/workspace/WorkspaceLspClientTransport.cpp

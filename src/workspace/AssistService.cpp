@@ -15,6 +15,7 @@
 #include "util/TextFileIO.h"
 #include "workspace/FileUri.h"
 #include "workspace/LanguageDetection.h"
+#include "workspace/LspWorkspaceEditOps.h"
 #include "workspace/LspPositionEncoding.h"
 #include "workspace/LspViewportPositions.h"
 #include "workspace/SettingFlags.h"
@@ -684,42 +685,11 @@ std::vector<CodeActionSessionItem> AssistService::TransformLspCodeActions(
       // module" creates the target file). One undecodable op URI disables the
       // whole inline fix — applying the text edits without their ops would leave
       // the workspace inconsistent.
-      bool ops_unusable = false;
-      resource_ops.reserve(action.edit.resource_ops.size());
-      for (const auto& op : action.edit.resource_ops) {
-        const std::optional<std::filesystem::path> op_path = PathFromFileUri(op.uri);
-        std::optional<std::filesystem::path> op_new_path;
-        if (op.kind == LspClient::WorkspaceEdit::ResourceOp::Kind::Rename) {
-          op_new_path = PathFromFileUri(op.new_uri);
-        }
-        if (!op_path.has_value() ||
-            (op.kind == LspClient::WorkspaceEdit::ResourceOp::Kind::Rename &&
-             !op_new_path.has_value())) {
-          ops_unusable = true;
-          break;
-        }
-        WorkspaceResourceOp host_op;
-        switch (op.kind) {
-          case LspClient::WorkspaceEdit::ResourceOp::Kind::Create:
-            host_op.kind = WorkspaceResourceOp::Kind::Create;
-            break;
-          case LspClient::WorkspaceEdit::ResourceOp::Kind::Rename:
-            host_op.kind = WorkspaceResourceOp::Kind::Rename;
-            break;
-          case LspClient::WorkspaceEdit::ResourceOp::Kind::Delete:
-            host_op.kind = WorkspaceResourceOp::Kind::Delete;
-            break;
-        }
-        host_op.path = *op_path;
-        host_op.new_path = op_new_path.value_or(std::filesystem::path{});
-        host_op.overwrite = op.overwrite;
-        host_op.ignore_if_exists = op.ignore_if_exists;
-        host_op.ignore_if_not_exists = op.ignore_if_not_exists;
-        host_op.recursive = op.recursive;
-        resource_ops.push_back(std::move(host_op));
-      }
-      if (ops_unusable) {
-        resource_ops.clear();
+      if (std::optional<std::vector<WorkspaceResourceOp>> flattened =
+              lsp_workspace_edit::FlattenResourceOps(action.edit.resource_ops);
+          flattened.has_value()) {
+        resource_ops = *std::move(flattened);
+      } else {
         edits_truncated = true;
       }
       for (const auto& [uri, text_edits] : action.edit.changes) {
@@ -1288,54 +1258,24 @@ bool AssistService::RenameSymbol(const std::string& new_name, std::string* error
         // Version gate: a versioned TextDocumentEdit pinned to a document version
         // we have since advanced past is stale — applying it would corrupt the
         // buffer the user kept typing in. LSP requires failing the whole edit.
-        for (const auto& [uri, expected] : edit->expected_versions) {
-          const std::optional<int> tracked = client->TrackedDocumentVersion(uri);
-          if (tracked.has_value() && *tracked != expected) {
-            output_channels_->AppendLine(
-                "lsp.log", "LSP Log",
-                "Rename aborted: the document changed while the server computed the rename");
-            return;
-          }
+        if (!lsp_workspace_edit::VersionsCurrent(*client, *edit)) {
+          output_channels_->AppendLine(
+              "lsp.log", "LSP Log",
+              "Rename aborted: the document changed while the server computed the rename");
+          return;
         }
         // Flatten resource ops (file create/rename/delete — e.g. rust-analyzer
         // renames the file when a module is renamed). An undecodable target URI
         // refuses the whole rename, mirroring the text-edit rule below.
-        std::vector<WorkspaceResourceOp> resource_ops;
-        resource_ops.reserve(edit->resource_ops.size());
-        for (const auto& op : edit->resource_ops) {
-          const std::optional<std::filesystem::path> op_path = PathFromFileUri(op.uri);
-          std::optional<std::filesystem::path> op_new_path;
-          if (op.kind == LspClient::WorkspaceEdit::ResourceOp::Kind::Rename) {
-            op_new_path = PathFromFileUri(op.new_uri);
-          }
-          if (!op_path.has_value() ||
-              (op.kind == LspClient::WorkspaceEdit::ResourceOp::Kind::Rename &&
-               !op_new_path.has_value())) {
-            output_channels_->AppendLine(
-                "lsp.log", "LSP Log",
-                "Rename aborted: server returned an unusable resource-operation URI");
-            return;
-          }
-          WorkspaceResourceOp host_op;
-          switch (op.kind) {
-            case LspClient::WorkspaceEdit::ResourceOp::Kind::Create:
-              host_op.kind = WorkspaceResourceOp::Kind::Create;
-              break;
-            case LspClient::WorkspaceEdit::ResourceOp::Kind::Rename:
-              host_op.kind = WorkspaceResourceOp::Kind::Rename;
-              break;
-            case LspClient::WorkspaceEdit::ResourceOp::Kind::Delete:
-              host_op.kind = WorkspaceResourceOp::Kind::Delete;
-              break;
-          }
-          host_op.path = *op_path;
-          host_op.new_path = op_new_path.value_or(std::filesystem::path{});
-          host_op.overwrite = op.overwrite;
-          host_op.ignore_if_exists = op.ignore_if_exists;
-          host_op.ignore_if_not_exists = op.ignore_if_not_exists;
-          host_op.recursive = op.recursive;
-          resource_ops.push_back(std::move(host_op));
+        std::optional<std::vector<WorkspaceResourceOp>> flattened_ops =
+            lsp_workspace_edit::FlattenResourceOps(edit->resource_ops);
+        if (!flattened_ops.has_value()) {
+          output_channels_->AppendLine(
+              "lsp.log", "LSP Log",
+              "Rename aborted: server returned an unusable resource-operation URI");
+          return;
         }
+        std::vector<WorkspaceResourceOp> resource_ops = *std::move(flattened_ops);
         // Flatten the URI-keyed WorkspaceEdit into the shared edit records (0-based
         // LSP coordinates; the apply path maps columns through the position
         // encoding). The host decides whether to apply in place or open + save the

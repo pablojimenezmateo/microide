@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <filesystem>
 #include <map>
@@ -224,6 +225,41 @@ IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
   return batch;
 }
 
+// Stop flag plus wakeup channel for the poll-fallback worker. The worker used to
+// sleep its interval in fixed slices purely so a stop request was noticed
+// promptly, which burned ~15 pointless wakeups per idle 750ms interval; waiting
+// on the condition variable costs ONE, and a stop is observed immediately rather
+// than up to a slice late.
+class PollStopSignal {
+ public:
+  void Reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stopped_ = false;
+  }
+  void Stop() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      stopped_ = true;
+    }
+    cv_.notify_all();
+  }
+  bool stopped() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return stopped_;
+  }
+  // Blocks up to `timeout`, returning false as soon as a stop is requested.
+  bool WaitFor(std::chrono::milliseconds timeout) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    cv_.wait_for(lock, timeout, [this] { return stopped_; });
+    return !stopped_;
+  }
+
+ private:
+  mutable std::mutex mutex_;
+  std::condition_variable cv_;
+  bool stopped_ = false;
+};
+
 // One tree walk producing the poll backend's snapshot (relative path -> mtime+size).
 // Filtering is deliberately identical to CollectTrackedCreations (directory prune,
 // tracked-relative check, file-level ignore), so a baseline seeded from an initial
@@ -282,14 +318,14 @@ void RunPollFallbackWorker(const std::filesystem::path& root,
                            const std::vector<std::string>& exclude_globs,
                            std::size_t entry_budget,
                            std::chrono::milliseconds poll_interval,
-                           const std::atomic<bool>& stop_poll,
+                           PollStopSignal& stop_poll,
                            const FileIndexWatcher::Callback& callback) {
   // ONE walk feeds both outputs. The baseline is the full snapshot (budget-free,
   // as the poll baseline has always been) while the initial batch it derives is
   // entry-budgeted, so a tree past the budget still reports only `entry_budget`
   // files and the later diffs do not smuggle the remainder in one interval later.
   detail::FileIndexSnapshot snapshot = BuildPollSnapshot(root, exclude_globs);
-  if (stop_poll.load(std::memory_order_acquire)) {
+  if (stop_poll.stopped()) {
     return;
   }
   IndexUpdateBatch initial;
@@ -311,18 +347,10 @@ void RunPollFallbackWorker(const std::filesystem::path& root,
     callback(std::move(initial));
   }
 
-  while (!stop_poll.load(std::memory_order_acquire)) {
-    // Sleep the configured interval in slices so a stop request is noticed
-    // promptly. The slice is capped at the interval so a short test interval
-    // stays responsive without making the production 750ms cadence pay extra
-    // idle wakeups.
-    const std::chrono::milliseconds slice =
-        std::min(poll_interval, std::chrono::milliseconds(50));
-    for (std::chrono::milliseconds waited(0);
-         waited < poll_interval && !stop_poll.load(std::memory_order_acquire); waited += slice) {
-      std::this_thread::sleep_for(std::min(slice, poll_interval - waited));
-    }
-    if (stop_poll.load(std::memory_order_acquire)) {
+  while (!stop_poll.stopped()) {
+    // One blocking wait per interval: an idle watch parks the thread instead of
+    // ticking, and Unwatch() wakes it at once rather than after a sleep slice.
+    if (!stop_poll.WaitFor(poll_interval)) {
       break;
     }
 
@@ -426,7 +454,7 @@ struct FileIndexWatcher::Impl {
   bool force_poll = false;
   std::chrono::milliseconds poll_interval{750};
   std::thread poll_worker;
-  std::atomic<bool> stop_poll{false};
+  PollStopSignal stop_poll;
   std::thread initial_scan_worker;
   std::atomic<bool> stop_initial_scan{false};
 
@@ -492,7 +520,7 @@ struct FileIndexWatcher::Impl {
   }
 
   void StopPoll() {
-    stop_poll.store(true, std::memory_order_release);
+    stop_poll.Stop();
     if (poll_worker.joinable()) {
       poll_worker.join();
     }
@@ -848,7 +876,7 @@ struct FileIndexWatcher::Impl {
 
   void StartPollFallback() {
     poll_mode = true;
-    stop_poll.store(false, std::memory_order_release);
+    stop_poll.Reset();
     // Take initial snapshot
     poll_worker = std::thread([this]() {
       RunPollFallbackWorker(root, exclude_globs, entry_budget, poll_interval, stop_poll, callback);
@@ -879,7 +907,7 @@ struct FileIndexWatcher::Impl {
   bool force_poll = false;
   std::chrono::milliseconds poll_interval{750};
   std::thread poll_worker;
-  std::atomic<bool> stop_poll{false};
+  PollStopSignal stop_poll;
   std::thread initial_scan_worker;
   std::atomic<bool> stop_initial_scan{false};
   bool warned_fallback = false;
@@ -920,7 +948,7 @@ struct FileIndexWatcher::Impl {
 
   void StopPoll() {
     StopInitialScan();
-    stop_poll.store(true, std::memory_order_release);
+    stop_poll.Stop();
     if (poll_worker.joinable()) {
       poll_worker.join();
     }
@@ -1037,7 +1065,7 @@ struct FileIndexWatcher::Impl {
 
   void StartPollFallback() {
     poll_mode = true;
-    stop_poll.store(false, std::memory_order_release);
+    stop_poll.Reset();
     poll_worker = std::thread([this]() {
       RunPollFallbackWorker(root, exclude_globs, entry_budget, poll_interval, stop_poll, callback);
     });
@@ -1066,7 +1094,7 @@ struct FileIndexWatcher::Impl {
   bool force_poll = false;
   std::chrono::milliseconds poll_interval{750};
   std::thread poll_worker;
-  std::atomic<bool> stop_poll{false};
+  PollStopSignal stop_poll;
   std::thread initial_scan_worker;
   std::atomic<bool> stop_initial_scan{false};
 
@@ -1107,7 +1135,7 @@ struct FileIndexWatcher::Impl {
 
   void StopPoll() {
     StopInitialScan();
-    stop_poll.store(true, std::memory_order_release);
+    stop_poll.Stop();
     if (poll_worker.joinable()) {
       poll_worker.join();
     }
@@ -1270,7 +1298,7 @@ struct FileIndexWatcher::Impl {
 
   void StartPollFallback() {
     poll_mode = true;
-    stop_poll.store(false, std::memory_order_release);
+    stop_poll.Reset();
     poll_worker = std::thread([this]() {
       RunPollFallbackWorker(root, exclude_globs, entry_budget, poll_interval, stop_poll, callback);
     });
@@ -1294,12 +1322,12 @@ struct FileIndexWatcher::Impl {
   bool force_poll = false;
   std::chrono::milliseconds poll_interval{750};
   std::thread poll_worker;
-  std::atomic<bool> stop_poll{false};
+  PollStopSignal stop_poll;
 
   ~Impl() { StopPoll(); }
 
   void StopPoll() {
-    stop_poll.store(true, std::memory_order_release);
+    stop_poll.Stop();
     if (poll_worker.joinable()) {
       poll_worker.join();
     }
@@ -1307,7 +1335,7 @@ struct FileIndexWatcher::Impl {
 
   void StartPollFallback() {
     poll_mode = true;
-    stop_poll.store(false, std::memory_order_release);
+    stop_poll.Reset();
     poll_worker = std::thread([this]() {
       RunPollFallbackWorker(root, exclude_globs, entry_budget, poll_interval, stop_poll, callback);
     });
