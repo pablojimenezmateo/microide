@@ -126,40 +126,11 @@ bool LspClient::Impl::SendMessageBuilderAfterInitialize(
 // pipe, so an idle server makes no fixed-cadence wakeups; elsewhere it degrades
 // to a short read timeout (no wake fd available).
 bool LspClient::Impl::WaitStdoutReadable(int timeout_ms) {
-#if defined(__unix__) || defined(__APPLE__)
-  // Re-fetch the stdout fd each poll rather than trusting the once-captured
-  // cached_stdout_fd_: a liveness probe / shutdown reap can close this fd from
-  // another thread and its number be reused, so polling the cached copy would
-  // watch an unrelated descriptor. stdout_fd() returns -1 (under lock) once
-  // closed, so we fall through and let Read() observe EOF. (Mirrors the DAP fix.)
-  const int stdout_fd = proc.stdout_fd();
-  if (stdout_fd >= 0) {
-    pollfd fds[2] = {};
-    int nfds = 0;
-    const int out_index = nfds;
-    fds[nfds].fd = stdout_fd;
-    fds[nfds].events = POLLIN | POLLHUP;
-    ++nfds;
-    int wake_index = -1;
-    if (const int wake_read_fd = wake_pipe_.read_fd(); wake_read_fd >= 0) {
-      wake_index = nfds;
-      fds[nfds].fd = wake_read_fd;
-      fds[nfds].events = POLLIN;
-      ++nfds;
-    }
-    const int ready = ::poll(fds, nfds, timeout_ms);
-    if (ready <= 0) {
-      return false;  // timeout or EINTR — loop drains outbound and re-polls
-    }
-    if (wake_index >= 0 && (fds[wake_index].revents & POLLIN) != 0) {
-      DrainWakePipe();
-    }
-    const short out_revents = fds[out_index].revents;
-    return (out_revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0;
-  }
-#endif
-  // Fallback: no pollable fd; let Read() block briefly and report data directly.
-  return true;
+  // Fetch the stdout fd fresh on every poll rather than reusing the once-captured
+  // cached_stdout_fd_ — see WakePipe::PollReadableOrWake for why a cached
+  // descriptor number is unsafe here. That poll is shared with the DAP client so
+  // the two transports cannot drift apart again.
+  return wake_pipe_.PollReadableOrWake(proc.stdout_fd(), timeout_ms);
 }
 
 void LspClient::Impl::IoMain() {

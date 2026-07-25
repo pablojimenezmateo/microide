@@ -29,7 +29,7 @@
 
 #include "util/StartupTrace.h"
 #include "workspace/LspClientTrace.h"
-#include "workspace/LspMessageFraming.h"
+#include "workspace/JsonRpcMessageFraming.h"
 #include "util/StringUtil.h"
 
 namespace microide::workspace {
@@ -59,7 +59,7 @@ struct LspClient::Impl {
   // thread; keeping it a member preserves any bytes the server pushed right after
   // the initialize response (e.g. clangd's early registerCapability / progress /
   // configuration requests) across that handoff, along with any partial frame.
-  LspMessageFramer framer_;
+  JsonRpcMessageFramer framer_{.max_message_bytes = kMaxLspMessageBytes};
   std::thread io_thread;
   std::atomic<bool> stop_io{false};
   util::WakePipe wake_pipe_;  // self-pipe that breaks the I/O thread's poll() on demand
@@ -228,7 +228,6 @@ struct LspClient::Impl {
   void OpenWakePipe() { wake_pipe_.Open(); }
   void CloseWakePipe() { wake_pipe_.Close(); }
   void Wake() { wake_pipe_.Wake(); }
-  void DrainWakePipe() { wake_pipe_.Drain(); }
 
   // Flush every queued outbound message. Runs only on the I/O thread; holds
   // write_mutex across the proc.Write calls so it never races a shutdown-time

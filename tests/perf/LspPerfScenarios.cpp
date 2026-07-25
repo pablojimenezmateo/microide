@@ -11,13 +11,13 @@
 // live-subprocess scenarios.
 //
 // The decode helpers live in `lsp_protocol` (one home for the JSON <-> wire
-// mapping) and the framing codec is `LspMessageFramer`; both are hot (speed)
+// mapping) and the framing codec is `JsonRpcMessageFramer`; both are hot (speed)
 // and hostile-input (correctness) surfaces, which is exactly why they were
 // extracted into pure value types with deterministic coverage.
 #include "perf/PerfHarness.h"
 
 #include "util/JsonValue.h"
-#include "workspace/LspMessageFraming.h"
+#include "workspace/JsonRpcMessageFraming.h"
 #include "workspace/LspProtocol.h"
 #include "workspace/WorkspaceLspClient.h"
 
@@ -33,7 +33,7 @@ using microide::util::JsonArray;
 using microide::util::JsonObject;
 using microide::util::JsonValue;
 using microide::util::SerializeJson;
-using microide::workspace::LspMessageFramer;
+using microide::workspace::JsonRpcMessageFramer;
 
 // ---- Synthetic wire-payload builders --------------------------------------
 
@@ -212,16 +212,16 @@ void RunLspDocumentSymbolsParse(ScenarioContext& context) {
 }
 
 // Framing throughput: feed a chatty server's Content-Length-delimited stream to
-// the incremental LspMessageFramer in realistic partial chunks so the
+// the incremental JsonRpcMessageFramer in realistic partial chunks so the
 // cross-chunk partial-frame state is exercised, and drain every complete
 // message. This is the transport hot path on the I/O thread and the resync
 // surface that must never desync on a boundary split.
-void RunLspMessageFraming(ScenarioContext& context) {
+void RunJsonRpcMessageFraming(ScenarioContext& context) {
   const std::string stream = MakeFramedStream(/*count=*/500);
   constexpr std::size_t kChunk = 1500;  // TCP-segment-ish partial delivery
   context.Measure("lsp_message_framing.parse", [&]() {
     for (int iter = 0; iter < 40; ++iter) {
-      LspMessageFramer framer;
+      JsonRpcMessageFramer framer;
       std::size_t messages = 0;
       for (std::size_t off = 0; off < stream.size(); off += kChunk) {
         framer.Append(std::string_view(stream).substr(off, kChunk));
@@ -259,7 +259,7 @@ const ScenarioRegistration g_perf_lsp_message_framing({Scenario{
     .name = "lsp_message_framing",
     .smoke = true,
     .baseline_gated = true,
-    .run = RunLspMessageFraming,
+    .run = RunJsonRpcMessageFraming,
 }});
 
 }  // namespace

@@ -2,9 +2,11 @@
 
 #include "util/JsonValue.h"
 #include "workspace/DapProtocol.h"
+#include "workspace/JsonRpcMessageFraming.h"
 
 #include <cstdint>
 #include <optional>
+#include <string>
 
 namespace microide::tests {
 namespace {
@@ -452,7 +454,57 @@ void TestDapProtocolListsAreCapped() {
 
 }  // namespace
 
+// The DAP client used to carry its OWN copy of the Content-Length framing codec,
+// and that copy required a byte-exact `Content-Length: ` prefix. An adapter that
+// wrote `content-length:` or omitted the space had its header line dropped as
+// garbage, after which the parser tried to resync by reading the JSON body as
+// headers — desyncing the stream and tearing the session down. The LSP copy had
+// already been hardened for exactly this; the DAP copy never got the fix.
+//
+// Both now share one framer. This pins the tolerance on the DAP side (with the
+// DAP frame ceiling) so the two cannot drift apart again.
+void TestDapFramingToleratesHeaderCasingAndSpacing() {
+  const std::string body = R"({"type":"event","event":"initialized"})";
+  const auto expect_frames = [&](const std::string& header) {
+    microide::workspace::JsonRpcMessageFramer framer{
+        .max_message_bytes = microide::workspace::kDefaultMaxJsonRpcMessageBytes};
+    framer.Append(header + std::to_string(body.size()) + "\r\n\r\n" + body);
+    const auto msg = framer.Next();
+    Expect(msg.has_value() && (*msg)["event"].AsString() == "initialized",
+           "DAP header variant should frame the message: " + header);
+  };
+  expect_frames("Content-Length: ");    // the only spelling the old DAP copy took
+  expect_frames("content-length: ");    // lowercase name
+  expect_frames("CONTENT-LENGTH: ");    // uppercase name
+  expect_frames("Content-Length:");     // no space after the colon
+  expect_frames("Content-Length:   ");  // extra spaces
+  expect_frames("Content-Length \t: ");  // whitespace before the colon
+}
+
+// A frame past the ceiling must be skipped WHOLE (headers + body) so the parser
+// resyncs on the next frame rather than reading body bytes as headers. Pinned on
+// the DAP side because the ceiling is now a per-client field rather than a
+// hard-coded constant — a wrong or unset one silently swallows every message.
+void TestDapFramingOversizedFrameSkipsAndResyncs() {
+  microide::workspace::JsonRpcMessageFramer framer{.max_message_bytes = 64};
+  const std::string big_body(200, 'x');
+  const std::string good_body = R"({"type":"event","event":"terminated"})";
+  framer.Append("Content-Length: " + std::to_string(big_body.size()) + "\r\n\r\n" + big_body +
+                "Content-Length: " + std::to_string(good_body.size()) + "\r\n\r\n" + good_body);
+  // Drain until the framer yields the message behind the oversized frame.
+  std::optional<JsonValue> seen;
+  for (int i = 0; i < 8 && !seen.has_value(); ++i) {
+    seen = framer.Next();
+  }
+  Expect(seen.has_value() && (*seen)["event"].AsString() == "terminated",
+         "the frame after an oversized one must still parse (no desync)");
+}
+
 void RegisterDapProtocolTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "DapProtocol/FramingToleratesHeaderCasingAndSpacing",
+          TestDapFramingToleratesHeaderCasingAndSpacing);
+  AddTest(tests, "DapProtocol/FramingOversizedFrameSkipsAndResyncs",
+          TestDapFramingOversizedFrameSkipsAndResyncs);
   AddTest(tests, "DapProtocol/DecodeRobustness", TestDapProtocolDecodeRobustness);
   AddTest(tests, "DapProtocol/StackFramesAreCapped", TestDapProtocolStackFramesAreCapped);
   AddTest(tests, "DapProtocol/ListsAreCapped", TestDapProtocolListsAreCapped);

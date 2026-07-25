@@ -7,13 +7,25 @@
 
 #include "util/JsonValue.h"
 
-// LSP wire framing: the `Content-Length: N\r\n\r\n<body>` codec that turns a raw
-// stdout byte stream into discrete JSON-RPC messages. Extracted from the transport
-// `Impl` so the parser — a hot path (speed) and a hostile-input surface
-// (correctness: oversized/malformed frames must resync, never desync) — is a pure
-// value type with deterministic unit coverage instead of only reachable through a
-// live subprocess.
+// The `Content-Length: N\r\n\r\n<body>` codec that turns a raw stdout byte stream
+// into discrete JSON-RPC messages. Shared by BOTH stdio clients: LSP and DAP speak
+// the identical wire framing, and each having its own copy is how they drift —
+// the DAP copy this replaced required an exact `Content-Length: ` prefix and so
+// desynced on a peer that wrote `content-length:` or omitted the space, a case
+// the LSP copy had already been hardened against.
+//
+// Extracted from the transport `Impl` so the parser — a hot path (speed) and a
+// hostile-input surface (correctness: oversized/malformed frames must resync,
+// never desync) — is a pure value type with deterministic unit coverage instead
+// of only reachable through a live subprocess.
 namespace microide::workspace {
+
+// Default frame ceiling. Both protocols independently chose 64 MiB, so this is
+// the shared value rather than a compromise; each client still sets
+// `max_message_bytes` explicitly because the ceiling is protocol policy. It is a
+// real default rather than 0 so that a framer built without one still PARSES —
+// a zero ceiling silently classifies every frame as oversized and skips it.
+inline constexpr std::size_t kDefaultMaxJsonRpcMessageBytes = 64ull * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Internal buffer — avoids O(n) prefix-erasure on every line read.
@@ -41,8 +53,12 @@ struct ReadBuf {
 // bytes). A single framer instance carries the cross-chunk state (partial frame +
 // oversized-frame skip counter), so it is used as a member and survives the
 // initialize-handshake -> I/O-thread handoff without dropping server-pushed bytes.
-struct LspMessageFramer {
+struct JsonRpcMessageFramer {
   ReadBuf buf;
+  // Frames declaring more than this are skipped whole (headers + body) rather
+  // than buffered. Each protocol sets its own ceiling; the caller assigns this
+  // once at construction (LSP: kMaxLspMessageBytes, DAP: kMaxDapMessageBytes).
+  std::size_t max_message_bytes = kDefaultMaxJsonRpcMessageBytes;
   // Remaining body bytes to drain-and-discard for a frame whose declared
   // Content-Length exceeded kMaxLspMessageBytes. Skipping the whole frame lets the
   // parser resync to the next frame instead of reading body bytes as headers (which

@@ -2,6 +2,7 @@
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
+#include <poll.h>
 #include <unistd.h>
 
 #include "util/PosixPipe.h"
@@ -90,6 +91,55 @@ class WakePipe {
 
   // Read end to add to a poll() set; -1 when closed.
   int read_fd() const { return read_fd_; }
+
+  // Wait until `watched_fd` has data/EOF or a Wake() arrives, whichever comes
+  // first. Returns true when `watched_fd` should be read; false on timeout or
+  // EINTR (the caller loops). A pending wake is consumed before returning.
+  //
+  // This is the stdio-transport poll shared by BOTH the LSP and DAP clients.
+  // They each carried a verbatim copy, which is how they drift: the copies had
+  // already diverged once and been re-synced by hand ("Mirrors the DAP fix").
+  //
+  // The caller MUST pass a freshly-fetched descriptor rather than a cached one:
+  // a liveness probe or the shutdown reap can close the watched fd from another
+  // thread and its NUMBER be reused, so polling a stale copy would watch an
+  // unrelated descriptor. A closed fd arrives here as -1, and returning true
+  // then lets the caller's read observe EOF and tear down.
+  //
+  // Call only on the I/O thread — it drains the wake pipe (see Drain()).
+  bool PollReadableOrWake(int watched_fd, int timeout_ms) {
+#if defined(__unix__) || defined(__APPLE__)
+    if (watched_fd < 0) {
+      return true;  // nothing pollable; let the caller's read report EOF
+    }
+    pollfd fds[2] = {};
+    int nfds = 0;
+    const int watched_index = nfds;
+    fds[nfds].fd = watched_fd;
+    fds[nfds].events = POLLIN | POLLHUP;
+    ++nfds;
+    int wake_index = -1;
+    if (const int wake_read_fd = read_fd(); wake_read_fd >= 0) {
+      wake_index = nfds;
+      fds[nfds].fd = wake_read_fd;
+      fds[nfds].events = POLLIN;
+      ++nfds;
+    }
+    const int ready = ::poll(fds, nfds, timeout_ms);
+    if (ready <= 0) {
+      return false;
+    }
+    if (wake_index >= 0 && (fds[wake_index].revents & POLLIN) != 0) {
+      Drain();
+    }
+    const short revents = fds[watched_index].revents;
+    return (revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0;
+#else
+    (void)watched_fd;
+    (void)timeout_ms;
+    return true;
+#endif
+  }
 
  private:
   std::mutex mutex_;

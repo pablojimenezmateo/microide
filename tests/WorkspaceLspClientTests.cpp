@@ -2,7 +2,7 @@
 
 #include "util/JsonValue.h"
 #include "workspace/FileUri.h"
-#include "workspace/LspMessageFraming.h"
+#include "workspace/JsonRpcMessageFraming.h"
 #include "workspace/WorkspaceLspClient.h"
 #include "workspace/WorkspaceLspManager.h"
 
@@ -1349,7 +1349,7 @@ while True:
 }
 
 // ---------------------------------------------------------------------------
-// LspMessageFramer — direct, subprocess-free unit coverage of the wire codec.
+// JsonRpcMessageFramer — direct, subprocess-free unit coverage of the wire codec.
 // The parser is a hot path and a hostile-input surface; these exercise its
 // cross-chunk state (partial frames, coalesced frames, header EOL variants,
 // malformed-length resync, oversized-frame skip) deterministically.
@@ -1445,8 +1445,8 @@ void TestLspManagerReRegistrationDropsStaleAliases() {
          "the dropped language id must no longer resolve after re-registration");
 }
 
-void TestLspMessageFramerSplitFrameAcrossChunks() {
-  workspace::LspMessageFramer framer;
+void TestJsonRpcMessageFramerSplitFrameAcrossChunks() {
+  workspace::JsonRpcMessageFramer framer;
   const std::string frame = LspFrame(R"({"jsonrpc":"2.0","method":"a"})");
   const std::size_t split = frame.size() / 2;
   framer.Append(std::string_view(frame).substr(0, split));
@@ -1458,8 +1458,8 @@ void TestLspMessageFramerSplitFrameAcrossChunks() {
   Expect(!framer.Next().has_value(), "no trailing message remains");
 }
 
-void TestLspMessageFramerMultipleFramesInOneChunk() {
-  workspace::LspMessageFramer framer;
+void TestJsonRpcMessageFramerMultipleFramesInOneChunk() {
+  workspace::JsonRpcMessageFramer framer;
   framer.Append(LspFrame(R"({"method":"one"})") + LspFrame(R"({"method":"two"})"));
   auto a = framer.Next();
   auto b = framer.Next();
@@ -1468,8 +1468,8 @@ void TestLspMessageFramerMultipleFramesInOneChunk() {
   Expect(!framer.Next().has_value(), "only two frames were present");
 }
 
-void TestLspMessageFramerBareNewlineHeaders() {
-  workspace::LspMessageFramer framer;
+void TestJsonRpcMessageFramerBareNewlineHeaders() {
+  workspace::JsonRpcMessageFramer framer;
   framer.Append(LspFrame(R"({"method":"lf"})", /*crlf=*/false));
   auto msg = framer.Next();
   Expect(msg.has_value() && (*msg)["method"].AsString() == "lf",
@@ -1480,10 +1480,10 @@ void TestLspMessageFramerBareNewlineHeaders() {
 // whitespace around the value is optional (HTTP-style tolerant peers). Previously
 // only the exact `Content-Length: ` spelling framed a message, so a lowercase or
 // no-space header made the client read the body as header noise.
-void TestLspMessageFramerToleratesHeaderCasingAndSpacing() {
+void TestJsonRpcMessageFramerToleratesHeaderCasingAndSpacing() {
   const std::string body = R"({"method":"tolerant"})";
   const auto expect_frames = [&](const std::string& header) {
-    workspace::LspMessageFramer framer;
+    workspace::JsonRpcMessageFramer framer;
     framer.Append(header + std::to_string(body.size()) + "\r\n\r\n" + body);
     auto msg = framer.Next();
     Expect(msg.has_value() && (*msg)["method"].AsString() == "tolerant",
@@ -1496,8 +1496,8 @@ void TestLspMessageFramerToleratesHeaderCasingAndSpacing() {
   expect_frames("Content-Length \t: ");  // space before colon
 }
 
-void TestLspMessageFramerMalformedLengthResyncs() {
-  workspace::LspMessageFramer framer;
+void TestJsonRpcMessageFramerMalformedLengthResyncs() {
+  workspace::JsonRpcMessageFramer framer;
   framer.Append("Content-Length: notanumber\r\n\r\n" + LspFrame(R"({"method":"ok"})"));
   std::optional<util::JsonValue> got;
   for (int i = 0; i < 8 && !got.has_value(); ++i) {
@@ -1507,8 +1507,8 @@ void TestLspMessageFramerMalformedLengthResyncs() {
          "a malformed Content-Length header is dropped and the stream resyncs to the next frame");
 }
 
-void TestLspMessageFramerOversizedFrameSkips() {
-  workspace::LspMessageFramer framer;
+void TestJsonRpcMessageFramerOversizedFrameSkips() {
+  workspace::JsonRpcMessageFramer framer;
   const std::size_t oversized = 64ull * 1024 * 1024 + 1;  // just past kMaxLspMessageBytes
   framer.Append("Content-Length: " + std::to_string(oversized) + "\r\n\r\n");
   Expect(!framer.Next().has_value(), "an oversized header frames no message");
@@ -1525,8 +1525,8 @@ void TestLspMessageFramerOversizedFrameSkips() {
 // still-unseen "\r\n" terminator bytes as body, drain two bytes short, and desync
 // the stream (re-parsing trailing body bytes as a new frame). The framer must wait
 // for the terminator, then skip with a body_start that is correctly past it.
-void TestLspMessageFramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync() {
-  workspace::LspMessageFramer framer;
+void TestJsonRpcMessageFramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync() {
+  workspace::JsonRpcMessageFramer framer;
   const std::size_t oversized = 64ull * 1024 * 1024 + 1;  // just past kMaxLspMessageBytes
   // Feed only the Content-Length line, ending exactly on its '\n' — no blank line.
   framer.Append("Content-Length: " + std::to_string(oversized) + "\r\n");
@@ -2096,15 +2096,15 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceLspClient/DropsStaleDiagnosticsFloatVersion",
           TestWorkspaceLspClientDropsStaleDiagnosticsFloatVersion);
   AddTest(tests, "WorkspaceLspClient/FramerSplitFrameAcrossChunks",
-          TestLspMessageFramerSplitFrameAcrossChunks);
+          TestJsonRpcMessageFramerSplitFrameAcrossChunks);
   AddTest(tests, "WorkspaceLspClient/FramerMultipleFramesInOneChunk",
-          TestLspMessageFramerMultipleFramesInOneChunk);
+          TestJsonRpcMessageFramerMultipleFramesInOneChunk);
   AddTest(tests, "WorkspaceLspClient/FramerBareNewlineHeaders",
-          TestLspMessageFramerBareNewlineHeaders);
+          TestJsonRpcMessageFramerBareNewlineHeaders);
   AddTest(tests, "WorkspaceLspClient/FramerMalformedLengthResyncs",
-          TestLspMessageFramerMalformedLengthResyncs);
+          TestJsonRpcMessageFramerMalformedLengthResyncs);
   AddTest(tests, "WorkspaceLspClient/FramerToleratesHeaderCasingAndSpacing",
-          TestLspMessageFramerToleratesHeaderCasingAndSpacing);
+          TestJsonRpcMessageFramerToleratesHeaderCasingAndSpacing);
   AddTest(tests, "WorkspaceLspClient/ManagerReRegistrationDropsStaleAliases",
           TestLspManagerReRegistrationDropsStaleAliases);
   AddTest(tests, "WorkspaceLspClient/RejectsChangeAndSaveForUnopenedDocument",
@@ -2112,9 +2112,9 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceLspClient/DidOpenCloseCommitAfterSuccess",
           TestLspClientDidOpenCloseCommitAfterSuccess);
   AddTest(tests, "WorkspaceLspClient/FramerOversizedFrameSkips",
-          TestLspMessageFramerOversizedFrameSkips);
+          TestJsonRpcMessageFramerOversizedFrameSkips);
   AddTest(tests, "WorkspaceLspClient/FramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync",
-          TestLspMessageFramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync);
+          TestJsonRpcMessageFramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync);
 }
 
 }  // namespace microide::tests

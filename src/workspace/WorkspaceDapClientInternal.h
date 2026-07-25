@@ -1,6 +1,7 @@
 #pragma once
 
 #include "workspace/DapProtocol.h"
+#include "workspace/JsonRpcMessageFraming.h"
 #include "workspace/WorkspaceDapClient.h"
 #include "workspace/ProtocolNumeric.h"
 #include "workspace/StdioClientQueue.h"
@@ -128,24 +129,6 @@ void TraceDapLifecycle(std::string_view adapter_id, int pid, std::string_view ph
 
 }  // namespace
 
-// Internal buffer — avoids O(n) prefix-erasure on every framed read.
-struct DapReadBuf {
-  std::string data;
-  std::size_t pos = 0;
-
-  std::string_view view() const { return std::string_view(data).substr(pos); }
-
-  void consume(std::size_t n) {
-    pos += n;
-    if (pos > 65536 && pos > data.size() / 2) {
-      data.erase(0, pos);
-      pos = 0;
-    }
-  }
-
-  void append(std::string_view chunk) { data.append(chunk); }
-};
-
 struct DapClient::Impl {
   using QueuedMessage = StdioQueuedMessage;
 
@@ -164,12 +147,10 @@ struct DapClient::Impl {
 
   // Single I/O thread: reads stdout / writes stdin, blocking in poll() over
   // stdout + a self-pipe wake, so an idle adapter makes no fixed-cadence wakeups.
-  // io_buf is filled by the initialize handshake and handed to the I/O thread,
-  // preserving any events the adapter pushed right after the initialize response.
-  DapReadBuf io_buf;
-  // Remaining body bytes to drain-and-discard for a frame whose declared
-  // Content-Length exceeded kMaxDapMessageBytes; see TryParseOneMessage.
-  std::size_t skip_body_bytes_ = 0;
+  // framer_ is filled by the initialize handshake and handed to the I/O thread,
+  // preserving any events the adapter pushed right after the initialize response
+  // (and any partial frame) across that handoff.
+  JsonRpcMessageFramer framer_{.max_message_bytes = kMaxDapMessageBytes};
   std::thread io_thread;
   std::atomic<bool> stop_io{false};
   util::WakePipe wake_pipe_;  // self-pipe that breaks the I/O thread's poll() on demand
@@ -250,7 +231,6 @@ struct DapClient::Impl {
   void OpenWakePipe() { wake_pipe_.Open(); }
   void CloseWakePipe() { wake_pipe_.Close(); }
   void Wake() { wake_pipe_.Wake(); }
-  void DrainWakePipe() { wake_pipe_.Drain(); }
 
   // --- outbound queue (I/O thread only) -------------------------------------
   void DrainOutbound() {
@@ -391,135 +371,28 @@ struct DapClient::Impl {
     proc.Shutdown(timeout_ms);
   }
 
-  // --- framing --------------------------------------------------------------
-  std::optional<util::JsonValue> TryParseOneMessage(DapReadBuf& buf) {
-    static constexpr std::string_view kPrefix = "Content-Length: ";
-
-    // Draining the body of an oversized frame we chose to skip: consume what is
-    // buffered and stop until the rest arrives, so the parser resyncs to the next
-    // frame instead of desyncing and tearing the session down.
-    if (skip_body_bytes_ > 0) {
-      const std::size_t drop = std::min<std::size_t>(skip_body_bytes_, buf.view().size());
-      buf.consume(drop);
-      skip_body_bytes_ -= drop;
-      return std::nullopt;
-    }
-
-    const std::string_view v = buf.view();
-    const auto nl = v.find('\n');
-    if (nl == std::string_view::npos) {
-      return std::nullopt;
-    }
-    std::string_view line = v.substr(0, nl);
-    if (!line.empty() && line.back() == '\r') {
-      line.remove_suffix(1);
-    }
-    if (line.substr(0, kPrefix.size()) != kPrefix) {
-      buf.consume(nl + 1);
-      return std::nullopt;
-    }
-    const std::string_view len_sv = line.substr(kPrefix.size());
-    int content_len = 0;
-    const auto [ptr, ec] =
-        std::from_chars(len_sv.data(), len_sv.data() + len_sv.size(), content_len);
-    if (ec != std::errc{} || content_len <= 0) {
-      // Malformed/absurd length: drop the header line and try to resync; the
-      // read-buffer cap remains the backstop if the stream never recovers.
-      buf.consume(nl + 1);
-      return std::nullopt;
-    }
-    std::size_t body_start = nl + 1;
-    bool header_terminated = false;
-    while (body_start < v.size()) {
-      const auto nl2 = v.find('\n', body_start);
-      if (nl2 == std::string_view::npos) {
-        return std::nullopt;
-      }
-      std::string_view hdr = v.substr(body_start, nl2 - body_start);
-      if (!hdr.empty() && hdr.back() == '\r') {
-        hdr.remove_suffix(1);
-      }
-      body_start = nl2 + 1;
-      if (hdr.empty()) {
-        header_terminated = true;
-        break;
-      }
-    }
-    // The loop can also exit because the buffer ran out mid-header-block (a recv
-    // split right on a header newline). `body_start` then points at the buffer
-    // end, not past the real blank-line terminator; committing the oversized skip
-    // below with that body_start would count the unseen terminator bytes as body
-    // and desync the stream. Wait for the rest of the header block instead.
-    if (!header_terminated) {
-      return std::nullopt;
-    }
-    if (static_cast<std::size_t>(content_len) > kMaxDapMessageBytes) {
-      // Too large to buffer: skip the entire frame (headers + body) so the parser
-      // resyncs to the next frame instead of reading body bytes as headers.
-      buf.consume(body_start);
-      skip_body_bytes_ = static_cast<std::size_t>(content_len);
-      return std::nullopt;
-    }
-    if (v.size() - body_start < static_cast<std::size_t>(content_len)) {
-      return std::nullopt;
-    }
-    const std::string_view body = v.substr(body_start, content_len);
-    auto parsed = util::ParseJson(body);
-    buf.consume(body_start + content_len);
-    return parsed;
-  }
-
   bool WaitStdoutReadable(int timeout_ms) {
-#if defined(__unix__) || defined(__APPLE__)
-    // Re-fetch the stdout fd each poll rather than trusting the once-captured
-    // cached_stdout_fd_: a main-thread liveness probe (proc.IsRunning) or the
-    // shutdown thread can reap the child and close this fd, whose number another
-    // thread may then reuse — polling the cached number would watch an unrelated
-    // descriptor. stdout_fd() returns -1 (under lock) once closed, so we fall
-    // through to the read path and let proc.Read() observe EOF and tear down.
-    const int stdout_fd = proc.stdout_fd();
-    if (stdout_fd >= 0) {
-      pollfd fds[2] = {};
-      int nfds = 0;
-      const int out_index = nfds;
-      fds[nfds].fd = stdout_fd;
-      fds[nfds].events = POLLIN | POLLHUP;
-      ++nfds;
-      int wake_index = -1;
-      if (const int wake_read_fd = wake_pipe_.read_fd(); wake_read_fd >= 0) {
-        wake_index = nfds;
-        fds[nfds].fd = wake_read_fd;
-        fds[nfds].events = POLLIN;
-        ++nfds;
-      }
-      const int ready = ::poll(fds, nfds, timeout_ms);
-      if (ready <= 0) {
-        return false;
-      }
-      if (wake_index >= 0 && (fds[wake_index].revents & POLLIN) != 0) {
-        DrainWakePipe();
-      }
-      const short out_revents = fds[out_index].revents;
-      return (out_revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0;
-    }
-#endif
-    return true;
+    // Fetch the stdout fd fresh on every poll rather than reusing the
+    // once-captured cached_stdout_fd_ — see WakePipe::PollReadableOrWake for why
+    // a cached descriptor number is unsafe here. That poll is shared with the LSP
+    // client so the two transports cannot drift apart again.
+    return wake_pipe_.PollReadableOrWake(proc.stdout_fd(), timeout_ms);
   }
 
   void ParseBufferedMessages() {
     while (true) {
-      const std::size_t buffered_before = io_buf.view().size();
-      auto msg_opt = TryParseOneMessage(io_buf);
+      const std::size_t buffered_before = framer_.BufferedBytes();
+      auto msg_opt = framer_.Next();
       if (msg_opt) {
         DispatchMessage(std::move(*msg_opt));
         continue;
       }
-      // nullopt is overloaded: either TryParseOneMessage consumed a frame it could
+      // nullopt is overloaded: either the framer consumed a frame it could
       // not surface (malformed header / oversized / invalid JSON) — in which case
       // well-formed frames already buffered behind it must still be drained now, not
       // ~1s later on the next poll — or no complete frame is available yet, in which
       // case the buffer is unchanged and we wait for more bytes.
-      if (io_buf.view().size() == buffered_before) {
+      if (framer_.BufferedBytes() == buffered_before) {
         break;
       }
     }
@@ -547,9 +420,9 @@ struct DapClient::Impl {
         break;
       }
       if (!chunk->empty()) {
-        io_buf.append(*chunk);
+        framer_.Append(*chunk);
       }
-      if (io_buf.view().size() > kMaxDapReadBufferBytes) {
+      if (framer_.BufferedBytes() > kMaxDapReadBufferBytes) {
         break;  // runaway adapter (no valid frame): tear the session down
       }
     }
@@ -787,7 +660,6 @@ struct DapClient::Impl {
       return;
     }
 
-    DapReadBuf& buf = io_buf;
     bool got_init = false;
     // Messages that arrive BEFORE the initialize response are buffered here and
     // dispatched only after `capabilities` is stored and `initialized` is set. A
@@ -814,16 +686,16 @@ struct DapClient::Impl {
         initializing.store(false, std::memory_order_release);
         return;
       }
-      auto msg_opt = TryParseOneMessage(buf);
+      auto msg_opt = framer_.Next();
       if (!msg_opt) {
         auto chunk = proc.Read(4096, 500);
         if (!chunk) {
           break;
         }
         if (!chunk->empty()) {
-          buf.append(*chunk);
+          framer_.Append(*chunk);
         }
-        if (buf.view().size() > kMaxDapReadBufferBytes) {
+        if (framer_.BufferedBytes() > kMaxDapReadBufferBytes) {
           break;  // runaway adapter
         }
         continue;

@@ -1,4 +1,4 @@
-#include "workspace/LspMessageFraming.h"
+#include "workspace/JsonRpcMessageFraming.h"
 
 #include <algorithm>
 #include <charconv>
@@ -43,7 +43,7 @@ std::optional<std::string_view> ContentLengthValue(std::string_view line) {
 
 }  // namespace
 
-std::optional<util::JsonValue> LspMessageFramer::Next() {
+std::optional<util::JsonValue> JsonRpcMessageFramer::Next() {
   // Draining the body of an oversized frame we chose to skip: consume what is
   // buffered and stop until the rest arrives. The read loop keeps feeding bytes,
   // so the frame is discarded a chunk at a time without the buffer ever growing.
@@ -101,7 +101,7 @@ std::optional<util::JsonValue> LspMessageFramer::Next() {
   // rest of the header block instead.
   if (!header_terminated) return std::nullopt;
 
-  if (static_cast<std::size_t>(content_len) > kMaxLspMessageBytes) {
+  if (static_cast<std::size_t>(content_len) > max_message_bytes) {
     // Too large to buffer: skip the entire frame (headers + body) so the parser
     // resyncs to the next frame instead of reading body bytes as headers.
     buf.consume(body_start);
