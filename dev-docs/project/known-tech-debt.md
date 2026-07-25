@@ -186,11 +186,15 @@ both build `-Werror`-clean. What is left open:
 - **TD-2026-07-25-104 — `TextLayoutCache::VisibleLineLayoutRefCached` hands out a
   reference into an evictable cache. OPEN (latent; no known trigger).**
   The returned `const LayoutLine&` points into `visible_line_cache_`, whose FIFO eviction
-  `erase`s entries once `kVisibleLineCacheLimit` is reached. A caller that holds the
+  `erase`s entries once `kVisibleLineCacheLimit` (256) is reached. A caller that holds the
   reference across a later query for a different line can therefore be left dangling.
-  No current caller does — the limit exceeds the visible row count, so a single frame
-  never evicts what it is still reading — but nothing enforces that. Either raise it to a
-  documented invariant with a lint, or return a stable handle/index instead of a
+  The requirement IS documented at the declaration (`TextLayoutCache.h`: "stable until the
+  next call that can evict it … the per-frame working set is far below
+  kVisibleLineCacheLimit"), and no current caller violates it — 256 comfortably exceeds any
+  visible row count, so a frame never evicts what it is still reading. The gap is
+  enforcement, not awareness: nothing fails if a future caller stashes the reference or if
+  someone lowers the limit. Options are a lint over the call sites, an assertion that the
+  live working set stays under the limit, or returning a stable handle/index instead of a
   reference.
 
 ### ⏭️ Standing backlog — deferred to dedicated passes (revisit; NOT dropped)
