@@ -60,6 +60,7 @@ void FileFinder::Refresh() {
   EnsureCacheBuilt();
 
   const std::string lower_query = util::Utf8CaseFold(query_.text());
+  const std::uint64_t query_mask = CharPresenceMask(lower_query);
 
   // While the query is empty, lead with recent files (newest-first) so the finder is
   // useful before the user types. Only recents still present in the index are shown;
@@ -116,7 +117,7 @@ void FileFinder::Refresh() {
     if (!recent_shown.empty() && recent_shown.count(entry.path_string) != 0) {
       return;
     }
-    const int score = RankMatchCached(entry, lower_query);
+    const int score = RankMatchCached(entry, lower_query, query_mask);
     if (score == std::numeric_limits<int>::max()) {
       return;
     }
@@ -225,13 +226,32 @@ int FileFinder::SubsequenceScore(const std::string& text, const std::string& que
   return total_gap + first_match;
 }
 
-int FileFinder::RankMatchCached(const CachedFileEntry& entry, const std::string& query) {
+std::uint64_t FileFinder::CharPresenceMask(std::string_view text) {
+  std::uint64_t mask = 0;
+  for (const char c : text) {
+    mask |= std::uint64_t{1} << (static_cast<unsigned char>(c) & 63u);
+  }
+  return mask;
+}
+
+int FileFinder::RankMatchCached(const CachedFileEntry& entry, const std::string& query,
+                                std::uint64_t query_mask) {
   if (query.empty()) {
     return static_cast<int>(entry.path_string.size());
   }
 
+  // O(1) reject before the O(path length * query length) scans. The filename is
+  // a suffix component of the path, so its folded bytes are a subset of the
+  // path's — a path-mask miss means BOTH scans would fail, which is the common
+  // case for any query narrow enough to be useful.
+  if ((entry.lower_path_mask & query_mask) != query_mask) {
+    return std::numeric_limits<int>::max();
+  }
+  const bool filename_possible = (entry.lower_filename_mask & query_mask) == query_mask;
+
   const int path_score = SubsequenceScore(entry.lower_path, query);
-  const int file_score = SubsequenceScore(entry.lower_filename, query);
+  const int file_score = filename_possible ? SubsequenceScore(entry.lower_filename, query)
+                                           : std::numeric_limits<int>::max();
   if (path_score == std::numeric_limits<int>::max() &&
       file_score == std::numeric_limits<int>::max()) {
     return std::numeric_limits<int>::max();
@@ -281,11 +301,17 @@ void FileFinder::EnsureCacheBuilt() {
   for (const auto& path : files) {
     std::string path_string = path.relative_path.string();
     entry_index_by_path_.emplace(path_string, cached_entries_.size());
+    std::string lower_path = util::Utf8CaseFold(path_string);
+    std::string lower_filename = util::Utf8CaseFold(path.relative_path.filename().string());
+    const std::uint64_t lower_path_mask = CharPresenceMask(lower_path);
+    const std::uint64_t lower_filename_mask = CharPresenceMask(lower_filename);
     cached_entries_.push_back(CachedFileEntry{
         .relative_path = path.relative_path,
-        .path_string = path_string,
-        .lower_path = util::Utf8CaseFold(path_string),
-        .lower_filename = util::Utf8CaseFold(path.relative_path.filename().string()),
+        .path_string = std::move(path_string),
+        .lower_path = std::move(lower_path),
+        .lower_filename = std::move(lower_filename),
+        .lower_path_mask = lower_path_mask,
+        .lower_filename_mask = lower_filename_mask,
     });
   }
   cached_index_version_ = snapshot.version;

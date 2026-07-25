@@ -53,10 +53,23 @@ class FileFinder {
     std::string path_string;
     std::string lower_path;
     std::string lower_filename;
+    // Presence bitmask over the folded bytes (see CharPresenceMask). A query
+    // whose mask is not a subset of these cannot possibly be a subsequence, so
+    // the O(len * query) scan below is skipped outright.
+    std::uint64_t lower_path_mask = 0;
+    std::uint64_t lower_filename_mask = 0;
   };
 
+  // 64-bucket presence set: bit (byte % 64) for every byte of `text`. Subsequence
+  // matching requires every query byte to APPEAR in the candidate, so
+  // `(candidate & query) != query` is a sound (never false-negative) rejection.
+  // Buckets collide, so it can pass an impossible candidate — the real scan then
+  // rejects it. Cheap enough to run over the whole index per keystroke.
+  static std::uint64_t CharPresenceMask(std::string_view text);
+
   static int SubsequenceScore(const std::string& text, const std::string& query);
-  static int RankMatchCached(const CachedFileEntry& entry, const std::string& query);
+  static int RankMatchCached(const CachedFileEntry& entry, const std::string& query,
+                             std::uint64_t query_mask);
   void EnsureCacheBuilt();
 
   const FileIndex* index_ = nullptr;

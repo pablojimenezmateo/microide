@@ -2,6 +2,7 @@
 
 #include "project/FileFinder.h"
 #include "util/PerformanceCounters.h"
+#include "util/StringUtil.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -376,7 +377,95 @@ void TestFileFinderReportsTruncatedIndex() {
          "the finder must surface the backing index's truncation status");
 }
 
+// RankMatchCached rejects an entry outright when the query's character-presence
+// bitmask is not a subset of the entry's. That is only sound in one direction:
+// the mask may pass a candidate that cannot actually match (bucket collisions —
+// bytes 64 apart share a bit), which the real subsequence scan then rejects, but
+// it must NEVER reject a candidate that would have matched. This drives the
+// finder against an independently-computed subsequence oracle so a false
+// negative shows up as a missing result.
+void TestFileFinderPresenceMaskNeverRejectsAMatch() {
+  // Case-insensitive subsequence test, restated independently of the finder.
+  const auto is_subsequence = [](std::string_view text, std::string_view query) {
+    std::size_t q = 0;
+    for (std::size_t i = 0; i < text.size() && q < query.size(); ++i) {
+      const char folded = microide::util::ToLowerAsciiChar(text[i]);
+      if (folded == microide::util::ToLowerAsciiChar(query[q])) {
+        ++q;
+      }
+    }
+    return q == query.size();
+  };
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+
+  // Paths chosen to stress the 64-bucket mask: '!'(0x21)/'a'(0x61),
+  // '.'(0x2E)/'n'(0x6E), and '/'(0x2F)/'o'(0x6F) each collide, and mixed case
+  // exercises the fold applied before the mask is built.
+  const std::vector<std::filesystem::path> paths = {
+      "src/Alpha.cpp",      "src/alpha_impl.h",   "src/a!b/Node.cpp",
+      "tests/Beta.test.cc", "docs/read.me.md",    "tools/run-checks.sh",
+      "a/b/c/d/e/deep.txt", "UPPER/CASE/File.MD", "x!y.z",
+      "no-vowels/xyz.qq",   "src/workspace/Shell.cpp",
+  };
+
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred),
+         "presence-mask fixture should initialize a deferred index root");
+  IndexUpdateBatch batch;
+  batch.is_initial = true;
+  for (const auto& path : paths) {
+    batch.changes.push_back(MakeCreateChange(path));
+  }
+  Expect(index.ApplyBatch(batch), "presence-mask fixture should apply its initial batch");
+
+  FileFinder finder;
+  finder.SetIndex(&index);
+
+  const std::vector<std::string> queries = {
+      "a",     "alpha", "ac",   "acp",   "shell", "SHELL", "md",   "!",     "a!b",
+      "ne",    "x.z",   "xyz",  "qq",    "deep",  "abcde", "zzzz", "",      "u/c/f",
+      "run",   "sh",    "Node", "readme", "..",   "//",    "cpp",
+  };
+
+  for (const std::string& query : queries) {
+    finder.SetQuery("");  // force a full scan rather than the narrowing path
+    finder.SetQuery(query);
+
+    // Every path the oracle says should match must be present in the results.
+    // (Results are capped at 512; this fixture is far below that, so the cap
+    // cannot mask a false negative here.)
+    for (const std::filesystem::path& path : paths) {
+      const std::string path_string = path.string();
+      const std::string filename = path.filename().string();
+      if (!is_subsequence(path_string, query) && !is_subsequence(filename, query)) {
+        continue;
+      }
+      const bool found =
+          std::any_of(finder.results().begin(), finder.results().end(),
+                      [&](const auto& result) { return result.path_string == path_string; });
+      Expect(found, ("the presence-mask prefilter dropped a real match: query='" + query +
+                     "' path='" + path_string + "'")
+                        .c_str());
+    }
+
+    // And nothing the oracle rejects may appear (the mask must not widen the
+    // match set either — the real scan still has to run on everything it passes).
+    for (const auto& result : finder.results()) {
+      const std::string filename = std::filesystem::path(result.path_string).filename().string();
+      Expect(is_subsequence(result.path_string, query) || is_subsequence(filename, query),
+             ("the finder returned a non-matching path: query='" + query + "' path='" +
+              result.path_string + "'")
+                 .c_str());
+    }
+  }
+}
+
 void RegisterFileFinderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileFinder/PresenceMaskNeverRejectsAMatch",
+          TestFileFinderPresenceMaskNeverRejectsAMatch);
   AddTest(tests, "FileFinder/ReportsTruncatedIndex", TestFileFinderReportsTruncatedIndex);
   AddTest(tests, "FileFinder/CapsRecentsOnEmptyQuery", TestFileFinderCapsRecentsOnEmptyQuery);
   AddTest(tests, "FileFinder/CapsBroadResultCount", TestFileFinderCapsBroadResultCount);
