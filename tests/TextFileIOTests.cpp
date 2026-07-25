@@ -266,6 +266,31 @@ void TestReadFileLineWindowRespectsByteBudget() {
   Expect(full[1] == "0123456789abcdef", "the deep line content should match");
 }
 
+// Regression: a window that ends inside the FIRST chunk of a multi-chunk file must
+// stop there. The reader used to break only the inner byte loop without advancing
+// line_number, so the outer loop kept pulling 64 KiB chunks to EOF and flushed one
+// spurious extra line per chunk into the window.
+void TestReadFileLineWindowStopsAtLastLineInLargeFile() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "multichunk.txt";
+  std::string content;
+  // 20,000 x 17 bytes = 340 KB, comfortably more than five 64 KiB read chunks.
+  for (int i = 0; i < 20000; ++i) {
+    content += "0123456789abcdef\n";
+  }
+  WriteFile(path, content);
+
+  const auto window = ReadFileLineWindow(path, 2, 3);
+  Expect(window.size() == 2, "a 2-line window must not grow with the file's size");
+  Expect(window[0] == "0123456789abcdef", "window line 2 content");
+  Expect(window[1] == "0123456789abcdef", "window line 3 content");
+
+  // The stop is also a byte-budget stop: with a budget that only covers the first
+  // few lines the window still resolves, proving the scan does not run past them.
+  const auto bounded = ReadFileLineWindow(path, 1, 3, /*max_bytes=*/17 * 3);
+  Expect(bounded.size() == 3, "lines 1-3 fit exactly in a 51-byte budget");
+}
+
 // A file whose scanned prefix contains a NUL is treated as binary -> empty window.
 void TestReadFileLineWindowRejectsBinary() {
   TemporaryDirectory temp_dir;
@@ -298,6 +323,8 @@ void RegisterTextFileIOTests(std::vector<TestCase>& tests) {
           TestReadFileLineWindowHandlesEofAndOverrun);
   AddTest(tests, "TextFileIO/ReadFileLineWindowRespectsByteBudget",
           TestReadFileLineWindowRespectsByteBudget);
+  AddTest(tests, "TextFileIO/ReadFileLineWindowStopsAtLastLineInLargeFile",
+          TestReadFileLineWindowStopsAtLastLineInLargeFile);
   AddTest(tests, "TextFileIO/ReadFileLineWindowRejectsBinary",
           TestReadFileLineWindowRejectsBinary);
   AddTest(tests, "TextFileIO/ReadTextFileRejectsNonRegularFiles",

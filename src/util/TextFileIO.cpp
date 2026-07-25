@@ -85,7 +85,10 @@ std::vector<std::string> ReadFileLineWindow(const std::filesystem::path& path,
     return window;
   }
 
-  window.reserve(last_line - first_line + 1);
+  // Clamp the hint: a caller asking for a huge range (or SIZE_MAX as "to EOF")
+  // must not turn into one enormous up-front allocation. The vector grows on
+  // demand past the hint, and real snippet windows are a handful of lines.
+  window.reserve(std::min<std::size_t>(last_line - first_line + 1, 1024));
   std::string current;          // bytes of the line currently being accumulated
   std::size_t line_number = 1;  // 1-based number of the line `current` belongs to
   std::uintmax_t consumed = 0;  // total bytes streamed (bounds time + allocation)
@@ -118,10 +121,15 @@ std::vector<std::string> ReadFileLineWindow(const std::filesystem::path& path,
       }
       if (c == '\n') {
         flush_line();
-        if (line_number >= last_line) {
+        // Advance unconditionally so `line_number` always names the line `current`
+        // belongs to. Breaking here *without* advancing left the outer
+        // `line_number <= last_line` guard true, so the loop kept reading the rest
+        // of the file (up to max_bytes) and flushed one bogus extra line per chunk
+        // into `window` — visible on any file larger than one 64 KiB chunk.
+        ++line_number;
+        if (line_number > last_line) {
           break;
         }
-        ++line_number;
       } else if (line_number >= first_line && line_number <= last_line) {
         // Retain bytes only for lines we may emit; skipped lines still advance
         // line_number via their newline but cost no allocation.
