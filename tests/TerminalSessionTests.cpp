@@ -1311,7 +1311,7 @@ void TestTerminalSessionTabulationClampsToWidth() {
 
 // HT (`\t`) is pure cursor motion: it must move to the next tab stop WITHOUT
 // blanking the cells it passes over. Regression for the fix that replaced the
-// per-column `PutCharacterLocked(' ')` fill with a cursor move.
+// per-column `PutGlyphLocked(" ")` fill with a cursor move.
 void TestTerminalSessionTabDoesNotOverwriteCells() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -2263,7 +2263,79 @@ void TestTerminalSessionRestoreClampsOversizedCursorRow() {
          "the restored cursor row must be clamped to the scrollback ceiling");
 }
 
+// AppendOutputLocked takes a bulk fast path for runs of plain printable ASCII
+// (PutAsciiRunLocked) instead of dispatching every byte through PutGlyphLocked.
+// The fast path must be indistinguishable from the per-byte path at every seam:
+// the right margin, the wrap it defers, the boundaries where a run meets a
+// control byte / escape / multi-byte glyph, and the wide-glyph pairs it lands on.
+void TestTerminalSessionAsciiRunFastPathMatchesPerByte() {
+  microide::terminal::TerminalSession session;
+
+  // 1. A run that exactly fills the line must NOT wrap yet — the wrap is
+  //    deferred to the next write, matching the per-byte path.
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "ABCDEFGH");
+  auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "ABCDEFGH", "a run filling the line stays on that line");
+  Expect(session.cursor_row() == 0, "a run filling the line must not wrap yet");
+  Expect(session.cursor_column() == 8, "the cursor rests at the right margin");
+
+  // 2. The next byte performs the deferred wrap.
+  TerminalSessionTestAccess::AppendOutput(session, "IJ");
+  lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "ABCDEFGH", "the filled line is untouched by the wrap");
+  ExpectLineText(lines, 1, "IJ", "the deferred wrap continues on the next row");
+
+  // 3. A single run longer than the line wraps at exactly the same columns.
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "ABCDEFGHIJKLMNOPQRST");
+  lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "ABCDEFGH", "an over-long run wraps at the margin");
+  ExpectLineText(lines, 1, "IJKLMNOP", "an over-long run keeps wrapping");
+  ExpectLineText(lines, 2, "QRST", "the remainder lands on the third row");
+
+  // 4. Run boundaries: control bytes, escapes, and multi-byte glyphs must all
+  //    interrupt the run and be handled by the per-byte parser exactly as before.
+  TerminalSessionTestAccess::Reset(session, 4, 20);
+  TerminalSessionTestAccess::AppendOutput(session, "ab\tcd\r\nef\x1b[1mgh");
+  lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "ab      cd", "a tab inside a run still moves to the tab stop");
+  ExpectLineText(lines, 1, "efgh", "an SGR escape splits a run without losing bytes");
+
+  // 5. A run landing on a wide glyph must break the pair the same way a
+  //    per-byte write does — both when it overwrites the lead and when it
+  //    overwrites the trailing spacer.
+  TerminalSessionTestAccess::Reset(session, 4, 20);
+  TerminalSessionTestAccess::AppendOutput(session, "\xE6\x97\xA5\xE6\x9C\xAC ok");  // 日本 ok
+  TerminalSessionTestAccess::AppendOutput(session, "\r");
+  TerminalSessionTestAccess::AppendOutput(session, "xy");  // overwrites the first wide lead+spacer
+  lines = session.SnapshotLines();
+  Expect(LineText(lines[0]).rfind("xy", 0) == 0,
+         "a run overwriting a wide glyph writes its own bytes at the start");
+  Expect(LineText(lines[0]).find('\xE6') == std::string::npos ||
+             LineText(lines[0]).find("\xE6\x9C\xAC") != std::string::npos,
+         "the untouched second wide glyph survives; the overwritten one leaves no half-pair");
+
+  // 6. DEL (0x7F) is not run content: it must stay a no-op, not print.
+  TerminalSessionTestAccess::Reset(session, 4, 20);
+  TerminalSessionTestAccess::AppendOutput(session, "ab\x7f" "cd");
+  lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "abcd", "DEL inside a run is ignored, not printed");
+
+  // 7. The run must be split across AppendOutput calls without artifacts — the
+  //    PTY delivers arbitrary chunk boundaries.
+  TerminalSessionTestAccess::Reset(session, 4, 20);
+  for (const char c : std::string("chunked output")) {
+    TerminalSessionTestAccess::AppendOutput(session, std::string_view(&c, 1));
+  }
+  lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "chunked output",
+                 "byte-at-a-time delivery must produce the same row as one bulk write");
+}
+
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TerminalSession/AsciiRunFastPathMatchesPerByte",
+          TestTerminalSessionAsciiRunFastPathMatchesPerByte);
   AddTest(tests, "TerminalSession/RestoreClampsOversizedCursorRow",
           TestTerminalSessionRestoreClampsOversizedCursorRow);
   AddTest(tests, "TerminalSession/RejectedWakeLatchesOwedBit",

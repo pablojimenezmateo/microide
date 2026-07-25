@@ -278,10 +278,6 @@ void TerminalSession::MoveCursorLocked(std::size_t row, std::size_t column) {
   EnsureCursorLineExistsLocked();
 }
 
-void TerminalSession::PutCharacterLocked(char character) {
-  PutGlyphLocked(std::string_view(&character, 1));
-}
-
 void TerminalSession::PutGlyphLocked(std::string_view glyph) {
   // Fast path: a single ASCII byte is always one column, so skip UTF-8 decoding
   // and the width tables entirely for the overwhelmingly common case.
@@ -357,6 +353,52 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
     line.cells[cursor_column_ + 1] = spacer;
   }
   cursor_column_ += advance;
+}
+
+std::size_t TerminalSession::PutAsciiRunLocked(std::string_view run) {
+  // Longest prefix of bytes that PutGlyphLocked would each resolve to "one plain
+  // ASCII column": 0x20..0x7E. 0x7F (DEL) and everything below 0x20 are control
+  // bytes the per-byte switch handles, and >= 0x80 starts a UTF-8 sequence.
+  std::size_t length = 0;
+  while (length < run.size()) {
+    const auto byte = static_cast<unsigned char>(run[length]);
+    if (byte < 0x20 || byte >= 0x7F) {
+      break;
+    }
+    ++length;
+  }
+  if (length == 0) {
+    return 0;
+  }
+  // Stop at the right margin. PutGlyphLocked defers the wrap to the NEXT write
+  // (it wraps when `cursor_column_ + advance > columns_`), so ending the run
+  // exactly at `columns_` reproduces its cursor state byte for byte. A cursor
+  // already at or past the margin means a wrap — or the no-autowrap overwrite —
+  // is due, so hand that byte back to the per-byte path that implements it.
+  if (columns_ > 0) {
+    if (cursor_column_ >= columns_) {
+      return 0;
+    }
+    length = std::min(length, columns_ - cursor_column_);
+  }
+
+  EnsureCursorLineExistsLocked();
+  TerminalLine& line = lines_[cursor_row_];
+  ResizeLineLocked(line, cursor_column_ + length);
+  // One break for the whole span is exactly equivalent to one per cell: an
+  // interior wide pair is fully overwritten by the run (no orphan to clear), so
+  // only the two edges can strand a half-pair.
+  BreakWideGlyphPairForWriteLocked(line, cursor_column_, length);
+
+  TerminalCell cell;
+  cell.style = current_style_;
+  cell.length = 1;
+  for (std::size_t i = 0; i < length; ++i) {
+    cell.bytes[0] = run[i];
+    line.cells[cursor_column_ + i] = cell;
+  }
+  cursor_column_ += length;
+  return length;
 }
 
 void TerminalSession::ResizeLineLocked(TerminalLine& line, std::size_t size) {

@@ -81,6 +81,22 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
   // subsequent `++data_index` returns it to 0.
   for (std::size_t data_index = 0; data_index < data.size(); ++data_index) {
     const unsigned char byte = static_cast<unsigned char>(data[data_index]);
+    // Bulk fast path for the case that dominates every real command's output: a
+    // run of plain printable ASCII while the parser is in ground state. The
+    // per-byte path below walks five escape-mode comparisons and a switch, then
+    // re-does the line lookup, the line resize, and the wide-pair break inside
+    // PutGlyphLocked for EVERY byte. PutAsciiRunLocked does each of those once
+    // for the whole run; it returns 0 when the run cannot be taken whole (a due
+    // wrap, a control byte immediately) so the per-byte parser still owns every
+    // case it owned before.
+    if (escape_mode_ == EscapeMode::None && byte >= 0x20 && byte < 0x7F &&
+        pending_utf8_sequence_.empty()) {
+      if (const std::size_t consumed = PutAsciiRunLocked(data.substr(data_index));
+          consumed > 0) {
+        data_index += consumed - 1;  // the loop's ++ lands on the first unconsumed byte
+        continue;
+      }
+    }
     if (escape_mode_ == EscapeMode::AfterEscape) {
       if (byte == '[') {
         escape_sequence_buffer_.push_back('[');
@@ -400,9 +416,14 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         break;
       }
       default:
-        if (byte >= 32 || byte >= 0x80) {
+        // `byte >= 0x80` was a tautological second disjunct here (an unsigned
+        // char >= 0x80 is already >= 32); every remaining C0 control simply has
+        // no positional effect and falls through.
+        if (byte >= 32) {
           if (byte < 0x80) {
-            PutCharacterLocked(static_cast<char>(byte));
+            // Reached only when PutAsciiRunLocked declined the run (a wrap or a
+            // no-autowrap overwrite is due at the right margin).
+            PutGlyphLocked(data.substr(data_index, 1));
             break;
           }
 

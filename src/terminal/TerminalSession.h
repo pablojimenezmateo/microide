@@ -237,8 +237,13 @@ class TerminalSession {
   // on the alternate screen (which has no scrollback) and whenever the deque is
   // not yet taller than the screen.
   std::size_t PrimaryScreenTopLocked() const;
-  void PutCharacterLocked(char character);
   void PutGlyphLocked(std::string_view glyph);
+  // Bulk-write the leading run of plain printable ASCII in `run` (the case that
+  // dominates every real command's output) with one line lookup, one resize, and
+  // one wide-pair break for the whole span instead of per byte. Returns the number
+  // of bytes consumed, or 0 when the fast path does not apply and the caller must
+  // fall back to the per-byte parser.
+  std::size_t PutAsciiRunLocked(std::string_view run);
   // Blank any dangling half of a previously written double-width pair that a
   // fresh write over [start, start+advance) would orphan, so the renderer never
   // sees a lead without its trailing spacer (stale gap) or a spacer without its
