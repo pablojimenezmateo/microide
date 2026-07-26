@@ -1052,6 +1052,20 @@ if(MICROIDE_FUZZ)
   )
   microide_configure_fuzz_target(JsonValueParseFuzz)
 
+  # The Content-Length codec both stdio clients (LSP and DAP) run every server
+  # byte through. The peer is an external subprocess, so this is the editor's most
+  # directly hostile input surface, and a desync here silently corrupts every
+  # later frame rather than failing loudly.
+  add_executable(JsonRpcMessageFramingFuzz
+    src/util/JsonValue.cpp
+    src/util/Parse.cpp
+    src/util/StringUtil.cpp
+    src/workspace/JsonRpcMessageFraming.cpp
+    src/workspace/LspClientTrace.cpp
+    tests/fuzz/JsonRpcMessageFramingFuzz.cpp
+  )
+  microide_configure_fuzz_target(JsonRpcMessageFramingFuzz)
+
   add_executable(TerminalCsiParserFuzz
     src/util/Parse.cpp
     src/terminal/TerminalCsiParser.cpp

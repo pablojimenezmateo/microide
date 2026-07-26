@@ -169,7 +169,7 @@ check_fuzz() {
     PersistedRecordReaderFuzz DebugStateRecordFuzz GitBlameParserFuzz
     JsonValueParseFuzz PluginDisplayListParseFuzz SearchRegexFuzz
     SurfaceRasterDecodeFuzz TerminalCsiParserFuzz TerminalSessionOutputFuzz
-    PieceTreeEquivalenceFuzz
+    PieceTreeEquivalenceFuzz JsonRpcMessageFramingFuzz
   )
 
   run_logged "$log" bash -c '
