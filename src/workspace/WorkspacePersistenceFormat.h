@@ -77,55 +77,6 @@ struct PersistedProjectConfigState {
   PersistedBranchReviewState branch_review;
 };
 
-struct PersistedMessageState {
-  struct PersistedToolEventState {
-    std::string call_id;
-    std::string tool_id;
-    std::string display_name;
-    std::string arguments_summary;
-    std::string status;
-    std::string permission_decision;
-    std::string capability_scope;
-    std::string started_at;
-    std::string finished_at;
-    std::int64_t duration_ms = 0;
-    std::string error;
-    std::string output_summary;
-  };
-
-  std::string id;
-  std::string role;  // "user", "assistant", "system"
-  std::string content;
-  std::string timestamp;
-  std::string provider_id;
-  std::string model;
-  std::string status;  // serialized RequestStatus
-  std::int64_t request_duration_ms = 0;
-  std::string error;
-  std::vector<PersistedToolEventState> tool_events;
-};
-
-struct PersistedConversationState {
-  int schema_version = 1;
-  std::string id;
-  std::string title;
-  std::string provider_id;
-  std::string model_id;
-  std::string status;  // serialized RequestStatus
-  std::string tool_mode;  // "no_tools", "ask", "auto"
-  std::string draft;
-  std::string system_prompt;
-  std::string created_at;
-  std::string updated_at;
-  std::int64_t last_request_duration_ms = 0;
-  std::vector<PersistedMessageState> messages;
-};
-
-struct PersistedChatState {
-  std::string active_conversation_id;
-  std::vector<PersistedConversationState> conversations;
-};
-
 // One editor group: its own tab list and the index of its active tab. The editor
 // area holds 1 or 2 of these (VS Code-style splits live above tabs).
 struct PersistedEditorGroupState {

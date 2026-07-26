@@ -115,7 +115,6 @@ SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
     case SidebarMode::Search:
       request.query = JoinCommandArguments(args, 1);
       break;
-    case SidebarMode::Chat:
     case SidebarMode::Git:
     case SidebarMode::None:
     case SidebarMode::Plugin:

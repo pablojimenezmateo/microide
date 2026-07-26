@@ -133,8 +133,6 @@ bool WorkspaceActionContext::ShowSidebarView(const SidebarViewInfo& view,
     case SidebarMode::Search:
       operations_.show_search_sidebar(query, false);
       return true;
-    case SidebarMode::Chat:
-      return false;
     case SidebarMode::Problems:
       operations_.show_problems_sidebar();
       return true;
@@ -161,7 +159,6 @@ bool WorkspaceActionContext::ToggleSidebarView(const SidebarViewInfo& view,
   const bool same_view = state_.sidebar.visible && state_.sidebar.view_id == view.id;
   switch (view.mode) {
     case SidebarMode::Tree:
-    case SidebarMode::Chat:
     case SidebarMode::Problems:
     case SidebarMode::Git:
     case SidebarMode::Tests:

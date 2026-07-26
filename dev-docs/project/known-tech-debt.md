@@ -146,16 +146,18 @@ Other findings from the same sweep, closed in the commit log from `14da0f96`:
 
 Still open from this sweep:
 
-- **TD-2026-07-26-001 — `PersistedChatState` is unused. OPEN (probably in-flight
-  work).** `PersistedConversationState` / `PersistedMessageState` have live
-  encoders and decoders, but the `PersistedChatState` wrapper (and its
-  `active_conversation_id`) is referenced nowhere. Either it is scaffolding for
-  the assist/chat surface still being built, or it is the third unwired stub.
-  Decide which before the next persistence-format change.
-- **TD-2026-07-26-002 — `GitSidebarState::provider_backed` / `provider_id` /
-  `provider_label` are never written. OPEN.** `supports_mutations` beside them is
-  live. Same question as 001: plugin-SCM-provider scaffolding, or dead fields to
-  delete.
+- **TD-2026-07-26-001 / -002 — RESOLVED 2026-07-26.** Both were dead-code
+  questions, and the answer was delete. The chat cluster
+  (`PersistedChatState`, `PersistedConversationState`, `PersistedMessageState`,
+  their four Encode/Decode helpers and four tag enums) was already retired from
+  the format — the encoder stopped writing `ProjectSessionTag::ChatRegistry` and
+  the decoder tolerates-and-ignores it, both pinned by tests — so only the
+  unreachable leftovers remained. `SidebarMode::Chat` and
+  `GitSidebarState::provider_backed` / `provider_id` / `provider_label` went with
+  them. **`ProjectSessionTag::ChatRegistry = 7` and its skip-on-read case are
+  deliberately KEPT**: a previously written session file still carries that tag,
+  and dropping the case would fail the decode.
+
 - **TD-2026-07-26-003 — `CommitOperationResultCategory::RefreshFailedAfterSuccess`
   is handled but never produced. OPEN (needs the async correlation, not a
   one-liner).** `ResultFeedback` and `ResultTone` both have a branch for it, so a

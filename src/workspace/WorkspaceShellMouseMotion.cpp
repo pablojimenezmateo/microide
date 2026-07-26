@@ -217,7 +217,6 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         return std::nullopt;
       }
       case SidebarMode::None:
-      case SidebarMode::Chat:
       case SidebarMode::Problems:
       case SidebarMode::Tests:
       case SidebarMode::Plugin:

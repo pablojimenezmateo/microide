@@ -33,7 +33,6 @@ enum class SidebarMode {
   None,
   Tree,
   Search,
-  Chat,
   Problems,
   Git,
   Tests,
@@ -164,10 +163,7 @@ struct GitSidebarState {
   bool snapshot_stale = false;
   std::string refresh_error;
   bool tree_git_badges_materialized = false;
-  bool provider_backed = false;
   bool supports_mutations = true;
-  std::string provider_id;
-  std::string provider_label;
   std::string error;
   std::size_t selected_index = 0;
   std::uint64_t snapshot_generation = 0;
