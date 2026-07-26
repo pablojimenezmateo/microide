@@ -850,6 +850,7 @@ add_executable(microide_tests
   tests/SaveDataIntegrityTests.cpp
   tests/ArchitectureInvariantsTests.cpp
   tests/architecture/ArchitectureFileScanner.cpp
+  tests/architecture/ArchitectureRuleFixtures.cpp
   tests/architecture/ArchitectureRuleHelpers.cpp
   tests/architecture/WorkspaceArchitectureRules.cpp
   tests/architecture/WorkspaceShellArchitectureRules.cpp

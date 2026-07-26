@@ -338,7 +338,7 @@ struct FileTreeWatcher::NativeBackend {
     }
 
     for (const auto& path : watch_paths) {
-      const int fd = open(path.c_str(), O_EVTONLY);
+      const int fd = open(path.c_str(), O_EVTONLY | O_CLOEXEC);
       if (fd < 0) {
         return false;
       }

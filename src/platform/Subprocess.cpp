@@ -550,7 +550,7 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
     if (options.capture_stderr) {
       dup2(stderr_pipe[1].Get(), STDERR_FILENO);
     } else if (options.silence_stderr) {
-      UniqueFd devnull(open("/dev/null", O_WRONLY));
+      UniqueFd devnull(open("/dev/null", O_WRONLY | O_CLOEXEC));
       if (devnull.IsValid()) {
         dup2(devnull.Get(), STDERR_FILENO);
       }

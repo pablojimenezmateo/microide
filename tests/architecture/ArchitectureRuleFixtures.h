@@ -1,0 +1,17 @@
+#pragma once
+
+// Self-tests for the architecture rules themselves: synthetic source trees that
+// pin what each rule MUST flag and what it MUST accept. A rule whose pattern
+// silently stops matching its own call form otherwise keeps passing forever —
+// the close-on-exec rule shipped exactly that way (see
+// RunDescriptorCloseOnExecRuleFixtures).
+//
+// These live here rather than in tests/ArchitectureInvariantsTests.cpp because
+// that file is capped as a dispatcher by CheckArchitectureInvariantsDispatcherSize.
+
+namespace microide::tests::architecture {
+
+// Negative + positive control for CheckDescriptorCreationIsCloseOnExec.
+void RunDescriptorCloseOnExecRuleFixtures();
+
+}  // namespace microide::tests::architecture

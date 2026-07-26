@@ -348,12 +348,22 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
     std::string_view flag;
     std::string_view advice;
   };
-  const std::array<Form, 5> forms = {
+  // NOTE ON THE `open` PATTERN: it must be `open(at)?`, NOT `openat?`. The `?`
+  // binds to the single preceding character, so `openat?` matches `opena` /
+  // `openat` and NEVER plain `open(` — which silently made this rule blind to the
+  // exact call form it exists to police (it passed with two real unflagged
+  // `open()` sites in the tree). The fixture below is the positive control.
+  const std::array<Form, 6> forms = {
       Form{std::regex(R"((^|[^\w:])(::)?socket\s*\()"), "SOCK_CLOEXEC",
            "pass SOCK_CLOEXEC in socket()'s type argument"},
       Form{std::regex(R"((^|[^\w:])(::)?accept4\s*\()"), "SOCK_CLOEXEC",
            "pass SOCK_CLOEXEC to accept4() (and never plain accept())"},
-      Form{std::regex(R"((^|[^\w:])(::)?openat?\s*\()"), "O_CLOEXEC",
+      // Plain accept() cannot request close-on-exec at all, so every occurrence is
+      // a violation: the flag string it is searched for can never appear in the
+      // call, which is the point — the advice is "use accept4".
+      Form{std::regex(R"((^|[^\w:])(::)?accept\s*\()"), "SOCK_CLOEXEC",
+           "use accept4() with SOCK_CLOEXEC; plain accept() cannot set close-on-exec atomically"},
+      Form{std::regex(R"((^|[^\w:])(::)?open(at)?\s*\()"), "O_CLOEXEC",
            "pass O_CLOEXEC in open()'s flags"},
       Form{std::regex(R"((^|[^\w:])(::)?pipe2\s*\()"), "O_CLOEXEC", "pass O_CLOEXEC to pipe2()"},
       Form{std::regex(R"((^|[^\w:])(::)?inotify_init1\s*\()"), "IN_CLOEXEC",

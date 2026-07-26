@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "architecture/ArchitectureFileScanner.h"
+#include "architecture/ArchitectureRuleFixtures.h"
 #include "architecture/ArchitectureRuleHelpers.h"
 #include "architecture/PluginArchitectureRules.h"
 #include "architecture/TerminalArchitectureRules.h"
@@ -574,6 +575,8 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
            "lua-boundary rule should accept Lua-free plugin facades, comment-only "
            "lua_State mentions, and the sanctioned SyntaxDefinitionLoader sandbox");
   }
+
+  architecture::RunDescriptorCloseOnExecRuleFixtures();
 }
 
 }  // namespace
