@@ -82,6 +82,112 @@ void TestRefreshMarksFileDirectoryConflict() {
          "file side, so the probe has to test the prefix before the `~`");
 }
 
+// The D/F probe must look at the FINAL path component only. Scanning the whole
+// path matched a `~` in a DIRECTORY name, so an ordinary content conflict at
+// `dir~x/file.txt` probed `dir`, found a directory, and was misreported as
+// file/directory — which also flips TextHunksAvailable to false and denies the
+// user the three-way merge editor for a perfectly normal conflict. Reproduced
+// against real git before the fix.
+void TestRefreshDoesNotMistakeTildeDirectoryForFileDirectoryConflict() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+  // `dir` exists AND a sibling directory's name contains `~`, which is what made
+  // the whole-path scan fire.
+  std::filesystem::create_directories(repo_path / "dir");
+  std::filesystem::create_directories(repo_path / "dir~x");
+  WriteFile(repo_path / "dir" / "keep.txt", "keep\n");
+  WriteFile(repo_path / "dir~x" / "file.txt", "base\n");
+  CommitAll(repo_path, "base", "base");
+
+  RequireGitCommandSuccess(repo_path, {"checkout", "-b", "side"}, "branch side");
+  WriteFile(repo_path / "dir~x" / "file.txt", "side\n");
+  CommitAll(repo_path, "side", "side");
+  RequireGitCommandSuccess(repo_path, {"checkout", "main"}, "checkout main");
+  WriteFile(repo_path / "dir~x" / "file.txt", "main\n");
+  CommitAll(repo_path, "main", "main");
+  (void)RunGitCommand(repo_path, {"merge", "side"});
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService service(executor);
+  service.RunRefreshSynchronouslyForTesting(repo_path, GitSidebarRefreshScope::Full,
+                                            OutgoingBaseChoice{}, false);
+  const auto state = service.CurrentState();
+
+  bool saw_conflict = false;
+  for (const auto& entry : state.entries) {
+    if (!entry.conflicted) {
+      continue;
+    }
+    saw_conflict = true;
+    Expect(!entry.path_is_directory,
+           "a content conflict under a directory whose NAME contains `~` must not be "
+           "mistaken for a file/directory conflict");
+  }
+  Expect(saw_conflict, "the fixture should produce a conflicted entry");
+}
+
+// A real conflicted submodule emits `u UU S... 160000 ... dep`, and `dep` IS a
+// directory on disk (the submodule checkout) — so it trips the D/F probe too.
+// That makes the submodule-before-file/directory precedence load-bearing, not
+// merely defensive, which is why this is an end-to-end test against real git
+// rather than a hand-built entry.
+void TestRefreshMarksSubmoduleConflict() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path inner = temp_dir.path() / "inner";
+  InitializeGitRepo(inner);
+  WriteFile(inner / "a.txt", "base\n");
+  CommitAll(inner, "base", "base");
+  RequireGitCommandSuccess(inner, {"checkout", "-b", "left"}, "inner left");
+  WriteFile(inner / "a.txt", "left\n");
+  CommitAll(inner, "left", "left");
+  RequireGitCommandSuccess(inner, {"checkout", "main"}, "inner main");
+  RequireGitCommandSuccess(inner, {"checkout", "-b", "right"}, "inner right");
+  WriteFile(inner / "a.txt", "right\n");
+  CommitAll(inner, "right", "right");
+  // Leave inner on `main` so `submodule add` records the BASE pointer. Adding
+  // while inner sits on `right` would make the base equal one side, and the
+  // merge below would then be a fast-forward with nothing to conflict over.
+  RequireGitCommandSuccess(inner, {"checkout", "main"}, "inner back to main");
+
+  const std::filesystem::path outer = temp_dir.path() / "outer";
+  InitializeGitRepo(outer);
+  // file:// submodules need the protocol allowlist on modern git.
+  if (RunGitCommand(outer, {"-c", "protocol.file.allow=always", "submodule", "add", "-q",
+                            inner.string(), "dep"}) != 0) {
+    return;  // submodules unavailable in this environment; nothing to assert
+  }
+  CommitAll(outer, "add submodule", "add submodule");
+
+  RequireGitCommandSuccess(outer, {"checkout", "-b", "side"}, "outer side");
+  RequireGitCommandSuccess(outer / "dep", {"checkout", "left"}, "dep left");
+  RequireGitCommandSuccess(outer, {"add", "dep"}, "stage dep left");
+  CommitAll(outer, "side moves dep", "side moves dep");
+  RequireGitCommandSuccess(outer, {"checkout", "main"}, "outer main");
+  RequireGitCommandSuccess(outer / "dep", {"checkout", "right"}, "dep right");
+  RequireGitCommandSuccess(outer, {"add", "dep"}, "stage dep right");
+  CommitAll(outer, "main moves dep", "main moves dep");
+  (void)RunGitCommand(outer, {"merge", "side"});
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService service(executor);
+  service.RunRefreshSynchronouslyForTesting(outer, GitSidebarRefreshScope::Full,
+                                            OutgoingBaseChoice{}, false);
+  const auto state = service.CurrentState();
+
+  bool saw_conflicted_submodule = false;
+  for (const auto& entry : state.entries) {
+    if (entry.conflicted && entry.submodule) {
+      saw_conflicted_submodule = true;
+      Expect(entry.path_is_directory,
+             "a submodule checkout is a directory, so the D/F probe fires too — which is "
+             "exactly why submodule must be classified first");
+    }
+  }
+  Expect(saw_conflicted_submodule,
+         "a divergent submodule pointer must produce a conflicted entry marked submodule");
+}
+
 void TestCurrentStateReturnsSnapshotCopy() {
   static_assert(
       !std::is_reference_v<decltype(std::declval<const GitRepositoryService&>().CurrentState())>,
@@ -497,6 +603,10 @@ void TestResetDoesNotCancelUnrelatedQueuedWork() {
 void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitRepositoryService/ResetDoesNotCancelUnrelatedQueuedWork",
           TestResetDoesNotCancelUnrelatedQueuedWork);
+  AddTest(tests, "GitRepositoryService/RefreshMarksSubmoduleConflict",
+          TestRefreshMarksSubmoduleConflict);
+  AddTest(tests, "GitRepositoryService/RefreshDoesNotMistakeTildeDirectory",
+          TestRefreshDoesNotMistakeTildeDirectoryForFileDirectoryConflict);
   AddTest(tests, "GitRepositoryService/RefreshMarksFileDirectoryConflict",
           TestRefreshMarksFileDirectoryConflict);
   AddTest(tests, "GitRepositoryService/CurrentStateReturnsSnapshotCopy",

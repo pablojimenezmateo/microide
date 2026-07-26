@@ -190,13 +190,20 @@ project::GitRepositoryState GitRepositoryService::BuildRepositoryState(
       entry.path_is_directory = true;
       continue;
     }
-    const std::string text = entry.path.relative_path.generic_string();
-    const std::size_t tilde = text.rfind('~');
-    // `tilde == 0` would leave an empty prefix, which would probe the repo root.
+    // Search the FINAL component only. git appends `~<branch>` to the last
+    // component, and scanning the whole path instead matches a `~` in a DIRECTORY
+    // name: a plain content conflict at `dir~x/file.txt` would probe `dir`, find a
+    // directory, and be misreported as file/directory — which also sets
+    // TextHunksAvailable false and denies the user the three-way merge editor for
+    // an ordinary conflict. (Reproduced against real git before this was fixed.)
+    const std::string leaf = entry.path.relative_path.filename().generic_string();
+    const std::size_t tilde = leaf.rfind('~');
+    // `tilde == 0` would leave an empty prefix, which would probe the parent.
     if (tilde == std::string::npos || tilde == 0) {
       continue;
     }
-    entry.path_is_directory = is_directory_at(std::filesystem::path(text.substr(0, tilde)));
+    entry.path_is_directory =
+        is_directory_at(entry.path.relative_path.parent_path() / leaf.substr(0, tilde));
   }
   state.refreshing = false;
   return state;
