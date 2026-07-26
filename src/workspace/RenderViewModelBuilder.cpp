@@ -830,11 +830,7 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
       for_visible([&](std::size_t item_index) {
         const auto& result = search.results[item_index];
         compose_scratch.clear();
-        if (result.relative_path_string.empty()) {
-          compose_scratch += result.relative_path.string();
-        } else {
-          compose_scratch += result.relative_path_string;
-        }
+        compose_scratch += result.relative_path_string;
         compose_scratch += ":";
         AppendUnsigned(compose_scratch, result.line + 1);
         compose_scratch += ":";

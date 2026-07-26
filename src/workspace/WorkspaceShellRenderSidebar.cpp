@@ -333,9 +333,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                 .results[static_cast<std::size_t>(line_map[next_result_index])];
         DrawVCenteredTextOn(text_renderer_, renderer, row_rect, 4.0f, theme_.text_primary,
                             theme_.surface_background,
-                            TruncateLabel(file_result.relative_path_string.empty()
-                                              ? file_result.relative_path.string()
-                                              : std::string_view(file_result.relative_path_string),
+                            TruncateLabel(std::string_view(file_result.relative_path_string),
                                           row_rect.w - 8.0f));
         continue;
       }

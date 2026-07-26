@@ -43,6 +43,10 @@ struct ProjectSearchOptions {
 
 struct ProjectSearchResult {
   std::filesystem::path relative_path;
+  // Always the `relative_path.string()` of the sibling field, materialized once by
+  // the search worker so the render path never converts a path per visible row.
+  // Never conditionally empty: it is empty exactly when relative_path is, so a
+  // "fall back to relative_path.string()" branch is dead and was removed.
   std::string relative_path_string;
   // Position of `relative_path` in the (sorted) candidate file list. Workers run
   // in parallel and publish out of order, so consumers sort by
