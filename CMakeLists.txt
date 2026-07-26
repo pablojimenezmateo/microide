@@ -1034,6 +1034,25 @@ if(MICROIDE_FUZZ)
   target_link_libraries(SearchRegexFuzz PRIVATE ${MICROIDE_PCRE2_TARGET})
   microide_configure_fuzz_target(SearchRegexFuzz)
 
+  # `git status --porcelain=v2 -z`: NUL record splitting where a rename's origPath
+  # is the FOLLOWING record, fixed-field token walks that must stop on a truncated
+  # record, and the `<sub>` / `# branch.ab` reads. The capture ceiling means real
+  # git output IS truncated at an arbitrary byte on a large repository.
+  add_executable(GitPorcelainV2ParserFuzz
+    src/util/Parse.cpp
+    src/util/StringUtil.cpp
+    src/project/GitPorcelainParser.cpp
+    src/project/GitPorcelainV2Parser.cpp
+    src/project/GitRepositoryState.cpp
+    src/project/GitCommandUtil.cpp
+    src/util/TextFileIO.cpp
+    src/util/DurableFile.cpp
+    src/platform/Subprocess.cpp
+    src/platform/SubprocessSandbox.cpp
+    tests/fuzz/GitPorcelainV2ParserFuzz.cpp
+  )
+  microide_configure_fuzz_target(GitPorcelainV2ParserFuzz)
+
   add_executable(GitBlameParserFuzz
     src/util/Parse.cpp
     src/util/StringUtil.cpp

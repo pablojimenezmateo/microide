@@ -170,6 +170,7 @@ check_fuzz() {
     JsonValueParseFuzz PluginDisplayListParseFuzz SearchRegexFuzz
     SurfaceRasterDecodeFuzz TerminalCsiParserFuzz TerminalSessionOutputFuzz
     PieceTreeEquivalenceFuzz JsonRpcMessageFramingFuzz
+    GitPorcelainV2ParserFuzz
   )
 
   run_logged "$log" bash -c '
