@@ -271,6 +271,49 @@ void TestRefreshFailureClassification() {
 // 60 s git stall. Covers the plain `.git` directory, the linked-worktree
 // `.git`-file indirection, octopus merges (first id wins), and the rejection of
 // anything that is not a plain object id.
+// The `<sub>` field and the per-stage modes were parsed past and discarded, so a
+// conflicted submodule and an executable-bit-only conflict were indistinguishable
+// from an ordinary content conflict downstream.
+void TestPorcelainV2CapturesSubmoduleAndStageModes() {
+  // "u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>"
+  const auto parse_one = [](std::string record) {
+    record.push_back('\0');
+    return GitPorcelainV2Parser::Parse(record, "/repo", 1, 0);
+  };
+
+  const auto gitlink = parse_one(
+      "u UU S.M. 160000 160000 160000 160000 aaa bbb ccc vendor/dep");
+  Expect(gitlink.entries.size() == 1, "one unmerged record parses to one entry");
+  Expect(gitlink.entries.front().submodule,
+         "an `S`-prefixed <sub> field marks the entry as a submodule");
+
+  const auto ordinary = parse_one(
+      "u UU N... 100644 100644 100644 100644 aaa bbb ccc src/main.cpp");
+  Expect(!ordinary.entries.front().submodule,
+         "an `N`-prefixed <sub> field is not a submodule");
+  Expect(!ordinary.entries.front().stage_modes_differ,
+         "identical stage modes are not a mode conflict");
+
+  // OURS 100644 vs THEIRS 100755: the executable bit diverged.
+  const auto exec_bit = parse_one(
+      "u UU N... 100644 100644 100755 100755 aaa bbb ccc script.sh");
+  Expect(exec_bit.entries.front().stage_modes_differ,
+         "divergent ours/theirs stage modes are a mode conflict");
+
+  // A stage mode of 000000 means that side deleted the path — an existence
+  // conflict, not a mode one, so it must not be reported as divergent modes.
+  const auto deleted_side = parse_one(
+      "u DU N... 100644 000000 100644 100644 aaa bbb ccc gone.cpp");
+  Expect(!deleted_side.entries.front().stage_modes_differ,
+         "a zero stage mode is a deleted side, not a mode difference");
+
+  // The ordinary (non-unmerged) record shape also carries <sub> at the same index.
+  const auto ordinary_submodule =
+      parse_one("1 .M. S.M. 160000 160000 160000 aaa bbb vendor/dep");
+  Expect(ordinary_submodule.entries.front().submodule,
+         "a `1` record's <sub> field is read from the same position");
+}
+
 void TestReadPendingMergeHeadId() {
   namespace gitutil = microide::project::internal;
   TemporaryDirectory temp_dir;
@@ -384,6 +427,8 @@ void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
           TestPorcelainV2AheadBehindParsing);
   AddTest(tests, "GitRepositoryState/RefreshFailureClassification",
           TestRefreshFailureClassification);
+  AddTest(tests, "GitRepositoryState/PorcelainV2CapturesSubmoduleAndStageModes",
+          TestPorcelainV2CapturesSubmoduleAndStageModes);
   AddTest(tests, "GitRepositoryState/ReadPendingMergeHeadId", TestReadPendingMergeHeadId);
   AddTest(tests, "GitRepositoryState/DetectGitOperationState", TestDetectGitOperationState);
 }

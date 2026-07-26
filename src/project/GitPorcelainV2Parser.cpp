@@ -34,6 +34,31 @@ std::string_view PathAfterLeadingTokens(std::string_view body, std::size_t token
   return body.substr(offset);
 }
 
+// The `index`-th space-delimited token of a porcelain v2 record body (0-based),
+// or empty when the record is short. Fields are single-space delimited and the
+// path is always last, so this never has to handle a token containing a space.
+std::string_view TokenAt(std::string_view body, std::size_t index) {
+  std::size_t offset = 0;
+  for (std::size_t i = 0; i < index; ++i) {
+    offset = body.find(' ', offset);
+    if (offset == std::string_view::npos) {
+      return {};
+    }
+    ++offset;
+  }
+  if (offset >= body.size()) {
+    return {};
+  }
+  const std::size_t end = body.find(' ', offset);
+  return body.substr(offset, end == std::string_view::npos ? std::string_view::npos : end - offset);
+}
+
+// `<sub>` is "N..." for an ordinary path and "S<c><m><u>" for a gitlink.
+bool SubmoduleField(std::string_view body, std::size_t sub_token_index) {
+  const std::string_view sub = TokenAt(body, sub_token_index);
+  return !sub.empty() && sub.front() == 'S';
+}
+
 bool ParseAheadBehind(std::string_view token, int* ahead, int* behind) {
   if (ahead == nullptr || behind == nullptr || token.size() < 4 || token[0] != '+' ||
       token.find('-') == std::string_view::npos) {
@@ -98,7 +123,9 @@ GitRepositoryEntry MakeEntry(GitRepositoryEntryKind kind,
                              std::string_view xy,
                              std::filesystem::path path,
                              std::optional<std::filesystem::path> old_path,
-                             bool conflicted) {
+                             bool conflicted,
+                             bool submodule = false,
+                             bool stage_modes_differ = false) {
   GitRepositoryEntry entry{
       .kind = kind,
       .status = StatusFromPorcelainV2XY(xy, conflicted),
@@ -110,6 +137,8 @@ GitRepositoryEntry MakeEntry(GitRepositoryEntryKind kind,
       .worktree_dirty = !conflicted && xy.size() >= 2 && xy[1] != ' ' && xy[1] != '?' &&
                         xy[1] != '!' && xy[1] != '.',
       .conflicted = conflicted,
+      .submodule = submodule,
+      .stage_modes_differ = stage_modes_differ,
   };
   if (old_path.has_value()) {
     entry.old_path = MakeGitRepositoryPathIdentity(std::move(*old_path));
@@ -207,7 +236,8 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
         }
         state.entries.push_back(MakeEntry(GitRepositoryEntryKind::Ordinary, xy,
                                           std::filesystem::path(path), std::nullopt,
-                                          xy.find('U') != std::string_view::npos));
+                                          xy.find('U') != std::string_view::npos,
+                                          SubmoduleField(body, 1)));
         break;
       }
       case '2': {
@@ -231,7 +261,7 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
         }
         state.entries.push_back(MakeEntry(GitRepositoryEntryKind::Renamed, xy,
                                           std::filesystem::path(path), std::move(old_path),
-                                          false));
+                                          false, SubmoduleField(body, 1)));
         break;
       }
       case 'u': {
@@ -240,8 +270,17 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
         if (path.empty()) {
           break;
         }
+        // A mode-only conflict is OURS and THEIRS both present with different
+        // modes (the executable bit). Stage 0 ("000000") means that side deleted
+        // the path, which is an existence conflict, not a mode one.
+        const std::string_view ours_mode = TokenAt(body, 3);
+        const std::string_view theirs_mode = TokenAt(body, 4);
+        const bool modes_differ = !ours_mode.empty() && !theirs_mode.empty() &&
+                                  ours_mode != "000000" && theirs_mode != "000000" &&
+                                  ours_mode != theirs_mode;
         state.entries.push_back(MakeEntry(GitRepositoryEntryKind::Unmerged, xy,
-                                          std::filesystem::path(path), std::nullopt, true));
+                                          std::filesystem::path(path), std::nullopt, true,
+                                          SubmoduleField(body, 1), modes_differ));
         break;
       }
       case '?': {

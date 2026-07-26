@@ -92,6 +92,14 @@ struct GitRepositoryEntry {
   // partial-stage case the commit surface warns about.
   bool worktree_dirty = false;
   bool conflicted = false;
+  // Porcelain v2 `<sub>` field: "N..." for an ordinary path, "S<c><m><u>" for a
+  // gitlink. A conflicted submodule is not a text merge — there is nothing to
+  // three-way — so the merge surface must say so rather than offer hunks.
+  bool submodule = false;
+  // Unmerged records carry a mode per stage (`u <XY> <sub> <m1> <m2> <m3> ...`).
+  // True when OURS and THEIRS both exist with different modes — the executable-bit
+  // conflict git otherwise reports indistinguishably from a content conflict.
+  bool stage_modes_differ = false;
 };
 
 struct GitRepositoryRefreshError {

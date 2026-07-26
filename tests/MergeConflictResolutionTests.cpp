@@ -111,6 +111,69 @@ void TestBothModifiedClassification() {
          "both-modified fixture should classify as both modified");
 }
 
+// A conflicted gitlink is not a text merge — there is nothing to three-way — but
+// git reports it with the same `u UU` codes as a content conflict, so it used to
+// classify as BothModified and the merge surface offered hunks for what is really
+// a commit pointer. The porcelain v2 `<sub>` field is the discriminator.
+void TestSubmoduleConflictClassification() {
+  project::GitRepositoryEntry entry;
+  entry.kind = project::GitRepositoryEntryKind::Unmerged;
+  entry.conflicted = true;
+  entry.conflict_kind = project::GitConflictKind::BothModified;
+  entry.submodule = true;
+
+  const auto metadata = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .repository_entry = &entry,
+      .base_exists = true,
+      .incoming_exists = true,
+      .current_exists = true,
+      .base_content = "Subproject commit aaa\n",
+      .incoming_content = "Subproject commit bbb\n",
+      .current_content = "Subproject commit ccc\n",
+  });
+  Expect(metadata.kind == MergeFileConflictKind::Submodule,
+         "a conflicted gitlink must classify as a submodule conflict, not both-modified");
+  Expect(!metadata.text_hunks_available,
+         "a submodule conflict must not offer text hunks");
+}
+
+// Both sides kept byte-identical content and only the executable bit diverged.
+// git reports that indistinguishably from a content conflict, so without the
+// stage-mode comparison the user saw an empty three-way diff and no explanation.
+void TestModeOnlyConflictClassification() {
+  project::GitRepositoryEntry entry;
+  entry.kind = project::GitRepositoryEntryKind::Unmerged;
+  entry.conflicted = true;
+  entry.conflict_kind = project::GitConflictKind::BothModified;
+  entry.stage_modes_differ = true;
+
+  const auto metadata = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .repository_entry = &entry,
+      .base_exists = true,
+      .incoming_exists = true,
+      .current_exists = true,
+      .base_content = "same\n",
+      .incoming_content = "same\n",
+      .current_content = "same\n",
+  });
+  Expect(metadata.kind == MergeFileConflictKind::Mode,
+         "identical content with divergent stage modes is a mode conflict");
+
+  // Differing modes AND differing content is still a content conflict: the text
+  // merge is what the user needs, so Mode must not swallow it.
+  const auto content_too = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .repository_entry = &entry,
+      .base_exists = true,
+      .incoming_exists = true,
+      .current_exists = true,
+      .base_content = "base\n",
+      .incoming_content = "incoming\n",
+      .current_content = "current\n",
+  });
+  Expect(content_too.kind == MergeFileConflictKind::BothModified,
+         "a mode change alongside a real content conflict stays both-modified");
+}
+
 void TestBothAddedClassification() {
   const auto metadata = ClassifyMergeFileConflict(MergeConflictClassificationInput{
       .base_exists = false,
@@ -426,6 +489,10 @@ void TestExternalStaleClearedAfterSelfSave() {
 }  // namespace
 
 void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "MergeConflict/SubmoduleConflictClassification",
+          TestSubmoduleConflictClassification);
+  AddTest(tests, "MergeConflict/ModeOnlyConflictClassification",
+          TestModeOnlyConflictClassification);
   AddTest(tests, "MergeConflict/DeleteConflictResolvesByDeletion",
           TestDeleteConflictResolvesByDeletion);
   AddTest(tests, "MergeConflict/DeleteConflictStageFailureRestoresFile",

@@ -17,6 +17,12 @@ using util::NormalizeLineEndings;
 
 MergeFileConflictKind KindFromGitConflict(project::GitConflictKind git_kind,
                                           const project::GitRepositoryEntry* entry) {
+  // A conflicted gitlink outranks every content kind: there is no text to
+  // three-way merge, so reporting it as both-modified would offer hunks for a
+  // file that is really a commit pointer.
+  if (entry != nullptr && entry->submodule && entry->conflicted) {
+    return MergeFileConflictKind::Submodule;
+  }
   if (entry != nullptr && entry->kind == project::GitRepositoryEntryKind::Renamed && entry->conflicted) {
     if (entry->old_path.has_value()) {
       return MergeFileConflictKind::RenameRename;
@@ -167,6 +173,13 @@ MergeFileConflictMetadata ClassifyMergeFileConflict(
        MergeContentLooksBinary(input.incoming_content) ||
        MergeContentLooksBinary(input.current_content))) {
     kind = MergeFileConflictKind::Binary;
+  } else if (kind == MergeFileConflictKind::BothModified &&
+             input.repository_entry != nullptr && input.repository_entry->stage_modes_differ &&
+             input.incoming_content == input.current_content) {
+    // Both sides kept identical bytes and only the mode (the executable bit)
+    // diverged. git reports that indistinguishably from a content conflict, so
+    // without this the user is shown an empty three-way diff and no explanation.
+    kind = MergeFileConflictKind::Mode;
   } else if (kind == MergeFileConflictKind::BothModified &&
              MergeContentIsLineEndingHeavy(input.base_content, input.incoming_content,
                                            input.current_content)) {

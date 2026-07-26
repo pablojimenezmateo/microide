@@ -164,13 +164,20 @@ Still open from this sweep:
   cluster, these are *output taxonomies* with live display branches, so deleting
   them would silently downgrade what the user is told rather than remove waste:
 
-  - `MergeFileConflictKind::FileDirectory` / `Submodule` / `Mode` each have a
-    label, a summary, and `TextHunksAvailable` / `RequiresExistenceChoice`
-    handling, but `ClassifyMergeFileConflict` cannot emit them: it works from the
-    porcelain XY codes plus base/incoming/current existence, none of which
-    distinguish a file/directory clash, a submodule conflict, or a mode-only
-    change. Detecting them needs extra input (`ls-files -u` mode bits, a stat).
-    Until then those three conflicts classify as `Unknown` or `BothModified`.
+  - `MergeFileConflictKind::Submodule` / `Mode` — **RESOLVED 2026-07-26.** The
+    inputs were already on the wire and being discarded: porcelain v2 carries a
+    `<sub>` field (`S…` for a gitlink) and a mode per merge stage. The parser now
+    captures both into `GitRepositoryEntry::submodule` /
+    `stage_modes_differ`, and `ClassifyMergeFileConflict` maps them — submodule
+    outranks every content kind (there is no text to three-way, and
+    `TextHunksAvailable` already returned false for it), and a mode conflict
+    requires identical ours/theirs content so a real content conflict is not
+    swallowed. Both kinds already had labels and summaries, so this lit up
+    presentation that had shipped with no producer.
+  - `MergeFileConflictKind::FileDirectory` is still never produced. Unlike the
+    other two it is NOT on the wire: git reports a D/F conflict as the file path
+    with a stage missing plus a separate untracked directory, so detecting it
+    needs a tree probe rather than another porcelain field.
   - `PatchApplyResultCategory::StaleDiff` — **RESOLVED 2026-07-26.**
     `ClassifyGitApplyFailure` now reads git apply's stderr and splits a
     content/index mismatch (the diff is stale; "refresh the compare tab and try
