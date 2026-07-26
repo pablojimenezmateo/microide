@@ -72,10 +72,16 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
-### Lint-vacuity sweep (TD-2026-07-26-*)
+### Reachability sweep (TD-2026-07-26-*)
 
-A pass that treated the architecture lint itself as code under test rather than
-as an oracle. Three hard rules were **structurally incapable of reporting a
+Two related passes. The first treated the architecture lint itself as code under
+test rather than as an oracle. The second asked the same question of the product:
+*can a user actually reach this?* — sweeping for symbols that are handled but
+never produced. Both found shipped code that could not run, and each ended in a
+new hard lint so the class cannot silently return:
+`CheckEveryActionIdIsReachable` (an action named only in `case` labels) and
+`CheckRegisteredSettingsAreRead` (a setting the overlay shows and persists while
+nothing reads it). Three hard rules were **structurally incapable of reporting a
 violation** and had been passing green for that reason, not because the tree was
 clean — two of them were hiding real defects. All three are fixed with
 negative + positive control fixtures in
@@ -131,7 +137,30 @@ durable follow-up is to grow `tests/architecture/ArchitectureRuleFixtures.cpp`
 (add a fixture whenever you touch a rule) rather than to re-run the whole probe
 sweep by hand.
 
+**The product-reachability half.** Sweeping for enum values mentioned only in
+`case` labels, and struct fields mentioned only at their declaration, found four
+features that shipped with no way to invoke them and two Settings controls that
+did nothing. Triage matters more than the sweep here — *retired* means delete,
+*unreachable but wanted* means wire it up, and *output taxonomy with a live
+display branch but no detector* means leave it and file the gap, because deleting
+it downgrades what the user is told rather than removing waste.
+
 Other findings from the same sweep, closed in the commit log from `14da0f96`:
+
+- **Full screen could not be invoked**: `WindowAction::ToggleFullscreen` ran
+  `SDL_SetWindowFullscreen`, and no menu item, command or keybinding produced it.
+  Now a View-menu entry + `toggle-fullscreen` command (no chord — F11 is
+  `debug-step-in` and this keybinding model has no when-clause).
+- **Hit-count breakpoints and logpoints could not be set**: implemented
+  end-to-end, but the gutter menu offered only "Set Condition…".
+- Two Settings entries ("Hover Delay (ms)", "Scrollbar Size") were declared,
+  rendered, persisted, and read by nothing.
+- A **stale diff** reported a raw `git apply` error instead of the
+  refresh-and-retry message that already existed.
+- **Submodule and mode-only merge conflicts** classified as ordinary content
+  conflicts; the discriminators were on the porcelain v2 wire and being discarded.
+- `AddSecondaryCaret` re-sorted the whole caret list on every insert despite the
+  list already being sorted.
 
 - `GitRepositoryState::operation_state` was declared, defaulted, and **never
   written by anything**, which made the merge resolver's rebase/cherry-pick
