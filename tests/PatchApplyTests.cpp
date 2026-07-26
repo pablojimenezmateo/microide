@@ -205,6 +205,52 @@ void TestPatchStaleGenerationCategory() {
          "invalid repository should fail safely");
 }
 
+// A failed `git apply` splits into two very different user situations, and they
+// used to collapse into one message. If the file moved under the diff (an edit or
+// a pull between opening the compare tab and clicking the hunk) the actionable
+// message is "refresh the compare tab and try again"; if OUR patch is corrupt,
+// refreshing will never help. ClassifyGitApplyFailure is the split.
+void TestClassifyGitApplyFailureSeparatesStaleFromCorrupt() {
+  using microide::project::ClassifyGitApplyFailure;
+
+  // Content/index mismatch: the diff is stale.
+  for (const std::string_view stale : {
+           "error: patch failed: src/main.cpp:12\nerror: src/main.cpp: patch does not apply\n",
+           "error: src/main.cpp: does not match index\n",
+           "error: src/new.cpp: already exists in working directory\n",
+           "error: src/gone.cpp: No such file or directory\n",
+           "error: src/gone.cpp: does not exist in index\n",
+       }) {
+    Expect(ClassifyGitApplyFailure(stale) == PatchApplyResultCategory::StaleDiff,
+           "a content/index mismatch must classify as StaleDiff so the user is told to refresh");
+  }
+
+  // A patch we generated badly is not staleness — refreshing would loop forever.
+  for (const std::string_view corrupt : {
+           "fatal: corrupt patch at line 7\n",
+           "error: unrecognized input\n",
+           "error: patch fragment without header at line 3\n",
+       }) {
+    Expect(ClassifyGitApplyFailure(corrupt) == PatchApplyResultCategory::PatchDidNotApply,
+           "a corrupt/unparseable patch must NOT be reported as a stale diff");
+  }
+
+  // Corrupt wins when git reports both: git emits the mismatch phrasing alongside
+  // a corrupt fragment in some modes, and mislabeling our bug as staleness sends
+  // the user to refresh forever.
+  Expect(ClassifyGitApplyFailure(
+             "error: corrupt patch at line 4\nerror: a.cpp: patch does not apply\n") ==
+             PatchApplyResultCategory::PatchDidNotApply,
+         "a corrupt patch outranks a co-reported mismatch");
+
+  // Anything unrecognized stays the conservative generic failure.
+  Expect(ClassifyGitApplyFailure("") == PatchApplyResultCategory::PatchDidNotApply,
+         "empty output falls back to PatchDidNotApply");
+  Expect(ClassifyGitApplyFailure("error: something entirely new\n") ==
+             PatchApplyResultCategory::PatchDidNotApply,
+         "an unrecognized git error falls back to PatchDidNotApply");
+}
+
 void TestPatchLineSelectionHelpers() {
   const CompareModel model = BuildCompareModel("a\n", "a\nb\n");
   const auto selection = PatchLineSelectionFromModelRows(model, 0, model.rows.size() - 1);

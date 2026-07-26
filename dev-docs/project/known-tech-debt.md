@@ -171,10 +171,16 @@ Still open from this sweep:
     distinguish a file/directory clash, a submodule conflict, or a mode-only
     change. Detecting them needs extra input (`ls-files -u` mode bits, a stat).
     Until then those three conflicts classify as `Unknown` or `BothModified`.
-  - `PatchApplyResultCategory::StaleDiff` / `Cancelled` have user-facing messages
-    in `PatchApplyService`, but the applier never classifies into them — so
-    applying a hunk against a file that changed underneath reports a generic
-    failure instead of "the diff is stale".
+  - `PatchApplyResultCategory::StaleDiff` — **RESOLVED 2026-07-26.**
+    `ClassifyGitApplyFailure` now reads git apply's stderr and splits a
+    content/index mismatch (the diff is stale; "refresh the compare tab and try
+    again" already existed as a message) from a corrupt/unparseable patch, which
+    is our bug and must NOT be dressed up as refresh-and-retry. Corrupt wins when
+    git reports both.
+  - `PatchApplyResultCategory::Cancelled` is still never produced. There is no
+    cancellation path into a patch apply today (the operation runs to completion
+    on the background executor), so this is the message waiting for a cancel
+    affordance rather than a missing classification.
 
   Deleted in the same pass because they were genuinely unused vocabulary rather
   than undetected outcomes: `PatchOperationKind::StageFile` / `UnstageFile`
