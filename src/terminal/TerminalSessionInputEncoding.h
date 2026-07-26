@@ -23,42 +23,6 @@ inline TerminalMouseTrackingMode CurrentTerminalMouseTrackingMode(bool mouse_tra
   return TerminalMouseTrackingMode::Disabled;
 }
 
-inline std::string FormatTerminalKeyBytes(bool application_cursor_keys_mode,
-                                          TerminalSession::Key key) {
-  switch (key) {
-    case TerminalSession::Key::Escape:
-      return "\x1b";
-    case TerminalSession::Key::Enter:
-      return "\r";
-    case TerminalSession::Key::Backspace:
-      return "\x7f";
-    case TerminalSession::Key::Tab:
-      return "\t";
-    case TerminalSession::Key::Up:
-      return application_cursor_keys_mode ? "\x1bOA" : "\x1b[A";
-    case TerminalSession::Key::Down:
-      return application_cursor_keys_mode ? "\x1bOB" : "\x1b[B";
-    case TerminalSession::Key::Right:
-      return application_cursor_keys_mode ? "\x1bOC" : "\x1b[C";
-    case TerminalSession::Key::Left:
-      return application_cursor_keys_mode ? "\x1bOD" : "\x1b[D";
-    case TerminalSession::Key::Home:
-      return application_cursor_keys_mode ? "\x1bOH" : "\x1b[H";
-    case TerminalSession::Key::End:
-      return application_cursor_keys_mode ? "\x1bOF" : "\x1b[F";
-    case TerminalSession::Key::PageUp:
-      return "\x1b[5~";
-    case TerminalSession::Key::PageDown:
-      return "\x1b[6~";
-    case TerminalSession::Key::Insert:
-      return "\x1b[2~";
-    case TerminalSession::Key::Delete:
-      return "\x1b[3~";
-    default:
-      return {};
-  }
-}
-
 // Encode a modified key press. When `kitty_flags` is non-zero the Kitty
 // keyboard protocol is active and keys the legacy encoding cannot disambiguate
 // (modified Enter/Tab/Backspace/Escape, control letters) are emitted in CSI-u

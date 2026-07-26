@@ -34,23 +34,6 @@ bool UsePlaceholderTerminalsForTesting();
 
 class TerminalSession {
  public:
-  enum class Key {
-    Escape,
-    Enter,
-    Backspace,
-    Tab,
-    Up,
-    Down,
-    Right,
-    Left,
-    Home,
-    End,
-    PageUp,
-    PageDown,
-    Insert,
-    Delete,
-  };
-
   enum class MouseButton {
     Left,
     Middle,
@@ -127,7 +110,6 @@ class TerminalSession {
   // to a sane floor; re-trims immediately when lowered below the current backlog.
   void SetMaxScrollbackLines(std::size_t max_lines);
   void SendBytes(std::string_view bytes);
-  void SendKey(Key key);
   // Encode and send a modified key press. Returns true if it produced output.
   bool SendKeyPress(const KeyPress& press);
   bool running() const;

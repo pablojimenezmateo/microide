@@ -44,15 +44,6 @@ void TerminalSession::FlushPendingReply() {
   SendBytes(bytes);
 }
 
-void TerminalSession::SendKey(Key key) {
-  std::string bytes;
-  {
-    std::scoped_lock lock(mutex_);
-    bytes = FormatTerminalKeyBytes(application_cursor_keys_mode_, key);
-  }
-  SendBytes(bytes);
-}
-
 bool TerminalSession::SendKeyPress(const KeyPress& press) {
   std::string bytes;
   {

@@ -265,14 +265,28 @@ void TestTerminalSessionPasteFallsBackToRawBytesWhenDisabled() {
          "terminal paste should send raw bytes when bracketed paste mode is disabled");
 }
 
+using KeyPress = microide::terminal::TerminalSession::KeyPress;
+
+// A bare key press with no modifiers — the shape the shell sends for an arrow /
+// Home / End with nothing held.
+void SendUnmodified(microide::terminal::TerminalSession& session, KeyPress::Key key) {
+  KeyPress press;
+  press.key = key;
+  Expect(session.SendKeyPress(press), "an unmodified functional key should encode to bytes");
+}
+
 void TestTerminalSessionApplicationCursorKeysModeUsesSs3Sequences() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1h");
 
-  session.SendKey(microide::terminal::TerminalSession::Key::Up);
-  session.SendKey(microide::terminal::TerminalSession::Key::Home);
-  session.SendKey(microide::terminal::TerminalSession::Key::End);
+  // Drive the SAME entry point the shell uses (SendKeyPress). These assertions
+  // previously went through SendKey/FormatTerminalKeyBytes, a legacy encoder no
+  // production path called — so a DECCKM regression in the live encoder could not
+  // have failed them.
+  SendUnmodified(session, KeyPress::Key::Up);
+  SendUnmodified(session, KeyPress::Key::Home);
+  SendUnmodified(session, KeyPress::Key::End);
 
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1bOA\x1bOH\x1bOF",
          "application cursor-key mode should use SS3 sequences for arrows, Home, and End");
@@ -283,9 +297,9 @@ void TestTerminalSessionNormalCursorKeysUseCsiSequences() {
   TerminalSessionTestAccess::Reset(session, 24, 80);
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1h\x1b[?1l");
 
-  session.SendKey(microide::terminal::TerminalSession::Key::Up);
-  session.SendKey(microide::terminal::TerminalSession::Key::Home);
-  session.SendKey(microide::terminal::TerminalSession::Key::End);
+  SendUnmodified(session, KeyPress::Key::Up);
+  SendUnmodified(session, KeyPress::Key::Home);
+  SendUnmodified(session, KeyPress::Key::End);
 
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[A\x1b[H\x1b[F",
          "normal cursor-key mode should use CSI sequences after DECCKM is disabled");
