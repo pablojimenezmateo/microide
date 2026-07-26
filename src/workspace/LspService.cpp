@@ -117,10 +117,21 @@ const editor::TextViewport* FindOpenEditorViewport(const ProjectWorkspaceState& 
 // kind. Returns Plain for kinds we have no distinct theme color for (variable,
 // function, parameter, property, ...); the caller skips those so semantic tokens
 // only refine coloring rather than flatten it.
+//
+// The type-like set is checked against what clangd 18 actually advertises and
+// emits, not just the LSP standard list: its legend is {bracket, class, comment,
+// concept, enum, enumMember, function, interface, label, macro, method, modifier,
+// namespace, operator, parameter, property, type, typeParameter, unknown,
+// variable}. `concept` is C++20-specific, absent from the LSP standard set, and
+// really is a type-like entity — clangd emits it for the constraint name in
+// `template <Addable T>` — so it belongs here rather than falling through to
+// Plain and being left to the lexical highlighter, which cannot know the name is
+// a type.
 editor::SyntaxTokenKind SyntaxKindForSemanticType(std::string_view type) {
   if (type == "keyword" || type == "modifier") return editor::SyntaxTokenKind::Keyword;
   if (type == "type" || type == "class" || type == "struct" || type == "interface" ||
-      type == "enum" || type == "typeParameter" || type == "namespace") {
+      type == "enum" || type == "typeParameter" || type == "namespace" ||
+      type == "concept") {
     return editor::SyntaxTokenKind::Type;
   }
   if (type == "string") return editor::SyntaxTokenKind::String;
