@@ -101,9 +101,35 @@ negative + positive control fixtures in
 listed as a load-bearing invariant but a reintroduction only printed a line.
 
 **Repeat this.** The generic technique: inject a synthetic violation into the
-real tree, run the one rule, revert, and check it actually failed. A rule with no
-fixture and no loud-missing-target guard is a rule you have no evidence about.
-34 of the 49 workspace rules still have no fixture.
+real tree, run the one rule, revert, and check it actually failed. No rebuild is
+needed — the test binary reads the live tree:
+
+```bash
+cp "$file" /tmp/probe.bak
+printf '%s\n' "<synthetic violation>" >> "$file"
+./build/microide/microide_tests "ArchitectureInvariants/Workspace/$rule"
+cp /tmp/probe.bak "$file"
+```
+
+Craft the probe from the rule's **actual regex**, not from its comment — several
+rules are narrowly scoped and a plausible-looking probe simply misses (that reads
+identically to a dead rule, so confirm before concluding). For required-presence
+rules, delete the anchor token instead of appending. "Detected but still green"
+means `hard_fail` was never set.
+
+**Audit status (2026-07-26): every rule in the terminal, plugin and workspace
+sets has now been probed.** Three were dead (fixed above), one was warn-only
+(promoted), two more lacked a loud-missing-target guard (added); the remainder
+fire correctly. The four not probed by injection are self-guarding: the two TU
+line-count caps, and `CheckTextViewportSpecialMembersCoverEveryField` /
+`CheckBuildEditorViewModelUsesIncrementalVectorWrites`, which already fail when
+they cannot locate their target.
+
+That audit is a **one-shot** result, not a ratchet — it says nothing about the
+rules as they will be after the next edit. Most still have no fixture, so the
+durable follow-up is to grow `tests/architecture/ArchitectureRuleFixtures.cpp`
+(add a fixture whenever you touch a rule) rather than to re-run the whole probe
+sweep by hand.
 
 Other findings from the same sweep, closed in the commit log from `14da0f96`:
 
