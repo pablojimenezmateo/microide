@@ -137,48 +137,11 @@ void TestSubmoduleConflictClassification() {
          "a submodule conflict must not offer text hunks");
 }
 
-// Both sides kept byte-identical content and only the executable bit diverged.
-// git reports that indistinguishably from a content conflict, so without the
-// stage-mode comparison the user saw an empty three-way diff and no explanation.
-void TestModeOnlyConflictClassification() {
-  project::GitRepositoryEntry entry;
-  entry.kind = project::GitRepositoryEntryKind::Unmerged;
-  entry.conflicted = true;
-  entry.conflict_kind = project::GitConflictKind::BothModified;
-  entry.stage_modes_differ = true;
-
-  const auto metadata = ClassifyMergeFileConflict(MergeConflictClassificationInput{
-      .repository_entry = &entry,
-      .base_exists = true,
-      .incoming_exists = true,
-      .current_exists = true,
-      .base_content = "same\n",
-      .incoming_content = "same\n",
-      .current_content = "same\n",
-  });
-  Expect(metadata.kind == MergeFileConflictKind::Mode,
-         "identical content with divergent stage modes is a mode conflict");
-
-  // Differing modes AND differing content is still a content conflict: the text
-  // merge is what the user needs, so Mode must not swallow it.
-  const auto content_too = ClassifyMergeFileConflict(MergeConflictClassificationInput{
-      .repository_entry = &entry,
-      .base_exists = true,
-      .incoming_exists = true,
-      .current_exists = true,
-      .base_content = "base\n",
-      .incoming_content = "incoming\n",
-      .current_content = "current\n",
-  });
-  Expect(content_too.kind == MergeFileConflictKind::BothModified,
-         "a mode change alongside a real content conflict stays both-modified");
-}
-
-// git's D/F conflict: one side made the path a file, the other a directory. It is
-// the one conflict shape porcelain v2 cannot express — the record just shows a
-// missing stage — so the worktree probe on the background refresh is what
-// distinguishes it, and without it the merge surface offered text hunks for a
-// directory.
+// git's D/F conflict. git does NOT report the colliding path: it leaves the
+// directory in place and moves the file side aside, so the unmerged record names
+// `thing~file-side` while `thing` is the directory. The refresh probe sets this
+// flag; see GitRepositoryService/RefreshMarksFileDirectoryConflict for the
+// end-to-end case against real git.
 void TestFileDirectoryConflictClassification() {
   project::GitRepositoryEntry entry;
   entry.kind = project::GitRepositoryEntryKind::Unmerged;
@@ -550,8 +513,6 @@ void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
           TestFileDirectoryConflictClassification);
   AddTest(tests, "MergeConflict/SubmoduleConflictClassification",
           TestSubmoduleConflictClassification);
-  AddTest(tests, "MergeConflict/ModeOnlyConflictClassification",
-          TestModeOnlyConflictClassification);
   AddTest(tests, "MergeConflict/DeleteConflictResolvesByDeletion",
           TestDeleteConflictResolvesByDeletion);
   AddTest(tests, "MergeConflict/DeleteConflictStageFailureRestoresFile",

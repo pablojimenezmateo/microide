@@ -193,16 +193,27 @@ Still open from this sweep:
   cluster, these are *output taxonomies* with live display branches, so deleting
   them would silently downgrade what the user is told rather than remove waste:
 
-  - `MergeFileConflictKind::Submodule` / `Mode` — **RESOLVED 2026-07-26.** The
-    inputs were already on the wire and being discarded: porcelain v2 carries a
-    `<sub>` field (`S…` for a gitlink) and a mode per merge stage. The parser now
-    captures both into `GitRepositoryEntry::submodule` /
-    `stage_modes_differ`, and `ClassifyMergeFileConflict` maps them — submodule
-    outranks every content kind (there is no text to three-way, and
-    `TextHunksAvailable` already returned false for it), and a mode conflict
-    requires identical ours/theirs content so a real content conflict is not
-    swallowed. Both kinds already had labels and summaries, so this lit up
-    presentation that had shipped with no producer.
+  - `MergeFileConflictKind::Submodule` — **RESOLVED 2026-07-26.** The
+    discriminator was already on the wire and being discarded: porcelain v2's
+    `<sub>` field is `S…` for a gitlink (verified against real output: `1 .M SC..
+    160000 … dep`). The parser now captures it into
+    `GitRepositoryEntry::submodule`, and it outranks every content kind — there is
+    no text to three-way merge, and `TextHunksAvailable` already returned false.
+  - **`MergeFileConflictKind::Mode` is NOT reachable and should not be "fixed"
+    the obvious way. OPEN, and probably WON'T-DO.** Comparing the per-stage modes
+    on an unmerged record looks like the way to spot an executable-bit conflict.
+    It is not, and an attempt at it in this sweep shipped briefly before being
+    backed out. Two reasons, both confirmed against real git:
+    * A 644 vs 755 divergence never conflicts — with only two regular-file modes,
+      any three-way combination auto-resolves, so git emits no conflict at all.
+    * A genuine "distinct types" conflict (file vs symlink) is reported as TWO
+      records that each carry a **zero** stage — `u UA … 000000 000000 120000 …
+      thing` plus `u UD … 100644 100755 000000 … thing~HEAD` — so no
+      ours-vs-theirs mode pair ever differs on a single record.
+    Detecting it at all would need the same cross-record correlation the D/F case
+    uses (pair `<path>` with `<path>~<suffix>`), and the resulting conflict is
+    arguably better described as distinct-types than as a mode change. Decide what
+    the kind should MEAN before implementing anything.
   - `MergeFileConflictKind::FileDirectory` — **RESOLVED 2026-07-26.** It is not on
     the wire, so it needs a worktree probe, and the shape is not what it looks
     like: git does NOT report the colliding path. It leaves the directory in place

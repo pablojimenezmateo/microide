@@ -124,8 +124,7 @@ GitRepositoryEntry MakeEntry(GitRepositoryEntryKind kind,
                              std::filesystem::path path,
                              std::optional<std::filesystem::path> old_path,
                              bool conflicted,
-                             bool submodule = false,
-                             bool stage_modes_differ = false) {
+                             bool submodule = false) {
   GitRepositoryEntry entry{
       .kind = kind,
       .status = StatusFromPorcelainV2XY(xy, conflicted),
@@ -138,7 +137,6 @@ GitRepositoryEntry MakeEntry(GitRepositoryEntryKind kind,
                         xy[1] != '!' && xy[1] != '.',
       .conflicted = conflicted,
       .submodule = submodule,
-      .stage_modes_differ = stage_modes_differ,
   };
   if (old_path.has_value()) {
     entry.old_path = MakeGitRepositoryPathIdentity(std::move(*old_path));
@@ -270,17 +268,9 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
         if (path.empty()) {
           break;
         }
-        // A mode-only conflict is OURS and THEIRS both present with different
-        // modes (the executable bit). Stage 0 ("000000") means that side deleted
-        // the path, which is an existence conflict, not a mode one.
-        const std::string_view ours_mode = TokenAt(body, 3);
-        const std::string_view theirs_mode = TokenAt(body, 4);
-        const bool modes_differ = !ours_mode.empty() && !theirs_mode.empty() &&
-                                  ours_mode != "000000" && theirs_mode != "000000" &&
-                                  ours_mode != theirs_mode;
         state.entries.push_back(MakeEntry(GitRepositoryEntryKind::Unmerged, xy,
                                           std::filesystem::path(path), std::nullopt, true,
-                                          SubmoduleField(body, 1), modes_differ));
+                                          SubmoduleField(body, 1)));
         break;
       }
       case '?': {
