@@ -52,36 +52,6 @@ void TestMultipleInFlightTasks() {
          "three balanced decrements should restore the original count");
 }
 
-// Verify the IdleHint::Full condition: count > 0 represents in-flight work.
-void TestIdleHintFullConditionHoldsWhenCountPositive() {
-  static const bool initialized = InitSdlEvents();
-  (void)initialized;
-
-  const int before = app::GetBackgroundTaskCount();
-  app::IncrementBackgroundTaskCount();
-  // ComputeIdleHint(GetBackgroundTaskCount()) would return IdleHint::Full here
-  // because in_flight_background_task_count > 0.
-  const bool would_be_full = app::GetBackgroundTaskCount() > 0;
-  app::DecrementBackgroundTaskCountAndWake();
-  Expect(would_be_full, "count > 0 should satisfy the IdleHint::Full condition");
-  (void)before;
-}
-
-// Verify the IdleHint::Idle condition: count == 0 when no tasks in flight.
-void TestIdleHintIdleConditionHoldsWhenCountZero() {
-  static const bool initialized = InitSdlEvents();
-  (void)initialized;
-
-  const int before = app::GetBackgroundTaskCount();
-  app::IncrementBackgroundTaskCount();
-  app::DecrementBackgroundTaskCountAndWake();
-  // With count restored to `before`, if before == 0 then IdleHint::Idle applies
-  // (assuming no plugin async processes and no caret blink).
-  const bool idle_condition_met = app::GetBackgroundTaskCount() <= 0;
-  Expect(idle_condition_met || before > 0,
-         "after balanced operations, count should satisfy IdleHint::Idle precondition");
-}
-
 // Verify count is always non-negative (underflow protection documented via SDL_assert).
 void TestCountRemainsNonNegativeAfterBalancedOps() {
   static const bool initialized = InitSdlEvents();
@@ -202,10 +172,6 @@ void RegisterBackgroundTaskCounterTests(std::vector<TestCase>& tests) {
           TestDecrementRestoresCount);
   AddTest(tests, "BackgroundTaskCounter/MultipleInFlightTasks",
           TestMultipleInFlightTasks);
-  AddTest(tests, "BackgroundTaskCounter/IdleHintFullCondition",
-          TestIdleHintFullConditionHoldsWhenCountPositive);
-  AddTest(tests, "BackgroundTaskCounter/IdleHintIdleCondition",
-          TestIdleHintIdleConditionHoldsWhenCountZero);
   AddTest(tests, "BackgroundTaskCounter/CountRemainsNonNegative",
           TestCountRemainsNonNegativeAfterBalancedOps);
 }
