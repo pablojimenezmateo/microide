@@ -109,13 +109,18 @@ bool ParseAheadBehind(std::string_view token, int* ahead, int* behind) {
 void RecordTreeGitStatus(std::unordered_map<std::string, GitFileStatus>& statuses,
                          const GitRepositoryEntry& entry) {
   const GitFileStatus status = entry.conflicted ? GitFileStatus::Conflicted : entry.status;
-  GitPorcelainParser::RecordGitStatus(statuses, entry.path.relative_path, status);
+  // MakeGitRepositoryPathIdentity already normalized these paths and already built
+  // their generic string, so re-deriving both per entry was pure duplicated work on
+  // the refresh path that every project pays on every git change.
+  std::string scratch;
+  GitPorcelainParser::RecordNormalizedGitStatus(statuses, GenericPathView(entry.path, scratch),
+                                                status);
   if (entry.old_path.has_value()) {
     // The rename/copy source no longer exists at its old path in the working tree,
     // so badge it Deleted rather than inheriting the destination's status (which
     // painted the now-gone source as Modified/Added).
-    GitPorcelainParser::RecordGitStatus(statuses, entry.old_path->relative_path,
-                                        GitFileStatus::Deleted);
+    GitPorcelainParser::RecordNormalizedGitStatus(
+        statuses, GenericPathView(*entry.old_path, scratch), GitFileStatus::Deleted);
   }
 }
 

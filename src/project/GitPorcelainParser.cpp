@@ -139,11 +139,23 @@ GitFileStatus GitPorcelainParser::CombineGitStatus(GitFileStatus current, GitFil
 void GitPorcelainParser::RecordGitStatus(std::unordered_map<std::string, GitFileStatus>& statuses,
                                          std::filesystem::path relative_path,
                                          GitFileStatus status) {
-  relative_path = relative_path.lexically_normal();
-  const std::string normalized = relative_path.generic_string();
-  if (!normalized.empty() && normalized != ".") {
+  RecordNormalizedGitStatus(statuses, relative_path.lexically_normal().generic_string(), status);
+}
+
+void GitPorcelainParser::RecordNormalizedGitStatus(
+    std::unordered_map<std::string, GitFileStatus>& statuses,
+    std::string_view normalized_generic_path,
+    GitFileStatus status) {
+  // The ancestor walk used to run on std::filesystem::path: parent_path() built a
+  // fresh path per level and generic_string() a fresh std::string per level, so a
+  // 4-deep path cost 8 allocations on top of the leaf's. A normalized generic path
+  // is just '/'-separated text, so the same walk is a scratch string shortened in
+  // place — the only remaining allocations are the map keys actually inserted, and
+  // those are unavoidable (the map owns its keys).
+  std::string scratch(normalized_generic_path);
+  if (!scratch.empty() && scratch != ".") {
     // Hoist the slot reference so operator[] runs once, not twice (read + assign).
-    GitFileStatus& slot = statuses[normalized];
+    GitFileStatus& slot = statuses[scratch];
     slot = CombineGitStatus(slot, status);
   }
 
@@ -151,19 +163,20 @@ void GitPorcelainParser::RecordGitStatus(std::unordered_map<std::string, GitFile
   // pathologically deep path (`a/a/.../x`); walking every ancestor and retaining
   // a map key per level is O(depth) string allocations per entry — quadratic in
   // path length, an OOM. Folder badges beyond a modest depth are not usefully
-  // visible anyway. `relative_path` is already normalized, so each parent_path
-  // stays normalized without the (previously per-step) lexically_normal() call.
+  // visible anyway.
   constexpr int kMaxBadgeAncestorDepth = 64;
-  std::filesystem::path dir = relative_path.parent_path();
-  for (int depth = 0; depth < kMaxBadgeAncestorDepth && !dir.empty() && dir != ".";
-       ++depth) {
-    GitFileStatus& slot = statuses[dir.generic_string()];
-    slot = CombineGitStatus(slot, status);
-    const auto next = dir.parent_path();
-    if (next == dir) {
+  for (int depth = 0; depth < kMaxBadgeAncestorDepth; ++depth) {
+    const std::size_t slash = scratch.find_last_of('/');
+    // No separator left (a top-level name), or the only separator is a leading
+    // one (an absolute path, whose "/" ancestor is not a tree node) — done.
+    if (slash == std::string::npos || slash == 0) {
       break;
     }
-    dir = next;
+    // No "." check here: a normalized path never has a "." ancestor ("./a/b"
+    // normalizes to "a/b"), so the guard the path walk needed is unreachable.
+    scratch.resize(slash);
+    GitFileStatus& slot = statuses[scratch];
+    slot = CombineGitStatus(slot, status);
   }
 }
 

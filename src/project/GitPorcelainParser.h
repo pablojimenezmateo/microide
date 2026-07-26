@@ -39,9 +39,18 @@ class GitPorcelainParser {
   static std::vector<GitCommitEntry> ParseLog(std::string_view output,
                                               std::size_t max_entries = kDefaultParseLogCap);
 
+  // Record `relative_path`'s status plus the aggregated folder badge on each of
+  // its ancestors. Normalizes the path first; prefer RecordNormalizedGitStatus
+  // when the caller already holds a normalized generic path.
   static void RecordGitStatus(std::unordered_map<std::string, GitFileStatus>& statuses,
                               std::filesystem::path relative_path,
                               GitFileStatus status);
+  // Same, for a path that is ALREADY lexically normal and in generic ('/') form —
+  // which is what GitRepositoryPathIdentity stores. Skips a redundant
+  // lexically_normal() + generic_string() per entry on the git-refresh hot path.
+  static void RecordNormalizedGitStatus(std::unordered_map<std::string, GitFileStatus>& statuses,
+                                        std::string_view normalized_generic_path,
+                                        GitFileStatus status);
 
  private:
   static bool StatusUsesTargetPath(std::string_view code);

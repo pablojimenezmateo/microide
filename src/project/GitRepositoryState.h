@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -135,6 +136,14 @@ struct GitRepositoryState {
 GitOperationStateKind DetectGitOperationState(const std::filesystem::path& repository_root);
 
 GitRepositoryPathIdentity MakeGitRepositoryPathIdentity(std::filesystem::path relative_path);
+
+// The identity's normalized generic-form ('/'-separated) path — the key form the
+// tree-status map and DirectoryTree index by, which is NOT always display_label.
+// MakeGitRepositoryPathIdentity sets display_label to exactly that string when the
+// path is valid UTF-8, so the common case returns a view and does no work; an
+// invalid-UTF-8 path escapes its label, so the real key is rebuilt into `scratch`.
+// `scratch` must outlive the returned view.
+std::string_view GenericPathView(const GitRepositoryPathIdentity& identity, std::string& scratch);
 GitRefreshErrorCategory ClassifyGitRefreshFailure(int exit_code, std::string_view stderr_text);
 GitConflictKind ConflictKindFromUnmergedCodes(std::string_view xy);
 GitFileStatus StatusFromPorcelainV2XY(std::string_view xy, bool conflicted);

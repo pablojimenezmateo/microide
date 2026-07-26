@@ -43,6 +43,14 @@ GitRepositoryPathIdentity MakeGitRepositoryPathIdentity(std::filesystem::path re
   return identity;
 }
 
+std::string_view GenericPathView(const GitRepositoryPathIdentity& identity, std::string& scratch) {
+  if (identity.path_is_valid_utf8) {
+    return identity.display_label;
+  }
+  scratch = identity.relative_path.generic_string();
+  return scratch;
+}
+
 GitRefreshErrorCategory ClassifyGitRefreshFailure(int exit_code,
                                                   std::string_view stderr_text) {
   if (exit_code == 0) {

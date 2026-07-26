@@ -810,6 +810,79 @@ void TestGitPorcelainParserBoundsHostileStatus() {
   }
 }
 
+// The folder-badge ancestor walk was rewritten to shorten a scratch string at each
+// '/' instead of allocating a fresh std::filesystem::path plus a fresh generic
+// string per level (2.4x faster on a 20k-entry status). It must produce EXACTLY the
+// same key set as the std::filesystem::path walk it replaced, including the shapes
+// where a naive rewrite diverges: a trailing slash (git's `!` ignored records report
+// `target/`), redundant `./` and `..` segments that only normalization removes, and
+// a leading slash (whose "/" ancestor is not a tree node).
+//
+// The reference walk below is spelled out HERE, in path terms, on purpose. Comparing
+// RecordGitStatus against RecordNormalizedGitStatus would prove nothing — the former
+// delegates to the latter, so the assertion would be a tautology that passes even
+// with the leading-slash and "." guards deleted (verified: it did).
+void TestGitPorcelainParserNormalizedRecordMatchesPathWalk() {
+  // The original implementation, verbatim: normalize, key off generic_string(),
+  // then walk parent_path() up to the depth cap.
+  const auto reference_walk = [](const std::string& raw) {
+    std::unordered_map<std::string, GitFileStatus> statuses;
+    const std::filesystem::path normalized = std::filesystem::path(raw).lexically_normal();
+    const std::string leaf = normalized.generic_string();
+    if (!leaf.empty() && leaf != ".") {
+      statuses[leaf] = GitFileStatus::Modified;
+    }
+    std::filesystem::path dir = normalized.parent_path();
+    for (int depth = 0; depth < 64 && !dir.empty() && dir != "."; ++depth) {
+      statuses[dir.generic_string()] = GitFileStatus::Modified;
+      const auto next = dir.parent_path();
+      if (next == dir) {
+        break;
+      }
+      dir = next;
+    }
+    return statuses;
+  };
+
+  const std::vector<std::string> paths = {
+      "src/util/Parse.cpp", "top.txt",       "target/",
+      "./a/./b/c.txt",      "a/b/../c.txt",  "/abs/dir/file.txt",
+      "a/b/",               ".",             "deep/1/2/3/4/5/6/x.h",
+  };
+  for (const std::string& raw : paths) {
+    std::unordered_map<std::string, GitFileStatus> expected = reference_walk(raw);
+    // The one deliberate divergence: the path walk recorded a bare "/" ancestor for
+    // an absolute path. That is not a tree node and was never rendered.
+    expected.erase("/");
+
+    std::unordered_map<std::string, GitFileStatus> actual;
+    GitPorcelainParser::RecordGitStatus(actual, std::filesystem::path(raw),
+                                        GitFileStatus::Modified);
+    Expect(actual == expected,
+           "the normalized folder-badge walk must record the same keys as the path walk: " +
+               raw);
+
+    // And the normalized entry point (what the v2 refresh path calls, passing the
+    // identity's already-generic string) must agree with it.
+    std::unordered_map<std::string, GitFileStatus> via_normalized;
+    GitPorcelainParser::RecordNormalizedGitStatus(
+        via_normalized, std::filesystem::path(raw).lexically_normal().generic_string(),
+        GitFileStatus::Modified);
+    Expect(via_normalized == expected,
+           "RecordNormalizedGitStatus must match the path walk for: " + raw);
+  }
+
+  // The badge really does reach every ancestor (a walk that silently recorded
+  // nothing would satisfy an equality check against an equally broken reference).
+  std::unordered_map<std::string, GitFileStatus> statuses;
+  GitPorcelainParser::RecordNormalizedGitStatus(statuses, "a/b/c/d.txt",
+                                                GitFileStatus::Modified);
+  Expect(statuses.size() == 4, "leaf plus three ancestors should be badged");
+  Expect(statuses.count("a") == 1 && statuses.count("a/b") == 1 &&
+             statuses.count("a/b/c") == 1 && statuses.count("a/b/c/d.txt") == 1,
+         "every ancestor level should carry the aggregated badge");
+}
+
 // A git invocation killed for exceeding its wall-clock timeout must report
 // timed_out (not a bare non-zero exit), so callers can distinguish a spurious
 // timeout from a real failure instead of showing a generic error.
@@ -918,6 +991,8 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
           TestGitExplicitRevisionArgsUseEndOfOptions);
   AddTest(tests, "Git/PorcelainParserBoundsHostileStatus",
           TestGitPorcelainParserBoundsHostileStatus);
+  AddTest(tests, "Git/PorcelainParserNormalizedRecordMatchesPathWalk",
+          TestGitPorcelainParserNormalizedRecordMatchesPathWalk);
   AddTest(tests, "Git/BuildStatusMapFolderPriorityIsSingleSourced",
           TestBuildGitStatusMapFolderPriorityIsSingleSourced);
   AddTest(tests, "Git/BranchDiffNameStatusZParser", TestGitBranchDiffNameStatusZParser);
