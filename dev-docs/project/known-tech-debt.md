@@ -72,6 +72,69 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
+### Lint-vacuity sweep (TD-2026-07-26-*)
+
+A pass that treated the architecture lint itself as code under test rather than
+as an oracle. Three hard rules were **structurally incapable of reporting a
+violation** and had been passing green for that reason, not because the tree was
+clean — two of them were hiding real defects. All three are fixed with
+negative + positive control fixtures in
+`tests/architecture/ArchitectureRuleFixtures.cpp`:
+
+- `CheckDescriptorCreationIsCloseOnExec` spelled its pattern `openat?`. `?` binds
+  to the single preceding character, so it matched `opena`/`openat` and never
+  plain `open(`. It was hiding an unflagged `open("/dev/null")` in
+  `platform/Subprocess.cpp` and a bare `O_EVTONLY` open in the macOS
+  `FileWatcher` backend (those descriptors are held for the whole watch, so every
+  spawned child inherited one per watched path). The rule now also covers plain
+  `accept(`, which its own advice string already forbade but no pattern matched.
+- `CheckTerminalSessionNoExtractedImpl` anchors five helper definitions with `^`
+  but built the regexes without `std::regex::multiline`, so `^` meant "offset 0
+  of the file" — always `#include`. Three of the five sub-checks could never fire.
+- `CheckNoDirectGitRepositoryInWorkspace` matched only a temporary
+  (`GitRepository(root)`); every real construction is the named-declaration form.
+  Reviving it surfaced a synchronous `git rev-parse --short MERGE_HEAD` on the
+  **shell thread** (bounded only by the 60 s git read timeout, for a pane
+  caption) and a `GitRepository` built solely to do lexical path math.
+
+`CheckThrowingStoParsers` was also promoted from warn-only to hard-fail: it is
+listed as a load-bearing invariant but a reintroduction only printed a line.
+
+**Repeat this.** The generic technique: inject a synthetic violation into the
+real tree, run the one rule, revert, and check it actually failed. A rule with no
+fixture and no loud-missing-target guard is a rule you have no evidence about.
+34 of the 49 workspace rules still have no fixture.
+
+Other findings from the same sweep, closed in the commit log from `14da0f96`:
+
+- `GitRepositoryState::operation_state` was declared, defaulted, and **never
+  written by anything**, which made the merge resolver's rebase/cherry-pick
+  "upstream" label unreachable. Now derived from git's own marker files.
+- LSP completion ignored `sortText` entirely (the struct carried a dead
+  `int sort_text_priority`), so the popup used raw server array order.
+- `control-list` echoed the attacker-droppable descriptor body, handing back the
+  forged `socket` path that enumeration deliberately reconstructs to avoid, and
+  letting a pretty-printed descriptor inject extra JSONL lines.
+- The unwired AI-provider / external-agent contribution stub was deleted (same
+  disposition and guard as the earlier MCP-tool stub).
+
+Still open from this sweep:
+
+- **TD-2026-07-26-001 — `PersistedChatState` is unused. OPEN (probably in-flight
+  work).** `PersistedConversationState` / `PersistedMessageState` have live
+  encoders and decoders, but the `PersistedChatState` wrapper (and its
+  `active_conversation_id`) is referenced nowhere. Either it is scaffolding for
+  the assist/chat surface still being built, or it is the third unwired stub.
+  Decide which before the next persistence-format change.
+- **TD-2026-07-26-002 — `GitSidebarState::provider_backed` / `provider_id` /
+  `provider_label` are never written. OPEN.** `supports_mutations` beside them is
+  live. Same question as 001: plugin-SCM-provider scaffolding, or dead fields to
+  delete.
+- **TD-2026-07-26-003 — `CommitOperationResult::refresh_failed_after_success` and
+  its `RefreshFailedAfterSuccess` category are never produced.** The category is
+  handled in `CommitWorkflowService`, so the branch is dead: a commit that
+  succeeds but whose follow-up refresh fails is reported as a plain success.
+
 ### Post-merge review pass (TD-2026-07-25-*)
 
 Full review of the `td/wait-until-helper-088` branch before it merged to `main`
