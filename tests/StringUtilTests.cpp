@@ -2,12 +2,16 @@
 
 #include "compare/CompareModel.h"
 #include "util/Hex.h"
+#include "util/PerformanceCounters.h"
 #include "util/SaturatingMath.h"
 #include "util/StringUtil.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <string_view>
 #include <limits>
 
+#include <utility>
 #include <vector>
 
 namespace microide::tests {
@@ -544,6 +548,47 @@ void TestStringUtilContainsCaseInsensitiveAscii() {
   Expect(!ContainsCaseInsensitiveAscii("aaaa", "aab "), "a near-miss tail still rejects");
 }
 
+// kCounterNames is indexed POSITIONALLY by PerfCounterId in NonZeroCounterDelta,
+// and only its *size* is compiler-checked (both are sized by kPerfCounterCount).
+// So removing or inserting an id without making the matching edit at the matching
+// position in the name table still compiles, and silently relabels every counter
+// after that point — perf output would attribute one subsystem's numbers to
+// another. Two dead counters were removed from both lists in 2026-07-26; these
+// anchors are what makes the next such edit fail loudly instead.
+void TestPerformanceCounterNamesStayAlignedWithIds() {
+  using microide::util::PerfCounterId;
+  using microide::util::PerformanceCounterName;
+
+  const auto pinned = {
+      std::pair{PerfCounterId::FramePrepareCalls, std::string_view("frame.prepare_calls")},
+      std::pair{PerfCounterId::SearchProjectProgressPublishes,
+                std::string_view("search.project_progress_publishes")},
+      // The id immediately after the pair removed in 2026-07-26: if a future edit
+      // drops an id without dropping its name (or vice versa), this is the first
+      // anchor to shift.
+      std::pair{PerfCounterId::SearchProjectLowerLineCalls,
+                std::string_view("search.project_lower_line_calls")},
+      std::pair{PerfCounterId::FileFinderCacheBuildCalls,
+                std::string_view("search.file_finder_cache_build_calls")},
+  };
+  for (const auto& [id, expected] : pinned) {
+    Expect(PerformanceCounterName(id) == expected,
+           "perf counter name table must stay positionally aligned with PerfCounterId");
+  }
+
+  // Every name must be present and distinct: a duplicate is the other symptom of
+  // a botched insert, and an empty slot means the table is short.
+  std::vector<std::string_view> all;
+  for (std::size_t i = 0; i < microide::util::kPerfCounterCount; ++i) {
+    const std::string_view name = PerformanceCounterName(static_cast<PerfCounterId>(i));
+    Expect(!name.empty(), "every perf counter id must have a name");
+    all.push_back(name);
+  }
+  std::sort(all.begin(), all.end());
+  Expect(std::adjacent_find(all.begin(), all.end()) == all.end(),
+         "perf counter names must be unique");
+}
+
 void RegisterStringUtilTests(std::vector<TestCase>& tests) {
   AddTest(tests, "StringUtil/AsciiClassifiersAreLocaleIndependent",
           TestStringUtilAsciiClassifiersAreLocaleIndependent);
@@ -580,6 +625,8 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
   AddTest(tests, "StringUtil/LineEndingHelpersRoundTrip",
           TestStringUtilLineEndingHelpersRoundTrip);
   AddTest(tests, "StringUtil/ConfigTokenSets", TestStringUtilConfigTokenSets);
+  AddTest(tests, "Util/PerformanceCounterNamesStayAlignedWithIds",
+          TestPerformanceCounterNamesStayAlignedWithIds);
   AddTest(tests, "StringUtil/CompareModelHandlesCrLfInputViaSharedSplitter",
           TestCompareModelHandlesCrLfInputViaSharedSplitter);
 }

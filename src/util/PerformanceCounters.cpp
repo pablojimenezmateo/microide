@@ -35,8 +35,6 @@ constexpr std::array<std::string_view, kPerfCounterCount> kCounterNames = {
     "terminal.trim_scrollback_calls",
     "terminal.trim_scrollback_lines",
     "search.project_progress_publishes",
-    "search.project_snapshot_results_calls",
-    "search.project_snapshot_results_count",
     "search.project_lower_line_calls",
     "search.project_lower_line_bytes",
     "search.project_candidate_files_from_index",

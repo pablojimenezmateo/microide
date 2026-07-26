@@ -30,8 +30,6 @@ enum class PerfCounterId : std::size_t {
   TerminalTrimScrollbackCalls,
   TerminalTrimScrollbackLines,
   SearchProjectProgressPublishes,
-  SearchProjectSnapshotResultsCalls,
-  SearchProjectSnapshotResultsCount,
   SearchProjectLowerLineCalls,
   SearchProjectLowerLineBytes,
   SearchProjectCandidateFilesFromIndex,
