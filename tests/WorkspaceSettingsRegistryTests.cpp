@@ -22,17 +22,15 @@ using microide::workspace::SettingsOverlayService;
 using microide::workspace::SettingSpec;
 using microide::workspace::SettingType;
 
-constexpr std::array<std::string_view, 15> kNewSettingIds = {
+constexpr std::array<std::string_view, 13> kNewSettingIds = {
     "editor.font_family",
     "editor.font_size",
     "editor.line_endings",
     "editor.format_on_save",
     "editor.autosave",
     "editor.autosave.delay_ms",
-    "editor.hover_delay_ms",
     "ui.layout_mode",
     "ui.layout_compact_breakpoint_px",
-    "ui.scrollbar_size",
     "ui.show_status_bar",
     "terminal.shell",
     "terminal.font_size",
@@ -47,9 +45,6 @@ std::vector<std::string_view> ValidSamplesFor(const SettingSpec& spec) {
     case SettingType::Int:
       if (spec.id == "ui.layout_compact_breakpoint_px") {
         return {"600", "720", "2000"};
-      }
-      if (spec.id == "editor.hover_delay_ms") {
-        return {"0", "350", "2000"};
       }
       return {"8", "13", "32"};
     case SettingType::Float:

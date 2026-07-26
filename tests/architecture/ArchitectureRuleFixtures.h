@@ -26,4 +26,8 @@ void RunDirectGitRepositoryRuleFixtures();
 // only in `case` labels cannot be invoked by anyone.
 void RunActionIdReachabilityRuleFixtures();
 
+// Negative + positive control for CheckRegisteredSettingsAreRead: a setting the
+// overlay shows and persists while nothing reads it.
+void RunRegisteredSettingsAreReadRuleFixtures();
+
 }  // namespace microide::tests::architecture

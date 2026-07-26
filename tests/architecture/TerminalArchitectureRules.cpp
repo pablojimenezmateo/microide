@@ -576,7 +576,86 @@ std::vector<RuleResult> RunTerminalArchitectureRules(const std::filesystem::path
       CheckWorkspaceArchitectureRulesDispatcherSize(repo_root),
       CheckDescriptorCreationIsCloseOnExec(repo_root),
       CheckSettingsReadAreRegistered(repo_root),
+      CheckRegisteredSettingsAreRead(repo_root),
   };
+}
+
+// The mirror of CheckSettingsReadAreRegistered. That rule stops a setting being
+// READ without being declared (invisible, unreachable). This one stops the
+// opposite and equally user-visible failure: a setting DECLARED but read by
+// nothing, which the Settings overlay renders with a label and a description, and
+// persists when changed, while doing absolutely nothing.
+//
+// Two shipped that way — "Hover Delay (ms)" and "Scrollbar Size" — and neither
+// had any consumer at all. A user could set them, see them stick across restarts,
+// and never observe an effect.
+//
+// A setting whose value is reached through a computed key rather than a literal
+// would false-positive here; none exist today, and the fix for one would be to
+// name the id in a comment at the read site rather than to weaken the rule.
+RuleResult CheckRegisteredSettingsAreRead(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "declared settings must be read by something";
+  result.hard_fail = true;
+
+  const std::filesystem::path registry = repo_root / "src/workspace/WorkspaceSettingsRegistry.cpp";
+  const std::string registry_text = ReadText(registry);
+  const std::vector<bool> registry_is_code = BuildCodeMask(registry_text);
+  // Custom delimiter: the pattern itself contains `)"`.
+  const std::regex id_pattern(R"re(\.id\s*=\s*"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)")re");
+  std::vector<std::string> declared;
+  for (std::sregex_iterator it(registry_text.begin(), registry_text.end(), id_pattern), last;
+       it != last; ++it) {
+    const std::size_t start = static_cast<std::size_t>(it->position());
+    if (start < registry_is_code.size() && !registry_is_code[start]) {
+      continue;
+    }
+    declared.push_back(it->str(1));
+  }
+  if (declared.size() < 20) {
+    result.violations.push_back(Violation{
+        .path = registry,
+        .line = 1,
+        .message = "parsed only " + std::to_string(declared.size()) +
+                   " setting ids from the registry; the declaration shape changed and this lint "
+                   "has gone vacuous — fix the scan rather than deleting the rule",
+    });
+    return result;
+  }
+
+  // Any mention of the quoted id anywhere in src/ outside the registry counts as
+  // a consumer; the read helpers are varied (SettingFlagEnabled, SettingIntValue,
+  // direct SettingsStore lookups) and this rule is about reachability, not shape.
+  std::string other_sources;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::filesystem::path extension = entry.path().extension();
+    if (extension != ".cpp" && extension != ".h" && extension != ".inc") {
+      continue;
+    }
+    if (entry.path().filename() == "WorkspaceSettingsRegistry.cpp") {
+      continue;
+    }
+    other_sources += ReadText(entry.path());
+    other_sources += '\n';
+  }
+
+  for (const std::string& id : declared) {
+    if (other_sources.find('"' + id + '"') != std::string::npos) {
+      continue;
+    }
+    result.violations.push_back(Violation{
+        .path = registry,
+        .line = 1,
+        .message = "setting `" + id +
+                   "` is declared but read by nothing — the Settings overlay shows it and "
+                   "persists it while it does nothing. Wire it to a consumer, or drop the "
+                   "declaration until the feature exists",
+    });
+  }
+  return result;
 }
 
 }  // namespace microide::tests::architecture

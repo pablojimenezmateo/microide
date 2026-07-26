@@ -41,12 +41,6 @@ const SettingEnumValue kLayoutModeValues[] = {
     {"compact", "Compact"},
 };
 
-const SettingEnumValue kHandleSizeValues[] = {
-    {"compact", "Compact"},
-    {"regular", "Regular"},
-    {"large", "Large"},
-};
-
 const SettingEnumValue kSeverityValues[] = {
     {"hint", "Hint"},
     {"info", "Info"},
@@ -230,22 +224,6 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Editor → Text & Files",
       },
       SettingSpec{
-          .id = "editor.hover_delay_ms",
-          .label = "Hover Delay (ms)",
-          .description = "Milliseconds before hover popups open.",
-          .type = SettingType::Int,
-          .scope = SettingScope::User,
-          .default_bool = false,
-          .default_int = 350,
-          .min_int = 0,
-          .max_int = 2000,
-          .int_step = 50,
-          .default_float = 0.0f,
-          .default_string = {},
-          .enum_values = {},
-          .group = "Editor → Text & Files",
-      },
-      SettingSpec{
           .id = "ui.layout_mode",
           .label = "Layout Mode",
           .description = "Compact / Regular / Auto layout selection.",
@@ -272,19 +250,6 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
-          .group = "Appearance → Layout",
-      },
-      SettingSpec{
-          .id = "ui.scrollbar_size",
-          .label = "Scrollbar Size",
-          .description = "Compact / Regular / Large scrollbar visual size.",
-          .type = SettingType::Enum,
-          .scope = SettingScope::User,
-          .default_bool = false,
-          .default_int = 0,
-          .default_float = 0.0f,
-          .default_string = "regular",
-          .enum_values = kHandleSizeValues,
           .group = "Appearance → Layout",
       },
       SettingSpec{

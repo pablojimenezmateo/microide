@@ -193,4 +193,44 @@ void RunActionIdReachabilityRuleFixtures() {
          "any non-`case` mention makes an action reachable");
 }
 
+void RunRegisteredSettingsAreReadRuleFixtures() {
+  // The mirror of the reads-must-be-registered rule. "Hover Delay (ms)" and
+  // "Scrollbar Size" both shipped declared-and-unread: shown in the overlay,
+  // persisted on change, consumed by nothing.
+  TemporaryDirectory settings_dir;
+  const std::filesystem::path& root = settings_dir.path();
+  std::filesystem::create_directories(root / "src/workspace");
+
+  std::string registry = "std::span<const SettingSpec> BuiltinSettingSpecs() {\n";
+  for (int i = 0; i < 24; ++i) {
+    registry += "  SettingSpec{ .id = \"group" + std::to_string(i) + ".used_key\" },\n";
+  }
+  registry += "  SettingSpec{ .id = \"group.orphan_key\" },\n};\n";
+  WriteFile(root / "src/workspace/WorkspaceSettingsRegistry.cpp", registry);
+
+  std::string reader;
+  for (int i = 0; i < 24; ++i) {
+    reader += "bool R" + std::to_string(i) + "(){ return SettingFlagEnabled(cfg, \"group" +
+              std::to_string(i) + ".used_key\"); }\n";
+  }
+  WriteFile(root / "src/workspace/Reader.cpp", reader);
+  const RuleResult flagged = CheckRegisteredSettingsAreRead(root);
+  Expect(flagged.violations.size() == 1,
+         "exactly the setting no source reads must be flagged");
+  Expect(flagged.violations.front().message.find("group.orphan_key") != std::string::npos,
+         "the flagged setting must be the unread one");
+
+  // Positive control: give it a reader and the rule clears.
+  WriteFile(root / "src/workspace/Reader.cpp",
+            reader + "bool Orphan(){ return SettingFlagEnabled(cfg, \"group.orphan_key\"); }\n");
+  Expect(CheckRegisteredSettingsAreRead(root).violations.empty(),
+         "a setting with any consumer passes");
+
+  // Vacuity guard: too few parsed ids means the declaration shape moved.
+  WriteFile(root / "src/workspace/WorkspaceSettingsRegistry.cpp",
+            "std::span<const SettingSpec> BuiltinSettingSpecs() { return {}; }\n");
+  Expect(!CheckRegisteredSettingsAreRead(root).violations.empty(),
+         "a registry the scan cannot parse must fail loudly, not pass vacuously");
+}
+
 }  // namespace microide::tests::architecture
