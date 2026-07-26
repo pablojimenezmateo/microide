@@ -402,18 +402,27 @@ void TextViewport::AddSecondaryCaret(std::size_t line, std::size_t column) {
   if (position == TextPosition{cursor_line_, cursor_column_}) {
     return;
   }
-  if (std::find_if(secondary_carets_.begin(), secondary_carets_.end(),
-                   [&](const SecondaryCaret& caret) { return caret.position == position; }) !=
-      secondary_carets_.end()) {
+  // secondary_carets_ is sorted by position at every mutation site that leaves
+  // this class (SetSecondaryCarets, AddSecondaryCaretWithRange, the column-caret
+  // build, and the post-edit remap all sort; the ViewState restore copies an
+  // already-sorted vector), so the duplicate check and the insertion point are
+  // one binary probe. The previous form paid a linear find_if AND a full re-sort
+  // per insert, so a run of Ctrl+clicks on top of an existing column selection
+  // (capped at kMaxColumnCarets = 10,000) was O(k * n log n) for no reason — the
+  // same redundant-re-sort problem SetSecondaryCarets was already fixed for.
+  const auto at = std::lower_bound(
+      secondary_carets_.begin(), secondary_carets_.end(), position,
+      [](const SecondaryCaret& caret, const TextPosition& value) {
+        return detail::PositionLess(caret.position, value);
+      });
+  if (at != secondary_carets_.end() && at->position == position) {
     return;
   }
-  secondary_carets_.push_back(SecondaryCaret{
-      .position = position,
-      .preferred_column = PreferredColumnForCaret(position),
-      .selection_anchor = std::nullopt,
-  });
-  std::sort(secondary_carets_.begin(), secondary_carets_.end(),
-            detail::SecondaryCaretPositionLess);
+  secondary_carets_.insert(at, SecondaryCaret{
+                                   .position = position,
+                                   .preferred_column = PreferredColumnForCaret(position),
+                                   .selection_anchor = std::nullopt,
+                               });
 }
 
 void TextViewport::AddSecondaryCaretWithRange(SelectionRange range) {

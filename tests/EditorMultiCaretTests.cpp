@@ -1009,7 +1009,45 @@ void TestMultiCaretManyPairInsertRemapsEveryCaret() {
          "each caret should insert exactly one '()' pair");
 }
 
+// AddSecondaryCaret relies on secondary_carets_ already being sorted by position
+// to find both the duplicate and the insertion point in one binary probe. Pin the
+// two properties that relies on — the result stays sorted whatever order carets
+// arrive in, and an exact duplicate (or the primary caret) is still rejected.
+void TestAddSecondaryCaretKeepsSortedOrderAndDedupes() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha line\nbeta line\ngamma line\ndelta line\n",
+                       "/tmp/mc-sorted-insert.txt");
+  viewport.MoveCursorTo(0, 0);
+
+  // Insert out of order; the vector must end up sorted by (line, column).
+  viewport.AddSecondaryCaret(3, 2);
+  viewport.AddSecondaryCaret(1, 4);
+  viewport.AddSecondaryCaret(2, 0);
+  viewport.AddSecondaryCaret(1, 1);
+
+  const std::vector<TextPosition> carets = viewport.secondary_carets();
+  Expect(carets.size() == 4, "four distinct carets should be recorded");
+  for (std::size_t i = 1; i < carets.size(); ++i) {
+    const bool ordered =
+        carets[i - 1].line < carets[i].line ||
+        (carets[i - 1].line == carets[i].line && carets[i - 1].column < carets[i].column);
+    Expect(ordered, "secondary carets must stay sorted by position after each insert");
+  }
+
+  // An exact duplicate is rejected wherever it lands in the order.
+  viewport.AddSecondaryCaret(1, 4);
+  viewport.AddSecondaryCaret(3, 2);
+  Expect(viewport.secondary_carets().size() == 4, "duplicate carets must not be added twice");
+
+  // The primary caret position is never duplicated as a secondary.
+  viewport.AddSecondaryCaret(0, 0);
+  Expect(viewport.secondary_carets().size() == 4,
+         "the primary caret position must not be added as a secondary");
+}
+
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorMultiCaret/AddSecondaryCaretKeepsSortedOrderAndDedupes",
+          TestAddSecondaryCaretKeepsSortedOrderAndDedupes);
   AddTest(tests, "EditorMultiCaret/ManySameLineInsertRemapsEveryCaret",
           TestMultiCaretManySameLineInsertRemapsEveryCaret);
   AddTest(tests, "EditorMultiCaret/ManyPairInsertRemapsEveryCaret",
