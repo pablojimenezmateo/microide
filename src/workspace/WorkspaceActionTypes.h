@@ -166,7 +166,9 @@ enum class ActionId {
   ToggleEditorSaveEnsureNewline,
   ToggleEditorAutoDetectIndent,
   MarkBranchFileReviewed,
+  UnmarkBranchFileReviewed,
   MarkBranchHunkReviewed,
+  UnmarkBranchHunkReviewed,
   ClearBranchReviewState,
   EditBranchReviewNote,
   // Debugger (DAP). Gated on the `debug.enabled` master toggle.

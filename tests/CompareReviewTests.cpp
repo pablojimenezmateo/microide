@@ -6,6 +6,10 @@
 #include "compare/CompareReviewTypes.h"
 #include "compare/CompareSemanticMetadata.h"
 #include "workspace/CompareTabReview.h"
+#include "workspace/WorkspaceActionCoordinator.h"
+#include "workspace/WorkspaceActionServices.h"
+#include "workspace/WorkspaceActionTypes.h"
+#include "workspace/WorkspaceProjectState.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -32,6 +36,102 @@ using microide::workspace::ExpandCompareCollapsedContext;
 using microide::workspace::RefreshCompareReviewHeader;
 
 void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
+  // Branch review could be marked but never unmarked. MarkFileUnreviewed and
+  // MarkHunkUnreviewed were fully implemented and unit-tested, but no ActionId, no
+  // command spec, and no dispatch case ever reached them — so the only way to undo
+  // an accidental "reviewed" was clear-branch-review-state, which discards the
+  // ENTIRE branch's review (every file, every hunk, every note).
+  //
+  // This drives the real dispatch path (ActionCoordinator::Execute) rather than
+  // calling the service directly, because the service half was never the broken
+  // half: the missing piece was the wiring from a user-invocable command down to it.
+  tests.push_back(
+      {"CompareReview/UnmarkCommandsReachTheReviewService",
+       [] {
+         using microide::workspace::ActionCoordinator;
+         using microide::workspace::ActionId;
+         using microide::workspace::ActionSource;
+         using microide::workspace::ProjectCatalogState;
+         using microide::workspace::ProjectWorkspaceState;
+         using microide::workspace::WorkspaceActionContext;
+
+         ProjectCatalogState catalog;
+         ProjectWorkspaceState project_state;
+         float ui_scale = 1.0f;
+
+         int marked_file = 0;
+         int unmarked_file = 0;
+         int marked_hunk = 0;
+         int unmarked_hunk = 0;
+
+         WorkspaceActionContext::Operations operations;
+         // PrepareForAction invokes this unconditionally on every dispatch.
+         operations.close_tree_context_menu = []() {};
+         operations.mark_branch_file_reviewed = [&]() { ++marked_file; };
+         operations.unmark_branch_file_reviewed = [&]() { ++unmarked_file; };
+         operations.mark_branch_hunk_reviewed = [&]() { ++marked_hunk; };
+         operations.unmark_branch_hunk_reviewed = [&]() { ++unmarked_hunk; };
+
+         ActionCoordinator coordinator(WorkspaceActionContext(
+             catalog, project_state, ui_scale, std::move(operations)));
+
+         const std::vector<std::string> no_args;
+         Expect(coordinator.Execute(ActionId::MarkBranchFileReviewed, no_args,
+                                    ActionSource::Command),
+                "mark-branch-file-reviewed should dispatch");
+         Expect(coordinator.Execute(ActionId::UnmarkBranchFileReviewed, no_args,
+                                    ActionSource::Command),
+                "unmark-branch-file-reviewed should dispatch");
+         Expect(coordinator.Execute(ActionId::MarkBranchHunkReviewed, no_args,
+                                    ActionSource::Command),
+                "mark-branch-hunk-reviewed should dispatch");
+         Expect(coordinator.Execute(ActionId::UnmarkBranchHunkReviewed, no_args,
+                                    ActionSource::Command),
+                "unmark-branch-hunk-reviewed should dispatch");
+
+         Expect(marked_file == 1 && unmarked_file == 1,
+                "each file-review command must reach its own operation exactly once");
+         Expect(marked_hunk == 1 && unmarked_hunk == 1,
+                "each hunk-review command must reach its own operation exactly once");
+       }});
+
+  // The service semantics the commands above depend on: unmarking must actually
+  // clear the reviewed status rather than no-op, and must leave OTHER files alone
+  // (the distinction from clear-branch-review-state).
+  tests.push_back(
+      {"CompareReview/UnmarkClearsOnlyTheTargetedFile",
+       [] {
+         using microide::compare::BranchReviewMarkerStatus;
+         using microide::compare::BranchReviewStateQueryInput;
+         using microide::compare::BranchReviewStateService;
+         using microide::compare::MakeBranchReviewTargetIdentity;
+
+         BranchReviewStateService service;
+         const auto target = MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 3);
+         const std::filesystem::path kept("kept.cpp");
+         const std::filesystem::path undone("undone.cpp");
+
+         service.MarkFileReviewed(target, kept);
+         service.MarkFileReviewed(target, undone);
+         const auto status = [&](const std::filesystem::path& path) {
+           BranchReviewStateQueryInput input;
+           input.target = target;
+           input.path = path;
+           return service.FileStatus(input);
+         };
+         Expect(status(kept) == BranchReviewMarkerStatus::Reviewed &&
+                    status(undone) == BranchReviewMarkerStatus::Reviewed,
+                "both files should start reviewed");
+
+         const std::uint64_t before = service.revision();
+         service.MarkFileUnreviewed(target, undone);
+         Expect(service.revision() != before, "a real removal must bump the revision");
+         Expect(status(undone) != BranchReviewMarkerStatus::Reviewed,
+                "unmarking must clear the targeted file's reviewed status");
+         Expect(status(kept) == BranchReviewMarkerStatus::Reviewed,
+                "unmarking one file must not clear another file's review state");
+       }});
+
   // Regression: branch-review markers/notes must actually render on the compare
   // rows. The marker-application loop gated on ComparePresentationRow::hunk_index,
   // which the presentation builder never populates (stays -1), so the whole

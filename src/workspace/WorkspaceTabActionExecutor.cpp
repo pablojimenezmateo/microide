@@ -258,8 +258,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
     case ActionId::MarkBranchFileReviewed:
       context_.MarkBranchFileReviewed();
       return DispatchResult::Handled;
+    case ActionId::UnmarkBranchFileReviewed:
+      context_.UnmarkBranchFileReviewed();
+      return DispatchResult::Handled;
     case ActionId::MarkBranchHunkReviewed:
       context_.MarkBranchHunkReviewed();
+      return DispatchResult::Handled;
+    case ActionId::UnmarkBranchHunkReviewed:
+      context_.UnmarkBranchHunkReviewed();
       return DispatchResult::Handled;
     case ActionId::ClearBranchReviewState:
       context_.ClearBranchReviewState();

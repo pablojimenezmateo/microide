@@ -407,7 +407,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::JumpToMatchingBracket:
       return active_viewport != nullptr;
     case ActionId::MarkBranchFileReviewed:
+    case ActionId::UnmarkBranchFileReviewed:
     case ActionId::MarkBranchHunkReviewed:
+    case ActionId::UnmarkBranchHunkReviewed:
     case ActionId::ClearBranchReviewState:
     case ActionId::EditBranchReviewNote:
       return operations_.active_tab_is_compare();

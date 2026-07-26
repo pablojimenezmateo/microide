@@ -534,20 +534,27 @@ void WorkspaceShell::PersistBranchReviewState() {
   MakePersistenceCoordinator().SaveConfigState();
 }
 
-void WorkspaceShell::MarkActiveBranchFileReviewed() {
+// Mark/unmark share everything but the one service call, so they are one method
+// with a flag rather than four near-identical bodies (which would also have pushed
+// WorkspaceShellMembers.inc past its hard line cap).
+void WorkspaceShell::SetActiveBranchFileReviewed(bool reviewed) {
   CompareTabState* compare_tab = ActiveCompareTab();
   if (compare_tab == nullptr || compare_tab->review_mode != compare::CompareReviewMode::Branch) {
     return;
   }
-  context_.current_project_state.branch_review.MarkFileReviewed(compare_tab->branch_target,
-                                                                compare_tab->path);
-  ApplyBranchReviewPresentationMarkers(*compare_tab, context_.current_project_state.branch_review);
+  compare::BranchReviewStateService& review = context_.current_project_state.branch_review;
+  if (reviewed) {
+    review.MarkFileReviewed(compare_tab->branch_target, compare_tab->path);
+  } else {
+    review.MarkFileUnreviewed(compare_tab->branch_target, compare_tab->path);
+  }
+  ApplyBranchReviewPresentationMarkers(*compare_tab, review);
   PersistBranchReviewState();
   RequestActiveTabRedraw(true);
   RequestSidebarRedraw();
 }
 
-void WorkspaceShell::MarkActiveBranchHunkReviewed() {
+void WorkspaceShell::SetActiveBranchHunkReviewed(bool reviewed) {
   CompareTabState* compare_tab = ActiveCompareTab();
   if (compare_tab == nullptr || compare_tab->review_mode != compare::CompareReviewMode::Branch) {
     return;
@@ -558,8 +565,13 @@ void WorkspaceShell::MarkActiveBranchHunkReviewed() {
   }
   const compare::BranchReviewHunkIdentity identity = compare::ComputeBranchReviewHunkIdentity(
       compare_tab->model, hunk_index, compare_tab->path);
-  context_.current_project_state.branch_review.MarkHunkReviewed(compare_tab->branch_target, identity);
-  ApplyBranchReviewPresentationMarkers(*compare_tab, context_.current_project_state.branch_review);
+  compare::BranchReviewStateService& review = context_.current_project_state.branch_review;
+  if (reviewed) {
+    review.MarkHunkReviewed(compare_tab->branch_target, identity);
+  } else {
+    review.MarkHunkUnreviewed(compare_tab->branch_target, identity);
+  }
+  ApplyBranchReviewPresentationMarkers(*compare_tab, review);
   PersistBranchReviewState();
   RequestActiveTabRedraw(true);
 }

@@ -548,7 +548,9 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `goto <line[:col]>`
 - `git-refresh`
 - `mark-branch-file-reviewed`
+- `unmark-branch-file-reviewed`
 - `mark-branch-hunk-reviewed`
+- `unmark-branch-hunk-reviewed`
 - `clear-branch-review-state`
 - `branch-review-note <text>`
 - `indent-width [n]`

@@ -919,8 +919,8 @@
   void OpenWorkingFileFromCompare();
   void MoveCompareSelection(int delta);
   void JumpCompareHunk(int delta);
-  void MarkActiveBranchFileReviewed();
-  void MarkActiveBranchHunkReviewed();
+  void SetActiveBranchFileReviewed(bool reviewed);
+  void SetActiveBranchHunkReviewed(bool reviewed);
   void ClearActiveBranchReviewState();
   void EditActiveBranchReviewNote(const std::string& note_text);
   void PersistBranchReviewState();

@@ -576,9 +576,21 @@ void WorkspaceActionContext::MarkBranchFileReviewed() {
   }
 }
 
+void WorkspaceActionContext::UnmarkBranchFileReviewed() {
+  if (operations_.unmark_branch_file_reviewed != nullptr) {
+    operations_.unmark_branch_file_reviewed();
+  }
+}
+
 void WorkspaceActionContext::MarkBranchHunkReviewed() {
   if (operations_.mark_branch_hunk_reviewed != nullptr) {
     operations_.mark_branch_hunk_reviewed();
+  }
+}
+
+void WorkspaceActionContext::UnmarkBranchHunkReviewed() {
+  if (operations_.unmark_branch_hunk_reviewed != nullptr) {
+    operations_.unmark_branch_hunk_reviewed();
   }
 }
 

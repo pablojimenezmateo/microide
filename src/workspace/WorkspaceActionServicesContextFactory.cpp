@@ -615,8 +615,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
                 return MakeTextInputCoordinator().CutSelectionAtActiveSingleLineSurface();
               },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
-          .mark_branch_file_reviewed = [this]() { MarkActiveBranchFileReviewed(); },
-          .mark_branch_hunk_reviewed = [this]() { MarkActiveBranchHunkReviewed(); },
+          .mark_branch_file_reviewed = [this]() { SetActiveBranchFileReviewed(true); },
+          .unmark_branch_file_reviewed = [this]() { SetActiveBranchFileReviewed(false); },
+          .mark_branch_hunk_reviewed = [this]() { SetActiveBranchHunkReviewed(true); },
+          .unmark_branch_hunk_reviewed = [this]() { SetActiveBranchHunkReviewed(false); },
           .clear_branch_review_state = [this]() { ClearActiveBranchReviewState(); },
           .edit_branch_review_note =
               [this](std::string note_text) { EditActiveBranchReviewNote(note_text); },
