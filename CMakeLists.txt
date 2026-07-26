@@ -807,6 +807,7 @@ add_executable(microide_tests
   tests/LspResourceOpsTests.cpp
   tests/LspPositionEncodingTests.cpp
   tests/LspRealServerE2ETests.cpp
+  tests/DapRealAdapterE2ETests.cpp
   tests/WorkspaceDapClientTests.cpp
   tests/DapProtocolTests.cpp
   tests/DebugServiceTests.cpp

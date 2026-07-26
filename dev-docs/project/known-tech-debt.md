@@ -247,6 +247,30 @@ Still open from this sweep:
   (whole-file staging goes through `git add` / `GitStagePath`, never the patch
   applier).
 
+- **TD-2026-07-26-005 — `WorkspaceShell/ReplaceAllReadsOnlyMatchedFiles` is a
+  rare flake. OPEN (observed once; not reproducible on demand).** Seen failing a
+  single time during a full parallel `ctest`, then green across 31 further runs
+  (25 of the test alone under 6-way CPU load, plus 6 full parallel suites) with a
+  probe printing the two counter readings — which never fired again. So the
+  numbers behind the failure were never captured.
+
+  The measurement is inherently fragile and the test knows it: it subtracts two
+  readings of the **process-global** `util::TextSearchReadCount()` across windows
+  that contain live background threads, and asserts the difference is exactly 2.
+  Prior rounds already added `WaitForProjectSearchWorkersIdle` barriers for the
+  same reason (see the comment in the test). The remaining suspect is the
+  **filesystem watcher**, which those barriers do NOT drain: replace-all writes
+  `match_a.txt` and `match_b.txt` inside the measured window, guaranteeing watcher
+  activity there, and a watcher-triggered rescan lands extra counted reads.
+
+  Deliberately NOT blind-fixed. A change that cannot be shown to fix anything is
+  worth less than an accurate report — and this sweep already produced two
+  "fixes" that were verified only against fixtures and turned out to detect
+  nothing. To close it properly: reproduce first (a watcher-drain test seam does
+  not exist yet, so one would have to be added), then either quiesce the watcher
+  for the measured window or replace the global-counter subtraction with a
+  per-search read count that cannot be perturbed by another subsystem.
+
 - **TD-2026-07-26-003 — `CommitOperationResultCategory::RefreshFailedAfterSuccess`
   is handled but never produced. OPEN (needs the async correlation, not a
   one-liner).** `ResultFeedback` and `ResultTone` both have a branch for it, so a

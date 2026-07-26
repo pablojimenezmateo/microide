@@ -66,6 +66,7 @@ void RegisterLspProtocolTests(std::vector<TestCase>& tests);
 void RegisterLspResourceOpsTests(std::vector<TestCase>& tests);
 void RegisterLspPositionEncodingTests(std::vector<TestCase>& tests);
 void RegisterLspRealServerE2ETests(std::vector<TestCase>& tests);
+void RegisterDapRealAdapterE2ETests(std::vector<TestCase>& tests);
 void RegisterWorkspaceDapClientTests(std::vector<TestCase>& tests);
 void RegisterDapProtocolTests(std::vector<TestCase>& tests);
 void RegisterDebugServiceTests(std::vector<TestCase>& tests);
@@ -500,6 +501,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterLspResourceOpsTests(tests);
   microide::tests::RegisterLspPositionEncodingTests(tests);
   microide::tests::RegisterLspRealServerE2ETests(tests);
+  microide::tests::RegisterDapRealAdapterE2ETests(tests);
   microide::tests::RegisterWorkspaceDapClientTests(tests);
   microide::tests::RegisterDapProtocolTests(tests);
   microide::tests::RegisterDebugServiceTests(tests);
