@@ -156,10 +156,30 @@ Still open from this sweep:
   `provider_label` are never written. OPEN.** `supports_mutations` beside them is
   live. Same question as 001: plugin-SCM-provider scaffolding, or dead fields to
   delete.
-- **TD-2026-07-26-003 — `CommitOperationResult::refresh_failed_after_success` and
-  its `RefreshFailedAfterSuccess` category are never produced.** The category is
-  handled in `CommitWorkflowService`, so the branch is dead: a commit that
-  succeeds but whose follow-up refresh fails is reported as a plain success.
+- **TD-2026-07-26-003 — `CommitOperationResultCategory::RefreshFailedAfterSuccess`
+  is handled but never produced. OPEN (needs the async correlation, not a
+  one-liner).** `ResultFeedback` and `ResultTone` both have a branch for it, so a
+  commit that succeeds but whose follow-up refresh fails would say "Commit
+  succeeded, but repository refresh failed" — except nothing ever sets the
+  category, so the toast says plain success.
+
+  **This is a missing-message issue, not silent data loss.** `PublishResult`
+  fires `MarkStale()` + `request_git_refresh()` and returns; the refresh runs
+  asynchronously and its failure IS surfaced independently, as the git sidebar's
+  "Git refresh failed: …" banner (`BuildGitRefreshErrorBanner`). Only the
+  commit-specific toast is missing.
+
+  Producing it means correlating the async refresh outcome back to the commit
+  that triggered it. The hook already exists: `PublishResult` captures
+  `repository_generation` and then explicitly discards it (`(void)
+  repository_generation;`), which is where the intended correlation was meant to
+  land. What still needs deciding is the UX — whether the refresh-failure toast
+  replaces or follows the success toast, and what happens if the user starts
+  another operation while the refresh is in flight.
+
+  The parallel `bool refresh_failed_after_success` on `CommitOperationResult` was
+  deleted: the committing worker cannot know the refresh outcome, so a flag it
+  could never set only made the gap look closed.
 
 ### Post-merge review pass (TD-2026-07-25-*)
 

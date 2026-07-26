@@ -65,7 +65,13 @@ struct CommitOperationResult {
   CommitOperationResultCategory category = CommitOperationResultCategory::UnknownError;
   std::string detail;
   std::string hook_output;
-  bool refresh_failed_after_success = false;
+  // NOTE: there is deliberately no `refresh_failed_after_success` flag here. The
+  // post-commit repository refresh is asynchronous and completes long after this
+  // result is published, so the committing worker cannot know its outcome —
+  // `CommitOperationResultCategory::RefreshFailedAfterSuccess` is the channel for
+  // that, and wiring it needs the async refresh correlated back by
+  // `repository_generation` (see TD-2026-07-26-003). A bool here read by nobody
+  // just made it look already handled.
 };
 
 struct CommitDraftContext {
