@@ -123,10 +123,12 @@ class LspClient {
     std::string documentation;
     std::string insert_text;
     // LSP `sortText`: the server's own relevance ranking, compared
-    // lexicographically. Servers return the array in arbitrary order and expect
-    // the client to sort by this (clangd, rust-analyzer and pyright all encode
-    // relevance here and nowhere else), so the parser sorts the parsed vector
-    // before handing it on. Empty when the server omitted it.
+    // lexicographically, and the only place the protocol defines relevance to
+    // live (array order is unspecified). clangd populates it with an opaque
+    // relevance prefix plus the name — `40691dfcalpha`, `407e41ffgamma` — which is
+    // emphatically not the label, so sorting by label instead would reorder the
+    // list. Empty when the server omitted it; see
+    // SortCompletionItemsByServerRank for what the client does with it.
     std::string sort_text;
     // LSP InsertTextFormat: 1=PlainText, 2=Snippet
     int insert_text_format = 1;
@@ -357,9 +359,16 @@ class LspClient {
   // `sortText` (case-insensitively, and only when BOTH items carry one), then
   // `label`, then `kind`. Stable, so a server that already returns its preferred
   // order and omits sortText is left untouched. Applied by the completion parser
-  // before the list leaves the client — servers return items in arbitrary array
-  // order and encode relevance only here, so without this the popup showed
-  // whatever order the wire happened to use. Exposed for direct testing.
+  // before the list leaves the client. Exposed for direct testing.
+  //
+  // Scope, measured rather than assumed: clangd DOES populate sortText — an
+  // opaque relevance prefix plus the name, e.g. `40691dfcalpha` / `407e41ffgamma`
+  // — and it ALSO returns its array already in that order, so for clangd this
+  // sort is a no-op. The value is elsewhere: array order is unspecified by the
+  // protocol (relevance is defined to live in sortText, and servers that do not
+  // pre-sort exist), and the LSP list is subsequently merged with plugin-provided
+  // items, so a well-defined total order is needed regardless of what any one
+  // server happens to emit.
   static void SortCompletionItemsByServerRank(std::vector<CompletionItem>& items);
 
   // Async textDocument/signatureHelp. nullopt when the server has no result.
