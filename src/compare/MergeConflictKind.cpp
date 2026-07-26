@@ -23,6 +23,14 @@ MergeFileConflictKind KindFromGitConflict(project::GitConflictKind git_kind,
   if (entry != nullptr && entry->submodule && entry->conflicted) {
     return MergeFileConflictKind::Submodule;
   }
+  // A D/F conflict next: the path is a directory on disk, so there is no file to
+  // three-way merge and the existence choice is between a file and a tree. This
+  // is checked AFTER the submodule case on purpose — a submodule checkout is also
+  // a directory, and reporting it as file/directory would lose the more specific
+  // (and more actionable) submodule message.
+  if (entry != nullptr && entry->conflicted && entry->path_is_directory) {
+    return MergeFileConflictKind::FileDirectory;
+  }
   if (entry != nullptr && entry->kind == project::GitRepositoryEntryKind::Renamed && entry->conflicted) {
     if (entry->old_path.has_value()) {
       return MergeFileConflictKind::RenameRename;
@@ -68,6 +76,9 @@ bool TextHunksAvailable(MergeFileConflictKind kind) {
   switch (kind) {
     case MergeFileConflictKind::Binary:
     case MergeFileConflictKind::Submodule:
+    // A D/F conflict has a directory on one side: there is no text to three-way
+    // merge, so offering hunks would present an empty diff with live actions.
+    case MergeFileConflictKind::FileDirectory:
     case MergeFileConflictKind::BothDeleted:
       return false;
     default:

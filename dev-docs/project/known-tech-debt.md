@@ -203,10 +203,23 @@ Still open from this sweep:
     requires identical ours/theirs content so a real content conflict is not
     swallowed. Both kinds already had labels and summaries, so this lit up
     presentation that had shipped with no producer.
-  - `MergeFileConflictKind::FileDirectory` is still never produced. Unlike the
-    other two it is NOT on the wire: git reports a D/F conflict as the file path
-    with a stage missing plus a separate untracked directory, so detecting it
-    needs a tree probe rather than another porcelain field.
+  - `MergeFileConflictKind::FileDirectory` — **RESOLVED 2026-07-26.** It is not on
+    the wire, so it needs a worktree probe, and the shape is not what it looks
+    like: git does NOT report the colliding path. It leaves the directory in place
+    and moves the file side aside, so the unmerged record names
+    `thing~file-side` (an ordinary file) while `thing` is the directory —
+    identical in both merge directions, only the suffix differs (`~file-side` vs
+    `~HEAD`). Probing the record's own path therefore never fires; the detector
+    tests the prefix before the last `~`, on the background refresh, for
+    conflicted entries only. Submodule still outranks it (a submodule checkout is
+    also a directory) and `TextHunksAvailable` is now false for it.
+
+    Worth remembering how this was nearly missed: the first implementation probed
+    the record path, and its end-to-end test asserted *conditionally* ("if git
+    left a conflicted directory, then…"), so it passed while detecting nothing.
+    Reading the actual `git status --porcelain=v2` output for both merge
+    directions is what found it. An end-to-end test for a detector must assert
+    unconditionally, and be shown to fail when the detector is broken.
   - `PatchApplyResultCategory::StaleDiff` — **RESOLVED 2026-07-26.**
     `ClassifyGitApplyFailure` now reads git apply's stderr and splits a
     content/index mismatch (the diff is stale; "refresh the compare tab and try

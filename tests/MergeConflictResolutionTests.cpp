@@ -174,6 +174,63 @@ void TestModeOnlyConflictClassification() {
          "a mode change alongside a real content conflict stays both-modified");
 }
 
+// git's D/F conflict: one side made the path a file, the other a directory. It is
+// the one conflict shape porcelain v2 cannot express — the record just shows a
+// missing stage — so the worktree probe on the background refresh is what
+// distinguishes it, and without it the merge surface offered text hunks for a
+// directory.
+void TestFileDirectoryConflictClassification() {
+  project::GitRepositoryEntry entry;
+  entry.kind = project::GitRepositoryEntryKind::Unmerged;
+  entry.conflicted = true;
+  entry.conflict_kind = project::GitConflictKind::BothAdded;
+  entry.path_is_directory = true;
+
+  const auto metadata = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .repository_entry = &entry,
+      .base_exists = false,
+      .incoming_exists = true,
+      .current_exists = true,
+      .base_content = {},
+      .incoming_content = "file side\n",
+      .current_content = {},
+  });
+  Expect(metadata.kind == MergeFileConflictKind::FileDirectory,
+         "a conflicted path that is a directory on disk is a file/directory conflict");
+  Expect(!metadata.text_hunks_available,
+         "a file/directory conflict must not offer text hunks");
+
+  // A submodule checkout is also a directory; the more specific (and more
+  // actionable) submodule message must win.
+  entry.submodule = true;
+  const auto submodule_wins = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .repository_entry = &entry,
+      .base_exists = true,
+      .incoming_exists = true,
+      .current_exists = true,
+      .base_content = "Subproject commit aaa\n",
+      .incoming_content = "Subproject commit bbb\n",
+      .current_content = "Subproject commit ccc\n",
+  });
+  Expect(submodule_wins.kind == MergeFileConflictKind::Submodule,
+         "a submodule outranks file/directory — its checkout is a directory too");
+
+  // A conflicted path that is an ordinary file is unaffected.
+  entry.submodule = false;
+  entry.path_is_directory = false;
+  const auto ordinary = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .repository_entry = &entry,
+      .base_exists = true,
+      .incoming_exists = true,
+      .current_exists = true,
+      .base_content = "base\n",
+      .incoming_content = "incoming\n",
+      .current_content = "current\n",
+  });
+  Expect(ordinary.kind != MergeFileConflictKind::FileDirectory,
+         "an ordinary conflicted file must not classify as file/directory");
+}
+
 void TestBothAddedClassification() {
   const auto metadata = ClassifyMergeFileConflict(MergeConflictClassificationInput{
       .base_exists = false,
@@ -489,6 +546,8 @@ void TestExternalStaleClearedAfterSelfSave() {
 }  // namespace
 
 void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "MergeConflict/FileDirectoryConflictClassification",
+          TestFileDirectoryConflictClassification);
   AddTest(tests, "MergeConflict/SubmoduleConflictClassification",
           TestSubmoduleConflictClassification);
   AddTest(tests, "MergeConflict/ModeOnlyConflictClassification",

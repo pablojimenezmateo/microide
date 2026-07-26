@@ -161,6 +161,43 @@ project::GitRepositoryState GitRepositoryService::BuildRepositoryState(
   // stayed None forever and the merge resolver's rebase/cherry-pick label was
   // unreachable.
   state.operation_state = project::DetectGitOperationState(request.project_root);
+  // D/F (file-vs-directory) conflicts are the one conflict shape porcelain v2
+  // cannot express, so probe the worktree here — background thread, and only for
+  // the handful of conflicted entries, so a clean repo does no extra I/O.
+  //
+  // git does NOT report the conflicted path itself. It resolves the collision by
+  // leaving the directory in place and moving the file side aside:
+  //
+  //   CONFLICT (file/directory): directory in the way of thing from file-side;
+  //   moving it to thing~file-side instead.
+  //   u UA N... 000000 000000 100644 100644 ... thing~file-side
+  //
+  // so the unmerged record names `thing~file-side` (an ordinary file) while the
+  // directory sits at `thing`. Both merge directions produce that shape — only
+  // the suffix differs (`~file-side` vs `~HEAD`). Probing the record's own path
+  // therefore never fires; the prefix before the last `~` is what to test. The
+  // direct probe is kept as a cheap fallback in case a git version ever reports
+  // the path itself.
+  for (project::GitRepositoryEntry& entry : state.entries) {
+    if (!entry.conflicted) {
+      continue;
+    }
+    const auto is_directory_at = [&request](const std::filesystem::path& relative) {
+      std::error_code error;
+      return std::filesystem::is_directory(request.project_root / relative, error) && !error;
+    };
+    if (is_directory_at(entry.path.relative_path)) {
+      entry.path_is_directory = true;
+      continue;
+    }
+    const std::string text = entry.path.relative_path.generic_string();
+    const std::size_t tilde = text.rfind('~');
+    // `tilde == 0` would leave an empty prefix, which would probe the repo root.
+    if (tilde == std::string::npos || tilde == 0) {
+      continue;
+    }
+    entry.path_is_directory = is_directory_at(std::filesystem::path(text.substr(0, tilde)));
+  }
   state.refreshing = false;
   return state;
 }

@@ -100,6 +100,14 @@ struct GitRepositoryEntry {
   // True when OURS and THEIRS both exist with different modes — the executable-bit
   // conflict git otherwise reports indistinguishably from a content conflict.
   bool stage_modes_differ = false;
+  // True when the worktree path for a CONFLICTED entry is a directory. That is
+  // git's D/F (file-vs-directory) conflict: one side made the path a file, the
+  // other a directory, and git leaves the directory in place while stashing the
+  // file side under a suffixed name. Unlike `submodule` and `stage_modes_differ`
+  // this is NOT on the porcelain wire — porcelain v2 reports the path with a
+  // missing stage and says nothing about the directory — so it is filled in by a
+  // filesystem probe on the background refresh, never in the parser.
+  bool path_is_directory = false;
 };
 
 struct GitRepositoryRefreshError {

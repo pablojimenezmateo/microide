@@ -26,6 +26,62 @@ using microide::workspace::GitSidebarRefreshScope;
 using microide::workspace::GitSidebarState;
 using microide::workspace::OutgoingBaseChoice;
 
+// End-to-end for the D/F probe against a REAL file-vs-directory merge conflict.
+//
+// This test started out asserting conditionally ("if git left a conflicted
+// directory, then...") and passed while detecting nothing, because the first
+// implementation probed the wrong path. git does not report the colliding path:
+// it leaves the directory in place and moves the file side aside, so the record
+// names `thing~file-side` (an ordinary file) while `thing` is the directory. The
+// assertions below are therefore unconditional — a detector that stops firing
+// must fail here, not quietly pass.
+void TestRefreshMarksFileDirectoryConflict() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "seed.txt", "seed\n");
+  CommitAll(repo_path, "base", "base");
+
+  // Branch A turns `thing` into a FILE.
+  RequireGitCommandSuccess(repo_path, {"checkout", "-b", "file-side"}, "branch file-side");
+  WriteFile(repo_path / "thing", "i am a file\n");
+  CommitAll(repo_path, "file", "file");
+
+  // main turns the same path into a DIRECTORY, then merges A.
+  RequireGitCommandSuccess(repo_path, {"checkout", "main"}, "checkout main");
+  std::filesystem::create_directories(repo_path / "thing");
+  WriteFile(repo_path / "thing" / "inner.txt", "i am inside a directory\n");
+  CommitAll(repo_path, "dir", "dir");
+  // Expected to exit non-zero: this merge is the conflict under test.
+  (void)RunGitCommand(repo_path, {"merge", "file-side"});
+
+  Expect(std::filesystem::is_directory(repo_path / "thing"),
+         "git should leave the directory in place for a D/F conflict");
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService service(executor);
+  service.RunRefreshSynchronouslyForTesting(repo_path, GitSidebarRefreshScope::Full,
+                                            OutgoingBaseChoice{}, false);
+  const auto state = service.CurrentState();
+
+  bool saw_conflicted_entry = false;
+  bool saw_directory_conflict = false;
+  for (const auto& entry : state.entries) {
+    if (entry.conflicted) {
+      saw_conflicted_entry = true;
+      if (entry.path_is_directory) {
+        saw_directory_conflict = true;
+      }
+    } else {
+      Expect(!entry.path_is_directory, "the probe must only run for conflicted entries");
+    }
+  }
+  Expect(saw_conflicted_entry, "the D/F merge should leave a conflicted entry");
+  Expect(saw_directory_conflict,
+         "a D/F conflict must be marked path_is_directory — git names the moved-aside "
+         "file side, so the probe has to test the prefix before the `~`");
+}
+
 void TestCurrentStateReturnsSnapshotCopy() {
   static_assert(
       !std::is_reference_v<decltype(std::declval<const GitRepositoryService&>().CurrentState())>,
@@ -441,6 +497,8 @@ void TestResetDoesNotCancelUnrelatedQueuedWork() {
 void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitRepositoryService/ResetDoesNotCancelUnrelatedQueuedWork",
           TestResetDoesNotCancelUnrelatedQueuedWork);
+  AddTest(tests, "GitRepositoryService/RefreshMarksFileDirectoryConflict",
+          TestRefreshMarksFileDirectoryConflict);
   AddTest(tests, "GitRepositoryService/CurrentStateReturnsSnapshotCopy",
           TestCurrentStateReturnsSnapshotCopy);
   AddTest(tests, "GitRepositoryService/CurrentStateReadsDuringRefresh",
