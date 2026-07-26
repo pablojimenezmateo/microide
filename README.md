@@ -524,6 +524,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `command-palette`
 - `colorscheme [name|list]`
 - `toggle-theme`
+- `toggle-fullscreen`
 - `completion`
 - `insert-snippet`
 - `compare [path] [commit-prefix]`

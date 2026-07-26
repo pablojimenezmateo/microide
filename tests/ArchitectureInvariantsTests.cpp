@@ -579,6 +579,7 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
   architecture::RunDescriptorCloseOnExecRuleFixtures();
   architecture::RunTerminalExtractedImplRuleFixtures();
   architecture::RunDirectGitRepositoryRuleFixtures();
+  architecture::RunActionIdReachabilityRuleFixtures();
 }
 
 }  // namespace

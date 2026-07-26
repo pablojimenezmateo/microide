@@ -172,6 +172,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
                std::array<std::string_view, 2>{"reset", {}}, 1),
       MenuSeparator(),
       MenuItem(ActionId::ToggleColorTheme, "Toggle Light/Dark Theme"),
+      MenuItem(ActionId::ToggleFullscreen, "Toggle Full Screen"),
   });
   static const auto kGoItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::OpenCommandPalette, "Command Palette…", "Ctrl+Shift+P"),
@@ -343,6 +344,12 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
   static const auto kBreakpointItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::DebugBreakpointToggleEnabled, "Disable Breakpoint"),
       MenuItem(ActionId::DebugBreakpointEditCondition, "Set Condition…"),
+      // Hit-count breakpoints and logpoints are implemented end-to-end (the
+      // Breakpoint fields, the SetBreakpointHitCondition/SetBreakpointLogMessage
+      // prompts, EditBreakpointModifierFromMenu's cases, and the DAP resend all
+      // exist) but had no menu entry, so neither could be set from the UI.
+      MenuItem(ActionId::DebugBreakpointEditHitCondition, "Set Hit Count…"),
+      MenuItem(ActionId::DebugBreakpointEditLogMessage, "Set Log Message…"),
       MenuItem(ActionId::DebugBreakpointClearCondition, "Clear Condition"),
       MenuSeparator(),
       MenuItem(ActionId::DebugBreakpointRemove, "Remove Breakpoint"),

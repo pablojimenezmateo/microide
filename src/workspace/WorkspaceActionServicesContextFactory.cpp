@@ -530,13 +530,6 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](std::string* error_message) {
                 return RunAllDiscoveredTests(error_message);
               },
-          .request_inline_completion =
-              [](std::string* error_message) {
-                if (error_message != nullptr) {
-                  *error_message = "Inline completion is retired";
-                }
-                return false;
-              },
           .open_compare_picker_for_path =
               [this](const std::filesystem::path& path, const std::string& commit_spec) {
                 OpenComparePickerForPath(path, commit_spec);
@@ -686,6 +679,8 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](float scale) { MakePersistenceCoordinator().ApplyUiScale(scale, true, true); },
           .mark_layout_dirty = [this]() { MarkLayoutDirty(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
+          .request_toggle_fullscreen =
+              [this]() { pending_window_action_ = WindowAction::ToggleFullscreen; },
           .active_terminal_tab = [this]() { return ActiveTerminalTab(); },
           .plugin_runtime_enabled = [this]() { return plugin_runtime_.enabled(); },
           .reload_plugins_for_current_project = [this]() { ReloadPluginsForCurrentProject(); },

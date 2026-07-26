@@ -163,7 +163,6 @@ class KeyInputCoordinator {
     std::function<bool()> apply_selected_completion;
     std::function<bool(std::string*)> show_code_actions_overlay;
     std::function<bool()> execute_selected_code_action;
-    std::function<bool(std::string*)> request_inline_completion;
     std::function<bool()> accept_inline_completion;
     std::function<void()> dismiss_inline_completion;
     std::function<bool(bool)> try_snippet_tab_in_editor;

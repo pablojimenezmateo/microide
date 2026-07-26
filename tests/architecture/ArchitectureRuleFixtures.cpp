@@ -3,6 +3,7 @@
 #include "TestSupport.h"
 #include "architecture/TerminalArchitectureRules.h"
 #include "architecture/WorkspaceCoordinatorArchitectureRules.h"
+#include "architecture/WorkspaceShellArchitectureRules.h"
 
 #include <filesystem>
 
@@ -129,6 +130,67 @@ void RunDirectGitRepositoryRuleFixtures() {
   Expect(CheckNoDirectGitRepositoryInWorkspace(root).violations.empty(),
          "direct-GitRepository rule must accept the allowlisted service TU, reference and "
          "pointer parameters, sibling types, and qualified static calls");
+}
+
+void RunActionIdReachabilityRuleFixtures() {
+  // An ActionId is dispatched and gated by `switch` statements, so an action can
+  // be fully implemented, compile cleanly, appear in three switches, and still be
+  // impossible to invoke because nothing PRODUCES it. Four actions were in that
+  // state: ToggleFullscreen (which reached SDL_SetWindowFullscreen), the two
+  // DebugBreakpointEdit* modifiers (hit-count breakpoints and logpoints had no
+  // menu entry), and the retired InlineCompletion.
+  TemporaryDirectory action_dir;
+  const std::filesystem::path& root = action_dir.path();
+  std::filesystem::create_directories(root / "src/workspace");
+
+  const char* kEnum =
+      "enum class ActionId {\n"
+      "  Reachable,\n"
+      "  Orphan,\n"
+      "  ContextMenuOnly,\n"
+      "  Commented,  // Orphan is named here in a comment only\n"
+      "};\n";
+  WriteFile(root / "src/workspace/WorkspaceActionTypes.h", kEnum);
+  // Too few enumerators: the parse-shape guard must fire rather than silently
+  // reporting every action reachable.
+  Expect(!CheckEveryActionIdIsReachable(root).violations.empty(),
+         "a too-small ActionId parse must fail loudly, not pass vacuously");
+
+  // Pad the enum past the vacuity floor, then give each action a distinct fate.
+  std::string enum_text = "enum class ActionId {\n  Reachable,\n  Orphan,\n  ContextMenuOnly,\n";
+  for (int i = 0; i < 25; ++i) {
+    enum_text += "  Padding" + std::to_string(i) + ",\n";
+  }
+  enum_text += "};\n";
+  WriteFile(root / "src/workspace/WorkspaceActionTypes.h", enum_text);
+
+  std::string uses =
+      "void Menu(){ MenuItem(ActionId::Reachable); }\n"
+      "void Ctx(){ Dispatch(ActionId::ContextMenuOnly); }\n"
+      "void Handle(ActionId id){\n"
+      "  switch (id) {\n"
+      "    case ActionId::Reachable:\n"
+      "    case ActionId::Orphan:\n"
+      "    case ActionId::ContextMenuOnly:\n"
+      "      return;\n"
+      "  }\n"
+      "}\n";
+  for (int i = 0; i < 25; ++i) {
+    uses += "void P" + std::to_string(i) + "(){ Bind(ActionId::Padding" + std::to_string(i) + "); }\n";
+  }
+  WriteFile(root / "src/workspace/Uses.cpp", uses);
+
+  const RuleResult flagged = CheckEveryActionIdIsReachable(root);
+  Expect(flagged.violations.size() == 1,
+         "exactly the action named only in `case` labels must be flagged");
+  Expect(flagged.violations.front().message.find("Orphan") != std::string::npos,
+         "the flagged action must be the orphan, not the menu- or context-menu-produced ones");
+
+  // Positive control: giving the orphan any producer clears it. A context-menu
+  // call site counts, so documented context-menu-only actions need no allowlist.
+  WriteFile(root / "src/workspace/Uses.cpp", uses + "void Fix(){ Dispatch(ActionId::Orphan); }\n");
+  Expect(CheckEveryActionIdIsReachable(root).violations.empty(),
+         "any non-`case` mention makes an action reachable");
 }
 
 }  // namespace microide::tests::architecture

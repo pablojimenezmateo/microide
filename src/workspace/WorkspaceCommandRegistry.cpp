@@ -19,6 +19,11 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Colorscheme", ""},
       ActionSpec{ActionId::ToggleColorTheme, "toggle-theme", "toggle-theme",
                  "Toggle Light/Dark Theme", ""},
+      // No default chord: VS Code binds this to F11, but F11 is already
+      // `debug-step-in` here and this keybinding model has no when-clause to
+      // scope one chord to an active debug session. Menu + command only.
+      ActionSpec{ActionId::ToggleFullscreen, "toggle-fullscreen", "toggle-fullscreen",
+                 "Toggle Full Screen", ""},
       ActionSpec{ActionId::Completion, "completion", "completion", "Completions",
                  "Ctrl+Space"},
       ActionSpec{ActionId::InsertSnippet, "insert-snippet", "insert-snippet", "Insert Snippet…",

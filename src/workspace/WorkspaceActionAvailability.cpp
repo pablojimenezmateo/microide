@@ -93,9 +93,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // invocation.
       return active_viewport != nullptr &&
              LspFeatureAvailable(operations_, "lsp.signature_help.enabled");
-    case ActionId::InlineCompletion:
       return active_viewport != nullptr;
     case ActionId::Colorscheme:
+    case ActionId::ToggleFullscreen:
     case ActionId::ToggleColorTheme:
     case ActionId::Files:
     case ActionId::OpenCommandPalette:

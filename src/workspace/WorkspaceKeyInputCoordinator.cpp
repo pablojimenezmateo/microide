@@ -900,16 +900,6 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               },
           .execute_selected_code_action =
               [this]() { return assist_service_.ExecuteSelectedCodeAction(); },
-          .request_inline_completion =
-              [](std::string* error_message) {
-                // Ghost text is published reactively by plugins; there is no
-                // host-driven manual request. Report unavailable so the action
-                // surfaces a clear message rather than silently doing nothing.
-                if (error_message != nullptr) {
-                  *error_message = "Inline suggestions are provided by plugins";
-                }
-                return false;
-              },
           .accept_inline_completion = [this]() { return AcceptGhostText(); },
           .dismiss_inline_completion = [this]() { DismissGhostText(); },
           .try_snippet_tab_in_editor =

@@ -19,6 +19,7 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckWorkspaceFriends", CheckWorkspaceFriends},
       {"CheckCoordinatorShellConstructors", CheckCoordinatorShellConstructors},
       {"CheckThrowingStoParsers", CheckThrowingStoParsers},
+      {"CheckEveryActionIdIsReachable", CheckEveryActionIdIsReachable},
       {"CheckDapTransportUsesCheckedResponseSeqNarrowing",
        CheckDapTransportUsesCheckedResponseSeqNarrowing},
       {"CheckPerfScenariosUseNonThrowingFilesystemProbes",

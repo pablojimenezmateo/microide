@@ -370,10 +370,6 @@ bool WorkspaceActionContext::RunAllDiscoveredTests(std::string* error_message) {
   return operations_.run_all_discovered_tests(error_message);
 }
 
-bool WorkspaceActionContext::RequestInlineCompletion(std::string* error_message) {
-  return operations_.request_inline_completion(error_message);
-}
-
 bool WorkspaceActionContext::ActiveTabIsCompare() const {
   return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
          state_.focused_group().open_tabs[state_.focused_group().active_tab_index].kind == TabEntry::Kind::Compare;
@@ -1126,6 +1122,12 @@ void WorkspaceActionContext::RequestLiveConfigRedraw() {
   }
   if (operations_.request_window_redraw) {
     operations_.request_window_redraw();
+  }
+}
+
+void WorkspaceActionContext::ToggleWindowFullscreen() {
+  if (operations_.request_toggle_fullscreen) {
+    operations_.request_toggle_fullscreen();
   }
 }
 

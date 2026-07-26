@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <regex>
+#include <set>
 
 namespace microide::tests::architecture {
 
@@ -489,5 +490,115 @@ RuleResult CheckPersistenceFileIoBoundary(const std::filesystem::path& repo_root
 // Blocking on a subprocess from the main thread stalls the event loop.
 // All git/lint subprocesses must be dispatched through ProjectBackgroundExecutor.
 
+
+// Every ActionId must be REACHABLE by a user. An action is dispatched by the
+// executors and gated by the availability table, both of which are `switch`
+// statements — so an action can be fully implemented, compile cleanly, appear in
+// three switches, and still be impossible to invoke because nothing ever
+// *produces* it: no command spec, no keybinding, no menu item, no context-menu
+// call site.
+//
+// That is not hypothetical. `ActionId::ToggleFullscreen` reached
+// Application.cpp's SDL_SetWindowFullscreen call and was unreachable; so were
+// `InlineCompletion` and the two `DebugBreakpointEdit*` actions.
+//
+// "Produced" is deliberately broad: any mention of `ActionId::X` on a line that
+// is not a `case` label counts, so context-menu-only actions (the git sidebar
+// entry actions, which are documented as such and are constructed directly in
+// the mouse coordinators) pass without an allowlist. The rule only catches the
+// case where the ONLY mentions anywhere are `case` labels.
+RuleResult CheckEveryActionIdIsReachable(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "every ActionId is reachable from some user-facing surface";
+  result.hard_fail = true;
+
+  const std::filesystem::path types_header = repo_root / "src/workspace/WorkspaceActionTypes.h";
+  const std::string types_text = ReadText(types_header);
+  const std::size_t enum_at = types_text.find("enum class ActionId");
+  const std::size_t open_brace =
+      enum_at == std::string::npos ? std::string::npos : types_text.find('{', enum_at);
+  const std::size_t close_brace =
+      open_brace == std::string::npos ? std::string::npos : types_text.find('}', open_brace);
+  if (close_brace == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = types_header,
+        .line = 1,
+        .message = "could not locate `enum class ActionId`; this lint's anchor moved and it is "
+                   "now vacuous — repoint it rather than leaving it green",
+    });
+    return result;
+  }
+
+  std::vector<std::string> action_names;
+  {
+    const std::string body = types_text.substr(open_brace + 1, close_brace - open_brace - 1);
+    const std::vector<bool> body_is_code = BuildCodeMask(body);
+    const std::regex name_pattern(R"(\b([A-Z][A-Za-z0-9_]*)\b\s*(?:=[^,]*)?,)");
+    for (std::sregex_iterator it(body.begin(), body.end(), name_pattern), last; it != last; ++it) {
+      const std::size_t start = static_cast<std::size_t>(it->position(1));
+      if (start < body_is_code.size() && !body_is_code[start]) {
+        continue;  // a name inside a comment is not an enumerator
+      }
+      action_names.push_back(it->str(1));
+    }
+  }
+  if (action_names.size() < 20) {
+    result.violations.push_back(Violation{
+        .path = types_header,
+        .line = 1,
+        .message = "parsed only " + std::to_string(action_names.size()) +
+                   " ActionId enumerators; the declaration shape changed and this lint has gone "
+                   "vacuous — fix the scan rather than deleting the rule",
+    });
+    return result;
+  }
+
+  // Collect, per action, whether any non-`case` mention exists anywhere in src/.
+  std::set<std::string> produced;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::filesystem::path extension = entry.path().extension();
+    if (extension != ".cpp" && extension != ".h" && extension != ".inc") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    if (text.find("ActionId::") == std::string::npos) {
+      continue;
+    }
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    const std::regex use_pattern(R"(\bActionId::([A-Za-z0-9_]+)\b)");
+    for (std::sregex_iterator it(text.begin(), text.end(), use_pattern), last; it != last; ++it) {
+      const std::size_t start = static_cast<std::size_t>(it->position());
+      if (start < is_code.size() && !is_code[start]) {
+        continue;
+      }
+      const std::size_t line_start = text.rfind('\n', start) + 1;
+      const std::string prefix = text.substr(line_start, start - line_start);
+      // `case ActionId::X:` is a handler, not a producer. Fall-through groups of
+      // case labels are handled the same way.
+      if (std::regex_search(prefix, std::regex(R"(^\s*case\s*$)"))) {
+        continue;
+      }
+      produced.insert(it->str(1));
+    }
+  }
+
+  for (const std::string& name : action_names) {
+    if (produced.count(name) != 0) {
+      continue;
+    }
+    result.violations.push_back(Violation{
+        .path = types_header,
+        .line = 1,
+        .message = "ActionId::" + name +
+                   " is only ever named in `case` labels — nothing produces it, so it cannot be "
+                   "invoked. Give it a command spec, a keybinding, a menu item, or a context-menu "
+                   "call site; or delete it if the behavior is not wanted",
+    });
+  }
+  return result;
+}
 
 }  // namespace microide::tests::architecture

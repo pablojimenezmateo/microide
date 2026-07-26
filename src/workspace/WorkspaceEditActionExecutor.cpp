@@ -291,13 +291,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       return DispatchResult::Handled;
     }
-    case ActionId::InlineCompletion: {
-      std::string error_message;
-      if (!context_.RequestInlineCompletion(&error_message)) {
-        return reject(error_message.empty() ? "Inline completion unavailable" : error_message);
-      }
-      return DispatchResult::Handled;
-    }
     case ActionId::TestsDiscover: {
       std::string error_message;
       if (!context_.DiscoverTestsForActiveBuffer(&error_message)) {

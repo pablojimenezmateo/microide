@@ -54,7 +54,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::CodeActions:
     case ActionId::Completion:
     case ActionId::InsertSnippet:
-    case ActionId::InlineCompletion:
     case ActionId::TestsDiscover:
       return DispatchResult::Unhandled;
     case ActionId::Colorscheme: {
@@ -70,6 +69,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       context_.ApplyColorscheme(request->name);
       return DispatchResult::Handled;
     }
+    case ActionId::ToggleFullscreen:
+      // The shell only records the request; Application owns the SDL window and
+      // applies it on the next ConsumeWindowAction poll.
+      context_.ToggleWindowFullscreen();
+      return DispatchResult::Handled;
     case ActionId::ToggleColorTheme: {
       // Flip between the built-in light and dark themes; any other active scheme
       // resolves to dark first so the toggle has a predictable two-state feel.

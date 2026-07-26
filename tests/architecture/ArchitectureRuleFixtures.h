@@ -22,4 +22,8 @@ void RunTerminalExtractedImplRuleFixtures();
 // pattern originally matched only a temporary construction.
 void RunDirectGitRepositoryRuleFixtures();
 
+// Negative + positive control for CheckEveryActionIdIsReachable: an action named
+// only in `case` labels cannot be invoked by anyone.
+void RunActionIdReachabilityRuleFixtures();
+
 }  // namespace microide::tests::architecture

@@ -115,7 +115,6 @@ class WorkspaceActionContext {
     std::function<bool(std::string*)> discover_tests_for_active_buffer;
     std::function<bool(const std::vector<std::string>&, std::string*)> run_tests;
     std::function<bool(std::string*)> run_all_discovered_tests;
-    std::function<bool(std::string*)> request_inline_completion;
     std::function<void(const std::filesystem::path&, const std::string&)> open_compare_picker_for_path;
     std::function<void(const project::GitCommitEntry&)> open_comparison;
     // Non-git ("plain") comparison of two arbitrary sides (file/buffer/clipboard).
@@ -197,6 +196,10 @@ class WorkspaceActionContext {
     std::function<void(float)> apply_ui_scale;
     std::function<void()> mark_layout_dirty;
     std::function<void()> request_window_redraw;
+    // Queue the host-level full-screen toggle. The window itself is owned by
+    // Application, which polls WorkspaceShell::ConsumeWindowAction each frame;
+    // the shell only records the request.
+    std::function<void()> request_toggle_fullscreen;
     std::function<TerminalTabState*()> active_terminal_tab;
     std::function<bool()> plugin_runtime_enabled;
     std::function<void()> reload_plugins_for_current_project;
@@ -349,7 +352,6 @@ class WorkspaceActionContext {
   bool DiscoverTestsForActiveBuffer(std::string* error_message);
   bool RunTests(const std::vector<std::string>& test_ids, std::string* error_message);
   bool RunAllDiscoveredTests(std::string* error_message);
-  bool RequestInlineCompletion(std::string* error_message);
   bool ActiveTabIsCompare() const;
   bool ActiveTabIsMerge() const;
   void OpenBufferSearch(std::string query);
@@ -518,6 +520,10 @@ class WorkspaceActionContext {
   bool SetSettingValue(std::string_view id, std::string value);
   // Post a transient host notification toast. No-op when no sink is wired.
   void Notify(NotificationService::Tone tone, std::string message);
+  // Queue the host full-screen toggle (see Operations::request_toggle_fullscreen).
+  // The shell only records it; Application owns the SDL window and applies the
+  // request on its next ConsumeWindowAction poll.
+  void ToggleWindowFullscreen();
 
  private:
   // Mark layout dirty and request a full-window repaint after a live config
