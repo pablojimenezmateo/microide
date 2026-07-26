@@ -72,6 +72,41 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
+### Producer-side reachability sweep (TD-2026-07-27-*)
+
+A follow-on to the 2026-07-26 sweep, asking the mirror-image question: not "is
+this symbol produced?" but "does anything in `src/` ever *populate* this store?"
+A registry whose only writers are its own tests is a subsystem that cannot run in
+the product, however complete and well-tested its read side looks. Two of the
+shell's registries answered no. One was deleted; the other is filed below.
+
+- **[OPEN] TD-2026-07-27-001 — `VirtualDocumentRegistry` has no producer, so a
+  plugin can ask to open a virtual document but nothing can ever create one.**
+  `WorkspaceShellPlugins.cpp` rebuilds seven sibling registries from plugin
+  contributions in one function (formatters, save participants, completions, code
+  actions, tools, SCM providers, annotation providers). Virtual documents are the
+  odd one out: `virtual_document_registry_.Register(...)` is reachable only
+  through the `WorkspaceShell::TestAccess` backdoor, and `PluginHost` has no
+  `ContributedVirtualDocument` kind at all — the contribution type does not exist.
+  The consumer side is fully built and behaves correctly (open-in-tab, reload on
+  change, read-only enforcement, and the plugin `open_file` callback's
+  `virtual://` branch), so `GetDocument` simply always returns nullptr and the
+  plugin's `open_file` returns a bare `false` with no diagnostic.
+  NOT deleted, unlike the review-comments registry: this read side is correct and
+  covered by shell-level tests, so removing it would discard working code that is
+  one contribution kind away from shipping. Closing it means designing a plugin
+  API (`ctx.virtual_documents` or similar) plus its lifetime/ownership rules,
+  which is a feature decision rather than a missing wire — hence filed, not fixed.
+  At minimum the `open_file` virtual-document branch should report *why* it
+  failed instead of returning a silent false.
+  Files: `src/workspace/WorkspaceVirtualDocument.*`,
+  `src/workspace/WorkspaceShellPlugins.cpp`,
+  `src/workspace/WorkspaceTabCoordinatorShellBridge.cpp`.
+
+- **[FIXED 2026-07-27] `ReviewCommentsRegistry` was unreachable and is removed.**
+  Same sweep, opposite verdict — see the superseded TD-2026-07-17A-063 entry
+  below for the detail.
+
 ### Reachability sweep (TD-2026-07-26-*)
 
 Two related passes. The first treated the architecture lint itself as code under
