@@ -71,8 +71,14 @@ PatchApplyResultCategory ClassifyGitApplyFailure(std::string_view git_output) {
   // A corrupt / unparseable patch is checked FIRST: git reports the content
   // mismatch phrasings alongside it in some modes, and misreading our own bad
   // patch as "your diff is stale" would send the user to refresh forever.
+  // These phrasings were captured from real `git apply` runs (see the unit test),
+  // not guessed. "No valid patches in input" is what git says for wholly
+  // unparseable input; it previously matched nothing here and only landed on
+  // PatchDidNotApply via the fallback, which would have silently become
+  // "your diff is stale" if the fallback were ever changed.
   if (mentions("corrupt patch") || mentions("unrecognized input") ||
-      mentions("patch fragment without header") || mentions("new file with no content")) {
+      mentions("No valid patches in input") || mentions("patch fragment without header") ||
+      mentions("new file with no content")) {
     return PatchApplyResultCategory::PatchDidNotApply;
   }
   // git apply's content/index mismatch vocabulary. `does not match index` is the

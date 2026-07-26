@@ -213,7 +213,9 @@ void TestPatchStaleGenerationCategory() {
 void TestClassifyGitApplyFailureSeparatesStaleFromCorrupt() {
   using microide::project::ClassifyGitApplyFailure;
 
-  // Content/index mismatch: the diff is stale.
+  // Content/index mismatch: the diff is stale. The first two are verbatim from a
+  // real `git apply` of a patch whose target moved (both the worktree and the
+  // --cached form print exactly these two lines).
   for (const std::string_view stale : {
            "error: patch failed: src/main.cpp:12\nerror: src/main.cpp: patch does not apply\n",
            "error: src/main.cpp: does not match index\n",
@@ -226,7 +228,11 @@ void TestClassifyGitApplyFailureSeparatesStaleFromCorrupt() {
   }
 
   // A patch we generated badly is not staleness — refreshing would loop forever.
+  // "corrupt patch at line N" and "No valid patches in input" are verbatim from
+  // real `git apply` runs (a truncated hunk and wholly unparseable input).
   for (const std::string_view corrupt : {
+           "error: corrupt patch at line 5\n",
+           "error: No valid patches in input (allow with \"--allow-empty\")\n",
            "fatal: corrupt patch at line 7\n",
            "error: unrecognized input\n",
            "error: patch fragment without header at line 3\n",
@@ -1167,6 +1173,8 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
                    TestCopyFilePatchWholeFileIsRealUnifiedDiffAndApplies});
   tests.push_back({"PatchApply/CopyPatchAddDeleteSpacesNoNewline",
                    TestCopyPatchAppliesForAddDeleteSpacesAndNoNewline});
+  tests.push_back({"PatchApply/ClassifyGitApplyFailureSeparatesStaleFromCorrupt",
+                   TestClassifyGitApplyFailureSeparatesStaleFromCorrupt});
   tests.push_back({"PatchApply/HeaderQuotesUnsafePaths", TestPatchHeaderQuotesUnsafePaths});
   tests.push_back({"PatchApply/RequestDoesNotCopyModel", TestPatchApplyRequestDoesNotCopyModel});
   tests.push_back({"PatchApply/LineScopeExcludesExclusiveEndLine",
