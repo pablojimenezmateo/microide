@@ -247,6 +247,34 @@ Still open from this sweep:
   (whole-file staging goes through `git add` / `GitStagePath`, never the patch
   applier).
 
+- **TD-2026-07-26-006 — the DAP end-to-end test stops at the handshake; the
+  launch -> breakpoint -> stopped cycle is still only stub-covered. OPEN.**
+  `DapRealAdapterE2ETests.cpp` drives a real gdb through initialize, capabilities,
+  a `threads` round trip and disconnect. Everything past that — launch, breakpoint
+  binding, stop events, stepping, variables — is still exercised only by
+  stub-mode tests (85 of them), i.e. against a fake we wrote ourselves. That is
+  the gap that hid the pending-breakpoint tint bug.
+
+  The protocol sequence was verified by hand against gdb 17.2 and is recorded
+  here so a follow-up does not have to rediscover it:
+
+  1. `initialize` -> success + capabilities, then an `initialized` event.
+  2. `setBreakpoints` BEFORE launch -> success, but
+     `{"id":1,"verified":false,"reason":"pending"}` (symbols not loaded yet).
+  3. `launch {"program": ...}` -> success; `process` and `thread` events.
+  4. `configurationDone` -> success.
+  5. Several `breakpoint` events, `reason:"changed"`, each with
+     `verified:true` and an `instructionReference` (the address changes as PIE
+     relocation resolves) — this is what clears the pending state.
+  6. `stopped` with `{"reason":"breakpoint","hitBreakpointIds":[1],
+     "allThreadsStopped":true}`.
+
+  Not added yet because it needs a compiled debuggee (a gcc availability gate on
+  top of the gdb one) and generous timeouts; a flaky end-to-end test that spawns
+  gcc + gdb + a debuggee on every CI run would cost more than it pays. Gate it the
+  same way the clangd and gdb suites are gated, and prove it fails when the
+  behaviour regresses before landing it.
+
 - **TD-2026-07-26-005 — `WorkspaceShell/ReplaceAllReadsOnlyMatchedFiles` is a
   rare flake. OPEN (observed once; not reproducible on demand).** Seen failing a
   single time during a full parallel `ctest`, then green across 31 further runs
