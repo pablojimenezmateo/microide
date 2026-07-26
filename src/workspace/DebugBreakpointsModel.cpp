@@ -7,6 +7,27 @@ namespace microide::workspace {
 
 namespace {
 
+// DAP distinguishes two unverified states, and conflating them is a UI lie.
+// `Breakpoint.reason` is "pending" — "might be verified in the future, but the
+// adapter cannot verify it in the current state" — or "failed" — "not able to be
+// verified, and the adapter does not believe it can be verified without
+// intervention". Only the latter is a failure.
+//
+// This matters for the most ordinary debugging flow there is. gdb answers
+// `setBreakpoints` sent BEFORE launch with `verified:false, reason:"pending"`
+// (symbols are not loaded yet), and that breakpoint then binds and hits — verified
+// against gdb 17.2, which reports `hitBreakpointIds` for exactly such a
+// breakpoint. Painting it in the warning tint made every pre-launch gdb breakpoint
+// look broken while working perfectly.
+bool UnverifiedReasonIsFailure(std::string_view reason) {
+  return reason != "pending";
+}
+
+}  // namespace
+
+
+namespace {
+
 bool Contains(const std::vector<std::string>& ids, const std::string& id) {
   return std::find(ids.begin(), ids.end(), id) != ids.end();
 }
@@ -155,9 +176,12 @@ void DebugBreakpointsModel::Rebuild(
       const bool adapter_responded =
           fn.verified || fn.adapter_id != 0 || !fn.verify_message.empty();
       if (adapter_responded && !fn.verified) {
-        row.failed = true;
         const std::string reason =
             !fn.verify_message.empty() ? fn.verify_message : "unverified";
+        // Still surface the reason in the muted trailer either way — the user
+        // should see "pending" — but only tint the row as a failure when the
+        // adapter says it genuinely could not bind it.
+        row.failed = UnverifiedReasonIsFailure(reason);
         row.secondary = row.secondary.empty() ? reason : (row.secondary + " — " + reason);
       }
       rows_.push_back(std::move(row));
@@ -193,9 +217,9 @@ void DebugBreakpointsModel::Rebuild(
         const bool adapter_responded = breakpoint.verified || breakpoint.adapter_id != 0 ||
                                        !breakpoint.verify_message.empty();
         if (adapter_responded && !breakpoint.verified) {
-          row.failed = true;
           const std::string reason =
               !breakpoint.verify_message.empty() ? breakpoint.verify_message : "unverified";
+          row.failed = UnverifiedReasonIsFailure(reason);
           row.secondary = row.secondary.empty() ? reason : (row.secondary + " — " + reason);
         }
         row.path = file.path;

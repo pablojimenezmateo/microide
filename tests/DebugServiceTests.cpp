@@ -2163,6 +2163,66 @@ void TestDebugSessionExceptionFiltersSentOnLaunchAndToggle() {
 
 // Pure DebugBreakpointsModel behavior (no adapter): default seeding, toggle,
 // EnabledAdvertisedIds intersection, and Rebuild's prebuilt rows.
+// DAP has two unverified states and they mean opposite things to a user.
+// `reason: "pending"` is "might be verified in the future" — gdb answers a
+// setBreakpoints sent BEFORE launch that way, and the breakpoint then binds and
+// hits. `reason: "failed"` is "cannot be verified without intervention". Marking
+// both as failed painted every pre-launch gdb breakpoint in the warning tint
+// while it worked perfectly.
+void TestDebugBreakpointsModelPendingIsNotFailed() {
+  using microide::workspace::DebugBreakpointsModel;
+  using microide::workspace::DebugBreakpointRowView;
+
+  const std::filesystem::path path = "/proj/prog.c";
+  editor::BreakpointStore store;
+  store.Set(path, 2);
+  store.Set(path, 7);
+  editor::FunctionBreakpointStore function_store;
+
+  // Exactly what gdb 17.2 reports for a pre-launch setBreakpoints (the `reason`
+  // field, which DapProtocol maps onto `message`), plus a genuine failure.
+  // NOTE the line bases differ: VerifiedBreakpoint::line is 1-BASED (it echoes the
+  // requested DAP line) while Breakpoint::line is 0-based, so verifying the
+  // breakpoints set at 2 and 7 above means sending 3 and 8. Getting this wrong
+  // silently matches nothing, leaves the rows unverified, and makes a
+  // `!row.failed` assertion pass for the wrong reason — which is why the
+  // trailer-text assertions below matter as much as the tint ones.
+  store.ApplyVerification(path, {
+                                    editor::VerifiedBreakpoint{
+                                        .id = 1, .verified = false, .line = 3,
+                                        .message = "pending"},
+                                    editor::VerifiedBreakpoint{
+                                        .id = 2, .verified = false, .line = 8,
+                                        .message = "failed"},
+                                });
+
+  DebugBreakpointsModel model;
+  model.Rebuild(store, function_store);
+
+  bool saw_pending = false;
+  bool saw_failed = false;
+  for (const DebugBreakpointRowView& row : model.Rows()) {
+    if (row.kind != DebugBreakpointRowView::Kind::Breakpoint) {
+      continue;
+    }
+    if (row.line == 2) {
+      saw_pending = true;
+      Expect(!row.failed,
+             "a `pending` breakpoint must not be tinted as failed — gdb reports every "
+             "pre-launch breakpoint that way and it still binds");
+      Expect(row.secondary.find("pending") != std::string::npos,
+             "the pending reason should still be surfaced in the muted trailer");
+    }
+    if (row.line == 7) {
+      saw_failed = true;
+      Expect(row.failed, "a `failed` breakpoint must still be tinted as failed");
+      Expect(row.secondary.find("failed") != std::string::npos,
+             "the failure reason should be surfaced in the trailer too");
+    }
+  }
+  Expect(saw_pending && saw_failed, "both breakpoint rows should be present");
+}
+
 void TestDebugBreakpointsModelBehavior() {
   using microide::workspace::DebugBreakpointsModel;
   using microide::workspace::DebugBreakpointRowView;
@@ -3371,6 +3431,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/FunctionBreakpointStoreApplyVerificationManyNames",
           TestFunctionBreakpointStoreApplyVerificationManyNames);
   AddTest(tests, "DebugService/GdbRealFunctionBreakpointsE2E", TestGdbRealFunctionBreakpointsE2E);
+  AddTest(tests, "DebugService/BreakpointsModelPendingIsNotFailed",
+          TestDebugBreakpointsModelPendingIsNotFailed);
   AddTest(tests, "DebugService/BreakpointsModelBehavior", TestDebugBreakpointsModelBehavior);
   AddTest(tests, "DebugService/SessionVariablesTreeAndSetVariable",
           TestDebugSessionVariablesTreeAndSetVariable);
