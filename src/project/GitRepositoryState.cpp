@@ -111,6 +111,14 @@ GitOperationStateKind DetectGitOperationState(const std::filesystem::path& repos
   // Precedence mirrors git's own wt_status_get_state: a merge is reported by
   // MERGE_HEAD, a rebase by either of its two state directories, and the
   // sequencer operations by their respective HEAD files.
+  //
+  // All five marker names were verified against real git, and so was the
+  // precedence: a rebase leaves `rebase-merge/` + AUTO_MERGE + MERGE_MSG, a
+  // revert leaves REVERT_HEAD + AUTO_MERGE + MERGE_MSG, and a cherry-pick leaves
+  // CHERRY_PICK_HEAD — none of them leave MERGE_HEAD. So checking MERGE_HEAD
+  // first cannot shadow the others, even though the merge-ish AUTO_MERGE and
+  // MERGE_MSG files are present in every case. Those two are deliberately NOT
+  // probed for exactly that reason.
   if (present("MERGE_HEAD")) {
     return GitOperationStateKind::Merge;
   }

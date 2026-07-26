@@ -375,6 +375,14 @@ void TestDetectGitOperationState() {
   Expect(DetectGitOperationState(temp_dir.path() / "missing") == GitOperationStateKind::None,
          "a path with no git directory reports no in-flight operation");
 
+  // Real git leaves AUTO_MERGE and MERGE_MSG behind during a rebase, revert AND
+  // cherry-pick. Plant them up front: they must never be mistaken for a merge,
+  // which is why MERGE_HEAD (and not those) is the merge marker.
+  WriteFile(root / ".git/AUTO_MERGE", "0123456789abcdef0123456789abcdef01234567\n");
+  WriteFile(root / ".git/MERGE_MSG", "Merge branch 'side'\n");
+  Expect(DetectGitOperationState(root) == GitOperationStateKind::None,
+         "AUTO_MERGE/MERGE_MSG alone are not an in-flight merge");
+
   WriteFile(root / ".git/BISECT_LOG", "log\n");
   Expect(DetectGitOperationState(root) == GitOperationStateKind::Bisect,
          "BISECT_LOG reports a bisect");
