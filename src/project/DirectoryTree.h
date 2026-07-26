@@ -91,7 +91,11 @@ class DirectoryTree {
                        int depth,
                        const std::shared_ptr<const IgnoreMatcher>& matcher,
                        SymlinkLoopGuard& loop_guard);
-  GitFileStatus EntryGitStatus(const std::filesystem::path& path) const;
+  // Resolve a tree entry's git badge. `scratch` is a caller-owned buffer that the
+  // key is built into: this runs once per entry on every git refresh, so a fresh
+  // string (let alone the lexically_relative + lexically_normal + generic_string
+  // chain it replaced) per entry is the whole cost of the sweep.
+  GitFileStatus EntryGitStatus(const std::filesystem::path& path, std::string& scratch) const;
   bool IsExpanded(const std::filesystem::path& path) const;
   // Drop expanded/collapsed keys whose directory no longer exists on disk, so the
   // sets do not grow unbounded across a session and a deleted-then-recreated dir
@@ -109,6 +113,9 @@ class DirectoryTree {
   static std::string NormalizePathKey(const std::filesystem::path& path);
 
   std::filesystem::path root_;
+  // root_ in generic ('/'-separated) form, cached because every git-badge lookup
+  // strips it as a prefix. Kept in lockstep with root_ (SetRoot is its only writer).
+  std::string root_generic_;
   bool follow_out_of_root_symlinks_ = false;
   std::vector<std::string> exclude_globs_;
   std::vector<TreeEntry> entries_;

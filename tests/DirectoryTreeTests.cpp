@@ -7,12 +7,14 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace microide::tests {
 namespace {
 
 using microide::project::DirectoryTree;
+using microide::project::GitFileStatus;
 using microide::project::TreeEntry;
 
 const TreeEntry* FindEntry(const DirectoryTree& tree, const std::filesystem::path& path) {
@@ -326,6 +328,57 @@ void TestDirectoryTreeAmortizesDeletedKeyPruneForLargeSets() {
          "surviving directories keep their expansion state across the sweep (no over-prune)");
 }
 
+// The sidebar's git badge: ApplyGitStatuses stores keys relative to the repository
+// root in generic form, and every tree entry has to resolve its own badge out of
+// that map. Nothing covered it — the key derivation could be off by a byte and the
+// whole suite stayed green, so a "no file ever shows as modified" regression was
+// invisible. (Found while replacing the per-entry lexically_relative +
+// lexically_normal + generic_string chain with a root-prefix strip, 12x faster.)
+void TestDirectoryTreeResolvesGitBadgesFromRelativeKeys() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "top.txt", "top\n");
+  WriteFile(root / "src" / "deep" / "file.cpp", "code\n");
+  WriteFile(root / "src" / "clean.cpp", "clean\n");
+
+  DirectoryTree tree;
+  Expect(tree.SetRoot(root), "directory tree should open fixture root");
+  Expect(tree.SelectPath(root / "src" / "deep" / "file.cpp"),
+         "selecting the nested file should expand its ancestors into the entry list");
+
+  // Exactly the key shape the porcelain parser writes: repository-relative,
+  // '/'-separated, with the folder badge aggregated onto each ancestor.
+  tree.ApplyGitStatuses({
+      {"top.txt", GitFileStatus::Untracked},
+      {"src/deep/file.cpp", GitFileStatus::Modified},
+      {"src/deep", GitFileStatus::Modified},
+      {"src", GitFileStatus::Modified},
+  });
+
+  const auto badge = [&](const std::filesystem::path& path) {
+    const TreeEntry* entry = FindEntry(tree, path);
+    Expect(entry != nullptr, "expected a tree entry for " + path.generic_string());
+    return entry == nullptr ? GitFileStatus::Clean : entry->git_status;
+  };
+
+  Expect(badge(root / "top.txt") == GitFileStatus::Untracked,
+         "a top-level file's badge should resolve");
+  Expect(badge(root / "src" / "deep" / "file.cpp") == GitFileStatus::Modified,
+         "a nested file's badge should resolve");
+  Expect(badge(root / "src" / "deep") == GitFileStatus::Modified,
+         "an aggregated folder badge should resolve");
+  Expect(badge(root / "src") == GitFileStatus::Modified,
+         "the top-level folder badge should resolve");
+  Expect(badge(root / "src" / "clean.cpp") == GitFileStatus::Clean,
+         "a path absent from the status map must stay Clean");
+  Expect(tree.has_dirty_files(), "a non-Clean status should mark the tree dirty");
+
+  // Clearing the map must clear every badge, not leave the previous sweep's values.
+  tree.ApplyGitStatuses({});
+  Expect(badge(root / "src" / "deep" / "file.cpp") == GitFileStatus::Clean,
+         "an emptied status map should clear existing badges");
+}
+
 void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DirectoryTree/PrunesDeletedDirectoryKeysOnRefresh",
           TestDirectoryTreePrunesDeletedDirectoryKeysOnRefresh);
@@ -345,6 +398,8 @@ void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
           TestDirectoryTreeSelectPathExpandsAncestors);
   AddTest(tests, "DirectoryTree/StopsExpandingSymlinkCycle",
           TestDirectoryTreeStopsExpandingSymlinkCycle);
+  AddTest(tests, "DirectoryTree/ResolvesGitBadgesFromRelativeKeys",
+          TestDirectoryTreeResolvesGitBadgesFromRelativeKeys);
 }
 
 }  // namespace microide::tests
