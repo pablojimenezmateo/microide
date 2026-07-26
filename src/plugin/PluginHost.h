@@ -390,26 +390,6 @@ class PluginHost {
     std::vector<std::string> scopes;
   };
 
-  struct ContributedAiProvider {
-    std::string id;
-    std::string label;
-    std::string type;  // "cloud", "local", "external"
-    std::vector<std::string> models;
-    std::string runtime;            // "sidecar", "openai_compat", "anthropic_messages"
-    std::string base_url;
-    std::string default_model;
-    std::string plugin_id;
-  };
-
-  struct ContributedExternalAgent {
-    std::string id;
-    std::string label;
-    std::string protocol;  // "acp", "stdio", "http"
-    std::vector<std::string> command;
-    std::vector<std::string> capabilities;
-    std::string plugin_id;
-  };
-
   // Plugin-contributed bracket pair set for a single language. The host merges
   // these on top of built-in defaults during `WorkspaceLanguageContract::Refresh`.
   struct ContributedBracketSet {

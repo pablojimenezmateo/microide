@@ -368,44 +368,6 @@ bool RegisterAuthProvider(lua_State* state,
   return true;
 }
 
-bool RegisterAiProvider(lua_State* state,
-                        std::string_view plugin_id,
-                        std::vector<PluginHost::ContributedAiProvider>* providers,
-                        std::string* error_message) {
-  if (providers == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(providers, error_message)) {
-    return false;
-  }
-  registration_parsers::AiProviderRegistration registration;
-  if (!registration_parsers::ParseAiProviderRegistration(state, std::string(plugin_id), &registration,
-                                                         error_message)) {
-    return false;
-  }
-  providers->push_back(std::move(registration.contributed));
-  return true;
-}
-
-bool RegisterExternalAgent(lua_State* state,
-                           std::string_view plugin_id,
-                           std::vector<PluginHost::ContributedExternalAgent>* agents,
-                           std::string* error_message) {
-  if (agents == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(agents, error_message)) {
-    return false;
-  }
-  registration_parsers::ExternalAgentRegistration registration;
-  if (!registration_parsers::ParseExternalAgentRegistration(state, std::string(plugin_id),
-                                                            &registration, error_message)) {
-    return false;
-  }
-  agents->push_back(std::move(registration.contributed));
-  return true;
-}
-
 bool RegisterBracketSet(lua_State* state,
                         std::string_view plugin_id,
                         std::vector<PluginHost::ContributedBracketSet>* sets,

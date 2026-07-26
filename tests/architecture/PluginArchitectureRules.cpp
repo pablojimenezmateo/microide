@@ -445,21 +445,32 @@ RuleResult CheckCoreIsNetworkFree(const std::filesystem::path& repo_root) {
 }
 
 RuleResult CheckNoUnwiredMcpScaffolding(const std::filesystem::path& repo_root) {
-  // The MCP-tool contribution scaffolding (ContributedMcpTool, McpToolRuntime,
-  // McpToolRegistration, ParseMcpToolRegistration, RegisterMcpTool, InvokeMcpTool)
-  // was a complete but never-dispatched stub: it duplicated the shape of the live
-  // contribution/query/teardown machinery without being wired into the Lua API
-  // registry or host storage, so it could never run. It was deleted as dead code.
-  // This guards against silently re-adding an unwired MCP stub; a real MCP feature
-  // is new work (registry verb + host storage + teardown), not a resurrection.
+  // Two contribution stubs have now been deleted for the same reason: each was a
+  // complete-looking struct + parser + Register* that duplicated the shape of the
+  // live contribution/query/teardown machinery, but was never wired into the Lua
+  // API registry or host storage — so no plugin could reach it and nothing could
+  // read it. They cost real maintenance (every plugin-wide sweep audited them)
+  // while being unreachable at runtime.
+  //
+  //  * MCP tools: ContributedMcpTool, McpToolRuntime, McpToolRegistration,
+  //    ParseMcpToolRegistration, RegisterMcpTool, InvokeMcpTool.
+  //  * AI providers / external agents: ContributedAiProvider,
+  //    ContributedExternalAgent, AiProviderRegistration, ExternalAgentRegistration,
+  //    ParseAiProviderRegistration, ParseExternalAgentRegistration,
+  //    RegisterAiProvider, RegisterExternalAgent.
+  //
+  // This guards against silently re-adding either. A real feature in these areas
+  // is new work — Lua-API registry verb, host runtime storage, teardown wiring,
+  // and a consumer — not a resurrection of the stub.
   RuleResult result;
-  result.label = "no unwired MCP-tool scaffolding in src/plugin";
+  result.label = "no unwired contribution scaffolding in src/plugin";
   result.hard_fail = true;
   const std::filesystem::path plugin_dir = repo_root / "src/plugin";
   if (!std::filesystem::exists(plugin_dir)) {
     return result;
   }
-  const std::regex mcp_token(R"(\b(Mcp|McpTool|RegisterMcpTool|InvokeMcpTool)\b)");
+  const std::regex stub_token(
+      R"(\b(Mcp|McpTool|RegisterMcpTool|InvokeMcpTool|AiProvider|ExternalAgent)\b)");
   for (const auto& entry : std::filesystem::recursive_directory_iterator(plugin_dir)) {
     if (!entry.is_regular_file()) {
       continue;
@@ -470,10 +481,10 @@ RuleResult CheckNoUnwiredMcpScaffolding(const std::filesystem::path& repo_root) 
     }
     const std::string text = ReadText(entry.path());
     AppendCodeMaskRegexViolations(
-        result, entry.path(), text, mcp_token,
-        "the never-dispatched MCP-tool contribution stub was deleted as dead code; do not "
-        "re-add unwired MCP scaffolding. A real MCP feature needs a Lua-API registry verb, "
-        "host runtime storage, and teardown wiring.");
+        result, entry.path(), text, stub_token,
+        "a never-dispatched contribution stub (MCP tool / AI provider / external agent) was "
+        "deleted as dead code; do not re-add unwired scaffolding. A real feature needs a "
+        "Lua-API registry verb, host runtime storage, teardown wiring, and a consumer.");
   }
   return result;
 }

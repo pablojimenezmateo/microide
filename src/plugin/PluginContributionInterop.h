@@ -106,16 +106,6 @@ bool RegisterAuthProvider(lua_State* state,
                           std::vector<runtime_types::AuthProviderRuntime>* runtimes,
                           std::string* error_message);
 
-bool RegisterAiProvider(lua_State* state,
-                        std::string_view plugin_id,
-                        std::vector<PluginHost::ContributedAiProvider>* providers,
-                        std::string* error_message);
-
-bool RegisterExternalAgent(lua_State* state,
-                           std::string_view plugin_id,
-                           std::vector<PluginHost::ContributedExternalAgent>* agents,
-                           std::string* error_message);
-
 bool RegisterBracketSet(lua_State* state,
                         std::string_view plugin_id,
                         std::vector<PluginHost::ContributedBracketSet>* sets,

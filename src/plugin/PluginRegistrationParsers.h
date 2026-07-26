@@ -97,14 +97,6 @@ struct AuthProviderRegistration {
   bool has_runtime = false;
 };
 
-struct AiProviderRegistration {
-  PluginHost::ContributedAiProvider contributed;
-};
-
-struct ExternalAgentRegistration {
-  PluginHost::ContributedExternalAgent contributed;
-};
-
 struct BracketSetRegistration {
   PluginHost::ContributedBracketSet contributed;
 };
@@ -212,16 +204,6 @@ bool ParseAuthProviderRegistration(lua_State* state,
                                    const std::string& plugin_id,
                                    AuthProviderRegistration* out,
                                    std::string* error_message);
-
-bool ParseAiProviderRegistration(lua_State* state,
-                                 const std::string& plugin_id,
-                                 AiProviderRegistration* out,
-                                 std::string* error_message);
-
-bool ParseExternalAgentRegistration(lua_State* state,
-                                    const std::string& plugin_id,
-                                    ExternalAgentRegistration* out,
-                                    std::string* error_message);
 
 bool ParseBracketSetRegistration(lua_State* state,
                                  const std::string& plugin_id,
