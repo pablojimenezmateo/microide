@@ -112,6 +112,12 @@ void FileFinder::Refresh() {
   };
   std::vector<RankedRef> ranked_refs;
   std::vector<std::size_t> matched_indices;
+  // The match set is only kept as a narrowing base for the NEXT keystroke, and an
+  // empty query is never a valid base (its result excludes recents, and
+  // has_last_match_ below stays false for it). Recording it anyway meant opening
+  // the finder — where the query IS empty — built and immediately discarded one
+  // std::size_t per indexed file, on the UI thread, for every large repo.
+  const bool track_match_set = !lower_query.empty();
   const auto consider = [&](std::size_t entry_index) {
     const CachedFileEntry& entry = cached_entries_[entry_index];
     if (!recent_shown.empty() && recent_shown.count(entry.path_string) != 0) {
@@ -121,7 +127,9 @@ void FileFinder::Refresh() {
     if (score == std::numeric_limits<int>::max()) {
       return;
     }
-    matched_indices.push_back(entry_index);
+    if (track_match_set) {
+      matched_indices.push_back(entry_index);
+    }
     ranked_refs.push_back(RankedRef{entry_index, score});
   };
 
