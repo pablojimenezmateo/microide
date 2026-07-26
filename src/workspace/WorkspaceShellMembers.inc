@@ -2057,7 +2057,6 @@
   WorkspaceThemeRegistry theme_registry_;
   WorkspaceFileIconRegistry file_icon_registry_;
   VirtualDocumentRegistry virtual_document_registry_;
-  ReviewCommentsRegistry review_comments_registry_;
   PersistenceService persistence_service_;
   RecentsService recents_service_;
   LayoutModeService layout_mode_service_;

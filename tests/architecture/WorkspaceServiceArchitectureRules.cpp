@@ -67,6 +67,15 @@ RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path&
   // is unaffected — these only match an std::string construction adjacent to `+`.
   const std::regex concat_lhs_pattern(R"(std::string\s*\([^)]*\)\s*\+)");
   const std::regex concat_rhs_pattern(R"(\+\s*std::string\s*\()");
+  // std::filesystem::path -> std::string conversion. Every one of these returns a
+  // FRESH std::string, so it is a per-frame (often per-row) allocation, but none of
+  // the patterns above name it: the ban on std::to_string / std::format / string
+  // concat let `viewport.path().generic_string()` through untouched. Two render TUs
+  // were doing exactly that. The normalized form is already cached per document as
+  // TextViewport::path_key() (editor::NormalizedPathKey), and any other render text
+  // belongs in RenderViewModelBuilder.
+  const std::regex path_to_string_pattern(
+      R"(\.\s*(generic_string|generic_u8string|u8string|string)\s*\(\s*\))");
   for (const auto& path : render_files) {
     if (!std::filesystem::exists(path)) {
       continue;
@@ -85,6 +94,10 @@ RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path&
         result, path, text, concat_lhs_pattern,
         "render TU must not build concatenated strings in the hot path; measure across "
         "segments or compute the string in RenderViewModelBuilder");
+    AppendCodeMaskRegexViolations(
+        result, path, text, path_to_string_pattern,
+        "render TU must not convert a path to a string (each call allocates); use the "
+        "cached TextViewport::path_key() or precompute the text in RenderViewModelBuilder");
     AppendCodeMaskRegexViolations(
         result, path, text, concat_rhs_pattern,
         "render TU must not build concatenated strings in the hot path; measure across "

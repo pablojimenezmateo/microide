@@ -40,7 +40,6 @@
 #include "workspace/SettingsOverlayService.h"
 #include "workspace/CompareTabReview.h"
 #include "workspace/WorkspacePersistenceFormat.h"
-#include "workspace/WorkspaceReviewComments.h"
 #include "workspace/WorkspaceSettingsRegistry.h"
 #include "workspace/WorkspaceTabState.h"
 
@@ -87,63 +86,6 @@ void RunAssistRankedUnionMerge(ScenarioContext& context) {
   });
 }
 
-// ---- 063: ReviewCommentsRegistry per-URI marker index ----------------------
-//
-// The inline-review render pass resolves each visible document's markers via
-// MarkersForUri, then tests individual lines with HasMarkerAtLine. The fix made
-// IndexForUri non-inserting (a marker-free document does not grow the cache) and
-// RebuildIndices a single O(comments+threads) pass. This benches a marker sweep
-// over many documents -- including marker-free ones -- so a regression to the
-// old per-first-seen-URI full rescan (or the empty-URI cache inserts) shows up
-// as an allocation / wall blow-up.
-void RunReviewCommentsRegistryLookup(ScenarioContext& context) {
-  workspace::ReviewCommentsRegistry registry;
-  constexpr int kUris = 300;
-  constexpr int kCommentsPerUri = 20;
-  std::vector<std::string> uris;
-  uris.reserve(kUris);
-  for (int u = 0; u < kUris; ++u) {
-    std::string uri = "file:///repo/src/module_" + std::to_string(u) + ".cpp";
-    uris.push_back(uri);
-    for (int c = 0; c < kCommentsPerUri; ++c) {
-      workspace::ReviewComment comment;
-      comment.id = "c_" + std::to_string(u) + "_" + std::to_string(c);
-      comment.uri = uri;
-      comment.line = c * 7 + 1;
-      comment.author = "reviewer";
-      comment.body = "needs a second look here";
-      registry.AddComment(comment);
-    }
-  }
-  // Half the swept URIs carry no markers at all -- these must stay out of the
-  // cache (non-inserting IndexForUri), which is the crux of the fix.
-  std::vector<std::string> marker_free;
-  marker_free.reserve(kUris);
-  for (int u = 0; u < kUris; ++u) {
-    marker_free.push_back("file:///repo/other/blank_" + std::to_string(u) + ".cpp");
-  }
-
-  context.Measure("review_comments.marker_sweep", [&]() {
-    volatile int hits = 0;
-    for (int iter = 0; iter < 30; ++iter) {
-      for (const std::string& uri : uris) {
-        const auto markers = registry.MarkersForUri(uri);
-        if (markers) {
-          for (int line = 1; line <= 140; line += 1) {
-            hits += markers.HasMarkerAtLine(line) ? 1 : 0;
-          }
-        }
-      }
-      for (const std::string& uri : marker_free) {
-        const auto markers = registry.MarkersForUri(uri);
-        hits += static_cast<bool>(markers) ? 1 : 0;
-      }
-    }
-    (void)hits;
-  });
-}
-
-#if MICROIDE_HAS_LUA_PLUGINS
 // ---- 081: registry_interop::ApplyStatusItemUpdate id->pos cache ------------
 //
 // A plugin firing frequent ctx.status.update calls resolves its target item in
@@ -551,18 +493,6 @@ const ScenarioRegistration g_perf_assist_ranked_union_merge({Scenario{
     .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
     .tolerance_alloc_max_percent = kTdCoverageAllocMax,
     .run = RunAssistRankedUnionMerge,
-}});
-const ScenarioRegistration g_perf_review_comments_registry_lookup({Scenario{
-    .name = "review_comments_registry_lookup",
-    .smoke = true,
-    .baseline_gated = true,
-    .tolerance_p50_percent = kTdCoverageTolP50,
-    .tolerance_p95_percent = kTdCoverageTolP95,
-    .tolerance_max_percent = kTdCoverageTolMax,
-    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
-    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
-    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
-    .run = RunReviewCommentsRegistryLookup,
 }});
 #if MICROIDE_HAS_LUA_PLUGINS
 const ScenarioRegistration g_perf_plugin_status_item_update({Scenario{

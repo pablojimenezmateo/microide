@@ -642,47 +642,6 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       const auto* pres = project_state.plugin_presentation_if_present();
       return pres != nullptr ? pres->decorations.FindByPathKey(viewport.path_key()) : nullptr;
     };
-    const auto draw_review_comment_markers =
-        [this, renderer](const editor::TextViewport& viewport,
-                         const SDL_FRect& pane_rect,
-                         const editor::EditorViewMetrics& editor_metrics) {
-          if (renderer == nullptr || viewport.path().empty() || viewport.is_placeholder() ||
-              review_comments_registry_.Empty()) {
-            return;
-          }
-
-          // Resolve this document's marker index once (one URI hash) instead of
-          // re-hashing the URI twice per visible row.
-          const std::string uri = viewport.path().generic_string();
-          const auto document_markers = review_comments_registry_.MarkersForUri(uri);
-          if (!document_markers) {
-            return;
-          }
-          for (std::size_t row = 0; row < viewport.visible_lines(); ++row) {
-            const std::size_t visual_row_index = viewport.scroll_line() + row;
-            if (visual_row_index >= viewport.visual_line_count()) {
-              break;
-            }
-            const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
-            if (viewport.soft_wrap() && row_meta.visual_start != 0) {
-              continue;
-            }
-            const std::size_t line_index = row_meta.line_index;
-            const int one_based_line = static_cast<int>(line_index + 1);
-            if (!document_markers.HasMarkerAtLine(one_based_line)) {
-              continue;
-            }
-            const float y =
-                editor_metrics.first_line_y + static_cast<float>(row) * editor_metrics.line_height;
-            const SDL_FRect marker_rect = SDL_FRect{
-                pane_rect.x + editor_metrics.gutter_width - 6.0f,
-                y + std::max(1.0f, (editor_metrics.line_height - 6.0f) * 0.5f),
-                3.0f,
-                6.0f,
-            };
-            DrawFilledRect(renderer, marker_rect, theme_.accent);
-          }
-        };
     const auto setting_enabled = [this](std::string_view id, bool default_value) {
       return SettingFlagEnabled(GetSettingValue(id), default_value);
     };
@@ -857,7 +816,6 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                    explicit_search_matches);
       DrawEditorInsets(renderer, pane.rect, metrics, viewport->scroll_line(),
                        tls_editor_surface_vm);
-      draw_review_comment_markers(*viewport, pane.rect, metrics);
 
     }
     // Overview-ruler marker caches, one per pane, keyed by a cheap signature so the

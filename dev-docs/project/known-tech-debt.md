@@ -1629,8 +1629,13 @@ speed-path items first, then the correctness/lifecycle cleanups.
   presentation refresh even though hunk status/note state is constant per hunk. Precompute a
   per-hunk marker/note map for the active `(target,path,model_revision)` and stamp rows from that
   map, or make the review service expose an indexed query object for one compare model.
-- **[RESOLVED 2026-07-18] TD-2026-07-17A-063 — review-comment marker lookups create empty URI indexes and
-  rescan all comments per first URI.**
+- **[RESOLVED 2026-07-18; SUPERSEDED 2026-07-27 — subsystem deleted] TD-2026-07-17A-063 — review-comment
+  marker lookups create empty URI indexes and rescan all comments per first URI.**
+  Superseded: `ReviewCommentsRegistry` was removed entirely on 2026-07-27. Nothing in `src/` ever
+  called `AddComment`/`AddThread` — the registry was populated only by its own tests and perf
+  scenario, so `Empty()` was always true in the product and the gutter-marker render pass was
+  unreachable. (The shipped review surface is the separate `branch_review` compare path.) The
+  optimization below is retained as the historical record.
   Fixed: `ReviewCommentsRegistry` replaced the per-URI lazy `indices_by_uri_[uri]` (which inserted
   an empty record on every marker-free lookup and rescanned all comments/threads per first-seen
   URI) with a single `indices_dirty_` flag + `RebuildIndices()` that groups ALL markers by URI in

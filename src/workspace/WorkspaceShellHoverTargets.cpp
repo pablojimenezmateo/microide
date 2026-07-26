@@ -574,8 +574,10 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
   // names in that frame's lexical scope, so a token hovered in another file would
   // silently resolve against the wrong scope. Match the same way the execution-line
   // marker does (lexically-normalized generic strings).
-  if (viewport.path().lexically_normal().generic_string() !=
-      execution.FocusedPathNormalized()) {
+  // path_key() is this exact value (editor::NormalizedPathKey), cached on the
+  // document, so the hover path compares against it instead of re-normalizing and
+  // re-allocating the viewport's path on every resolve.
+  if (viewport.path_key() != execution.FocusedPathNormalized()) {
     LogHoverGate("file-not-focused-frame");
     return std::nullopt;
   }

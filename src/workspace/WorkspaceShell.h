@@ -59,7 +59,6 @@
 #include "workspace/WorkspaceFileIconRegistry.h"
 #include "workspace/PluginEditorEventTracker.h"
 #include "workspace/WorkspaceVirtualDocument.h"
-#include "workspace/WorkspaceReviewComments.h"
 #include "workspace/WorkspaceEventResult.h"
 #include "workspace/AssistService.h"
 #include "workspace/ControlChannelService.h"

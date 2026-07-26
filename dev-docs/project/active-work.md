@@ -495,8 +495,6 @@ Open work:
     providers per language
   - `workspace/WorkspaceVirtualDocument.*` provides virtual document support for diff views,
     merge views, and generated content
-  - `workspace/WorkspaceReviewComments.*` manages inline code review comments and discussion
-    threads with state tracking
   - the authentication-provider and host-managed secret-storage surfaces (`WorkspaceAuthProvider.*`,
     `WorkspaceSecretStorage.*`) have been retired alongside the Phase 5 AI scope
   - `PluginHost` gains two new Lua tables: `ctx.scm` (add) and `ctx.annotations` (add); virtual
