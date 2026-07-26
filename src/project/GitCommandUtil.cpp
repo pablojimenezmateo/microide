@@ -1,10 +1,12 @@
 #include "project/GitCommandUtil.h"
 
 #include <cctype>
+#include <string_view>
 #include <system_error>
 
 #include "platform/Subprocess.h"
 #include "util/StringUtil.h"
+#include "util/TextFileIO.h"
 
 namespace microide::project::internal {
 
@@ -63,6 +65,82 @@ std::optional<std::string> ResolveHeadId(const std::filesystem::path& root) {
   std::string head_id = result.output;
   util::TrimTrailingLineEndings(&head_id);
   return head_id.empty() ? std::nullopt : std::make_optional(std::move(head_id));
+}
+
+std::optional<std::filesystem::path> ResolveGitDirectory(const std::filesystem::path& root) {
+  if (root.empty()) {
+    return std::nullopt;
+  }
+  // Non-throwing probes throughout: this can run against an unmounted network
+  // volume or a directory that lost +x, and those must degrade to "no git dir"
+  // rather than abort the process (same reasoning as HasGitMarker).
+  const std::filesystem::path marker = root / ".git";
+  std::error_code error;
+  if (std::filesystem::is_directory(marker, error) && !error) {
+    return marker;
+  }
+  error.clear();
+  if (!std::filesystem::is_regular_file(marker, error) || error) {
+    return std::nullopt;
+  }
+  const std::optional<std::string> contents = util::ReadTextFile(marker);
+  if (!contents.has_value()) {
+    return std::nullopt;
+  }
+  constexpr std::string_view kGitDirPrefix = "gitdir:";
+  std::string_view line(*contents);
+  if (const std::size_t newline = line.find('\n'); newline != std::string_view::npos) {
+    line = line.substr(0, newline);
+  }
+  if (!line.starts_with(kGitDirPrefix)) {
+    return std::nullopt;
+  }
+  line.remove_prefix(kGitDirPrefix.size());
+  while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) {
+    line.remove_prefix(1);
+  }
+  while (!line.empty() && (line.back() == ' ' || line.back() == '\t' || line.back() == '\r')) {
+    line.remove_suffix(1);
+  }
+  if (line.empty()) {
+    return std::nullopt;
+  }
+  std::filesystem::path git_dir(line);
+  // A `.git` file may hold either an absolute path or one relative to the
+  // worktree root.
+  return git_dir.is_absolute() ? git_dir : (root / git_dir).lexically_normal();
+}
+
+std::optional<std::string> ReadPendingMergeHeadId(const std::filesystem::path& root) {
+  const std::optional<std::filesystem::path> git_dir = ResolveGitDirectory(root);
+  if (!git_dir.has_value()) {
+    return std::nullopt;
+  }
+  const std::optional<std::string> contents = util::ReadTextFile(*git_dir / "MERGE_HEAD");
+  if (!contents.has_value()) {
+    return std::nullopt;
+  }
+  std::string_view first_line(*contents);
+  if (const std::size_t newline = first_line.find('\n'); newline != std::string_view::npos) {
+    first_line = first_line.substr(0, newline);
+  }
+  while (!first_line.empty() &&
+         (first_line.back() == '\r' || first_line.back() == ' ' || first_line.back() == '\t')) {
+    first_line.remove_suffix(1);
+  }
+  // Only accept a plain object id. A ref file holding anything else (a symref, a
+  // truncated write mid-merge) must not be surfaced as a commit label.
+  if (first_line.size() < 7 || first_line.size() > 64) {
+    return std::nullopt;
+  }
+  for (const char byte : first_line) {
+    const bool is_hex = (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f') ||
+                        (byte >= 'A' && byte <= 'F');
+    if (!is_hex) {
+      return std::nullopt;
+    }
+  }
+  return std::string(first_line);
 }
 
 CommandResult ReadGitCommandOutput(const std::filesystem::path& root,

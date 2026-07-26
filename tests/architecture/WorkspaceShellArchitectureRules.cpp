@@ -76,6 +76,11 @@ RuleResult CheckCoordinatorShellConstructors(const std::filesystem::path& repo_r
 RuleResult CheckThrowingStoParsers(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "try/std::sto parsing";
+  // Hard: CLAUDE.md and openspec/specs/workspace-architecture list "numeric token
+  // parsing uses util/Parse.h; no try/catch around std::sto*" as a load-bearing
+  // invariant, and the tree is clean of it. Warn-only meant a reintroduced
+  // throwing parser printed a line nobody reads and shipped anyway.
+  result.hard_fail = true;
   // The non-throwing parse policy also covers the developer tools and the perf
   // harness: benchmark CLI parsers and /proc sample parsers are part of the speed
   // regression workflow, and divergent parsing style tempts future agents to copy the

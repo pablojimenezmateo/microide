@@ -6,7 +6,7 @@
 #include "compare/CompareReviewTypes.h"
 #include "compare/CompareSemanticMetadata.h"
 #include "project/GitPatchApply.h"
-#include "project/GitRepository.h"
+#include "project/GitCommandUtil.h"
 #include "project/PatchGenerator.h"
 #include "workspace/CompareTabReview.h"
 #include "workspace/GitRepositoryService.h"
@@ -80,8 +80,14 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
     return std::nullopt;
   }
 
-  project::GitRepository repo(repository_state.repository_root);
-  const std::optional<std::filesystem::path> relative_path = repo.ToRelative(compare_tab.path);
+  // Path math only — no repository object. GitRepository::ToRelative is a thin
+  // wrapper over this helper, and constructing one here both allocated a
+  // subprocess-capable handle for a pure lexical operation and put a
+  // GitRepository construction in a workspace TU (the shell must go through
+  // GitRepositoryService for anything that actually talks to git).
+  const std::optional<std::filesystem::path> relative_path =
+      project::internal::AbsoluteToRelativePath(repository_state.repository_root,
+                                                compare_tab.path);
   if (!relative_path.has_value()) {
     return std::nullopt;
   }

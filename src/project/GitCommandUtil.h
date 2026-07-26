@@ -35,6 +35,21 @@ std::optional<std::filesystem::path> AbsoluteToRelativePath(
     const std::filesystem::path& root,
     const std::filesystem::path& absolute_path);
 std::optional<std::string> ResolveHeadId(const std::filesystem::path& root);
+
+// The repository's git directory: `<root>/.git` when it is a real directory, or
+// the path a `.git` *file* points at (`gitdir: …`, the linked-worktree and
+// submodule layout). Nullopt when `root` has no usable marker.
+std::optional<std::filesystem::path> ResolveGitDirectory(const std::filesystem::path& root);
+
+// Object id of the in-progress merge's incoming side, read straight out of
+// `<gitdir>/MERGE_HEAD` — no `git` subprocess. An octopus merge lists one id per
+// line; the first is returned, matching `git rev-parse MERGE_HEAD`. Nullopt when
+// no merge is in progress or the file is unreadable / not a plain object id.
+//
+// This exists so a shell-thread caller can label the incoming pane without
+// forking git: the subprocess it replaced was bounded only by kGitReadTimeoutMs
+// (60 s), so a stuck git stalled the UI for a cosmetic string.
+std::optional<std::string> ReadPendingMergeHeadId(const std::filesystem::path& root);
 CommandResult ReadGitCommandOutput(const std::filesystem::path& root,
                                    std::vector<std::string> arguments,
                                    bool silence_stderr = true,

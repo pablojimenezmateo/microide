@@ -332,7 +332,16 @@ RuleResult CheckNoDirectGitRepositoryInWorkspace(const std::filesystem::path& re
   RuleResult result;
   result.label = "direct GitRepository construction in workspace";
   result.hard_fail = true;
-  const std::regex pattern(R"(\bproject::GitRepository\s*\(|\bGitRepository\s*\()");
+  // Both construction spellings. The original pattern was only
+  // `GitRepository\s*\(`, which matches a *temporary* (`GitRepository(root)`) —
+  // a form nobody writes. Every real construction in the tree is the named
+  // declaration `GitRepository repo(root);` / `const project::GitRepository
+  // repo(root);`, so the rule could not fire on the very shape it exists to ban.
+  // `\b` after the type name keeps `GitRepositoryService` / `GitRepositoryState`
+  // / `GitRepository::Foo` out, and requiring an identifier before the `(`/`{`
+  // keeps reference and pointer parameters (`GitRepository& repo`) out.
+  const std::regex pattern(
+      R"(\b(?:project::)?GitRepository\b\s*(?:[A-Za-z_]\w*\s*[({]|\())");
   const std::array<std::string_view, 1> allowed_files = {
       "GitRepositoryService.cpp",
   };

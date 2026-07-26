@@ -6,6 +6,7 @@
 #include <string_view>
 #include <utility>
 
+#include "project/GitCommandUtil.h"
 #include "project/GitPorcelainV2Parser.h"
 #include "project/GitRepositoryState.h"
 namespace microide::tests {
@@ -265,6 +266,64 @@ void TestRefreshFailureClassification() {
          "index lock stderr should classify as repo locked");
 }
 
+// `<gitdir>/MERGE_HEAD` is read directly (no `git` subprocess) so the merge
+// resolver can label the incoming pane from the shell thread without risking a
+// 60 s git stall. Covers the plain `.git` directory, the linked-worktree
+// `.git`-file indirection, octopus merges (first id wins), and the rejection of
+// anything that is not a plain object id.
+void TestReadPendingMergeHeadId() {
+  namespace gitutil = microide::project::internal;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / ".git");
+
+  Expect(!gitutil::ReadPendingMergeHeadId(root).has_value(),
+         "no MERGE_HEAD means no pending merge");
+
+  const std::string oid = "0123456789abcdef0123456789abcdef01234567";
+  WriteFile(root / ".git/MERGE_HEAD", oid + "\n");
+  Expect(gitutil::ReadPendingMergeHeadId(root) == oid, "a plain MERGE_HEAD id is read verbatim");
+
+  // Octopus merge: one id per line, first wins (matches `git rev-parse MERGE_HEAD`).
+  const std::string second = "89abcdef0123456789abcdef0123456789abcdef";
+  WriteFile(root / ".git/MERGE_HEAD", oid + "\n" + second + "\n");
+  Expect(gitutil::ReadPendingMergeHeadId(root) == oid, "an octopus merge reports the first id");
+
+  // CRLF and trailing blanks must not leak into the label.
+  WriteFile(root / ".git/MERGE_HEAD", oid + "  \r\n");
+  Expect(gitutil::ReadPendingMergeHeadId(root) == oid, "trailing whitespace/CR is trimmed");
+
+  for (const std::string_view junk : {"ref: refs/heads/topic", "not-hex-at-all-xxxxx", "abc", ""}) {
+    WriteFile(root / ".git/MERGE_HEAD", std::string(junk) + "\n");
+    Expect(!gitutil::ReadPendingMergeHeadId(root).has_value(),
+           "a MERGE_HEAD that is not a plain object id is rejected");
+  }
+
+  // Linked worktree: `.git` is a FILE pointing at the real git directory.
+  const std::filesystem::path worktree = temp_dir.path() / "wt";
+  const std::filesystem::path linked_gitdir = temp_dir.path() / "gitdir";
+  std::filesystem::create_directories(worktree);
+  std::filesystem::create_directories(linked_gitdir);
+  WriteFile(worktree / ".git", "gitdir: " + linked_gitdir.string() + "\n");
+  WriteFile(linked_gitdir / "MERGE_HEAD", oid + "\n");
+  Expect(gitutil::ReadPendingMergeHeadId(worktree) == oid,
+         "a `.git` file indirection resolves to the linked git directory");
+  Expect(gitutil::ResolveGitDirectory(worktree) == linked_gitdir,
+         "ResolveGitDirectory follows the gitdir: pointer");
+
+  // A relative gitdir: pointer resolves against the worktree root.
+  const std::filesystem::path relative_worktree = temp_dir.path() / "rel";
+  std::filesystem::create_directories(relative_worktree / "store");
+  WriteFile(relative_worktree / ".git", "gitdir: store\n");
+  WriteFile(relative_worktree / "store/MERGE_HEAD", oid + "\n");
+  Expect(gitutil::ReadPendingMergeHeadId(relative_worktree) == oid,
+         "a relative gitdir: pointer resolves against the worktree root");
+
+  WriteFile(relative_worktree / ".git", "not a gitdir pointer\n");
+  Expect(!gitutil::ResolveGitDirectory(relative_worktree).has_value(),
+         "a `.git` file without a gitdir: pointer yields no git directory");
+}
+
 }  // namespace
 
 void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
@@ -287,6 +346,7 @@ void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
           TestPorcelainV2AheadBehindParsing);
   AddTest(tests, "GitRepositoryState/RefreshFailureClassification",
           TestRefreshFailureClassification);
+  AddTest(tests, "GitRepositoryState/ReadPendingMergeHeadId", TestReadPendingMergeHeadId);
 }
 
 }  // namespace microide::tests

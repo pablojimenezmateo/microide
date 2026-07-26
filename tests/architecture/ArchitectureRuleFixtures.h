@@ -18,4 +18,8 @@ void RunDescriptorCloseOnExecRuleFixtures();
 // line-anchored patterns need std::regex::multiline to match at all.
 void RunTerminalExtractedImplRuleFixtures();
 
+// Negative + positive control for CheckNoDirectGitRepositoryInWorkspace, whose
+// pattern originally matched only a temporary construction.
+void RunDirectGitRepositoryRuleFixtures();
+
 }  // namespace microide::tests::architecture

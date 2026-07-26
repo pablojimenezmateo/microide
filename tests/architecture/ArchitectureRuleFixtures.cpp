@@ -2,6 +2,7 @@
 
 #include "TestSupport.h"
 #include "architecture/TerminalArchitectureRules.h"
+#include "architecture/WorkspaceCoordinatorArchitectureRules.h"
 
 #include <filesystem>
 
@@ -93,6 +94,41 @@ void RunTerminalExtractedImplRuleFixtures() {
             "void TerminalSession::F() { (void)DecodeBase64(\"\"); (void)ParseCsiParameters(\"\"); }\n");
   Expect(CheckTerminalSessionNoExtractedImpl(root).violations.empty(),
          "extracted-impl rule must accept calls into the extracted helpers");
+}
+
+void RunDirectGitRepositoryRuleFixtures() {
+  // The original pattern was `GitRepository\s*\(`, which only matches a
+  // temporary. Every construction in the tree is the named-declaration form
+  // (`const project::GitRepository repo(root);`), so the rule was structurally
+  // unable to fire. The declaration forms below are the negative control; the
+  // reference/pointer/qualified-name forms are the false-positive control.
+  TemporaryDirectory git_dir;
+  const std::filesystem::path& root = git_dir.path();
+  std::filesystem::create_directories(root / "src/workspace");
+
+  WriteFile(root / "src/workspace/SomeCoordinator.cpp",
+            "void A(const Path& p){ project::GitRepository repo(p); (void)repo; }\n"
+            "void B(const Path& p){ const GitRepository repo(p); (void)repo; }\n"
+            "void C(const Path& p){ GitRepository repo{p}; (void)repo; }\n"
+            "void D(const Path& p){ (void)GitRepository(p).Status(); }\n");
+  Expect(CheckNoDirectGitRepositoryInWorkspace(root).violations.size() == 4,
+         "direct-GitRepository rule must flag named declarations and brace init, not "
+         "just a temporary");
+
+  // The sanctioned service TU is allowlisted, and neither a reference/pointer
+  // parameter, a qualified static call, nor a differently-named type is a
+  // construction.
+  WriteFile(root / "src/workspace/GitRepositoryService.cpp",
+            "void S(const Path& p){ const project::GitRepository repo(p); (void)repo; }\n");
+  WriteFile(root / "src/workspace/SomeCoordinator.cpp",
+            "void A(project::GitRepository& repo){ (void)repo; }\n"
+            "void B(GitRepository* repo){ (void)repo; }\n"
+            "void C(){ GitRepositoryService svc(deps); (void)svc; }\n"
+            "void D(){ (void)GitRepositoryState{}; }\n"
+            "void E(){ (void)project::GitRepository::IsRepositoryRoot(p); }\n");
+  Expect(CheckNoDirectGitRepositoryInWorkspace(root).violations.empty(),
+         "direct-GitRepository rule must accept the allowlisted service TU, reference and "
+         "pointer parameters, sibling types, and qualified static calls");
 }
 
 }  // namespace microide::tests::architecture
