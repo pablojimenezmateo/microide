@@ -27,7 +27,12 @@ struct ControlInstanceDescriptor {
   std::filesystem::path socket;
   std::string project_root;
   std::string project_hash;
-  std::string raw_json;  // descriptor line as written (backs `control-list`)
+  // The single JSONL line `control-list` prints for this instance. Built by
+  // re-serializing the validated fields above, NOT copied from the descriptor
+  // file: the file body is attacker-droppable, so echoing it would hand a driver
+  // a forged `socket` path (the very redirect `socket` above is reconstructed to
+  // prevent) and let embedded newlines inject extra listing lines.
+  std::string raw_json;
 };
 
 // Enumerate every running instance with the control channel enabled, parsed from

@@ -198,7 +198,21 @@ std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
     descriptor.socket = SocketPathForPid(pid);
     descriptor.project_root = (*parsed)["project_root"].AsString();
     descriptor.project_hash = (*parsed)["project_hash"].AsString();
-    descriptor.raw_json = std::move(contents);
+    // Re-serialize from the VALIDATED fields rather than echoing the file body.
+    // `descriptor.socket` above is deliberately reconstructed from the pid so a
+    // forged `socket` field cannot redirect a driver onto an attacker-controlled
+    // Unix socket — but `control-list` prints this string, and printing the raw
+    // body handed the forged field straight back to the driver, defeating that
+    // defense at the only surface that matters. Re-serializing also guarantees
+    // one line per instance: JSON escaping turns an embedded newline in a
+    // descriptor written by a hostile local process into `\n`, so it can no
+    // longer inject an extra forged line into the JSONL listing.
+    util::JsonObject canonical;
+    canonical["pid"] = util::JsonValue(static_cast<std::int64_t>(descriptor.pid));
+    canonical["socket"] = util::JsonValue(descriptor.socket.generic_string());
+    canonical["project_root"] = util::JsonValue(descriptor.project_root);
+    canonical["project_hash"] = util::JsonValue(descriptor.project_hash);
+    descriptor.raw_json = util::SerializeJson(util::JsonValue(std::move(canonical)));
     instances.push_back(std::move(descriptor));
   }
   return instances;

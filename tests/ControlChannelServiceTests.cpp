@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -365,6 +366,47 @@ void TestControlDiscoveryIgnoresForgedSocketAndPid() {
   std::filesystem::remove_all(runtime, ec);
 }
 
+// `control-list` is the surface a driver actually reads, and it prints one JSON
+// object per line. Echoing the descriptor file body there would have handed back
+// the forged `socket` the enumeration above deliberately discards, and a body
+// containing a raw newline would have injected a second, wholly attacker-authored
+// line into the JSONL stream. The listing is re-serialized from validated fields
+// instead, so neither is possible.
+void TestControlListPrintsCanonicalSingleLineJson() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-listing-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  const std::filesystem::path instances = runtime / "microide" / "instances";
+  std::filesystem::create_directories(instances, ec);
+  const int alive_pid = static_cast<int>(::getpid());
+  {
+    // Pretty-printed (so the body spans several lines) AND advertising a hostile
+    // socket. Both are valid JSON, so this parses and is accepted as live.
+    std::ofstream out(instances / (std::to_string(alive_pid) + ".json"), std::ios::trunc);
+    out << "{\n  \"pid\": " << alive_pid
+        << ",\n  \"socket\": \"/tmp/attacker-controlled.sock\",\n"
+        << "  \"project_root\": \"/p\"\n}";
+  }
+
+  const std::string listing = microide::workspace::ControlListInstancesText();
+  Expect(listing.find("attacker-controlled.sock") == std::string::npos,
+         "the listing must not echo a forged socket path back to the driver");
+  Expect(listing.find(std::to_string(alive_pid)) != std::string::npos,
+         "the live instance should still be listed");
+  const std::size_t newlines =
+      static_cast<std::size_t>(std::count(listing.begin(), listing.end(), '\n'));
+  Expect(newlines == 1, "one accepted instance must produce exactly one JSONL line");
+  Expect(listing.find((runtime / "microide" / (std::to_string(alive_pid) + ".sock"))
+                          .generic_string()) != std::string::npos,
+         "the listing should carry the canonical socket path");
+
+  std::filesystem::remove_all(runtime, ec);
+}
+
 // An oversized descriptor file must be skipped before it is slurped, so a hostile
 // local process cannot OOM `control-list`/`control-send` with one giant file.
 void TestControlDiscoveryRejectsOversizedDescriptor() {
@@ -598,6 +640,7 @@ void TestLaunchConfigsAndAdaptersOverSocket() {}
 void TestSocketSelfHealsAfterExternalDeletion() {}
 void TestDebugCommandAutoEnablesDebugger() {}
 void TestControlDiscoveryIgnoresForgedSocketAndPid() {}
+void TestControlListPrintsCanonicalSingleLineJson() {}
 void TestControlDiscoveryRejectsOversizedDescriptor() {}
 void TestControlDiscoveryBoundsHostileSweep() {}
 
@@ -752,6 +795,8 @@ void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
           TestDebugCommandAutoEnablesDebugger);
   AddTest(tests, "ControlChannelService/DiscoveryIgnoresForgedSocketAndPid",
           TestControlDiscoveryIgnoresForgedSocketAndPid);
+  AddTest(tests, "ControlChannelService/ListPrintsCanonicalSingleLineJson",
+          TestControlListPrintsCanonicalSingleLineJson);
   AddTest(tests, "ControlChannelService/DiscoveryRejectsOversizedDescriptor",
           TestControlDiscoveryRejectsOversizedDescriptor);
   AddTest(tests, "ControlChannelService/DiscoveryBoundsHostileSweep",
