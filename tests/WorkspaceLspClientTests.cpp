@@ -2042,6 +2042,59 @@ void TestWorkspaceLspClientOutcomeTaxonomy() {
 #endif
 }
 
+// LSP servers return completion items in arbitrary array order and encode their
+// relevance ranking in `sortText` alone. The client sorts before handing the list
+// on; this pins the VS Code comparator semantics, including the deliberate
+// asymmetry that sortText is only consulted when BOTH items carry one.
+void TestLspCompletionSortsByServerRank() {
+  const auto make = [](std::string label, std::string sort_text, int kind = 1) {
+    LspClient::CompletionItem item;
+    item.label = std::move(label);
+    item.sort_text = std::move(sort_text);
+    item.kind = kind;
+    return item;
+  };
+  const auto labels = [](const std::vector<LspClient::CompletionItem>& items) {
+    std::string joined;
+    for (const auto& item : items) {
+      if (!joined.empty()) joined += ",";
+      joined += item.label;
+    }
+    return joined;
+  };
+
+  // sortText wins over both array order and label order.
+  std::vector<LspClient::CompletionItem> items = {
+      make("zebra", "00"), make("apple", "01"), make("mango", "02")};
+  LspClient::SortCompletionItemsByServerRank(items);
+  Expect(labels(items) == "zebra,apple,mango", "sortText must outrank array and label order");
+
+  // sortText compares case-insensitively (VS Code lowercases it first), so a
+  // server mixing `A` and `a` prefixes does not split into two blocks.
+  items = {make("upper", "B1"), make("lower", "a1"), make("mid", "A2")};
+  LspClient::SortCompletionItemsByServerRank(items);
+  Expect(labels(items) == "lower,mid,upper", "sortText comparison is case-insensitive");
+
+  // Items with no sortText fall through to label order.
+  items = {make("delta", ""), make("bravo", ""), make("alpha", "")};
+  LspClient::SortCompletionItemsByServerRank(items);
+  Expect(labels(items) == "alpha,bravo,delta", "missing sortText falls back to label order");
+
+  // Full ties keep the server's array order (stable).
+  items = {make("same", "10", 3), make("same", "10", 3), make("other", "10", 3)};
+  items[0].detail = "first";
+  items[1].detail = "second";
+  LspClient::SortCompletionItemsByServerRank(items);
+  Expect(items[0].label == "other", "label breaks a sortText tie");
+  Expect(items[1].detail == "first" && items[2].detail == "second",
+         "a full tie preserves the server's array order");
+
+  // Kind is the final tie-break, so the order is total and deterministic.
+  items = {make("dup", "10", 7), make("dup", "10", 2)};
+  LspClient::SortCompletionItemsByServerRank(items);
+  Expect(items[0].kind == 2 && items[1].kind == 7, "kind is the final tie-break");
+}
+
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceLspClient/TimeoutReportsTimeoutOutcome",
           TestWorkspaceLspClientTimeoutReportsTimeoutOutcome);
@@ -2115,6 +2168,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestJsonRpcMessageFramerOversizedFrameSkips);
   AddTest(tests, "WorkspaceLspClient/FramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync",
           TestJsonRpcMessageFramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync);
+  AddTest(tests, "WorkspaceLspClient/CompletionSortsByServerRank",
+          TestLspCompletionSortsByServerRank);
 }
 
 }  // namespace microide::tests

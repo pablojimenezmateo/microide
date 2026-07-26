@@ -122,7 +122,12 @@ class LspClient {
     std::string detail;
     std::string documentation;
     std::string insert_text;
-    int sort_text_priority = 0;
+    // LSP `sortText`: the server's own relevance ranking, compared
+    // lexicographically. Servers return the array in arbitrary order and expect
+    // the client to sort by this (clangd, rust-analyzer and pyright all encode
+    // relevance here and nowhere else), so the parser sorts the parsed vector
+    // before handing it on. Empty when the server omitted it.
+    std::string sort_text;
     // LSP InsertTextFormat: 1=PlainText, 2=Snippet
     int insert_text_format = 1;
     // Server-provided replacement range (0-based, in the server's negotiated
@@ -347,6 +352,15 @@ class LspClient {
 
   // Async textDocument/completion.
   void RequestCompletionAsync(std::string uri, Position pos, CompletionCallback callback);
+
+  // Order a parsed completion list the way the LSP spec and VS Code do: by
+  // `sortText` (case-insensitively, and only when BOTH items carry one), then
+  // `label`, then `kind`. Stable, so a server that already returns its preferred
+  // order and omits sortText is left untouched. Applied by the completion parser
+  // before the list leaves the client — servers return items in arbitrary array
+  // order and encode relevance only here, so without this the popup showed
+  // whatever order the wire happened to use. Exposed for direct testing.
+  static void SortCompletionItemsByServerRank(std::vector<CompletionItem>& items);
 
   // Async textDocument/signatureHelp. nullopt when the server has no result.
   void RequestSignatureHelpAsync(std::string uri, Position pos, SignatureHelpCallback callback);

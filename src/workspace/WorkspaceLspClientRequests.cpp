@@ -3,10 +3,33 @@
 #include <algorithm>
 #include <cstddef>
 
+#include "util/StringUtil.h"
 #include "workspace/LspProtocol.h"
 #include "workspace/WorkspaceLspClientInternal.h"
 
 namespace microide::workspace {
+
+void LspClient::SortCompletionItemsByServerRank(std::vector<CompletionItem>& items) {
+  // Mirrors VS Code's default completion comparator. Note the deliberate
+  // asymmetry: sortText is only consulted when BOTH items have one, so a server
+  // that ranks part of its list does not push its unranked items to an arbitrary
+  // end. Ties fall through to label, then kind, so the order is total and
+  // deterministic; stable_sort keeps the server's array order for full ties.
+  std::stable_sort(items.begin(), items.end(),
+                   [](const CompletionItem& lhs, const CompletionItem& rhs) {
+                     if (!lhs.sort_text.empty() && !rhs.sort_text.empty()) {
+                       const std::string left = util::ToLowerAscii(lhs.sort_text);
+                       const std::string right = util::ToLowerAscii(rhs.sort_text);
+                       if (left != right) {
+                         return left < right;
+                       }
+                     }
+                     if (lhs.label != rhs.label) {
+                       return lhs.label < rhs.label;
+                     }
+                     return lhs.kind < rhs.kind;
+                   });
+}
 
 void LspClient::RequestHoverAsync(std::string uri, Position pos, HoverCallback callback) {
   if (!callback) return;
@@ -74,6 +97,7 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
           ci.detail = take(item, "detail");
           ci.documentation = take_markup(item, "documentation");
           ci.insert_text = take(item, "insertText");
+          ci.sort_text = take(item, "sortText");
           ci.insert_text_format = static_cast<int>(item["insertTextFormat"].AsInt(1));
           // Prefer the server's textEdit: its range is authoritative (it knows the
           // token being completed, so a member/path completion extends the
@@ -93,6 +117,7 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
           if (ci.insert_text.empty()) ci.insert_text = ci.label;
           items.push_back(std::move(ci));
         }
+        SortCompletionItemsByServerRank(items);
         return items;
       });
 }
