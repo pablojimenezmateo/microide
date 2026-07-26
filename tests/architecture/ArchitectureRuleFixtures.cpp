@@ -60,4 +60,39 @@ void RunDescriptorCloseOnExecRuleFixtures() {
          "close-on-exec rule must fail loudly when it finds no creation sites to scan");
 }
 
+void RunTerminalExtractedImplRuleFixtures() {
+  // Five of this rule's patterns anchor a definition with `^`. std::regex only
+  // treats `^` as a line start when constructed with std::regex::multiline;
+  // without it `^` matches offset 0 of the whole file, which in a .cpp is always
+  // `#include` — so three of the five sub-checks could never fire and the other
+  // two only fired for one return-type spelling. Both halves below are needed:
+  // the violating fixture proves the patterns match a real definition, and the
+  // clean fixture proves they do not match the extracted-out shape.
+  TemporaryDirectory impl_dir;
+  const std::filesystem::path& root = impl_dir.path();
+  std::filesystem::create_directories(root / "src/terminal");
+
+  WriteFile(root / "src/terminal/TerminalSession.cpp",
+            "#include \"terminal/TerminalSession.h\"\n"
+            "namespace {\n"
+            "}\n"
+            "int Base64Value(char c) { return c; }\n"
+            "std::optional<std::string> DecodeBase64(std::string_view s) { return {}; }\n"
+            "std::vector<int> ParseCsiParameters(std::string_view s) { return {}; }\n"
+            "int MouseModifierBits(int m) { return m; }\n"
+            "bool EncodeTerminalMouseEvent(int a, std::string* out) { return false; }\n");
+  Expect(CheckTerminalSessionNoExtractedImpl(root).violations.size() == 5,
+         "extracted-impl rule must flag every helper implementation defined at a line "
+         "start in TerminalSession.cpp");
+
+  WriteFile(root / "src/terminal/TerminalSession.cpp",
+            "#include \"terminal/TerminalSession.h\"\n"
+            "#include \"terminal/TerminalBase64.h\"\n"
+            "#include \"terminal/TerminalCsiParser.h\"\n"
+            "#include \"terminal/TerminalMouseEncoder.h\"\n"
+            "void TerminalSession::F() { (void)DecodeBase64(\"\"); (void)ParseCsiParameters(\"\"); }\n");
+  Expect(CheckTerminalSessionNoExtractedImpl(root).violations.empty(),
+         "extracted-impl rule must accept calls into the extracted helpers");
+}
+
 }  // namespace microide::tests::architecture

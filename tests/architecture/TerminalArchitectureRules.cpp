@@ -101,25 +101,32 @@ RuleResult CheckTerminalSessionNoExtractedImpl(const std::filesystem::path& repo
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.cpp";
   const std::string text = ReadText(path);
+  // These patterns anchor a definition to the start of a LINE, so they need
+  // std::regex::multiline. Without it `^` matches only at offset 0 of the whole
+  // file — which for a .cpp is always `#include`, so three of these five
+  // sub-checks could never fire and the other two only fired for one specific
+  // return-type spelling. kLineAnchored is the single place that flag is set,
+  // and ArchitectureRuleFixtures.cpp pins that each pattern still matches the
+  // implementation shape it is meant to keep out.
+  constexpr auto kLineAnchored = std::regex::ECMAScript | std::regex::multiline;
   AppendCodeMaskRegexViolations(
       result, path, text,
-      std::regex(R"((?:std::optional<int>|^int)\s+Base64Value\s*\()"),
+      std::regex(R"((?:std::optional<int>|^int)\s+Base64Value\s*\()", kLineAnchored),
       "TerminalSession.cpp must not contain base64 decoder implementation");
   AppendCodeMaskRegexViolations(
       result, path, text,
-      std::regex(R"((?:std::optional<std::string>|^std::optional)\s+DecodeBase64\s*\()"),
+      std::regex(R"((?:std::optional<std::string>|^std::optional)\s+DecodeBase64\s*\()",
+                 kLineAnchored),
       "TerminalSession.cpp must not contain base64 decoder implementation");
   AppendCodeMaskRegexViolations(
       result, path, text,
-      std::regex(R"(^std::vector<int>\s+ParseCsiParameters\s*\()"),
+      std::regex(R"(^std::vector<int>\s+ParseCsiParameters\s*\()", kLineAnchored),
       "TerminalSession.cpp must not contain CSI parameter parser implementation");
   AppendCodeMaskRegexViolations(
-      result, path, text,
-      std::regex(R"(^int\s+MouseModifierBits\s*\()"),
+      result, path, text, std::regex(R"(^int\s+MouseModifierBits\s*\()", kLineAnchored),
       "TerminalSession.cpp must not contain mouse encoder implementation");
   AppendCodeMaskRegexViolations(
-      result, path, text,
-      std::regex(R"(^bool\s+EncodeTerminalMouseEvent\s*\()"),
+      result, path, text, std::regex(R"(^bool\s+EncodeTerminalMouseEvent\s*\()", kLineAnchored),
       "TerminalSession.cpp must not contain mouse encoder implementation");
   return result;
 }
