@@ -151,8 +151,6 @@ class LspService {
   // status text, so callers never re-derive tone from the label text.
   void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip,
                               LspStatusSeverity* severity = nullptr);
-  std::string ActiveLspStatusText(bool ensure_started = true);
-  std::string ActiveLspStatusTooltip(bool ensure_started = true);
 
   // In-flight request indicator (drives the "LSP: working..." status segment).
   void BeginTrackedLspRequest();

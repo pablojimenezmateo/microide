@@ -106,13 +106,6 @@ void DirectoryTree::Refresh() {
   RebuildEntries(false);
 }
 
-void DirectoryTree::RefreshGitStatuses() {
-  if (root_.empty()) {
-    return;
-  }
-  util::StartupTrace::Scope trace_scope("DirectoryTree::RefreshGitStatuses");
-  ApplyGitStatuses(CollectGitStatuses(root_));
-}
 
 void DirectoryTree::ApplyGitStatuses(std::unordered_map<std::string, GitFileStatus> statuses) {
   git_statuses_ = std::move(statuses);

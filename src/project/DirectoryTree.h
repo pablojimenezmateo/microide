@@ -46,7 +46,6 @@ class DirectoryTree {
   // the built-in defaults; consulted on the next rebuild. Matched entries render
   // grayed (ignored), not hidden.
   void SetExcludeGlobs(std::vector<std::string> globs) { exclude_globs_ = std::move(globs); }
-  void RefreshGitStatuses();
   void ApplyGitStatuses(std::unordered_map<std::string, GitFileStatus> statuses);
   void MoveSelection(int delta);
   void SetSelectedIndex(std::size_t index);

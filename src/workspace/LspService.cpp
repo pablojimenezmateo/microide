@@ -359,19 +359,7 @@ LspClient::ReadinessSnapshot LspService::ActiveLspReadinessSnapshot(bool ensure_
   return client->GetReadinessSnapshot();
 }
 
-std::string LspService::ActiveLspStatusText(bool ensure_started) {
-  std::string text;
-  std::string tooltip;
-  ActiveLspStatusStrings(ensure_started, text, tooltip);
-  return text;
-}
 
-std::string LspService::ActiveLspStatusTooltip(bool ensure_started) {
-  std::string text;
-  std::string tooltip;
-  ActiveLspStatusStrings(ensure_started, text, tooltip);
-  return tooltip;
-}
 
 void LspService::ActiveLspStatusStrings(bool ensure_started, std::string& text,
                                         std::string& tooltip, LspStatusSeverity* severity) {

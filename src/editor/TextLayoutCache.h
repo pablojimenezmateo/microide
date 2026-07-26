@@ -49,14 +49,7 @@ class TextLayoutCache {
   // ---- visible-line LayoutLine LRU --------------------------------------
   // Returns the LayoutLine for `line_index` from the cache, or builds it on
   // miss. Caller is responsible for caret-row decoration (the cache does not
-  // know which row the cursor is on).
-  LayoutLine VisibleLineLayoutCached(LineSpan lines,
-                                     std::size_t line_index,
-                                     std::size_t horizontal_scroll,
-                                     std::size_t visible_columns,
-                                     std::size_t tab_size) const;
-
-  // Reference-returning variant: hands back the cached LayoutLine in place
+  // know which row the cursor is on). Hands back the cached LayoutLine in place
   // instead of copying it out. The returned reference is stable until the next
   // call that can evict it (the per-frame working set is far below
   // kVisibleLineCacheLimit, so a renderer that consumes each row before

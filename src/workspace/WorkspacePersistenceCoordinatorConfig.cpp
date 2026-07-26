@@ -298,12 +298,7 @@ void PersistenceCoordinator::SaveConfigState() const {
   };
   if (!state.sidebar.git.commit_workflow.subject.text().empty() ||
       !state.sidebar.git.commit_workflow.BodyText().empty()) {
-    persisted.commit_draft = PersistedCommitDraftState{
-        .head_oid = state.sidebar.git.commit_workflow.draft_context.head_oid,
-        .branch_name = state.sidebar.git.commit_workflow.draft_context.branch_name,
-        .subject = state.sidebar.git.commit_workflow.subject.text(),
-        .body = state.sidebar.git.commit_workflow.BodyText(),
-    };
+    persisted.commit_draft = MakePersistedCommitDraft(state.sidebar.git.commit_workflow);
   }
   StripTransientSettings(persisted.settings);
   operations_.persistence_service->SaveProjectConfig(config_path, persisted);

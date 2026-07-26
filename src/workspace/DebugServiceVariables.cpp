@@ -437,10 +437,6 @@ void DebugService::EvaluateHover(int frame_id, const std::string& expression) {
       });
 }
 
-bool DebugService::SupportsEvaluateForHovers() const {
-  const DebugSession* session = CurrentDapManager().ActiveSession();
-  return session != nullptr && session->Client().Capabilities().supports_evaluate_for_hovers;
-}
 
 bool DebugService::SupportsStepBack() const {
   const DebugSession* session = CurrentDapManager().ActiveSession();

@@ -35,14 +35,6 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
   return it->second;
 }
 
-LayoutLine TextLayoutCache::VisibleLineLayoutCached(LineSpan lines,
-                                                    std::size_t line_index,
-                                                    std::size_t horizontal_scroll,
-                                                    std::size_t visible_columns,
-                                                    std::size_t tab_size) const {
-  return VisibleLineLayoutRefCached(lines, line_index, horizontal_scroll, visible_columns,
-                                    tab_size);
-}
 
 void TextLayoutCache::WrapSingleLine(std::string_view line_text,
                                      std::size_t line_index,

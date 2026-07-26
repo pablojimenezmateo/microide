@@ -20,4 +20,13 @@ const std::string& CommitWorkflowState::BodyText() const {
   return body_text_cache_;
 }
 
+PersistedCommitDraftState MakePersistedCommitDraft(const CommitWorkflowState& state) {
+  return PersistedCommitDraftState{
+      .head_oid = state.draft_context.head_oid,
+      .branch_name = state.draft_context.branch_name,
+      .subject = state.subject.text(),
+      .body = state.BodyText(),
+  };
+}
+
 }  // namespace microide::workspace

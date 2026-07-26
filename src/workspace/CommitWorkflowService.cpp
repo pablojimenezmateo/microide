@@ -88,16 +88,6 @@ void CommitWorkflowService::RestorePersistedDraft(
   state.draft_restored = true;
 }
 
-PersistedCommitDraftState CommitWorkflowService::BuildPersistedDraft(
-    const CommitWorkflowState& state) const {
-  return PersistedCommitDraftState{
-      .head_oid = state.draft_context.head_oid,
-      .branch_name = state.draft_context.branch_name,
-      .subject = state.subject.text(),
-      .body = state.BodyText(),
-  };
-}
-
 void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state,
                                                 const bool run_blocking_conflict_scan) {
   const project::GitRepositoryState repository_state = git_repository_service_.CurrentState();

@@ -234,7 +234,6 @@ void DapManager::ClearActiveEntry() {
   active_session_id_ = sessions_.empty() ? 0 : sessions_.back().id;
 }
 
-void DapManager::ClearSession() { ClearActiveEntry(); }
 
 bool DapManager::ReapExitedSessions() {
   bool changed = false;

@@ -13,7 +13,6 @@ class ProjectChangeCoalescer {
   void Reset();
   void Ingest(ProjectChangeBatch batch);
   std::optional<ProjectChangeBatch> ConsumeReady(std::uint64_t* out_generation = nullptr);
-  std::uint64_t CurrentGeneration() const;
 
  private:
   void MergeFileChange(ProjectFileChange change);

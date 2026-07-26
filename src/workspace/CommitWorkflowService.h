@@ -70,7 +70,6 @@ class CommitWorkflowService {
   bool ConfirmPendingOperation(CommitWorkflowState& state);
   void CancelPendingConfirmation(CommitWorkflowState& state);
   bool CanExecuteCommit(const CommitWorkflowState& state) const;
-  PersistedCommitDraftState BuildPersistedDraft(const CommitWorkflowState& state) const;
   void RestorePersistedDraft(CommitWorkflowState& state,
                              const PersistedCommitDraftState& persisted);
 

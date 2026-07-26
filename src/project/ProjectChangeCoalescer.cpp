@@ -62,10 +62,6 @@ std::optional<ProjectChangeBatch> ProjectChangeCoalescer::ConsumeReady(
   return ready;
 }
 
-std::uint64_t ProjectChangeCoalescer::CurrentGeneration() const {
-  std::scoped_lock lock(mutex_);
-  return generation_;
-}
 
 void ProjectChangeCoalescer::MergeFileChange(ProjectFileChange change) {
   // Past the cap, collapse to a full-tree rescan and stop tracking individual

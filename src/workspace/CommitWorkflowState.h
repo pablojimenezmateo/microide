@@ -73,4 +73,11 @@ struct CommitWorkflowState {
   mutable std::uint64_t body_text_cache_revision_ = std::numeric_limits<std::uint64_t>::max();
 };
 
+// The ONE place a CommitWorkflowState is mapped onto its persisted form. Both the
+// service and the project-config writer used to spell these field assignments out
+// separately; designated initializers silently value-initialize a field nobody
+// assigns, so a new member on PersistedCommitDraftState would have been dropped by
+// whichever copy was not updated, with no compiler error.
+PersistedCommitDraftState MakePersistedCommitDraft(const CommitWorkflowState& state);
+
 }  // namespace microide::workspace

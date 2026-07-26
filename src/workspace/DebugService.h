@@ -214,7 +214,6 @@ class DebugService {
   // without an active session.
   void EvaluateHover(int frame_id, const std::string& expression);
   // Whether the active session's adapter advertises `supportsEvaluateForHovers`.
-  bool SupportsEvaluateForHovers() const;
   // Whether the active session's adapter advertises `supportsStepBack` (gates the
   // reverse-execution commands + their toolbar buttons).
   bool SupportsStepBack() const;
