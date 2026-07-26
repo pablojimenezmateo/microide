@@ -158,6 +158,29 @@ Still open from this sweep:
   deliberately KEPT**: a previously written session file still carries that tag,
   and dropping the case would fail the decode.
 
+- **TD-2026-07-26-004 — five result/classification enum values are handled but
+  never produced. OPEN (detection gaps, deliberately NOT deleted).** Found by the
+  same "appears only in `case` labels" sweep as -003. Unlike the retired chat
+  cluster, these are *output taxonomies* with live display branches, so deleting
+  them would silently downgrade what the user is told rather than remove waste:
+
+  - `MergeFileConflictKind::FileDirectory` / `Submodule` / `Mode` each have a
+    label, a summary, and `TextHunksAvailable` / `RequiresExistenceChoice`
+    handling, but `ClassifyMergeFileConflict` cannot emit them: it works from the
+    porcelain XY codes plus base/incoming/current existence, none of which
+    distinguish a file/directory clash, a submodule conflict, or a mode-only
+    change. Detecting them needs extra input (`ls-files -u` mode bits, a stat).
+    Until then those three conflicts classify as `Unknown` or `BothModified`.
+  - `PatchApplyResultCategory::StaleDiff` / `Cancelled` have user-facing messages
+    in `PatchApplyService`, but the applier never classifies into them — so
+    applying a hunk against a file that changed underneath reports a generic
+    failure instead of "the diff is stale".
+
+  Deleted in the same pass because they were genuinely unused vocabulary rather
+  than undetected outcomes: `PatchOperationKind::StageFile` / `UnstageFile`
+  (whole-file staging goes through `git add` / `GitStagePath`, never the patch
+  applier).
+
 - **TD-2026-07-26-003 — `CommitOperationResultCategory::RefreshFailedAfterSuccess`
   is handled but never produced. OPEN (needs the async correlation, not a
   one-liner).** `ResultFeedback` and `ResultTone` both have a branch for it, so a

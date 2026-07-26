@@ -4,10 +4,8 @@ namespace microide::project {
 
 bool PatchOperationAppliesToIndex(const PatchOperationKind operation) {
   switch (operation) {
-    case PatchOperationKind::StageFile:
     case PatchOperationKind::StageHunk:
     case PatchOperationKind::StageSelectedLines:
-    case PatchOperationKind::UnstageFile:
     case PatchOperationKind::UnstageHunk:
     case PatchOperationKind::UnstageSelectedLines:
       return true;
@@ -20,7 +18,6 @@ bool PatchOperationAppliesToIndex(const PatchOperationKind operation) {
 
 bool PatchOperationReversesPatch(const PatchOperationKind operation) {
   switch (operation) {
-    case PatchOperationKind::UnstageFile:
     case PatchOperationKind::UnstageHunk:
     case PatchOperationKind::UnstageSelectedLines:
     case PatchOperationKind::DiscardHunk:

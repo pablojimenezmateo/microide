@@ -13,10 +13,8 @@
 namespace microide::project {
 
 enum class PatchOperationKind {
-  StageFile,
   StageHunk,
   StageSelectedLines,
-  UnstageFile,
   UnstageHunk,
   UnstageSelectedLines,
   DiscardHunk,
