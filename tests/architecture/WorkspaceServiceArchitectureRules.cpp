@@ -258,6 +258,19 @@ RuleResult CheckSdlTtfBackendNoPerGlyphLoop(const std::filesystem::path& repo_ro
       "per-glyph DrawFastAsciiString path was removed in the 2026-05-14 perf pass; "
       "ASCII text must render through ResolveEntry+BuildAsciiCompositeSurface so the "
       "steady-state path is one SDL_RenderTexture call per cached (text, color)");
+  // Required-presence anchor. Banning the old symbol alone is satisfied by a
+  // rewrite that reintroduces a per-glyph loop under any other name, and by the
+  // file being renamed out from under the rule. Requiring the composite path to
+  // still be here makes the rule fail loudly instead of going quiet.
+  if (text.find("BuildAsciiCompositeSurface") == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = 1,
+        .message = "SdlTtfTextBackend.cpp no longer builds an ASCII composite surface; the "
+                   "one-draw-per-cached-string path this lint protects is gone (or the lint's "
+                   "anchor moved) — repoint it rather than leaving it green",
+    });
+  }
   return result;
 }
 

@@ -359,6 +359,18 @@ RuleResult CheckPerClipRenderPathDoesNotRunFramePrep(const std::filesystem::path
           .message = "partial-clip render loop must not invoke frame prep; prepare once before the loop",
       });
     }
+  } else {
+    // Loud-missing-target guard: both halves of this rule are anchored on an
+    // exact source shape, and a rename/restructure of either would make the rule
+    // silently inspect nothing while still reporting green. Fail instead so the
+    // anchor gets repointed. (Three hard rules were found passing vacuously for
+    // exactly this reason in the 2026-07-26 lint sweep.)
+    result.violations.push_back(Violation{
+        .path = app_cpp,
+        .line = 1,
+        .message = "partial-clip render loop not found in Application.cpp; this lint's anchor "
+                   "moved and it is now vacuous — repoint it rather than leaving it green",
+    });
   }
 
   const std::regex render_clip_pattern(
@@ -403,6 +415,13 @@ RuleResult CheckPerClipRenderPathDoesNotRunFramePrep(const std::filesystem::path
       });
       break;
     }
+  } else {
+    result.violations.push_back(Violation{
+        .path = shell_render_cpp,
+        .line = 1,
+        .message = "WorkspaceShell::RenderClip not found; this lint's anchor moved and it is "
+                   "now vacuous — repoint it rather than leaving it green",
+    });
   }
 
   return result;
