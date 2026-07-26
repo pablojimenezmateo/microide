@@ -59,6 +59,25 @@ void ResetAlternateScreenFixture(microide::terminal::TerminalSession& session) {
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049hA\nB\nC\nD");
 }
 
+// Real terminal traffic contains CSI sequences we do not implement. Capturing a
+// PTY running `ls --color`, `clear`, `tput smcup/rmcup` and a coloured `git
+// status` yields finals {t, m, H, J} plus private modes ?1049 and ?2004 — and `t`
+// (XTWINOPS window manipulation) is NOT in the dispatcher's handled set. An
+// unrecognised final must be CONSUMED, never echoed: printing `22;0t` into the
+// grid would corrupt every screen a title-setting prompt touches.
+void TestTerminalSessionSwallowsUnknownCsiFinals() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 16);
+
+  // The exact XTWINOPS pair a real `tput smcup`/title-setting prompt emits,
+  // wrapped in ordinary text so any leakage lands visibly on the row.
+  TerminalSessionTestAccess::AppendOutput(session, "a\x1b[22;0tb\x1b[23;0tc");
+
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "abc",
+                 "an unhandled CSI final must be consumed, not printed into the grid");
+}
+
 void TestTerminalSessionScrollsBottomMarginOnLineFeed() {
   microide::terminal::TerminalSession session;
   ResetAlternateScreenFixture(session);
@@ -2334,6 +2353,8 @@ void TestTerminalSessionAsciiRunFastPathMatchesPerByte() {
 }
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TerminalSession/SwallowsUnknownCsiFinals",
+          TestTerminalSessionSwallowsUnknownCsiFinals);
   AddTest(tests, "TerminalSession/AsciiRunFastPathMatchesPerByte",
           TestTerminalSessionAsciiRunFastPathMatchesPerByte);
   AddTest(tests, "TerminalSession/RestoreClampsOversizedCursorRow",
