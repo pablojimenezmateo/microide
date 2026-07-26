@@ -50,7 +50,6 @@
 #include "workspace/WorkspaceCompletionRegistry.h"
 #include "workspace/WorkspaceCodeActionRegistry.h"
 #include "workspace/WorkspaceToolRegistry.h"
-#include "workspace/WorkspaceToolDownloader.h"
 #include "workspace/WorkspaceLspManager.h"
 #include "workspace/WorkspaceTestController.h"
 #include "workspace/WorkspaceScmRegistry.h"

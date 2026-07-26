@@ -2050,7 +2050,11 @@
   CompletionRegistry completion_registry_;
   CodeActionRegistry code_action_registry_;
   ToolRegistry tool_registry_;
-  ToolDownloader tool_downloader_;
+  // NOTE: no ToolDownloader member. The downloader is implemented but not wired to
+  // any command or plugin surface yet (see README "not exercised against production
+  // tool catalogs"), and holding one here was not free: its ProjectBackgroundExecutor
+  // starts its worker thread EAGERLY, so every shell paid an idle OS thread for a
+  // feature nothing could invoke. Construct one where the feature is wired up.
   TestController test_controller_;
   ScmRegistry scm_registry_;
   AnnotationRegistry annotation_registry_;
