@@ -324,6 +324,44 @@ void TestReadPendingMergeHeadId() {
          "a `.git` file without a gitdir: pointer yields no git directory");
 }
 
+// `operation_state` is derived from git's own in-flight markers. It was a
+// declared-but-never-written field, so the merge resolver could never report a
+// rebase/cherry-pick incoming side.
+void TestDetectGitOperationState() {
+  using microide::project::DetectGitOperationState;
+  using microide::project::GitOperationStateKind;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / ".git");
+
+  Expect(DetectGitOperationState(root) == GitOperationStateKind::None,
+         "a clean repository reports no in-flight operation");
+  Expect(DetectGitOperationState(temp_dir.path() / "missing") == GitOperationStateKind::None,
+         "a path with no git directory reports no in-flight operation");
+
+  WriteFile(root / ".git/BISECT_LOG", "log\n");
+  Expect(DetectGitOperationState(root) == GitOperationStateKind::Bisect,
+         "BISECT_LOG reports a bisect");
+  WriteFile(root / ".git/REVERT_HEAD", "0123456789abcdef0123456789abcdef01234567\n");
+  Expect(DetectGitOperationState(root) == GitOperationStateKind::Revert,
+         "REVERT_HEAD outranks BISECT_LOG");
+  WriteFile(root / ".git/CHERRY_PICK_HEAD", "0123456789abcdef0123456789abcdef01234567\n");
+  Expect(DetectGitOperationState(root) == GitOperationStateKind::CherryPick,
+         "CHERRY_PICK_HEAD outranks REVERT_HEAD");
+  std::filesystem::create_directories(root / ".git/rebase-merge");
+  Expect(DetectGitOperationState(root) == GitOperationStateKind::Rebase,
+         "a rebase state directory outranks the sequencer heads");
+  WriteFile(root / ".git/MERGE_HEAD", "0123456789abcdef0123456789abcdef01234567\n");
+  Expect(DetectGitOperationState(root) == GitOperationStateKind::Merge,
+         "MERGE_HEAD outranks every other marker, matching git's own precedence");
+
+  // `rebase-apply` (the am-based rebase layout) counts too.
+  const std::filesystem::path apply_root = temp_dir.path() / "apply";
+  std::filesystem::create_directories(apply_root / ".git/rebase-apply");
+  Expect(DetectGitOperationState(apply_root) == GitOperationStateKind::Rebase,
+         "rebase-apply also reports a rebase");
+}
+
 }  // namespace
 
 void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
@@ -347,6 +385,7 @@ void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitRepositoryState/RefreshFailureClassification",
           TestRefreshFailureClassification);
   AddTest(tests, "GitRepositoryState/ReadPendingMergeHeadId", TestReadPendingMergeHeadId);
+  AddTest(tests, "GitRepositoryState/DetectGitOperationState", TestDetectGitOperationState);
 }
 
 }  // namespace microide::tests

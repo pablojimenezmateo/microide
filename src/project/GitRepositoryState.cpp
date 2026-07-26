@@ -1,7 +1,9 @@
 #include "project/GitRepositoryState.h"
 
 #include <sstream>
+#include <system_error>
 
+#include "project/GitCommandUtil.h"
 #include "project/GitPorcelainParser.h"
 #include "util/StringUtil.h"
 
@@ -91,6 +93,40 @@ GitFileStatus StatusFromPorcelainV2XY(std::string_view xy, bool conflicted) {
     return GitFileStatus::Untracked;
   }
   return GitPorcelainParser::StatusFromChangeCodeChars(xy);
+}
+
+GitOperationStateKind DetectGitOperationState(const std::filesystem::path& repository_root) {
+  const std::optional<std::filesystem::path> git_dir =
+      internal::ResolveGitDirectory(repository_root);
+  if (!git_dir.has_value()) {
+    return GitOperationStateKind::None;
+  }
+  // Non-throwing probes: the git directory can sit on an unmounted network
+  // volume or a directory that lost +x, and a refresh must degrade to "no
+  // operation" rather than abort the background worker.
+  const auto present = [&git_dir](std::string_view name) {
+    std::error_code error;
+    return std::filesystem::exists(*git_dir / name, error) && !error;
+  };
+  // Precedence mirrors git's own wt_status_get_state: a merge is reported by
+  // MERGE_HEAD, a rebase by either of its two state directories, and the
+  // sequencer operations by their respective HEAD files.
+  if (present("MERGE_HEAD")) {
+    return GitOperationStateKind::Merge;
+  }
+  if (present("rebase-merge") || present("rebase-apply")) {
+    return GitOperationStateKind::Rebase;
+  }
+  if (present("CHERRY_PICK_HEAD")) {
+    return GitOperationStateKind::CherryPick;
+  }
+  if (present("REVERT_HEAD")) {
+    return GitOperationStateKind::Revert;
+  }
+  if (present("BISECT_LOG")) {
+    return GitOperationStateKind::Bisect;
+  }
+  return GitOperationStateKind::None;
 }
 
 }  // namespace microide::project

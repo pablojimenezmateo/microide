@@ -156,6 +156,11 @@ project::GitRepositoryState GitRepositoryService::BuildRepositoryState(
   state = project::GitPorcelainV2Parser::Parse(result.output, request.project_root,
                                                request.generation, state.refreshed_at_ms);
   state.repo_available = true;
+  // Cheap filesystem probes on the same background refresh — porcelain v2 does
+  // not report the in-flight operation, and nothing else wrote this field, so it
+  // stayed None forever and the merge resolver's rebase/cherry-pick label was
+  // unreachable.
+  state.operation_state = project::DetectGitOperationState(request.project_root);
   state.refreshing = false;
   return state;
 }

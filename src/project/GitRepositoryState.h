@@ -113,6 +113,15 @@ struct GitRepositoryState {
   bool refreshing = false;
 };
 
+// Which multi-step git operation (if any) is mid-flight, derived from the marker
+// files git itself writes into the git directory (MERGE_HEAD, rebase-merge/,
+// rebase-apply/, CHERRY_PICK_HEAD, REVERT_HEAD, BISECT_LOG). Pure filesystem
+// probes — no subprocess — so the refresh path can fill this in without a second
+// `git` invocation. `GitRepositoryState::operation_state` was declared but never
+// written by anything, which left the merge resolver's rebase/cherry-pick
+// "upstream" label unreachable.
+GitOperationStateKind DetectGitOperationState(const std::filesystem::path& repository_root);
+
 GitRepositoryPathIdentity MakeGitRepositoryPathIdentity(std::filesystem::path relative_path);
 GitRefreshErrorCategory ClassifyGitRefreshFailure(int exit_code, std::string_view stderr_text);
 GitConflictKind ConflictKindFromUnmergedCodes(std::string_view xy);
