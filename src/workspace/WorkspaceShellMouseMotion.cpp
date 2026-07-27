@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
 #include "workspace/ProjectSearchPanelLayout.h"
+#include "workspace/GitSidebarHeaderLayout.h"
 
 #include <algorithm>
 #include <cmath>
@@ -190,18 +191,26 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       }
       case SidebarMode::Git: {
         if (CanStageAllGitSidebarEntries()) {
-          const SDL_FRect stage_rect = GitSidebarStageAllButtonRect(layout.sidebar);
+          const SDL_FRect stage_rect = git_sidebar_header::StageAllButtonRect(layout.sidebar);
           if (Contains(stage_rect, x, y)) {
             return stage_rect;
           }
         }
         if (CanDiscardAllGitSidebarEntries()) {
-          const SDL_FRect discard_rect = GitSidebarDiscardAllButtonRect(layout.sidebar);
+          const SDL_FRect discard_rect = git_sidebar_header::DiscardAllButtonRect(layout.sidebar);
           if (Contains(discard_rect, x, y)) {
             return discard_rect;
           }
         }
-        const SDL_FRect refresh_rect = GitSidebarRefreshButtonRect(layout.sidebar);
+        const SDL_FRect branch_rect = git_sidebar_header::BranchButtonRect(layout.sidebar);
+        if (Contains(branch_rect, x, y)) {
+          return branch_rect;
+        }
+        const SDL_FRect sync_rect = git_sidebar_header::SyncButtonRect(layout.sidebar);
+        if (Contains(sync_rect, x, y)) {
+          return sync_rect;
+        }
+        const SDL_FRect refresh_rect = git_sidebar_header::RefreshButtonRect(layout.sidebar);
         if (Contains(refresh_rect, x, y)) {
           return refresh_rect;
         }

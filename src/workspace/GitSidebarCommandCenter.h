@@ -80,6 +80,13 @@ struct GitSidebarViewModel {
   bool commit_ready = false;
   std::string commit_blocked_reason;
   bool refreshing = false;
+  // Labels for the branch row's two buttons, composed here because the render TU
+  // may not materialize strings. `branch_button_label` is the current branch (or a
+  // prompt when HEAD is detached/unborn); `sync_button_label` carries the
+  // ahead/behind counts so the button says what syncing would actually do.
+  std::string branch_button_label;
+  std::string sync_button_label;
+  std::string sync_button_tooltip;
   std::vector<GitSidebarSectionViewModel> sections;
 };
 

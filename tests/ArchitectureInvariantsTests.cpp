@@ -209,10 +209,12 @@ void TestArchitectureFileSizes() {
              // and six layout constants moved out to workspace/ProjectSearchPanelLayout.h
              // as free functions (-11), replaced by the scope-expanded getter/toggle (+2).
              // +3 for the git-operation service member and its two entry points
-             // (InitializeGitOperationService / DispatchGitOperationAction); the
-             // service itself lives in workspace/GitOperationService, not the shell.
+             // (InitializeGitOperationService / DispatchGitOperationAction; the
+             // service itself lives in workspace/GitOperationService, not the shell),
+             // then -5 as the git sidebar header's five rect accessors moved out to
+             // workspace/GitSidebarHeaderLayout.h as free functions.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1691);
+                                                     1686);
            });
 
   AssertRuleResultsPass(results);

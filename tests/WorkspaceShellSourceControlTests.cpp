@@ -919,6 +919,40 @@ void TestWorkspaceShellGitBranchPickerSwitchesBranch() {
          "activating a branch row should check that branch out");
 }
 
+// The branch row is the mouse-reachable surface for branch work. Clicking the
+// branch button opens the switch picker; the rows must not overlap the working-tree
+// action row above them or the clicks would land on the wrong control.
+void TestWorkspaceShellGitSidebarBranchRowIsClickable() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "a.txt", "one\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "initial", "branch row fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 0), "the fixture repo should start clean");
+
+  const auto top_row = WorkspaceShellTestAccess::GitSidebarTopActionRects(shell);
+  const SDL_FRect branch_rect = WorkspaceShellTestAccess::GitSidebarBranchButtonRect(shell);
+  const SDL_FRect sync_rect = WorkspaceShellTestAccess::GitSidebarSyncButtonRect(shell);
+  Expect(branch_rect.w > 0.0f && sync_rect.w > 0.0f, "both branch-row buttons should be laid out");
+  Expect(branch_rect.y > top_row[0].y + top_row[0].h - 1.0f,
+         "the branch row must sit below the working-tree action row, not overlap it");
+  Expect(!RectsIntersect(branch_rect, sync_rect),
+         "the branch and sync buttons must not overlap each other");
+  Expect(sync_rect.x > branch_rect.x, "sync should sit to the right of the branch button");
+
+  Expect(SendMouseDown(shell, branch_rect.x + branch_rect.w * 0.5f,
+                       branch_rect.y + branch_rect.h * 0.5f, SDL_BUTTON_LEFT),
+         "clicking the branch button should be handled");
+  Expect(SettleComparePicker(shell), "the branch picker should open and finish loading");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell),
+         "clicking the branch button should open the picker overlay");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
@@ -930,6 +964,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitStashActionsRoundTrip);
   AddTest(tests, "WorkspaceShell/GitBranchPickerSwitchesBranch",
           TestWorkspaceShellGitBranchPickerSwitchesBranch);
+  AddTest(tests, "WorkspaceShell/GitSidebarBranchRowIsClickable",
+          TestWorkspaceShellGitSidebarBranchRowIsClickable);
   AddTest(tests, "WorkspaceShell/GitSidebarRefreshPreservesActiveEditorBlameCache",
           TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache);
   AddTest(tests, "WorkspaceShell/GitSidebarEntryRightClickOpensContextMenu",

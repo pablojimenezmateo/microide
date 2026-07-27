@@ -76,6 +76,7 @@ for what is actually measured, and what is not.
 ### Git
 - Sidebar git view: working-tree changes, staged files, merge conflicts, outgoing branch files
 - Per-file stage (`s`), discard (`x`), bulk stage-all, confirmed discard-all
+- Sidebar branch row: current branch opens a filterable switch picker; Sync shows ahead/behind counts
 - Conflict files open directly in the three-way merge tab
 - Branch switch/create, fetch, pull, push, publish, sync, and stash push/pop — each run off the
   shell thread with git's failure classified (auth, no upstream, non-fast-forward, dirty tree, conflict)

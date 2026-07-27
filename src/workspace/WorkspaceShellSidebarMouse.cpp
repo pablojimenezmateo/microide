@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
 #include "workspace/ProjectSearchPanelLayout.h"
+#include "workspace/GitSidebarHeaderLayout.h"
 
 #include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceActionCoordinator.h"
@@ -36,21 +37,13 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
           .seed_buffer_search_from_project_search =
               [this]() { OpenBufferSearchFromProjectSearchResult(); },
           .can_stage_all_git_sidebar_entries = [this]() { return CanStageAllGitSidebarEntries(); },
-          .git_sidebar_stage_all_button_rect =
-              [this](const SDL_FRect& rect) { return GitSidebarStageAllButtonRect(rect); },
           .stage_all_git_sidebar_entries = [this]() { return StageAllGitSidebarEntries(); },
           .can_open_git_commit_button = [this]() { return CanOpenGitCommitButton(); },
-          .git_sidebar_commit_button_rect =
-              [this](const SDL_FRect& rect) { return GitSidebarCommitButtonRect(rect); },
           .open_git_commit_workflow = [this]() { return OpenCommitWorkflow(); },
           .confirm_commit_workflow = [this]() { return RequestCommitWorkflowCommit(); },
           .can_discard_all_git_sidebar_entries =
               [this]() { return CanDiscardAllGitSidebarEntries(); },
-          .git_sidebar_discard_all_button_rect =
-              [this](const SDL_FRect& rect) { return GitSidebarDiscardAllButtonRect(rect); },
           .open_discard_all_git_sidebar_prompt = [this]() { OpenDiscardAllGitSidebarPrompt(); },
-          .git_sidebar_refresh_button_rect =
-              [this](const SDL_FRect& rect) { return GitSidebarRefreshButtonRect(rect); },
           .git_sidebar_outgoing_base_button_rect =
               [this](const SDL_FRect& rect) { return GitSidebarOutgoingBaseButtonRect(rect); },
           .open_anchored_menu =

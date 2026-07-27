@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
 #include "workspace/ProjectSearchPanelLayout.h"
+#include "workspace/GitSidebarHeaderLayout.h"
 
 #include <algorithm>
 #include <cctype>
@@ -477,15 +478,19 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Default;
     }
     if (sidebar_mode == SidebarMode::Git) {
-      if (Contains(GitSidebarStageAllButtonRect(layout.sidebar), x, y) &&
+      if (Contains(git_sidebar_header::StageAllButtonRect(layout.sidebar), x, y) &&
           CanStageAllGitSidebarEntries()) {
         return CursorKind::Pointer;
       }
-      if (Contains(GitSidebarDiscardAllButtonRect(layout.sidebar), x, y) &&
+      if (Contains(git_sidebar_header::DiscardAllButtonRect(layout.sidebar), x, y) &&
           CanDiscardAllGitSidebarEntries()) {
         return CursorKind::Pointer;
       }
-      if (Contains(GitSidebarRefreshButtonRect(layout.sidebar), x, y)) {
+      if (Contains(git_sidebar_header::BranchButtonRect(layout.sidebar), x, y) ||
+          Contains(git_sidebar_header::SyncButtonRect(layout.sidebar), x, y)) {
+        return CursorKind::Pointer;
+      }
+      if (Contains(git_sidebar_header::RefreshButtonRect(layout.sidebar), x, y)) {
         return CursorKind::Pointer;
       }
       if (const auto button_rect = GitSidebarOutgoingBaseButtonRect(layout.sidebar);
@@ -497,7 +502,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       // It is clearly clickable, so it must claim the pointer like every other action.
       if (const auto& git_state = context_.current_project_state.sidebar.git;
           git_state.repo_available && !git_state.commit_workflow.open &&
-          Contains(GitSidebarCommitButtonRect(layout.sidebar), x, y)) {
+          Contains(git_sidebar_header::CommitButtonRect(layout.sidebar), x, y)) {
         return CursorKind::Pointer;
       }
       // Commit workflow (open after the user begins a commit): the subject/body are

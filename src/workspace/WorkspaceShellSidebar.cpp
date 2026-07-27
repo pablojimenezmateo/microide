@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "workspace/GitSidebarHeaderLayout.h"
 #include "workspace/ProjectSearchPanelLayout.h"
 
 #include <algorithm>
@@ -35,9 +36,6 @@ std::string_view BuiltinSidebarModeLabel(SidebarMode mode) {
   const SidebarViewSpec* view = FindBuiltinSidebarView(mode);
   return view != nullptr ? view->label : std::string_view{};
 }
-constexpr float kGitSidebarActionRowTop = 34.0f;
-constexpr float kGitSidebarActionButtonHeight = 18.0f;
-constexpr float kGitSidebarActionGap = 6.0f;
 constexpr float kGitSidebarListGap = 8.0f;
 constexpr float kTreeSidebarActionRowTop = 34.0f;
 constexpr float kTreeSidebarActionButtonHeight = 18.0f;
@@ -61,67 +59,6 @@ bool UseCompactTreeHeader(float sidebar_width,
 }
 
 }  // namespace
-
-SDL_FRect WorkspaceShell::GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const {
-  if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
-    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
-  }
-
-  const SDL_FRect row_rect = GitSidebarActionRowRect(sidebar_rect);
-  if (row_rect.w <= 0.0f || row_rect.h <= 0.0f) {
-    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
-  }
-
-  const float button_width =
-      std::max(0.0f, (row_rect.w - kGitSidebarActionGap * 2.0f) / 3.0f);
-  return MakeRect(row_rect.x + (button_width + kGitSidebarActionGap) * 2.0f, row_rect.y,
-                  button_width, row_rect.h);
-}
-
-SDL_FRect WorkspaceShell::GitSidebarCommitButtonRect(const SDL_FRect& sidebar_rect) const {
-  const SDL_FRect row_rect = GitSidebarActionRowRect(sidebar_rect);
-  if (row_rect.w <= 0.0f || row_rect.h <= 0.0f) {
-    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
-  }
-  // Positioned as the first element of the summary block (kept in sync with the render
-  // start offset of action-row-bottom + 10).
-  const float button_width = std::min(row_rect.w, 96.0f);
-  return MakeRect(row_rect.x, row_rect.y + row_rect.h + 10.0f, button_width,
-                  kGitSidebarCommitButtonHeight);
-}
-
-SDL_FRect WorkspaceShell::GitSidebarActionRowRect(const SDL_FRect& sidebar_rect) const {
-  if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
-    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
-  }
-
-  return MakeRect(sidebar_rect.x + kSidebarInset, sidebar_rect.y + kGitSidebarActionRowTop,
-                  std::max(0.0f, sidebar_rect.w - kSidebarInset * 2.0f),
-                  kGitSidebarActionButtonHeight);
-}
-
-SDL_FRect WorkspaceShell::GitSidebarStageAllButtonRect(const SDL_FRect& sidebar_rect) const {
-  const SDL_FRect row_rect = GitSidebarActionRowRect(sidebar_rect);
-  if (row_rect.w <= 0.0f || row_rect.h <= 0.0f) {
-    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
-  }
-
-  const float button_width =
-      std::max(0.0f, (row_rect.w - kGitSidebarActionGap * 2.0f) / 3.0f);
-  return MakeRect(row_rect.x, row_rect.y, button_width, row_rect.h);
-}
-
-SDL_FRect WorkspaceShell::GitSidebarDiscardAllButtonRect(const SDL_FRect& sidebar_rect) const {
-  const SDL_FRect row_rect = GitSidebarActionRowRect(sidebar_rect);
-  if (row_rect.w <= 0.0f || row_rect.h <= 0.0f) {
-    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
-  }
-
-  const float button_width =
-      std::max(0.0f, (row_rect.w - kGitSidebarActionGap * 2.0f) / 3.0f);
-  return MakeRect(row_rect.x + button_width + kGitSidebarActionGap, row_rect.y, button_width,
-                  row_rect.h);
-}
 
 std::optional<SDL_FRect> WorkspaceShell::GitSidebarOutgoingBaseButtonRect(
     const SDL_FRect& sidebar_rect) const {
@@ -191,8 +128,8 @@ float WorkspaceShell::GitSidebarSummaryHeight() const {
 
 float WorkspaceShell::GitSidebarListTop(const SDL_FRect& sidebar_rect) const {
   const float summary_height = GitSidebarSummaryHeight();
-  return sidebar_rect.y + kGitSidebarActionRowTop + kGitSidebarActionButtonHeight +
-         kGitSidebarListGap + summary_height +
+  return sidebar_rect.y + git_sidebar_header::kActionRowTop +
+         git_sidebar_header::kActionRowsHeight + kGitSidebarListGap + summary_height +
          (summary_height > 0.0f ? kGitSidebarListGap * 0.5f : 0.0f) + GitSidebarCommitWorkflowHeight() +
          (GitSidebarCommitWorkflowHeight() > 0.0f ? kGitSidebarListGap : 0.0f);
 }
@@ -385,7 +322,7 @@ std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sideb
     return {};
   }
 
-  if (Contains(GitSidebarRefreshButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
+  if (Contains(git_sidebar_header::RefreshButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
     return context_.current_project_state.sidebar.git.refreshing ? "Refreshing repository snapshot"
                                                                  : "Refresh";
   }

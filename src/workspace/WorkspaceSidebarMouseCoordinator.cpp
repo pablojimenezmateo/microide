@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "workspace/GitSidebarHeaderLayout.h"
 #include "workspace/ProjectSearchPanelLayout.h"
 #include "workspace/WorkspaceLayout.h"
 
@@ -126,24 +127,30 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
   // Header chrome (stage-all / discard-all / refresh / commit / outgoing base)
   // responds to left-click only.
   if (is_left) {
+    const float px = static_cast<float>(event.button.x);
+    const float py = static_cast<float>(event.button.y);
     if (operations_.can_stage_all_git_sidebar_entries() &&
-        Contains(operations_.git_sidebar_stage_all_button_rect(layout.sidebar), event.button.x,
-                 event.button.y)) {
+        Contains(git_sidebar_header::StageAllButtonRect(layout.sidebar), px, py)) {
       return operations_.stage_all_git_sidebar_entries();
     }
     if (operations_.can_discard_all_git_sidebar_entries() &&
-        Contains(operations_.git_sidebar_discard_all_button_rect(layout.sidebar), event.button.x,
-                 event.button.y)) {
+        Contains(git_sidebar_header::DiscardAllButtonRect(layout.sidebar), px, py)) {
       operations_.open_discard_all_git_sidebar_prompt();
       return true;
     }
-    if (Contains(operations_.git_sidebar_refresh_button_rect(layout.sidebar), event.button.x,
-                 event.button.y)) {
+    if (Contains(git_sidebar_header::RefreshButtonRect(layout.sidebar), px, py)) {
       return operations_.execute_action(ActionId::GitRefresh, {}, ActionSource::Shortcut);
     }
+    // Branch row. Switching opens the picker (the argument-less form of the action);
+    // Sync pulls then pushes. Both dispatch onto the background executor.
+    if (Contains(git_sidebar_header::BranchButtonRect(layout.sidebar), px, py)) {
+      return operations_.execute_action(ActionId::GitSwitchBranch, {}, ActionSource::Shortcut);
+    }
+    if (Contains(git_sidebar_header::SyncButtonRect(layout.sidebar), px, py)) {
+      return operations_.execute_action(ActionId::GitSync, {}, ActionSource::Shortcut);
+    }
     if (operations_.can_open_git_commit_button() &&
-        Contains(operations_.git_sidebar_commit_button_rect(layout.sidebar), event.button.x,
-                 event.button.y)) {
+        Contains(git_sidebar_header::CommitButtonRect(layout.sidebar), px, py)) {
       return operations_.open_git_commit_workflow();
     }
     if (auto& workflow = state_.sidebar.git.commit_workflow;

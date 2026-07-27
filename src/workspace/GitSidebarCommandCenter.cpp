@@ -415,6 +415,28 @@ GitSidebarViewModel BuildGitSidebarViewModel(
       OutgoingBranchReviewTarget(git_state, repository_root);
   GitSidebarViewModel view_model;
   view_model.refreshing = git_state.refreshing;
+  view_model.branch_button_label =
+      git_state.branch_label.empty() ? std::string("Branch\u2026") : git_state.branch_label;
+  // "Sync 2\u2193 1\u2191" reads as "two to pull, one to push". Counts are omitted when
+  // both are zero so the common in-sync case stays a plain verb.
+  view_model.sync_button_label = "Sync";
+  if (git_state.behind > 0 || git_state.ahead > 0) {
+    view_model.sync_button_label += ' ';
+    if (git_state.behind > 0) {
+      view_model.sync_button_label += std::to_string(git_state.behind) + "\u2193";
+    }
+    if (git_state.ahead > 0) {
+      if (git_state.behind > 0) {
+        view_model.sync_button_label += ' ';
+      }
+      view_model.sync_button_label += std::to_string(git_state.ahead) + "\u2191";
+    }
+  }
+  view_model.sync_button_tooltip =
+      git_state.upstream_label.empty()
+          ? std::string("No upstream branch \u2014 publish this branch first")
+          : ("Pull then push (" + std::to_string(git_state.behind) + " behind, " +
+             std::to_string(git_state.ahead) + " ahead of " + git_state.upstream_label + ")");
   view_model.stale_banner = BuildGitStaleBanner(git_state.snapshot_stale, git_state.refreshing);
   view_model.error_banner =
       git_state.error.empty() ? BuildGitRefreshErrorBanner(git_state.refresh_error)

@@ -1062,12 +1062,7 @@
   bool RefreshPluginSidebar();
   SDL_FRect TreeSidebarCollapseButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
-  SDL_FRect GitSidebarActionRowRect(const SDL_FRect& sidebar_rect) const;
-  SDL_FRect GitSidebarCommitButtonRect(const SDL_FRect& sidebar_rect) const;
   bool CanOpenGitCommitButton() const;
-  SDL_FRect GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
-  SDL_FRect GitSidebarStageAllButtonRect(const SDL_FRect& sidebar_rect) const;
-  SDL_FRect GitSidebarDiscardAllButtonRect(const SDL_FRect& sidebar_rect) const;
   std::optional<SDL_FRect> GitSidebarOutgoingBaseButtonRect(const SDL_FRect& sidebar_rect) const;
   std::vector<std::string> GitSidebarSummaryLines() const;
   float GitSidebarSummaryHeight() const;

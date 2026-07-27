@@ -35,16 +35,12 @@ class SidebarMouseCoordinator {
     std::function<void()> restore_previous_sidebar;
     std::function<void()> seed_buffer_search_from_project_search;
     std::function<bool()> can_stage_all_git_sidebar_entries;
-    std::function<SDL_FRect(const SDL_FRect&)> git_sidebar_stage_all_button_rect;
     std::function<bool()> stage_all_git_sidebar_entries;
     std::function<bool()> can_open_git_commit_button;
-    std::function<SDL_FRect(const SDL_FRect&)> git_sidebar_commit_button_rect;
     std::function<bool()> open_git_commit_workflow;
     std::function<bool()> confirm_commit_workflow;
     std::function<bool()> can_discard_all_git_sidebar_entries;
-    std::function<SDL_FRect(const SDL_FRect&)> git_sidebar_discard_all_button_rect;
     std::function<void()> open_discard_all_git_sidebar_prompt;
-    std::function<SDL_FRect(const SDL_FRect&)> git_sidebar_refresh_button_rect;
     std::function<std::optional<SDL_FRect>(const SDL_FRect&)> git_sidebar_outgoing_base_button_rect;
     std::function<void(MenuId, const SDL_FRect&)> open_anchored_menu;
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;

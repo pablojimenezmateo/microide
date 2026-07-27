@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 
 #include "workspace/ProjectSearchPanelLayout.h"
+#include "workspace/GitSidebarHeaderLayout.h"
 
 #include <algorithm>
 #include <cmath>
@@ -404,23 +405,53 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         context_.menu_state.menu_bar_open &&
         context_.menu_state.active_menu_id == MenuId::GitOutgoingBase &&
         context_.menu_state.active_menu_anchor_rect.has_value();
-    draw_action_button(GitSidebarStageAllButtonRect(layout.sidebar), "Stage All",
+    draw_action_button(git_sidebar_header::StageAllButtonRect(layout.sidebar), "Stage All",
                        CanStageAllGitSidebarEntries(), ButtonTone::Neutral);
-    draw_action_button(GitSidebarDiscardAllButtonRect(layout.sidebar), "Discard All",
+    draw_action_button(git_sidebar_header::DiscardAllButtonRect(layout.sidebar), "Discard All",
                        CanDiscardAllGitSidebarEntries(), ButtonTone::Destructive);
     DrawButtonCentered(
-        text_renderer_, renderer, theme_, GitSidebarRefreshButtonRect(layout.sidebar), "Refresh",
+        text_renderer_, renderer, theme_, git_sidebar_header::RefreshButtonRect(layout.sidebar), "Refresh",
         ButtonTone::Neutral,
         ButtonVisualState{
             .enabled = true,
             .hovered = last_mouse_position_valid_ &&
-                       Contains(GitSidebarRefreshButtonRect(layout.sidebar), last_mouse_x_,
+                       Contains(git_sidebar_header::RefreshButtonRect(layout.sidebar), last_mouse_x_,
                                 last_mouse_y_),
             .active = false,
         });
 
-    float summary_y = GitSidebarActionRowRect(layout.sidebar).y +
-                      GitSidebarActionRowRect(layout.sidebar).h + 10.0f;
+    // Branch row: the current branch (opens the switch picker) plus Sync, which
+    // carries the ahead/behind counts. Both labels are precomposed in the git
+    // sidebar view model — this TU must not build strings.
+    if (sidebar_vm.git_sidebar != nullptr) {
+      const SDL_FRect branch_rect = git_sidebar_header::BranchButtonRect(layout.sidebar);
+      const SDL_FRect sync_rect = git_sidebar_header::SyncButtonRect(layout.sidebar);
+      DrawButtonCentered(
+          text_renderer_, renderer, theme_, branch_rect,
+          TruncateLabelView(sidebar_vm.git_sidebar->branch_button_label,
+                            std::max(0.0f, branch_rect.w - 8.0f)),
+          ButtonTone::Neutral,
+          ButtonVisualState{
+              .enabled = true,
+              .hovered = last_mouse_position_valid_ &&
+                         Contains(branch_rect, last_mouse_x_, last_mouse_y_),
+              .active = false,
+          });
+      DrawButtonCentered(
+          text_renderer_, renderer, theme_, sync_rect,
+          TruncateLabelView(sidebar_vm.git_sidebar->sync_button_label,
+                            std::max(0.0f, sync_rect.w - 8.0f)),
+          ButtonTone::Neutral,
+          ButtonVisualState{
+              .enabled = true,
+              .hovered =
+                  last_mouse_position_valid_ && Contains(sync_rect, last_mouse_x_, last_mouse_y_),
+              .active = false,
+          });
+    }
+
+    const SDL_FRect branch_row = git_sidebar_header::ActionRowRect(layout.sidebar, 1);
+    float summary_y = branch_row.y + branch_row.h + 10.0f;
     if (sidebar_vm.git_sidebar != nullptr) {
       const GitSidebarViewModel& git_vm = *sidebar_vm.git_sidebar;
       const float text_width = layout.sidebar.w - kSidebarInset * 2.0f;
@@ -435,7 +466,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       // commit hint. The redundant staged/unstaged/outgoing counts are gone — they are
       // already on each section header.
       if (git_vm.show_commit_button) {
-        const SDL_FRect commit_rect = GitSidebarCommitButtonRect(layout.sidebar);
+        const SDL_FRect commit_rect = git_sidebar_header::CommitButtonRect(layout.sidebar);
         draw_action_button(commit_rect, "Commit", git_vm.commit_ready, ButtonTone::Accent);
         if (!git_vm.commit_ready && !git_vm.commit_blocked_reason.empty()) {
           const float reason_x = commit_rect.x + commit_rect.w + 8.0f;

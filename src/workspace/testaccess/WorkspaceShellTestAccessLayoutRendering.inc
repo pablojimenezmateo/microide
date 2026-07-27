@@ -133,9 +133,17 @@
   }
   static std::array<SDL_FRect, 3> GitSidebarTopActionRects(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return {shell.GitSidebarStageAllButtonRect(layout.sidebar),
-            shell.GitSidebarDiscardAllButtonRect(layout.sidebar),
-            shell.GitSidebarRefreshButtonRect(layout.sidebar)};
+    return {git_sidebar_header::StageAllButtonRect(layout.sidebar),
+            git_sidebar_header::DiscardAllButtonRect(layout.sidebar),
+            git_sidebar_header::RefreshButtonRect(layout.sidebar)};
+  }
+  static SDL_FRect GitSidebarBranchButtonRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return git_sidebar_header::BranchButtonRect(layout.sidebar);
+  }
+  static SDL_FRect GitSidebarSyncButtonRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return git_sidebar_header::SyncButtonRect(layout.sidebar);
   }
   static std::optional<SDL_FRect> GitSidebarOutgoingBaseButtonRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
