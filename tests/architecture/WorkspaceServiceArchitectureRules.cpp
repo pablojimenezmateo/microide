@@ -77,7 +77,7 @@ RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path&
   const std::regex path_to_string_pattern(
       R"(\.\s*(generic_string|generic_u8string|u8string|string)\s*\(\s*\))");
   for (const auto& path : render_files) {
-    if (!std::filesystem::exists(path)) {
+    if (!RequireRuleTarget(result, path)) {
       continue;
     }
     const std::string text = ReadText(path);
@@ -232,7 +232,7 @@ RuleResult CheckWorkspaceShellRenderFrameAvoidsEphemeralEditorViewModelStrings(
   result.label = "WorkspaceShellRenderFrame editor VM path avoids std::string assembly";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/workspace/WorkspaceShellRenderFrame.cpp";
-  if (!std::filesystem::exists(path)) {
+  if (!RequireRuleTarget(result, path)) {
     return result;
   }
   const std::string text = ReadText(path);
@@ -259,7 +259,7 @@ RuleResult CheckSdlTtfBackendNoPerGlyphLoop(const std::filesystem::path& repo_ro
   result.label = "SdlTtfTextBackend must not regress to per-glyph SDL_RenderTexture loops";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/render/SdlTtfTextBackend.cpp";
-  if (!std::filesystem::exists(path)) {
+  if (!RequireRuleTarget(result, path)) {
     return result;
   }
   const std::string text = ReadText(path);
@@ -297,7 +297,7 @@ RuleResult CheckDecoratedTextGridRendererBatchesFills(const std::filesystem::pat
   result.label = "DecoratedTextGridRenderer must coalesce same-color fills via SDL_RenderFillRects";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/editor/DecoratedTextGridRenderer.cpp";
-  if (!std::filesystem::exists(path)) {
+  if (!RequireRuleTarget(result, path)) {
     return result;
   }
   const std::string text = ReadText(path);
@@ -324,7 +324,7 @@ RuleResult CheckEditorViewRendererUsesScratchRows(const std::filesystem::path& r
   result.label = "EditorViewRenderer must reuse scratch DecoratedTextRow members";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/editor/EditorViewRenderer.cpp";
-  if (!std::filesystem::exists(path)) {
+  if (!RequireRuleTarget(result, path)) {
     return result;
   }
   const std::string text = ReadText(path);
@@ -368,7 +368,7 @@ RuleResult CheckCompareMergeRenderUsesScratchRows(const std::filesystem::path& r
              {"merge_incoming_scratch_row_", "merge_current_scratch_row_"}},
   };
   for (const auto& target : targets) {
-    if (!std::filesystem::exists(target.path)) {
+    if (!RequireRuleTarget(result, target.path)) {
       continue;
     }
     const std::string text = ReadText(target.path);
@@ -398,7 +398,7 @@ RuleResult CheckApplicationCoalescesResize(const std::filesystem::path& repo_roo
   result.label = "Scene texture must coalesce realloc during resize bursts";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/app/SceneTexturePresenter.cpp";
-  if (!std::filesystem::exists(path)) {
+  if (!RequireRuleTarget(result, path)) {
     return result;
   }
   const std::string text = ReadText(path);
@@ -424,7 +424,7 @@ RuleResult CheckMouseWheelUsesFractionalAccumulator(const std::filesystem::path&
   result.label = "HandleMouseWheel must use the fractional wheel accumulator";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/workspace/WorkspaceShellMouseMotion.cpp";
-  if (!std::filesystem::exists(path)) {
+  if (!RequireRuleTarget(result, path)) {
     return result;
   }
   const std::string text = ReadText(path);
@@ -456,7 +456,7 @@ RuleResult CheckBottomPanelTerminalRectCache(const std::filesystem::path& repo_r
   result.label = "PrepareFrameOnce must cache the last terminal panel rect";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/workspace/WorkspaceShellRenderFrame.cpp";
-  if (!std::filesystem::exists(path)) {
+  if (!RequireRuleTarget(result, path)) {
     return result;
   }
   const std::string text = ReadText(path);
@@ -496,7 +496,7 @@ RuleResult CheckNoStdStoInRenderOrBuilderTus(const std::filesystem::path& repo_r
   targets.push_back(repo_root / "src/editor/DecoratedTextGridRenderer.cpp");
 
   for (const auto& path : targets) {
-    if (!std::filesystem::exists(path)) {
+    if (!RequireRuleTarget(result, path)) {
       continue;
     }
     const std::string text = ReadText(path);
@@ -615,7 +615,7 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
   };
 
   for (const auto& path : render_files) {
-    if (!std::filesystem::exists(path)) {
+    if (!RequireRuleTarget(result, path)) {
       continue;
     }
     const std::string text = ReadText(path);
@@ -625,7 +625,7 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
   }
 
   for (const auto& path : hot_editor_render_files) {
-    if (!std::filesystem::exists(path)) {
+    if (!RequireRuleTarget(result, path)) {
       continue;
     }
     const std::string text = ReadText(path);

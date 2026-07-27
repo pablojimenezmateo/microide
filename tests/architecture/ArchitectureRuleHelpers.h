@@ -21,6 +21,13 @@ struct RuleResult {
   std::string label;
   bool hard_fail = false;
   std::vector<Violation> violations;
+  // Files the rule expected to scan but did not find. Kept apart from
+  // `violations` because the two answer different questions: a violation means
+  // the code broke the rule, a missing target means the RULE broke — it now
+  // scans nothing and would report green forever. The real-repo run fails on
+  // either; the synthetic-root fixtures assert on `violations` alone, since they
+  // deliberately materialize only the file under test.
+  std::vector<Violation> missing_targets;
 };
 
 // A single architecture rule paired with a stable name. Exposing rule groups as
@@ -60,5 +67,13 @@ void AppendTrailingCodeRegexViolations(RuleResult& result,
 RuleResult CheckShellFileSize(const std::filesystem::path& repo_root,
                               std::string_view relative_path,
                               std::size_t limit);
+
+// Records a missing target when a rule's file is not on disk, and returns whether
+// it is. Every rule below scans named files, so a rule that simply returns (or
+// `continue`s past) a missing target keeps passing forever after the file is
+// renamed or split — the rule is structurally dead but reports green, which is
+// how several rules in this suite went silently blind. Gate every target read on
+// this instead.
+bool RequireRuleTarget(RuleResult& result, const std::filesystem::path& path);
 
 }  // namespace microide::tests::architecture

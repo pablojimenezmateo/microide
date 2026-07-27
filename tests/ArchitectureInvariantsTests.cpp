@@ -26,8 +26,15 @@ void AssertRuleResultsPass(const std::vector<architecture::RuleResult>& results)
     if (result.hard_fail && !result.violations.empty()) {
       hard_failure = true;
     }
+    // A rule whose target moved is a broken rule, not a clean one: it scans
+    // nothing and reports green. Fail on it here (the real repo), where every
+    // target is supposed to exist.
+    if (!result.missing_targets.empty()) {
+      hard_failure = true;
+    }
   }
-  Expect(!hard_failure, "hard-fail architecture invariants should have no violations");
+  Expect(!hard_failure,
+         "hard-fail architecture invariants should have no violations and no missing targets");
 }
 
 // One workspace rule, run in isolation. Registered once per rule (see
@@ -589,6 +596,7 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
   architecture::RunDirectGitRepositoryRuleFixtures();
   architecture::RunActionIdReachabilityRuleFixtures();
   architecture::RunRegisteredSettingsAreReadRuleFixtures();
+  architecture::RunMissingRuleTargetFixtures();
 }
 
 }  // namespace

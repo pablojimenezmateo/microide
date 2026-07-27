@@ -30,4 +30,10 @@ void RunActionIdReachabilityRuleFixtures();
 // overlay shows and persists while nothing reads it.
 void RunRegisteredSettingsAreReadRuleFixtures();
 
+// Control for the shared missing-target guard every file-scanning rule now goes
+// through. A rule pointed at a file that no longer exists scans nothing and
+// reports green; this pins that such a rule reports its target as missing
+// instead, and reports nothing when the target is there.
+void RunMissingRuleTargetFixtures();
+
 }  // namespace microide::tests::architecture

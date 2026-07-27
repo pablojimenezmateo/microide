@@ -122,8 +122,7 @@ RuleResult CheckDapTransportUsesCheckedResponseSeqNarrowing(
   // inbound seq narrowing routes through DapResponseSeqInRange. (TD-2026-07-16-44.)
   const std::filesystem::path target =
       repo_root / "src/workspace/WorkspaceDapClientInternal.h";
-  std::error_code exists_ec;
-  if (!std::filesystem::exists(target, exists_ec) || exists_ec) {
+  if (!RequireRuleTarget(result, target)) {
     return result;
   }
   const std::string text = ReadText(target);
@@ -207,8 +206,7 @@ RuleResult CheckOneShotWakeProducersCheckPushResultOrHaveBackstop(
   const std::regex bare_push(R"(\bSDL_PushEvent\s*\()");
   for (const char* rel : kProducerFiles) {
     const std::filesystem::path path = repo_root / rel;
-    std::error_code exists_ec;
-    if (!std::filesystem::exists(path, exists_ec) || exists_ec) {
+    if (!RequireRuleTarget(result, path)) {
       continue;
     }
     const std::string text = ReadText(path);
@@ -298,7 +296,7 @@ RuleResult CheckRenderSurfaceGeometryAccess(const std::filesystem::path& repo_ro
   const std::regex direct_window_size_pattern(R"(context_\.window_size\b)");
   for (const std::string_view relative_path : render_tus) {
     const std::filesystem::path path = repo_root / relative_path;
-    if (!std::filesystem::exists(path)) {
+    if (!RequireRuleTarget(result, path)) {
       continue;
     }
     const std::string text = ReadText(path);

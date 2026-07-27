@@ -156,7 +156,7 @@ RuleResult CheckSidebarSurfaceFallbackUsesStringView(const std::filesystem::path
   result.label = "SidebarSurfaceViewModel fallback fields stay as std::string_view";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/workspace/RenderViewModelBuilder.h";
-  if (!std::filesystem::exists(path)) {
+  if (!RequireRuleTarget(result, path)) {
     return result;
   }
   const std::string text = ReadText(path);
@@ -264,7 +264,7 @@ RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& rep
   const std::regex broad_state(R"(\b(ProjectWorkspaceState|OverlayState)\b)");
   for (const std::string_view relative : converted_tus) {
     const std::filesystem::path path = repo_root / relative;
-    if (!std::filesystem::exists(path)) {
+    if (!RequireRuleTarget(result, path)) {
       continue;
     }
     const std::string text = ReadText(path);
@@ -283,7 +283,7 @@ RuleResult CheckEditorViewModelStickyAndOccurrenceAreSpans(const std::filesystem
   result.label = "EditorViewModel sticky/occurrence fields stay as std::span";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/editor/EditorViewModel.h";
-  if (!std::filesystem::exists(path)) {
+  if (!RequireRuleTarget(result, path)) {
     return result;
   }
   const std::string text = ReadText(path);

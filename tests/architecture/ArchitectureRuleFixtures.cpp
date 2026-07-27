@@ -4,6 +4,7 @@
 #include "architecture/TerminalArchitectureRules.h"
 #include "architecture/WorkspaceCoordinatorArchitectureRules.h"
 #include "architecture/WorkspaceShellArchitectureRules.h"
+#include "architecture/WorkspaceViewModelArchitectureRules.h"
 
 #include <filesystem>
 
@@ -231,6 +232,33 @@ void RunRegisteredSettingsAreReadRuleFixtures() {
             "std::span<const SettingSpec> BuiltinSettingSpecs() { return {}; }\n");
   Expect(!CheckRegisteredSettingsAreRead(root).violations.empty(),
          "a registry the scan cannot parse must fail loudly, not pass vacuously");
+}
+
+void RunMissingRuleTargetFixtures() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path();
+
+  // An empty tree: the rule's target does not exist, so it can scan nothing.
+  // Before the guard this returned an empty result and read as a clean pass.
+  const RuleResult absent = CheckEditorViewModelStickyAndOccurrenceAreSpans(root);
+  Expect(!absent.missing_targets.empty(),
+         "a rule whose target file is absent must report the missing target, not pass silently");
+  Expect(absent.violations.empty(),
+         "a missing target is a broken rule, not a code violation -- the two must stay separate");
+
+  // Positive control: with the target present and satisfying the rule, nothing is
+  // reported on either channel. Without this half, a guard that always reported a
+  // missing target would still satisfy the case above.
+  WriteFile(root / "src/editor/EditorViewModel.h",
+            "struct EditorViewModel {\n"
+            "  std::span<const std::size_t> sticky_lines;\n"
+            "  std::span<const OccurrenceRange> occurrence_ranges;\n"
+            "};\n");
+  const RuleResult present = CheckEditorViewModelStickyAndOccurrenceAreSpans(root);
+  Expect(present.missing_targets.empty(),
+         "a present target must not be reported as missing");
+  Expect(present.violations.empty(),
+         "a present target satisfying the rule must produce no violations");
 }
 
 }  // namespace microide::tests::architecture

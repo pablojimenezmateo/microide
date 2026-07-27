@@ -44,7 +44,7 @@ RuleResult CheckSinglePluginReloadPerActivation(const std::filesystem::path& rep
   result.label = "single plugin reload per ActivateProjectState";
   result.hard_fail = true;
   const std::filesystem::path service_cpp = repo_root / "src/workspace/ProjectCatalogService.cpp";
-  if (!std::filesystem::exists(service_cpp)) {
+  if (!RequireRuleTarget(result, service_cpp)) {
     return result;
   }
   const std::string text = ReadText(service_cpp);
@@ -201,7 +201,7 @@ RuleResult CheckPluginLuaErrorDoesNotLongjmpOverCppLocals(const std::filesystem:
   result.label = "plugin Lua errors do not longjmp over C++ locals";
   result.hard_fail = true;
   const std::filesystem::path plugin_dir = repo_root / "src/plugin";
-  if (!std::filesystem::exists(plugin_dir)) {
+  if (!RequireRuleTarget(result, plugin_dir)) {
     return result;
   }
   const std::regex lua_error_call(R"(\bluaL_error\s*\()");
@@ -238,7 +238,7 @@ RuleResult CheckPluginFieldReadsAreMetamethodProtected(const std::filesystem::pa
   result.label = "plugin field reads are metamethod-protected (no raw lua_getfield/gettable/geti)";
   result.hard_fail = true;
   const std::filesystem::path plugin_dir = repo_root / "src/plugin";
-  if (!std::filesystem::exists(plugin_dir)) {
+  if (!RequireRuleTarget(result, plugin_dir)) {
     return result;
   }
   const std::regex raw_field_read(R"(\blua_get(field|table|i)\s*\()");
@@ -278,7 +278,7 @@ RuleResult CheckLuaStaysBehindPluginBoundary(const std::filesystem::path& repo_r
   result.label = "lua_State stays behind the src/plugin boundary";
   result.hard_fail = true;
   const std::filesystem::path src_dir = repo_root / "src";
-  if (!std::filesystem::exists(src_dir)) {
+  if (!RequireRuleTarget(result, src_dir)) {
     return result;
   }
   const std::regex lua_state_token(R"(\blua_State\b)");
@@ -421,7 +421,7 @@ RuleResult CheckCoreIsNetworkFree(const std::filesystem::path& repo_root) {
   result.label = "core binary is network-free";
   result.hard_fail = true;
   const std::filesystem::path src_dir = repo_root / "src";
-  if (!std::filesystem::exists(src_dir)) {
+  if (!RequireRuleTarget(result, src_dir)) {
     return result;
   }
   const std::regex network_client(
@@ -466,7 +466,7 @@ RuleResult CheckNoUnwiredMcpScaffolding(const std::filesystem::path& repo_root) 
   result.label = "no unwired contribution scaffolding in src/plugin";
   result.hard_fail = true;
   const std::filesystem::path plugin_dir = repo_root / "src/plugin";
-  if (!std::filesystem::exists(plugin_dir)) {
+  if (!RequireRuleTarget(result, plugin_dir)) {
     return result;
   }
   const std::regex stub_token(

@@ -45,7 +45,7 @@ RuleResult CheckLspDidOpenIsNonBlocking(const std::filesystem::path& repo_root) 
   // Scan Activate() in TabCoordinator for direct LSP didOpen/didChange dispatch.
   // Activation should only hydrate UI state and schedule async work.
   const std::filesystem::path target_path = repo_root / "src/workspace/WorkspaceTabCoordinator.cpp";
-  if (!std::filesystem::exists(target_path)) {
+  if (!RequireRuleTarget(result, target_path)) {
     return result;
   }
   const std::string text = ReadText(target_path);
@@ -104,7 +104,7 @@ RuleResult CheckTextViewportNoCombinedLayoutRevision(const std::filesystem::path
   result.label = "TextViewport tiered revisions (no combined layout_revision)";
   result.hard_fail = true;
   const std::filesystem::path header = repo_root / "src/editor/TextViewport.h";
-  if (!std::filesystem::exists(header)) {
+  if (!RequireRuleTarget(result, header)) {
     return result;
   }
   const std::string text = ReadText(header);
@@ -131,7 +131,7 @@ RuleResult CheckNoLegacyPersistenceSymbols(const std::filesystem::path& repo_roo
   };
 
   for (const auto& root_dir : {repo_root / "src", repo_root / "tests", repo_root / "tools"}) {
-    if (!std::filesystem::exists(root_dir)) {
+    if (!RequireRuleTarget(result, root_dir)) {
       continue;
     }
     for (const auto& entry : std::filesystem::recursive_directory_iterator(root_dir)) {
@@ -208,7 +208,7 @@ RuleResult CheckNoFallbackEditorViewportSymbols(const std::filesystem::path& rep
   result.label = "no fallback editor viewport symbols";
   result.hard_fail = true;
   for (const auto& root_dir : {repo_root / "src", repo_root / "tests", repo_root / "tools"}) {
-    if (!std::filesystem::exists(root_dir)) {
+    if (!RequireRuleTarget(result, root_dir)) {
       continue;
     }
     for (const auto& entry : std::filesystem::recursive_directory_iterator(root_dir)) {

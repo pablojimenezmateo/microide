@@ -90,12 +90,29 @@ RuleResult CheckShellFileSize(const std::filesystem::path& repo_root,
   return result;
 }
 
+bool RequireRuleTarget(RuleResult& result, const std::filesystem::path& path) {
+  if (std::filesystem::exists(path)) {
+    return true;
+  }
+  result.missing_targets.push_back(Violation{
+      .path = path,
+      .line = 1,
+      .message = "architecture rule target is missing, so the rule scans nothing here -- point "
+                 "the rule at the file's new location or delete the rule",
+  });
+  return false;
+}
+
 void ReportRule(const RuleResult& result) {
-  if (result.violations.empty()) {
+  if (result.violations.empty() && result.missing_targets.empty()) {
     return;
   }
   std::cerr << "ArchitectureInvariants warning: " << result.label << '\n';
   const std::filesystem::path repo_root = RepoRoot().lexically_normal();
+  for (const Violation& violation : result.missing_targets) {
+    std::cerr << "  " << violation.path.lexically_normal().generic_string() << ": "
+              << violation.message << '\n';
+  }
   for (const Violation& violation : result.violations) {
     const std::filesystem::path relative =
         violation.path.lexically_normal().lexically_relative(repo_root);

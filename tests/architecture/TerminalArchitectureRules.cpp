@@ -190,7 +190,7 @@ RuleResult CheckTerminalInternalHeadersStayInTerminalDir(const std::filesystem::
       repo_root / "tools",
   };
   for (const std::filesystem::path& root : scan_roots) {
-    if (!std::filesystem::exists(root)) {
+    if (!RequireRuleTarget(result, root)) {
       continue;
     }
     for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
@@ -379,7 +379,7 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
 
   std::size_t scanned_creation_sites = 0;
   for (const std::filesystem::path& dir : {repo_root / "src"}) {
-    if (!std::filesystem::exists(dir)) {
+    if (!RequireRuleTarget(result, dir)) {
       continue;
     }
     for (const auto& entry : std::filesystem::recursive_directory_iterator(dir)) {
