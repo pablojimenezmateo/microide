@@ -333,7 +333,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                 .results[static_cast<std::size_t>(line_map[next_result_index])];
         DrawVCenteredTextOn(text_renderer_, renderer, row_rect, 4.0f, theme_.text_primary,
                             theme_.surface_background,
-                            TruncateLabel(std::string_view(file_result.relative_path_string),
+                            TruncateLabelView(std::string_view(file_result.relative_path_string),
                                           row_rect.w - 8.0f));
         continue;
       }
@@ -373,7 +373,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       DrawVCenteredTextOn(text_renderer_, renderer, row_rect, 6.0f,
                           emphasized ? theme_.text_primary : theme_.text_secondary,
                           emphasized ? theme_.row_highlight : theme_.surface_background,
-                          TruncateLabel(label, row_rect.w - 12.0f));
+                          TruncateLabelView(label, row_rect.w - 12.0f));
     }
 
     if (line_map.empty()) {
@@ -387,7 +387,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
               : FormatEmptyState("matches");
       DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
                  list_layout.row_y + 4.0f, theme_.text_muted, theme_.surface_background,
-                 TruncateLabel(placeholder, layout.sidebar.w - kSidebarInset * 2.0f));
+                 TruncateLabelView(placeholder, layout.sidebar.w - kSidebarInset * 2.0f));
     }
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(line_map.size()),
@@ -439,13 +439,13 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                        std::max(0.0f, layout.sidebar.x + layout.sidebar.w - kSidebarInset - reason_x),
                        commit_rect.h),
               0.0f, theme_.text_muted, theme_.surface_background,
-              TruncateLabel(git_vm.commit_blocked_reason, text_width));
+              TruncateLabelView(git_vm.commit_blocked_reason, text_width));
         }
         detail_y += kCommitButtonHeight + kCommitButtonGap;
       } else if (!git_vm.commit_summary_line.empty()) {
         DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, detail_y,
                    theme_.text_muted, theme_.surface_background,
-                   TruncateLabel(git_vm.commit_summary_line, text_width));
+                   TruncateLabelView(git_vm.commit_summary_line, text_width));
         detail_y += kSummaryLineHeight;
       }
       // summary_lines now carries only banners (stale snapshot / refresh error); the
@@ -454,7 +454,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         const SDL_Color color = summary == git_vm.error_banner ? theme_.diff_deleted
                                                                : theme_.text_secondary;
         DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, detail_y, color,
-                   theme_.surface_background, TruncateLabel(summary, text_width));
+                   theme_.surface_background, TruncateLabelView(summary, text_width));
         detail_y += kSummaryLineHeight;
       }
       summary_y = detail_y;
@@ -462,7 +462,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       for (const std::string& summary : GitSidebarSummaryLines()) {
         DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, summary_y,
                    theme_.text_muted, theme_.surface_background,
-                   TruncateLabel(summary, layout.sidebar.w - kSidebarInset * 2.0f));
+                   TruncateLabelView(summary, layout.sidebar.w - kSidebarInset * 2.0f));
         summary_y += 14.0f;
       }
     }
@@ -488,7 +488,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
       DrawTextOn(text_renderer_, renderer, field_x, panel.staged_summary_y, theme_.text_primary,
                  theme_.surface_background,
-                 TruncateLabel(workflow.staged_summary_line, field_w));
+                 TruncateLabelView(workflow.staged_summary_line, field_w));
 
       // --- Subject: a framed single-line input. ComputeSingleLineViewMetrics gives the
       //     in-field horizontal scroll, caret x, and visible selection slice. ---
@@ -544,13 +544,13 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                                     : theme_.text_muted;
         DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, check_y, color,
                    theme_.surface_background,
-                   TruncateLabel(check.message, layout.sidebar.w - kSidebarInset * 2.0f));
+                   TruncateLabelView(check.message, layout.sidebar.w - kSidebarInset * 2.0f));
         check_y += 14.0f;
       }
       if (!workflow.status_message.empty()) {
         DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel.status_y,
                    theme_.text_muted, theme_.surface_background,
-                   TruncateLabel(workflow.status_message, layout.sidebar.w - kSidebarInset * 2.0f));
+                   TruncateLabelView(workflow.status_message, layout.sidebar.w - kSidebarInset * 2.0f));
       }
 
       // Confirm button: the discoverable way to commit the staged changes (mirrors the
@@ -631,7 +631,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         }
         DrawVCenteredTextOn(text_renderer_, renderer, row_rect, 8.0f, theme_.text_secondary,
                             theme_.surface_raised,
-                            TruncateLabel(line.label, label_width));
+                            TruncateLabelView(line.label, label_width));
         continue;
       }
       if (line.kind == GitSidebarLine::Kind::Directory) {
@@ -650,13 +650,13 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         DrawVCenteredTextOn(
             text_renderer_, renderer,
             MakeRect(label_x, row_rect.y, label_width, row_rect.h), 0.0f, theme_.text_primary,
-            row_background, TruncateLabel(line.label, label_width));
+            row_background, TruncateLabelView(line.label, label_width));
         continue;
       }
       if (line.kind == GitSidebarLine::Kind::Empty || line.entry_index < 0) {
         DrawVCenteredTextOn(text_renderer_, renderer, row_rect, 4.0f, theme_.text_disabled,
                             theme_.surface_background,
-                            TruncateLabel(line.label, row_rect.w - 8.0f));
+                            TruncateLabelView(line.label, row_rect.w - 8.0f));
         continue;
       }
       if (static_cast<std::size_t>(line.entry_index) >= project_state.sidebar.git.entries.size()) {
@@ -760,7 +760,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                  project_state.sidebar.plugin.placeholder_is_error ? theme_.diff_deleted
                                                                    : theme_.text_muted,
                  theme_.surface_background,
-                 TruncateLabel(placeholder, layout.sidebar.w - kSidebarInset * 2.0f));
+                 TruncateLabelView(placeholder, layout.sidebar.w - kSidebarInset * 2.0f));
     }
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(project_state.sidebar.plugin.items.size()),
@@ -874,7 +874,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
               : (entry.ignored ? theme_.text_muted
                                : (entry.is_directory ? theme_.text_primary : theme_.text_secondary)),
           row_background,
-          TruncateLabel(entry.label, label_width));
+          TruncateLabelView(entry.label, label_width));
       if (has_git_marker) {
         DrawVCenteredTextOn(
             text_renderer_, renderer,
