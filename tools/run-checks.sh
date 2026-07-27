@@ -223,7 +223,10 @@ check_perf_tests() {
   run_logged "$log" bash -c '
     set -e
     cmake --preset microide-perf
-    cmake --build '"$build_dir"' --target microide_tests -j'"$JOBS"'
+    # Build microide_perf too: NOTHING in the default flow compiles it, so a perf
+    # scenario can stop building (a removed #if, a source dropped from its curated
+    # list) and every other check stays green. Building it here is the cheap guard.
+    cmake --build '"$build_dir"' --target microide_tests microide_perf -j'"$JOBS"'
     ctest --test-dir '"$build_dir"' -R microide_tests_shard --output-on-failure -j'"$CTEST_JOBS"'
   '
   local rc=$?

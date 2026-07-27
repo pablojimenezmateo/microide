@@ -86,6 +86,7 @@ void RunAssistRankedUnionMerge(ScenarioContext& context) {
   });
 }
 
+#if MICROIDE_HAS_LUA_PLUGINS
 // ---- 081: registry_interop::ApplyStatusItemUpdate id->pos cache ------------
 //
 // A plugin firing frequent ctx.status.update calls resolves its target item in

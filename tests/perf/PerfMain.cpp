@@ -1064,18 +1064,21 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             OpenEditorEssentials50kCppOrThrow(context);
             microide::editor::TextViewport& vp = context.ActiveViewport();
-            std::vector<std::string_view> line_views(vp.lines().size());
-            for (std::size_t i = 0; i < vp.lines().size(); ++i) {
-              line_views[i] = vp.lines()[i];
-            }
+            // Measure FindBracketMatch, the entry point the editor actually calls on
+            // caret motion -- NOT the FindBracketMatchInLines test seam. The seam takes
+            // a caller-built line vector, so timing it excluded the per-call window
+            // materialization that production pays, and the old scenario prebuilt a
+            // view for all 50k lines outside the timed loop: exactly the O(file) shape
+            // FindBracketMatch was rewritten to stop doing. A regression in the window
+            // build was therefore invisible to this baseline.
             // Shallow nest depth keeps bracket scans bounded while the 50k-line buffer is live.
             vp.MoveCursorTo(24, 8, false);
             std::vector<double> samples_us;
             samples_us.reserve(400);
             for (int i = 0; i < 400; ++i) {
               const auto t0 = std::chrono::steady_clock::now();
-              (void)microide::editor::FindBracketMatchInLines(line_views, vp.cursor_line(),
-                                                              vp.cursor_column(), 2000, &vp);
+              (void)microide::editor::FindBracketMatch(vp, vp.cursor_line(), vp.cursor_column(),
+                                                       2000);
               const auto t1 = std::chrono::steady_clock::now();
               samples_us.push_back(
                   std::chrono::duration<double, std::micro>(t1 - t0).count());
