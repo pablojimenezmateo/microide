@@ -1112,6 +1112,8 @@
   bool StageAllGitSidebarEntries();
   void OpenDiscardAllGitSidebarPrompt();
   void InitializeCommitWorkflowService();
+  void InitializeGitOperationService();
+  std::string DispatchGitOperationAction(ActionId id, const std::vector<std::string>& args);
   bool OpenCommitWorkflow();
   void CloseCommitWorkflow();
   bool CommitWorkflowOpen() const;
@@ -1959,6 +1961,7 @@
   GitRepositoryService git_repository_service_{project_background_executor_};
   PatchApplyService patch_apply_service_{project_background_executor_, git_repository_service_};
   CommitWorkflowService commit_workflow_service_{project_background_executor_, git_repository_service_};
+  GitOperationService git_operation_service_{project_background_executor_};
   // Async compare/ref picker: the blocking git history/branch queries run on the
   // background executor and marshal results back through this mailbox (wake reuses
   // git_sidebar_event_type_, drained in ConsumeGitSidebarRefresh). The generation

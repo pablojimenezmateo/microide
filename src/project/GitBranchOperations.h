@@ -51,15 +51,6 @@ struct GitOperationReport {
   bool success() const { return GitOperationSucceeded(outcome); }
 };
 
-// Branch names known to the repository. `current` is empty on a detached or unborn
-// HEAD. Remote names keep their `origin/` prefix, matching how git prints them.
-struct GitBranchListing {
-  std::vector<std::string> local;
-  std::vector<std::string> remote;
-  std::string current;
-  bool valid = false;
-};
-
 enum class GitRemoteOperationKind {
   Fetch,
   Pull,
@@ -70,7 +61,9 @@ enum class GitRemoteOperationKind {
 // side-effect free so every failure mapping is unit-testable without spawning git.
 GitOperationOutcome ClassifyGitOperationFailure(int exit_code, std::string_view output);
 
-GitBranchListing ListGitBranches(const std::filesystem::path& repository_root);
+// Branch enumeration lives in project::CollectGitBranches (GitCompareService.h) —
+// one date-sorted, capped, HEAD-aware list shared with the compare pickers rather
+// than a second for-each-ref parser here.
 
 // `git switch <branch>`. Refuses to run with a dirty index/worktree conflict rather
 // than clobbering local work — git's own guard, surfaced as DirtyWorktree.

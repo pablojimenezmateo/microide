@@ -80,6 +80,27 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
       context_.RefreshProjectFiles();
       context_.ReloadCleanOpenBuffersFromDisk();
       return DispatchResult::Handled;
+    case ActionId::GitSwitchBranch:
+    case ActionId::GitCreateBranch:
+    case ActionId::GitFetch:
+    case ActionId::GitPull:
+    case ActionId::GitPush:
+    case ActionId::GitPublishBranch:
+    case ActionId::GitSync:
+    case ActionId::GitStash:
+    case ActionId::GitStashPop: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      // The service runs git on the background executor and reports the outcome as
+      // a toast; only a refusal to start (no repo, one already in flight, missing
+      // argument) comes back here as a rejection sentence.
+      std::string rejection = context_.DispatchGitOperation(id, args);
+      if (!rejection.empty()) {
+        return reject(std::move(rejection));
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::GitOpenChanges:
     case ActionId::GitStageToggleEntry:
     case ActionId::GitDiscardEntry: {

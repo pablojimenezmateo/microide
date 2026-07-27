@@ -50,6 +50,12 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
 struct GitBranchReference {
   std::string ref;
   std::string label;
+  // True for the branch HEAD currently points at. Empty for every entry on a
+  // detached or unborn HEAD.
+  bool is_head = false;
+  // refs/remotes/… rather than refs/heads/…. Note the label alone cannot tell you
+  // this: a local branch may itself be named "feature/topic".
+  bool is_remote = false;
 };
 
 struct GitBranchFileEntry {
@@ -60,7 +66,9 @@ struct GitBranchFileEntry {
 std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem::path& root);
 
 // Local + remote branches, most-recently-committed first, with short labels
-// ("main", "origin/main"). Symbolic refs like origin/HEAD are skipped.
+// ("main", "origin/main"). Symbolic refs like origin/HEAD are skipped. The single
+// branch enumerator in the tree: the compare/outgoing-base pickers, the
+// switch-branch picker, and the git status surfaces all read this one list.
 std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& root);
 
 std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesystem::path& root,

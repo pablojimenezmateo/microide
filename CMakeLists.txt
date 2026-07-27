@@ -467,6 +467,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/FileUri.cpp
   src/workspace/CompareMergeRender.cpp
   src/workspace/ProjectCatalogService.cpp
+  src/workspace/GitOperationService.cpp
   src/workspace/ProjectSearchPanelLayout.cpp
   src/workspace/WorkspacePathMutationCoordinatorDirty.cpp
   src/workspace/WorkspacePathMutationCoordinatorTabs.cpp

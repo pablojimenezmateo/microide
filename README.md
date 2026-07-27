@@ -77,6 +77,8 @@ for what is actually measured, and what is not.
 - Sidebar git view: working-tree changes, staged files, merge conflicts, outgoing branch files
 - Per-file stage (`s`), discard (`x`), bulk stage-all, confirmed discard-all
 - Conflict files open directly in the three-way merge tab
+- Branch switch/create, fetch, pull, push, publish, sync, and stash push/pop — each run off the
+  shell thread with git's failure classified (auth, no upstream, non-fast-forward, dirty tree, conflict)
 - Editable commit message; branch/commit ref picker for compare and review
 - Commit picker overlay for compare target selection
 
@@ -549,6 +551,15 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `signature-help`
 - `goto <line[:col]>`
 - `git-refresh`
+- `git-switch-branch [branch]`
+- `git-create-branch <name> [start-point]`
+- `git-fetch`
+- `git-pull`
+- `git-push`
+- `git-publish-branch`
+- `git-sync`
+- `git-stash [message]`
+- `git-stash-pop`
 - `mark-branch-file-reviewed`
 - `unmark-branch-file-reviewed`
 - `mark-branch-hunk-reviewed`

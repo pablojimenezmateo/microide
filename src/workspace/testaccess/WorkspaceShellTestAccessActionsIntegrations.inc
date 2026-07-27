@@ -301,6 +301,12 @@
     shell.CycleProjectSearchCaseMode();
   }
   static void RefreshProjectSearch(WorkspaceShell& shell) { shell.RefreshProjectSearch(); }
+  static bool GitOperationBusy(const WorkspaceShell& shell) {
+    return shell.git_operation_service_.busy();
+  }
+  static void DrainGitOperationCompletions(WorkspaceShell& shell) {
+    shell.git_operation_service_.DrainCompletions();
+  }
   static void ToggleProjectSearchHiddenFiles(WorkspaceShell& shell) {
     shell.ToggleProjectSearchHiddenFiles();
   }

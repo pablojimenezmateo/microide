@@ -269,6 +269,18 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::Compare:
     case ActionId::Find:
     case ActionId::GitRefresh:
+    // Git write actions gate on "a project is open", exactly as GitRefresh does;
+    // the executor reports "not a git repository" precisely on invocation rather
+    // than the command silently vanishing from the palette in a non-git project.
+    case ActionId::GitSwitchBranch:
+    case ActionId::GitCreateBranch:
+    case ActionId::GitFetch:
+    case ActionId::GitPull:
+    case ActionId::GitPush:
+    case ActionId::GitPublishBranch:
+    case ActionId::GitSync:
+    case ActionId::GitStash:
+    case ActionId::GitStashPop:
     case ActionId::Merge:
     case ActionId::ReviewConflicts:
     case ActionId::ReviewBranch:

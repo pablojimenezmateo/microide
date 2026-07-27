@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "editor/TextBuffer.h"
+#include "project/GitCompareService.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
@@ -774,9 +775,116 @@ void TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable() {
          "Shift+Tab should move focus back to the commit subject");
 }
 
+// Git write operations run on the project background executor and publish through a
+// main-thread mailbox, so a test must drain that mailbox rather than sleep.
+bool SettleGitOperation(WorkspaceShell& shell) {
+  return WaitUntil([&shell]() { return !WorkspaceShellTestAccess::GitOperationBusy(shell); },
+                   std::chrono::seconds(10), std::chrono::milliseconds(5),
+                   [&shell]() { WorkspaceShellTestAccess::DrainGitOperationCompletions(shell); });
+}
+
+std::string CurrentGitBranch(const std::filesystem::path& root) {
+  for (const auto& branch : microide::project::CollectGitBranches(root)) {
+    if (branch.is_head) {
+      return branch.label;
+    }
+  }
+  return {};
+}
+
+// End-to-end through the action layer: `git-create-branch` and `git-switch-branch`
+// must actually move HEAD, and must do so off the shell thread.
+void TestWorkspaceShellGitBranchActionsSwitchHead() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "a.txt", "one\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "initial", "git action fixture");
+  const std::string base_branch = CurrentGitBranch(root);
+  Expect(!base_branch.empty(), "the fixture repo should start on a branch");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 0), "a clean fixture repo should list no entries");
+
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::GitCreateBranch,
+                                                 {"topic"}),
+         "git-create-branch should be accepted");
+  Expect(SettleGitOperation(shell), "the create-branch operation should complete");
+  Expect(CurrentGitBranch(root) == "topic", "git-create-branch should check out the new branch");
+
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::GitSwitchBranch,
+                                                 {base_branch}),
+         "git-switch-branch should be accepted");
+  Expect(SettleGitOperation(shell), "the switch operation should complete");
+  Expect(CurrentGitBranch(root) == base_branch, "git-switch-branch should move HEAD back");
+}
+
+// A missing required argument must be rejected before anything is dispatched, and a
+// git failure must surface as a notification rather than being swallowed.
+void TestWorkspaceShellGitOperationFailuresAreReported() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "a.txt", "one\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "initial", "git failure fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 0), "the fixture repo should be clean");
+
+  WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::GitSwitchBranch, {});
+  Expect(!WorkspaceShellTestAccess::GitOperationBusy(shell),
+         "a missing branch argument must be rejected without dispatching git");
+
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::GitSwitchBranch,
+                                                 {"no-such-branch"}),
+         "a switch to a missing branch should still dispatch");
+  Expect(SettleGitOperation(shell), "the failing switch should complete");
+  const auto& notifications = WorkspaceShellTestAccess::ActiveNotifications(shell);
+  Expect(!notifications.empty(), "a failed git operation should post a notification");
+  Expect(notifications.back().tone != microide::workspace::NotificationService::Tone::Info,
+         "a failure notification should not be posted as plain info");
+}
+
+// Stash push/pop through the action layer must move the working tree, and the shell
+// must re-read the file it rewrote underneath.
+void TestWorkspaceShellGitStashActionsRoundTrip() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path file = root / "a.txt";
+  WriteFile(file, "one\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "initial", "stash action fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 0), "the fixture repo should start clean");
+
+  WriteFile(file, "stashed edit\n");
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::GitStash, {}),
+         "git-stash should be accepted");
+  Expect(SettleGitOperation(shell), "the stash operation should complete");
+  Expect(ReadFile(file) == "one\n", "stashing should restore the committed content on disk");
+
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::GitStashPop, {}),
+         "git-stash-pop should be accepted");
+  Expect(SettleGitOperation(shell), "the pop operation should complete");
+  Expect(ReadFile(file) == "stashed edit\n", "popping should restore the stashed edit");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/GitBranchActionsSwitchHead",
+          TestWorkspaceShellGitBranchActionsSwitchHead);
+  AddTest(tests, "WorkspaceShell/GitOperationFailuresAreReported",
+          TestWorkspaceShellGitOperationFailuresAreReported);
+  AddTest(tests, "WorkspaceShell/GitStashActionsRoundTrip",
+          TestWorkspaceShellGitStashActionsRoundTrip);
   AddTest(tests, "WorkspaceShell/GitSidebarRefreshPreservesActiveEditorBlameCache",
           TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache);
   AddTest(tests, "WorkspaceShell/GitSidebarEntryRightClickOpensContextMenu",

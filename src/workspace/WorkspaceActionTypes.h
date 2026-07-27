@@ -53,6 +53,17 @@ enum class ActionId {
   SignatureHelp,
   Goto,
   GitRefresh,
+  // Git write operations. Each dispatches through GitOperationService onto the
+  // project background executor; none of them run on the shell thread.
+  GitSwitchBranch,
+  GitCreateBranch,
+  GitFetch,
+  GitPull,
+  GitPush,
+  GitPublishBranch,
+  GitSync,
+  GitStash,
+  GitStashPop,
   // Git sidebar entry context-menu actions (right-click on a changed-file row).
   // Context-menu only; act on the selected git entry. Not registered as commands.
   GitOpenChanges,

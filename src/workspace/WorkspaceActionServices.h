@@ -71,6 +71,10 @@ class WorkspaceActionContext {
     std::function<std::optional<SDL_FRect>()> current_window_rect;
     std::function<void()> refresh_project_files;
     std::function<void()> reload_clean_open_buffers_from_disk;
+    // Dispatch one git write action (switch/create/fetch/pull/push/publish/sync/
+    // stash/stash-pop). Returns a rejection sentence on failure to start, or an
+    // empty string when the operation was dispatched to the background executor.
+    std::function<std::string(ActionId, const std::vector<std::string>&)> dispatch_git_operation;
     std::function<std::filesystem::path(ActionSource)> tree_mutation_base_path;
     std::function<std::filesystem::path(ActionSource)> resolve_tree_action_path;
     std::function<std::filesystem::path()> active_tab_path;
@@ -318,6 +322,7 @@ class WorkspaceActionContext {
   void SetSidebarWidth(float width);
   void RefreshProjectFiles();
   void ReloadCleanOpenBuffersFromDisk();
+  std::string DispatchGitOperation(ActionId id, const std::vector<std::string>& args);
   std::filesystem::path TreeMutationBasePath(ActionSource source) const;
   std::filesystem::path ResolveTreeActionPath(ActionSource source) const;
   std::filesystem::path ActiveTabPath() const;

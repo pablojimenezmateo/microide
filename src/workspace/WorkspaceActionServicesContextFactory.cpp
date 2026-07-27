@@ -387,6 +387,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .current_window_rect = [this]() { return CurrentWindowRect(); },
           .refresh_project_files = [this]() { RefreshProjectFiles(); },
           .reload_clean_open_buffers_from_disk = [this]() { ReloadCleanOpenBuffersFromDisk(); },
+          .dispatch_git_operation =
+              [this](ActionId id, const std::vector<std::string>& args) {
+                return DispatchGitOperationAction(id, args);
+              },
           .tree_mutation_base_path =
               [this](ActionSource source) { return TreeMutationBasePath(source); },
           .resolve_tree_action_path =

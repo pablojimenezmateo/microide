@@ -4,6 +4,7 @@
 
 #include "workspace/CommitWorkflowLayout.h"
 #include "workspace/CommitWorkflowService.h"
+#include "workspace/GitOperationService.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 
 namespace microide::workspace {
@@ -141,6 +142,98 @@ bool WorkspaceShell::RequestCommitWorkflowCommit() {
   return commit_workflow_service_.RequestCommit(
       context_.current_project_state.sidebar.git.commit_workflow,
       project::CommitOperationKind::Create);
+}
+
+void WorkspaceShell::InitializeGitOperationService() {
+  git_operation_service_.SetCallbacks(GitOperationService::Callbacks{
+      .request_git_refresh = [this]() { RequestAutomaticGitSidebarRefresh(); },
+      // A branch switch, pull, or stash pop rewrites files under open editors. Clean
+      // buffers are re-read from disk; dirty ones are left alone (the reload helper
+      // skips them) so unsaved work is never silently replaced.
+      .reload_open_buffers =
+          [this]() {
+            RefreshProjectFiles();
+            ReloadCleanOpenBuffersFromDisk();
+          },
+      .append_output =
+          [this](const std::string_view channel_id, const std::string_view label,
+                 const std::string line) {
+            output_channels_.AppendLine(channel_id, label, line);
+          },
+      .show_output_panel =
+          [this](const std::string_view channel_id) {
+            EnsureOutputChannelTabOpen(channel_id);
+            context_.current_project_state.panel.content = PanelContentKind::Output;
+            context_.current_project_state.panel.output.channel_id = std::string(channel_id);
+          },
+      .notify = [this](NotificationService::Tone tone,
+                       std::string message) { Notify(tone, std::move(message)); },
+      .request_redraw = [this]() { RequestSidebarRedraw(); },
+  });
+}
+
+std::string WorkspaceShell::DispatchGitOperationAction(const ActionId id,
+                                                       const std::vector<std::string>& args) {
+  const std::filesystem::path& root = context_.current_project_state.root;
+  if (root.empty()) {
+    return "No active project";
+  }
+  // One git write at a time: a second request would race the index lock, and the
+  // toast that eventually arrives could not be attributed to either request.
+  if (git_operation_service_.busy()) {
+    return "A git operation is already running";
+  }
+
+  // The branch HEAD is on, taken from the git sidebar snapshot. Empty on a detached
+  // or unborn HEAD, or before the first refresh.
+  const std::string& current_branch = context_.current_project_state.sidebar.git.branch_label;
+
+  bool dispatched = false;
+  switch (id) {
+    case ActionId::GitSwitchBranch:
+      if (args.empty() || args[0].empty()) {
+        return "Usage: git-switch-branch <branch>";
+      }
+      dispatched = git_operation_service_.SwitchBranch(root, args[0]);
+      break;
+    case ActionId::GitCreateBranch:
+      if (args.empty() || args[0].empty()) {
+        return "Usage: git-create-branch <name> [start-point]";
+      }
+      dispatched = git_operation_service_.CreateBranch(root, args[0],
+                                                       args.size() > 1 ? args[1] : std::string{});
+      break;
+    case ActionId::GitFetch:
+      dispatched = git_operation_service_.Fetch(root);
+      break;
+    case ActionId::GitPull:
+      dispatched = git_operation_service_.Pull(root);
+      break;
+    case ActionId::GitPush:
+      dispatched = git_operation_service_.Push(root, {}, false);
+      break;
+    case ActionId::GitPublishBranch:
+      if (current_branch.empty()) {
+        return "No branch to publish (detached or unborn HEAD)";
+      }
+      dispatched = git_operation_service_.Push(root, current_branch, true);
+      break;
+    case ActionId::GitSync:
+      dispatched = git_operation_service_.Sync(root);
+      break;
+    case ActionId::GitStash:
+      // Untracked files are included: a stash that leaves new files behind does not
+      // give the clean tree the user asked for, which is the usual reason to stash.
+      dispatched = git_operation_service_.Stash(root, args.empty() ? std::string{} : args[0], true);
+      break;
+    case ActionId::GitStashPop:
+      dispatched = git_operation_service_.StashPop(root);
+      break;
+    default:
+      return "Unsupported git operation";
+  }
+
+  return dispatched ? std::string{} : std::string("Git operation could not be started");
 }
 
 }  // namespace microide::workspace

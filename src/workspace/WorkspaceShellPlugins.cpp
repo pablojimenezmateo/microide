@@ -139,6 +139,10 @@ WorkspaceShell::WorkspaceShell() {
   // Load the persisted recent-projects/files MRU so the welcome surface and the
   // empty file finder can surface them immediately on first paint.
   recents_service_.Configure(persistence_service_);
+  // Bound here rather than on the SDL window-init path: git write actions are
+  // reachable from the control channel and headless dispatch, where that path never
+  // runs, and unbound callbacks would silently swallow every operation's result.
+  InitializeGitOperationService();
   virtual_document_registry_.SetOnChange(
       [this](const std::string& uri) { ReloadVirtualDocumentTabs(uri); });
   tab_strip_chrome_.Configure(

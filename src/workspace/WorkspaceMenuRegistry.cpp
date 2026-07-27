@@ -197,6 +197,17 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
                std::array<std::string_view, 2>{"git", {}}, 1, false),
       MenuItem(ActionId::GitRefresh, "Refresh"),
       MenuSeparator(),
+      // Sync first: it is the everyday verb, and grouping pull/push under it keeps
+      // the individual halves available without making them the default choice.
+      MenuItem(ActionId::GitSync, "Sync"),
+      MenuItem(ActionId::GitFetch, "Fetch"),
+      MenuItem(ActionId::GitPull, "Pull"),
+      MenuItem(ActionId::GitPush, "Push"),
+      MenuItem(ActionId::GitPublishBranch, "Publish Branch"),
+      MenuSeparator(),
+      MenuItem(ActionId::GitStash, "Stash Changes"),
+      MenuItem(ActionId::GitStashPop, "Pop Stash"),
+      MenuSeparator(),
       MenuItem(ActionId::CompareHead, "Compare with HEAD"),
   });
   static const auto kTerminalItems = std::to_array<MenuItemSpec>({

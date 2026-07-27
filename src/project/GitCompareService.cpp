@@ -149,8 +149,10 @@ std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& 
   if (!repo.IsValid()) {
     return {};
   }
+  // %(HEAD) is "*" for the checked-out branch and " " otherwise, so the caller can
+  // mark/exclude the current branch without a second `git branch --show-current`.
   const auto result = repo.Execute(std::vector<std::string>{
-      "for-each-ref", "--format=%(refname)", "--sort=-committerdate", "refs/heads",
+      "for-each-ref", "--format=%(refname)%09%(HEAD)", "--sort=-committerdate", "refs/heads",
       "refs/remotes"});
   if (!result.success()) {
     return {};
@@ -160,11 +162,17 @@ std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& 
   // Bound line materialization at the retained cap (plus small slack for filtered
   // symbolic-head/empty lines) so a huge for-each-ref listing cannot build millions of
   // line views before the branch cap stops collection. (TD-2026-07-16-30.)
-  for (const std::string_view ref :
+  for (const std::string_view line :
        util::SplitLineViews(result.output, kMaxGitCollectionEntries + 8)) {
     if (branches.size() >= kMaxGitCollectionEntries) {
       break;
     }
+    if (line.empty()) {
+      continue;
+    }
+    const std::size_t tab = line.find('\t');
+    const std::string_view ref = tab == std::string_view::npos ? line : line.substr(0, tab);
+    const bool is_head = tab != std::string_view::npos && line.substr(tab + 1) == "*";
     if (ref.empty()) {
       continue;
     }
@@ -181,7 +189,10 @@ std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& 
     // (e.g. "origin/main") could resolve to the wrong target when a local branch
     // and a remote-tracking name collide; the full ref is unambiguous. This matches
     // the local/remote GitBranchReference builders above.
-    branches.push_back(GitBranchReference{.ref = std::string(ref), .label = std::move(label)});
+    branches.push_back(GitBranchReference{.ref = std::string(ref),
+                                          .label = std::move(label),
+                                          .is_head = is_head,
+                                          .is_remote = ref.starts_with("refs/remotes/")});
   }
   return branches;
 }

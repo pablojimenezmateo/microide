@@ -200,6 +200,14 @@ void WorkspaceActionContext::ReloadCleanOpenBuffersFromDisk() {
   operations_.reload_clean_open_buffers_from_disk();
 }
 
+std::string WorkspaceActionContext::DispatchGitOperation(const ActionId id,
+                                                         const std::vector<std::string>& args) {
+  if (operations_.dispatch_git_operation == nullptr) {
+    return "Git operations are unavailable";
+  }
+  return operations_.dispatch_git_operation(id, args);
+}
+
 std::filesystem::path WorkspaceActionContext::TreeMutationBasePath(ActionSource source) const {
   return operations_.tree_mutation_base_path(source);
 }

@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "project/GitBranchOperations.h"
+#include "project/GitCompareService.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -14,14 +15,25 @@ using microide::project::ClassifyGitOperationFailure;
 using microide::project::CreateGitBranch;
 using microide::project::GitOperationOutcome;
 using microide::project::GitRemoteOperationKind;
-using microide::project::ListGitBranches;
+using microide::project::CollectGitBranches;
 using microide::project::PopGitStash;
 using microide::project::RunGitRemoteOperation;
 using microide::project::StashGitChanges;
 using microide::project::SwitchGitBranch;
 
-bool ListContains(const std::vector<std::string>& values, std::string_view name) {
-  return std::find(values.begin(), values.end(), name) != values.end();
+bool ListContains(const std::vector<microide::project::GitBranchReference>& branches,
+                  std::string_view label) {
+  return std::any_of(branches.begin(), branches.end(),
+                     [label](const auto& branch) { return branch.label == label; });
+}
+
+std::string CurrentBranchLabel(const std::vector<microide::project::GitBranchReference>& branches) {
+  for (const auto& branch : branches) {
+    if (branch.is_head) {
+      return branch.label;
+    }
+  }
+  return {};
 }
 
 // The classifier is the whole reason these operations are usable: it turns git's
@@ -87,29 +99,34 @@ void TestGitBranchListingAndSwitch() {
   InitializeGitRepo(root);
   CommitAll(root, "initial", "branch ops fixture");
 
-  const auto initial = ListGitBranches(root);
-  Expect(initial.valid, "listing branches in a real repo should succeed");
-  Expect(!initial.current.empty(), "a repo on a branch should report a current branch");
-  Expect(ListContains(initial.local, initial.current),
-         "the current branch should appear in the local list");
-
-  const std::string base_branch = initial.current;
+  const auto initial = CollectGitBranches(root);
+  Expect(!initial.empty(), "listing branches in a real repo should return the branch");
+  const std::string base_branch = CurrentBranchLabel(initial);
+  Expect(!base_branch.empty(), "a repo on a branch should mark one entry as HEAD");
+  Expect(ListContains(initial, base_branch),
+         "the current branch should appear in the listing");
   const auto created = CreateGitBranch(root, "feature/topic");
   Expect(created.success(), "creating a branch should succeed");
 
-  const auto after_create = ListGitBranches(root);
-  Expect(after_create.current == "feature/topic",
+  const auto after_create = CollectGitBranches(root);
+  Expect(CurrentBranchLabel(after_create) == "feature/topic",
          "creating a branch with switch -c should check it out");
-  Expect(ListContains(after_create.local, "feature/topic"),
-         "the new branch should appear in the local list");
-  Expect(after_create.remote.empty(), "a repo with no remotes should list no remote branches");
+  Expect(ListContains(after_create, "feature/topic"),
+         "the new branch should appear in the listing");
+  Expect(std::none_of(after_create.begin(), after_create.end(),
+                      [](const auto& branch) { return branch.is_remote; }),
+         "a repo with no remotes should list no remote branches");
+  Expect(std::count_if(after_create.begin(), after_create.end(),
+                       [](const auto& branch) { return branch.is_head; }) == 1,
+         "exactly one entry should be marked as HEAD");
 
   Expect(CreateGitBranch(root, "feature/topic").outcome == GitOperationOutcome::BadRef,
          "recreating an existing branch should report bad-ref, not a generic failure");
 
   const auto switched = SwitchGitBranch(root, base_branch);
   Expect(switched.success(), "switching back to the base branch should succeed");
-  Expect(ListGitBranches(root).current == base_branch, "the switch should take effect");
+  Expect(CurrentBranchLabel(CollectGitBranches(root)) == base_branch,
+         "the switch should take effect");
 
   Expect(SwitchGitBranch(root, "does-not-exist").outcome == GitOperationOutcome::BadRef,
          "switching to a missing branch should report bad-ref");
@@ -125,7 +142,7 @@ void TestGitSwitchRefusesToOverwriteLocalChanges() {
   InitializeGitRepo(root);
   CommitAll(root, "initial", "switch guard fixture");
 
-  const std::string base_branch = ListGitBranches(root).current;
+  const std::string base_branch = CurrentBranchLabel(CollectGitBranches(root));
   Expect(CreateGitBranch(root, "other").success(), "creating the second branch should succeed");
   WriteFile(root / "a.txt", "two\n");
   CommitAll(root, "diverge on other", "switch guard fixture");
@@ -192,7 +209,8 @@ void TestGitOperationsOutsideRepositoryAreRejected() {
   const std::filesystem::path root = temp_dir.path() / "plain";
   WriteFile(root / "a.txt", "one\n");
 
-  Expect(!ListGitBranches(root).valid, "a non-repository should not produce a branch listing");
+  Expect(CollectGitBranches(root).empty(),
+         "a non-repository should not produce a branch listing");
   Expect(SwitchGitBranch(root, "main").outcome == GitOperationOutcome::NotARepo,
          "switching outside a repository should report not-a-repo");
   Expect(StashGitChanges(root, "", false).outcome == GitOperationOutcome::NotARepo,
