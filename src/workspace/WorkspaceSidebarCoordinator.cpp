@@ -473,6 +473,11 @@ void WorkspaceShell::OnFramePresented() {
   // Run any LSP hydration deferred by a tab switch now that the tab-switch frame
   // is on screen (TD-2026-07-17A-033). No-op when nothing was scheduled.
   lsp_service_.ConsumeDeferredBufferOpen();
+  // Re-request semantic occurrence highlights when the caret has moved since the
+  // last frame. Every caret-moving path (mouse, keyboard, search, go-to-definition,
+  // fold) ends in a repaint, so this is the single point they all converge on; the
+  // call is an identity comparison and returns without work when nothing moved.
+  lsp_service_.MaybeRequestDocumentHighlights();
 }
 
 void WorkspaceShell::RequestAutomaticGitSidebarRefresh() {

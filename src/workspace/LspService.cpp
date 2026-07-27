@@ -789,6 +789,126 @@ void LspService::PublishLspInlayHints(ProjectWorkspaceState& state, std::string 
       });
 }
 
+void LspService::MaybeRequestDocumentHighlights() {
+  if (!operations_.active_editable_viewport) {
+    return;
+  }
+  editor::TextViewport* const viewport = operations_.active_editable_viewport();
+  if (viewport == nullptr || viewport->path().empty() || viewport->is_placeholder()) {
+    return;
+  }
+  // Same two gates the render path applies to occurrence highlighting: the feature
+  // must be on, and a caret being driven by active typing does not highlight (the
+  // seed would be a growing prefix). Checking them here keeps a keystroke from
+  // costing a server round-trip whose answer would be discarded anyway.
+  if (operations_.get_setting_value &&
+      (!LspFeatureEnabled(operations_.get_setting_value, "lsp.document_highlight.enabled") ||
+       !SettingFlagEnabled(operations_.get_setting_value("editor.occurrences.enabled"), true))) {
+    return;
+  }
+  if (viewport->CaretIsFromActiveTextEdit() && !viewport->selection_range().has_value()) {
+    return;
+  }
+
+  const std::uint64_t revision = viewport->content_revision();
+  const std::size_t caret_line = viewport->cursor_line();
+  const std::size_t caret_column = viewport->cursor_column();
+  if (document_highlight_request_valid_ && document_highlight_request_revision_ == revision &&
+      document_highlight_request_line_ == caret_line &&
+      document_highlight_request_column_ == caret_column &&
+      document_highlight_request_path_ == viewport->path()) {
+    return;  // steady state: nothing about the request's identity changed
+  }
+
+  std::string language_id;
+  LspClient* const client = LspClientForViewport(*viewport, &language_id);
+  if (client == nullptr || !client->SupportsDocumentHighlight()) {
+    return;
+  }
+  EnsureLspDocumentOpen(*viewport, *client, language_id);
+
+  document_highlight_request_valid_ = true;
+  document_highlight_request_path_ = viewport->path();
+  document_highlight_request_revision_ = revision;
+  document_highlight_request_line_ = caret_line;
+  document_highlight_request_column_ = caret_column;
+
+  ProjectWorkspaceState* const project = &CurrentProjectState();
+  const std::uint64_t generation = ++document_highlight_generation_;
+  const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
+  client->RequestDocumentHighlightAsync(
+      FileUriForPath(viewport->path()),
+      ByteColumnToLspPosition(*viewport, caret_line, caret_column, encoding),
+      [this, project, path = viewport->path(), generation, revision, encoding, caret_line,
+       caret_column](LspResult<std::vector<LspClient::DocumentHighlight>> highlights) {
+        // A transport failure leaves the previous set (and the textual fallback)
+        // alone; only an authoritative answer replaces what is painted.
+        if (!highlights.has_value()) {
+          return;
+        }
+        PublishLspDocumentHighlights(*project, path, generation, revision, encoding, caret_line,
+                                     caret_column, std::move(*highlights));
+      });
+}
+
+void LspService::PublishLspDocumentHighlights(
+    ProjectWorkspaceState& state, const std::filesystem::path& path,
+    std::uint64_t request_generation, std::uint64_t content_revision,
+    lsp_encoding::PositionEncoding encoding, std::size_t caret_line, std::size_t caret_column,
+    std::vector<LspClient::DocumentHighlight> highlights) {
+  if (request_generation != document_highlight_generation_) {
+    return;  // a newer caret position already went out
+  }
+  const editor::TextViewport* const file_viewport = FindOpenEditorViewport(state, path);
+  if (file_viewport == nullptr || file_viewport->content_revision() != content_revision) {
+    return;  // the buffer moved on; these absolute positions no longer describe it
+  }
+
+  auto& store = state.semantic_occurrences;
+  store.path = path;
+  store.content_revision = content_revision;
+  store.ranges.clear();
+  store.ranges.reserve(highlights.size());
+  for (const LspClient::DocumentHighlight& highlight : highlights) {
+    // Single-line ranges only. A symbol highlight spanning lines is not something
+    // the row-sliced fill path can paint, and no server produces one for an
+    // identifier; dropping it is honest, clamping it would paint a wrong extent.
+    if (highlight.range.start.line != highlight.range.end.line || highlight.range.start.line < 0) {
+      continue;
+    }
+    const std::size_t line = static_cast<std::size_t>(highlight.range.start.line);
+    const std::size_t start =
+        LspInboundColumn(file_viewport, line, highlight.range.start.character, encoding);
+    const std::size_t end =
+        LspInboundColumn(file_viewport, line, highlight.range.end.character, encoding);
+    if (start >= end) {
+      continue;
+    }
+    store.ranges.push_back(editor::OccurrenceRange{
+        .line_index = line,
+        .start_column = start,
+        .end_column = end,
+        .is_primary_seed = line == caret_line && caret_column >= start && caret_column <= end,
+        .kind = highlight.kind == 3   ? editor::OccurrenceKind::Write
+                : highlight.kind == 2 ? editor::OccurrenceKind::Read
+                                      : editor::OccurrenceKind::Text,
+    });
+  }
+  // The renderer resolves a row's fills with a binary search over this vector, and
+  // the protocol does not promise any order.
+  std::sort(store.ranges.begin(), store.ranges.end(),
+            [](const editor::OccurrenceRange& lhs, const editor::OccurrenceRange& rhs) {
+              return lhs.line_index != rhs.line_index ? lhs.line_index < rhs.line_index
+                                                      : lhs.start_column < rhs.start_column;
+            });
+  if (store.ranges.empty()) {
+    // An authoritative "no symbol here" — drop the identity too so a later caret
+    // move back onto a real symbol is not mistaken for a still-valid empty set.
+    store.Clear();
+  }
+  operations_.request_editor_surface_redraw();
+}
+
 void LspService::ClearLspInlayHintsForFile(const editor::TextViewport& viewport) {
   if (viewport.path().empty()) {
     return;

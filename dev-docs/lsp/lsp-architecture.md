@@ -35,7 +35,7 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
 | `WorkspaceLspClientTransport.cpp` | I/O thread body (`IoMain`), outbound send/drain (`DrainOutbound`, `SendMessageImmediate`, `SendMessageBuilderAfterInitialize`), `WaitStdoutReadable`. |
 | `WorkspaceLspClientDispatch.cpp` | Inbound routing (`DispatchMessage`), server-request replies (`HandleServerRequest`, `SendResponse*`), timeout sweep (`FailPendingRequests`). |
 | `WorkspaceLspClientLifecycle.cpp` | Blocking initialize handshake (`DoInitializeBlocking`), shutdown (`DoShutdown`/`BeginShutdown`/`WaitForShutdown`), readiness (`SetProgressReadiness`). |
-| `WorkspaceLspClientRequests.cpp` | Interactive request methods (hover/completion/signatureHelp/codeAction/formatting/rangeFormatting/definition/typeDefinition/implementation/declaration/references/prepareRename/rename/documentSymbol/workspaceSymbol/semanticTokens/inlayHint). definition + the three sibling navigations share one templated `DispatchLocationRequest`. |
+| `WorkspaceLspClientRequests.cpp` | Interactive request methods (hover/completion/signatureHelp/codeAction/formatting/rangeFormatting/definition/typeDefinition/implementation/declaration/references/prepareRename/rename/documentSymbol/workspaceSymbol/semanticTokens/inlayHint/documentHighlight). definition + the three sibling navigations share one templated `DispatchLocationRequest`. |
 | `editor/InlayHintColumns.{h,cpp}` | Pure per-row inlay-hint grid displacement (**under `src/editor/`, not `src/workspace/`**): `InlayRowDisplacement` (cells-before / next-anchor / hit-test inverse), `BuildInlayRowSpans` (line decorations → row-local spans), and `RealVisualColumnForDisplayColumn` (the mouse inverse). |
 | `LspMessageFraming.{h,cpp}` | `LspMessageFramer`: the `Content-Length` JSON-RPC codec as a pure, unit-tested value type (partial-frame + oversized-skip state). |
 | `LspClientTrace.{h,cpp}` | `TraceLspLifecycle` (opt-in via `MICROIDE_TRACE_LSP_LIFECYCLE`) + transport tuning constants (`kLspRequestTimeout`, queue/message/read-buffer caps). |
@@ -122,6 +122,26 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
   displacement is generation-guarded like semantic tokens and identity (≈zero
   cost) on a row with no hints. **v1 limitation:** hints are suppressed on
   soft-wrapped lines (cross-wrap-row displacement is out of scope).
+- **Occurrence highlighting is semantic when a server can answer.**
+  `textDocument/documentHighlight` is requested for the caret's position from
+  `WorkspaceShell::OnFramePresented` — the one point every caret-moving path (mouse,
+  keyboard, search, go-to-definition, folding) converges on — and only when the
+  request's identity (path + content revision + caret line/column) actually changed,
+  so a resting caret costs four integer compares per frame. It is suppressed while
+  the caret is being driven by active typing, exactly where the render path already
+  suppresses occurrence highlighting. Gated on `lsp.document_highlight.enabled` plus
+  the existing `editor.occurrences.enabled`, and short-circuited without a
+  round-trip when the server advertises no `documentHighlightProvider`.
+  Responses land in `ProjectWorkspaceState::semantic_occurrences` as
+  `editor::OccurrenceRange`s (byte columns, sorted by line), and
+  `RenderViewModelBuilder` **replaces** its own textual word scan with them while
+  the set is valid — same file, same content revision, caret still inside one of the
+  ranges (VS Code's rule, so arrowing through a word does not blink the highlight
+  off between round-trips). Everything else falls back to the word scan: unserved
+  languages, servers without the provider, and the window between a caret move and
+  its answer. `DocumentHighlightKind::Write` paints with the strong tint so an
+  assignment stands out from the reads around it. A content edit invalidates the set
+  by revision alone — nothing has to clear it.
 - **prepareRename refines the rename prompt.** The prompt opens instantly with the
   heuristic identifier seed; `textDocument/prepareRename` then (async, best-effort,
   gated on the server's `renameProvider.prepareProvider`) prefills the server

@@ -475,6 +475,22 @@ void LspClient::ClearTestInlayHintHandler() {
   impl_->test_handlers.inlay_hint = nullptr;
 }
 
+bool LspClient::SupportsDocumentHighlight() const {
+  return impl_->supports_document_highlight.load(std::memory_order_acquire);
+}
+
+void LspClient::SetTestDocumentHighlightHandler(
+    std::function<void(std::string uri, Position pos, DocumentHighlightCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_handlers.document_highlight = std::move(handler);
+  impl_->supports_document_highlight.store(true, std::memory_order_release);
+}
+
+void LspClient::ClearTestDocumentHighlightHandler() {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_handlers.document_highlight = nullptr;
+}
+
 void LspClient::SetTestPrepareRenameHandler(
     std::function<void(std::string uri, Position pos, PrepareRenameCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);

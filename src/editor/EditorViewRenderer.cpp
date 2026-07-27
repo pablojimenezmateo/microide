@@ -807,10 +807,12 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         if (occ.start_column >= occ.end_column) {
           continue;
         }
+        const bool strong =
+            occ.is_primary_seed || occ.kind == OccurrenceKind::Write;
         column_fill_scratch_.push_back(RowFillSpan{
             .start_column = occ.start_column,
             .end_column = occ.end_column,
-            .color = occ.is_primary_seed ? theme.search_match_active : theme.search_match,
+            .color = strong ? theme.search_match_active : theme.search_match,
             .geometry = RowFillSpan::Geometry::kRange,
         });
       }

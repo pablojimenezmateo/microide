@@ -12,6 +12,7 @@
 #include "editor/BreakpointStore.h"
 #include "editor/FunctionBreakpointStore.h"
 #include "editor/DiagnosticsStore.h"
+#include "editor/EditorViewModel.h"
 #include "editor/PluginDecorationStore.h"
 #include "editor/PluginSurfaceStore.h"
 #include "editor/SingleLineEditor.h"
@@ -631,6 +632,50 @@ struct ProjectWorkspaceState {
                : nullptr;
   }
   editor::DiagnosticsStore diagnostics_store;
+
+  // Semantic occurrence highlights for the caret's symbol in one buffer, from
+  // `textDocument/documentHighlight`. While valid these REPLACE the built-in
+  // textual word scan in the render view model: the server resolved the symbol, so
+  // a same-spelled name in another scope stays unpainted and a shadowed one does
+  // not, and writes are told apart from reads.
+  //
+  // Validity is caret-shaped rather than position-exact, matching VS Code: the set
+  // survives as long as the caret is anywhere inside one of its ranges in the same
+  // unedited buffer, so arrowing through a word does not blink the highlight off
+  // between round-trips. Any content edit invalidates it (the ranges are absolute
+  // positions) — the stale set is simply ignored on read and overwritten by the
+  // next response, so nothing has to clear it.
+  struct SemanticOccurrenceHighlights {
+    std::filesystem::path path;
+    std::uint64_t content_revision = 0;
+    // Sorted by (line_index, start_column) so the renderer resolves a row's slice
+    // with a binary search, exactly like the textual scan's output.
+    std::vector<editor::OccurrenceRange> ranges;
+
+    void Clear() {
+      path.clear();
+      content_revision = 0;
+      ranges.clear();
+    }
+    // True when this set was computed for `viewport_path` at `revision` AND the
+    // caret still sits inside one of its ranges (inclusive of both edges, so a
+    // caret parked just past the last character of the symbol keeps it lit).
+    bool CoversCaret(const std::filesystem::path& viewport_path, std::uint64_t revision,
+                     std::size_t caret_line, std::size_t caret_column) const {
+      if (ranges.empty() || content_revision != revision || path != viewport_path) {
+        return false;
+      }
+      for (const editor::OccurrenceRange& range : ranges) {
+        if (range.line_index == caret_line && caret_column >= range.start_column &&
+            caret_column <= range.end_column) {
+          return true;
+        }
+      }
+      return false;
+    }
+  };
+  SemanticOccurrenceHighlights semantic_occurrences;
+
   // Plugin/LSP-published editor presentation: decorations (inline text styles,
   // gutter marks, inline/virtual text, code lenses) keyed by owner+path, and
   // content surfaces (display lists / rasters) keyed by owner+surface_id. Both

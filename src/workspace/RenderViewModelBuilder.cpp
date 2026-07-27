@@ -1307,6 +1307,20 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     return;
   }
 
+  // Prefer the language server's answer whenever it is still valid for this caret.
+  // It resolved the symbol, so a same-spelled name in an unrelated scope stays
+  // unpainted, a shadowed one is painted, and writes get the strong tint. The
+  // textual scan below stays the fallback: unserved languages, servers with no
+  // documentHighlightProvider, and the window between a caret move and its
+  // response (where showing the last good set would be worse than a word match).
+  const ProjectWorkspaceState::SemanticOccurrenceHighlights& semantic =
+      context_.current_project_state.semantic_occurrences;
+  if (semantic.CoversCaret(viewport.path(), viewport.content_revision(), viewport.cursor_line(),
+                           viewport.cursor_column())) {
+    out.occurrence_ranges = std::span<const editor::OccurrenceRange>(semantic.ranges);
+    return;
+  }
+
   const std::uintptr_t viewport_key = reinterpret_cast<std::uintptr_t>(&viewport);
 
   const bool seed_cache_hit =

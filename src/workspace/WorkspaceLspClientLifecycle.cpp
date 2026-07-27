@@ -177,6 +177,11 @@ void LspClient::Impl::DoInitializeBlocking() {
     inlay_hint_caps["dynamicRegistration"] = JsonValue(false);
     text_document_caps["inlayHint"] = JsonValue(std::move(inlay_hint_caps));
   }
+  {
+    JsonObject document_highlight_caps;
+    document_highlight_caps["dynamicRegistration"] = JsonValue(false);
+    text_document_caps["documentHighlight"] = JsonValue(std::move(document_highlight_caps));
+  }
 
   JsonObject workspace_caps;
   workspace_caps["configuration"] = JsonValue(true);
@@ -392,6 +397,13 @@ void LspClient::Impl::DoInitializeBlocking() {
             const auto& provider = server_caps["inlayHintProvider"];
             const bool provided = provider.IsObject() || provider.AsBool(false);
             supports_inlay_hints.store(provided, std::memory_order_release);
+          }
+
+          // documentHighlightProvider: bare bool or a WorkDoneProgressOptions object.
+          if (server_caps.HasKey("documentHighlightProvider")) {
+            const auto& provider = server_caps["documentHighlightProvider"];
+            const bool provided = provider.IsObject() || provider.AsBool(false);
+            supports_document_highlight.store(provided, std::memory_order_release);
           }
 
           // renameProvider may be a bare bool (plain rename) or an object that can

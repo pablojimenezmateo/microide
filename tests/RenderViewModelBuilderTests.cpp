@@ -339,6 +339,85 @@ void TestBuilderMarksExecutionLineOnlyForMatchingFile() {
          "execution line should not be marked when the focused frame is in another file");
 }
 
+// The language server's documentHighlight answer replaces the built-in word scan
+// while it is valid for the caret. The point of the feature is that it is NOT a
+// spelling match: `value` in an unrelated scope must stay unpainted, which no
+// textual scan can express.
+void TestBuilderPrefersSemanticOccurrencesOverWordScan() {
+  WorkspaceContext ctx;
+  RenderViewModelBuilder builder(ctx);
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("value = 1\nother = value\nvalue = 2\n", "/proj/main.py");
+  viewport.SetViewportSize(8, 80);
+  viewport.MoveCursorTo(0, 2);  // inside the first `value`
+
+  const auto build = [&](microide::editor::EditorViewModel& vm) {
+    builder.BuildEditorViewModelInto(vm, viewport, 8, nullptr,
+                                     /*occurrences_highlight_enabled=*/true,
+                                     /*occurrences_case_sensitive=*/true,
+                                     /*sticky_scroll_enabled=*/false, /*sticky_max_depth=*/3,
+                                     /*render_whitespace_enabled=*/false);
+  };
+
+  // Baseline: with no semantic set the word scan paints every spelling match.
+  microide::editor::EditorViewModel textual;
+  build(textual);
+  Expect(textual.occurrence_ranges.size() == 3,
+         "the word scan paints all three spellings of `value`");
+
+  // A server answer that deliberately omits line 2 (a different symbol that happens
+  // to share the name) and marks line 0 as a write.
+  auto& semantic = ctx.current_project_state.semantic_occurrences;
+  semantic.path = viewport.path();
+  semantic.content_revision = viewport.content_revision();
+  semantic.ranges = {
+      microide::editor::OccurrenceRange{.line_index = 0,
+                                        .start_column = 0,
+                                        .end_column = 5,
+                                        .is_primary_seed = true,
+                                        .kind = microide::editor::OccurrenceKind::Write},
+      microide::editor::OccurrenceRange{.line_index = 1,
+                                        .start_column = 8,
+                                        .end_column = 13,
+                                        .kind = microide::editor::OccurrenceKind::Read},
+  };
+
+  microide::editor::EditorViewModel vm;
+  build(vm);
+  Expect(vm.occurrence_ranges.size() == 2,
+         "the semantic set replaces the word scan rather than merging with it");
+  Expect(vm.occurrence_ranges[0].kind == microide::editor::OccurrenceKind::Write &&
+             vm.occurrence_ranges[1].kind == microide::editor::OccurrenceKind::Read,
+         "read/write kinds survive into the view model");
+
+  // Move the caret off every highlighted range: the set no longer describes what the
+  // caret points at, so the word scan takes back over instead of painting a stale
+  // symbol's uses.
+  viewport.MoveCursorTo(1, 2);  // inside `other`
+  microide::editor::EditorViewModel off_symbol;
+  build(off_symbol);
+  Expect(off_symbol.occurrence_ranges.size() != 2 || off_symbol.occurrence_ranges.empty() ||
+             off_symbol.occurrence_ranges[0].line_index != 0 ||
+             off_symbol.occurrence_ranges[0].end_column != 5,
+         "a caret outside every semantic range falls back off the stale set");
+
+  // An edit invalidates the absolute positions, so the stale set must not be used
+  // even with the caret back on the original symbol.
+  viewport.MoveCursorTo(0, 2);
+  viewport.InsertText("x");
+  viewport.MoveCursorTo(0, 2);
+  microide::editor::EditorViewModel after_edit;
+  build(after_edit);
+  Expect(ctx.current_project_state.semantic_occurrences.content_revision !=
+             viewport.content_revision(),
+         "the edit moved the buffer past the stored set's revision");
+  for (const auto& range : after_edit.occurrence_ranges) {
+    Expect(range.kind == microide::editor::OccurrenceKind::Text,
+           "after an edit the ranges come from the word scan, which only emits Text");
+  }
+}
+
 void TestBuilderInsetGapsEmptyWithoutPluginPresentation() {
   WorkspaceContext ctx;  // default context: no plugin presentation bundle
   RenderViewModelBuilder builder(ctx);
@@ -966,6 +1045,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestSettingsOverlayControlValueIsPrecomputed);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayWrapsLongDescriptions",
           TestSettingsOverlayWrapsLongDescriptions);
+  AddTest(tests, "RenderViewModelBuilder/PrefersSemanticOccurrencesOverWordScan",
+          TestBuilderPrefersSemanticOccurrencesOverWordScan);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewIsRegistrySourcedWithRecents",
           TestBuilderWelcomeViewIsRegistrySourcedWithRecents);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewPrunesMissingRecents",

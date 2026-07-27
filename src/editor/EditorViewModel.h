@@ -37,11 +37,19 @@ struct BreakpointGutterMark {
   bool is_logpoint = false;
 };
 
+// What a highlighted range does with the symbol. `Text` is both the built-in word
+// scan's only answer and the LSP DocumentHighlightKind for a match the server
+// could not classify; `Read`/`Write` only ever come from a language server.
+// `Write` paints with the strong tint (VS Code does the same) so an assignment
+// stands out from the reads around it.
+enum class OccurrenceKind : std::uint8_t { Text, Read, Write };
+
 struct OccurrenceRange {
   std::size_t line_index = 0;
   std::size_t start_column = 0;
   std::size_t end_column = 0;
   bool is_primary_seed = false;
+  OccurrenceKind kind = OccurrenceKind::Text;
 };
 
 /// One whitespace decoration for a clipped visual row fragment (tabs span

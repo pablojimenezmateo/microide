@@ -417,4 +417,26 @@ void LspClient::RequestInlayHintsAsync(std::string uri, Range range, InlayHintCa
       });
 }
 
+void LspClient::RequestDocumentHighlightAsync(std::string uri, Position pos,
+                                              DocumentHighlightCallback callback) {
+  if (!callback) return;
+  if (impl_->DispatchTestStub(impl_->test_handlers.document_highlight, callback, std::move(uri),
+                              pos)) {
+    return;
+  }
+  // Short-circuit without a round-trip when the server has no provider: this
+  // request fires on caret movement, so provoking a per-move server error would be
+  // the most frequent wasted message the client sends.
+  if (!impl_->supports_document_highlight.load(std::memory_order_acquire)) {
+    callback(std::nullopt);
+    return;
+  }
+  impl_->DispatchResultRequest(
+      "textDocument/documentHighlight", lsp_protocol::MakeTextDocumentPositionParams(uri, pos),
+      std::move(callback), [](const util::JsonValue& result) {
+        return std::optional<std::vector<DocumentHighlight>>(
+            lsp_protocol::ParseDocumentHighlights(result));
+      });
+}
+
 }  // namespace microide::workspace

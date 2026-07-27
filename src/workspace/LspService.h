@@ -201,6 +201,27 @@ class LspService {
                             std::uint64_t request_generation,
                             lsp_encoding::PositionEncoding encoding,
                             std::vector<LspClient::InlayHint> hints);
+
+  // Keep the caret's semantic occurrence highlights fresh. Drained once per
+  // presented frame (WorkspaceShell::OnFramePresented), because a caret can move
+  // through mouse, keyboard, search, go-to-definition and folding paths and this is
+  // the one place all of them converge. The steady state is four integer compares
+  // against the last request's identity — a request only goes out when the active
+  // buffer, its content revision, or the caret position actually changed, so
+  // holding a cursor still costs nothing. Suppressed while the caret is being
+  // driven by active typing, which is exactly when the render path suppresses
+  // occurrence highlighting anyway.
+  void MaybeRequestDocumentHighlights();
+  // Store a documentHighlight response as the active buffer's semantic occurrence
+  // set (converting server positions to byte columns) and repaint. Drops a
+  // response superseded by a newer request or by a content edit.
+  void PublishLspDocumentHighlights(ProjectWorkspaceState& state,
+                                    const std::filesystem::path& path,
+                                    std::uint64_t request_generation,
+                                    std::uint64_t content_revision,
+                                    lsp_encoding::PositionEncoding encoding,
+                                    std::size_t caret_line, std::size_t caret_column,
+                                    std::vector<LspClient::DocumentHighlight> highlights);
   void SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
                                       const std::vector<std::string>& after_lines);
   // Compact description of a bulk buffer change, replacing the two full
@@ -386,6 +407,17 @@ class LspService {
   // guard as semantic tokens). Shares NextSemanticGeneration's helper pattern via
   // a dedicated map so the two overlays never invalidate each other.
   std::unordered_map<std::string, std::uint64_t> inlay_hint_generation_;
+
+  // Identity of the last documentHighlight request, so MaybeRequestDocumentHighlights
+  // fires only on a real change. A single counter (not a per-URI map like the two
+  // overlays above) because only one caret is ever live: a newer request always
+  // supersedes the outstanding one, whatever buffer it was for.
+  std::uint64_t document_highlight_generation_ = 0;
+  std::filesystem::path document_highlight_request_path_;
+  std::uint64_t document_highlight_request_revision_ = 0;
+  std::size_t document_highlight_request_line_ = 0;
+  std::size_t document_highlight_request_column_ = 0;
+  bool document_highlight_request_valid_ = false;
 
   // Last feature-enablement state applied by ReconcileFeatureSettings, so it acts
   // only on actual transitions (shut down / clear / re-request) instead of redoing

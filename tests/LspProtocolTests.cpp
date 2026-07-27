@@ -594,10 +594,43 @@ void TestLspProtocolParsesInlayHints() {
          "split multi-byte sequence");
 }
 
+void TestLspProtocolParsesDocumentHighlights() {
+  const auto highlights = codec::ParseDocumentHighlights(Json(R"json([
+      {"range":{"start":{"line":2,"character":4},"end":{"line":2,"character":9}},"kind":2},
+      {"range":{"start":{"line":7,"character":0},"end":{"line":7,"character":5}},"kind":3},
+      {"range":{"start":{"line":9,"character":1},"end":{"line":9,"character":6}}}])json"));
+  Expect(highlights.size() == 3, "three well-formed highlights parse");
+  Expect(highlights[0].kind == 2 && highlights[0].range.start.character == 4, "read kind parsed");
+  Expect(highlights[1].kind == 3, "write kind parsed");
+  Expect(highlights[2].kind == 1, "an absent kind defaults to Text(1)");
+
+  // An out-of-vocabulary kind keeps the range (the server's authoritative answer)
+  // and only loses its read/write tint.
+  const auto odd_kind = codec::ParseDocumentHighlights(Json(R"json([
+      {"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":3}},"kind":99}])json"));
+  Expect(odd_kind.size() == 1 && odd_kind[0].kind == 1,
+         "an unknown kind falls back to Text rather than dropping the range");
+
+  // Empty and inverted ranges paint nothing, so they never reach the store.
+  const auto degenerate = codec::ParseDocumentHighlights(Json(R"json([
+      {"range":{"start":{"line":1,"character":4},"end":{"line":1,"character":4}}},
+      {"range":{"start":{"line":2,"character":9},"end":{"line":2,"character":4}}},
+      {"range":{"start":{"line":3,"character":2},"end":{"line":2,"character":8}}}])json"));
+  Expect(degenerate.empty(), "empty and inverted ranges are dropped");
+
+  Expect(codec::ParseDocumentHighlights(Json("null")).empty(), "non-array yields no highlights");
+  const auto capped = codec::ParseDocumentHighlights(Json(R"json([
+      {"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}}},
+      {"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":1}}}])json"),
+      /*max_highlights=*/1);
+  Expect(capped.size() == 1, "the highlight cap truncates");
+}
+
 }  // namespace
 
 void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspProtocol/ParsesInlayHints", TestLspProtocolParsesInlayHints);
+  AddTest(tests, "LspProtocol/ParsesDocumentHighlights", TestLspProtocolParsesDocumentHighlights);
   AddTest(tests, "LspProtocol/ParsesWorkspaceEdit", TestLspProtocolParsesWorkspaceEdit);
   AddTest(tests, "LspProtocol/ParsesWorkspaceEditResourceOps",
           TestLspProtocolParsesWorkspaceEditResourceOps);

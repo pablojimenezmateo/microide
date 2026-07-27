@@ -84,6 +84,16 @@ std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const util::JsonVa
 std::vector<LspClient::InlayHint> ParseInlayHints(const util::JsonValue& result,
                                                   std::size_t max_hints = 20000);
 
+// Decode a `textDocument/documentHighlight` result (a DocumentHighlight[]). Reads
+// `range` plus the optional `kind` (1=Text, 2=Read, 3=Write; out-of-vocabulary
+// values fall back to Text). Empty and inverted ranges are dropped — they paint
+// nothing but would still cost a per-row slice lookup. Non-array input yields no
+// highlights; `max_highlights` caps the result. The cap is deliberately small: this
+// is a same-file symbol highlight re-requested on every caret move, so a legitimate
+// answer is dozens of ranges, not thousands.
+std::vector<LspClient::DocumentHighlight> ParseDocumentHighlights(
+    const util::JsonValue& result, std::size_t max_highlights = 4096);
+
 // ---- Encode (LSP structs -> wire JSON) ------------------------------------
 util::JsonValue MakePosition(const LspClient::Position& position);
 util::JsonValue MakeRange(const LspClient::Range& range);

@@ -781,6 +781,58 @@ void TestWorkspaceLspClientInlayHintStubRoundTrip() {
   Expect(called && !after_clear.has_value(), "with no handler the stub reports no hints");
 }
 
+void TestWorkspaceLspClientDocumentHighlightStubRoundTrip() {
+  LspClient client;
+  client.EnableTestStubMode();
+
+  // Before any handler the capability is absent, and the request must short-circuit
+  // rather than send: documentHighlight fires on caret movement, so a server without
+  // the provider would otherwise take one wasted message per cursor move.
+  Expect(!client.SupportsDocumentHighlight(),
+         "a fresh client advertises no documentHighlight provider");
+  bool short_circuited = false;
+  std::optional<std::vector<LspClient::DocumentHighlight>> no_provider;
+  client.RequestDocumentHighlightAsync("file:///s.cpp", LspClient::Position{1, 1},
+                                       [&](auto result) {
+                                         short_circuited = true;
+                                         no_provider = std::move(result.value);
+                                       });
+  client.DrainCallbacks();
+  Expect(short_circuited && !no_provider.has_value(),
+         "with no provider the request answers nullopt without a round-trip");
+
+  LspClient::Position requested{};
+  client.SetTestDocumentHighlightHandler(
+      [&](std::string uri, LspClient::Position pos, LspClient::DocumentHighlightCallback cb) {
+        (void)uri;
+        requested = pos;
+        cb(std::vector<LspClient::DocumentHighlight>{
+            LspClient::DocumentHighlight{.range = {{2, 4}, {2, 9}}, .kind = 2},
+            LspClient::DocumentHighlight{.range = {{6, 0}, {6, 5}}, .kind = 3}});
+      });
+  Expect(client.SupportsDocumentHighlight(),
+         "the stub handler marks the server documentHighlight-capable");
+
+  std::optional<std::vector<LspClient::DocumentHighlight>> received;
+  client.RequestDocumentHighlightAsync("file:///s.cpp", LspClient::Position{2, 6},
+                                       [&](auto result) { received = std::move(result.value); });
+  client.DrainCallbacks();
+  Expect(received.has_value() && received->size() == 2, "both stubbed highlights are delivered");
+  Expect((*received)[0].kind == 2 && (*received)[1].kind == 3, "read/write kinds survive");
+  Expect(requested.line == 2 && requested.character == 6, "the caret position is forwarded");
+
+  client.ClearTestDocumentHighlightHandler();
+  std::optional<std::vector<LspClient::DocumentHighlight>> after_clear;
+  bool called = false;
+  client.RequestDocumentHighlightAsync("file:///s.cpp", LspClient::Position{0, 0},
+                                       [&](auto result) {
+                                         after_clear = std::move(result.value);
+                                         called = true;
+                                       });
+  client.DrainCallbacks();
+  Expect(called && !after_clear.has_value(), "with no handler the stub reports no highlights");
+}
+
 // Regression: formatting must deliver the FULL TextEdit[] to the caller. A prior
 // implementation returned only edits.front().newText, silently dropping every edit
 // after the first — corrupting the buffer for the common whole-document reformat
@@ -2116,6 +2168,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientSemanticTokensStubRoundTrip);
   AddTest(tests, "WorkspaceLspClient/InlayHintStubRoundTrip",
           TestWorkspaceLspClientInlayHintStubRoundTrip);
+  AddTest(tests, "WorkspaceLspClient/DocumentHighlightStubRoundTrip",
+          TestWorkspaceLspClientDocumentHighlightStubRoundTrip);
   AddTest(tests, "WorkspaceLspClient/FormattingReturnsAllEdits",
           TestWorkspaceLspClientFormattingReturnsAllEdits);
   AddTest(tests, "WorkspaceLspClient/ShutdownDoesNotRaceInitialization",

@@ -982,6 +982,17 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "LSP → Features",
       },
       SettingSpec{
+          .id = "lsp.document_highlight.enabled",
+          .label = "Semantic Occurrence Highlighting",
+          .description = "Highlight other uses of the symbol under the caret using the language "
+                         "server, which resolves the symbol instead of matching its spelling. "
+                         "When off, the built-in word scan is used alone.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
           .id = "lsp.document_symbols.enabled",
           .label = "Document Outline",
           .description = "Populate the Outline sidebar view from language-server document symbols.",

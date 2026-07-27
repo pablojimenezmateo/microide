@@ -584,6 +584,37 @@ std::vector<LspClient::InlayHint> ParseInlayHints(const JsonValue& result, std::
   return hints;
 }
 
+std::vector<LspClient::DocumentHighlight> ParseDocumentHighlights(const JsonValue& result,
+                                                                  std::size_t max_highlights) {
+  std::vector<LspClient::DocumentHighlight> highlights;
+  if (!result.IsArray()) {
+    return highlights;
+  }
+  const auto& array = result.AsArray();
+  const std::size_t count = std::min(array.size(), max_highlights);
+  highlights.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    const JsonValue& entry = array[i];
+    if (!entry.IsObject()) {
+      continue;
+    }
+    LspClient::DocumentHighlight highlight;
+    highlight.range = ParseRange(entry["range"]);
+    // `kind` is optional; the spec's default is Text(1). Clamp out-of-vocabulary
+    // values to Text rather than dropping the highlight — the range is still the
+    // server's authoritative answer, only its read/write tint is unknown.
+    const int kind = JsonIntInRange(entry["kind"], 1);
+    highlight.kind = (kind >= 1 && kind <= 3) ? kind : 1;
+    if (highlight.range.end.line < highlight.range.start.line ||
+        (highlight.range.end.line == highlight.range.start.line &&
+         highlight.range.end.character <= highlight.range.start.character)) {
+      continue;  // empty or inverted range paints nothing
+    }
+    highlights.push_back(highlight);
+  }
+  return highlights;
+}
+
 JsonValue MakePosition(const LspClient::Position& position) {
   JsonObject object;
   object["line"] = JsonValue(static_cast<std::int64_t>(position.line));

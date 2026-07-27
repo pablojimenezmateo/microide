@@ -238,6 +238,17 @@ class LspClient {
     bool padding_right = false;
   };
 
+  // One textDocument/documentHighlight result: a range in the REQUESTED document
+  // (the protocol never returns cross-file highlights) plus what the symbol does
+  // there. LSP DocumentHighlightKind: 1=Text (an unclassified textual match),
+  // 2=Read, 3=Write. This is the semantic form of the editor's word-occurrence
+  // highlight: the server resolves the symbol, so a same-spelled local in another
+  // scope is not highlighted and a shadowed name is.
+  struct DocumentHighlight {
+    Range range;
+    int kind = 1;
+  };
+
   using OnPublishDiagnostics = std::function<void(std::string uri, std::vector<Diagnostic>)>;
 
   // One text edit: a document range plus its replacement text (server encoding).
@@ -259,6 +270,8 @@ class LspClient {
   using SemanticTokensCallback =
       std::function<void(LspResult<std::vector<SemanticToken>>)>;
   using InlayHintCallback = std::function<void(LspResult<std::vector<InlayHint>>)>;
+  using DocumentHighlightCallback =
+      std::function<void(LspResult<std::vector<DocumentHighlight>>)>;
   using SignatureHelpCallback = std::function<void(LspResult<SignatureHelp>)>;
   using WorkspaceSymbolCallback =
       std::function<void(LspResult<std::vector<WorkspaceSymbol>>)>;
@@ -443,6 +456,13 @@ class LspClient {
   void RequestInlayHintsAsync(std::string uri, Range range, InlayHintCallback callback);
   bool SupportsInlayHints() const;
 
+  // Async textDocument/documentHighlight for the symbol at `pos`. Reports nullopt
+  // when the server advertises no documentHighlightProvider, so the caller keeps
+  // its textual word scan instead of paying a round-trip per caret move.
+  void RequestDocumentHighlightAsync(std::string uri, Position pos,
+                                     DocumentHighlightCallback callback);
+  bool SupportsDocumentHighlight() const;
+
   // True when the server advertised renameProvider.prepareProvider — i.e. a
   // textDocument/prepareRename request is worth sending.
   bool SupportsPrepareRename() const;
@@ -500,6 +520,11 @@ class LspClient {
   void SetTestInlayHintHandler(
       std::function<void(std::string uri, Range range, InlayHintCallback cb)> handler);
   void ClearTestInlayHintHandler();
+  // Unit tests: feed a canned documentHighlight response (also marks the capability
+  // supported so the request is not short-circuited).
+  void SetTestDocumentHighlightHandler(
+      std::function<void(std::string uri, Position pos, DocumentHighlightCallback cb)> handler);
+  void ClearTestDocumentHighlightHandler();
 
   // Shutdown and close connection (blocks until complete).
   void BeginShutdown();

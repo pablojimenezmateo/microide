@@ -117,6 +117,7 @@ struct LspClient::Impl {
     std::function<void(std::string, Position, PrepareRenameCallback)> prepare_rename;
     std::function<void(std::string, WorkspaceSymbolCallback)> workspace_symbol;
     std::function<void(std::string, Range, InlayHintCallback)> inlay_hint;
+    std::function<void(std::string, Position, DocumentHighlightCallback)> document_highlight;
     void Reset() { *this = TestHandlers{}; }
   };
   TestHandlers test_handlers;
@@ -129,6 +130,8 @@ struct LspClient::Impl {
   std::atomic<bool> supports_prepare_rename{false};
   // Server advertised an inlayHintProvider (captured at initialize).
   std::atomic<bool> supports_inlay_hints{false};
+  // Server advertised a documentHighlightProvider (captured at initialize).
+  std::atomic<bool> supports_document_highlight{false};
 
   // Negotiated position encoding (LSP `capabilities.positionEncoding`), captured at
   // initialize. Guarded by `mutex`. We advertise utf-8 first, so a conformant server
