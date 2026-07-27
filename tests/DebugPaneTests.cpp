@@ -62,9 +62,9 @@ void TestDebugPaneServiceShowAndToggle() {
 
   Expect(!state.debug_pane.visible, "pane starts hidden");
 
-  service.ShowVariables();
+  service.ShowMode(DebugPaneMode::Variables);
   Expect(state.debug_pane.visible && state.debug_pane.mode == DebugPaneMode::Variables,
-         "ShowVariables makes the pane visible on the Variables surface");
+         "ShowMode makes the pane visible on the requested surface");
   Expect(state.surface.focus == microide::workspace::FocusTarget::DebugPane,
          "showing the pane moves focus to it");
 
@@ -87,7 +87,7 @@ void TestDebugPaneServiceOpenOnStop() {
          "the first stop opens the pane on the Variables inspector");
 
   // The user switches to Call Stack, then a later stop must not yank them back.
-  service.ShowCallStack();
+  service.ShowMode(DebugPaneMode::CallStack);
   service.OpenOnStop();
   Expect(state.debug_pane.mode == DebugPaneMode::CallStack,
          "a stop while the pane is already open preserves the active surface");
@@ -96,7 +96,7 @@ void TestDebugPaneServiceOpenOnStop() {
 void TestDebugPaneServiceClose() {
   ProjectWorkspaceState state;
   DebugPaneService service = MakeService(state);
-  service.ShowCallStack();
+  service.ShowMode(DebugPaneMode::CallStack);
   service.Close();
   Expect(!state.debug_pane.visible, "Close hides the pane (session teardown)");
 }

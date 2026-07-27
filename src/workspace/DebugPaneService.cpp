@@ -23,14 +23,6 @@ void DebugPaneService::Activate(DebugPaneMode mode) {
 
 void DebugPaneService::ShowMode(DebugPaneMode mode) { Activate(mode); }
 
-void DebugPaneService::ShowCallStack() { Activate(DebugPaneMode::CallStack); }
-
-void DebugPaneService::ShowVariables() { Activate(DebugPaneMode::Variables); }
-
-void DebugPaneService::ShowWatch() { Activate(DebugPaneMode::Watch); }
-
-void DebugPaneService::ShowBreakpoints() { Activate(DebugPaneMode::Breakpoints); }
-
 void DebugPaneService::Close() {
   DebugPaneState& pane = state_.debug_pane;
   if (!pane.visible) {

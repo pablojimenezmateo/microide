@@ -208,17 +208,6 @@ bool PrimitiveWriter::WritePath(const std::filesystem::path& path) {
          WriteString(PathToUtf8String(path));
 }
 
-bool PrimitiveReader::ReadBytes(std::span<std::byte> target) {
-  // offset_ <= input_.size() is an invariant, so subtract rather than add: on a
-  // 32-bit size_t, offset_ + size could wrap and pass a naive check.
-  if (target.size() > input_.size() - offset_) {
-    return false;
-  }
-  std::copy_n(input_.begin() + static_cast<std::ptrdiff_t>(offset_), target.size(),
-              target.begin());
-  offset_ += target.size();
-  return true;
-}
 
 bool PrimitiveReader::ReadU8(std::uint8_t* value) {
   if (value == nullptr || offset_ + 1 > input_.size()) {

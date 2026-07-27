@@ -531,9 +531,6 @@ void TextViewport::PushHistoryEntry(HistoryEntry entry, CoalesceHint hint) {
   undo_history_.RecordEntry(std::move(entry), hint);
 }
 
-void TextViewport::PushHistoryEntryDirect(HistoryEntry entry) {
-  undo_history_.RecordEntryDirect(std::move(entry));
-}
 
 void TextViewport::BeginUndoGroup() { undo_history_.BeginGroup(CaptureViewState()); }
 

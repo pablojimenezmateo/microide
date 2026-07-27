@@ -22,10 +22,6 @@ class DebugPaneService {
 
   // Show a specific surface (makes the pane visible and focuses it).
   void ShowMode(DebugPaneMode mode);
-  void ShowCallStack();
-  void ShowVariables();
-  void ShowWatch();
-  void ShowBreakpoints();
 
   // Hide the pane (e.g. on session teardown). Moves focus back to the editor if
   // the pane currently holds it.

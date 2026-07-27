@@ -151,7 +151,6 @@ class PrimitiveReader {
   std::span<const std::byte> input_;
   std::size_t offset_ = 0;
 
-  bool ReadBytes(std::span<std::byte> target);
 };
 
 bool AppendTaggedRecord(std::uint16_t tag,

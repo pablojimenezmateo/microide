@@ -44,11 +44,6 @@ class PatchApplyService {
   bool ConfirmPendingDiscard();
   void CancelPendingDiscard();
 
-  // Test seam: applies a patch synchronously. Always compiled; production uses
-  // the async discard/apply paths above.
-  project::PatchApplyResult ApplyPatchSynchronouslyForTesting(project::PatchApplyRequest request,
-                                                              std::string patch_text);
-
   // Test seam: builds a patch-apply request the same way the production request
   // paths do, so tests can assert the request carries no full-model copy (the
   // model stays UI-thread-local and only the compact target + patch text is

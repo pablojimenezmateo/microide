@@ -484,7 +484,6 @@ class TextViewport {
   ViewState CaptureViewState() const;
   void RestoreViewState(const ViewState& state);
   void PushHistoryEntry(HistoryEntry entry, CoalesceHint hint = CoalesceHint{});
-  void PushHistoryEntryDirect(HistoryEntry entry);
   void FlushActiveUndoGroup();
   void ApplyHistoryEntry(const HistoryEntry& entry, bool forward);
   std::optional<HistoryEntry> BuildRangeHistoryEntry(const SelectionRange& range,

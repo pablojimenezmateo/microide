@@ -297,30 +297,6 @@ void TextViewportUndoHistory::Clear() {
 }
 
 // Lifted verbatim from TextViewport::ApplyHistoryEntryToLines.
-void TextViewportUndoHistory::ApplyEntryToLines(std::vector<std::string>& lines,
-                                                const Entry& entry, bool forward) {
-  const std::size_t start_line = std::min(entry.start_line, lines.size());
-  const std::size_t removed_count = forward ? entry.before_lines.size() : entry.after_lines.size();
-  const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
-
-  const bool same_count_replacement = removed_count > 0 && removed_count == inserted_lines.size() &&
-                                      start_line + removed_count <= lines.size();
-  if (same_count_replacement) {
-    for (std::size_t i = 0; i < removed_count; ++i) {
-      lines[start_line + i] = inserted_lines[i];
-    }
-  } else {
-    const auto erase_begin = lines.begin() + static_cast<std::ptrdiff_t>(start_line);
-    const auto erase_end =
-        erase_begin + static_cast<std::ptrdiff_t>(std::min(removed_count, lines.size() - start_line));
-    lines.erase(erase_begin, erase_end);
-    lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(start_line),
-                 inserted_lines.begin(), inserted_lines.end());
-  }
-  if (lines.empty()) {
-    lines.push_back("");
-  }
-}
 
 void TextViewportUndoHistory::ApplyEntryToBuffer(TextBuffer& lines, const Entry& entry,
                                                  bool forward) {

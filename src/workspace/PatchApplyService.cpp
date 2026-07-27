@@ -435,10 +435,5 @@ void PatchApplyService::CancelPendingDiscard() {
   pending_discard_.reset();
 }
 
-project::PatchApplyResult PatchApplyService::ApplyPatchSynchronouslyForTesting(
-    project::PatchApplyRequest request,
-    std::string patch_text) {
-  return project::ApplyPatchRequest(request, patch_text);
-}
 
 }  // namespace microide::workspace

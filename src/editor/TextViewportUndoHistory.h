@@ -28,7 +28,7 @@ struct CoalesceHint {
 
 // Owns the undo / redo storage and the grouped-edit aggregation state that
 // previously lived on TextViewport (undo_stack, redo_stack, undo_group_stack_,
-// plus the static TryMerge / ReconstructFallback / ApplyEntryToLines helpers).
+// plus the static TryMerge / ReconstructFallback / ApplyEntryToBuffer helpers).
 //
 // The owning TextViewport stays in charge of:
 //   - capturing a ViewState snapshot from its current cursor / scroll /
@@ -112,10 +112,8 @@ class TextViewportUndoHistory {
   void NotifyCursorMoved() { EndCoalesceRun(); }
 
   // Pure helpers -------------------------------------------------------
-  static void ApplyEntryToLines(std::vector<std::string>& lines, const Entry& entry,
-                                 bool forward);
-  // Same as ApplyEntryToLines but mutating the document's TextBuffer in place
-  // through its splice primitive. Used by the live undo/redo apply path.
+  // Applies an entry by mutating the document's TextBuffer in place through its
+  // splice primitive. Used by the live undo/redo apply path.
   static void ApplyEntryToBuffer(TextBuffer& lines, const Entry& entry, bool forward);
   static std::optional<AppliedEdit> BuildAppliedEdit(const Entry& entry, bool forward);
   // Whole-line-trimmed line span of `entry` (common leading/trailing identical
