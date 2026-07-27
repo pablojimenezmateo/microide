@@ -36,6 +36,10 @@ class CommitWorkflowService {
                        std::string_view left_label)>
         open_staged_diff;
     std::function<void(project::CommitOperationKind)> open_commit_confirmation;
+    // Ask the user to acknowledge the non-blocking pre-check warnings listed in the
+    // argument. Accepting routes back through ConfirmPendingOperation, which records
+    // the acknowledgements and dispatches the parked operation.
+    std::function<void(std::string)> open_commit_warning_confirmation;
     std::function<void()> request_commit_workflow_redraw;
   };
 
@@ -60,12 +64,11 @@ class CommitWorkflowService {
   void Open(CommitWorkflowState& state);
   void Close(CommitWorkflowState& state);
   // `run_blocking_conflict_scan` gates the full `git diff --cached` conflict-marker
-  // scan. Interactive refreshes (open, per-keystroke draft edits, warning acks) pass
-  // false to keep the shell thread responsive; only the pre-dispatch refresh in
-  // RequestCommit pays for the unbounded scan, which still blocks the commit if it fires.
+  // scan. Interactive refreshes (open, per-keystroke draft edits) pass false to keep
+  // the shell thread responsive; only the pre-dispatch refresh in RequestCommit pays
+  // for the unbounded scan, which still blocks the commit if it fires.
   void RefreshDerivedState(CommitWorkflowState& state, bool run_blocking_conflict_scan = false);
   void OnDraftEdited(CommitWorkflowState& state);
-  void AcknowledgeWarning(CommitWorkflowState& state, std::string_view warning_id);
   bool RequestCommit(CommitWorkflowState& state, project::CommitOperationKind operation);
   bool ConfirmPendingOperation(CommitWorkflowState& state);
   void CancelPendingConfirmation(CommitWorkflowState& state);

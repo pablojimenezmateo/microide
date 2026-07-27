@@ -64,6 +64,9 @@ struct PromptSurfaceState {
     OpenExternalUrl,
     ConfirmCommitAmend,
     ConfirmCommitNoVerify,
+    // Non-blocking commit pre-check warnings, listed in `detail`. Confirming
+    // acknowledges them all and runs the commit the user asked for.
+    ConfirmCommitWarnings,
     // Debugger (Phase 6): edit a breakpoint modifier on `path:target_line`.
     SetBreakpointCondition,
     SetBreakpointHitCondition,

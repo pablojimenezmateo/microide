@@ -60,6 +60,12 @@ void WorkspaceShell::InitializeCommitWorkflowService() {
                 amend ? "Rewrite the previous commit with the staged changes and new message?"
                       : "Bypass Git hooks for this commit? Only continue if you trust the staged changes.";
           },
+      .open_commit_warning_confirmation =
+          [this](std::string warnings) {
+            OpenPromptSurface(PromptSurfaceState::Action::ConfirmCommitWarnings,
+                              PromptSurfaceState::Kind::Confirm, {}, {});
+            context_.prompts.surface.detail = std::move(warnings);
+          },
       .request_commit_workflow_redraw = [this]() { RequestSidebarRedraw(); },
   });
 }

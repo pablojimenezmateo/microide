@@ -23,6 +23,10 @@ enum class CommitWorkflowPendingConfirmation {
   None,
   Amend,
   NoVerify,
+  // Non-blocking pre-check warnings are pending acknowledgement. Unlike Amend /
+  // NoVerify the confirmation does not itself name the operation, so the requested
+  // one is parked in CommitWorkflowState::pending_operation.
+  Warnings,
 };
 
 std::string CommitWorkflowBodyText(const editor::TextViewport& viewport);
@@ -34,6 +38,9 @@ struct CommitWorkflowState {
   bool operation_in_flight = false;
   CommitWorkflowFocusField focus_field = CommitWorkflowFocusField::Subject;
   CommitWorkflowPendingConfirmation pending_confirmation = CommitWorkflowPendingConfirmation::None;
+  // The operation to run once a Warnings confirmation is accepted. Meaningless for
+  // the other pending_confirmation values, which encode their own operation.
+  project::CommitOperationKind pending_operation = project::CommitOperationKind::Create;
   editor::SingleLineEditor subject;
   editor::TextViewport body;
   project::CommitDraftContext draft_context;

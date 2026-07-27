@@ -167,14 +167,6 @@ void CommitWorkflowService::OnDraftEdited(CommitWorkflowState& state) {
   }
 }
 
-void CommitWorkflowService::AcknowledgeWarning(CommitWorkflowState& state,
-                                               const std::string_view warning_id) {
-  if (!warning_id.empty()) {
-    state.acknowledged_warning_ids.insert(std::string(warning_id));
-  }
-  RefreshDerivedState(state);
-}
-
 bool CommitWorkflowService::CanExecuteCommit(const CommitWorkflowState& state) const {
   return state.open && !state.operation_in_flight && state.staged_summary.file_count > 0 &&
          project::CommitPreChecksAllowExecution(state.checks, state.acknowledged_warning_ids);
@@ -188,19 +180,50 @@ bool CommitWorkflowService::RequestCommit(CommitWorkflowState& state,
   // Pre-dispatch refresh runs the full conflict-marker scan; a positive result is a
   // blocking check that CanExecuteCommit rejects below.
   RefreshDerivedState(state, /*run_blocking_conflict_scan=*/true);
-  if (!CanExecuteCommit(state)) {
-    if (callbacks_.set_command_feedback != nullptr) {
-      for (const project::CommitPreCheck& check : state.checks) {
-        if (check.severity == project::CommitPreCheckSeverity::Blocking ||
-            (check.severity == project::CommitPreCheckSeverity::Warning &&
-             state.acknowledged_warning_ids.find(check.id) ==
-                 state.acknowledged_warning_ids.end())) {
-          callbacks_.set_command_feedback(check.message);
-          break;
-        }
+  // A Blocking check refuses outright, every time. Nothing acknowledges these.
+  for (const project::CommitPreCheck& check : state.checks) {
+    if (check.severity == project::CommitPreCheckSeverity::Blocking) {
+      if (callbacks_.set_command_feedback != nullptr) {
+        callbacks_.set_command_feedback(check.message);
       }
+      return false;
+    }
+  }
+  // Nothing staged (or the surface is closed / already committing) is not a
+  // pre-check; it is simply not a commit.
+  if (!state.open || state.operation_in_flight || state.staged_summary.file_count == 0) {
+    if (callbacks_.set_command_feedback != nullptr && state.staged_summary.file_count == 0) {
+      callbacks_.set_command_feedback("Nothing staged");
     }
     return false;
+  }
+  // Whatever is left is unacknowledged WARNINGS. These are advisory — "untracked
+  // files are not included", "branch is behind upstream" — and used to refuse the
+  // commit outright with no way forward, because AcknowledgeWarning had no caller.
+  // Ask once, then dispatch on confirmation.
+  if (!CanExecuteCommit(state)) {
+    std::string summary;
+    for (const project::CommitPreCheck& check : state.checks) {
+      if (check.severity != project::CommitPreCheckSeverity::Warning ||
+          state.acknowledged_warning_ids.count(check.id) != 0) {
+        continue;
+      }
+      if (!summary.empty()) {
+        summary += "\n";
+      }
+      summary += check.message;
+    }
+    if (summary.empty()) {
+      // No warning explains the refusal, so surfacing a confirmation would be a
+      // dialog the user cannot act on. Refuse instead of prompting emptily.
+      return false;
+    }
+    state.pending_operation = operation;
+    state.pending_confirmation = CommitWorkflowPendingConfirmation::Warnings;
+    if (callbacks_.open_commit_warning_confirmation != nullptr) {
+      callbacks_.open_commit_warning_confirmation(std::move(summary));
+    }
+    return true;
   }
 
   if (operation == project::CommitOperationKind::Amend ||
@@ -221,6 +244,20 @@ bool CommitWorkflowService::RequestCommit(CommitWorkflowState& state,
 bool CommitWorkflowService::ConfirmPendingOperation(CommitWorkflowState& state) {
   if (state.pending_confirmation == CommitWorkflowPendingConfirmation::None) {
     return false;
+  }
+  if (state.pending_confirmation == CommitWorkflowPendingConfirmation::Warnings) {
+    // Record the acknowledgement for every warning currently outstanding, then run
+    // the operation the user originally asked for. The ids are stable per check kind
+    // (CheckId), so the re-run sees them acknowledged and proceeds; Open() and a
+    // successful commit both clear the set, so the next commit asks again.
+    const project::CommitOperationKind operation = state.pending_operation;
+    state.pending_confirmation = CommitWorkflowPendingConfirmation::None;
+    for (const project::CommitPreCheck& check : state.checks) {
+      if (check.severity == project::CommitPreCheckSeverity::Warning) {
+        state.acknowledged_warning_ids.insert(check.id);
+      }
+    }
+    return RequestCommit(state, operation);
   }
   const project::CommitOperationKind operation =
       state.pending_confirmation == CommitWorkflowPendingConfirmation::Amend

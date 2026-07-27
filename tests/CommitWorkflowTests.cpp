@@ -482,6 +482,133 @@ void TestCommitBodyTextCachesUntilContentEdit() {
          "an edit must invalidate the cache and re-serialize the new body");
 }
 
+// An untracked file in the repo raises the UntrackedFiles pre-check, whose severity
+// is Warning. CommitPreChecksAllowExecution refuses on ANY unacknowledged warning,
+// and the only writer of acknowledged_warning_ids (AcknowledgeWarning) had no caller
+// anywhere in src/ -- so the set was permanently empty and this commit could never
+// be dispatched from the UI at all. Same for a branch behind upstream, or a staged
+// file with further unstaged edits: all extremely common, all hard blocks with
+// purely informational message text and no way to proceed.
+//
+// Now a warning raises a confirmation instead of a refusal, and confirming it
+// dispatches the operation the user originally asked for.
+void TestUnacknowledgedWarningsConfirmRatherThanBlock() {
+  using microide::project::ProjectBackgroundExecutor;
+  using microide::workspace::CommitWorkflowPendingConfirmation;
+  using microide::workspace::CommitWorkflowService;
+  using microide::workspace::CommitWorkflowState;
+  using microide::workspace::GitRepositoryService;
+  using microide::workspace::GitSidebarRefreshScope;
+  using microide::workspace::OutgoingBaseChoice;
+
+  TemporaryDirectory temp_dir;
+  const auto repo = temp_dir.path() / "repo";
+  WriteFile(repo / "seed.txt", "seed\n");
+  InitializeGitRepo(repo);
+  CommitAll(repo, "base", "base");
+
+  WriteFile(repo / "seed.txt", "seed\nmore\n");
+  RequireGitCommandSuccess(repo, {"add", "seed.txt"}, "stage a change to commit");
+  // The trigger: an untracked, unstaged file. Nothing about it should stop a commit.
+  WriteFile(repo / "scratch.txt", "not staged, not tracked\n");
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService git_service(executor);
+  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+                                                OutgoingBaseChoice{}, false);
+  Expect(git_service.CurrentState().repo_available, "fixture repo should be available");
+
+  CommitWorkflowService service(executor, git_service);
+  std::string confirmation_detail;
+  int confirmations = 0;
+  service.SetCallbacks(CommitWorkflowService::Callbacks{
+      .open_commit_warning_confirmation =
+          [&](std::string warnings) {
+            ++confirmations;
+            confirmation_detail = std::move(warnings);
+          },
+  });
+
+  CommitWorkflowState state;
+  service.Open(state);
+  state.subject.SetText("Add more");
+
+  const bool has_untracked_warning =
+      std::any_of(state.checks.begin(), state.checks.end(), [](const auto& check) {
+        return check.kind == CommitPreCheckKind::UntrackedFiles &&
+               check.severity == CommitPreCheckSeverity::Warning;
+      });
+  Expect(has_untracked_warning, "an untracked file should raise the UntrackedFiles warning");
+  Expect(state.acknowledged_warning_ids.empty(),
+         "a freshly opened workflow acknowledges nothing");
+
+  // First request: does NOT commit, asks instead.
+  Expect(service.RequestCommit(state, CommitOperationKind::Create),
+         "a warning must be surfaced as a confirmation, not a silent refusal");
+  Expect(!state.operation_in_flight, "no commit may dispatch before the warning is confirmed");
+  Expect(confirmations == 1, "exactly one confirmation should be requested");
+  Expect(!confirmation_detail.empty(), "the confirmation must say what it is warning about");
+  Expect(state.pending_confirmation ==
+             CommitWorkflowPendingConfirmation::Warnings,
+         "the workflow should be parked on a Warnings confirmation");
+
+  // Confirming acknowledges the warnings and runs the original operation.
+  Expect(service.ConfirmPendingOperation(state),
+         "confirming the warning should dispatch the commit");
+  Expect(state.operation_in_flight, "the commit should be in flight after confirmation");
+
+  for (int i = 0; i < 2000 && service.PendingCompletionCount() == 0; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  Expect(service.PendingCompletionCount() > 0, "the confirmed commit should actually run");
+  service.DrainCompletions();
+  Expect(confirmations == 1, "the confirmed commit must not re-ask about the same warnings");
+}
+
+// Cancelling must leave the workflow exactly as it was: nothing acknowledged (so the
+// next attempt asks again) and nothing committed.
+void TestCancelledWarningConfirmationCommitsNothing() {
+  using microide::project::ProjectBackgroundExecutor;
+  using microide::workspace::CommitWorkflowPendingConfirmation;
+  using microide::workspace::CommitWorkflowService;
+  using microide::workspace::CommitWorkflowState;
+  using microide::workspace::GitRepositoryService;
+  using microide::workspace::GitSidebarRefreshScope;
+  using microide::workspace::OutgoingBaseChoice;
+
+  TemporaryDirectory temp_dir;
+  const auto repo = temp_dir.path() / "repo";
+  WriteFile(repo / "seed.txt", "seed\n");
+  InitializeGitRepo(repo);
+  CommitAll(repo, "base", "base");
+  WriteFile(repo / "seed.txt", "seed\nmore\n");
+  RequireGitCommandSuccess(repo, {"add", "seed.txt"}, "stage a change to commit");
+  WriteFile(repo / "scratch.txt", "untracked\n");
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService git_service(executor);
+  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+                                                OutgoingBaseChoice{}, false);
+
+  CommitWorkflowService service(executor, git_service);
+  service.SetCallbacks(CommitWorkflowService::Callbacks{
+      .open_commit_warning_confirmation = [](std::string) {},
+  });
+  CommitWorkflowState state;
+  service.Open(state);
+  state.subject.SetText("Add more");
+
+  Expect(service.RequestCommit(state, CommitOperationKind::Create),
+         "the warning confirmation should open");
+  service.CancelPendingConfirmation(state);
+  Expect(state.pending_confirmation ==
+             CommitWorkflowPendingConfirmation::None,
+         "cancelling clears the pending confirmation");
+  Expect(!state.operation_in_flight, "cancelling must not commit");
+  Expect(state.acknowledged_warning_ids.empty(),
+         "cancelling must not acknowledge anything, so the next attempt asks again");
+}
+
 }  // namespace
 
 void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
@@ -492,6 +619,10 @@ void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CommitWorkflow/SubjectLengthCountsCharactersNotBytes",
           TestCommitSubjectLengthCountsCharactersNotBytes);
   AddTest(tests, "CommitWorkflow/WarningsRequireAck", TestWarningsRequireAcknowledgement);
+  AddTest(tests, "CommitWorkflow/WarningsConfirmRatherThanBlock",
+          TestUnacknowledgedWarningsConfirmRatherThanBlock);
+  AddTest(tests, "CommitWorkflow/CancelledWarningConfirmationCommitsNothing",
+          TestCancelledWarningConfirmationCommitsNothing);
   AddTest(tests, "CommitWorkflow/DraftPersistenceRoundTrip", TestCommitDraftPersistenceRoundTrip);
   AddTest(tests, "CommitWorkflow/PartialStageWarnsForV2SingleModifiedEntry",
           TestPartialStageWarnsForV2SingleModifiedEntry);

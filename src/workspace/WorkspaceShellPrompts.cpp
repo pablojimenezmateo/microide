@@ -209,6 +209,8 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
       return "Amend Commit";
     case PromptSurfaceState::Action::ConfirmCommitNoVerify:
       return "Commit Without Hooks";
+    case PromptSurfaceState::Action::ConfirmCommitWarnings:
+      return "Commit With Warnings";
     case PromptSurfaceState::Action::SetBreakpointCondition:
       return "Breakpoint Condition";
     case PromptSurfaceState::Action::SetBreakpointHitCondition:
@@ -266,6 +268,7 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Open " + context_.prompts.surface.detail + " in your browser?";
     case PromptSurfaceState::Action::ConfirmCommitAmend:
     case PromptSurfaceState::Action::ConfirmCommitNoVerify:
+    case PromptSurfaceState::Action::ConfirmCommitWarnings:
       return context_.prompts.surface.detail;
     case PromptSurfaceState::Action::SetBreakpointCondition:
       return "Stop only when this expression is true (empty clears).";
@@ -323,6 +326,8 @@ std::vector<std::string> WorkspaceShell::PromptSurfaceActionLabels() const {
       return {"Amend", "Cancel"};
     case PromptSurfaceState::Action::ConfirmCommitNoVerify:
       return {"Commit", "Cancel"};
+    case PromptSurfaceState::Action::ConfirmCommitWarnings:
+      return {"Commit Anyway", "Cancel"};
     case PromptSurfaceState::Action::SetBreakpointCondition:
     case PromptSurfaceState::Action::SetBreakpointHitCondition:
     case PromptSurfaceState::Action::SetBreakpointLogMessage:
@@ -442,7 +447,8 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
   }
   if (context_.prompts.surface_visible &&
       (context_.prompts.surface.action == PromptSurfaceState::Action::ConfirmCommitAmend ||
-       context_.prompts.surface.action == PromptSurfaceState::Action::ConfirmCommitNoVerify)) {
+       context_.prompts.surface.action == PromptSurfaceState::Action::ConfirmCommitNoVerify ||
+       context_.prompts.surface.action == PromptSurfaceState::Action::ConfirmCommitWarnings)) {
     InitializeCommitWorkflowService();
     auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
     if (resolution != DirtyPathResolution::Discard) {
