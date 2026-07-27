@@ -887,17 +887,20 @@ void LspService::PublishLspCodeLenses(ProjectWorkspaceState& state, std::string 
                                       std::uint64_t request_generation, std::string language_id,
                                       lsp_encoding::PositionEncoding encoding,
                                       std::vector<LspClient::CodeLens> lenses) {
-  // Retire the previous publish's payloads for this URI before the guard: a
-  // superseded response still means the old handles are dead. Doing it here (and
-  // not on the guard's happy path alone) is what keeps the table bounded.
-  std::erase_if(code_lens_commands_,
-                [&uri](const auto& entry) { return entry.second.uri == uri; });
   PublishGuardedOverlay(
       state, "lsp:codelens", code_lens_generation_, uri, request_generation, encoding,
       std::move(lenses),
       [this, &uri, &language_id](const editor::TextViewport* /*file_viewport*/,
                                  lsp_encoding::PositionEncoding /*encoding*/,
                                  std::vector<LspClient::CodeLens>& lenses) {
+        // Retire the previous publish's payloads for this URI. This runs inside the
+        // build callback, i.e. only once the generation guard has ALREADY accepted
+        // the response: retiring earlier would strip the handles off lenses that a
+        // superseded response then fails to replace, leaving the ones on screen
+        // inert. Rebuilding here is also what keeps the table proportional to what
+        // is currently published rather than growing for the session.
+        std::erase_if(code_lens_commands_,
+                      [&uri](const auto& entry) { return entry.second.uri == uri; });
         editor::PluginDecorationData data;
         data.code_lenses.reserve(lenses.size());
         for (LspClient::CodeLens& lens : lenses) {
@@ -988,6 +991,15 @@ void LspService::MaybeRequestDocumentHighlights() {
       document_highlight_request_column_ == caret_column &&
       document_highlight_request_path_ == viewport->path()) {
     return;  // steady state: nothing about the request's identity changed
+  }
+  // Moving WITHIN the current highlight set asks the same question again — the
+  // symbol and the buffer are both unchanged — so the answer is already on screen.
+  // Arrowing through a word therefore costs nothing instead of one round-trip per
+  // character. (The render path applies the same rule to decide the set is still
+  // valid, so the two can never disagree about what is painted.)
+  if (CurrentProjectState().semantic_occurrences.CoversCaret(viewport->path(), revision,
+                                                             caret_line, caret_column)) {
+    return;
   }
 
   std::string language_id;

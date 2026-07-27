@@ -2197,6 +2197,112 @@ return ide.plugin({
   Expect(executed_command.empty(), "an unknown payload handle runs nothing");
 }
 
+// A code-lens response the buffer has moved past must be dropped WHOLE. Retiring
+// the URI's executable payloads before the generation guard runs would strip the
+// handles off the lenses a superseded response then fails to replace, leaving the
+// ones still painted on screen inert — they would look clickable and do nothing.
+void TestWorkspaceShellSupersededCodeLensResponseKeepsLiveLensesClickable() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path md_file = project / "notes.md";
+  WriteFile(md_file, "fn alpha() {}\n");
+
+  WritePluginInit(plugins_root, "mdstale",
+                  R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "mdstale",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "md-lsp-server" } })
+  end
+})
+)lua");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "stale-lens fixture should open the project");
+
+  // Park each request's callback instead of answering it, so the test controls the
+  // order the two responses land in.
+  std::vector<workspace::LspClient::CodeLensCallback> parked;
+  auto stub = std::make_unique<workspace::LspClient>();
+  stub->EnableTestStubMode();
+  stub->SetTestCodeLensHandler(
+      [&parked](std::string, workspace::LspClient::CodeLensCallback cb) {
+        parked.push_back(std::move(cb));
+      });
+  std::string executed_command;
+  stub->SetTestExecuteCommandHandler(
+      [&executed_command](std::string command, std::vector<util::JsonValue>,
+                          workspace::LspClient::ExecuteCommandCallback cb) {
+        executed_command = std::move(command);
+        cb(util::JsonValue{});
+      });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
+         "fixture should attach a stub markdown client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, md_file);
+  (void)WorkspaceShellTestAccess::ResolveLspHoverForTesting(shell, md_file, 1, 1);
+  // A second pull (what a save or an undo-to-clean does) while the first is still
+  // parked leaves two responses in flight.
+  Expect(WorkspaceShellTestAccess::RequestCodeLensesForActiveBuffer(shell),
+         "a second code-lens pull should be issuable");
+  // Stub responses are marshalled through the main-thread mailbox, so the handler
+  // that parks them only runs on a drain.
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(parked.size() >= 2, "two code-lens requests should be outstanding");
+  if (parked.size() < 2) {
+    return;
+  }
+
+  const auto make_lens = [](std::string title, std::string command) {
+    workspace::LspClient::CodeLens lens;
+    lens.range = {{0, 0}, {0, 13}};
+    lens.title = std::move(title);
+    lens.command = std::move(command);
+    return lens;
+  };
+  // Answer the NEWER request first; it becomes what is on screen.
+  parked.back()(std::vector<workspace::LspClient::CodeLens>{make_lens("current", "md.current")});
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  const auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  const auto* presentation = state.plugin_presentation_if_present();
+  const auto* decorations =
+      presentation != nullptr ? presentation->decorations.FindByPath(md_file) : nullptr;
+  Expect(decorations != nullptr && decorations->code_lenses.size() == 1,
+         "the newest response publishes its lens");
+  if (decorations == nullptr || decorations->code_lenses.empty()) {
+    return;
+  }
+  const std::uint64_t live_payload = decorations->code_lenses[0].payload;
+  Expect(live_payload != 0, "the published lens carries an executable payload");
+
+  // Now the stale response lands. It must change nothing at all.
+  parked.front()(std::vector<workspace::LspClient::CodeLens>{make_lens("stale", "md.stale")});
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  const auto* after =
+      state.plugin_presentation_if_present() != nullptr
+          ? state.plugin_presentation_if_present()->decorations.FindByPath(md_file)
+          : nullptr;
+  Expect(after != nullptr && after->code_lenses.size() == 1 &&
+             after->code_lenses[0].text == "current",
+         "the superseded response must not replace the painted lens");
+
+  WorkspaceShellTestAccess::ActivateCodeLens(shell, live_payload);
+  Expect(executed_command == "md.current",
+         "the painted lens must still be clickable after a superseded response arrived");
+}
+
 // `call-hierarchy` chains prepareCallHierarchy -> callHierarchy/{incoming,outgoing}
 // Calls and renders navigable entries. Incoming calls list the CALL SITES inside
 // each caller (that is what the user wants to look at); outgoing calls navigate to
@@ -5258,6 +5364,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellInlayHintsPublishMidLineDecorations);
   AddTest(tests, "WorkspaceShell/CodeLensesResolveAndActivate",
           TestWorkspaceShellCodeLensesResolveAndActivate);
+  AddTest(tests, "WorkspaceShell/SupersededCodeLensResponseKeepsLiveLensesClickable",
+          TestWorkspaceShellSupersededCodeLensResponseKeepsLiveLensesClickable);
   AddTest(tests, "WorkspaceShell/CallHierarchyRendersBothDirections",
           TestWorkspaceShellCallHierarchyRendersBothDirections);
   AddTest(tests, "WorkspaceShell/PrepareRenameRefinesPrompt",

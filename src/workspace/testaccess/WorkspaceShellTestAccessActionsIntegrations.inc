@@ -26,6 +26,21 @@
     shell.ConsumeLspCallbacks();
     return shell.plugin_hover_cache_.result.content;
   }
+  // Fire one code-lens pull for the active buffer, as didOpen/save/undo-to-clean do.
+  // Drives the trigger directly so a test can have two responses in flight at once.
+  static bool RequestCodeLensesForActiveBuffer(WorkspaceShell& shell) {
+    editor::TextViewport* viewport = shell.ActiveEditableViewport();
+    if (viewport == nullptr) {
+      return false;
+    }
+    std::string language_id;
+    LspClient* client = shell.lsp_service_.LspClientForViewport(*viewport, &language_id);
+    if (client == nullptr) {
+      return false;
+    }
+    shell.lsp_service_.RequestLspCodeLenses(*viewport, *client);
+    return true;
+  }
   // Run a published code lens's server command, exactly as a click on it would.
   static void ActivateCodeLens(WorkspaceShell& shell, std::uint64_t payload) {
     shell.lsp_service_.ActivateCodeLens(payload);
