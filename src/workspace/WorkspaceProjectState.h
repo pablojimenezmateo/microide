@@ -379,7 +379,11 @@ struct CodeActionSessionState {
 struct CommandPaletteItem {
   std::string primary_label;
   std::string secondary_label;
-  std::string search_text;  // lowercased "primary secondary", built once for filtering
+  std::string search_text;  // lowercased "name primary secondary", built once for filtering
+  // Lowercased command name ("git-stash-pop"). Scored separately from the label
+  // so typing a command's exact name always ranks it first, however many other
+  // rows happen to contain those letters.
+  std::string command_name;
   ActionId action = ActionId::CodeActions;  // meaningful only when !is_plugin
   std::string command_token;                // plugin command name when is_plugin
   bool is_plugin = false;

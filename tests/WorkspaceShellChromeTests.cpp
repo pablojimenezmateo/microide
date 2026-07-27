@@ -802,6 +802,34 @@ void TestWorkspaceShellCommandPasteShortcutUsesSharedTextInputPath() {
          "Ctrl+V should route clipboard text through the shared command text-input path");
 }
 
+// An exact command name must win the palette however the registry happens to be
+// ordered. Without ranking the winner was simply whichever command the registry
+// listed first, so typing "open" selected "Open Merge Conflicts for Review" and
+// "search" selected "Search Workspace Symbols…" — both ahead of the command
+// actually carrying that name.
+void TestWorkspaceShellCommandPaletteRanksExactCommandNameFirst() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "palette ranking fixture should open the command palette");
+
+  WorkspaceShellTestAccess::SetCommandPaletteQueryAndRefresh(shell, "open");
+  Expect(WorkspaceShellTestAccess::CommandPaletteMatchCount(shell) > 1,
+         "'open' should match more than one command");
+  Expect(WorkspaceShellTestAccess::CommandPaletteMatchLabelAt(shell, 0) == "Open File",
+         "the command actually named 'open' should rank first");
+
+  WorkspaceShellTestAccess::SetCommandPaletteQueryAndRefresh(shell, "search");
+  Expect(WorkspaceShellTestAccess::CommandPaletteMatchLabelAt(shell, 0) == "Find in Buffer",
+         "the command actually named 'search' should rank first");
+
+  // A partial query still ranks by name prefix before falling back to a match
+  // buried anywhere in the row.
+  WorkspaceShellTestAccess::SetCommandPaletteQueryAndRefresh(shell, "goto-t");
+  Expect(WorkspaceShellTestAccess::CommandPaletteMatchLabelAt(shell, 0) == "Go to Type Definition",
+         "a command-name prefix should rank ahead of an incidental substring match");
+}
+
 void TestWorkspaceShellProjectTabsShowBadges() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "alpha-project";
@@ -2549,6 +2577,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation);
   AddTest(tests, "WorkspaceShell/CommandPasteShortcutUsesSharedTextInputPath",
           TestWorkspaceShellCommandPasteShortcutUsesSharedTextInputPath);
+  AddTest(tests, "WorkspaceShell/CommandPaletteRanksExactCommandNameFirst",
+          TestWorkspaceShellCommandPaletteRanksExactCommandNameFirst);
   AddTest(tests, "WorkspaceShell/ProjectTabsShowBadges",
           TestWorkspaceShellProjectTabsShowBadges);
   AddTest(tests, "WorkspaceShell/ProjectTabBadgeColorStableAcrossSwitch",

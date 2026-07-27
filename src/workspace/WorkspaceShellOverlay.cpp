@@ -347,8 +347,10 @@ void WorkspaceShell::OpenCommandPalette(std::string seed) {
     palette.items.push_back(CommandPaletteItem{
         .primary_label = std::string(spec.label),
         .secondary_label = std::string(spec.accelerator),
-        .search_text =
-            util::ToLowerAscii(std::string(spec.label) + " " + std::string(spec.accelerator)),
+        .search_text = util::ToLowerAscii(std::string(spec.command_name) + " " +
+                                          std::string(spec.label) + " " +
+                                          std::string(spec.accelerator)),
+        .command_name = util::ToLowerAscii(spec.command_name),
         .action = spec.id,
         .command_token = {},
         .is_plugin = false,
@@ -364,6 +366,7 @@ void WorkspaceShell::OpenCommandPalette(std::string seed) {
         .primary_label = name,
         .secondary_label = {},
         .search_text = util::ToLowerAscii(name),
+        .command_name = util::ToLowerAscii(name),
         .action = ActionId::CodeActions,
         .command_token = name,
         .is_plugin = true,
@@ -387,6 +390,26 @@ void WorkspaceShell::RefreshCommandPalette() {
       continue;
     }
     palette.matches.push_back(i);
+  }
+  // Rank the survivors: an exact command name beats a name prefix, which beats a
+  // prefix of the row's text, which beats a match buried anywhere in it. Without
+  // this the winner is whichever command the registry happens to list first, so
+  // typing `open` selected "Open Merge Conflicts for Review" and `search`
+  // selected "Search Workspace Symbols…" — each ahead of the command that
+  // actually carries the name. stable_sort keeps registry order within a rank.
+  if (!query.empty()) {
+    const auto rank = [&](std::size_t index) {
+      const CommandPaletteItem& item = palette.items[index];
+      if (item.command_name == query) {
+        return 0;
+      }
+      if (item.command_name.rfind(query, 0) == 0) {
+        return 1;
+      }
+      return item.search_text.rfind(query, 0) == 0 ? 2 : 3;
+    };
+    std::stable_sort(palette.matches.begin(), palette.matches.end(),
+                     [&](std::size_t lhs, std::size_t rhs) { return rank(lhs) < rank(rhs); });
   }
   palette.summary_line =
       std::to_string(palette.matches.size()) + " of " + std::to_string(palette.items.size());
