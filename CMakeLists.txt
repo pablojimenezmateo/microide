@@ -307,6 +307,7 @@ set(MICROIDE_CORE_SOURCES
   src/project/GitRepository.cpp
   src/project/GitRepositoryState.cpp
   src/project/CommitWorkflowChecks.cpp
+  src/project/GitBranchOperations.cpp
   src/project/GitCommitExecutor.cpp
   src/project/GitRepositoryMetadataTracker.cpp
   src/project/ProjectChangeCoalescer.cpp
@@ -791,6 +792,7 @@ add_executable(microide_tests
   tests/DirtyRegionPolicyTests.cpp
   tests/FilesystemTests.cpp
   tests/GlobMatchTests.cpp
+  tests/GitBranchOperationsTests.cpp
   tests/IgnoreMatcherTests.cpp
   tests/ProjectTraversalFilterTests.cpp
   tests/CompileCommandsLocatorTests.cpp
@@ -1262,6 +1264,7 @@ add_executable(microide_diff_bench
   src/project/GitRepository.cpp
   src/project/GitRepositoryState.cpp
   src/project/CommitWorkflowChecks.cpp
+  src/project/GitBranchOperations.cpp
   src/project/GitCommitExecutor.cpp
   src/render/DebugTextBackend.cpp
   src/render/TextRenderer.cpp

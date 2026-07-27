@@ -174,6 +174,14 @@ CommandResult ReadGitCommandOutputWithStdin(const std::filesystem::path& root,
     command.push_back(std::move(argument));
   }
   platform::SubprocessOptions options;
+  // Never let git block on an interactive credential/passphrase prompt. The child
+  // inherits our stdio, so a git launched from a terminal can read a password from
+  // a tty the user is not looking at and simply hang until the wall-clock cap kills
+  // it (300 s for write ops). With this, git fails immediately and reports why,
+  // which the caller can surface. A configured GUI askpass still works — only the
+  // terminal prompt is disabled.
+  options.environment_overrides.push_back({"GIT_TERMINAL_PROMPT", "0"});
+  options.environment_overrides.push_back({"GCM_INTERACTIVE", "never"});
   options.capture_stdout = true;
   options.capture_stderr = !silence_stderr;
   options.silence_stderr = silence_stderr;
