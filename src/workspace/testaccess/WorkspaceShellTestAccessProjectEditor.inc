@@ -409,6 +409,20 @@
   static std::size_t ComparePickerItemCount(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.compare_picker.items.size();
   }
+  static std::vector<std::string> ComparePickerMatchRefs(const WorkspaceShell& shell) {
+    std::vector<std::string> refs;
+    for (const auto& item :
+         shell.context_.current_project_state.overlay.workflow.compare_picker.matches) {
+      refs.push_back(item.ref);
+    }
+    return refs;
+  }
+  static void SetComparePickerSelection(WorkspaceShell& shell, std::size_t index) {
+    shell.context_.current_project_state.overlay.workflow.compare_picker.selected_index = index;
+  }
+  static void ActivateComparePickerSelection(WorkspaceShell& shell) {
+    shell.MakeCompareMergeService().OpenSelectedCommit();
+  }
   static void StageCompareHunk(WorkspaceShell& shell) { shell.StageCompareHunk(); }
   static void StageCompareSelectedLines(WorkspaceShell& shell) {
     shell.StageCompareSelectedLines();

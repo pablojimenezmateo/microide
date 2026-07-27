@@ -41,9 +41,10 @@ class CompareMergeService {
   void OpenPicker();
   bool OpenPickerForPath(const std::filesystem::path& path, std::string_view commit_spec = {});
   void OpenOutgoingBasePicker();
+  void OpenBranchSwitchPicker();
   void ApplyFileHistoryResult(const project::GitFileHistoryResult& history);
-  void ApplyOutgoingBaseResult(const std::vector<project::GitBranchReference>& branches,
-                               const std::vector<project::GitCommitEntry>& commits);
+  void ApplyRefsResult(const std::vector<project::GitBranchReference>& branches,
+                       const std::vector<project::GitCommitEntry>& commits);
   void RefreshPicker();
   void MovePickerSelection(int delta);
   void OpenSelectedCommit();

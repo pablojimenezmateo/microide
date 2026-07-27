@@ -68,10 +68,12 @@ void CompareMergeService::ApplyFileHistoryResult(const project::GitFileHistoryRe
   interactions_.ApplyFileHistoryResult(history);
 }
 
-void CompareMergeService::ApplyOutgoingBaseResult(
+void CompareMergeService::OpenBranchSwitchPicker() { interactions_.OpenBranchSwitchPicker(); }
+
+void CompareMergeService::ApplyRefsResult(
     const std::vector<project::GitBranchReference>& branches,
     const std::vector<project::GitCommitEntry>& commits) {
-  interactions_.ApplyOutgoingBaseResult(branches, commits);
+  interactions_.ApplyRefsResult(branches, commits);
 }
 
 void CompareMergeService::RefreshPicker() {

@@ -876,6 +876,49 @@ void TestWorkspaceShellGitStashActionsRoundTrip() {
   Expect(ReadFile(file) == "stashed edit\n", "popping should restore the stashed edit");
 }
 
+// The branch picker is how a branch switch is actually reached: `git-switch-branch`
+// with no argument opens it, it lists every branch except the one HEAD is on, and
+// activating a row checks that branch out.
+void TestWorkspaceShellGitBranchPickerSwitchesBranch() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "a.txt", "one\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "initial", "branch picker fixture");
+  const std::string base_branch = CurrentGitBranch(root);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 0), "the fixture repo should start clean");
+
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::GitCreateBranch,
+                                                 {"topic"}),
+         "creating the second branch should be accepted");
+  Expect(SettleGitOperation(shell), "the create-branch operation should complete");
+  Expect(CurrentGitBranch(root) == "topic", "the fixture should now be on topic");
+
+  // No argument means "let me choose".
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::GitSwitchBranch,
+                                                 {}),
+         "argument-less git-switch-branch should be accepted");
+  Expect(SettleComparePicker(shell), "the branch picker should finish loading");
+
+  const auto refs = WorkspaceShellTestAccess::ComparePickerMatchRefs(shell);
+  Expect(std::find(refs.begin(), refs.end(), base_branch) != refs.end(),
+         "the picker should offer the other local branch");
+  Expect(std::find(refs.begin(), refs.end(), "topic") == refs.end(),
+         "the picker must not offer the branch HEAD is already on");
+
+  const auto selected = std::find(refs.begin(), refs.end(), base_branch);
+  WorkspaceShellTestAccess::SetComparePickerSelection(
+      shell, static_cast<std::size_t>(selected - refs.begin()));
+  WorkspaceShellTestAccess::ActivateComparePickerSelection(shell);
+  Expect(SettleGitOperation(shell), "activating the picker row should run the switch");
+  Expect(CurrentGitBranch(root) == base_branch,
+         "activating a branch row should check that branch out");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
@@ -885,6 +928,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitOperationFailuresAreReported);
   AddTest(tests, "WorkspaceShell/GitStashActionsRoundTrip",
           TestWorkspaceShellGitStashActionsRoundTrip);
+  AddTest(tests, "WorkspaceShell/GitBranchPickerSwitchesBranch",
+          TestWorkspaceShellGitBranchPickerSwitchesBranch);
   AddTest(tests, "WorkspaceShell/GitSidebarRefreshPreservesActiveEditorBlameCache",
           TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache);
   AddTest(tests, "WorkspaceShell/GitSidebarEntryRightClickOpensContextMenu",

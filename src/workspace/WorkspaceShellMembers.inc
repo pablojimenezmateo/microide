@@ -856,12 +856,12 @@
   // background executor keyed by a fresh generation; Apply* run on the main thread
   // and drop stale/closed completions before repopulating the picker.
   void RequestComparePickerFileHistory(const std::filesystem::path& path);
-  void RequestComparePickerOutgoingBase();
+  void RequestComparePickerRefs(bool include_commits);
   void ApplyComparePickerFileHistory(std::uint64_t generation,
                                      const project::GitFileHistoryResult& history);
-  void ApplyComparePickerOutgoingBase(std::uint64_t generation,
-                                      const std::vector<project::GitBranchReference>& branches,
-                                      const std::vector<project::GitCommitEntry>& commits);
+  void ApplyComparePickerRefs(std::uint64_t generation,
+                              const std::vector<project::GitBranchReference>& branches,
+                              const std::vector<project::GitCommitEntry>& commits);
   // True only if the async request `generation` still owns the visible commit
   // picker (not closed, not superseded by a newer open or a project switch).
   bool ComparePickerRequestCurrent(std::uint64_t generation) const;

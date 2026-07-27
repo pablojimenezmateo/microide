@@ -4,6 +4,7 @@
 
 #include "workspace/CommitWorkflowLayout.h"
 #include "workspace/CommitWorkflowService.h"
+#include "workspace/CompareMergeService.h"
 #include "workspace/GitOperationService.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 
@@ -192,7 +193,11 @@ std::string WorkspaceShell::DispatchGitOperationAction(const ActionId id,
   switch (id) {
     case ActionId::GitSwitchBranch:
       if (args.empty() || args[0].empty()) {
-        return "Usage: git-switch-branch <branch>";
+        // No argument means "let me choose": open the filterable branch picker
+        // rather than rejecting, which is how the command is reached from the menu
+        // and the palette. Typing the name stays available for scripted use.
+        MakeCompareMergeService().OpenBranchSwitchPicker();
+        return {};
       }
       dispatched = git_operation_service_.SwitchBranch(root, args[0]);
       break;

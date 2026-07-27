@@ -20,6 +20,10 @@ class CompareInteractionCoordinator {
     // Sets the sidebar outgoing-comparison base to the picked ref (branch name or
     // commit hash) with a user-facing label.
     std::function<void(const std::string& ref, const std::string& label)> set_outgoing_base_ref;
+    // Check out the picked branch. Takes the short label ("main", "origin/topic")
+    // because that is what `git switch` accepts for both local and remote-tracking
+    // branches (the latter via DWIM tracking-branch creation).
+    std::function<void(const std::string& branch)> switch_to_branch;
     std::function<CompareTabState*()> active_compare_tab;
     std::function<MergeTabState*()> active_merge_tab;
     std::function<void(const std::filesystem::path&)> open_file;
@@ -60,7 +64,9 @@ class CompareInteractionCoordinator {
     // ApplyOutgoingBaseResult. Kept as host operations so the stack-temporary
     // coordinator never owns the background job.
     std::function<void(const std::filesystem::path&)> request_compare_file_history;
-    std::function<void()> request_outgoing_base_refs;
+    // `include_commits` is false for the switch-branch picker, which shows branches
+    // only and should not wait on 50 commit subjects it will never display.
+    std::function<void(bool include_commits)> request_ref_list;
   };
 
   CompareInteractionCoordinator(ProjectWorkspaceState& state, Operations operations);
@@ -69,12 +75,16 @@ class CompareInteractionCoordinator {
   bool OpenPickerForPath(const std::filesystem::path& path,
                          std::string_view commit_spec = {});
   void OpenOutgoingBasePicker();
+  void OpenBranchSwitchPicker();
   // Populate the picker from an async git result marshaled back to the main
   // thread. Clears `loading`, rebuilds items, and refreshes matches. The shell's
   // completion handler has already verified the request is still current.
   void ApplyFileHistoryResult(const project::GitFileHistoryResult& history);
-  void ApplyOutgoingBaseResult(const std::vector<project::GitBranchReference>& branches,
-                               const std::vector<project::GitCommitEntry>& commits);
+  // Populate whichever ref picker is open, routing on `picker.purpose`. The
+  // switch-branch picker drops the branch HEAD is already on ("switch to the branch
+  // you are on" is not a choice worth offering) and ignores `commits`.
+  void ApplyRefsResult(const std::vector<project::GitBranchReference>& branches,
+                       const std::vector<project::GitCommitEntry>& commits);
   void RefreshPicker();
   void MovePickerSelection(int delta);
   void OpenSelectedCommit();

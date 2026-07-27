@@ -93,17 +93,34 @@ void CompareInteractionCoordinator::ApplyFileHistoryResult(
   RefreshPicker();
 }
 
-void CompareInteractionCoordinator::ApplyOutgoingBaseResult(
+void CompareInteractionCoordinator::ApplyRefsResult(
     const std::vector<project::GitBranchReference>& branches,
     const std::vector<project::GitCommitEntry>& commits) {
   auto& picker = state_.overlay.workflow.compare_picker;
   picker.items.clear();
-  picker.items.reserve(branches.size() + commits.size());
-  for (const auto& branch_ref : branches) {
-    picker.items.push_back(MakeBranchPickerItem(branch_ref));
-  }
-  for (const auto& commit : commits) {
-    picker.items.push_back(MakeCommitPickerItem(commit));
+
+  if (picker.purpose == ComparePickerPurpose::SwitchBranch) {
+    picker.items.reserve(branches.size());
+    for (const auto& branch_ref : branches) {
+      if (branch_ref.is_head) {
+        continue;
+      }
+      GitPickerItem item = MakeBranchPickerItem(branch_ref);
+      // `git switch` takes the SHORT name for both local and remote-tracking
+      // branches; the full ref would check out a detached HEAD for the latter.
+      item.ref = branch_ref.label;
+      item.secondary_label = branch_ref.is_remote ? "remote branch" : "branch";
+      item.search_text = ToLower(item.primary_label + " " + item.secondary_label);
+      picker.items.push_back(std::move(item));
+    }
+  } else {
+    picker.items.reserve(branches.size() + commits.size());
+    for (const auto& branch_ref : branches) {
+      picker.items.push_back(MakeBranchPickerItem(branch_ref));
+    }
+    for (const auto& commit : commits) {
+      picker.items.push_back(MakeCommitPickerItem(commit));
+    }
   }
   picker.loading = false;
   RefreshPicker();
@@ -194,8 +211,32 @@ void CompareInteractionCoordinator::OpenOutgoingBasePicker() {
   // executor and populate via ApplyOutgoingBaseResult.
   picker.loading = true;
   RefreshPicker();
-  if (operations_.request_outgoing_base_refs) {
-    operations_.request_outgoing_base_refs();
+  if (operations_.request_ref_list) {
+    operations_.request_ref_list(true);
+  }
+  operations_.show_compare_picker_overlay();
+}
+
+void CompareInteractionCoordinator::OpenBranchSwitchPicker() {
+  if (state_.root.empty()) {
+    return;
+  }
+
+  auto& picker = state_.overlay.workflow.compare_picker;
+  picker.purpose = ComparePickerPurpose::SwitchBranch;
+  picker.path.clear();
+  picker.title = "Switch branch";
+  const std::string& branch = state_.sidebar.git.branch_label;
+  picker.context_label = branch.empty() ? std::string("Check out a branch") : ("on " + branch);
+  picker.query.SetText("");
+  picker.items.clear();
+  picker.matches.clear();
+  picker.selected_index = 0;
+
+  picker.loading = true;
+  RefreshPicker();
+  if (operations_.request_ref_list) {
+    operations_.request_ref_list(false);
   }
   operations_.show_compare_picker_overlay();
 }
@@ -243,6 +284,12 @@ void CompareInteractionCoordinator::OpenSelectedCommit() {
   if (picker.purpose == ComparePickerPurpose::OutgoingBaseRef) {
     if (operations_.set_outgoing_base_ref) {
       operations_.set_outgoing_base_ref(item.ref, item.apply_label);
+    }
+    return;
+  }
+  if (picker.purpose == ComparePickerPurpose::SwitchBranch) {
+    if (operations_.switch_to_branch) {
+      operations_.switch_to_branch(item.ref);
     }
     return;
   }

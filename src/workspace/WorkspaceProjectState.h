@@ -258,7 +258,9 @@ struct GitPickerItem {
 // What selecting an item does. CompareFileHistory opens a diff of the picked
 // commit against the working tree; OutgoingBaseRef sets the sidebar's outgoing
 // comparison base to the picked branch/commit.
-enum class ComparePickerPurpose { CompareFileHistory, OutgoingBaseRef };
+// SwitchBranch reuses the same overlay/list machinery as the compare pickers; it
+// just applies the choice by checking the branch out instead of diffing against it.
+enum class ComparePickerPurpose { CompareFileHistory, OutgoingBaseRef, SwitchBranch };
 
 struct ComparePickerState {
   ComparePickerPurpose purpose = ComparePickerPurpose::CompareFileHistory;

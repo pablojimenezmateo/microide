@@ -143,6 +143,17 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
                     .custom_ref = ref,
                 });
               },
+          .switch_to_branch =
+              [this](const std::string& branch) {
+                // Dismiss the picker first: the switch runs in the background and
+                // leaving the overlay up over a changing worktree reads as a hang.
+                DismissOverlay();
+                const std::string rejection =
+                    DispatchGitOperationAction(ActionId::GitSwitchBranch, {branch});
+                if (!rejection.empty()) {
+                  Notify(NotificationService::Tone::Warning, rejection);
+                }
+              },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
           .active_merge_tab = [this]() { return ActiveMergeTab(); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
@@ -253,7 +264,8 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
               [this](const std::filesystem::path& path) {
                 RequestComparePickerFileHistory(path);
               },
-          .request_outgoing_base_refs = [this]() { RequestComparePickerOutgoingBase(); },
+          .request_ref_list =
+              [this](bool include_commits) { RequestComparePickerRefs(include_commits); },
       });
 }
 
@@ -343,7 +355,10 @@ void WorkspaceShell::RequestComparePickerFileHistory(const std::filesystem::path
       });
 }
 
-void WorkspaceShell::RequestComparePickerOutgoingBase() {
+// One ref query behind both ref pickers. The outgoing-base picker wants branches
+// plus recent commits; the switch-branch picker wants branches only, and paying for
+// 50 commit subjects it will never show is pure latency on the picker's open.
+void WorkspaceShell::RequestComparePickerRefs(const bool include_commits) {
   auto& picker = context_.current_project_state.overlay.workflow.compare_picker;
   const std::uint64_t generation = ++compare_picker_generation_;
   picker.active_request_generation = generation;
@@ -362,13 +377,16 @@ void WorkspaceShell::RequestComparePickerOutgoingBase() {
                 &project::CollectGitRecentCommits);
   interactive_background_executor_.PostLatest(
       "compare-picker",
-      [this, root, generation, branches_provider = std::move(branches_provider),
+      [this, root, generation, include_commits, branches_provider = std::move(branches_provider),
        commits_provider = std::move(commits_provider)]() {
         std::vector<project::GitBranchReference> branches = branches_provider(root);
-        std::vector<project::GitCommitEntry> commits = commits_provider(root, 50);
+        std::vector<project::GitCommitEntry> commits;
+        if (include_commits) {
+          commits = commits_provider(root, 50);
+        }
         compare_picker_mailbox_.Post([this, generation, branches = std::move(branches),
                                       commits = std::move(commits)]() mutable {
-          ApplyComparePickerOutgoingBase(generation, branches, commits);
+          ApplyComparePickerRefs(generation, branches, commits);
         });
       });
 }
@@ -387,13 +405,13 @@ void WorkspaceShell::ApplyComparePickerFileHistory(
   MakeCompareMergeService().ApplyFileHistoryResult(history);
 }
 
-void WorkspaceShell::ApplyComparePickerOutgoingBase(
+void WorkspaceShell::ApplyComparePickerRefs(
     std::uint64_t generation, const std::vector<project::GitBranchReference>& branches,
     const std::vector<project::GitCommitEntry>& commits) {
   if (!ComparePickerRequestCurrent(generation)) {
-    return;
+    return;  // Overlay closed, project switched, or a newer picker superseded this.
   }
-  MakeCompareMergeService().ApplyOutgoingBaseResult(branches, commits);
+  MakeCompareMergeService().ApplyRefsResult(branches, commits);
 }
 
 void WorkspaceShell::RefreshComparePicker() {

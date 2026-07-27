@@ -197,6 +197,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
                std::array<std::string_view, 2>{"git", {}}, 1, false),
       MenuItem(ActionId::GitRefresh, "Refresh"),
       MenuSeparator(),
+      MenuItem(ActionId::GitSwitchBranch, "Switch Branch…"),
+      MenuSeparator(),
       // Sync first: it is the everyday verb, and grouping pull/push under it keeps
       // the individual halves available without making them the default choice.
       MenuItem(ActionId::GitSync, "Sync"),
