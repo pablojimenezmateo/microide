@@ -98,6 +98,7 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests);
 void RegisterRowDecorationBuilderTests(std::vector<TestCase>& tests);
 void RegisterTerminalBackendTests(std::vector<TestCase>& tests);
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests);
+void RegisterTerminalSearchTests(std::vector<TestCase>& tests);
 void RegisterThemeTests(std::vector<TestCase>& tests);
 void RegisterTextRendererTests(std::vector<TestCase>& tests);
 void RegisterTextViewportTests(std::vector<TestCase>& tests);
@@ -457,6 +458,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterTerminalBackendTests(tests);
   microide::tests::RegisterTerminalLifecycleStressTests(tests);
   microide::tests::RegisterTerminalSessionTests(tests);
+  microide::tests::RegisterTerminalSearchTests(tests);
   microide::tests::RegisterRegexUtilTests(tests);
   microide::tests::RegisterRuntimePathsTests(tests);
   microide::tests::RegisterStringUtilTests(tests);

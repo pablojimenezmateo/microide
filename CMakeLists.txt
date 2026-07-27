@@ -348,6 +348,7 @@ set(MICROIDE_CORE_SOURCES
   src/terminal/TerminalCsiParser.cpp
   src/terminal/TerminalMouseEncoder.cpp
   src/terminal/TerminalOscClipboard.cpp
+  src/terminal/TerminalSearch.cpp
   src/util/DebugTrace.cpp
   src/util/DurableFile.cpp
   src/util/JsonValue.cpp
@@ -838,6 +839,7 @@ add_executable(microide_tests
   tests/TerminalBackendTests.cpp
   tests/TerminalLifecycleStressTests.cpp
   tests/TerminalSessionTests.cpp
+  tests/TerminalSearchTests.cpp
   tests/ThemeTests.cpp
   tests/TestMain.cpp
   tests/TestRunnerCli.cpp
@@ -1120,6 +1122,7 @@ if(MICROIDE_FUZZ)
     src/terminal/TerminalCsiParser.cpp
     src/terminal/TerminalMouseEncoder.cpp
     src/terminal/TerminalOscClipboard.cpp
+    src/terminal/TerminalSearch.cpp
     src/platform/ShellProcess.cpp
     src/platform/TerminalBackend.cpp
     src/render/AnsiPalette.cpp

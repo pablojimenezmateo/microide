@@ -456,6 +456,34 @@ std::vector<TerminalLine> TerminalSession::SnapshotLineRange(std::size_t start_r
   };
 }
 
+TerminalSession::SearchScan TerminalSession::FindMatches(const TerminalSearchQuery& query,
+                                                         std::size_t start_row,
+                                                         const std::uint64_t expected_trim_total,
+                                                         const std::size_t max_matches,
+                                                         TerminalSearchScratch& scratch,
+                                                         std::vector<TerminalSearchMatch>& out) const {
+  std::scoped_lock lock(mutex_);
+  SearchScan scan;
+  scan.line_count = lines_.size();
+  scan.trim_total = scrollback_trim_total_;
+  scan.stable_row_end = PrimaryScreenTopLocked();
+  if (scan.trim_total != expected_trim_total) {
+    out.clear();
+    start_row = 0;
+    scan.full_rescan = true;
+  }
+  if (query.empty() || max_matches == 0) {
+    return scan;
+  }
+  for (std::size_t row = start_row; row < lines_.size(); ++row) {
+    if (!FindTerminalLineMatches(lines_[row], query, row, max_matches, scratch, out)) {
+      scan.truncated = true;
+      break;
+    }
+  }
+  return scan;
+}
+
 const std::vector<TerminalLine>& TerminalSession::SnapshotLineRangeCached(
     std::size_t start_row,
     std::size_t max_lines) const {

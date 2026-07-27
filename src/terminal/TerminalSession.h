@@ -4,6 +4,7 @@
 
 #include "platform/TerminalBackend.h"
 #include "terminal/TerminalCell.h"
+#include "terminal/TerminalSearch.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -127,6 +128,36 @@ class TerminalSession {
                                   std::size_t max_lines,
                                   std::uint64_t previous_generation,
                                   TerminalLineRangeSnapshot* snapshot) const;
+  // Outcome of one FindMatches pass, sampled under the same lock as the scan so
+  // the caller never pairs a row count with a trim counter from a different
+  // instant.
+  struct SearchScan {
+    std::size_t line_count = 0;
+    // First row of the visible grid: everything below it is settled scrollback
+    // that no later output can rewrite, so a rescan after new output only has to
+    // restart from here. Zero on the alternate screen, which has no scrollback.
+    std::size_t stable_row_end = 0;
+    std::uint64_t trim_total = 0;
+    // Set when `expected_trim_total` was stale, so `out` was cleared and the scan
+    // restarted from row 0 regardless of `start_row`.
+    bool full_rescan = false;
+    // Set when `max_matches` was reached; later rows were not scanned.
+    bool truncated = false;
+  };
+  // Appends literal matches for rows `[start_row, line_count)` to `out`.
+  //
+  // `expected_trim_total` is the ScrollbackTrimTotal() the rows already in `out`
+  // are expressed against. Scrollback trimming happens on the reader thread, so a
+  // caller that rebased its rows outside the lock can be overtaken between the
+  // rebase and the scan; passing the counter it rebased against lets the scan
+  // detect that atomically and restart cleanly instead of mixing two coordinate
+  // spaces. Pass the current counter with an empty `out` for a plain full scan.
+  SearchScan FindMatches(const TerminalSearchQuery& query,
+                         std::size_t start_row,
+                         std::uint64_t expected_trim_total,
+                         std::size_t max_matches,
+                         TerminalSearchScratch& scratch,
+                         std::vector<TerminalSearchMatch>& out) const;
   std::string LaunchLabel() const;
   std::size_t rows() const;
   std::size_t columns() const;
