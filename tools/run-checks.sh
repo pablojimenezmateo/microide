@@ -9,6 +9,7 @@
 #   tools/run-checks.sh asan    # AddressSanitizer build + ctest -> /tmp/microide-asan.log
 #   tools/run-checks.sh ubsan   # UndefinedBehavior build + ctest-> /tmp/microide-ubsan.log
 #   tools/run-checks.sh tsan    # ThreadSanitizer build + ctest  -> /tmp/microide-tsan.log
+#   tools/run-checks.sh perf-tests # tests with allocation counting -> /tmp/microide-perf-tests.log
 #   tools/run-checks.sh all     # tests, asan, ubsan, tsan in sequence
 #
 # The full console output (build + test) is tee'd to the log file; the script's
@@ -202,8 +203,37 @@ check_fuzz() {
   return $rc
 }
 
+# Allocation-discipline gate. A large body of assertions -- all of
+# PluginPresentationAllocationTests and EditorRenderViewModelAllocationTests, plus
+# parts of TextViewportTests -- is wrapped in `#if MICROIDE_PERF_HARNESS_BUILD`,
+# because that define is what arms the counting operator new/delete in
+# tests/perf/AllocationCounter.cpp. The default `tests` target leaves it OFF, so
+# those blocks compile to nothing and every "this path must not allocate"
+# assertion is silently skipped. Nothing else in the documented flow turned it on,
+# which meant the allocation contracts were never actually checked anywhere.
+#
+# The microide-perf preset sets it tree-wide, and that tree registers the same
+# 24 test shards. Run them here. `-R microide_tests_shard` deliberately excludes
+# the microide_perf_tests scenario run -- that is the separate perf-baseline gate
+# with its own fixtures, not part of this check. NOTE: RelWithDebInfo + LTO, so
+# the first build is slow (several minutes); the ccache-warm rebuild is not.
+check_perf_tests() {
+  local build_dir="build/microide-perf-make"
+  local log="${LOG_DIR}/microide-perf-tests.log"
+  run_logged "$log" bash -c '
+    set -e
+    cmake --preset microide-perf
+    cmake --build '"$build_dir"' --target microide_tests -j'"$JOBS"'
+    ctest --test-dir '"$build_dir"' -R microide_tests_shard --output-on-failure -j'"$CTEST_JOBS"'
+  '
+  local rc=$?
+  echo "run-checks: perf-tests finished (exit $rc); log at $log"
+  return $rc
+}
+
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|all}" >&2
+  echo "       tools/run-checks.sh perf-tests    # tests with allocation counting armed" >&2
   echo "       tools/run-checks.sh fuzz --list   # configure+build fuzz targets, list them, no runs" >&2
   exit 2
 }
@@ -217,6 +247,7 @@ main() {
     tsan)  check_sanitizer tsan ;;
     release) check_release ;;
     fuzz)  check_fuzz "${2:-run}" ;;
+    perf-tests) check_perf_tests ;;
     all)
       local overall=0
       check_tests            || overall=1

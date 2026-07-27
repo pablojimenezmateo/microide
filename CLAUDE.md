@@ -102,8 +102,16 @@ tools/run-checks.sh tests   # -> /tmp/microide-tests.log
 tools/run-checks.sh asan    # -> /tmp/microide-asan.log
 tools/run-checks.sh ubsan   # -> /tmp/microide-ubsan.log
 tools/run-checks.sh tsan    # -> /tmp/microide-tsan.log  (needs vm.mmap_rnd_bits=28)
+tools/run-checks.sh perf-tests  # -> /tmp/microide-perf-tests.log (allocation counting armed)
 tools/run-checks.sh all     # all four in sequence
 ```
+
+The default `tests` target leaves `MICROIDE_PERF_HARNESS_BUILD` OFF, which is what
+arms the counting `operator new`/`delete`. Every `#if MICROIDE_PERF_HARNESS_BUILD`
+assertion — all of `PluginPresentationAllocationTests` and
+`EditorRenderViewModelAllocationTests`, plus parts of `TextViewportTests` — therefore
+compiles to nothing there. Run `perf-tests` after touching a render, view-model, or
+presentation hot path, or those "must not allocate" contracts go unchecked.
 
 After a run, READ `/tmp/microide-<target>.log` instead of rebuilding and rerunning.
 
