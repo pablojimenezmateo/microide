@@ -85,12 +85,22 @@ struct OverlayListRowViewModel {
 };
 
 // Prebuilt model for the compact find/replace widget (BufferSearch/BufferReplace).
+// A find-widget mode toggle: its glyph label and whether it is currently on.
+// Labels are static literals, so this stays allocation-free.
+struct FindWidgetToggleViewModel {
+  std::string_view label;
+  bool active = false;
+};
+
+// Shared by the in-file find widget (overlay) and the terminal find bar (bottom
+// panel), which render identically; only the toggles and the source of the match
+// count differ.
 struct OverlayFindWidgetViewModel {
   FindWidgetLayout fw{};
   bool replace_mode = false;
   bool search_focused = false;
   bool replace_focused = false;
-  bool regex = false;
+  std::array<FindWidgetToggleViewModel, kFindWidgetMaxToggles> toggles{};
   bool has_matches = false;
   bool has_query = false;
   std::string_view search_display_text;   // caret-relative tail when focused

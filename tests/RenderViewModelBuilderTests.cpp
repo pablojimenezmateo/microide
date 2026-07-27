@@ -205,7 +205,10 @@ void TestBuildOverlaySurfaceFindWidgetSubmodel() {
 
   const auto& fw = vm.find_widget;
   Expect(fw.replace_mode, "BufferReplace builds the replace-mode widget");
-  Expect(fw.regex && fw.has_matches && fw.has_query, "widget flags should be forwarded");
+  Expect(fw.toggles[0].label == ".*" && fw.toggles[0].active,
+         "the in-file widget's single toggle should be the regex mode");
+  Expect(fw.fw.toggle_count == 1, "the in-file widget reserves exactly one toggle slot");
+  Expect(fw.has_matches && fw.has_query, "widget flags should be forwarded");
   Expect(fw.count_text == "2/2", "the selected/total counter should be composed");
   Expect(fw.search_display_text == "needle",
          "the unfocused search field shows the raw query (zero-copy view)");

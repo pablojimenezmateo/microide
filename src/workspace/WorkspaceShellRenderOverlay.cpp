@@ -177,11 +177,14 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
 
   draw_field(fw.search_field, fw_vm.search_focused, fw_vm.search_display_text);
 
-  // `.*` regex-mode toggle: highlighted (Accent tone) when active, neutral when
-  // off. Mirrors the project-search "Rx" affordance for the in-file find widget.
-  DrawButtonCentered(text_renderer_, renderer, theme_, fw.regex_button, ".*",
-                     fw_vm.regex ? ButtonTone::Accent : ButtonTone::Neutral,
-                     ButtonVisualState{.enabled = true});
+  // Mode toggles: highlighted (Accent tone) when active, neutral when off.
+  // Mirrors the project-search "Rx" affordance.
+  for (std::size_t index = 0; index < fw.toggle_count; ++index) {
+    DrawButtonCentered(text_renderer_, renderer, theme_, fw.toggle_buttons[index],
+                       fw_vm.toggles[index].label,
+                       fw_vm.toggles[index].active ? ButtonTone::Accent : ButtonTone::Neutral,
+                       ButtonVisualState{.enabled = true});
+  }
 
   if (!fw_vm.count_text.empty()) {
     DrawCenteredTextOn(text_renderer_, renderer, fw.count_rect,

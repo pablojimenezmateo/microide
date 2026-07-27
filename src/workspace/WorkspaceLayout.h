@@ -490,12 +490,22 @@ SDL_FRect ComputeSettingsOverlaySurfaceRect(const SDL_FRect& editor_area);
 // shared by the renderer, the field hit-test, and button mouse handling so they
 // cannot drift apart. Rects for controls that only exist in replace mode are
 // zero-sized when replace_mode is false.
+// Upper bound on the mode toggles a find widget can carry. The in-file widget has
+// one (`.*` regex); the terminal find bar has two (`Aa`, `ab|`). Fixed-size so the
+// layout stays a trivially copyable value.
+inline constexpr std::size_t kFindWidgetMaxToggles = 3;
+
 struct FindWidgetLayout {
   SDL_FRect widget{};
   SDL_FRect search_field{};
   SDL_FRect replace_field{};
   SDL_FRect count_rect{};
-  SDL_FRect regex_button{};  // `.*` regex-mode toggle (row 1, left of the count)
+  // Mode toggles, laid out left to right between the search field and the match
+  // count; only `[0, toggle_count)` are populated and the rest stay zero-sized, so
+  // the generic hover/hit-test loops can scan the whole array. Which toggle means
+  // what is the caller's business — the layout only reserves the slots.
+  std::array<SDL_FRect, kFindWidgetMaxToggles> toggle_buttons{};
+  std::size_t toggle_count = 0;
   SDL_FRect prev_button{};
   SDL_FRect next_button{};
   SDL_FRect close_button{};
@@ -505,7 +515,9 @@ struct FindWidgetLayout {
 };
 
 SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area, bool replace_mode);
-FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area, bool replace_mode);
+FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
+                                         bool replace_mode,
+                                         std::size_t toggle_count = 1);
 
 // Floating, icon-only debug control bar anchored top-right of the editor area
 // while a session is active. Like FindWidgetLayout, a single shared layout drives

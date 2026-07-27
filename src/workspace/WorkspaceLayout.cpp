@@ -935,9 +935,12 @@ SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area, bool replace_mode)
   return MakeRect(std::floor(x), std::floor(y), std::floor(width), std::floor(height));
 }
 
-FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area, bool replace_mode) {
+FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
+                                         bool replace_mode,
+                                         std::size_t toggle_count) {
   FindWidgetLayout layout;
   layout.replace_mode = replace_mode;
+  layout.toggle_count = std::min(toggle_count, kFindWidgetMaxToggles);
   const SDL_FRect r = ComputeFindWidgetRect(editor_area, replace_mode);
   layout.widget = r;
 
@@ -954,11 +957,16 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area, bool repl
                                 row1_y, kFindWidgetButton, kFindWidgetRowHeight);
   const float count_x = layout.prev_button.x - kFindWidgetButtonGap - kFindWidgetCountWidth;
   layout.count_rect = MakeRect(count_x, row1_y, kFindWidgetCountWidth, kFindWidgetRowHeight);
-  // `.*` regex toggle sits between the search field and the match count.
-  const float regex_x = count_x - kFindWidgetButtonGap - kFindWidgetButton;
-  layout.regex_button = MakeRect(regex_x, row1_y, kFindWidgetButton, kFindWidgetRowHeight);
+  // Mode toggles sit between the search field and the match count, filled from the
+  // right so slot 0 stays adjacent to the field however many there are.
+  float toggles_x = count_x;
+  for (std::size_t index = layout.toggle_count; index-- > 0;) {
+    toggles_x -= kFindWidgetButtonGap + kFindWidgetButton;
+    layout.toggle_buttons[index] =
+        MakeRect(toggles_x, row1_y, kFindWidgetButton, kFindWidgetRowHeight);
+  }
   layout.search_field = MakeRect(field_x, row1_y,
-                                 std::max(0.0f, regex_x - kFindWidgetButtonGap - field_x),
+                                 std::max(0.0f, toggles_x - kFindWidgetButtonGap - field_x),
                                  kFindWidgetRowHeight);
 
   if (replace_mode) {

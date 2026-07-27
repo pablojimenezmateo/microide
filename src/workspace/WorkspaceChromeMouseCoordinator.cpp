@@ -479,7 +479,7 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
       operations_.dismiss_overlay(true);
       return true;
     }
-    if (Contains(fw.regex_button, event.button.x, event.button.y)) {
+    if (Contains(fw.toggle_buttons[0], event.button.x, event.button.y)) {
       operations_.toggle_buffer_search_regex();
     } else if (Contains(fw.prev_button, event.button.x, event.button.y)) {
       operations_.move_buffer_search_selection(-1);

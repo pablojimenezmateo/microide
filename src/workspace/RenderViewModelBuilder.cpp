@@ -641,7 +641,7 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
     fw_vm.search_focused = current_surface == TextInputSurface::BufferSearch ||
                            current_surface == TextInputSurface::BufferReplaceSearch;
     fw_vm.replace_focused = current_surface == TextInputSurface::BufferReplaceReplace;
-    fw_vm.regex = buffer_search.regex;
+    fw_vm.toggles[0] = FindWidgetToggleViewModel{.label = ".*", .active = buffer_search.regex};
     fw_vm.has_matches = !buffer_search.matches.empty();
     fw_vm.has_query = !buffer_search.query.text().empty();
 
