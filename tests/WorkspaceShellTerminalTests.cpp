@@ -1458,6 +1458,36 @@ void TestWorkspaceShellTerminalFindTracksStreamingOutput() {
   }
 }
 
+
+// The bar floats over a terminal that may itself carry a selection, so the
+// clipboard shortcuts have to resolve against the focused field, not the panel.
+void TestWorkspaceShellTerminalFindClipboardShortcutsTargetTheQuery() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "transcript needle text\r\n");
+
+  std::string clipboard;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(shell, [&](std::string_view text) {
+    clipboard = std::string(text);
+    return true;
+  });
+
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
+         "Ctrl+F should open the find bar");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "needle"),
+         "the query should be typed into the bar");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_A, SDL_KMOD_CTRL),
+         "Ctrl+A should be routed to the focused find field");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_C, SDL_KMOD_CTRL),
+         "Ctrl+C should be routed to the focused find field");
+  Expect(clipboard == "needle",
+         "Ctrl+A then Ctrl+C in the find bar should copy the query, not the transcript");
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
+         "neither shortcut should reach the shell as a control byte");
+}
+
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TerminalSelectionPreservesInternalSpaces",
           TestWorkspaceShellSelectionPreservesInternalSpaces);
@@ -1559,6 +1589,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalFindEscapeReturnsKeyboardToTerminal);
   AddTest(tests, "WorkspaceShell/TerminalFindTracksStreamingOutput",
           TestWorkspaceShellTerminalFindTracksStreamingOutput);
+  AddTest(tests, "WorkspaceShell/TerminalFindClipboardShortcutsTargetTheQuery",
+          TestWorkspaceShellTerminalFindClipboardShortcutsTargetTheQuery);
 }
 
 }  // namespace microide::tests

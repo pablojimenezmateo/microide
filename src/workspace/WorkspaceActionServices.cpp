@@ -961,14 +961,17 @@ void WorkspaceActionContext::Redo() {
 }
 
 std::string WorkspaceActionContext::CopySelectionText() const {
-  if (state_.surface.focus == FocusTarget::Panel && operations_.terminal_has_selection()) {
-    return operations_.selected_terminal_text();
-  }
+  // A focused single-line field owns the keystroke even when the panel holds
+  // focus: the terminal find bar floats over a terminal that may itself have a
+  // selection, and Ctrl+C there must copy the query, not the transcript.
   if (operations_.has_active_single_line_text_surface()) {
     // A single-line field owns the keystroke. Return its selection (empty when
     // nothing is selected -> the caller skips the clipboard write) instead of
     // falling through to the background editor and copying its current line.
     return operations_.selected_text_at_active_single_line_text_surface();
+  }
+  if (state_.surface.focus == FocusTarget::Panel && operations_.terminal_has_selection()) {
+    return operations_.selected_terminal_text();
   }
   if (const auto* viewport = operations_.active_navigable_viewport(); viewport != nullptr) {
     // VSCode multi-caret copy: each caret's selection joined by newline, so a

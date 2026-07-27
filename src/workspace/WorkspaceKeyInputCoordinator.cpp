@@ -291,7 +291,8 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
       text_input_surface == TextInputSurface::ProjectSearchOverlay ||
       text_input_surface == TextInputSurface::CommitPicker ||
       IsSidebarSearchFieldSurface(text_input_surface) ||
-      text_input_surface == TextInputSurface::CommitSubject;
+      text_input_surface == TextInputSurface::CommitSubject ||
+      text_input_surface == TextInputSurface::TerminalFind;
   if (single_line_text_surface && (modifiers & SDL_KMOD_CTRL) != 0) {
     switch (event.key) {
       case SDLK_A:
