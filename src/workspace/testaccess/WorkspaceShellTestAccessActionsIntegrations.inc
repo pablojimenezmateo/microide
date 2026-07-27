@@ -26,6 +26,8 @@
     shell.ConsumeLspCallbacks();
     return shell.plugin_hover_cache_.result.content;
   }
+  // Apply a settings change to live subsystem state, as the next prepared frame does.
+  static void ApplyLiveSettings(WorkspaceShell& shell) { shell.ApplyLiveSettings(); }
   // Fire one code-lens pull for the active buffer, as didOpen/save/undo-to-clean do.
   // Drives the trigger directly so a test can have two responses in flight at once.
   static bool RequestCodeLensesForActiveBuffer(WorkspaceShell& shell) {

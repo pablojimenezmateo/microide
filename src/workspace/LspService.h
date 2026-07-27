@@ -465,8 +465,17 @@ class LspService {
     bool master = false;
     bool diagnostics = false;
     bool semantic = false;
+    bool inlay = false;
+    bool code_lens = false;
+    bool document_highlight = false;
   };
   std::optional<FeatureEnablement> last_feature_enablement_;
+
+  // Drop every LSP-owned editor overlay for the current project and invalidate the
+  // request generations behind them, so an in-flight response cannot repaint what
+  // was just cleared. Used when the master switch goes off — each overlay also has
+  // its own per-feature clear for its own toggle. Returns whether anything changed.
+  bool ClearAllLspOverlays(ProjectWorkspaceState& state);
 
   // Host-owned graveyard of clients whose servers are shutting down. Outlives every
   // per-project LspManager, so a project switch hands its retiring clients here and

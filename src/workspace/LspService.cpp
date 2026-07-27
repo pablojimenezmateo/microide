@@ -201,13 +201,18 @@ void LspService::ReconcileFeatureSettings() {
   const bool master = LspMasterEnabled(get);
   const bool diagnostics = master && SettingFlagEnabled(get("lsp.diagnostics.enabled"), true);
   const bool semantic = master && SettingFlagEnabled(get("lsp.semantic_tokens.enabled"), true);
+  const bool inlay = master && SettingFlagEnabled(get("editor.inlay_hints.enabled"), true);
+  const bool code_lens = master && SettingFlagEnabled(get("lsp.code_lens.enabled"), true);
+  const bool document_highlight =
+      master && SettingFlagEnabled(get("lsp.document_highlight.enabled"), true);
 
   // Treat the first reconcile as a transition from "all on", so any feature that
   // starts disabled is cleared once, and only actual flips do work thereafter.
   const bool first = !last_feature_enablement_.has_value();
-  const FeatureEnablement prev =
-      last_feature_enablement_.value_or(FeatureEnablement{true, true, true});
-  last_feature_enablement_ = FeatureEnablement{master, diagnostics, semantic};
+  const FeatureEnablement prev = last_feature_enablement_.value_or(
+      FeatureEnablement{true, true, true, true, true, true});
+  last_feature_enablement_ =
+      FeatureEnablement{master, diagnostics, semantic, inlay, code_lens, document_highlight};
 
   ProjectWorkspaceState& state = CurrentProjectState();
 
@@ -221,13 +226,12 @@ void LspService::ReconcileFeatureSettings() {
         // master switch off must not stall the shell thread (TD-2026-07-17-091).
         RetireClients(state.lsp_manager->BeginShutdownAllAndTakeClients());
       }
-      semantic_token_generation_.clear();
       bool changed = state.diagnostics_store.ClearOwner("lsp");
-      if (state.plugin_presentation != nullptr &&
-          state.plugin_presentation->decorations.ClearOwner("lsp:semantic")) {
-        state.MaybeReleasePluginPresentation();
-        changed = true;
-      }
+      // EVERY LSP-owned overlay, not just semantic tokens: inlay hints, code
+      // lenses and semantic occurrence highlights are equally server-owned, and
+      // leaving any of them painted after the subsystem is switched off shows the
+      // user output from a server that is no longer running.
+      changed = ClearAllLspOverlays(state) || changed;
       if (changed) {
         operations_.refresh_problems_sidebar();
         operations_.request_editor_surface_redraw();
@@ -274,6 +278,78 @@ void LspService::ReconcileFeatureSettings() {
       RequestLspSemanticTokens(*viewport, *client);
     }
   }
+
+  // Inlay hints and code lenses mirror semantic tokens: their own toggle clears
+  // the overlay on disable and re-pulls it on enable. Both are pull-based, so
+  // without the re-pull they would stay blank until an unrelated didOpen/save.
+  if (!inlay && prev.inlay) {
+    if (state.plugin_presentation != nullptr &&
+        state.plugin_presentation->decorations.ClearOwner("lsp:inlay")) {
+      state.MaybeReleasePluginPresentation();
+      operations_.request_editor_surface_redraw();
+    }
+    inlay_hint_generation_.clear();
+  } else if (inlay && !prev.inlay && !master_turned_on && has_active) {
+    std::string language_id;
+    if (LspClient* client = LspClientForViewport(*viewport, &language_id); client != nullptr) {
+      EnsureLspDocumentOpen(*viewport, *client, language_id);
+      RequestLspInlayHints(*viewport, *client);
+    }
+  }
+
+  if (!code_lens && prev.code_lens) {
+    if (state.plugin_presentation != nullptr &&
+        state.plugin_presentation->decorations.ClearOwner("lsp:codelens")) {
+      state.MaybeReleasePluginPresentation();
+      operations_.request_editor_surface_redraw();
+    }
+    code_lens_generation_.clear();
+    code_lens_commands_.clear();
+  } else if (code_lens && !prev.code_lens && !master_turned_on && has_active) {
+    std::string language_id;
+    if (LspClient* client = LspClientForViewport(*viewport, &language_id); client != nullptr) {
+      EnsureLspDocumentOpen(*viewport, *client, language_id);
+      RequestLspCodeLenses(*viewport, *client);
+    }
+  }
+
+  // Semantic occurrence highlights need no re-request on enable: the next presented
+  // frame re-asks for the caret's symbol on its own. Turning them off just drops the
+  // stored set so the textual word scan takes back over immediately.
+  if (!document_highlight && prev.document_highlight && !state.semantic_occurrences.empty()) {
+    state.semantic_occurrences.Clear();
+    operations_.request_editor_surface_redraw();
+  }
+}
+
+bool LspService::ClearAllLspOverlays(ProjectWorkspaceState& state) {
+  // Invalidate the generations first, unconditionally: a response already in flight
+  // captured the previous value, and dropping it there is the only thing that stops
+  // it repainting an overlay this call just cleared.
+  semantic_token_generation_.clear();
+  inlay_hint_generation_.clear();
+  code_lens_generation_.clear();
+  code_lens_commands_.clear();
+  ++document_highlight_generation_;
+  document_highlight_request_valid_ = false;
+
+  bool changed = false;
+  if (!state.semantic_occurrences.empty()) {
+    state.semantic_occurrences.Clear();
+    changed = true;
+  }
+  if (state.plugin_presentation != nullptr) {
+    for (const char* owner : {"lsp:semantic", "lsp:inlay", "lsp:codelens"}) {
+      changed = state.plugin_presentation->decorations.ClearOwner(owner) || changed;
+    }
+    if (changed) {
+      state.MaybeReleasePluginPresentation();
+    }
+  }
+  if (changed) {
+    operations_.request_editor_surface_redraw();
+  }
+  return changed;
 }
 
 ProjectWorkspaceState& LspService::CurrentProjectState() {

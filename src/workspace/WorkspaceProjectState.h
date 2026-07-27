@@ -652,6 +652,7 @@ struct ProjectWorkspaceState {
     // with a binary search, exactly like the textual scan's output.
     std::vector<editor::OccurrenceRange> ranges;
 
+    bool empty() const { return ranges.empty(); }
     void Clear() {
       path.clear();
       content_revision = 0;

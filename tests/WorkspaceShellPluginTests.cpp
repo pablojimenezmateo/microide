@@ -2197,6 +2197,86 @@ return ide.plugin({
   Expect(executed_command.empty(), "an unknown payload handle runs nothing");
 }
 
+// Turning the LSP master switch off must drop EVERY server-owned overlay. It used
+// to clear only diagnostics and semantic tokens, so inlay hints stayed painted
+// after the subsystem was switched off and its servers were retired — output from
+// a server that is no longer running, with no way to get rid of it.
+void TestWorkspaceShellDisablingLspClearsEveryServerOverlay() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path md_file = project / "notes.md";
+  WriteFile(md_file, "let value = compute()\n");
+
+  WritePluginInit(plugins_root, "mdoverlays",
+                  R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "mdoverlays",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "md-lsp-server" } })
+  end
+})
+)lua");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "overlay fixture should open the project");
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  stub->EnableTestStubMode();
+  stub->SetTestInlayHintHandler(
+      [](std::string, workspace::LspClient::Range, workspace::LspClient::InlayHintCallback cb) {
+        cb(std::vector<workspace::LspClient::InlayHint>{workspace::LspClient::InlayHint{
+            .position = workspace::LspClient::Position{0, 9}, .label = ": number", .kind = 1}});
+      });
+  stub->SetTestCodeLensHandler([](std::string, workspace::LspClient::CodeLensCallback cb) {
+    workspace::LspClient::CodeLens lens;
+    lens.range = {{0, 0}, {0, 21}};
+    lens.title = "1 reference";
+    lens.command = "md.refs";
+    cb(std::vector<workspace::LspClient::CodeLens>{std::move(lens)});
+  });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
+         "fixture should attach a stub markdown client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, md_file);
+  (void)WorkspaceShellTestAccess::ResolveLspHoverForTesting(shell, md_file, 1, 1);
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+
+  const auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  const auto decorations_now = [&state, &md_file]() -> const editor::FileDecorations* {
+    const auto* presentation = state.plugin_presentation_if_present();
+    return presentation != nullptr ? presentation->decorations.FindByPath(md_file) : nullptr;
+  };
+  const auto* before = decorations_now();
+  Expect(before != nullptr && !before->inline_texts.empty(),
+         "the fixture should publish an inlay-hint overlay to clear");
+  Expect(before != nullptr && !before->code_lenses.empty(),
+         "the fixture should publish a code-lens overlay to clear");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "lsp.enabled", "false"),
+         "the master toggle should write");
+  WorkspaceShellTestAccess::ApplyLiveSettings(shell);
+
+  const auto* after = decorations_now();
+  Expect(after == nullptr || after->inline_texts.empty(),
+         "master off must drop the inlay-hint overlay, not just diagnostics and tokens");
+  Expect(after == nullptr || after->code_lenses.empty(),
+         "master off must drop the code-lens overlay");
+  Expect(after == nullptr || after->text_styles.empty(),
+         "master off must drop the semantic-token overlay");
+}
+
 // A code-lens response the buffer has moved past must be dropped WHOLE. Retiring
 // the URI's executable payloads before the generation guard runs would strip the
 // handles off the lenses a superseded response then fails to replace, leaving the
@@ -5364,6 +5444,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellInlayHintsPublishMidLineDecorations);
   AddTest(tests, "WorkspaceShell/CodeLensesResolveAndActivate",
           TestWorkspaceShellCodeLensesResolveAndActivate);
+  AddTest(tests, "WorkspaceShell/DisablingLspClearsEveryServerOverlay",
+          TestWorkspaceShellDisablingLspClearsEveryServerOverlay);
   AddTest(tests, "WorkspaceShell/SupersededCodeLensResponseKeepsLiveLensesClickable",
           TestWorkspaceShellSupersededCodeLensResponseKeepsLiveLensesClickable);
   AddTest(tests, "WorkspaceShell/CallHierarchyRendersBothDirections",
