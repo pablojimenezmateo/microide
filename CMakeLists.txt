@@ -313,6 +313,7 @@ set(MICROIDE_CORE_SOURCES
   src/project/ProjectChangeNormalizer.cpp
   src/project/ProjectFileScanner.cpp
   src/project/GitStatusService.cpp
+  src/project/GlobMatch.cpp
   src/project/IgnoreMatcher.cpp
   src/project/ProjectTraversalFilter.cpp
   src/project/CompileCommandsLocator.cpp
@@ -788,6 +789,7 @@ add_executable(microide_tests
   tests/DirectoryTreeTests.cpp
   tests/DirtyRegionPolicyTests.cpp
   tests/FilesystemTests.cpp
+  tests/GlobMatchTests.cpp
   tests/IgnoreMatcherTests.cpp
   tests/ProjectTraversalFilterTests.cpp
   tests/CompileCommandsLocatorTests.cpp
@@ -1295,6 +1297,7 @@ add_executable(microide_search_bench
   src/util/DurableFile.cpp
   src/util/TextFileIO.cpp
   src/util/Parse.cpp
+  src/project/GlobMatch.cpp
   src/project/IgnoreMatcher.cpp
   src/project/ProjectFileScanner.cpp
   src/project/ProjectSearchService.cpp
