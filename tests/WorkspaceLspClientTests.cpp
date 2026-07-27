@@ -833,6 +833,60 @@ void TestWorkspaceLspClientDocumentHighlightStubRoundTrip() {
   Expect(called && !after_clear.has_value(), "with no handler the stub reports no highlights");
 }
 
+// The three capability-gated pull requests must answer without touching the wire
+// when the server advertises no provider. codeLens fires on every open and save and
+// callHierarchy on demand, so provoking a per-pull server error would be pure waste.
+void TestWorkspaceLspClientCapabilityGatedRequestsShortCircuit() {
+  LspClient client;
+  client.EnableTestStubMode();
+  Expect(!client.SupportsCodeLens() && !client.SupportsCodeLensResolve() &&
+             !client.SupportsCallHierarchy(),
+         "a fresh client advertises none of the pull providers");
+
+  int answered = 0;
+  int with_value = 0;
+  const auto record = [&answered, &with_value](bool has_value) {
+    ++answered;
+    if (has_value) ++with_value;
+  };
+  client.RequestCodeLensAsync("file:///s.cpp",
+                              [&](auto r) { record(r.has_value()); });
+  client.ResolveCodeLensAsync(util::JsonValue{}, [&](auto r) { record(r.has_value()); });
+  client.RequestPrepareCallHierarchyAsync("file:///s.cpp", LspClient::Position{1, 1},
+                                          [&](auto r) { record(r.has_value()); });
+  client.RequestIncomingCallsAsync(util::JsonValue{}, [&](auto r) { record(r.has_value()); });
+  client.RequestOutgoingCallsAsync(util::JsonValue{}, [&](auto r) { record(r.has_value()); });
+  client.DrainCallbacks();
+  Expect(answered == 5, "every capability-gated request answers its callback");
+  Expect(with_value == 0, "with no provider none of them produce a result");
+
+  // Installing a stub handler flips the capability and the request goes through.
+  client.SetTestCodeLensHandler([](std::string, LspClient::CodeLensCallback cb) {
+    LspClient::CodeLens lens;
+    lens.range = {{2, 0}, {2, 4}};
+    lens.title = "1 reference";
+    lens.command = "show.refs";
+    cb(std::vector<LspClient::CodeLens>{std::move(lens)});
+  });
+  Expect(client.SupportsCodeLens(), "the stub handler marks the server code-lens capable");
+  std::optional<std::vector<LspClient::CodeLens>> lenses;
+  client.RequestCodeLensAsync("file:///s.cpp", [&](auto r) { lenses = std::move(r.value); });
+  client.DrainCallbacks();
+  Expect(lenses.has_value() && lenses->size() == 1 && (*lenses)[0].title == "1 reference",
+         "the stubbed lens is delivered");
+
+  // Clearing the handler puts the client back to answering with no result.
+  client.ClearTestCodeLensHandler();
+  std::optional<std::vector<LspClient::CodeLens>> after_clear;
+  bool called = false;
+  client.RequestCodeLensAsync("file:///s.cpp", [&](auto r) {
+    after_clear = std::move(r.value);
+    called = true;
+  });
+  client.DrainCallbacks();
+  Expect(called && !after_clear.has_value(), "with no handler the stub reports no lenses");
+}
+
 // Regression: formatting must deliver the FULL TextEdit[] to the caller. A prior
 // implementation returned only edits.front().newText, silently dropping every edit
 // after the first — corrupting the buffer for the common whole-document reformat
@@ -2170,6 +2224,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientInlayHintStubRoundTrip);
   AddTest(tests, "WorkspaceLspClient/DocumentHighlightStubRoundTrip",
           TestWorkspaceLspClientDocumentHighlightStubRoundTrip);
+  AddTest(tests, "WorkspaceLspClient/CapabilityGatedRequestsShortCircuit",
+          TestWorkspaceLspClientCapabilityGatedRequestsShortCircuit);
   AddTest(tests, "WorkspaceLspClient/FormattingReturnsAllEdits",
           TestWorkspaceLspClientFormattingReturnsAllEdits);
   AddTest(tests, "WorkspaceLspClient/ShutdownDoesNotRaceInitialization",
