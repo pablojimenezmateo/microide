@@ -57,6 +57,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::Find, "find", "find <query>", "Find File By Query", ""},
       ActionSpec{ActionId::FindReferences, "find-references", "find-references",
                  "Find References", "Shift+F12"},
+      ActionSpec{ActionId::CallHierarchy, "call-hierarchy", "call-hierarchy [incoming|outgoing]",
+                 "Show Call Hierarchy", ""},
       ActionSpec{ActionId::Focus, "focus", "focus <editor|sidebar|panel>", "Focus", ""},
       ActionSpec{ActionId::GoToDefinition, "goto-definition", "goto-definition",
                  "Go to Definition", "F12"},

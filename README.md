@@ -543,6 +543,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `files [root]`
 - `find <query>`
 - `find-references`
+- `call-hierarchy [incoming|outgoing]`
 - `focus <editor|sidebar|panel>`
 - `goto-definition`
 - `goto-type-definition`

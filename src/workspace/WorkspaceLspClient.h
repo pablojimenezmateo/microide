@@ -266,6 +266,29 @@ class LspClient {
     bool needs_resolve() const { return title.empty() && !unresolved.IsNull(); }
   };
 
+  // One node of a call hierarchy: the symbol itself. `raw` keeps the item object
+  // exactly as the server sent it because `callHierarchy/incomingCalls` and
+  // `/outgoingCalls` take that object back verbatim as their `item` argument —
+  // servers stash private resolution state in its `data` field.
+  struct CallHierarchyItem {
+    std::string name;
+    std::string detail;
+    int kind = 1;  // LSP SymbolKind
+    std::string uri;
+    Range range{};            // the whole symbol, including e.g. its body
+    Range selection_range{};  // just the name, which is where navigation lands
+    util::JsonValue raw;
+  };
+
+  // One edge of a call hierarchy: the symbol at the other end plus the call-site
+  // ranges. For incoming calls `item` is the CALLER and `call_ranges` are the call
+  // sites inside it; for outgoing calls `item` is the CALLEE and `call_ranges` are
+  // the call sites inside the symbol that was asked about.
+  struct CallHierarchyCall {
+    CallHierarchyItem item;
+    std::vector<Range> call_ranges;
+  };
+
   using OnPublishDiagnostics = std::function<void(std::string uri, std::vector<Diagnostic>)>;
 
   // One text edit: a document range plus its replacement text (server encoding).
@@ -295,6 +318,10 @@ class LspClient {
   // command; its result value is server-defined and usually null (the observable
   // effect arrives as a separate workspace/applyEdit or edit notification).
   using ExecuteCommandCallback = std::function<void(LspResult<util::JsonValue>)>;
+  using PrepareCallHierarchyCallback =
+      std::function<void(LspResult<std::vector<CallHierarchyItem>>)>;
+  using CallHierarchyCallsCallback =
+      std::function<void(LspResult<std::vector<CallHierarchyCall>>)>;
   using SignatureHelpCallback = std::function<void(LspResult<SignatureHelp>)>;
   using WorkspaceSymbolCallback =
       std::function<void(LspResult<std::vector<WorkspaceSymbol>>)>;
@@ -503,6 +530,17 @@ class LspClient {
   void ExecuteServerCommandAsync(std::string command, std::vector<util::JsonValue> arguments,
                                  ExecuteCommandCallback callback);
 
+  // Async textDocument/prepareCallHierarchy — resolve the symbol at `pos` into the
+  // hierarchy items the two calls requests below accept. Reports nullopt when the
+  // server advertises no callHierarchyProvider.
+  void RequestPrepareCallHierarchyAsync(std::string uri, Position pos,
+                                        PrepareCallHierarchyCallback callback);
+  // Async callHierarchy/incomingCalls and /outgoingCalls. `item` must be the item
+  // object exactly as prepareCallHierarchy returned it (`CallHierarchyItem::raw`).
+  void RequestIncomingCallsAsync(util::JsonValue item, CallHierarchyCallsCallback callback);
+  void RequestOutgoingCallsAsync(util::JsonValue item, CallHierarchyCallsCallback callback);
+  bool SupportsCallHierarchy() const;
+
   // True when the server advertised renameProvider.prepareProvider — i.e. a
   // textDocument/prepareRename request is worth sending.
   bool SupportsPrepareRename() const;
@@ -575,6 +613,13 @@ class LspClient {
   void SetTestExecuteCommandHandler(
       std::function<void(std::string command, std::vector<util::JsonValue> arguments,
                          ExecuteCommandCallback cb)> handler);
+  // Unit tests: feed canned call-hierarchy responses. The prepare handler marks the
+  // capability supported so none of the three requests are short-circuited.
+  void SetTestPrepareCallHierarchyHandler(
+      std::function<void(std::string uri, Position pos, PrepareCallHierarchyCallback cb)> handler);
+  void SetTestCallHierarchyCallsHandler(
+      std::function<void(bool incoming, util::JsonValue item, CallHierarchyCallsCallback cb)>
+          handler);
 
   // Shutdown and close connection (blocks until complete).
   void BeginShutdown();

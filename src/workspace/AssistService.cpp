@@ -1129,6 +1129,133 @@ void AssistService::PublishReferenceMerge(const std::shared_ptr<NavigationMerge>
   }
 }
 
+bool AssistService::ShowCallHierarchy(bool incoming, std::string* error_message) {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  editor::TextViewport* viewport = RequireActiveEditableViewport(error_message);
+  if (viewport == nullptr) {
+    return false;
+  }
+  LspClient* client = PrepareLspRequest(*viewport, error_message);
+  if (client == nullptr) {
+    return false;
+  }
+
+  static constexpr const char* kChannelId = "lsp.callHierarchy";
+  const char* const title = incoming ? "Incoming Calls" : "Outgoing Calls";
+  if (!client->SupportsCallHierarchy()) {
+    // Say so instead of letting the short-circuited request read as "no callers":
+    // a missing provider is a property of the server, not of the code.
+    operations_.finish_tracked_lsp_request();
+    output_channels_->Clear(kChannelId);
+    output_channels_->AppendLine(kChannelId, title,
+                                 "This language server does not provide call hierarchy");
+    return true;
+  }
+  const std::uint64_t generation = ++call_hierarchy_request_generation_;
+  const std::size_t request_line = viewport->cursor_line();
+  const std::size_t request_column = viewport->cursor_column();
+  output_channels_->Clear(kChannelId);
+  output_channels_->AppendLine(kChannelId, title, "Resolving call hierarchy…");
+
+  // Both hops report through here so "the server never answered" and "the server
+  // says there are none" stay distinguishable at every step of the chain.
+  const auto finish_empty = [this, title](const char* message) {
+    output_channels_->Clear(kChannelId);
+    output_channels_->AppendLine(kChannelId, title, message);
+  };
+
+  client->RequestPrepareCallHierarchyAsync(
+      FileUriForPath(viewport->path()),
+      ByteColumnToLspPosition(*viewport, request_line, request_column,
+                              LspEncodingForClient(*client)),
+      [this, client, incoming, title, generation, finish_empty](
+          LspResult<std::vector<LspClient::CallHierarchyItem>> items) {
+        if (generation != call_hierarchy_request_generation_) {
+          operations_.finish_tracked_lsp_request();
+          return;
+        }
+        if (!items.answered()) {
+          operations_.finish_tracked_lsp_request();
+          finish_empty("Language server did not respond");
+          return;
+        }
+        if (!items.has_value() || items->empty()) {
+          operations_.finish_tracked_lsp_request();
+          finish_empty("No callable symbol at the cursor");
+          return;
+        }
+        // prepareCallHierarchy may resolve to several items (overloads); the first
+        // is the server's best match, which is what VS Code walks by default.
+        const LspClient::CallHierarchyItem& root = items->front();
+        std::string root_label = root.name;
+        if (!root.detail.empty()) {
+          root_label += "  ·  " + root.detail;
+        }
+        const auto render = [this, title, root_label, incoming, generation, finish_empty](
+                                LspResult<std::vector<LspClient::CallHierarchyCall>> calls) {
+          operations_.finish_tracked_lsp_request();
+          if (generation != call_hierarchy_request_generation_) {
+            return;
+          }
+          if (!calls.answered()) {
+            finish_empty("Language server did not respond");
+            return;
+          }
+          if (!calls.has_value() || calls->empty()) {
+            finish_empty(incoming ? "No callers found" : "No calls found");
+            return;
+          }
+          output_channels_->Clear(kChannelId);
+          output_channels_->AppendLine(
+              kChannelId, title,
+              (incoming ? "Callers of " : "Called by ") + root_label);
+          std::map<std::filesystem::path, std::vector<std::string>> file_line_cache;
+          for (std::size_t i = 0; i < calls->size(); ++i) {
+            const LspClient::CallHierarchyCall& call = (*calls)[i];
+            const std::optional<std::filesystem::path> path = PathFromFileUri(call.item.uri);
+            if (!path.has_value()) {
+              continue;
+            }
+            std::string header = call.item.name;
+            if (!call.item.detail.empty()) {
+              header += "  ·  " + call.item.detail;
+            }
+            output_channels_->AppendLine(kChannelId, title, header);
+            const bool last = i + 1 >= calls->size();
+            if (incoming && !call.call_ranges.empty()) {
+              // Incoming: the interesting positions are the call sites inside the
+              // caller, so list each one rather than the caller's declaration.
+              for (std::size_t r = 0; r < call.call_ranges.size(); ++r) {
+                const LspClient::Range& range = call.call_ranges[r];
+                EmitReferenceEntry(
+                    kChannelId, title, *path,
+                    static_cast<std::size_t>(std::max(range.start.line, 0)) + 1,
+                    static_cast<std::size_t>(std::max(range.start.character, 0)) + 1,
+                    last && r + 1 >= call.call_ranges.size(), file_line_cache);
+              }
+              continue;
+            }
+            // Outgoing (and callers whose call sites the server omitted): navigate
+            // to the symbol's own name.
+            EmitReferenceEntry(
+                kChannelId, title, *path,
+                static_cast<std::size_t>(std::max(call.item.selection_range.start.line, 0)) + 1,
+                static_cast<std::size_t>(
+                    std::max(call.item.selection_range.start.character, 0)) + 1,
+                !last, file_line_cache);
+          }
+        };
+        if (incoming) {
+          client->RequestIncomingCallsAsync(root.raw, render);
+        } else {
+          client->RequestOutgoingCallsAsync(root.raw, render);
+        }
+      });
+  return true;
+}
+
 bool AssistService::ShowWorkspaceSymbols(const std::string& query, std::string* error_message) {
   if (error_message != nullptr) {
     error_message->clear();

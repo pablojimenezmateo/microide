@@ -187,6 +187,11 @@ void LspClient::Impl::DoInitializeBlocking() {
     code_lens_caps["dynamicRegistration"] = JsonValue(false);
     text_document_caps["codeLens"] = JsonValue(std::move(code_lens_caps));
   }
+  {
+    JsonObject call_hierarchy_caps;
+    call_hierarchy_caps["dynamicRegistration"] = JsonValue(false);
+    text_document_caps["callHierarchy"] = JsonValue(std::move(call_hierarchy_caps));
+  }
 
   JsonObject workspace_caps;
   workspace_caps["configuration"] = JsonValue(true);
@@ -415,6 +420,13 @@ void LspClient::Impl::DoInitializeBlocking() {
             const auto& provider = server_caps["documentHighlightProvider"];
             const bool provided = provider.IsObject() || provider.AsBool(false);
             supports_document_highlight.store(provided, std::memory_order_release);
+          }
+
+          // callHierarchyProvider: bare bool or a (Static)RegistrationOptions object.
+          if (server_caps.HasKey("callHierarchyProvider")) {
+            const auto& provider = server_caps["callHierarchyProvider"];
+            const bool provided = provider.IsObject() || provider.AsBool(false);
+            supports_call_hierarchy.store(provided, std::memory_order_release);
           }
 
           // codeLensProvider is always an object when present, and its optional

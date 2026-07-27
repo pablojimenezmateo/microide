@@ -488,6 +488,18 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](std::string* error_message) {
                 return assist_service_.FindLspReferences(error_message);
               },
+          .show_call_hierarchy =
+              [this](bool incoming, std::string* error_message) {
+                const bool ok = assist_service_.ShowCallHierarchy(incoming, error_message);
+                if (ok) {
+                  // Surface the results channel in the bottom panel (it fills async).
+                  EnsureOutputChannelTabOpen("lsp.callHierarchy");
+                  context_.current_project_state.panel.content = PanelContentKind::Output;
+                  context_.current_project_state.panel.output.channel_id = "lsp.callHierarchy";
+                  RequestBottomPanelRedraw();
+                }
+                return ok;
+              },
           .show_workspace_symbols =
               [this](const std::string& query, std::string* error_message) {
                 const bool ok = assist_service_.ShowWorkspaceSymbols(query, error_message);

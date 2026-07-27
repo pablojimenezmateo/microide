@@ -35,7 +35,7 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
 | `WorkspaceLspClientTransport.cpp` | I/O thread body (`IoMain`), outbound send/drain (`DrainOutbound`, `SendMessageImmediate`, `SendMessageBuilderAfterInitialize`), `WaitStdoutReadable`. |
 | `WorkspaceLspClientDispatch.cpp` | Inbound routing (`DispatchMessage`), server-request replies (`HandleServerRequest`, `SendResponse*`), timeout sweep (`FailPendingRequests`). |
 | `WorkspaceLspClientLifecycle.cpp` | Blocking initialize handshake (`DoInitializeBlocking`), shutdown (`DoShutdown`/`BeginShutdown`/`WaitForShutdown`), readiness (`SetProgressReadiness`). |
-| `WorkspaceLspClientRequests.cpp` | Interactive request methods (hover/completion/signatureHelp/codeAction/formatting/rangeFormatting/definition/typeDefinition/implementation/declaration/references/prepareRename/rename/documentSymbol/workspaceSymbol/semanticTokens/inlayHint/documentHighlight/codeLens/executeCommand). definition + the three sibling navigations share one templated `DispatchLocationRequest`. |
+| `WorkspaceLspClientRequests.cpp` | Interactive request methods (hover/completion/signatureHelp/codeAction/formatting/rangeFormatting/definition/typeDefinition/implementation/declaration/references/prepareRename/rename/documentSymbol/workspaceSymbol/semanticTokens/inlayHint/documentHighlight/codeLens/executeCommand/callHierarchy). definition + the three sibling navigations share one templated `DispatchLocationRequest`. |
 | `editor/InlayHintColumns.{h,cpp}` | Pure per-row inlay-hint grid displacement (**under `src/editor/`, not `src/workspace/`**): `InlayRowDisplacement` (cells-before / next-anchor / hit-test inverse), `BuildInlayRowSpans` (line decorations → row-local spans), and `RealVisualColumnForDisplayColumn` (the mouse inverse). |
 | `LspMessageFraming.{h,cpp}` | `LspMessageFramer`: the `Content-Length` JSON-RPC codec as a pure, unit-tested value type (partial-frame + oversized-skip state). |
 | `LspClientTrace.{h,cpp}` | `TraceLspLifecycle` (opt-in via `MICROIDE_TRACE_LSP_LIFECYCLE`) + transport tuning constants (`kLspRequestTimeout`, queue/message/read-buffer caps). |
@@ -122,6 +122,20 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
   displacement is generation-guarded like semantic tokens and identity (≈zero
   cost) on a row with no hints. **v1 limitation:** hints are suppressed on
   soft-wrapped lines (cross-wrap-row displacement is out of scope).
+- **Call hierarchy is a command, not a tree view.** `call-hierarchy
+  [incoming|outgoing]` (default incoming — "who calls this?" is the question that
+  gets asked) chains `textDocument/prepareCallHierarchy` →
+  `callHierarchy/{incoming,outgoing}Calls`, one level deep, and renders into the
+  `lsp.callHierarchy` output channel through the same `EmitReferenceEntry`
+  formatter as find-references, so every row is a navigable `file:line:col` with
+  context. One level rather than an expandable tree: the shell has no tree surface
+  for it, and a flat list is what a channel can express honestly. The item object
+  round-trips verbatim between the two hops (servers correlate through its `data`).
+  Incoming calls navigate to the **call sites inside each caller** (`fromRanges`) —
+  that is what the user is looking for — while outgoing calls navigate to each
+  callee's own name (`selectionRange`). Both hops carry one generation token, so a
+  second invocation mid-chain cannot let the older chain render last. A server
+  without `callHierarchyProvider` says so instead of reporting "no callers".
 - **Code lenses reuse the plugin decoration surface.** `textDocument/codeLens` is
   pulled on the same triggers as inlay hints (didOpen, save, clean-landing
   undo/redo) and gated on `lsp.code_lens.enabled` + the server's `codeLensProvider`.

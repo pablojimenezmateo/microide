@@ -44,6 +44,7 @@ enum class ActionId {
   Files,
   Find,
   FindReferences,
+  CallHierarchy,
   WorkspaceSymbol,
   Focus,
   GoToDefinition,

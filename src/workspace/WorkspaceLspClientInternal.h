@@ -122,6 +122,10 @@ struct LspClient::Impl {
     std::function<void(util::JsonValue, ResolveCodeLensCallback)> resolve_code_lens;
     std::function<void(std::string, std::vector<util::JsonValue>, ExecuteCommandCallback)>
         execute_command;
+    std::function<void(std::string, Position, PrepareCallHierarchyCallback)>
+        prepare_call_hierarchy;
+    // One handler for both directions; `incoming` says which was asked for.
+    std::function<void(bool, util::JsonValue, CallHierarchyCallsCallback)> call_hierarchy_calls;
     void Reset() { *this = TestHandlers{}; }
   };
   TestHandlers test_handlers;
@@ -140,6 +144,8 @@ struct LspClient::Impl {
   // (i.e. whether range-only lenses can be filled in via codeLens/resolve).
   std::atomic<bool> supports_code_lens{false};
   std::atomic<bool> supports_code_lens_resolve{false};
+  // Server advertised a callHierarchyProvider (captured at initialize).
+  std::atomic<bool> supports_call_hierarchy{false};
 
   // Negotiated position encoding (LSP `capabilities.positionEncoding`), captured at
   // initialize. Guarded by `mutex`. We advertise utf-8 first, so a conformant server

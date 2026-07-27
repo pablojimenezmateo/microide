@@ -493,4 +493,61 @@ void LspClient::ExecuteServerCommandAsync(std::string command,
       [](const util::JsonValue& result) { return std::optional<util::JsonValue>(result); });
 }
 
+void LspClient::RequestPrepareCallHierarchyAsync(std::string uri, Position pos,
+                                                 PrepareCallHierarchyCallback callback) {
+  if (!callback) return;
+  if (impl_->DispatchTestStub(impl_->test_handlers.prepare_call_hierarchy, callback,
+                              std::move(uri), pos)) {
+    return;
+  }
+  if (!impl_->supports_call_hierarchy.load(std::memory_order_acquire)) {
+    callback(std::nullopt);
+    return;
+  }
+  impl_->DispatchResultRequest(
+      "textDocument/prepareCallHierarchy", lsp_protocol::MakeTextDocumentPositionParams(uri, pos),
+      std::move(callback), [](const util::JsonValue& result) {
+        return std::optional<std::vector<CallHierarchyItem>>(
+            lsp_protocol::ParseCallHierarchyItems(result));
+      });
+}
+
+namespace {
+// incomingCalls and outgoingCalls are the same request with a different method and
+// a different key naming the far end of each edge.
+template <typename Impl>
+void DispatchCallHierarchyCalls(Impl* impl, bool incoming, util::JsonValue item,
+                                LspClient::CallHierarchyCallsCallback callback) {
+  if (impl->DispatchTestStub(impl->test_handlers.call_hierarchy_calls, callback, incoming,
+                             std::move(item))) {
+    return;
+  }
+  if (!impl->supports_call_hierarchy.load(std::memory_order_acquire)) {
+    callback(std::nullopt);
+    return;
+  }
+  util::JsonObject params;
+  params["item"] = std::move(item);
+  impl->DispatchResultRequest(
+      incoming ? "callHierarchy/incomingCalls" : "callHierarchy/outgoingCalls",
+      util::JsonValue(std::move(params)), std::move(callback),
+      [incoming](const util::JsonValue& result) {
+        return std::optional<std::vector<LspClient::CallHierarchyCall>>(
+            lsp_protocol::ParseCallHierarchyCalls(result, incoming));
+      });
+}
+}  // namespace
+
+void LspClient::RequestIncomingCallsAsync(util::JsonValue item,
+                                          CallHierarchyCallsCallback callback) {
+  if (!callback) return;
+  DispatchCallHierarchyCalls(impl_, /*incoming=*/true, std::move(item), std::move(callback));
+}
+
+void LspClient::RequestOutgoingCallsAsync(util::JsonValue item,
+                                          CallHierarchyCallsCallback callback) {
+  if (!callback) return;
+  DispatchCallHierarchyCalls(impl_, /*incoming=*/false, std::move(item), std::move(callback));
+}
+
 }  // namespace microide::workspace

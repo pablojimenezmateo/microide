@@ -668,10 +668,55 @@ void TestLspProtocolParsesCodeLenses() {
   Expect(capped.size() == 1, "the lens cap truncates");
 }
 
+void TestLspProtocolParsesCallHierarchy() {
+  const auto items = codec::ParseCallHierarchyItems(Json(R"json([
+      {"name":"alpha","detail":"void alpha()","kind":12,"uri":"file:///a.cpp",
+       "range":{"start":{"line":3,"character":0},"end":{"line":8,"character":1}},
+       "selectionRange":{"start":{"line":3,"character":5},"end":{"line":3,"character":10}},
+       "data":{"tok":5}},
+      {"name":"no-uri","kind":12,
+       "range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}}}])json"));
+  Expect(items.size() == 1, "an item with no uri is dropped — nothing could navigate to it");
+  Expect(items[0].name == "alpha" && items[0].detail == "void alpha()", "name/detail parsed");
+  Expect(items[0].selection_range.start.character == 5,
+         "selectionRange (the name, where navigation lands) is kept separately from range");
+  Expect(items[0].raw["data"]["tok"].AsInt(0) == 5,
+         "the item is preserved verbatim for the follow-up calls request");
+
+  // An item without selectionRange falls back to range rather than to (0,0).
+  const auto no_selection = codec::ParseCallHierarchyItems(Json(R"json([
+      {"name":"beta","uri":"file:///b.cpp",
+       "range":{"start":{"line":9,"character":2},"end":{"line":9,"character":6}}}])json"));
+  Expect(no_selection.size() == 1 && no_selection[0].selection_range.start.line == 9,
+         "a missing selectionRange falls back to the item's range");
+
+  // Incoming edges are keyed `from`; outgoing `to`. fromRanges is read from the
+  // same key in both directions.
+  const std::string calls_json = R"json([
+      {"from":{"name":"caller","uri":"file:///c.cpp",
+               "range":{"start":{"line":1,"character":0},"end":{"line":4,"character":1}}},
+       "to":{"name":"callee","uri":"file:///d.cpp",
+             "range":{"start":{"line":2,"character":0},"end":{"line":6,"character":1}}},
+       "fromRanges":[{"start":{"line":2,"character":4},"end":{"line":2,"character":9}},
+                     {"start":{"line":3,"character":4},"end":{"line":3,"character":9}}]}])json";
+  const auto incoming = codec::ParseCallHierarchyCalls(Json(calls_json), /*incoming=*/true);
+  Expect(incoming.size() == 1 && incoming[0].item.name == "caller",
+         "incoming calls take the far end from `from`");
+  Expect(incoming[0].call_ranges.size() == 2, "both call sites parsed");
+  const auto outgoing = codec::ParseCallHierarchyCalls(Json(calls_json), /*incoming=*/false);
+  Expect(outgoing.size() == 1 && outgoing[0].item.name == "callee",
+         "outgoing calls take the far end from `to`");
+  Expect(outgoing[0].call_ranges.size() == 2, "fromRanges is read the same way in both directions");
+
+  Expect(codec::ParseCallHierarchyItems(Json("null")).empty(), "non-array yields no items");
+  Expect(codec::ParseCallHierarchyCalls(Json("null"), true).empty(), "non-array yields no calls");
+}
+
 }  // namespace
 
 void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspProtocol/ParsesCodeLenses", TestLspProtocolParsesCodeLenses);
+  AddTest(tests, "LspProtocol/ParsesCallHierarchy", TestLspProtocolParsesCallHierarchy);
   AddTest(tests, "LspProtocol/ParsesInlayHints", TestLspProtocolParsesInlayHints);
   AddTest(tests, "LspProtocol/ParsesDocumentHighlights", TestLspProtocolParsesDocumentHighlights);
   AddTest(tests, "LspProtocol/ParsesWorkspaceEdit", TestLspProtocolParsesWorkspaceEdit);

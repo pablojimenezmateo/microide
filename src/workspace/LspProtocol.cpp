@@ -669,6 +669,87 @@ std::vector<LspClient::CodeLens> ParseCodeLenses(const JsonValue& result,
   return lenses;
 }
 
+namespace {
+LspClient::CallHierarchyItem ParseCallHierarchyItem(const JsonValue& value) {
+  // Names and details are rendered as one channel line each; clamp both so a
+  // degenerate response cannot force an unbounded main-thread allocation.
+  constexpr std::size_t kMaxNameBytes = 512;
+  LspClient::CallHierarchyItem item;
+  if (!value.IsObject()) {
+    return item;
+  }
+  item.name = value["name"].AsString();
+  TruncateUtf8InPlace(item.name, kMaxNameBytes);
+  item.detail = value["detail"].AsString();
+  TruncateUtf8InPlace(item.detail, kMaxNameBytes);
+  item.kind = JsonIntInRange(value["kind"], 1);
+  item.uri = value["uri"].AsString();
+  item.range = ParseRange(value["range"]);
+  item.selection_range = value.HasKey("selectionRange") ? ParseRange(value["selectionRange"])
+                                                        : item.range;
+  item.raw = value;
+  return item;
+}
+}  // namespace
+
+std::vector<LspClient::CallHierarchyItem> ParseCallHierarchyItems(const JsonValue& result,
+                                                                  std::size_t max_items) {
+  std::vector<LspClient::CallHierarchyItem> items;
+  if (!result.IsArray()) {
+    return items;
+  }
+  const auto& array = result.AsArray();
+  const std::size_t count = std::min(array.size(), max_items);
+  items.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    LspClient::CallHierarchyItem item = ParseCallHierarchyItem(array[i]);
+    if (item.uri.empty()) {
+      continue;  // nothing to navigate to
+    }
+    items.push_back(std::move(item));
+  }
+  return items;
+}
+
+std::vector<LspClient::CallHierarchyCall> ParseCallHierarchyCalls(const JsonValue& result,
+                                                                  bool incoming,
+                                                                  std::size_t max_calls) {
+  std::vector<LspClient::CallHierarchyCall> calls;
+  if (!result.IsArray()) {
+    return calls;
+  }
+  // The two directions differ only in which key holds the other end of the edge:
+  // incoming calls name it `from` (the caller), outgoing calls `to` (the callee).
+  const char* const item_key = incoming ? "from" : "to";
+  const auto& array = result.AsArray();
+  const std::size_t count = std::min(array.size(), max_calls);
+  calls.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    const JsonValue& entry = array[i];
+    if (!entry.IsObject()) {
+      continue;
+    }
+    LspClient::CallHierarchyCall call;
+    call.item = ParseCallHierarchyItem(entry[item_key]);
+    if (call.item.uri.empty()) {
+      continue;
+    }
+    // `fromRanges` is the call-site list in BOTH directions (it always names ranges
+    // in the caller's file), so it is read from the same key either way.
+    if (const JsonValue& ranges = entry["fromRanges"]; ranges.IsArray()) {
+      constexpr std::size_t kMaxCallRanges = 1024;
+      const auto& range_array = ranges.AsArray();
+      const std::size_t range_count = std::min(range_array.size(), kMaxCallRanges);
+      call.call_ranges.reserve(range_count);
+      for (std::size_t r = 0; r < range_count; ++r) {
+        call.call_ranges.push_back(ParseRange(range_array[r]));
+      }
+    }
+    calls.push_back(std::move(call));
+  }
+  return calls;
+}
+
 JsonValue MakePosition(const LspClient::Position& position) {
   JsonObject object;
   object["line"] = JsonValue(static_cast<std::int64_t>(position.line));

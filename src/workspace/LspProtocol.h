@@ -105,6 +105,20 @@ LspClient::CodeLens ParseCodeLens(const util::JsonValue& value);
 std::vector<LspClient::CodeLens> ParseCodeLenses(const util::JsonValue& result,
                                                  std::size_t max_lenses = 4096);
 
+// Decode a `textDocument/prepareCallHierarchy` result (a CallHierarchyItem[]).
+// Each item keeps its source object in `raw`, which the two calls requests below
+// hand back to the server verbatim. Items with no `uri` are dropped — nothing
+// could navigate to them.
+std::vector<LspClient::CallHierarchyItem> ParseCallHierarchyItems(const util::JsonValue& result,
+                                                                  std::size_t max_items = 256);
+// Decode a `callHierarchy/incomingCalls` (`incoming=true`, edges keyed `from`) or
+// `callHierarchy/outgoingCalls` (`incoming=false`, keyed `to`) result. `fromRanges`
+// is read from the same key in both directions — the protocol always names the
+// call sites in the caller's file.
+std::vector<LspClient::CallHierarchyCall> ParseCallHierarchyCalls(const util::JsonValue& result,
+                                                                  bool incoming,
+                                                                  std::size_t max_calls = 4096);
+
 // ---- Encode (LSP structs -> wire JSON) ------------------------------------
 util::JsonValue MakePosition(const LspClient::Position& position);
 util::JsonValue MakeRange(const LspClient::Range& range);

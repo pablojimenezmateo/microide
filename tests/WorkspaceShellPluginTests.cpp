@@ -2197,6 +2197,130 @@ return ide.plugin({
   Expect(executed_command.empty(), "an unknown payload handle runs nothing");
 }
 
+// `call-hierarchy` chains prepareCallHierarchy -> callHierarchy/{incoming,outgoing}
+// Calls and renders navigable entries. Incoming calls list the CALL SITES inside
+// each caller (that is what the user wants to look at); outgoing calls navigate to
+// each callee's own name.
+void TestWorkspaceShellCallHierarchyRendersBothDirections() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path md_file = project / "notes.md";
+  WriteFile(md_file, "fn target() {}\nfn caller() { target(); }\nfn other() { target(); }\n");
+
+  WritePluginInit(plugins_root, "mdcalls",
+                  R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "mdcalls",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "md-lsp-server" } })
+  end
+})
+)lua");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "call-hierarchy fixture should open the project");
+
+  const std::string uri = workspace::FileUriForPath(md_file);
+  auto stub = std::make_unique<workspace::LspClient>();
+  stub->EnableTestStubMode();
+  stub->SetTestPrepareCallHierarchyHandler(
+      [uri](std::string, workspace::LspClient::Position,
+            workspace::LspClient::PrepareCallHierarchyCallback cb) {
+        workspace::LspClient::CallHierarchyItem item;
+        item.name = "target";
+        item.detail = "fn target()";
+        item.uri = uri;
+        item.range = {{0, 0}, {0, 14}};
+        item.selection_range = {{0, 3}, {0, 9}};
+        util::JsonObject raw;
+        raw["name"] = util::JsonValue("target");
+        raw["data"] = util::JsonValue(std::int64_t{11});
+        item.raw = util::JsonValue(std::move(raw));
+        cb(std::vector<workspace::LspClient::CallHierarchyItem>{std::move(item)});
+      });
+  util::JsonValue calls_saw_item;
+  bool calls_saw_incoming = false;
+  stub->SetTestCallHierarchyCallsHandler(
+      [&, uri](bool incoming, util::JsonValue item,
+               workspace::LspClient::CallHierarchyCallsCallback cb) {
+        calls_saw_item = item;
+        calls_saw_incoming = incoming;
+        workspace::LspClient::CallHierarchyCall call;
+        call.item.name = incoming ? "caller" : "callee";
+        call.item.uri = uri;
+        call.item.range = {{1, 0}, {1, 26}};
+        call.item.selection_range = {{1, 3}, {1, 9}};
+        if (incoming) {
+          // Two call sites inside the caller, on lines 2 and 3 (1-based).
+          call.call_ranges.push_back({{1, 14}, {1, 20}});
+          call.call_ranges.push_back({{2, 13}, {2, 19}});
+        }
+        cb(std::vector<workspace::LspClient::CallHierarchyCall>{std::move(call)});
+      });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
+         "fixture should attach a stub markdown client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, md_file);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 4);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "call-hierarchy"),
+         "call-hierarchy should execute");
+  // Two chained round-trips: the second is issued from inside the first response,
+  // so it lands in the mailbox after that drain pass.
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+
+  Expect(calls_saw_incoming, "the bare command defaults to incoming calls");
+  Expect(calls_saw_item["data"].AsInt(0) == 11,
+         "the calls request hands back the prepare item verbatim");
+
+  const auto* channel = WorkspaceShellTestAccess::OutputChannelEntries(shell, "lsp.callHierarchy");
+  Expect(channel != nullptr && !channel->empty(), "the call-hierarchy channel should be filled");
+  const auto has = [&channel](std::string_view text) {
+    return channel != nullptr &&
+           std::find(channel->begin(), channel->end(), text) != channel->end();
+  };
+  Expect(has("Callers of target  ·  fn target()"), "the root symbol heads the incoming list");
+  Expect(has("caller"), "each caller is listed by name");
+  Expect(has("notes.md:2:15") && has("notes.md:3:14"),
+         "incoming calls navigate to the CALL SITES inside the caller, not its declaration");
+
+  // Outgoing walks the other direction and navigates to each callee's own name.
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 4);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "call-hierarchy outgoing"),
+         "call-hierarchy outgoing should execute");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(!calls_saw_incoming, "the `outgoing` argument selects the other direction");
+  const auto* outgoing = WorkspaceShellTestAccess::OutputChannelEntries(shell, "lsp.callHierarchy");
+  Expect(outgoing != nullptr &&
+             std::find(outgoing->begin(), outgoing->end(), "Called by target  ·  fn target()") !=
+                 outgoing->end(),
+         "the outgoing list is re-rendered from scratch, not appended to the incoming one");
+  Expect(outgoing != nullptr &&
+             std::find(outgoing->begin(), outgoing->end(), "notes.md:2:4") != outgoing->end(),
+         "outgoing calls navigate to the callee's own name (its selectionRange)");
+  Expect(outgoing != nullptr &&
+             std::find(outgoing->begin(), outgoing->end(), "Callers of target  ·  fn target()") ==
+                 outgoing->end(),
+         "the previous direction's heading must be gone");
+
+  // A bad direction argument is rejected rather than silently treated as incoming.
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "call-hierarchy sideways"),
+         "an unknown direction argument is rejected");
+}
+
 // prepareRename refines the just-opened Rename Symbol prompt: it prefills the
 // server's placeholder, and rejects positions the server reports as not renameable.
 void TestWorkspaceShellPrepareRenameRefinesPrompt() {
@@ -5134,6 +5258,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellInlayHintsPublishMidLineDecorations);
   AddTest(tests, "WorkspaceShell/CodeLensesResolveAndActivate",
           TestWorkspaceShellCodeLensesResolveAndActivate);
+  AddTest(tests, "WorkspaceShell/CallHierarchyRendersBothDirections",
+          TestWorkspaceShellCallHierarchyRendersBothDirections);
   AddTest(tests, "WorkspaceShell/PrepareRenameRefinesPrompt",
           TestWorkspaceShellPrepareRenameRefinesPrompt);
   AddTest(tests, "WorkspaceShell/ServerApplyEditEditsOpenAndClosedFiles",

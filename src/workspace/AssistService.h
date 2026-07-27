@@ -161,6 +161,15 @@ class AssistService {
   // the "lsp.workspaceSymbols" output channel.
   bool ShowWorkspaceSymbols(const std::string& query, std::string* error_message = nullptr);
 
+  // Render the call hierarchy of the symbol under the caret into the
+  // `lsp.callHierarchy` output channel: who calls it (`incoming`) or what it calls.
+  // Two round-trips — textDocument/prepareCallHierarchy resolves the symbol, then
+  // callHierarchy/{incoming,outgoing}Calls walks one level of edges. One level, not
+  // a tree: the channel is a flat navigable list, and an expandable tree would need
+  // a surface this shell does not have. Entries reuse the references formatter, so
+  // each is a clickable file:line:col with context.
+  bool ShowCallHierarchy(bool incoming, std::string* error_message = nullptr);
+
  private:
   struct EditSideEffectsSnapshot {
     bool was_dirty = false;
@@ -313,6 +322,10 @@ class AssistService {
   // channel and render its results over the newer query's. Gate it on a generation
   // token like completions/code actions do (TD-2026-07-17A-034).
   std::uint64_t workspace_symbol_request_generation_ = 0;
+  // Call hierarchy spans two chained round-trips, so a second invocation while the
+  // first is mid-chain would otherwise let the older chain finish last and render
+  // over the newer one. Both hops carry this token.
+  std::uint64_t call_hierarchy_request_generation_ = 0;
 };
 
 }  // namespace microide::workspace

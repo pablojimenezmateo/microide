@@ -362,6 +362,10 @@ bool WorkspaceActionContext::ShowWorkspaceSymbols(const std::string& query,
   return operations_.show_workspace_symbols(query, error_message);
 }
 
+bool WorkspaceActionContext::ShowCallHierarchy(bool incoming, std::string* error_message) {
+  return operations_.show_call_hierarchy(incoming, error_message);
+}
+
 bool WorkspaceActionContext::ShowSignatureHelp(std::string* error_message) {
   return operations_.show_signature_help(error_message);
 }

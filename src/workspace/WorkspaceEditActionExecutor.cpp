@@ -183,6 +183,23 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::CallHierarchy: {
+      // `call-hierarchy [incoming|outgoing]`, defaulting to incoming — "who calls
+      // this?" is the question that gets asked, and it is what VS Code opens with.
+      bool incoming = true;
+      if (!args.empty()) {
+        if (args[0] == "outgoing") {
+          incoming = false;
+        } else if (args[0] != "incoming") {
+          return reject("Usage: call-hierarchy [incoming|outgoing]");
+        }
+      }
+      std::string error_message;
+      if (!context_.ShowCallHierarchy(incoming, &error_message)) {
+        return reject(error_message.empty() ? "Call hierarchy unavailable" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::WorkspaceSymbol: {
       // The query is the joined command arguments: `workspace-symbol <query>`.
       std::string query;

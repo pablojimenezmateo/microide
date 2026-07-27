@@ -518,6 +518,24 @@ void LspClient::SetTestResolveCodeLensHandler(
   impl_->supports_code_lens_resolve.store(true, std::memory_order_release);
 }
 
+bool LspClient::SupportsCallHierarchy() const {
+  return impl_->supports_call_hierarchy.load(std::memory_order_acquire);
+}
+
+void LspClient::SetTestPrepareCallHierarchyHandler(
+    std::function<void(std::string uri, Position pos, PrepareCallHierarchyCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_handlers.prepare_call_hierarchy = std::move(handler);
+  impl_->supports_call_hierarchy.store(true, std::memory_order_release);
+}
+
+void LspClient::SetTestCallHierarchyCallsHandler(
+    std::function<void(bool incoming, util::JsonValue item, CallHierarchyCallsCallback cb)>
+        handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_handlers.call_hierarchy_calls = std::move(handler);
+}
+
 void LspClient::SetTestExecuteCommandHandler(
     std::function<void(std::string command, std::vector<util::JsonValue> arguments,
                        ExecuteCommandCallback cb)> handler) {
