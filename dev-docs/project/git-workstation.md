@@ -19,6 +19,15 @@ scenarios — not comparisons to other editors.
 | Resolve common text conflicts | Three-way merge tab for line-oriented text conflicts |
 | Commit staged changes | Commit workflow in Git sidebar |
 | Review branch against base | Branch review mode in compare (local base ref) |
+| Switch / create branches | Filterable branch picker, sidebar branch row, `git-switch-branch` / `git-create-branch` |
+| Fetch, pull, push, publish, sync | Git menu, sidebar Sync button (with ahead/behind counts), `git-fetch` / `git-pull` / `git-push` / `git-publish-branch` / `git-sync` |
+| Stash and restore work in progress | `git-stash [message]` (includes untracked) / `git-stash-pop` |
+
+Write operations run off the shell thread, one at a time, and report a classified
+outcome (auth failure, no upstream, non-fast-forward, dirty worktree, conflict,
+locked repo, network failure, timeout) rather than raw porcelain. Credential
+prompting is disabled (`GIT_TERMINAL_PROMPT=0`), so an operation needing
+credentials fails fast instead of blocking on an invisible prompt.
 
 ### Git/Diff UI behavior
 
@@ -37,9 +46,10 @@ scenarios — not comparisons to other editors.
 
 ### Branch review persistence
 
-Branch review against a base is supported. **Persistent** reviewed-file or reviewed-hunk
-markers are not yet shipped; they may land once core Git/diff/merge/commit paths and safety
-requirements stay met. Do not assume durable review markers unless release notes say otherwise.
+Branch review against a base is supported, and reviewed-file / reviewed-hunk markers
+**are** persisted per repository and base ref (`mark-branch-file-reviewed`,
+`mark-branch-hunk-reviewed`, `branch-review-note`, `clear-branch-review-state`),
+bounded per repository so the state file cannot grow without limit.
 
 ## Unsupported (explicit non-goals)
 
@@ -47,8 +57,6 @@ requirements stay met. Do not assume durable review markers unless release notes
 - Plugin marketplace, remote install, signed plugins
 - Project-local plugin directories (repo `.microide/plugins/` remains ignored)
 - Plugin sandbox, per-plugin capability prompts, plugin signing
-- Debugger / DAP
-- Recent-project / recent-file UI
 - Native OS menu bar
 - Full binary merge editing
 - AI features, cloud collaboration, account systems
