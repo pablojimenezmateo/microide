@@ -111,12 +111,10 @@ std::optional<CompareRightGridHit> HitTestCompareRightGrid(
   return hit;
 }
 
-std::optional<std::string> CodeLensCommandForViewport(const render::TextRenderer& text_renderer,
-                                                      const editor::TextViewport& viewport,
-                                                      const TextGridInteractionLayout& interaction,
-                                                      const editor::FileDecorations* decorations,
-                                                      float x,
-                                                      float y) {
+std::optional<editor::CodeLensDecoration> CodeLensForViewport(
+    const render::TextRenderer& text_renderer, const editor::TextViewport& viewport,
+    const TextGridInteractionLayout& interaction, const editor::FileDecorations* decorations,
+    float x, float y) {
   if (decorations == nullptr || viewport.path().empty() || viewport.dirty() ||
       !Contains(interaction.rect, x, y)) {
     return std::nullopt;
@@ -157,8 +155,8 @@ std::optional<std::string> CodeLensCommandForViewport(const render::TextRenderer
                                      interaction.line_height, right_limit, segments);
   for (const editor::EolDecorationSegment& segment : segments) {
     if (segment.kind == editor::EolDecorationSegment::Kind::CodeLens &&
-        Contains(segment.rect, x, y) && !code_lenses[segment.index].command.empty()) {
-      return code_lenses[segment.index].command;
+        Contains(segment.rect, x, y) && code_lenses[segment.index].activatable()) {
+      return code_lenses[segment.index];
     }
   }
   return std::nullopt;
@@ -734,8 +732,9 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::EditorHoverTarg
   return PluginHoverTargetAtPosition(x, y);
 }
 
-std::optional<std::string> WorkspaceShell::CodeLensCommandAtPosition(float x, float y) const {
-  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::CodeLensCommandAtPosition");
+std::optional<editor::CodeLensDecoration> WorkspaceShell::CodeLensAtPosition(float x,
+                                                                             float y) const {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::CodeLensAtPosition");
   if (!ActiveTabIsEditor()) {
     return std::nullopt;
   }
@@ -761,7 +760,7 @@ std::optional<std::string> WorkspaceShell::CodeLensCommandAtPosition(float x, fl
   const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
   const editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
-    return CodeLensCommandForViewport(
+    return CodeLensForViewport(
         text_renderer_, *active_viewport,
         BuildEditorInteractionLayout(text_renderer_, *active_viewport, layout.editor_surface,
                                      LineNumbersEnabled()),
@@ -773,11 +772,13 @@ std::optional<std::string> WorkspaceShell::CodeLensCommandAtPosition(float x, fl
     if (viewport == nullptr || viewport->path().empty() || viewport->dirty()) {
       continue;
     }
-    if (auto command = CodeLensCommandForViewport(
-            text_renderer_, *viewport, BuildEditorInteractionLayout(text_renderer_, *viewport, pane.rect, LineNumbersEnabled()),
+    if (auto lens = CodeLensForViewport(
+            text_renderer_, *viewport,
+            BuildEditorInteractionLayout(text_renderer_, *viewport, pane.rect,
+                                         LineNumbersEnabled()),
             decorations_for(*viewport), x, y);
-        command.has_value()) {
-      return command;
+        lens.has_value()) {
+      return lens;
     }
   }
   return std::nullopt;

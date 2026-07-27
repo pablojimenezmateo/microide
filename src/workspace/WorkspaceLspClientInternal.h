@@ -118,6 +118,10 @@ struct LspClient::Impl {
     std::function<void(std::string, WorkspaceSymbolCallback)> workspace_symbol;
     std::function<void(std::string, Range, InlayHintCallback)> inlay_hint;
     std::function<void(std::string, Position, DocumentHighlightCallback)> document_highlight;
+    std::function<void(std::string, CodeLensCallback)> code_lens;
+    std::function<void(util::JsonValue, ResolveCodeLensCallback)> resolve_code_lens;
+    std::function<void(std::string, std::vector<util::JsonValue>, ExecuteCommandCallback)>
+        execute_command;
     void Reset() { *this = TestHandlers{}; }
   };
   TestHandlers test_handlers;
@@ -132,6 +136,10 @@ struct LspClient::Impl {
   std::atomic<bool> supports_inlay_hints{false};
   // Server advertised a documentHighlightProvider (captured at initialize).
   std::atomic<bool> supports_document_highlight{false};
+  // Server advertised a codeLensProvider, and whether it carries resolveProvider
+  // (i.e. whether range-only lenses can be filled in via codeLens/resolve).
+  std::atomic<bool> supports_code_lens{false};
+  std::atomic<bool> supports_code_lens_resolve{false};
 
   // Negotiated position encoding (LSP `capabilities.positionEncoding`), captured at
   // initialize. Guarded by `mutex`. We advertise utf-8 first, so a conformant server

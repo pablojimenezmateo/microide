@@ -94,6 +94,17 @@ std::vector<LspClient::InlayHint> ParseInlayHints(const util::JsonValue& result,
 std::vector<LspClient::DocumentHighlight> ParseDocumentHighlights(
     const util::JsonValue& result, std::size_t max_highlights = 4096);
 
+// Decode one CodeLens object (the shape both `textDocument/codeLens` items and the
+// `codeLens/resolve` result use). A lens whose `command` is absent keeps the source
+// object in `unresolved` so it can be round-tripped to codeLens/resolve verbatim —
+// servers stash correlation state in `data` and reject a rebuilt object.
+LspClient::CodeLens ParseCodeLens(const util::JsonValue& value);
+// Decode a `textDocument/codeLens` result (a CodeLens[]). Lenses that can neither
+// be painted nor resolved are dropped. Non-array input yields none; `max_lenses`
+// caps the result.
+std::vector<LspClient::CodeLens> ParseCodeLenses(const util::JsonValue& result,
+                                                 std::size_t max_lenses = 4096);
+
 // ---- Encode (LSP structs -> wire JSON) ------------------------------------
 util::JsonValue MakePosition(const LspClient::Position& position);
 util::JsonValue MakeRange(const LspClient::Range& range);

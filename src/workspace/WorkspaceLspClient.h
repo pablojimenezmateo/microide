@@ -249,6 +249,23 @@ class LspClient {
     int kind = 1;
   };
 
+  // One textDocument/codeLens result: a line-level actionable annotation ("3
+  // references", "Run test"). Per the protocol `command` is OPTIONAL on the first
+  // response — a server that advertises `codeLensProvider.resolveProvider` may send
+  // range-only lenses and fill in the title/command from `codeLens/resolve`
+  // (rust-analyzer and typescript-language-server both do). `unresolved` keeps the
+  // original lens object verbatim for exactly that follow-up; it is Null once the
+  // lens carries a title, so the caller can tell the two apart without guessing.
+  struct CodeLens {
+    Range range;
+    std::string title;
+    std::string command;
+    std::vector<util::JsonValue> arguments;
+    util::JsonValue unresolved;
+
+    bool needs_resolve() const { return title.empty() && !unresolved.IsNull(); }
+  };
+
   using OnPublishDiagnostics = std::function<void(std::string uri, std::vector<Diagnostic>)>;
 
   // One text edit: a document range plus its replacement text (server encoding).
@@ -272,6 +289,12 @@ class LspClient {
   using InlayHintCallback = std::function<void(LspResult<std::vector<InlayHint>>)>;
   using DocumentHighlightCallback =
       std::function<void(LspResult<std::vector<DocumentHighlight>>)>;
+  using CodeLensCallback = std::function<void(LspResult<std::vector<CodeLens>>)>;
+  using ResolveCodeLensCallback = std::function<void(LspResult<CodeLens>)>;
+  // `workspace/executeCommand` reports only whether the server accepted the
+  // command; its result value is server-defined and usually null (the observable
+  // effect arrives as a separate workspace/applyEdit or edit notification).
+  using ExecuteCommandCallback = std::function<void(LspResult<util::JsonValue>)>;
   using SignatureHelpCallback = std::function<void(LspResult<SignatureHelp>)>;
   using WorkspaceSymbolCallback =
       std::function<void(LspResult<std::vector<WorkspaceSymbol>>)>;
@@ -463,6 +486,23 @@ class LspClient {
                                      DocumentHighlightCallback callback);
   bool SupportsDocumentHighlight() const;
 
+  // Async textDocument/codeLens for the whole document. Reports nullopt when the
+  // server advertises no codeLensProvider.
+  void RequestCodeLensAsync(std::string uri, CodeLensCallback callback);
+  // Async codeLens/resolve for a lens the first response left without a command.
+  // `unresolved` must be the lens object exactly as the server sent it — servers
+  // stash their own correlation data in a `data` field and reject a rebuilt one.
+  // Reports nullopt when the server advertises no `codeLensProvider.resolveProvider`.
+  void ResolveCodeLensAsync(util::JsonValue unresolved, ResolveCodeLensCallback callback);
+  bool SupportsCodeLens() const;
+  bool SupportsCodeLensResolve() const;
+
+  // Async workspace/executeCommand — run a server-side command by name. This is how
+  // an activated code lens takes effect: the server usually answers null and pushes
+  // the real change back as a workspace/applyEdit.
+  void ExecuteServerCommandAsync(std::string command, std::vector<util::JsonValue> arguments,
+                                 ExecuteCommandCallback callback);
+
   // True when the server advertised renameProvider.prepareProvider — i.e. a
   // textDocument/prepareRename request is worth sending.
   bool SupportsPrepareRename() const;
@@ -525,6 +565,16 @@ class LspClient {
   void SetTestDocumentHighlightHandler(
       std::function<void(std::string uri, Position pos, DocumentHighlightCallback cb)> handler);
   void ClearTestDocumentHighlightHandler();
+  // Unit tests: feed canned codeLens / codeLens-resolve responses (both mark their
+  // capability supported so the requests are not short-circuited), and observe
+  // workspace/executeCommand dispatches.
+  void SetTestCodeLensHandler(std::function<void(std::string uri, CodeLensCallback cb)> handler);
+  void ClearTestCodeLensHandler();
+  void SetTestResolveCodeLensHandler(
+      std::function<void(util::JsonValue unresolved, ResolveCodeLensCallback cb)> handler);
+  void SetTestExecuteCommandHandler(
+      std::function<void(std::string command, std::vector<util::JsonValue> arguments,
+                         ExecuteCommandCallback cb)> handler);
 
   // Shutdown and close connection (blocks until complete).
   void BeginShutdown();

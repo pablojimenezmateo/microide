@@ -26,6 +26,11 @@
     shell.ConsumeLspCallbacks();
     return shell.plugin_hover_cache_.result.content;
   }
+  // Run a published code lens's server command, exactly as a click on it would.
+  static void ActivateCodeLens(WorkspaceShell& shell, std::uint64_t payload) {
+    shell.lsp_service_.ActivateCodeLens(payload);
+    shell.ConsumeLspCallbacks();
+  }
   static bool IsControlChannelRunning(const WorkspaceShell& shell) {
     return shell.control_channel_service_.IsRunning();
   }

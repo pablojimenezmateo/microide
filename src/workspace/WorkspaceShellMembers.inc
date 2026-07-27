@@ -1131,16 +1131,17 @@
       std::span<const editor::PublishedDiagnostic> diagnostics,
       float x,
       float y) const;
-  // Plugin code-lens click routing (Phase B): resolve the command bound to a
-  // clickable end-of-line code lens under (x,y), or nullopt. The per-viewport
+  // Code-lens click routing (Phase B): resolve the clickable end-of-line lens
+  // under (x,y), or nullopt. Returned by value — dispatching it can republish the
+  // decoration store, which would dangle a pointer into it. The per-viewport
   // resolver is a file-local free function (CodeLensCommandForViewport) sharing
   // editor::BuildEolDecorationSegments with the renderer so the hit rect matches
   // the painted affordance exactly.
-  std::optional<std::string> CodeLensCommandAtPosition(float x, float y) const;
-  // Phase E2: resolve the command bound to an above-line code-lens inset under
-  // (x,y) when `plugins.code_lens_above` is on, sharing the gap geometry the
+  std::optional<editor::CodeLensDecoration> CodeLensAtPosition(float x, float y) const;
+  // Phase E2: resolve the above-line code-lens inset under (x,y) when
+  // `plugins.code_lens_above` is on, sharing the gap geometry the
   // renderer drew (editor::ResolveInsetClick). Returns nullopt outside any strip.
-  std::optional<std::string> AboveLensCommandAtPosition(float x, float y) const;
+  std::optional<editor::CodeLensDecoration> AboveLensAtPosition(float x, float y) const;
   std::optional<EditorHoverTarget> PluginHoverTargetAtPosition(float x, float y) const;
   std::optional<EditorHoverTarget> PluginHoverTargetForViewport(
       const editor::TextViewport& viewport,

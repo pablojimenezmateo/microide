@@ -626,9 +626,52 @@ void TestLspProtocolParsesDocumentHighlights() {
   Expect(capped.size() == 1, "the highlight cap truncates");
 }
 
+void TestLspProtocolParsesCodeLenses() {
+  const auto lenses = codec::ParseCodeLenses(Json(R"json([
+      {"range":{"start":{"line":4,"character":0},"end":{"line":4,"character":8}},
+       "command":{"title":"3 references","command":"editor.showRefs","arguments":[1,"x"]}},
+      {"range":{"start":{"line":9,"character":0},"end":{"line":9,"character":4}},
+       "data":{"id":77}},
+      "not-a-lens"])json"));
+  Expect(lenses.size() == 2,
+         "an entry that is not a lens object is dropped (nothing to paint or resolve)");
+  Expect(lenses[0].title == "3 references" && lenses[0].command == "editor.showRefs",
+         "title and command parsed from the nested command object");
+  Expect(lenses[0].arguments.size() == 2, "command arguments are kept verbatim");
+  Expect(lenses[0].unresolved.IsNull(), "a resolved lens carries nothing to resolve");
+  Expect(lenses[1].needs_resolve(), "a title-less lens with data is marked for resolve");
+  // The unresolved lens must round-trip VERBATIM: servers correlate through `data`
+  // and reject an object we rebuilt from the parsed fields.
+  Expect(lenses[1].unresolved["data"]["id"].AsInt(0) == 77,
+         "the original lens object (including `data`) is preserved for codeLens/resolve");
+  // `data` is optional in the protocol, so a bare range is still resolvable — it
+  // must not be discarded as unpaintable before resolve has had a chance to run.
+  const auto bare = codec::ParseCodeLenses(Json(R"json([
+      {"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":2}}}])json"));
+  Expect(bare.size() == 1 && bare[0].needs_resolve(),
+         "a range-only lens without `data` is still marked for resolve");
+
+  // codeLens/resolve returns the same shape, now with the command filled in.
+  const auto resolved = codec::ParseCodeLens(Json(R"json(
+      {"range":{"start":{"line":9,"character":0},"end":{"line":9,"character":4}},
+       "command":{"title":"Run test","command":"rust-analyzer.runSingle"}})json"));
+  Expect(resolved.title == "Run test" && resolved.command == "rust-analyzer.runSingle",
+         "a resolved lens parses its filled-in command");
+  Expect(resolved.unresolved.IsNull(), "a resolved lens needs no further resolve");
+
+  Expect(codec::ParseCodeLenses(Json("null")).empty(), "non-array yields no lenses");
+  const auto capped = codec::ParseCodeLenses(Json(R"json([
+      {"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},
+       "command":{"title":"a","command":"c"}},
+      {"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":1}},
+       "command":{"title":"b","command":"c"}}])json"), /*max_lenses=*/1);
+  Expect(capped.size() == 1, "the lens cap truncates");
+}
+
 }  // namespace
 
 void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "LspProtocol/ParsesCodeLenses", TestLspProtocolParsesCodeLenses);
   AddTest(tests, "LspProtocol/ParsesInlayHints", TestLspProtocolParsesInlayHints);
   AddTest(tests, "LspProtocol/ParsesDocumentHighlights", TestLspProtocolParsesDocumentHighlights);
   AddTest(tests, "LspProtocol/ParsesWorkspaceEdit", TestLspProtocolParsesWorkspaceEdit);

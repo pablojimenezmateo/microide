@@ -202,6 +202,28 @@ class LspService {
                             lsp_encoding::PositionEncoding encoding,
                             std::vector<LspClient::InlayHint> hints);
 
+  // Request textDocument/codeLens for `viewport`'s document and publish the results
+  // as "lsp:codelens" CodeLensDecorations (rendered end-of-line, or as above-line
+  // strips under `plugins.code_lens_above`). Pulled on the same triggers as inlay
+  // hints — didOpen, save, and a clean-landing undo/redo — never per keystroke.
+  // Lenses the server returned without a command are filled in through
+  // codeLens/resolve first, so servers that only answer that way (rust-analyzer,
+  // typescript-language-server) are not silently blank; the whole document
+  // publishes once, after the last resolve lands.
+  void RequestLspCodeLenses(const editor::TextViewport& viewport, LspClient& client);
+  void PublishLspCodeLenses(ProjectWorkspaceState& state, std::string uri,
+                            std::uint64_t request_generation, std::string language_id,
+                            lsp_encoding::PositionEncoding encoding,
+                            std::vector<LspClient::CodeLens> lenses);
+  // Run the server command behind a clicked code lens (workspace/executeCommand).
+  // A handle from a superseded publish resolves to nothing and is ignored — the
+  // lens the click landed on no longer exists.
+  void ActivateCodeLens(std::uint64_t payload);
+  // Drop the "lsp:codelens" decorations for `viewport`'s file. Same reasoning as
+  // the inlay overlay: the lens line numbers are absolute, so any content edit
+  // invalidates them until the next clean pull.
+  void ClearLspCodeLensesForFile(const editor::TextViewport& viewport);
+
   // Keep the caret's semantic occurrence highlights fresh. Drained once per
   // presented frame (WorkspaceShell::OnFramePresented), because a caret can move
   // through mouse, keyboard, search, go-to-definition and folding paths and this is
@@ -407,6 +429,23 @@ class LspService {
   // guard as semantic tokens). Shares NextSemanticGeneration's helper pattern via
   // a dedicated map so the two overlays never invalidate each other.
   std::unordered_map<std::string, std::uint64_t> inlay_hint_generation_;
+
+  // Per-URI generation guard for code-lens requests (same stale-response rule as
+  // the two overlays above).
+  std::unordered_map<std::string, std::uint64_t> code_lens_generation_;
+  // Executable payloads behind the published lenses. A CodeLensDecoration cannot
+  // carry a server command with JSON arguments, so it carries a handle into here
+  // instead; a click resolves the handle back to something runnable. Rebuilt per
+  // publish (each publish drops the previous entries for that URI), so it stays
+  // proportional to what is currently on screen rather than growing forever.
+  struct CodeLensCommand {
+    std::string uri;
+    std::string language_id;  // which server to run the command on
+    std::string command;
+    std::vector<util::JsonValue> arguments;
+  };
+  std::unordered_map<std::uint64_t, CodeLensCommand> code_lens_commands_;
+  std::uint64_t next_code_lens_payload_ = 0;
 
   // Identity of the last documentHighlight request, so MaybeRequestDocumentHighlights
   // fires only on a real change. A single counter (not a per-URI map like the two

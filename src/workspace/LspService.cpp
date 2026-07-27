@@ -528,6 +528,8 @@ void LspService::EnsureLspDocumentOpen(const editor::TextViewport& viewport, Lsp
   RequestLspSemanticTokens(viewport, client);
   // Pull inlay hints for the freshly-opened document (mid-line type/param hints).
   RequestLspInlayHints(viewport, client);
+  // Pull code lenses for the freshly-opened document (line-level actions).
+  RequestLspCodeLenses(viewport, client);
 }
 
 void LspService::ScheduleBufferOpen(const std::filesystem::path& path) {
@@ -787,6 +789,174 @@ void LspService::PublishLspInlayHints(ProjectWorkspaceState& state, std::string 
         }
         return data;
       });
+}
+
+namespace {
+// Resolve fan-out bound. Every unresolved lens costs one codeLens/resolve round
+// trip, so a pathological document must not turn one pull into thousands of
+// in-flight requests; unresolved lenses past the bound are dropped rather than
+// published blank.
+constexpr std::size_t kMaxResolvedCodeLenses = 256;
+
+// Shared state for the resolve fan-out: the lens array being filled in, plus how
+// many resolves are still outstanding. Held by shared_ptr so each response can
+// decrement and the last one publishes.
+struct CodeLensResolveBatch {
+  std::vector<LspClient::CodeLens> lenses;
+  std::size_t pending = 0;
+};
+}  // namespace
+
+void LspService::RequestLspCodeLenses(const editor::TextViewport& viewport, LspClient& client) {
+  if (viewport.path().empty() || !client.SupportsCodeLens()) {
+    return;
+  }
+  if (operations_.get_setting_value &&
+      !LspFeatureEnabled(operations_.get_setting_value, "lsp.code_lens.enabled")) {
+    return;
+  }
+  ProjectWorkspaceState* const project = &CurrentProjectState();
+  std::string uri = FileUriForPath(viewport.path());
+  std::string language_id = editor::runtime_syntax::DetectFiletype(viewport.path(),
+                                                                   viewport.lines());
+  const std::uint64_t generation = NextOverlayGeneration(code_lens_generation_, uri);
+  const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(client);
+  const bool can_resolve = client.SupportsCodeLensResolve();
+  LspClient* const client_ptr = &client;
+  client.RequestCodeLensAsync(
+      uri, [this, project, client_ptr, uri, language_id, generation, encoding, can_resolve](
+               LspResult<std::vector<LspClient::CodeLens>> lenses) mutable {
+        if (!lenses.has_value()) {
+          return;  // transport failure leaves the previous lenses alone
+        }
+        // Nothing to fill in: publish straight through.
+        const bool any_unresolved =
+            can_resolve && std::any_of(lenses->begin(), lenses->end(),
+                                       [](const LspClient::CodeLens& lens) {
+                                         return lens.needs_resolve();
+                                       });
+        if (!any_unresolved) {
+          // Without a resolve provider a title-less lens can never be painted.
+          std::erase_if(*lenses, [](const LspClient::CodeLens& lens) { return lens.title.empty(); });
+          PublishLspCodeLenses(*project, std::move(uri), generation, std::move(language_id),
+                               encoding, std::move(*lenses));
+          return;
+        }
+
+        auto batch = std::make_shared<CodeLensResolveBatch>();
+        batch->lenses = std::move(*lenses);
+        std::vector<std::size_t> to_resolve;
+        for (std::size_t i = 0; i < batch->lenses.size(); ++i) {
+          if (!batch->lenses[i].needs_resolve()) {
+            continue;
+          }
+          if (to_resolve.size() >= kMaxResolvedCodeLenses) {
+            batch->lenses[i].unresolved = util::JsonValue{};  // give up; dropped below
+            continue;
+          }
+          to_resolve.push_back(i);
+        }
+        batch->pending = to_resolve.size();
+        // Bound the batch BEFORE issuing anything, so `pending` can never be
+        // decremented past zero by a response arriving mid-loop.
+        for (const std::size_t index : to_resolve) {
+          client_ptr->ResolveCodeLensAsync(
+              batch->lenses[index].unresolved,
+              [this, project, batch, index, uri, language_id, generation, encoding](
+                  LspResult<LspClient::CodeLens> resolved) mutable {
+                if (resolved.has_value() && !resolved->title.empty()) {
+                  // Keep the original range: resolve is only required to fill in
+                  // `command`, and some servers echo a default-constructed range.
+                  const LspClient::Range range = batch->lenses[index].range;
+                  batch->lenses[index] = std::move(*resolved);
+                  batch->lenses[index].range = range;
+                }
+                if (--batch->pending != 0) {
+                  return;
+                }
+                std::erase_if(batch->lenses,
+                              [](const LspClient::CodeLens& lens) { return lens.title.empty(); });
+                PublishLspCodeLenses(*project, std::move(uri), generation, std::move(language_id),
+                                     encoding, std::move(batch->lenses));
+              });
+        }
+      });
+}
+
+void LspService::PublishLspCodeLenses(ProjectWorkspaceState& state, std::string uri,
+                                      std::uint64_t request_generation, std::string language_id,
+                                      lsp_encoding::PositionEncoding encoding,
+                                      std::vector<LspClient::CodeLens> lenses) {
+  // Retire the previous publish's payloads for this URI before the guard: a
+  // superseded response still means the old handles are dead. Doing it here (and
+  // not on the guard's happy path alone) is what keeps the table bounded.
+  std::erase_if(code_lens_commands_,
+                [&uri](const auto& entry) { return entry.second.uri == uri; });
+  PublishGuardedOverlay(
+      state, "lsp:codelens", code_lens_generation_, uri, request_generation, encoding,
+      std::move(lenses),
+      [this, &uri, &language_id](const editor::TextViewport* /*file_viewport*/,
+                                 lsp_encoding::PositionEncoding /*encoding*/,
+                                 std::vector<LspClient::CodeLens>& lenses) {
+        editor::PluginDecorationData data;
+        data.code_lenses.reserve(lenses.size());
+        for (LspClient::CodeLens& lens : lenses) {
+          if (lens.range.start.line < 0) {
+            continue;
+          }
+          editor::CodeLensDecoration decoration;
+          decoration.line = static_cast<std::uint32_t>(lens.range.start.line);
+          decoration.text = std::move(lens.title);
+          if (!lens.command.empty()) {
+            decoration.payload = ++next_code_lens_payload_;
+            code_lens_commands_.emplace(
+                decoration.payload,
+                CodeLensCommand{.uri = uri,
+                                .language_id = language_id,
+                                .command = std::move(lens.command),
+                                .arguments = std::move(lens.arguments)});
+          }
+          data.code_lenses.push_back(std::move(decoration));
+        }
+        return data;
+      });
+}
+
+void LspService::ActivateCodeLens(std::uint64_t payload) {
+  const auto it = code_lens_commands_.find(payload);
+  if (it == code_lens_commands_.end()) {
+    return;  // a handle from a superseded publish; the clicked lens is gone
+  }
+  LspClient* const client = CurrentLspManager().FindStartedServer(it->second.language_id);
+  if (client == nullptr) {
+    return;
+  }
+  BeginTrackedLspRequest();
+  client->ExecuteServerCommandAsync(
+      it->second.command, it->second.arguments,
+      [this](LspResult<util::JsonValue>) { FinishTrackedLspRequest(); });
+}
+
+void LspService::ClearLspCodeLensesForFile(const editor::TextViewport& viewport) {
+  if (viewport.path().empty()) {
+    return;
+  }
+  // Bump the generation first for the same reason inlay hints do: lenses paint in
+  // every buffer state, so an in-flight response captured before this edit would
+  // otherwise re-add lenses at pre-edit line numbers.
+  std::string uri = FileUriForPath(viewport.path());
+  NextOverlayGeneration(code_lens_generation_, uri);
+  std::erase_if(code_lens_commands_,
+                [&uri](const auto& entry) { return entry.second.uri == uri; });
+  ProjectWorkspaceState& state = CurrentProjectState();
+  auto* presentation = state.plugin_presentation.get();
+  if (presentation == nullptr) {
+    return;
+  }
+  if (presentation->decorations.ClearOwnerFile("lsp:codelens", viewport.path())) {
+    state.MaybeReleasePluginPresentation();
+    operations_.request_editor_surface_redraw();
+  }
 }
 
 void LspService::MaybeRequestDocumentHighlights() {
@@ -1060,6 +1230,7 @@ void LspService::SyncLspForBufferChange(const editor::TextViewport& viewport,
   // before the client early-out so a stale overlay is cleared even with no server.
   ClearLspSemanticTokensForFile(viewport);
   ClearLspInlayHintsForFile(viewport);
+  ClearLspCodeLensesForFile(viewport);
 
   // Keep diagnostics positioned for the dirty buffer until the server republishes.
   // Runs before the client early-out so a dead/absent server never strands them.
@@ -1088,6 +1259,7 @@ void LspService::SyncLspForBufferChange(const editor::TextViewport& viewport,
   if (!viewport.dirty()) {
     RequestLspSemanticTokens(viewport, *target->client);
     RequestLspInlayHints(viewport, *target->client);
+    RequestLspCodeLenses(viewport, *target->client);
   }
 }
 
@@ -1105,6 +1277,7 @@ void LspService::SyncLspForActiveEditableLastChange() {
   // re-request below repopulates it when an undo/redo lands on the saved point.
   ClearLspSemanticTokensForFile(*viewport);
   ClearLspInlayHintsForFile(*viewport);
+  ClearLspCodeLensesForFile(*viewport);
 
   // Slide stored diagnostics through this keystroke so they stay on their text while
   // the buffer is dirty, until the server republishes authoritative ranges. Runs
@@ -1184,6 +1357,7 @@ void LspService::SyncLspForActiveEditableLastChange() {
   if (!viewport->dirty()) {
     RequestLspSemanticTokens(*viewport, *client);
     RequestLspInlayHints(*viewport, *client);
+    RequestLspCodeLenses(*viewport, *client);
   }
 }
 

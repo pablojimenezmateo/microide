@@ -182,6 +182,11 @@ void LspClient::Impl::DoInitializeBlocking() {
     document_highlight_caps["dynamicRegistration"] = JsonValue(false);
     text_document_caps["documentHighlight"] = JsonValue(std::move(document_highlight_caps));
   }
+  {
+    JsonObject code_lens_caps;
+    code_lens_caps["dynamicRegistration"] = JsonValue(false);
+    text_document_caps["codeLens"] = JsonValue(std::move(code_lens_caps));
+  }
 
   JsonObject workspace_caps;
   workspace_caps["configuration"] = JsonValue(true);
@@ -190,6 +195,12 @@ void LspClient::Impl::DoInitializeBlocking() {
     JsonObject symbol_caps;
     symbol_caps["dynamicRegistration"] = JsonValue(false);
     workspace_caps["symbol"] = JsonValue(std::move(symbol_caps));
+  }
+  {
+    // Activating a code lens runs its command through workspace/executeCommand.
+    JsonObject execute_command_caps;
+    execute_command_caps["dynamicRegistration"] = JsonValue(false);
+    workspace_caps["executeCommand"] = JsonValue(std::move(execute_command_caps));
   }
   // Server-initiated edits are applied by the host (open buffers in place, closed
   // files silently on disk) via the bound apply-edit handler.
@@ -404,6 +415,16 @@ void LspClient::Impl::DoInitializeBlocking() {
             const auto& provider = server_caps["documentHighlightProvider"];
             const bool provided = provider.IsObject() || provider.AsBool(false);
             supports_document_highlight.store(provided, std::memory_order_release);
+          }
+
+          // codeLensProvider is always an object when present, and its optional
+          // `resolveProvider` decides whether range-only lenses can be filled in.
+          if (server_caps.HasKey("codeLensProvider")) {
+            const auto& provider = server_caps["codeLensProvider"];
+            const bool provided = provider.IsObject() || provider.AsBool(false);
+            supports_code_lens.store(provided, std::memory_order_release);
+            supports_code_lens_resolve.store(provided && provider["resolveProvider"].AsBool(false),
+                                             std::memory_order_release);
           }
 
           // renameProvider may be a bare bool (plain rename) or an object that can

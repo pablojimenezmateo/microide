@@ -615,6 +615,60 @@ std::vector<LspClient::DocumentHighlight> ParseDocumentHighlights(const JsonValu
   return highlights;
 }
 
+LspClient::CodeLens ParseCodeLens(const JsonValue& value) {
+  // Cap the title: a lens is a one-line annotation rendered inside the editor row,
+  // so a huge one is a degenerate response we clamp rather than try to lay out.
+  constexpr std::size_t kMaxTitleBytes = 256;
+  LspClient::CodeLens lens;
+  if (!value.IsObject()) {
+    return lens;
+  }
+  lens.range = ParseRange(value["range"]);
+  const JsonValue& command = value["command"];
+  if (command.IsObject()) {
+    lens.title = command["title"].AsString();
+    TruncateUtf8InPlace(lens.title, kMaxTitleBytes);
+    lens.command = command["command"].AsString();
+    if (const JsonValue& args = command["arguments"]; args.IsArray()) {
+      // Bound the argument list: these are forwarded verbatim to
+      // workspace/executeCommand, so they are retained until the lens is replaced.
+      constexpr std::size_t kMaxArguments = 64;
+      const auto& array = args.AsArray();
+      const std::size_t count = std::min(array.size(), kMaxArguments);
+      lens.arguments.assign(array.begin(), array.begin() + static_cast<std::ptrdiff_t>(count));
+    }
+  }
+  if (lens.title.empty()) {
+    // Keep the lens object verbatim for codeLens/resolve: servers stash private
+    // correlation state in `data` and reject anything we rebuild ourselves.
+    lens.unresolved = value;
+  }
+  return lens;
+}
+
+std::vector<LspClient::CodeLens> ParseCodeLenses(const JsonValue& result,
+                                                 std::size_t max_lenses) {
+  std::vector<LspClient::CodeLens> lenses;
+  if (!result.IsArray()) {
+    return lenses;
+  }
+  const auto& array = result.AsArray();
+  const std::size_t count = std::min(array.size(), max_lenses);
+  lenses.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    LspClient::CodeLens lens = ParseCodeLens(array[i]);
+    if (lens.range.start.line < 0) {
+      continue;
+    }
+    // A lens with neither a title nor anything to resolve from paints nothing.
+    if (lens.title.empty() && lens.unresolved.IsNull()) {
+      continue;
+    }
+    lenses.push_back(std::move(lens));
+  }
+  return lenses;
+}
+
 JsonValue MakePosition(const LspClient::Position& position) {
   JsonObject object;
   object["line"] = JsonValue(static_cast<std::int64_t>(position.line));

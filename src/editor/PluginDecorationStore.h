@@ -95,6 +95,16 @@ struct CodeLensDecoration {
   std::uint32_t line = 0;
   std::string text;
   std::string command;  // command name dispatched on click
+  // Opaque handle to an executable payload the PUBLISHER owns, for lenses whose
+  // action cannot be named as a host command. Non-zero routes the click back to
+  // the publisher instead of the command registry; the LSP service uses it to
+  // carry a server command plus its JSON arguments (`workspace/executeCommand`),
+  // which no `command` string could express. 0 => dispatch `command` by name.
+  std::uint64_t payload = 0;
+
+  // A lens is clickable only when it has something to dispatch. Informational
+  // lenses (a bare label with no action) still render; they just do not respond.
+  bool activatable() const { return payload != 0 || !command.empty(); }
 
   bool operator==(const CodeLensDecoration&) const = default;
 };

@@ -491,6 +491,40 @@ void LspClient::ClearTestDocumentHighlightHandler() {
   impl_->test_handlers.document_highlight = nullptr;
 }
 
+bool LspClient::SupportsCodeLens() const {
+  return impl_->supports_code_lens.load(std::memory_order_acquire);
+}
+
+bool LspClient::SupportsCodeLensResolve() const {
+  return impl_->supports_code_lens_resolve.load(std::memory_order_acquire);
+}
+
+void LspClient::SetTestCodeLensHandler(
+    std::function<void(std::string uri, CodeLensCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_handlers.code_lens = std::move(handler);
+  impl_->supports_code_lens.store(true, std::memory_order_release);
+}
+
+void LspClient::ClearTestCodeLensHandler() {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_handlers.code_lens = nullptr;
+}
+
+void LspClient::SetTestResolveCodeLensHandler(
+    std::function<void(util::JsonValue unresolved, ResolveCodeLensCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_handlers.resolve_code_lens = std::move(handler);
+  impl_->supports_code_lens_resolve.store(true, std::memory_order_release);
+}
+
+void LspClient::SetTestExecuteCommandHandler(
+    std::function<void(std::string command, std::vector<util::JsonValue> arguments,
+                       ExecuteCommandCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_handlers.execute_command = std::move(handler);
+}
+
 void LspClient::SetTestPrepareRenameHandler(
     std::function<void(std::string uri, Position pos, PrepareRenameCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);

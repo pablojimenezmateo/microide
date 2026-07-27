@@ -439,4 +439,58 @@ void LspClient::RequestDocumentHighlightAsync(std::string uri, Position pos,
       });
 }
 
+void LspClient::RequestCodeLensAsync(std::string uri, CodeLensCallback callback) {
+  if (!callback) return;
+  if (impl_->DispatchTestStub(impl_->test_handlers.code_lens, callback, std::move(uri))) {
+    return;
+  }
+  if (!impl_->supports_code_lens.load(std::memory_order_acquire)) {
+    callback(std::nullopt);
+    return;
+  }
+  using namespace util;
+  JsonObject params;
+  params["textDocument"] = lsp_protocol::MakeTextDocumentIdentifier(uri);
+  impl_->DispatchResultRequest(
+      "textDocument/codeLens", JsonValue(std::move(params)), std::move(callback),
+      [](const util::JsonValue& result) {
+        return std::optional<std::vector<CodeLens>>(lsp_protocol::ParseCodeLenses(result));
+      });
+}
+
+void LspClient::ResolveCodeLensAsync(util::JsonValue unresolved,
+                                     ResolveCodeLensCallback callback) {
+  if (!callback) return;
+  if (impl_->DispatchTestStub(impl_->test_handlers.resolve_code_lens, callback,
+                              std::move(unresolved))) {
+    return;
+  }
+  if (!impl_->supports_code_lens_resolve.load(std::memory_order_acquire)) {
+    callback(std::nullopt);
+    return;
+  }
+  impl_->DispatchResultRequest("codeLens/resolve", std::move(unresolved), std::move(callback),
+                               [](const util::JsonValue& result) {
+                                 return std::optional<CodeLens>(lsp_protocol::ParseCodeLens(result));
+                               });
+}
+
+void LspClient::ExecuteServerCommandAsync(std::string command,
+                                          std::vector<util::JsonValue> arguments,
+                                          ExecuteCommandCallback callback) {
+  if (!callback) return;
+  if (impl_->DispatchTestStub(impl_->test_handlers.execute_command, callback, std::move(command),
+                              std::move(arguments))) {
+    return;
+  }
+  using namespace util;
+  JsonObject params;
+  params["command"] = JsonValue(std::move(command));
+  params["arguments"] = JsonValue(JsonArray(std::make_move_iterator(arguments.begin()),
+                                            std::make_move_iterator(arguments.end())));
+  impl_->DispatchResultRequest(
+      "workspace/executeCommand", JsonValue(std::move(params)), std::move(callback),
+      [](const util::JsonValue& result) { return std::optional<util::JsonValue>(result); });
+}
+
 }  // namespace microide::workspace

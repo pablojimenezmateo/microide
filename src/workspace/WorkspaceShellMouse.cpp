@@ -223,15 +223,21 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     // With `plugins.code_lens_above` the lens renders as an inset strip above its
     // line, so its click geometry comes from the gap layout instead of the EOL one.
     const bool code_lens_above = SettingFlagEnabled(GetSettingValue("plugins.code_lens_above"));
-    const auto command =
-        code_lens_above ? AboveLensCommandAtPosition(static_cast<float>(event.button.x),
-                                                     static_cast<float>(event.button.y))
-                        : CodeLensCommandAtPosition(static_cast<float>(event.button.x),
-                                                    static_cast<float>(event.button.y));
-    if (command.has_value()) {
+    const auto lens = code_lens_above ? AboveLensAtPosition(static_cast<float>(event.button.x),
+                                                            static_cast<float>(event.button.y))
+                                      : CodeLensAtPosition(static_cast<float>(event.button.x),
+                                                           static_cast<float>(event.button.y));
+    if (lens.has_value()) {
       context_.current_project_state.surface.focus = FocusTarget::Editor;
-      std::string error_message;
-      ExecuteCommandName(*command, {}, ActionSource::Command, &error_message);
+      // A non-zero payload belongs to the publisher (an LSP lens carries a server
+      // command plus JSON arguments, which no command name can express); anything
+      // else dispatches through the host command registry as before.
+      if (lens->payload != 0) {
+        lsp_service_.ActivateCodeLens(lens->payload);
+      } else {
+        std::string error_message;
+        ExecuteCommandName(lens->command, {}, ActionSource::Command, &error_message);
+      }
       EnsureRedraw([this]() { RequestWindowRedraw(); });
       return true;
     }
@@ -599,7 +605,8 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   return was_selecting;
 }
 
-std::optional<std::string> WorkspaceShell::AboveLensCommandAtPosition(float x, float y) const {
+std::optional<editor::CodeLensDecoration> WorkspaceShell::AboveLensAtPosition(float x,
+                                                                              float y) const {
   if (!ActiveTabIsEditor()) {
     return std::nullopt;
   }
@@ -616,7 +623,7 @@ std::optional<std::string> WorkspaceShell::AboveLensCommandAtPosition(float x, f
     return std::nullopt;
   }
   const auto resolve = [&](const editor::TextViewport& viewport,
-                           const SDL_FRect& rect) -> std::optional<std::string> {
+                           const SDL_FRect& rect) -> std::optional<editor::CodeLensDecoration> {
     if (viewport.is_placeholder() || viewport.path().empty() || viewport.dirty()) {
       return std::nullopt;
     }
@@ -628,9 +635,8 @@ std::optional<std::string> WorkspaceShell::AboveLensCommandAtPosition(float x, f
     const editor::InsetClickResult result = editor::ResolveInsetClick(
         pres->surfaces, pres->decorations, viewport, metrics.first_line_y,
         metrics.line_height, metrics.visible_rows, y, options);
-    if (result.gap_content.code_lens != nullptr &&
-        !result.gap_content.code_lens->command.empty()) {
-      return result.gap_content.code_lens->command;
+    if (result.gap_content.code_lens != nullptr && result.gap_content.code_lens->activatable()) {
+      return *result.gap_content.code_lens;
     }
     return std::nullopt;
   };

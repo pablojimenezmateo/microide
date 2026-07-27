@@ -982,6 +982,16 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "LSP → Features",
       },
       SettingSpec{
+          .id = "lsp.code_lens.enabled",
+          .label = "Code Lens",
+          .description = "Show the language server's line-level actions (reference counts, run "
+                         "test) above or at the end of their line. Click one to run it.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
           .id = "lsp.document_highlight.enabled",
           .label = "Semantic Occurrence Highlighting",
           .description = "Highlight other uses of the symbol under the caret using the language "

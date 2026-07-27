@@ -35,7 +35,7 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
 | `WorkspaceLspClientTransport.cpp` | I/O thread body (`IoMain`), outbound send/drain (`DrainOutbound`, `SendMessageImmediate`, `SendMessageBuilderAfterInitialize`), `WaitStdoutReadable`. |
 | `WorkspaceLspClientDispatch.cpp` | Inbound routing (`DispatchMessage`), server-request replies (`HandleServerRequest`, `SendResponse*`), timeout sweep (`FailPendingRequests`). |
 | `WorkspaceLspClientLifecycle.cpp` | Blocking initialize handshake (`DoInitializeBlocking`), shutdown (`DoShutdown`/`BeginShutdown`/`WaitForShutdown`), readiness (`SetProgressReadiness`). |
-| `WorkspaceLspClientRequests.cpp` | Interactive request methods (hover/completion/signatureHelp/codeAction/formatting/rangeFormatting/definition/typeDefinition/implementation/declaration/references/prepareRename/rename/documentSymbol/workspaceSymbol/semanticTokens/inlayHint/documentHighlight). definition + the three sibling navigations share one templated `DispatchLocationRequest`. |
+| `WorkspaceLspClientRequests.cpp` | Interactive request methods (hover/completion/signatureHelp/codeAction/formatting/rangeFormatting/definition/typeDefinition/implementation/declaration/references/prepareRename/rename/documentSymbol/workspaceSymbol/semanticTokens/inlayHint/documentHighlight/codeLens/executeCommand). definition + the three sibling navigations share one templated `DispatchLocationRequest`. |
 | `editor/InlayHintColumns.{h,cpp}` | Pure per-row inlay-hint grid displacement (**under `src/editor/`, not `src/workspace/`**): `InlayRowDisplacement` (cells-before / next-anchor / hit-test inverse), `BuildInlayRowSpans` (line decorations → row-local spans), and `RealVisualColumnForDisplayColumn` (the mouse inverse). |
 | `LspMessageFraming.{h,cpp}` | `LspMessageFramer`: the `Content-Length` JSON-RPC codec as a pure, unit-tested value type (partial-frame + oversized-skip state). |
 | `LspClientTrace.{h,cpp}` | `TraceLspLifecycle` (opt-in via `MICROIDE_TRACE_LSP_LIFECYCLE`) + transport tuning constants (`kLspRequestTimeout`, queue/message/read-buffer caps). |
@@ -122,6 +122,22 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
   displacement is generation-guarded like semantic tokens and identity (≈zero
   cost) on a row with no hints. **v1 limitation:** hints are suppressed on
   soft-wrapped lines (cross-wrap-row displacement is out of scope).
+- **Code lenses reuse the plugin decoration surface.** `textDocument/codeLens` is
+  pulled on the same triggers as inlay hints (didOpen, save, clean-landing
+  undo/redo) and gated on `lsp.code_lens.enabled` + the server's `codeLensProvider`.
+  Lenses the first response leaves title-less are filled in through
+  `codeLens/resolve` — the only way rust-analyzer and typescript-language-server
+  deliver theirs — with the ORIGINAL lens object round-tripped verbatim (servers
+  correlate through its private `data` field) and the original range kept (a
+  resolve reply may echo a default one). The document publishes once, after the last
+  resolve lands; the fan-out is bounded at 256 lenses per pull. Results become
+  `lsp:codelens` `CodeLensDecoration`s, so end-of-line rendering, above-line strips
+  (`plugins.code_lens_above`), sorting, per-row slicing and hit-testing are all the
+  existing plugin machinery. A server command plus JSON arguments cannot be spelled
+  as a host command name, so the decoration carries an opaque `payload` handle into
+  an `LspService`-owned table instead; a click resolves it and runs
+  `workspace/executeCommand`. The table is rebuilt per publish (each publish drops
+  the URI's previous entries), and a handle from a superseded publish is inert.
 - **Occurrence highlighting is semantic when a server can answer.**
   `textDocument/documentHighlight` is requested for the caret's position from
   `WorkspaceShell::OnFramePresented` — the one point every caret-moving path (mouse,

@@ -2079,6 +2079,124 @@ return ide.plugin({
   }
 }
 
+// Code lenses flow LSP -> line-level annotations: opening a served document
+// requests textDocument/codeLens, fills in title-less lenses through
+// codeLens/resolve (the only way rust-analyzer and typescript-language-server
+// deliver theirs), publishes them as "lsp:codelens" decorations, and routes a
+// click back to the server as workspace/executeCommand with the original arguments.
+void TestWorkspaceShellCodeLensesResolveAndActivate() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path md_file = project / "notes.md";
+  WriteFile(md_file, "fn alpha() {}\nfn beta() {}\n");
+
+  WritePluginInit(plugins_root, "mdlens",
+                  R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "mdlens",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "md-lsp-server" } })
+  end
+})
+)lua");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "code-lens fixture should open the project");
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  stub->EnableTestStubMode();
+  // Line 0 arrives complete; line 1 arrives title-less and must be resolved.
+  stub->SetTestCodeLensHandler([](std::string, workspace::LspClient::CodeLensCallback cb) {
+    workspace::LspClient::CodeLens resolved;
+    resolved.range = {{0, 0}, {0, 13}};
+    resolved.title = "2 references";
+    resolved.command = "md.showRefs";
+    resolved.arguments.push_back(util::JsonValue(std::int64_t{7}));
+
+    workspace::LspClient::CodeLens pending;
+    pending.range = {{1, 0}, {1, 12}};
+    util::JsonObject raw;
+    raw["data"] = util::JsonValue(std::int64_t{99});
+    pending.unresolved = util::JsonValue(std::move(raw));
+
+    cb(std::vector<workspace::LspClient::CodeLens>{std::move(resolved), std::move(pending)});
+  });
+  util::JsonValue resolve_saw;
+  stub->SetTestResolveCodeLensHandler(
+      [&resolve_saw](util::JsonValue unresolved, workspace::LspClient::ResolveCodeLensCallback cb) {
+        resolve_saw = unresolved;
+        workspace::LspClient::CodeLens filled;
+        // A server is free to echo a default range here; the host must keep the
+        // range from the original lens rather than collapsing the lens onto line 0.
+        filled.title = "Run test";
+        filled.command = "md.runTest";
+        cb(std::move(filled));
+      });
+  std::string executed_command;
+  std::vector<util::JsonValue> executed_arguments;
+  stub->SetTestExecuteCommandHandler(
+      [&](std::string command, std::vector<util::JsonValue> arguments,
+          workspace::LspClient::ExecuteCommandCallback cb) {
+        executed_command = std::move(command);
+        executed_arguments = std::move(arguments);
+        cb(util::JsonValue{});
+      });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
+         "fixture should attach a stub markdown client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, md_file);
+  (void)WorkspaceShellTestAccess::ResolveLspHoverForTesting(shell, md_file, 1, 1);
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+
+  Expect(resolve_saw["data"].AsInt(0) == 99,
+         "codeLens/resolve receives the server's original lens object verbatim");
+
+  const auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  const auto* presentation = state.plugin_presentation_if_present();
+  Expect(presentation != nullptr, "a code-lens overlay should be published");
+  const auto* decorations =
+      presentation != nullptr ? presentation->decorations.FindByPath(md_file) : nullptr;
+  Expect(decorations != nullptr && decorations->code_lenses.size() == 2,
+         "both lenses publish, including the one that needed resolving");
+  if (decorations == nullptr || decorations->code_lenses.size() != 2) {
+    return;
+  }
+  const auto line0 = decorations->CodeLensesForLine(0);
+  const auto line1 = decorations->CodeLensesForLine(1);
+  Expect(line0.size() == 1 && line0[0].text == "2 references",
+         "the already-resolved lens keeps its title on its own line");
+  Expect(line1.size() == 1 && line1[0].text == "Run test",
+         "the resolved lens keeps the ORIGINAL range's line, not the resolve reply's");
+  Expect(line0[0].payload != 0 && line1[0].payload != 0 && line0[0].payload != line1[0].payload,
+         "each activatable lens gets its own payload handle");
+  Expect(line0[0].command.empty(),
+         "an LSP lens dispatches through its payload, not the host command registry");
+
+  WorkspaceShellTestAccess::ActivateCodeLens(shell, line0[0].payload);
+  Expect(executed_command == "md.showRefs",
+         "activating a lens runs its server command through workspace/executeCommand");
+  Expect(executed_arguments.size() == 1 && executed_arguments[0].AsInt(0) == 7,
+         "the lens's original arguments are forwarded verbatim");
+
+  // A handle that no longer names a published lens must be inert, not a crash or a
+  // stray command: a click can land after the buffer republished.
+  executed_command.clear();
+  WorkspaceShellTestAccess::ActivateCodeLens(shell, line0[0].payload + 4242);
+  Expect(executed_command.empty(), "an unknown payload handle runs nothing");
+}
+
 // prepareRename refines the just-opened Rename Symbol prompt: it prefills the
 // server's placeholder, and rejects positions the server reports as not renameable.
 void TestWorkspaceShellPrepareRenameRefinesPrompt() {
@@ -5014,6 +5132,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSignatureHelpPrefersLspOverPlugin);
   AddTest(tests, "WorkspaceShell/InlayHintsPublishMidLineDecorations",
           TestWorkspaceShellInlayHintsPublishMidLineDecorations);
+  AddTest(tests, "WorkspaceShell/CodeLensesResolveAndActivate",
+          TestWorkspaceShellCodeLensesResolveAndActivate);
   AddTest(tests, "WorkspaceShell/PrepareRenameRefinesPrompt",
           TestWorkspaceShellPrepareRenameRefinesPrompt);
   AddTest(tests, "WorkspaceShell/ServerApplyEditEditsOpenAndClosedFiles",

@@ -1057,6 +1057,8 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
   // Inlay hints are equally pull-based; re-request for the saved content so they
   // reappear after the edit path cleared them.
   lsp_service_.RequestLspInlayHints(*viewport, *client);
+  // Code lenses are pull-based too; re-request for the saved content.
+  lsp_service_.RequestLspCodeLenses(*viewport, *client);
 }
 
 void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
