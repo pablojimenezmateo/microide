@@ -179,7 +179,7 @@ RuleResult CheckReactivationDoesNotReloadPlugins(const std::filesystem::path& re
     });
     return result;
   }
-  const std::string text = ReadText(path);
+  const std::string text = ReadRuleTarget(result, path);
   AppendCodeMaskRegexViolations(
       result, path, text,
       std::regex(R"(\b(?:ReloadPluginsForCurrentProject|reload_plugins_for_current_project)\b)"),
@@ -388,7 +388,7 @@ RuleResult CheckTextViewportSpecialMembersCoverEveryField(
     return result;
   }
 
-  const std::string header_text = ReadText(header);
+  const std::string header_text = ReadRuleTarget(result, header);
   const std::vector<bool> header_code = BuildCodeMask(header_text);
   // Members are the trailing-underscore identifiers declared in the private
   // section: `<type> name_ = init;` / `<type> name_;`. Restrict the scan to the
@@ -434,7 +434,7 @@ RuleResult CheckTextViewportSpecialMembersCoverEveryField(
     return result;
   }
 
-  const std::string source_text = ReadText(source);
+  const std::string source_text = ReadRuleTarget(result, source);
   struct Region {
     std::string_view label;
     std::string_view signature;

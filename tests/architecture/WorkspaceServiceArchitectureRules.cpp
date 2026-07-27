@@ -16,7 +16,7 @@ RuleResult CheckRenderTuDoesNotMaterializeStrings(const std::filesystem::path& r
   result.label = "render translation units do not materialize search fallback strings";
   result.hard_fail = true;
   const std::filesystem::path sidebar_path = repo_root / "src/workspace/WorkspaceShellRenderSidebar.cpp";
-  const std::string text = ReadText(sidebar_path);
+  const std::string text = ReadRuleTarget(result, sidebar_path);
   AppendViolations(
       result, sidebar_path, text, std::regex(R"(std::string\s*\(\s*"search>\s*"\s*\)\s*\+)"),
       "render code must use RenderViewModelBuilder query_fallback_text");
@@ -177,7 +177,7 @@ RuleResult CheckTextViewportNoFullDocCopy(const std::filesystem::path& repo_root
   result.label = "TextViewport batch replace paths avoid full document materialization";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/editor/TextViewportEditEngine.cpp";
-  const std::string text = ReadText(path);
+  const std::string text = ReadRuleTarget(result, path);
   AppendFullDocumentMaterializationViolations(result, path, text,
                                               "std::size_t TextViewport::ReplaceAll(");
   AppendFullDocumentMaterializationViolations(
@@ -191,7 +191,7 @@ RuleResult CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot(
   result.label = "TextViewport edit pipeline avoids full document_->lines snapshots";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/editor/TextViewportEditEngine.cpp";
-  const std::string text = ReadText(path);
+  const std::string text = ReadRuleTarget(result, path);
   const std::array<std::string_view, 3> signatures = {
       "bool TextViewport::ApplyLineEdit(",
       "bool TextViewport::ApplyRangeEdit(",
@@ -209,7 +209,7 @@ RuleResult CheckRenderTuEditorEssentialsAvoidEphemeralLabelStrings(
   result.label = "editor essentials render helpers avoid std::string fold/sticky labels";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/editor/EditorViewRenderer.cpp";
-  const std::string text = ReadText(path);
+  const std::string text = ReadRuleTarget(result, path);
   const std::array<std::pair<std::regex, std::string_view>, 4> patterns = {
       std::pair{std::regex(R"(\bstd::string\b[^;\n]*FoldGutter)"),
                 "fold gutter painting must stay glyph/decoration-only (no std::string labels)"},
@@ -545,7 +545,7 @@ RuleResult CheckStatusBarRefreshIsAsyncOnly(const std::filesystem::path& repo_ro
       });
       continue;
     }
-    const std::string text = ReadText(path);
+    const std::string text = ReadRuleTarget(result, path);
     const auto is_code = BuildCodeMask(text);
     for (const auto& pattern : patterns) {
       for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {

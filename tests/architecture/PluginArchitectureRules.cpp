@@ -116,7 +116,7 @@ RuleResult CheckEssentialEditorCppModulesDoNotTouchLuaState(
       });
       continue;
     }
-    const std::string file_text = ReadText(path);
+    const std::string file_text = ReadRuleTarget(result, path);
     AppendCodeMaskRegexViolations(
         result, path, file_text, lua_pointer,
         "WorkspaceLanguageContract/FoldingModel/IndentGuides/SnippetEngine must stay Lua-free "
@@ -140,7 +140,7 @@ RuleResult CheckNoProjectLocalPluginDiscovery(const std::filesystem::path& repo_
       R"(DiscoverPluginRoots\s*\(\s*[^)]*(current_project_root|project_root|ProjectRoot))");
 
   const auto scan_file = [&](const std::filesystem::path& path) {
-    const std::string text = ReadText(path);
+    const std::string text = ReadRuleTarget(result, path);
     const std::vector<bool> is_code = BuildCodeMask(text);
     for (const std::string_view literal : forbidden_literals) {
       for (const std::size_t pos : FindCodeLiteralOccurrences(text, literal)) {

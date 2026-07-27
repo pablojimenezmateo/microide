@@ -102,7 +102,7 @@ RuleResult CheckBuildEditorViewModelUsesIncrementalVectorWrites(
   result.label = "BuildEditorViewModel clears and appends view-model vectors";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/workspace/RenderViewModelBuilder.cpp";
-  const std::string text = ReadText(path);
+  const std::string text = ReadRuleTarget(result, path);
   const auto body_with_offset = ExtractMemberFunctionBodyWithOffset(
       text, "editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel");
   if (!body_with_offset.has_value()) {
@@ -197,7 +197,7 @@ RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& rep
 
   const std::filesystem::path header = repo_root / "src/workspace/RenderViewModelBuilder.h";
   if (std::filesystem::exists(header)) {
-    const std::string text = ReadText(header);
+    const std::string text = ReadRuleTarget(result, header);
     // OverlayState must not appear anywhere in the view-model header: the overlay
     // model is fully owned (TD-2026-07-17-084).
     AppendCodeMaskRegexViolations(

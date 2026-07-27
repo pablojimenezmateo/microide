@@ -103,6 +103,13 @@ bool RequireRuleTarget(RuleResult& result, const std::filesystem::path& path) {
   return false;
 }
 
+std::string ReadRuleTarget(RuleResult& result, const std::filesystem::path& path) {
+  if (!RequireRuleTarget(result, path)) {
+    return {};
+  }
+  return ReadText(path);
+}
+
 void ReportRule(const RuleResult& result) {
   if (result.violations.empty() && result.missing_targets.empty()) {
     return;

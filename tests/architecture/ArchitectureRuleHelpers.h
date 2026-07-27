@@ -76,4 +76,11 @@ RuleResult CheckShellFileSize(const std::filesystem::path& repo_root,
 // this instead.
 bool RequireRuleTarget(RuleResult& result, const std::filesystem::path& path);
 
+// Reads a rule's named target. A missing file is recorded on
+// `result.missing_targets` and read back as an empty string, so the patterns
+// below it match nothing — but the run fails instead of reporting green. Use this
+// for every target named by a path variable; bare ReadText stays for paths that
+// came from directory iteration, where the file is known to exist.
+std::string ReadRuleTarget(RuleResult& result, const std::filesystem::path& path);
+
 }  // namespace microide::tests::architecture

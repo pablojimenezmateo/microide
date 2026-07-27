@@ -268,7 +268,7 @@ RuleResult CheckRenderSurfaceStateAccess(const std::filesystem::path& repo_root)
   const std::regex direct_state_pattern(R"(context_\.current_project_state)");
   const std::regex current_surface_pattern(R"(\bCurrentTextInputSurface\s*\()");
   for (const auto& path : render_files) {
-    const std::string text = ReadText(path);
+    const std::string text = ReadRuleTarget(result, path);
     AppendViolations(result, path, text, direct_state_pattern,
                      "render surface files should read project state through render view models");
     AppendViolations(result, path, text, current_surface_pattern,
@@ -322,8 +322,8 @@ RuleResult CheckPerClipRenderPathDoesNotRunFramePrep(const std::filesystem::path
 
   const std::filesystem::path app_cpp = repo_root / "src/app/Application.cpp";
   const std::filesystem::path shell_render_cpp = repo_root / "src/workspace/WorkspaceShellRender.cpp";
-  const std::string app_text = ReadText(app_cpp);
-  const std::string shell_render_text = ReadText(shell_render_cpp);
+  const std::string app_text = ReadRuleTarget(result, app_cpp);
+  const std::string shell_render_text = ReadRuleTarget(result, shell_render_cpp);
   const std::vector<bool> app_is_code = BuildCodeMask(app_text);
   const std::vector<bool> shell_is_code = BuildCodeMask(shell_render_text);
 
@@ -511,7 +511,7 @@ RuleResult CheckEveryActionIdIsReachable(const std::filesystem::path& repo_root)
   result.hard_fail = true;
 
   const std::filesystem::path types_header = repo_root / "src/workspace/WorkspaceActionTypes.h";
-  const std::string types_text = ReadText(types_header);
+  const std::string types_text = ReadRuleTarget(result, types_header);
   const std::size_t enum_at = types_text.find("enum class ActionId");
   const std::size_t open_brace =
       enum_at == std::string::npos ? std::string::npos : types_text.find('{', enum_at);

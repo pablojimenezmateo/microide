@@ -81,7 +81,7 @@ RuleResult CheckTerminalParserHelpersNoForbiddenDeps(const std::filesystem::path
   };
   for (const std::string_view relative : helper_paths) {
     const std::filesystem::path path = repo_root / relative;
-    const std::string text = ReadText(path);
+    const std::string text = ReadRuleTarget(result, path);
     for (const std::string_view needle : forbidden) {
       if (text.find(needle) != std::string::npos) {
         result.violations.push_back(Violation{
@@ -100,7 +100,7 @@ RuleResult CheckTerminalSessionNoExtractedImpl(const std::filesystem::path& repo
   result.label = "TerminalSession.cpp keeps extracted helper implementations out";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.cpp";
-  const std::string text = ReadText(path);
+  const std::string text = ReadRuleTarget(result, path);
   // These patterns anchor a definition to the start of a LINE, so they need
   // std::regex::multiline. Without it `^` matches only at offset 0 of the whole
   // file — which for a .cpp is always `#include`, so three of these five
@@ -159,7 +159,7 @@ RuleResult CheckTerminalSessionPrivateMethodCount(const std::filesystem::path& r
   // Reverse Index, and SU/SD) so the common full-screen path stays untouched.
   constexpr std::size_t kCap = 41;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
-  const std::string text = ReadText(path);
+  const std::string text = ReadRuleTarget(result, path);
   const std::regex locked_helper_pattern(R"((?:void|bool|std::size_t)\s+\w+Locked\s*\()");
   const std::size_t count =
       static_cast<std::size_t>(std::distance(
@@ -206,7 +206,7 @@ RuleResult CheckTerminalInternalHeadersStayInTerminalDir(const std::filesystem::
       if (relative.rfind("src/terminal/", 0) == 0) {
         continue;
       }
-      const std::string text = ReadText(path);
+      const std::string text = ReadRuleTarget(result, path);
       for (const std::string_view header : internal_headers) {
         const std::string needle = std::string("terminal/") + std::string(header);
         if (text.find(needle) != std::string::npos) {
@@ -466,7 +466,7 @@ RuleResult CheckSettingsReadAreRegistered(const std::filesystem::path& repo_root
 
   const std::filesystem::path registry_path =
       repo_root / "src/workspace/WorkspaceSettingsRegistry.cpp";
-  const std::string registry_text = ReadText(registry_path);
+  const std::string registry_text = ReadRuleTarget(result, registry_path);
   if (registry_text.empty()) {
     result.violations.push_back(Violation{
         .path = registry_path,
@@ -599,7 +599,7 @@ RuleResult CheckRegisteredSettingsAreRead(const std::filesystem::path& repo_root
   result.hard_fail = true;
 
   const std::filesystem::path registry = repo_root / "src/workspace/WorkspaceSettingsRegistry.cpp";
-  const std::string registry_text = ReadText(registry);
+  const std::string registry_text = ReadRuleTarget(result, registry);
   const std::vector<bool> registry_is_code = BuildCodeMask(registry_text);
   // Custom delimiter: the pattern itself contains `)"`.
   const std::regex id_pattern(R"re(\.id\s*=\s*"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)")re");
