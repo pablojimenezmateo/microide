@@ -34,7 +34,8 @@ struct BenchRun {
 void PrintUsage() {
   std::cerr
       << "usage: microide_search_bench <project-root> <query> [--regex|--literal]"
-      << " [--case=smart|sensitive|insensitive] [--hidden] [--runs=N]\n";
+      << " [--case=smart|sensitive|insensitive] [--hidden] [--runs=N]"
+      << " [--include=<globs>] [--exclude=<globs>]\n";
 }
 
 std::optional<ProjectSearchCaseMode> ParseCaseMode(std::string_view value) {
@@ -129,6 +130,14 @@ int main(int argc, char** argv) {
       options.show_hidden = true;
       continue;
     }
+    if (argument.starts_with("--include=")) {
+      options.include_globs = argument.substr(std::string_view("--include=").size());
+      continue;
+    }
+    if (argument.starts_with("--exclude=")) {
+      options.exclude_globs = argument.substr(std::string_view("--exclude=").size());
+      continue;
+    }
     if (argument.starts_with("--case=")) {
       const auto case_mode = ParseCaseMode(argument.substr(std::string_view("--case=").size()));
       if (!case_mode.has_value()) {
@@ -193,6 +202,8 @@ int main(int argc, char** argv) {
   std::cout << "pattern-mode: " << PatternModeLabel(options.pattern_mode) << '\n';
   std::cout << "case-mode: " << CaseModeLabel(options.case_mode) << '\n';
   std::cout << "show-hidden: " << (options.show_hidden ? "yes" : "no") << '\n';
+  std::cout << "include: " << options.include_globs << '\n';
+  std::cout << "exclude: " << options.exclude_globs << '\n';
   std::cout << "runs: " << run_count << '\n';
   std::cout << "results: " << runs.front().result_count << '\n';
   std::cout << "truncated: " << (runs.front().truncated ? "yes" : "no") << '\n';

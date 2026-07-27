@@ -39,6 +39,16 @@ struct ProjectSearchOptions {
   // kMaxProjectSearchResults for display). Default false preserves early-stop
   // speed; the UI exposes this as an opt-in toggle.
   bool count_all_matches = false;
+  // VSCode-style scope filters: comma-separated glob lists parsed by
+  // `project::GlobSet` (see GlobMatch.h for the exact pattern grammar). A file is
+  // searched when it matches `include_globs` (or the box is empty) and does not
+  // match `exclude_globs`. Both are empty by default, which costs one predicate
+  // per file and skips the glob machinery entirely.
+  //
+  // This is the cheapest possible speedup for a scoped search: a filtered-out
+  // file is rejected on its path alone, so it is never opened, read, or scanned.
+  std::string include_globs;
+  std::string exclude_globs;
 };
 
 struct ProjectSearchResult {

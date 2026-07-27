@@ -33,6 +33,7 @@ enum class PerfCounterId : std::size_t {
   SearchProjectLowerLineCalls,
   SearchProjectLowerLineBytes,
   SearchProjectCandidateFilesFromIndex,
+  SearchProjectScopeFilteredFiles,
   FileFinderCacheBuildCalls,
   FileFinderCacheEntriesBuilt,
   ProjectFileScannerCollectProjectFilesCalls,

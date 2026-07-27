@@ -38,6 +38,7 @@ constexpr std::array<std::string_view, kPerfCounterCount> kCounterNames = {
     "search.project_lower_line_calls",
     "search.project_lower_line_bytes",
     "search.project_candidate_files_from_index",
+    "search.project_scope_filtered_files",
     "search.file_finder_cache_build_calls",
     "search.file_finder_cache_entries_built",
     "project.collect_project_files_calls",

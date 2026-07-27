@@ -3,6 +3,7 @@
 #include "project/ProjectSearchService.h"
 #include "project/ProjectSearchServiceInternal.h"
 #include "project/ProjectFileScanner.h"
+#include "util/PerformanceCounters.h"
 
 #include <algorithm>
 #include <atomic>
@@ -749,6 +750,73 @@ void TestProjectSearchServiceCatastrophicRegexIsBounded() {
          "the bounded match limit must let the search complete well before the deadline");
 }
 
+// VSCode-style scope filters. The point of an include/exclude box is not just a
+// narrower result list — an out-of-scope file must never be opened, which is the
+// only reason scoping is faster than filtering results after the fact.
+void TestProjectSearchServiceScopeGlobsRestrictCandidates() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  WriteFile(root / "src" / "main.cpp", "needle\n");
+  WriteFile(root / "src" / "main.h", "needle\n");
+  WriteFile(root / "src" / "generated" / "tables.cpp", "needle\n");
+  WriteFile(root / "tests" / "MainTests.cpp", "needle\n");
+  WriteFile(root / "README.md", "needle\n");
+
+  const auto unscoped = RunProjectSearch(root, "needle");
+  Expect(unscoped.finished, "unscoped search should finish");
+  Expect(unscoped.results.size() == 5, "unscoped search should match every file");
+
+  ProjectSearchOptions include_only;
+  include_only.include_globs = "*.cpp";
+  const auto included = RunProjectSearch(root, "needle", include_only);
+  Expect(included.finished, "include-scoped search should finish");
+  Expect(included.error.empty(), "include-scoped search should not error");
+  Expect(included.results.size() == 3, "'*.cpp' should float to every .cpp at any depth");
+
+  ProjectSearchOptions with_exclude = include_only;
+  with_exclude.exclude_globs = "**/generated/**, tests";
+  const auto scoped = RunProjectSearch(root, "needle", with_exclude);
+  Expect(scoped.finished, "scoped search should finish");
+  Expect(scoped.results.size() == 1, "exclude globs should subtract from the include set");
+  Expect(scoped.results[0].relative_path == std::filesystem::path("src/main.cpp"),
+         "only src/main.cpp should survive both scope filters");
+
+  ProjectSearchOptions exclude_only;
+  exclude_only.exclude_globs = "*.md";
+  const auto without_docs = RunProjectSearch(root, "needle", exclude_only);
+  Expect(without_docs.finished, "exclude-only search should finish");
+  Expect(without_docs.results.size() == 4,
+         "an empty include box should mean 'everything', not 'nothing'");
+}
+
+// The scope filter must reject on the path alone. A file whose content would match
+// but whose path is out of scope contributes nothing, and the skip is counted so a
+// regression that reads the file anyway is visible rather than merely slower.
+void TestProjectSearchServiceScopeGlobsSkipFilesWithoutReading() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  for (int index = 0; index < 8; ++index) {
+    WriteFile(root / "skipped" / (std::to_string(index) + ".txt"), "needle\n");
+  }
+  WriteFile(root / "kept.cpp", "needle\n");
+
+  ProjectSearchOptions options;
+  options.include_globs = "*.cpp";
+
+  util::ResetPerformanceCounters();
+  const auto scoped = RunProjectSearch(root, "needle", options);
+  Expect(scoped.finished, "scoped search should finish");
+  Expect(scoped.results.size() == 1, "only the in-scope file should match");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::SearchProjectScopeFilteredFiles) == 8,
+         "every out-of-scope file should be rejected on its path, before any read");
+
+  util::ResetPerformanceCounters();
+  const auto unscoped = RunProjectSearch(root, "needle");
+  Expect(unscoped.results.size() == 9, "the unscoped run should still see every file");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::SearchProjectScopeFilteredFiles) == 0,
+         "an inactive scope must not run the filter at all");
+}
+
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ProjectSearchService/CatastrophicRegexIsBounded",
           TestProjectSearchServiceCatastrophicRegexIsBounded);
@@ -768,6 +836,10 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServiceRegexFindNextIsCancellable);
   AddTest(tests, "ProjectSearchService/HiddenAndBinaryFiles",
           TestProjectSearchServiceHiddenAndBinaryFiles);
+  AddTest(tests, "ProjectSearchService/ScopeGlobsRestrictCandidates",
+          TestProjectSearchServiceScopeGlobsRestrictCandidates);
+  AddTest(tests, "ProjectSearchService/ScopeGlobsSkipFilesWithoutReading",
+          TestProjectSearchServiceScopeGlobsSkipFilesWithoutReading);
   AddTest(tests, "ProjectSearchService/ExcludesIgnoredFilesByDefault",
           TestProjectSearchServiceExcludesIgnoredFilesByDefault);
   AddTest(tests, "ProjectSearchService/PublishesStableResultOrdering",

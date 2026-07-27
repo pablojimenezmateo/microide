@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "app/BackgroundTaskCounter.h"
+#include "project/GlobMatch.h"
 #include "util/Parse.h"
 #include "util/PerformanceCounters.h"
 #include "util/SdlWake.h"
@@ -318,6 +319,14 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
   std::atomic<bool> truncated{false};
   const bool count_all = options.count_all_matches;
 
+  // Scope filters are parsed once here and shared read-only by every worker; the
+  // per-file test is a pure string match against the already-materialized relative
+  // path, so a filtered-out file never reaches the filesystem. When both boxes are
+  // empty `scope_active` is false and the loop below pays one bool check per file.
+  const GlobSet include_globs = GlobSet::Parse(options.include_globs);
+  const GlobSet exclude_globs = GlobSet::Parse(options.exclude_globs);
+  const bool scope_active = !include_globs.empty() || !exclude_globs.empty();
+
   auto run_worker = [&]() {
     // Per-worker scratch: reused buffers (no per-file/per-line allocation) and a
     // private match-data object (pcre2_match is thread-safe only with distinct
@@ -332,6 +341,12 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     // per-match fetch_add on the shared atomic, which would serialize every worker on
     // one cache line for the whole tail of a common-pattern count-all search.
     std::size_t local_over_cap_matches = 0;
+    // Files the scope filter rejected without opening. Tallied locally and folded
+    // once at worker exit for the same reason as `local_over_cap_matches`: a
+    // per-file bump on a process-global counter would serialize every worker on one
+    // cache line across the entire index scan, which is exactly the loop scoping is
+    // supposed to make cheap.
+    std::size_t local_scope_filtered = 0;
 
     // Default stops claiming files once the display cap is reached; count-all
     // keeps scanning every file so it can report the exact total.
@@ -349,12 +364,23 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
       }
 
       const std::filesystem::path& relative_path = candidate_files[file_index];
+      // Materialized before the read (rather than after it, as this used to be) so
+      // the scope filter can reject a file from its path alone — the whole point of
+      // scoping is that an out-of-scope file is never opened. The match loop below
+      // reuses the same string, so no extra work is done on the in-scope path.
+      const std::string relative_path_string = relative_path.generic_string();
+      if (scope_active) {
+        if ((!include_globs.empty() && !include_globs.Matches(relative_path_string)) ||
+            (!exclude_globs.empty() && exclude_globs.Matches(relative_path_string))) {
+          ++local_scope_filtered;
+          continue;
+        }
+      }
       // One whole-file read (reusing file_buffer's capacity); returns false for
       // unreadable files and binaries (any embedded NUL), which we skip.
       if (!util::ReadFileForTextSearch(absolute_root / relative_path, file_buffer)) {
         continue;
       }
-      const std::string relative_path_string = relative_path.string();
 
       const std::string_view content(file_buffer);
       std::size_t line_index = 0;
@@ -462,6 +488,10 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     // matches were already counted by the fetch_add above.)
     if (local_over_cap_matches != 0) {
       matches_found.fetch_add(local_over_cap_matches, std::memory_order_relaxed);
+    }
+    if (local_scope_filtered != 0) {
+      util::AddPerformanceCounter(util::PerfCounterId::SearchProjectScopeFilteredFiles,
+                                  local_scope_filtered);
     }
 
     if (!batch.empty() && !token.IsCancellationRequested()) {
