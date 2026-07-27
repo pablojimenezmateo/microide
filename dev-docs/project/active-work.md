@@ -753,6 +753,24 @@ Deferred (not fixed, low value or hard to reach/test):
   backends are not built (see the non-Linux note above); Linux inotify handles
   both cases correctly.
 
+## Commit Pre-Check Warnings (2026-07-27)
+
+`CommitPreCheckSeverity::Warning` is genuinely advisory and genuinely distinct from
+`Blocking`. `RequestCommit` handles the three cases separately:
+
+- a `Blocking` check refuses outright, every time, and nothing acknowledges it;
+- nothing staged refuses with `Nothing staged`;
+- unacknowledged `Warning` checks raise a `ConfirmCommitWarnings` prompt listing
+  them. Confirming records the acknowledgements and dispatches the operation the
+  user originally asked for; cancelling acknowledges nothing, so the next attempt
+  asks again. `Open()` and a successful commit both clear the set.
+
+Before this, `acknowledged_warning_ids` had no reachable writer, so every Warning
+behaved exactly like Blocking — a repository with any untracked file could not be
+committed at all. Do not re-merge the Blocking and Warning arms of `RequestCommit`,
+and do not add a Warning-severity pre-check expecting it to hard-block: use
+`Blocking` for that.
+
 ## Git Workstation
 
 The workstation release scope, safe startup flags, release checklist, and trust documentation are
