@@ -127,6 +127,9 @@ void TestUnmatchedDecrementDoesNotGoNegative() {
     app::DecrementBackgroundTaskCountAndWake();
   }
   // Now decrement PAST zero: this is the underflow probe. Must stay clamped at zero.
+  // EXPECTED SIDE EFFECT: this prints "[background-task-counter] unmatched decrement"
+  // to stderr. That line in an otherwise-green suite run is this test, by design —
+  // it is the guard reporting itself, not a real accounting bug in SerialWorkQueue.
   app::DecrementBackgroundTaskCountAndWake();
   Expect(app::GetBackgroundTaskCount() == 0,
          "an unmatched decrement must leave the count at zero, not negative");

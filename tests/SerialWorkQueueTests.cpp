@@ -391,7 +391,6 @@ void TestDepthBudgetShedsOldestDroppableOnly() {
 // correctness bug, so the budget is best-effort against critical work.
 void TestDepthBudgetNeverShedsCriticalWork() {
   SerialWorkQueue queue(SerialWorkQueue::StartMode::kEager, {}, SerialWorkQueue::Limits{2});
-  std::mutex mutex;
   std::atomic<bool> release{false};
   std::atomic<int> ran{0};
 

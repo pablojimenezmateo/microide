@@ -24,7 +24,12 @@ const char* const kRows[] = {
     "abcdef",             // ASCII
     "\t\tindented",       // leading tabs
     "ab\tcd\tef",         // interior tabs
-    "a\xE4\xB8\xAD" "b",  // a 中 b  (中 = U+4E2D, 3 bytes)
+    // 'b' is spelled \x62 rather than written plainly: a hex escape consumes as many
+    // hex digits as it can, so "a\xE4\xB8\xADb" would swallow the b into \xAD. The
+    // previous fix for that was to split the literal ("a\xE4\xB8\xAD" "b"), which is
+    // correct but reads exactly like a missing comma in an array of strings — clang
+    // warns on it for that reason. Escaping the byte keeps the row unambiguous.
+    "a\xE4\xB8\xAD\x62",  // a 中 b  (中 = U+4E2D, 3 bytes)
     "e\xCC\x81xy",        // e + combining acute (U+0301, 2 bytes)
     "\t\xE4\xB8\xAD\t\xCC\x81z",  // tab, CJK, tab, combining, ASCII
 };
