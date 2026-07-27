@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "workspace/ProjectSearchPanelLayout.h"
+
 #include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
@@ -14,20 +16,12 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .begin_project_search_edit =
               [this](ProjectSearchEditField field) { BeginProjectSearchEdit(field); },
-          .project_search_query_rect =
-              [this](const SDL_FRect& rect) { return ProjectSearchQueryRect(rect); },
-          .project_search_replace_rect =
-              [this](const SDL_FRect& rect) { return ProjectSearchReplaceRect(rect); },
-          .project_search_mode_button_rect =
-              [this](const SDL_FRect& rect) { return ProjectSearchModeButtonRect(rect); },
           .commit_project_search_edit = [this]() { CommitProjectSearchEdit(); },
           .toggle_project_search_pattern_mode = [this]() { ToggleProjectSearchPatternMode(); },
-          .project_search_case_button_rect =
-              [this](const SDL_FRect& rect) { return ProjectSearchCaseButtonRect(rect); },
           .cycle_project_search_case_mode = [this]() { CycleProjectSearchCaseMode(); },
-          .project_search_hidden_button_rect =
-              [this](const SDL_FRect& rect) { return ProjectSearchHiddenButtonRect(rect); },
           .toggle_project_search_hidden_files = [this]() { ToggleProjectSearchHiddenFiles(); },
+          .toggle_project_search_scope_expanded =
+              [this]() { ToggleProjectSearchScopeExpanded(); },
           .build_project_search_line_map = [this]() { return BuildProjectSearchLineMap(); },
           .compute_project_search_sidebar_list_layout =
               [this](const SDL_FRect& rect, std::size_t count) {

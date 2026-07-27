@@ -114,6 +114,10 @@ enum class BufferSearchField {
 enum class ProjectSearchEditField {
   Query,
   Replace,
+  // "files to include" / "files to exclude" scope globs, shown only while the
+  // panel's "..." toggle is expanded (VS Code's affordance).
+  Include,
+  Exclude,
 };
 
 struct ProjectSurfaceState {
@@ -169,6 +173,14 @@ struct ProjectSearchState {
   bool editing = false;
   ProjectSearchEditField edit_field = ProjectSearchEditField::Query;
   editor::SingleLineEditor replace_text;
+  // Scope globs mirrored into `options.include_globs` / `options.exclude_globs`
+  // when committed. Held as editors (not raw strings) so they share the same
+  // single-line editing/caret/selection behaviour as the query and replace boxes.
+  editor::SingleLineEditor include_globs;
+  editor::SingleLineEditor exclude_globs;
+  // Whether the include/exclude fields are shown. Collapsed by default so the
+  // result list keeps its vertical space until the user asks for scoping.
+  bool scope_expanded = false;
   std::vector<project::ProjectSearchResult> results;
   // Monotonic revision of `results`, bumped by every mutation (clear on a new run /
   // overlay close, append+sort in ConsumeProjectSearchUpdates). The grouped sidebar
@@ -206,6 +218,29 @@ struct ProjectSearchState {
   bool index_incomplete = false;
   std::string error;
 };
+
+// The committed editor behind one search-panel field. Single source of truth for
+// the field->editor mapping so begin/commit/cancel-edit cannot drift apart (they
+// each used to spell their own Query-or-Replace ternary, which does not scale to
+// four fields).
+inline editor::SingleLineEditor& ProjectSearchFieldEditor(ProjectSearchState& search,
+                                                          ProjectSearchEditField field) {
+  switch (field) {
+    case ProjectSearchEditField::Replace:
+      return search.replace_text;
+    case ProjectSearchEditField::Include:
+      return search.include_globs;
+    case ProjectSearchEditField::Exclude:
+      return search.exclude_globs;
+    case ProjectSearchEditField::Query:
+    default:
+      return search.query;
+  }
+}
+inline const editor::SingleLineEditor& ProjectSearchFieldEditor(const ProjectSearchState& search,
+                                                                ProjectSearchEditField field) {
+  return ProjectSearchFieldEditor(const_cast<ProjectSearchState&>(search), field);
+}
 
 // One selectable row in the ref/commit picker. Display strings are precomputed
 // when the list is built (in the coordinator) so the render TU only draws them.

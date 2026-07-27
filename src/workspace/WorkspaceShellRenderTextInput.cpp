@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 
+#include "workspace/ProjectSearchPanelLayout.h"
+
 #include "workspace/RenderViewModelBuilder.h"
 
 #include <algorithm>
@@ -35,6 +37,8 @@ bool UsesSharedSingleLineCaret(TextInputSurface surface) {
     case TextInputSurface::CommandPalette:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::SidebarSearchInclude:
+    case TextInputSurface::SidebarSearchExclude:
     case TextInputSurface::CommitSubject:
       return true;
     case TextInputSurface::CommitBody:
@@ -288,14 +292,33 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       };
     }
     case TextInputSurface::SidebarSearchQuery:
-    case TextInputSurface::SidebarSearchReplace: {
+    case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::SidebarSearchInclude:
+    case TextInputSurface::SidebarSearchExclude: {
       if (!sidebar_vm.visible || sidebar_vm.mode != SidebarMode::Search ||
           !sidebar_vm.project_search_editing) {
         return std::nullopt;
       }
-      const SDL_FRect text_rect =
-          surface == TextInputSurface::SidebarSearchQuery ? ProjectSearchQueryRect(layout.sidebar)
-                                                          : ProjectSearchReplaceRect(layout.sidebar);
+      const bool scope_expanded = sidebar_vm.project_search_scope_expanded;
+      SDL_FRect text_rect{};
+      switch (surface) {
+        case TextInputSurface::SidebarSearchReplace:
+          text_rect = project_search_panel::ReplaceRect(layout.sidebar);
+          break;
+        case TextInputSurface::SidebarSearchInclude:
+          text_rect = project_search_panel::IncludeRect(layout.sidebar, scope_expanded);
+          break;
+        case TextInputSurface::SidebarSearchExclude:
+          text_rect = project_search_panel::ExcludeRect(layout.sidebar, scope_expanded);
+          break;
+        default:
+          text_rect = project_search_panel::QueryRect(layout.sidebar);
+          break;
+      }
+      if (text_rect.w <= 0.0f) {
+        // A collapsed scope field is not drawn, so it has no caret to place.
+        return std::nullopt;
+      }
       const float text_x = text_rect.x + 6.0f;
       const float text_y = text_rect.y + 3.0f;
       const std::string_view prefix = "";

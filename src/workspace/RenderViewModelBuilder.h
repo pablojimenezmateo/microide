@@ -168,6 +168,11 @@ struct SidebarSurfaceViewModel {
   // the view model. Avoids per-frame `std::string` allocations on every BuildSidebarSurface() call.
   std::string_view query_fallback_text;
   std::string_view replace_fallback_text;
+  // Same contract for the scope glob fields; only meaningful while
+  // `project_search_scope_expanded` is true.
+  std::string_view include_fallback_text;
+  std::string_view exclude_fallback_text;
+  bool project_search_scope_expanded = false;
   // Prebuilt project-search status/hint line (empty unless mode == Search).
   // Points into a builder-owned thread-local cache; consume within the frame.
   std::string_view project_search_status_text;

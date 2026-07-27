@@ -9,7 +9,20 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
   const SidebarMode sidebar_mode = operations_.active_sidebar_mode();
   if (sidebar_mode == SidebarMode::Search) {
     const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
-    if (state_.overlay.workflow.project_search.editing) {
+    auto& search_state = state_.overlay.workflow.project_search;
+    // Fields the panel currently offers, in Tab order. The scope globs are only
+    // reachable while the scope section is expanded.
+    const auto visible_fields = [&search_state]() {
+      std::vector<ProjectSearchEditField> fields{ProjectSearchEditField::Query,
+                                                 ProjectSearchEditField::Replace};
+      if (search_state.scope_expanded) {
+        fields.push_back(ProjectSearchEditField::Include);
+        fields.push_back(ProjectSearchEditField::Exclude);
+      }
+      return fields;
+    };
+
+    if (search_state.editing) {
       switch (event.key) {
         case SDLK_ESCAPE:
           operations_.cancel_project_search_edit();
@@ -18,6 +31,25 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
         case SDLK_KP_ENTER:
           operations_.commit_project_search_edit();
           return true;
+        case SDLK_TAB: {
+          // Tab/Shift+Tab walk the visible fields, committing on the way out so a
+          // query or glob edit takes effect as the focus leaves it.
+          const std::vector<ProjectSearchEditField> fields = visible_fields();
+          std::size_t index = 0;
+          for (std::size_t i = 0; i < fields.size(); ++i) {
+            if (fields[i] == search_state.edit_field) {
+              index = i;
+              break;
+            }
+          }
+          const std::size_t count = fields.size();
+          const std::size_t next = (modifiers & SDL_KMOD_SHIFT) != 0
+                                       ? (index + count - 1) % count
+                                       : (index + 1) % count;
+          operations_.commit_project_search_edit();
+          operations_.begin_project_search_edit(fields[next]);
+          return true;
+        }
         default:
           return operations_.text_input_handle_single_line_key_down(event, modifiers);
       }
@@ -99,6 +131,22 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       case SDLK_SLASH:
         operations_.begin_project_search_edit(ProjectSearchEditField::Query);
         return true;
+      case SDLK_I:
+        // "files to include" / "files to exclude" — expand the scope section on
+        // demand so the shortcut works from the collapsed default.
+        if (input_character == 'i') {
+          search_state.scope_expanded = true;
+          operations_.begin_project_search_edit(ProjectSearchEditField::Include);
+          return true;
+        }
+        return false;
+      case SDLK_X:
+        if (input_character == 'x') {
+          search_state.scope_expanded = true;
+          operations_.begin_project_search_edit(ProjectSearchEditField::Exclude);
+          return true;
+        }
+        return false;
       default:
         if (event.key == SDLK_J && input_character == 'j') {
           operations_.move_project_search_selection(1);

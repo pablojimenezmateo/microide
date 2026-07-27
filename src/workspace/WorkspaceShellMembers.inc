@@ -514,13 +514,6 @@
     Unavailable,
   };
 
-  static constexpr float kProjectSearchButtonTop = 34.0f;
-  static constexpr float kProjectSearchQueryTop = 58.0f;
-  static constexpr float kProjectSearchReplaceTop = 82.0f;
-  static constexpr float kProjectSearchButtonHeight = 18.0f;
-  static constexpr float kProjectSearchStatusTop = 106.0f;
-  static constexpr float kProjectSearchResultsTop = 124.0f;
-
   static std::span<const ActionSpec> ActionSpecs();
   static const ActionSpec* FindActionSpec(ActionId id);
   static const ActionSpec* FindActionByCommand(std::string_view command_name);
@@ -1287,11 +1280,11 @@
   void BeginProjectSearchEdit(ProjectSearchEditField field);
   void CommitProjectSearchEdit();
   void CancelProjectSearchEdit();
-  SDL_FRect ProjectSearchQueryRect(const SDL_FRect& sidebar_rect) const;
-  SDL_FRect ProjectSearchReplaceRect(const SDL_FRect& sidebar_rect) const;
-  SDL_FRect ProjectSearchModeButtonRect(const SDL_FRect& sidebar_rect) const;
-  SDL_FRect ProjectSearchCaseButtonRect(const SDL_FRect& sidebar_rect) const;
-  SDL_FRect ProjectSearchHiddenButtonRect(const SDL_FRect& sidebar_rect) const;
+  // Panel geometry lives in workspace/ProjectSearchPanelLayout.h (free functions
+  // of the sidebar rect + the scope-expanded flag) so the shell owns behaviour,
+  // not layout arithmetic.
+  bool ProjectSearchScopeExpanded() const;
+  void ToggleProjectSearchScopeExpanded();
   std::string ProjectSearchModeButtonLabel() const;
   std::string ProjectSearchCaseButtonLabel() const;
   std::string ProjectSearchHiddenButtonLabel() const;

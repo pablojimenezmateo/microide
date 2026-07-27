@@ -1017,6 +1017,21 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
   const std::string_view replace_fallback_text =
       replace_text.empty() ? kReplacePlaceholder : replace_text;
 
+  constexpr std::string_view kIncludePlaceholder = "files to include";
+  constexpr std::string_view kExcludePlaceholder = "files to exclude";
+  const std::string_view include_text =
+      project_search.editing && project_search.edit_field == ProjectSearchEditField::Include
+          ? project_search.edit_buffer.text()
+          : project_search.include_globs.text();
+  const std::string_view exclude_text =
+      project_search.editing && project_search.edit_field == ProjectSearchEditField::Exclude
+          ? project_search.edit_buffer.text()
+          : project_search.exclude_globs.text();
+  const std::string_view include_fallback_text =
+      include_text.empty() ? kIncludePlaceholder : include_text;
+  const std::string_view exclude_fallback_text =
+      exclude_text.empty() ? kExcludePlaceholder : exclude_text;
+
   const SidebarMode mode = SidebarModeFromViewId(context_.current_project_state.sidebar.view_id);
   const std::string_view project_search_status_text =
       mode == SidebarMode::Search ? CachedProjectSearchStatus(project_search) : std::string_view{};
@@ -1047,6 +1062,9 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
           context_.current_project_state.overlay.workflow.project_search.editing,
       .query_fallback_text = query_fallback_text,
       .replace_fallback_text = replace_fallback_text,
+      .include_fallback_text = include_fallback_text,
+      .exclude_fallback_text = exclude_fallback_text,
+      .project_search_scope_expanded = project_search.scope_expanded,
       .project_search_status_text = project_search_status_text,
       .git_sidebar = git_sidebar,
       .git_sidebar_lines = git_sidebar_lines,

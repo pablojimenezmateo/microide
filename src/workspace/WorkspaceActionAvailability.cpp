@@ -305,8 +305,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
              text_input_surface == TextInputSurface::BufferReplaceReplace ||
              text_input_surface == TextInputSurface::ProjectSearchOverlay ||
              text_input_surface == TextInputSurface::CommitPicker ||
-             text_input_surface == TextInputSurface::SidebarSearchQuery ||
-             text_input_surface == TextInputSurface::SidebarSearchReplace;
+             IsSidebarSearchFieldSurface(text_input_surface);
     case ActionId::InsertText:
       // `type <text>` targets the active editable viewport or a text-input
       // surface, same as a paste.
@@ -320,8 +319,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
              text_input_surface == TextInputSurface::BufferReplaceReplace ||
              text_input_surface == TextInputSurface::ProjectSearchOverlay ||
              text_input_surface == TextInputSurface::CommitPicker ||
-             text_input_surface == TextInputSurface::SidebarSearchQuery ||
-             text_input_surface == TextInputSurface::SidebarSearchReplace ||
+             IsSidebarSearchFieldSurface(text_input_surface) ||
              (context_.current_project_state.surface.focus == FocusTarget::Panel &&
               active_terminal_tab != nullptr);
     case ActionId::Goto:

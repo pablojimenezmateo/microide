@@ -317,15 +317,46 @@
   }
   static SDL_FRect SearchSidebarModeButtonRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return shell.ProjectSearchModeButtonRect(layout.sidebar);
+    return project_search_panel::ModeButtonRect(layout.sidebar);
   }
   static SDL_FRect SearchSidebarCaseButtonRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return shell.ProjectSearchCaseButtonRect(layout.sidebar);
+    return project_search_panel::CaseButtonRect(layout.sidebar);
   }
   static SDL_FRect SearchSidebarHiddenButtonRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return shell.ProjectSearchHiddenButtonRect(layout.sidebar);
+    return project_search_panel::HiddenButtonRect(layout.sidebar);
+  }
+  static SDL_FRect SearchSidebarScopeButtonRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return project_search_panel::ScopeButtonRect(layout.sidebar);
+  }
+  static SDL_FRect SearchSidebarIncludeFieldRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return project_search_panel::IncludeRect(
+        layout.sidebar,
+        shell.context_.current_project_state.overlay.workflow.project_search.scope_expanded);
+  }
+  static SDL_FRect SearchSidebarExcludeFieldRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return project_search_panel::ExcludeRect(
+        layout.sidebar,
+        shell.context_.current_project_state.overlay.workflow.project_search.scope_expanded);
+  }
+  static bool ProjectSearchScopeExpanded(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.project_search.scope_expanded;
+  }
+  static void SetProjectSearchScopeGlobs(WorkspaceShell& shell, std::string include,
+                                         std::string exclude) {
+    auto& search = shell.context_.current_project_state.overlay.workflow.project_search;
+    search.include_globs.SetText(std::move(include));
+    search.exclude_globs.SetText(std::move(exclude));
+  }
+  static ProjectSearchEditField ProjectSearchEditFieldValue(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.project_search.edit_field;
+  }
+  static bool ProjectSearchEditing(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.project_search.editing;
   }
   static SDL_FRect TreeSidebarCollapseButtonRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);

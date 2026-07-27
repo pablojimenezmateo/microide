@@ -20,6 +20,10 @@ enum class TextInputSurface {
   CommandPalette,
   SidebarSearchQuery,
   SidebarSearchReplace,
+  // "files to include" / "files to exclude" scope glob fields in the search
+  // sidebar. Present only while the panel's scope section is expanded.
+  SidebarSearchInclude,
+  SidebarSearchExclude,
   CommitSubject,
   CommitBody,
   Terminal,
@@ -43,5 +47,16 @@ struct TextInputState {
   TextInputSurface active_surface = TextInputSurface::None;
   TextCompositionState composition;
 };
+
+// True for the four single-line fields in the search sidebar's header (query,
+// replace, and the two scope glob boxes). They share caret handling, focus
+// routing, and text dispatch, so the predicate lives here rather than being
+// re-spelled as a four-case fallthrough at every consumer.
+inline bool IsSidebarSearchFieldSurface(TextInputSurface surface) {
+  return surface == TextInputSurface::SidebarSearchQuery ||
+         surface == TextInputSurface::SidebarSearchReplace ||
+         surface == TextInputSurface::SidebarSearchInclude ||
+         surface == TextInputSurface::SidebarSearchExclude;
+}
 
 }  // namespace microide::workspace

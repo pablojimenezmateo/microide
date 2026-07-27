@@ -18,15 +18,15 @@ class SidebarMouseCoordinator {
   struct Operations {
     std::function<SidebarMode()> active_sidebar_mode;
     std::function<void(ProjectSearchEditField)> begin_project_search_edit;
-    std::function<SDL_FRect(const SDL_FRect&)> project_search_query_rect;
-    std::function<SDL_FRect(const SDL_FRect&)> project_search_replace_rect;
-    std::function<SDL_FRect(const SDL_FRect&)> project_search_mode_button_rect;
+    // Search-panel geometry is not routed through here: the coordinator already
+    // holds the project state the layout depends on, so it calls the free
+    // functions in ProjectSearchPanelLayout.h directly instead of five
+    // shell-bound rect callbacks.
     std::function<void()> commit_project_search_edit;
     std::function<void()> toggle_project_search_pattern_mode;
-    std::function<SDL_FRect(const SDL_FRect&)> project_search_case_button_rect;
     std::function<void()> cycle_project_search_case_mode;
-    std::function<SDL_FRect(const SDL_FRect&)> project_search_hidden_button_rect;
     std::function<void()> toggle_project_search_hidden_files;
+    std::function<void()> toggle_project_search_scope_expanded;
     std::function<std::vector<int>()> build_project_search_line_map;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>
         compute_project_search_sidebar_list_layout;

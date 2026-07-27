@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "workspace/ProjectSearchPanelLayout.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -55,37 +56,38 @@ bool SidebarMouseCoordinator::HandleSearchButtonDown(const SDL_Event& event,
   if (event.button.button != SDL_BUTTON_LEFT) {
     return true;
   }
-  if (Contains(operations_.project_search_query_rect(layout.sidebar), event.button.x, event.button.y)) {
-    operations_.begin_project_search_edit(ProjectSearchEditField::Query);
-    return true;
-  }
-  if (Contains(operations_.project_search_replace_rect(layout.sidebar), event.button.x, event.button.y)) {
-    operations_.begin_project_search_edit(ProjectSearchEditField::Replace);
-    return true;
-  }
-  if (Contains(operations_.project_search_mode_button_rect(layout.sidebar), event.button.x,
-               event.button.y)) {
-    if (state_.overlay.workflow.project_search.editing) {
-      operations_.commit_project_search_edit();
+  const SDL_FPoint point{static_cast<float>(event.button.x), static_cast<float>(event.button.y)};
+  for (const auto& field : project_search_panel::SidebarSearchFieldRects(
+           layout.sidebar, state_.overlay.workflow.project_search.scope_expanded)) {
+    if (field.rect.w > 0.0f && Contains(field.rect, point.x, point.y)) {
+      operations_.begin_project_search_edit(field.field);
+      return true;
     }
-    operations_.toggle_project_search_pattern_mode();
-    return true;
   }
-  if (Contains(operations_.project_search_case_button_rect(layout.sidebar), event.button.x,
-               event.button.y)) {
-    if (state_.overlay.workflow.project_search.editing) {
-      operations_.commit_project_search_edit();
+
+  // Every toggle button commits an in-flight field edit first so the click never
+  // silently discards typed text.
+  const struct {
+    SDL_FRect rect;
+    const std::function<void()>& action;
+  } buttons[] = {
+      {project_search_panel::ModeButtonRect(layout.sidebar),
+       operations_.toggle_project_search_pattern_mode},
+      {project_search_panel::CaseButtonRect(layout.sidebar),
+       operations_.cycle_project_search_case_mode},
+      {project_search_panel::HiddenButtonRect(layout.sidebar),
+       operations_.toggle_project_search_hidden_files},
+      {project_search_panel::ScopeButtonRect(layout.sidebar),
+       operations_.toggle_project_search_scope_expanded},
+  };
+  for (const auto& button : buttons) {
+    if (Contains(button.rect, point.x, point.y)) {
+      if (state_.overlay.workflow.project_search.editing) {
+        operations_.commit_project_search_edit();
+      }
+      button.action();
+      return true;
     }
-    operations_.cycle_project_search_case_mode();
-    return true;
-  }
-  if (Contains(operations_.project_search_hidden_button_rect(layout.sidebar), event.button.x,
-               event.button.y)) {
-    if (state_.overlay.workflow.project_search.editing) {
-      operations_.commit_project_search_edit();
-    }
-    operations_.toggle_project_search_hidden_files();
-    return true;
   }
   if (local_y < 0.0f) {
     return true;

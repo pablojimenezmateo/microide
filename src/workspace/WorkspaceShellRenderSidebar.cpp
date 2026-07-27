@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 
+#include "workspace/ProjectSearchPanelLayout.h"
+
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -240,15 +242,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
   const SidebarMode sidebar_mode = sidebar_vm.mode;
   if (sidebar_mode == SidebarMode::Search) {
     const auto& ps = project_state.overlay.workflow.project_search;
-    const bool editing_query =
-        ps.editing && ps.edit_field == ProjectSearchEditField::Query;
-    const bool editing_replace =
-        ps.editing && ps.edit_field == ProjectSearchEditField::Replace;
-
     const TextInputSurface current_surface = text_input_vm.current_surface;
-    const bool sidebar_needs_visual =
-        current_surface == TextInputSurface::SidebarSearchQuery ||
-        current_surface == TextInputSurface::SidebarSearchReplace;
+    const bool sidebar_needs_visual = IsSidebarSearchFieldSurface(current_surface);
     const auto visual =
         sidebar_needs_visual ? BuildActiveTextInputVisual(layout, std::nullopt) : std::nullopt;
     const auto sidebar_display_text = [&](TextInputSurface surface,
@@ -259,25 +254,32 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       return fallback;
     };
 
-    const SDL_FRect query_rect = ProjectSearchQueryRect(layout.sidebar);
-    const SDL_FRect replace_rect = ProjectSearchReplaceRect(layout.sidebar);
-    DrawTextFieldFrame(renderer, theme_, query_rect,
-                       current_surface == TextInputSurface::SidebarSearchQuery);
-    DrawTextFieldFrame(renderer, theme_, replace_rect,
-                       current_surface == TextInputSurface::SidebarSearchReplace);
-    DrawSingleLineTextTail(
-        renderer, query_rect.x + 6.0f, query_rect.y + 3.0f,
-        std::max(1.0f, query_rect.w - 12.0f),
-        editing_query ? theme_.text_primary : theme_.text_secondary,
-        theme_.surface_background,
-        sidebar_display_text(TextInputSurface::SidebarSearchQuery, sidebar_vm.query_fallback_text));
-    DrawSingleLineTextTail(
-        renderer, replace_rect.x + 6.0f, replace_rect.y + 3.0f,
-        std::max(1.0f, replace_rect.w - 12.0f),
-        editing_replace ? theme_.text_primary : theme_.text_secondary,
-        theme_.surface_background,
-        sidebar_display_text(TextInputSurface::SidebarSearchReplace,
-                             sidebar_vm.replace_fallback_text));
+    // One draw per search field: query, replace, and (when the scope section is
+    // expanded) the include/exclude glob boxes. A collapsed scope field has a
+    // zero-sized rect, which the loop skips.
+    // Placeholder/committed text per field, indexed the same as the shared field
+    // list below so the two never fall out of order.
+    const std::string_view fallbacks[] = {
+        sidebar_vm.query_fallback_text,
+        sidebar_vm.replace_fallback_text,
+        sidebar_vm.include_fallback_text,
+        sidebar_vm.exclude_fallback_text,
+    };
+    const auto search_fields =
+        project_search_panel::SidebarSearchFieldRects(layout.sidebar, ps.scope_expanded);
+    for (std::size_t index = 0; index < search_fields.size(); ++index) {
+      const auto& field = search_fields[index];
+      if (field.rect.w <= 0.0f) {
+        continue;
+      }
+      DrawTextFieldFrame(renderer, theme_, field.rect, current_surface == field.surface);
+      DrawSingleLineTextTail(renderer, field.rect.x + 6.0f, field.rect.y + 3.0f,
+                             std::max(1.0f, field.rect.w - 12.0f),
+                             ps.editing && ps.edit_field == field.field ? theme_.text_primary
+                                                                       : theme_.text_secondary,
+                             theme_.surface_background,
+                             sidebar_display_text(field.surface, fallbacks[index]));
+    }
     const auto draw_search_button = [&](const SDL_FRect& rect,
                                         std::string_view label,
                                         bool active) {
@@ -290,20 +292,24 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           });
     };
 
-    draw_search_button(ProjectSearchModeButtonRect(layout.sidebar), ProjectSearchModeButtonLabel(),
+    draw_search_button(project_search_panel::ModeButtonRect(layout.sidebar), ProjectSearchModeButtonLabel(),
                        project_state.overlay.workflow.project_search.options.pattern_mode ==
                            project::ProjectSearchPatternMode::Regex);
-    draw_search_button(ProjectSearchCaseButtonRect(layout.sidebar), ProjectSearchCaseButtonLabel(),
+    draw_search_button(project_search_panel::CaseButtonRect(layout.sidebar), ProjectSearchCaseButtonLabel(),
                        project_state.overlay.workflow.project_search.options.case_mode !=
                            project::ProjectSearchCaseMode::Smart);
-    draw_search_button(ProjectSearchHiddenButtonRect(layout.sidebar),
+    draw_search_button(project_search_panel::HiddenButtonRect(layout.sidebar),
                        ProjectSearchHiddenButtonLabel(),
                        project_state.overlay.workflow.project_search.options.show_hidden);
+    draw_search_button(project_search_panel::ScopeButtonRect(layout.sidebar),
+                       // "..." mirrors VS Code's show/hide-scope affordance; a
+                       // constant label needs no shell accessor.
+                       "...", ps.scope_expanded);
 
     // The status/hint line is composed once (and cached) in
     // RenderViewModelBuilder::BuildSidebarSurface; draw the prebuilt view.
     DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
-               layout.sidebar.y + kProjectSearchStatusTop, theme_.text_muted,
+               layout.sidebar.y + project_search_panel::StatusTop(ps.scope_expanded), theme_.text_muted,
                theme_.surface_background,
                TruncateLabelView(sidebar_vm.project_search_status_text,
                                  layout.sidebar.w - kSidebarInset * 2.0f));

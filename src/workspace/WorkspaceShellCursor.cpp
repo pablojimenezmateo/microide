@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "workspace/ProjectSearchPanelLayout.h"
+
 #include <algorithm>
 #include <cctype>
 #include <string_view>
@@ -447,13 +449,17 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Pointer;
     }
     if (sidebar_mode == SidebarMode::Search) {
-      if (Contains(ProjectSearchQueryRect(layout.sidebar), x, y) ||
-          Contains(ProjectSearchReplaceRect(layout.sidebar), x, y)) {
-        return CursorKind::Text;
+      for (const auto& field : project_search_panel::SidebarSearchFieldRects(
+               layout.sidebar,
+               context_.current_project_state.overlay.workflow.project_search.scope_expanded)) {
+        if (field.rect.w > 0.0f && Contains(field.rect, x, y)) {
+          return CursorKind::Text;
+        }
       }
-      if (Contains(ProjectSearchModeButtonRect(layout.sidebar), x, y) ||
-          Contains(ProjectSearchCaseButtonRect(layout.sidebar), x, y) ||
-          Contains(ProjectSearchHiddenButtonRect(layout.sidebar), x, y)) {
+      if (Contains(project_search_panel::ModeButtonRect(layout.sidebar), x, y) ||
+          Contains(project_search_panel::CaseButtonRect(layout.sidebar), x, y) ||
+          Contains(project_search_panel::HiddenButtonRect(layout.sidebar), x, y) ||
+          Contains(project_search_panel::ScopeButtonRect(layout.sidebar), x, y)) {
         return CursorKind::Pointer;
       }
 

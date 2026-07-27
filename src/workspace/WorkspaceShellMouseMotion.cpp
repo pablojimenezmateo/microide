@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "workspace/ProjectSearchPanelLayout.h"
+
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -39,6 +41,8 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
           break;
         case TextInputSurface::SidebarSearchQuery:
         case TextInputSurface::SidebarSearchReplace:
+        case TextInputSurface::SidebarSearchInclude:
+        case TextInputSurface::SidebarSearchExclude:
           EnsureRedraw([this]() { RequestSidebarRedraw(); });
           break;
         default:
@@ -166,17 +170,21 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
     switch (ActiveSidebarMode()) {
       case SidebarMode::Search: {
-        const SDL_FRect mode_rect = ProjectSearchModeButtonRect(layout.sidebar);
+        const SDL_FRect mode_rect = project_search_panel::ModeButtonRect(layout.sidebar);
         if (Contains(mode_rect, x, y)) {
           return mode_rect;
         }
-        const SDL_FRect case_rect = ProjectSearchCaseButtonRect(layout.sidebar);
+        const SDL_FRect case_rect = project_search_panel::CaseButtonRect(layout.sidebar);
         if (Contains(case_rect, x, y)) {
           return case_rect;
         }
-        const SDL_FRect hidden_rect = ProjectSearchHiddenButtonRect(layout.sidebar);
+        const SDL_FRect hidden_rect = project_search_panel::HiddenButtonRect(layout.sidebar);
         if (Contains(hidden_rect, x, y)) {
           return hidden_rect;
+        }
+        const SDL_FRect scope_rect = project_search_panel::ScopeButtonRect(layout.sidebar);
+        if (Contains(scope_rect, x, y)) {
+          return scope_rect;
         }
         return std::nullopt;
       }

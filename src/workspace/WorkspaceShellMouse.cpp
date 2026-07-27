@@ -135,6 +135,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     switch (context_.interaction_state.single_line_drag_surface) {
       case TextInputSurface::SidebarSearchQuery:
       case TextInputSurface::SidebarSearchReplace:
+      case TextInputSurface::SidebarSearchInclude:
+      case TextInputSurface::SidebarSearchExclude:
       case TextInputSurface::CommitSubject:
         EnsureRedraw([this]() { RequestSidebarRedraw(); });
         break;
@@ -570,6 +572,8 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
         break;
       case TextInputSurface::SidebarSearchQuery:
       case TextInputSurface::SidebarSearchReplace:
+      case TextInputSurface::SidebarSearchInclude:
+      case TextInputSurface::SidebarSearchExclude:
         EnsureRedraw([this]() { RequestSidebarRedraw(); });
         break;
       default:

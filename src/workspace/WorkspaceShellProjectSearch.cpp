@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "workspace/ProjectSearchPanelLayout.h"
+
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -7,6 +9,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "project/GlobMatch.h"
 #include "workspace/WorkspaceProjectSearchPresentation.h"
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -145,10 +148,18 @@ void WorkspaceShell::RefreshProjectSearch() {
       context_.current_project_state.file_index.truncated();
   util::AddPerformanceCounter(util::PerfCounterId::SearchProjectCandidateFilesFromIndex,
                               file_snapshot.files ? file_snapshot.files->size() : 0);
+  // Mirror the committed scope editors into the options the worker sees. Held on
+  // the options (not re-read from the editors) so an in-flight run keeps the scope
+  // it started with.
+  project::ProjectSearchOptions options =
+      context_.current_project_state.overlay.workflow.project_search.options;
+  options.include_globs =
+      context_.current_project_state.overlay.workflow.project_search.include_globs.text();
+  options.exclude_globs =
+      context_.current_project_state.overlay.workflow.project_search.exclude_globs.text();
   project_search_runtime_.Start(context_.current_project_state.root,
                                 context_.current_project_state.overlay.workflow.project_search.query.text(),
-                                context_.current_project_state.overlay.workflow.project_search.options,
-                                file_snapshot.files);
+                                std::move(options), file_snapshot.files);
   ResetOverlayScroll();
   RequestSidebarRedraw();
 }
@@ -246,76 +257,50 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
 }
 
 void WorkspaceShell::BeginProjectSearchEdit(ProjectSearchEditField field) {
-  context_.current_project_state.overlay.workflow.project_search.edit_field = field;
-  context_.current_project_state.overlay.workflow.project_search.edit_buffer.SetText(
-      field == ProjectSearchEditField::Query
-          ? context_.current_project_state.overlay.workflow.project_search.query.text()
-          : context_.current_project_state.overlay.workflow.project_search.replace_text.text());
-  context_.current_project_state.overlay.workflow.project_search.editing = true;
+  auto& search = context_.current_project_state.overlay.workflow.project_search;
+  search.edit_field = field;
+  search.edit_buffer.SetText(ProjectSearchFieldEditor(search, field).text());
+  search.editing = true;
   RequestSidebarRedraw();
 }
 
 void WorkspaceShell::CommitProjectSearchEdit() {
-  context_.current_project_state.overlay.workflow.project_search.editing = false;
-  if (context_.current_project_state.overlay.workflow.project_search.edit_field == ProjectSearchEditField::Query) {
-    context_.current_project_state.overlay.workflow.project_search.query.SetText(
-        context_.current_project_state.overlay.workflow.project_search.edit_buffer.text());
-    RefreshProjectSearch();
+  auto& search = context_.current_project_state.overlay.workflow.project_search;
+  search.editing = false;
+  const ProjectSearchEditField field = search.edit_field;
+  ProjectSearchFieldEditor(search, field).SetText(search.edit_buffer.text());
+  // Query and scope globs all change WHICH files match, so committing any of them
+  // re-runs the search. Replace text only affects a later replace-all.
+  if (field == ProjectSearchEditField::Replace) {
+    RequestSidebarRedraw();
     return;
   }
-
-  context_.current_project_state.overlay.workflow.project_search.replace_text.SetText(
-      context_.current_project_state.overlay.workflow.project_search.edit_buffer.text());
-  RequestSidebarRedraw();
+  RefreshProjectSearch();
 }
 
 void WorkspaceShell::CancelProjectSearchEdit() {
-  context_.current_project_state.overlay.workflow.project_search.edit_buffer.SetText(
-      context_.current_project_state.overlay.workflow.project_search.edit_field ==
-              ProjectSearchEditField::Query
-          ? context_.current_project_state.overlay.workflow.project_search.query.text()
-          : context_.current_project_state.overlay.workflow.project_search.replace_text.text());
-  context_.current_project_state.overlay.workflow.project_search.editing = false;
+  auto& search = context_.current_project_state.overlay.workflow.project_search;
+  search.edit_buffer.SetText(ProjectSearchFieldEditor(search, search.edit_field).text());
+  search.editing = false;
   RequestSidebarRedraw();
 }
 
-SDL_FRect WorkspaceShell::ProjectSearchQueryRect(const SDL_FRect& sidebar_rect) const {
-  return MakeRect(sidebar_rect.x + 10.0f, sidebar_rect.y + kProjectSearchQueryTop,
-                  std::max(0.0f, sidebar_rect.w - 20.0f), 20.0f);
+bool WorkspaceShell::ProjectSearchScopeExpanded() const {
+  return context_.current_project_state.overlay.workflow.project_search.scope_expanded;
 }
 
-SDL_FRect WorkspaceShell::ProjectSearchReplaceRect(const SDL_FRect& sidebar_rect) const {
-  return MakeRect(sidebar_rect.x + 10.0f, sidebar_rect.y + kProjectSearchReplaceTop,
-                  std::max(0.0f, sidebar_rect.w - 20.0f), 20.0f);
-}
-
-SDL_FRect WorkspaceShell::ProjectSearchModeButtonRect(const SDL_FRect& sidebar_rect) const {
-  const float gap = 4.0f;
-  const float available_width = std::max(0.0f, sidebar_rect.w - 20.0f - gap * 2.0f);
-  const float mode_width = std::floor(available_width * 0.28f);
-  return MakeRect(sidebar_rect.x + 10.0f, sidebar_rect.y + kProjectSearchButtonTop, mode_width,
-                  kProjectSearchButtonHeight);
-}
-
-SDL_FRect WorkspaceShell::ProjectSearchCaseButtonRect(const SDL_FRect& sidebar_rect) const {
-  const float gap = 4.0f;
-  const float available_width = std::max(0.0f, sidebar_rect.w - 20.0f - gap * 2.0f);
-  const float mode_width = std::floor(available_width * 0.28f);
-  const float case_width = std::floor(available_width * 0.38f);
-  const SDL_FRect mode_rect = ProjectSearchModeButtonRect(sidebar_rect);
-  return MakeRect(mode_rect.x + mode_width + gap, mode_rect.y, case_width,
-                  kProjectSearchButtonHeight);
-}
-
-SDL_FRect WorkspaceShell::ProjectSearchHiddenButtonRect(const SDL_FRect& sidebar_rect) const {
-  const float gap = 4.0f;
-  const float available_width = std::max(0.0f, sidebar_rect.w - 20.0f - gap * 2.0f);
-  const float mode_width = std::floor(available_width * 0.28f);
-  const float case_width = std::floor(available_width * 0.38f);
-  const SDL_FRect case_rect = ProjectSearchCaseButtonRect(sidebar_rect);
-  const float hidden_width = std::max(0.0f, available_width - mode_width - case_width);
-  return MakeRect(case_rect.x + case_width + gap, case_rect.y, hidden_width,
-                  kProjectSearchButtonHeight);
+void WorkspaceShell::ToggleProjectSearchScopeExpanded() {
+  auto& search = context_.current_project_state.overlay.workflow.project_search;
+  search.scope_expanded = !search.scope_expanded;
+  if (!search.scope_expanded && search.editing &&
+      (search.edit_field == ProjectSearchEditField::Include ||
+       search.edit_field == ProjectSearchEditField::Exclude)) {
+    // Collapsing while a scope field is focused would strand the caret on a
+    // surface that is no longer drawn; commit the edit so focus returns to the
+    // panel and any glob change takes effect.
+    CommitProjectSearchEdit();
+  }
+  RequestSidebarRedraw();
 }
 
 std::string WorkspaceShell::ProjectSearchModeButtonLabel() const {
@@ -353,12 +338,12 @@ std::string WorkspaceShell::HoveredSidebarSearchTooltipLabel(
 
   const auto& options =
       context_.current_project_state.overlay.workflow.project_search.options;
-  if (Contains(ProjectSearchModeButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
+  if (Contains(project_search_panel::ModeButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
     return options.pattern_mode == project::ProjectSearchPatternMode::Regex
                ? "Pattern: regex (click for literal)"
                : "Pattern: literal (click for regex)";
   }
-  if (Contains(ProjectSearchCaseButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
+  if (Contains(project_search_panel::CaseButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
     switch (options.case_mode) {
       case project::ProjectSearchCaseMode::Sensitive:
         return "Case: sensitive (click to cycle)";
@@ -369,9 +354,13 @@ std::string WorkspaceShell::HoveredSidebarSearchTooltipLabel(
         return "Case: smart (click to cycle)";
     }
   }
-  if (Contains(ProjectSearchHiddenButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
+  if (Contains(project_search_panel::HiddenButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
     return options.show_hidden ? "Searching hidden files (click to skip)"
                                : "Skipping hidden files (click to include)";
+  }
+  if (Contains(project_search_panel::ScopeButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
+    return ProjectSearchScopeExpanded() ? "Hide files to include/exclude"
+                                        : "Show files to include/exclude";
   }
   return {};
 }
@@ -486,6 +475,19 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
     if (snapshot.files) {
       files = *snapshot.files;  // copy out: the shared cache pointer must not cross threads
     }
+  }
+  // Replace-all must honor the same scope the search did. The fast path above is
+  // already scoped (it is built from scoped results), but the whole-catalog
+  // fallback is not — without this, replace-all would rewrite exactly the files
+  // the user excluded and whose matches were never shown.
+  const project::GlobSet include_globs = project::GlobSet::Parse(ps.include_globs.text());
+  const project::GlobSet exclude_globs = project::GlobSet::Parse(ps.exclude_globs.text());
+  if (!include_globs.empty() || !exclude_globs.empty()) {
+    std::erase_if(files, [&](const std::filesystem::path& relative_path) {
+      const std::string text = relative_path.generic_string();
+      return (!include_globs.empty() && !include_globs.Matches(text)) ||
+             (!exclude_globs.empty() && exclude_globs.Matches(text));
+    });
   }
   if (files.empty()) {
     return;

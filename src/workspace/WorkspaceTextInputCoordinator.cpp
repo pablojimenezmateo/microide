@@ -78,6 +78,8 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::SidebarSearchInclude:
+    case TextInputSurface::SidebarSearchExclude:
     case TextInputSurface::CommitSubject:
     case TextInputSurface::CommitBody:
       operations_.request_sidebar_redraw();
@@ -128,6 +130,8 @@ editor::SingleLineEditor* TextInputCoordinator::ActiveSingleLineTextState() {
       return operations_.settings_value_editor ? operations_.settings_value_editor() : nullptr;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::SidebarSearchInclude:
+    case TextInputSurface::SidebarSearchExclude:
       return &state_.overlay.workflow.project_search.edit_buffer;
     case TextInputSurface::DebugVariableEdit:
       return &state_.debug_variables.EditBuffer();
@@ -212,6 +216,8 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::SidebarSearchInclude:
+    case TextInputSurface::SidebarSearchExclude:
     case TextInputSurface::CommitSubject:
     case TextInputSurface::CommitBody:
       // Typing in the commit subject/body only repaints the sidebar; the (heavier)
@@ -308,6 +314,8 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
     case TextInputSurface::SettingsValueEdit:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::SidebarSearchInclude:
+    case TextInputSurface::SidebarSearchExclude:
     case TextInputSurface::DebugVariableEdit:
     case TextInputSurface::CommitSubject:
       // These are single-line editors handled by ActiveSingleLineTextState above;

@@ -205,8 +205,11 @@ void TestArchitectureFileSizes() {
              // moved to workspace/SingleLineViewMetrics.h (-4, replaced by a using alias)
              // and the frame-prep PrepareCommitBodyViewportForFrame entry point (+1)
              // that sizes/clamps the commit-draft body viewport before paint.
+             // Tightened from 1699: the project-search panel's five rect accessors
+             // and six layout constants moved out to workspace/ProjectSearchPanelLayout.h
+             // as free functions (-11), replaced by the scope-expanded getter/toggle (+2).
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1699);
+                                                     1690);
            });
 
   AssertRuleResultsPass(results);

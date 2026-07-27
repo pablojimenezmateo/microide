@@ -712,6 +712,133 @@ void TestWorkspaceShellBufferRegexToggleViaAltR() {
          "an invalid regex should produce zero matches without crashing");
 }
 
+
+// The scope section is collapsed by default (the result list keeps its space) and
+// the "..." button expands it, exactly as VS Code's search view does.
+void TestWorkspaceShellProjectSearchScopeToggleRevealsGlobFields() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "main.cpp", "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+
+  Expect(!WorkspaceShellTestAccess::ProjectSearchScopeExpanded(shell),
+         "the scope section should start collapsed");
+  Expect(WorkspaceShellTestAccess::SearchSidebarIncludeFieldRect(shell).w == 0.0f,
+         "a collapsed include field should have no hit area");
+
+  const SDL_FRect scope_rect = WorkspaceShellTestAccess::SearchSidebarScopeButtonRect(shell);
+  Expect(scope_rect.w > 0.0f, "the scope toggle should be laid out");
+  Expect(SendMouseDown(shell, scope_rect.x + scope_rect.w * 0.5f,
+                       scope_rect.y + scope_rect.h * 0.5f, SDL_BUTTON_LEFT),
+         "clicking the scope toggle should be handled");
+  Expect(WorkspaceShellTestAccess::ProjectSearchScopeExpanded(shell),
+         "clicking the scope toggle should expand the glob fields");
+
+  const SDL_FRect include_rect = WorkspaceShellTestAccess::SearchSidebarIncludeFieldRect(shell);
+  const SDL_FRect exclude_rect = WorkspaceShellTestAccess::SearchSidebarExcludeFieldRect(shell);
+  Expect(include_rect.w > 0.0f && exclude_rect.w > 0.0f,
+         "expanding should lay out both glob fields");
+  Expect(exclude_rect.y > include_rect.y, "exclude should sit below include");
+
+  Expect(SendMouseDown(shell, include_rect.x + 4.0f, include_rect.y + include_rect.h * 0.5f,
+                       SDL_BUTTON_LEFT),
+         "clicking the include field should be handled");
+  Expect(WorkspaceShellTestAccess::ProjectSearchEditing(shell),
+         "clicking a glob field should begin editing it");
+  Expect(WorkspaceShellTestAccess::ProjectSearchEditFieldValue(shell) ==
+             microide::workspace::ProjectSearchEditField::Include,
+         "clicking the include field should focus the include field");
+
+  // Tab walks query -> replace -> include -> exclude and wraps.
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE), "Tab should be handled while editing");
+  Expect(WorkspaceShellTestAccess::ProjectSearchEditFieldValue(shell) ==
+             microide::workspace::ProjectSearchEditField::Exclude,
+         "Tab should advance from include to exclude");
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE), "Tab should wrap");
+  Expect(WorkspaceShellTestAccess::ProjectSearchEditFieldValue(shell) ==
+             microide::workspace::ProjectSearchEditField::Query,
+         "Tab should wrap from the last field back to the query");
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_SHIFT), "Shift+Tab should be handled");
+  Expect(WorkspaceShellTestAccess::ProjectSearchEditFieldValue(shell) ==
+             microide::workspace::ProjectSearchEditField::Exclude,
+         "Shift+Tab should walk backwards");
+}
+
+// The globs the panel holds must reach the worker: the same query returns a
+// different result set once a scope is set, and clearing it restores the full set.
+void TestWorkspaceShellProjectSearchScopeGlobsRerunAndRestrictResults() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "src" / "main.cpp", "alpha\n");
+  WriteFile(root / "src" / "main.h", "alpha\n");
+  WriteFile(root / "docs" / "notes.md", "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 3,
+         "the unscoped search should see every file");
+
+  WorkspaceShellTestAccess::SetProjectSearchScopeGlobs(shell, "*.cpp,*.h", "");
+  WorkspaceShellTestAccess::RefreshProjectSearch(shell);
+  WaitForProjectSearch(shell);
+  Expect(WorkspaceShellTestAccess::ProjectSearchError(shell).empty(),
+         "a scoped rerun should not error");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 2,
+         "an include scope should drop the out-of-scope file");
+
+  WorkspaceShellTestAccess::SetProjectSearchScopeGlobs(shell, "*.cpp,*.h", "**/*.h");
+  WorkspaceShellTestAccess::RefreshProjectSearch(shell);
+  WaitForProjectSearch(shell);
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
+         "an exclude scope should subtract from the include set");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell)[0].relative_path ==
+             std::filesystem::path("src/main.cpp"),
+         "only the file passing both filters should remain");
+
+  WorkspaceShellTestAccess::SetProjectSearchScopeGlobs(shell, "", "");
+  WorkspaceShellTestAccess::RefreshProjectSearch(shell);
+  WaitForProjectSearch(shell);
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 3,
+         "clearing the scope should restore the full result set");
+}
+
+// Replace-all falls back to the whole indexed catalog when the cached results are
+// not authoritative. That fallback must still honor the scope, or replace-all would
+// rewrite exactly the files the user excluded.
+void TestWorkspaceShellProjectSearchReplaceAllHonorsScopeGlobs() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "src" / "main.cpp", "alpha\n");
+  WriteFile(root / "vendor" / "dep.cpp", "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+
+  WorkspaceShellTestAccess::SetProjectSearchScopeGlobs(shell, "", "vendor");
+  WorkspaceShellTestAccess::RefreshProjectSearch(shell);
+  WaitForProjectSearch(shell);
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
+         "the excluded file should not appear in results");
+
+  WorkspaceShellTestAccess::SetProjectSearchReplaceText(shell, "beta");
+  WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
+  const bool replaced = WaitUntil(
+      [&root]() { return ReadFile(root / "src" / "main.cpp") == "beta\n"; },
+      std::chrono::seconds(2), std::chrono::milliseconds(5));
+  Expect(replaced, "replace-all should rewrite the in-scope file");
+  Expect(ReadFile(root / "vendor" / "dep.cpp") == "alpha\n",
+         "replace-all must not rewrite a file the scope excluded");
+}
+
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/BufferRegexReplaceAll",
           TestWorkspaceShellBufferRegexReplaceAll);
@@ -743,6 +870,12 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSearchReusesCachedResultsOnReturn);
   AddTest(tests, "WorkspaceShell/ProjectSearchSidebarClickMovesToCorrectLine",
           TestWorkspaceShellProjectSearchSidebarClickMovesToCorrectLine);
+  AddTest(tests, "WorkspaceShell/ProjectSearchScopeToggleRevealsGlobFields",
+          TestWorkspaceShellProjectSearchScopeToggleRevealsGlobFields);
+  AddTest(tests, "WorkspaceShell/ProjectSearchScopeGlobsRerunAndRestrictResults",
+          TestWorkspaceShellProjectSearchScopeGlobsRerunAndRestrictResults);
+  AddTest(tests, "WorkspaceShell/ProjectSearchReplaceAllHonorsScopeGlobs",
+          TestWorkspaceShellProjectSearchReplaceAllHonorsScopeGlobs);
   AddTest(tests, "WorkspaceShell/BufferSearchIsNonModal", TestWorkspaceShellBufferSearchIsNonModal);
   AddTest(tests, "WorkspaceShell/CutInSingleLineSurfaceDoesNotEditEditor",
           TestWorkspaceShellCutInSingleLineSurfaceDoesNotEditEditor);

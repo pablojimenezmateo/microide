@@ -144,9 +144,17 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
   if (context_.current_project_state.surface.focus == FocusTarget::Sidebar && context_.current_project_state.sidebar.visible &&
       ActiveSidebarMode() == SidebarMode::Search &&
       context_.current_project_state.overlay.workflow.project_search.editing) {
-    return context_.current_project_state.overlay.workflow.project_search.edit_field == ProjectSearchEditField::Query
-               ? TextInputSurface::SidebarSearchQuery
-               : TextInputSurface::SidebarSearchReplace;
+    switch (context_.current_project_state.overlay.workflow.project_search.edit_field) {
+      case ProjectSearchEditField::Replace:
+        return TextInputSurface::SidebarSearchReplace;
+      case ProjectSearchEditField::Include:
+        return TextInputSurface::SidebarSearchInclude;
+      case ProjectSearchEditField::Exclude:
+        return TextInputSurface::SidebarSearchExclude;
+      case ProjectSearchEditField::Query:
+      default:
+        return TextInputSurface::SidebarSearchQuery;
+    }
   }
 
   if (context_.current_project_state.surface.focus == FocusTarget::Sidebar &&

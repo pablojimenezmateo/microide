@@ -300,6 +300,7 @@
   static void CycleProjectSearchCaseMode(WorkspaceShell& shell) {
     shell.CycleProjectSearchCaseMode();
   }
+  static void RefreshProjectSearch(WorkspaceShell& shell) { shell.RefreshProjectSearch(); }
   static void ToggleProjectSearchHiddenFiles(WorkspaceShell& shell) {
     shell.ToggleProjectSearchHiddenFiles();
   }

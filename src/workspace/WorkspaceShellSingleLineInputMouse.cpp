@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "workspace/ProjectSearchPanelLayout.h"
+
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -241,24 +243,17 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
   if (context_.current_project_state.sidebar.visible &&
       ActiveSidebarMode() == SidebarMode::Search &&
       Contains(layout.sidebar, x, y)) {
-    const SDL_FRect query_rect = ProjectSearchQueryRect(layout.sidebar);
-    const SDL_FRect replace_rect = ProjectSearchReplaceRect(layout.sidebar);
-    if (Contains(query_rect, x, y)) {
-      auto& search = context_.current_project_state.overlay.workflow.project_search;
+    auto& search = context_.current_project_state.overlay.workflow.project_search;
+    for (const auto& field : project_search_panel::SidebarSearchFieldRects(layout.sidebar, search.scope_expanded)) {
+      if (field.rect.w <= 0.0f || !Contains(field.rect, x, y)) {
+        continue;
+      }
       // Activate the field if it's not already being edited so the click immediately
       // refers to the live edit_buffer (which the renderer + key handler also use).
-      if (!search.editing || search.edit_field != ProjectSearchEditField::Query) {
-        BeginProjectSearchEdit(ProjectSearchEditField::Query);
+      if (!search.editing || search.edit_field != field.field) {
+        BeginProjectSearchEdit(field.field);
       }
-      return FilledHit(TextInputSurface::SidebarSearchQuery, query_rect, "", &search.edit_buffer);
-    }
-    if (Contains(replace_rect, x, y)) {
-      auto& search = context_.current_project_state.overlay.workflow.project_search;
-      if (!search.editing || search.edit_field != ProjectSearchEditField::Replace) {
-        BeginProjectSearchEdit(ProjectSearchEditField::Replace);
-      }
-      return FilledHit(TextInputSurface::SidebarSearchReplace, replace_rect, "",
-                       &search.edit_buffer);
+      return FilledHit(field.surface, field.rect, "", &search.edit_buffer);
     }
   }
 
@@ -369,6 +364,8 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::SidebarSearchInclude:
+    case TextInputSurface::SidebarSearchExclude:
     case TextInputSurface::CommitSubject:
     case TextInputSurface::CommitBody:
       context_.current_project_state.surface.focus = FocusTarget::Sidebar;
@@ -427,7 +424,9 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
     case TextInputSurface::LaunchConfigPicker:
     case TextInputSurface::CommandPalette:
     case TextInputSurface::SidebarSearchQuery:
-    case TextInputSurface::SidebarSearchReplace: {
+    case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::SidebarSearchInclude:
+    case TextInputSurface::SidebarSearchExclude: {
       // Re-dispatch via FindSingleLineInputHit at the *current* pointer is wrong
       // (the pointer may have left the rect mid-drag). Re-derive directly from
       // the stored surface using the same layout math the press used.
@@ -489,15 +488,18 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
           }
           break;
         case TextInputSurface::SidebarSearchQuery:
-          if (proj.sidebar.visible) {
-            hit = FilledHit(surface, ProjectSearchQueryRect(layout.sidebar), "",
-                            &proj.overlay.workflow.project_search.edit_buffer);
-          }
-          break;
         case TextInputSurface::SidebarSearchReplace:
+        case TextInputSurface::SidebarSearchInclude:
+        case TextInputSurface::SidebarSearchExclude:
           if (proj.sidebar.visible) {
-            hit = FilledHit(surface, ProjectSearchReplaceRect(layout.sidebar), "",
-                            &proj.overlay.workflow.project_search.edit_buffer);
+            auto& search = proj.overlay.workflow.project_search;
+            for (const auto& field :
+                 project_search_panel::SidebarSearchFieldRects(layout.sidebar, search.scope_expanded)) {
+              if (field.surface == surface && field.rect.w > 0.0f) {
+                hit = FilledHit(surface, field.rect, "", &search.edit_buffer);
+                break;
+              }
+            }
           }
           break;
         default:

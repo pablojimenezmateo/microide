@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "workspace/ProjectSearchPanelLayout.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -203,7 +205,8 @@ float WorkspaceShell::GitSidebarVisibleUnits(const SDL_FRect& sidebar_rect) cons
 ScrollableListLayout WorkspaceShell::ComputeProjectSearchSidebarListLayout(
     const SDL_FRect& sidebar_rect,
     std::size_t line_count) const {
-  return ComputeScrollableListLayout(sidebar_rect, sidebar_rect.y + kProjectSearchResultsTop,
+  return ComputeScrollableListLayout(sidebar_rect, sidebar_rect.y + project_search_panel::ResultsTop(
+                                         ProjectSearchScopeExpanded()),
                                      line_count, context_.current_project_state.sidebar.scroll_row, kSidebarInset,
                                      kSidebarRowHeight, kSidebarRowHeight - 2.0f);
 }
