@@ -136,6 +136,13 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return false;
   }
 
+  if (operations_.terminal_find_mouse_down &&
+      operations_.terminal_find_mouse_down(static_cast<float>(event.button.x),
+                                           static_cast<float>(event.button.y))) {
+    state_.surface.focus = FocusTarget::Panel;
+    return true;
+  }
+
   if (auto* terminal_tab = ActivePanelTerminalTab()) {
     const SDL_FRect panel_content = operations_.bottom_panel_content_rect(layout);
     if (Contains(panel_content, event.button.x, event.button.y)) {
@@ -488,6 +495,8 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
               [terminal_panel](std::string_view input) mutable {
                 terminal_panel.AppendTerminalPendingInput(input);
               },
+          .terminal_find_mouse_down =
+              [this](float x, float y) { return HandleTerminalFindMouseDown(x, y); },
           .terminal_url_at_point =
               [terminal_panel](float x, float y) mutable {
                 return terminal_panel.TerminalUrlAtPoint(x, y);

@@ -390,6 +390,41 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
             project_state, panel_header, layout_mode_service_.CurrentMode(),
             prepare_cached_bottom_panel_vm_->tabs, output_channels_.Channels());
   }
+  // 1a) Terminal find bar: rescan and lay the bar out here, where the panel rect
+  //     is known, so the render TU paints a fully prepared widget. The rescan is
+  //     cheap by construction — settled scrollback is kept and only the visible
+  //     grid is re-walked (see TerminalFindService::Refresh).
+  if (panel_vm.content == PanelContentKind::Terminal && terminal_find_service_.visible()) {
+    TerminalTabState* terminal_tab = ActiveTerminalTab();
+    terminal_find_service_.Refresh(terminal_tab);
+    BottomPanelSurfaceViewModel& panel_out = *prepare_cached_bottom_panel_vm_;
+    panel_out.find_visible = true;
+    panel_out.find_query = &terminal_find_service_.query();
+    panel_out.find_matches = &terminal_find_service_.matches();
+    panel_out.find_selected_index = terminal_find_service_.selected_index();
+    OverlayFindWidgetViewModel& find_vm = panel_out.find;
+    find_vm.fw = ComputeFindWidgetLayout(BottomPanelContentRect(layout), /*replace_mode=*/false,
+                                         /*toggle_count=*/2);
+    find_vm.search_focused = terminal_find_service_.focused();
+    find_vm.toggles[0] = FindWidgetToggleViewModel{
+        .label = "Aa", .active = terminal_find_service_.case_sensitive()};
+    find_vm.toggles[1] = FindWidgetToggleViewModel{
+        .label = "ab", .active = terminal_find_service_.whole_word()};
+    find_vm.has_query = !terminal_find_service_.query().text().empty();
+    find_vm.has_matches = !terminal_find_service_.matches().empty();
+    find_vm.count_text = terminal_find_service_.count_text();
+    find_vm.search_display_text = terminal_find_service_.query().text();
+    if (find_vm.search_focused) {
+      // A focused field scrolls to the caret, so draw the metrics-resolved tail
+      // rather than the raw text. The service owns the storage, so the view stays
+      // valid through paint.
+      terminal_find_service_.SetDisplayText(
+          ComputeSingleLineViewMetrics(terminal_find_service_.query(), "",
+                                       std::max(1.0f, find_vm.fw.search_field.w - 12.0f))
+              .displayed_text);
+      find_vm.search_display_text = terminal_find_service_.display_text();
+    }
+  }
   // 1b) Plugin-surface preview scroll clamp: normalize the stored pixel scroll
   //     against the resolved layout so render consumes an already-clamped value
   //     even after a republish shrinks the content or the panel resizes

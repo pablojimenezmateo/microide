@@ -178,7 +178,10 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
 
   if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
     if (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr) {
-      return TextInputSurface::Terminal;
+      // The find bar floats over a live terminal; it only takes typing while it
+      // holds focus, the same rule the in-file find widget follows above.
+      return terminal_find_service_.focused() ? TextInputSurface::TerminalFind
+                                              : TextInputSurface::Terminal;
     }
   }
 

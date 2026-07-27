@@ -273,6 +273,10 @@ void WorkspaceActionContext::OpenTerminal(std::string command) {
   operations_.open_terminal(std::move(command));
 }
 
+bool WorkspaceActionContext::OpenTerminalFind(std::string query) {
+  return operations_.open_terminal_find(std::move(query));
+}
+
 void WorkspaceActionContext::ShowFileFinderWithQuery(std::string query) {
   state_.file_finder.SetIndex(&state_.file_index);
   state_.file_finder.SetQuery(std::move(query));

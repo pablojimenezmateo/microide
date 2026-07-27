@@ -81,6 +81,7 @@
 #include "workspace/StatusBarModelService.h"
 #include "workspace/StatusBarService.h"
 #include "workspace/TabStripService.h"
+#include "workspace/TerminalFindService.h"
 #include "workspace/WorkspaceTabStripChrome.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceOutputChannels.h"

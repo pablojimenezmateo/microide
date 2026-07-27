@@ -64,6 +64,8 @@ enum class ActionId {
   GitSync,
   GitStash,
   GitStashPop,
+  // Opens (or re-focuses) the terminal panel's find-in-scrollback bar.
+  TerminalFind,
   // Git sidebar entry context-menu actions (right-click on a changed-file row).
   // Context-menu only; act on the selected git entry. Not registered as commands.
   GitOpenChanges,

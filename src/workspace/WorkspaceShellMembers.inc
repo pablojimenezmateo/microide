@@ -1569,8 +1569,10 @@
   void RenderOverlaySurface(SDL_Renderer* renderer,
                             const WorkspaceLayout& layout,
                             const OverlaySurfaceViewModel& overlay_vm);
-  void RenderFindWidget(SDL_Renderer* renderer, const WorkspaceLayout& layout,
-                        const OverlaySurfaceViewModel& overlay_vm);
+  // Shared by the in-file find widget (overlay) and the terminal find bar
+  // (bottom panel): both are the same compact floating card, so they draw
+  // through one painter rather than two that can drift apart.
+  void RenderFindWidget(SDL_Renderer* renderer, const OverlayFindWidgetViewModel& fw_vm);
   // Floating, icon-only debug control bar (Continue/Pause, Step Over/In/Out,
   // Restart, Stop) anchored top-right of the editor area while a session is
   // active. Mirrors the find-widget pattern. Defined in
@@ -2060,6 +2062,13 @@
   StatusBarModelService status_bar_model_service_;
   NotificationService notification_service_;
   SettingsOverlayService settings_overlay_service_;
+  // Terminal find bar. All of its state, scanning, and match navigation live in
+  // the service; what stays here are the two input entry points, which have to
+  // run ahead of the terminal's own key/mouse handling because the bar floats
+  // over it. Both are defined in WorkspaceTextInputCoordinatorTerminal.cpp.
+  TerminalFindService terminal_find_service_;
+  bool HandleTerminalFindKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
+  bool HandleTerminalFindMouseDown(float x, float y);
   // Settings/Help overlay max scroll row, resolved by the const render pass (it
   // owns the list geometry) and consumed by the wheel handler to clamp scrolling.
   mutable int settings_overlay_max_scroll_row_ = 0;

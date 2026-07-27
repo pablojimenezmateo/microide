@@ -220,8 +220,14 @@ void TestArchitectureFileSizes() {
              // service itself lives in workspace/GitOperationService, not the shell),
              // then -5 as the git sidebar header's five rect accessors moved out to
              // workspace/GitSidebarHeaderLayout.h as free functions.
+             // +3 for the terminal find bar: the service member plus its two input
+             // entry points, which must run ahead of the terminal's own key/mouse
+             // handling. Its state, scan cache, and display strings all live in
+             // workspace/TerminalFindService. -1 as RenderFindWidget lost its unused
+             // layout/overlay parameters and now takes the find view model alone, so
+             // the bottom panel can reuse it.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1686);
+                                                     1688);
            });
 
   AssertRuleResultsPass(results);

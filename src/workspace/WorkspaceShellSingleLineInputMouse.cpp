@@ -257,6 +257,18 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
     }
   }
 
+  // Terminal find bar query field. Uses the same layout frame prep handed the
+  // renderer, so click-to-caret lands exactly where the text is drawn.
+  if (terminal_find_service_.visible() && BottomPanelShowsTerminal()) {
+    const FindWidgetLayout fw =
+        ComputeFindWidgetLayout(BottomPanelContentRect(layout), /*replace_mode=*/false,
+                                /*toggle_count=*/2);
+    if (Contains(fw.search_field, x, y)) {
+      return FilledHit(TextInputSurface::TerminalFind, fw.search_field, "",
+                       &terminal_find_service_.query());
+    }
+  }
+
   // Git commit-workflow subject field (a single-line input cached by the sidebar render).
   if (context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git &&
       context_.current_project_state.sidebar.git.commit_workflow.open) {
@@ -346,6 +358,10 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
     case TextInputSurface::PromptInput:
       // Prompt is modal; focus already pinned by the prompt service.
       break;
+    case TextInputSurface::TerminalFind:
+      terminal_find_service_.SetFocused(true);
+      context_.current_project_state.surface.focus = FocusTarget::Panel;
+      break;
     case TextInputSurface::BufferReplaceSearch:
       context_.current_project_state.overlay.buffer_search_field = BufferSearchField::Search;
       context_.current_project_state.surface.focus = FocusTarget::Overlay;
@@ -426,7 +442,8 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::SidebarSearchInclude:
-    case TextInputSurface::SidebarSearchExclude: {
+    case TextInputSurface::SidebarSearchExclude:
+    case TextInputSurface::TerminalFind: {
       // Re-dispatch via FindSingleLineInputHit at the *current* pointer is wrong
       // (the pointer may have left the rect mid-drag). Re-derive directly from
       // the stored surface using the same layout math the press used.

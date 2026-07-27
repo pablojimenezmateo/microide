@@ -561,6 +561,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `git-sync`
 - `git-stash [message]`
 - `git-stash-pop`
+- `terminal-find [query]`
 - `mark-branch-file-reviewed`
 - `unmark-branch-file-reviewed`
 - `mark-branch-hunk-reviewed`

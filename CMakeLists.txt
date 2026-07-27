@@ -479,6 +479,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLayoutMergeAndChrome.cpp
   src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/TerminalPanelService.cpp
+  src/workspace/TerminalFindService.cpp
   src/workspace/WorkspacePersistenceBinaryFormat.cpp
   src/workspace/WorkspacePersistenceBinaryFormatSessions.cpp
   src/workspace/WorkspacePersistenceBinaryFormatDebug.cpp

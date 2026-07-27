@@ -81,6 +81,7 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
     case TextInputSurface::SidebarSearchExclude:
     case TextInputSurface::CommitSubject:
     case TextInputSurface::CommitBody:
+    case TextInputSurface::TerminalFind:
       return true;
     case TextInputSurface::SettingsQuery:
     case TextInputSurface::SettingsValueEdit:

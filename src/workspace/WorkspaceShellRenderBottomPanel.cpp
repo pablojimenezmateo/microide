@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include <limits>
 #include <variant>
 
 #include "editor/DecoratedTextGridRenderer.h"
@@ -95,7 +96,11 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       .inactive_glyph = theme_.text_secondary,
   };
 
-  const auto resolve_terminal_colors = [&](const terminal::TerminalStyle& style, bool selected) {
+  // Per-cell emphasis, in precedence order. An explicit selection outranks a find
+  // hit: the user made it, and it is the one they are about to copy.
+  enum class CellEmphasis : std::uint8_t { None, FindMatch, FindCurrent, Selection };
+  const auto resolve_terminal_colors = [&](const terminal::TerminalStyle& style,
+                                           CellEmphasis emphasis) {
     SDL_Color foreground = style.foreground.value_or(theme_.text_primary);
     SDL_Color background = style.background.value_or(theme_.surface_background);
     if (style.inverse()) {
@@ -107,11 +112,40 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     if (style.hidden()) {
       foreground = background;
     }
-    if (selected) {
-      foreground = theme_.text_primary;
-      background = theme_.row_highlight;
+    switch (emphasis) {
+      case CellEmphasis::Selection:
+        foreground = theme_.text_primary;
+        background = theme_.row_highlight;
+        break;
+      case CellEmphasis::FindMatch:
+        foreground = theme_.text_primary;
+        background = theme_.search_match;
+        break;
+      case CellEmphasis::FindCurrent:
+        foreground = theme_.text_primary;
+        background = theme_.search_match_active;
+        break;
+      case CellEmphasis::None:
+        break;
     }
     return std::pair{foreground, background};
+  };
+  // The visible row's slice of the (row, column)-ordered match list, narrowed by
+  // the row loop before each row so the per-cell test scans only this row's hits.
+  const terminal::TerminalSearchMatch* row_matches = nullptr;
+  std::size_t row_match_count = 0;
+  std::size_t row_current_match = std::numeric_limits<std::size_t>::max();
+  const auto cell_emphasis = [&](std::size_t row_index, std::size_t column) {
+    if (TerminalCellSelected(row_index, column)) {
+      return CellEmphasis::Selection;
+    }
+    for (std::size_t index = 0; index < row_match_count; ++index) {
+      const terminal::TerminalSearchMatch& match = row_matches[index];
+      if (column >= match.column && column < match.column + match.length) {
+        return index == row_current_match ? CellEmphasis::FindCurrent : CellEmphasis::FindMatch;
+      }
+    }
+    return CellEmphasis::None;
   };
   const auto draw_terminal_line = [&](float x,
                                       float y,
@@ -132,15 +166,14 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
 
     for (std::size_t column = 0; column < visible_columns;) {
       const auto& cell = line.cells[column];
-      const bool selected = TerminalCellSelected(row_index, column);
-      const SDL_Color background = resolve_terminal_colors(cell.style, selected).second;
+      const SDL_Color background =
+          resolve_terminal_colors(cell.style, cell_emphasis(row_index, column)).second;
 
       std::size_t run_end = column + 1;
       while (run_end < visible_columns) {
         const auto& next_cell = line.cells[run_end];
-        const bool next_selected = TerminalCellSelected(row_index, run_end);
         const SDL_Color next_background =
-            resolve_terminal_colors(next_cell.style, next_selected).second;
+            resolve_terminal_colors(next_cell.style, cell_emphasis(row_index, run_end)).second;
         if (next_background.r != background.r || next_background.g != background.g ||
             next_background.b != background.b || next_background.a != background.a) {
           break;
@@ -172,8 +205,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         ++column;
         continue;
       }
-      const bool selected = TerminalCellSelected(row_index, column);
-      const SDL_Color foreground = resolve_terminal_colors(cell.style, selected).first;
+      const SDL_Color foreground =
+          resolve_terminal_colors(cell.style, cell_emphasis(row_index, column)).first;
 
       std::size_t run_end = column + 1;
       // A wide glyph is positioned on its own grid column, so it terminates the
@@ -184,9 +217,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
           if (next_cell.style.wide_trailing() || is_wide_lead(run_end)) {
             break;
           }
-          const bool next_selected = TerminalCellSelected(row_index, run_end);
           const SDL_Color next_foreground =
-              resolve_terminal_colors(next_cell.style, next_selected).first;
+              resolve_terminal_colors(next_cell.style, cell_emphasis(row_index, run_end)).first;
           if (next_foreground.r != foreground.r || next_foreground.g != foreground.g ||
               next_foreground.b != foreground.b || next_foreground.a != foreground.a) {
             break;
@@ -245,8 +277,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         ++column;
         continue;
       }
-      const bool selected = TerminalCellSelected(row_index, column);
-      const SDL_Color color = resolve_terminal_colors(style, selected).first;
+      const SDL_Color color =
+          resolve_terminal_colors(style, cell_emphasis(row_index, column)).first;
       std::size_t run_end = column + 1;
       while (run_end < visible_columns) {
         const auto& next_style = line.cells[run_end].style;
@@ -254,7 +286,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
           break;
         }
         const SDL_Color next_color =
-            resolve_terminal_colors(next_style, TerminalCellSelected(row_index, run_end)).first;
+            resolve_terminal_colors(next_style, cell_emphasis(row_index, run_end)).first;
         if (next_color.r != color.r || next_color.g != color.g || next_color.b != color.b ||
             next_color.a != color.a) {
           break;
@@ -427,6 +459,21 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     }
   }
 
+  // Find highlights: the match list is (row, column)-ordered, so seek once to the
+  // first hit at or after the top visible row and then walk forward with the row
+  // loop, instead of searching the whole list per row.
+  const std::vector<terminal::TerminalSearchMatch>* find_matches =
+      terminal_panel ? panel_vm.find_matches : nullptr;
+  std::size_t find_cursor = 0;
+  if (find_matches != nullptr && !find_matches->empty()) {
+    find_cursor = static_cast<std::size_t>(
+        std::lower_bound(find_matches->begin(), find_matches->end(), first_row,
+                         [](const terminal::TerminalSearchMatch& match, std::size_t row) {
+                           return match.row < row;
+                         }) -
+        find_matches->begin());
+  }
+
   for (int row = 0; row < panel_layout.scroll.visible_rows; ++row) {
     const int index = panel_layout.scroll.vertical_scroll + row;
     if (index >= static_cast<int>(panel_line_count)) {
@@ -434,6 +481,29 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     }
     const float line_y = panel_layout.text_y + static_cast<float>(row) * panel_layout.line_height;
     if (terminal_panel) {
+      // Narrow the shared match slice to this row before painting it.
+      row_matches = nullptr;
+      row_match_count = 0;
+      row_current_match = std::numeric_limits<std::size_t>::max();
+      if (find_matches != nullptr) {
+        const auto absolute_row = static_cast<std::size_t>(index);
+        while (find_cursor < find_matches->size() &&
+               (*find_matches)[find_cursor].row < absolute_row) {
+          ++find_cursor;
+        }
+        std::size_t row_end = find_cursor;
+        while (row_end < find_matches->size() && (*find_matches)[row_end].row == absolute_row) {
+          ++row_end;
+        }
+        if (row_end > find_cursor) {
+          row_matches = find_matches->data() + find_cursor;
+          row_match_count = row_end - find_cursor;
+          if (panel_vm.find_selected_index >= find_cursor &&
+              panel_vm.find_selected_index < row_end) {
+            row_current_match = panel_vm.find_selected_index - find_cursor;
+          }
+        }
+      }
       // panel_line_count comes from `session.LineCount()` sampled outside the
       // session mutex, while `terminal_lines` is the locked snapshot. They can
       // disagree when scrollback is trimmed between the two calls — the
@@ -540,7 +610,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
               const auto display_text = cell.DisplayText();
               if (!display_text.empty()) {
                 const SDL_Color cursor_foreground =
-                    resolve_terminal_colors(cell.style, false).second;
+                    resolve_terminal_colors(cell.style, CellEmphasis::None).second;
                 // DrawString takes std::string_view; pass the view directly without copying.
                 terminal_text_renderer_.DrawString(renderer, cursor_x, cursor_y, cursor_foreground,
                                                    display_text);
@@ -556,6 +626,11 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     DrawScrollbar(renderer, theme_, panel_layout.scroll.vertical_scrollbar->track,
                   panel_layout.scroll.vertical_scrollbar->thumb,
                   context_.interaction_state.drag_target == DragTarget::BottomPanelScrollbar);
+  }
+  // The find bar floats above the terminal body (and above the scrollbar), the
+  // same compact card the in-file find widget uses.
+  if (panel_vm.find_visible) {
+    RenderFindWidget(renderer, panel_vm.find);
   }
   if (panel_vm.focus == FocusTarget::Panel) {
     DrawSurfaceFocusRing(renderer, layout.bottom_panel);

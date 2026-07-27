@@ -27,6 +27,9 @@ enum class TextInputSurface {
   CommitSubject,
   CommitBody,
   Terminal,
+  // Query field of the terminal panel's find bar. Claimed only while the bar
+  // holds focus, so an unfocused bar leaves typing to the terminal underneath.
+  TerminalFind,
   SettingsQuery,
   // Inline edit of a String setting's value in the Settings overlay. Routes to
   // SettingsOverlayService::ValueEditor(); commits on Return, cancels on Esc.

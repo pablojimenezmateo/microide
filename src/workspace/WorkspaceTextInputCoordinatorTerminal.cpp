@@ -184,6 +184,100 @@ bool TextInputCoordinator::PasteTextIntoTerminal(std::string text) {
   return true;
 }
 
+// Keyboard for the terminal find bar. Runs ahead of the terminal's own key
+// handling (see MakeKeyInputCoordinator) because the bar floats over the
+// terminal and owns the keyboard whenever it holds focus.
+bool WorkspaceShell::HandleTerminalFindKeyDown(const SDL_KeyboardEvent& event,
+                                               const SDL_Keymod modifiers) {
+  if (!terminal_find_service_.focused()) {
+    return false;
+  }
+  const bool shift = (modifiers & SDL_KMOD_SHIFT) != 0;
+  const bool alt = (modifiers & SDL_KMOD_ALT) != 0;
+  const auto handled = [this]() {
+    RequestBottomPanelContentRedraw();
+    return true;
+  };
+
+  // Alt+C / Alt+W mirror VSCode's find-widget toggles.
+  if (alt && event.key == SDLK_C) {
+    terminal_find_service_.ToggleCaseSensitive(ActiveTerminalTab());
+    return handled();
+  }
+  if (alt && event.key == SDLK_W) {
+    terminal_find_service_.ToggleWholeWord(ActiveTerminalTab());
+    return handled();
+  }
+
+  switch (event.key) {
+    case SDLK_ESCAPE:
+      // Close and hand the keyboard back to the shell underneath.
+      terminal_find_service_.Close();
+      return handled();
+    case SDLK_RETURN:
+    case SDLK_KP_ENTER:
+    case SDLK_F3:
+      // Enter steps forward, Shift+Enter back. The first search lands on the
+      // newest hit, so Shift+Enter is the natural way to walk up the history.
+      terminal_find_service_.SelectRelative(ActiveTerminalTab(), shift ? -1 : 1);
+      return handled();
+    case SDLK_UP:
+      terminal_find_service_.SelectRelative(ActiveTerminalTab(), -1);
+      return handled();
+    case SDLK_DOWN:
+      terminal_find_service_.SelectRelative(ActiveTerminalTab(), 1);
+      return handled();
+    default:
+      break;
+  }
+
+  // Everything else is ordinary single-line editing in the query field.
+  if (MakeTextInputCoordinator().HandleSingleLineKeyDown(event, modifiers)) {
+    return handled();
+  }
+  // Swallow the rest: an unhandled key must not fall through to the PTY, or
+  // typing in the find box would also drive the shell underneath.
+  return true;
+}
+
+// Left press over the terminal find bar. Returns true when the bar consumed it;
+// a press elsewhere blurs the bar (its query field is hit-tested earlier, by
+// FindSingleLineInputHit, so it never reaches here).
+bool WorkspaceShell::HandleTerminalFindMouseDown(const float x, const float y) {
+  if (!terminal_find_service_.visible() || !prepare_cached_bottom_panel_vm_.has_value() ||
+      !prepare_cached_bottom_panel_vm_->find_visible) {
+    return false;
+  }
+  const FindWidgetLayout& fw = prepare_cached_bottom_panel_vm_->find.fw;
+  if (!Contains(fw.widget, x, y)) {
+    // Clicking the terminal underneath keeps the bar open but hands back the
+    // keyboard, matching the in-file find widget.
+    if (terminal_find_service_.focused()) {
+      terminal_find_service_.SetFocused(false);
+      RequestBottomPanelContentRedraw();
+    }
+    return false;
+  }
+  TerminalTabState* terminal_tab = ActiveTerminalTab();
+  if (Contains(fw.close_button, x, y)) {
+    terminal_find_service_.Close();
+  } else if (Contains(fw.prev_button, x, y)) {
+    terminal_find_service_.SelectRelative(terminal_tab, -1);
+  } else if (Contains(fw.next_button, x, y)) {
+    terminal_find_service_.SelectRelative(terminal_tab, 1);
+  } else if (Contains(fw.toggle_buttons[0], x, y)) {
+    terminal_find_service_.ToggleCaseSensitive(terminal_tab);
+  } else if (Contains(fw.toggle_buttons[1], x, y)) {
+    terminal_find_service_.ToggleWholeWord(terminal_tab);
+  }
+  // Any in-bar press focuses the bar, so the next keystroke edits the query.
+  if (terminal_find_service_.visible()) {
+    terminal_find_service_.SetFocused(true);
+  }
+  RequestBottomPanelContentRedraw();
+  return true;
+}
+
 TextInputCoordinator WorkspaceShell::MakeTextInputCoordinator() {
   return TextInputCoordinator(
       context_.current_project_state, context_.prompts, context_.menu_state,
@@ -210,6 +304,9 @@ TextInputCoordinator WorkspaceShell::MakeTextInputCoordinator() {
               [this]() -> editor::SingleLineEditor* {
                 return &settings_overlay_service_.ValueEditor();
               },
+          .terminal_find_query_editor =
+              [this]() -> editor::SingleLineEditor* { return &terminal_find_service_.query(); },
+          .refresh_terminal_find = [this]() { terminal_find_service_.Refresh(ActiveTerminalTab()); },
           .refresh_settings_overlay =
               [this]() {
                 settings_overlay_service_.SyncQueryFromEditor();

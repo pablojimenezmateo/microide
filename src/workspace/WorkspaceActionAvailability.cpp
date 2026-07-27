@@ -291,6 +291,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ProjectSearch:
     case ActionId::Tab:
     case ActionId::Term:
+    case ActionId::TerminalFind:
     case ActionId::Tree:
     case ActionId::TreeRefresh:
       return !context_.current_project_state.root.empty();

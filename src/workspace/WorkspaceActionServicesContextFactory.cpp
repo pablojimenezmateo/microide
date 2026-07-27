@@ -418,6 +418,26 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
                 return found;
               },
           .open_terminal = [this](std::string command) { OpenTerminal(std::move(command)); },
+          .open_terminal_find =
+              [this](std::string query) {
+                // A seedless invocation preloads the terminal selection, matching
+                // "Ctrl+F with something selected" everywhere else in the shell.
+                if (!BottomPanelShowsTerminal() || ActiveTerminalTab() == nullptr) {
+                  return false;
+                }
+                if (query.empty() && TerminalHasSelection()) {
+                  query = SelectedTerminalText();
+                  // A multi-line selection is not a useful seed for a per-row scan.
+                  if (const std::size_t newline = query.find('\n');
+                      newline != std::string::npos) {
+                    query.resize(newline);
+                  }
+                }
+                context_.current_project_state.surface.focus = FocusTarget::Panel;
+                terminal_find_service_.Open(ActiveTerminalTab(), query);
+                RequestBottomPanelContentRedraw();
+                return true;
+              },
           .show_overlay = [this](OverlayMode mode) { ShowOverlay(mode); },
           .dismiss_overlay = [this]() { DismissOverlay(); },
           .open_settings_overlay = [this]() { OpenSettingsOverlay(); },

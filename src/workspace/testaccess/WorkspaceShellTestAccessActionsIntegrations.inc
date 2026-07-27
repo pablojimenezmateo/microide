@@ -440,6 +440,19 @@
     const auto panel_layout = shell.ComputeBottomPanelLogLayout(layout, line_count);
     return SDL_FPoint{.x = panel_layout.text_x, .y = panel_layout.text_y};
   }
+  static TerminalFindService& TerminalFind(WorkspaceShell& shell) {
+    return shell.terminal_find_service_;
+  }
+  static void RefreshTerminalFind(WorkspaceShell& shell) {
+    shell.terminal_find_service_.Refresh(shell.ActiveTerminalTab());
+  }
+  static bool HandleTerminalFindKeyDown(WorkspaceShell& shell,
+                                        SDL_Keycode key,
+                                        SDL_Keymod modifiers) {
+    SDL_KeyboardEvent event{};
+    event.key = key;
+    return shell.HandleTerminalFindKeyDown(event, modifiers);
+  }
   static bool TerminalHasSelection(const WorkspaceShell& shell) {
     return shell.TerminalHasSelection();
   }

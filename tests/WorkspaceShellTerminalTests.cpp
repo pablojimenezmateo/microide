@@ -1300,6 +1300,164 @@ void TestWorkspaceShellSelectionSkipsWideTrailingSpacer() {
 
 }  // namespace
 
+
+// Ctrl+F in a focused terminal opens the find bar rather than sending ^F to the
+// shell, which is what VSCode does and the only reason the bar is reachable
+// without the palette.
+void TestWorkspaceShellTerminalCtrlFOpensFindBar() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "alpha needle beta\r\n");
+
+  Expect(!WorkspaceShellTestAccess::TerminalFind(shell).visible(),
+         "the find bar should start hidden");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
+         "Ctrl+F should be handled while the terminal has focus");
+  auto& find = WorkspaceShellTestAccess::TerminalFind(shell);
+  Expect(find.visible() && find.focused(),
+         "Ctrl+F should open the find bar and give it the keyboard");
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
+         "Ctrl+F must not also reach the shell as a control byte");
+}
+
+// Typing a query scans the scrollback, and the first result lands on the newest
+// hit because terminal output is read from the bottom.
+void TestWorkspaceShellTerminalFindSelectsNewestMatchFirst() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  for (int index = 0; index < 5; ++index) {
+    TerminalSessionTestAccess::AppendOutput(session, "needle line\r\n");
+  }
+
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
+         "Ctrl+F should open the find bar");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "needle"),
+         "typing should route into the find query, not the terminal");
+  auto& find = WorkspaceShellTestAccess::TerminalFind(shell);
+  Expect(find.matches().size() == 5, "every matching row should be found");
+  Expect(find.selected_index() == 4, "a fresh query should select the newest hit");
+  Expect(find.count_text() == "5/5", "the counter should read selected-of-total");
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
+         "the query text must never reach the PTY");
+}
+
+// Shift+Enter walks back up the history, Enter forward, and both wrap.
+void TestWorkspaceShellTerminalFindNavigationWrapsAndReveals() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 4, 80);
+  for (int index = 0; index < 40; ++index) {
+    TerminalSessionTestAccess::AppendOutput(session, "needle line\r\n");
+  }
+  WorkspaceShellTestAccess::SetActiveTerminalFollowTail(shell, true);
+
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
+         "Ctrl+F should open the find bar");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "needle"),
+         "the query should be typed into the bar");
+  auto& find = WorkspaceShellTestAccess::TerminalFind(shell);
+  const std::size_t newest = find.selected_index();
+  Expect(newest + 1 == find.matches().size(), "the newest hit should be selected first");
+
+  Expect(WorkspaceShellTestAccess::HandleTerminalFindKeyDown(shell, SDLK_RETURN, SDL_KMOD_SHIFT),
+         "Shift+Enter should be handled by the find bar");
+  Expect(find.selected_index() == newest - 1, "Shift+Enter should step back up the history");
+  Expect(!WorkspaceShellTestAccess::ActiveTerminalFollowTail(shell),
+         "revealing an off-screen match should detach the terminal from its tail");
+
+  Expect(WorkspaceShellTestAccess::HandleTerminalFindKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should be handled by the find bar");
+  Expect(find.selected_index() == newest, "Enter should step back forward");
+  Expect(WorkspaceShellTestAccess::HandleTerminalFindKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter past the last match should still be handled");
+  Expect(find.selected_index() == 0, "stepping past the end should wrap to the first match");
+}
+
+void TestWorkspaceShellTerminalFindTogglesNarrowMatches() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "Cat concatenate cat\r\n");
+
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
+         "Ctrl+F should open the find bar");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "cat"),
+         "the query should be typed into the bar");
+  auto& find = WorkspaceShellTestAccess::TerminalFind(shell);
+  Expect(find.matches().size() == 3, "case-insensitive substring search should find all three");
+
+  Expect(WorkspaceShellTestAccess::HandleTerminalFindKeyDown(shell, SDLK_C, SDL_KMOD_ALT),
+         "Alt+C should toggle case sensitivity");
+  Expect(find.case_sensitive() && find.matches().size() == 2,
+         "case sensitivity should drop the capitalised hit");
+
+  Expect(WorkspaceShellTestAccess::HandleTerminalFindKeyDown(shell, SDLK_W, SDL_KMOD_ALT),
+         "Alt+W should toggle whole-word matching");
+  Expect(find.whole_word() && find.matches().size() == 1,
+         "whole-word matching should drop the substring hit");
+}
+
+// Escape closes the bar and hands the keyboard back, so the next keystroke drives
+// the shell again.
+void TestWorkspaceShellTerminalFindEscapeReturnsKeyboardToTerminal() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "needle\r\n");
+
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
+         "Ctrl+F should open the find bar");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "needle"),
+         "the query should be typed into the bar");
+  Expect(WorkspaceShellTestAccess::HandleTerminalFindKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "Escape should be handled by the find bar");
+  auto& find = WorkspaceShellTestAccess::TerminalFind(shell);
+  Expect(!find.visible() && !find.focused(), "Escape should close the bar");
+  Expect(find.matches().empty(), "closing should drop the retained match list");
+
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_A, SDL_KMOD_CTRL),
+         "the terminal should own the keyboard again");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == std::string(1, '\x01'),
+         "Ctrl+A should reach the shell as a control byte once the bar is closed");
+}
+
+// New output must extend the match set in place: the incremental rescan only
+// re-walks the visible grid, so a bug there shows up as dropped or duplicated
+// scrollback hits.
+void TestWorkspaceShellTerminalFindTracksStreamingOutput() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 4, 80);
+  for (int index = 0; index < 30; ++index) {
+    TerminalSessionTestAccess::AppendOutput(session, "needle line\r\n");
+  }
+
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
+         "Ctrl+F should open the find bar");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "needle"),
+         "the query should be typed into the bar");
+  auto& find = WorkspaceShellTestAccess::TerminalFind(shell);
+  Expect(find.matches().size() == 30, "the initial scan should see every row");
+
+  for (int index = 0; index < 7; ++index) {
+    TerminalSessionTestAccess::AppendOutput(session, "needle again\r\n");
+  }
+  WorkspaceShellTestAccess::RefreshTerminalFind(shell);
+  Expect(find.matches().size() == 37, "streamed rows should extend the match set");
+  for (std::size_t index = 1; index < find.matches().size(); ++index) {
+    Expect(find.matches()[index - 1].row < find.matches()[index].row,
+           "matches should stay row-ordered with no duplicates");
+  }
+}
+
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TerminalSelectionPreservesInternalSpaces",
           TestWorkspaceShellSelectionPreservesInternalSpaces);
@@ -1389,6 +1547,18 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalUrlHoverUsesRenderedSnapshot);
   AddTest(tests, "WorkspaceShell/TerminalMouseCaptureSendsButtonEvents",
           TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents);
+  AddTest(tests, "WorkspaceShell/TerminalCtrlFOpensFindBar",
+          TestWorkspaceShellTerminalCtrlFOpensFindBar);
+  AddTest(tests, "WorkspaceShell/TerminalFindSelectsNewestMatchFirst",
+          TestWorkspaceShellTerminalFindSelectsNewestMatchFirst);
+  AddTest(tests, "WorkspaceShell/TerminalFindNavigationWrapsAndReveals",
+          TestWorkspaceShellTerminalFindNavigationWrapsAndReveals);
+  AddTest(tests, "WorkspaceShell/TerminalFindTogglesNarrowMatches",
+          TestWorkspaceShellTerminalFindTogglesNarrowMatches);
+  AddTest(tests, "WorkspaceShell/TerminalFindEscapeReturnsKeyboardToTerminal",
+          TestWorkspaceShellTerminalFindEscapeReturnsKeyboardToTerminal);
+  AddTest(tests, "WorkspaceShell/TerminalFindTracksStreamingOutput",
+          TestWorkspaceShellTerminalFindTracksStreamingOutput);
 }
 
 }  // namespace microide::tests

@@ -24,7 +24,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
   // (no backdrop, no match list) — handled entirely by RenderFindWidget.
   if (overlay_vm.mode == OverlayMode::BufferSearch ||
       overlay_vm.mode == OverlayMode::BufferReplace) {
-    RenderFindWidget(renderer, layout, overlay_vm);
+    RenderFindWidget(renderer, overlay_vm.find_widget);
     return;
   }
 
@@ -137,10 +137,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
 }
 
 void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
-                                      const WorkspaceLayout& layout,
-                                      const OverlaySurfaceViewModel& overlay_vm) {
-  (void)layout;
-  const OverlayFindWidgetViewModel& fw_vm = overlay_vm.find_widget;
+                                      const OverlayFindWidgetViewModel& fw_vm) {
   const FindWidgetLayout& fw = fw_vm.fw;
 
   // Floating card only — no backdrop, so the editor underneath stays visible and

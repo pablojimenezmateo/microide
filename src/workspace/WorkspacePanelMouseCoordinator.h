@@ -27,6 +27,10 @@ class PanelMouseCoordinator {
     std::function<std::optional<std::string>()> read_primary_selection_text;
     std::function<void()> clear_terminal_selection;
     std::function<void(std::string_view)> append_terminal_pending_input;
+    // Hands a left press to the terminal find bar. Returns true when the bar took
+    // it (a button or its chrome); a press anywhere else blurs the bar so the
+    // keyboard goes back to the terminal, exactly like the in-file find widget.
+    std::function<bool(float, float)> terminal_find_mouse_down;
     std::function<std::optional<std::string>(float, float)> terminal_url_at_point;
     std::function<bool(std::string_view)> open_external_url;
     std::function<std::optional<TerminalSelectionPosition>(int,

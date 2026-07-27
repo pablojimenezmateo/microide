@@ -84,6 +84,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::GitSync, "git-sync", "git-sync", "Git: Sync (Pull then Push)", ""},
       ActionSpec{ActionId::GitStash, "git-stash", "git-stash [message]", "Git: Stash Changes", ""},
       ActionSpec{ActionId::GitStashPop, "git-stash-pop", "git-stash-pop", "Git: Pop Stash", ""},
+      ActionSpec{ActionId::TerminalFind, "terminal-find", "terminal-find [query]",
+                 "Terminal: Find In Scrollback", ""},
       ActionSpec{ActionId::MarkBranchFileReviewed, "mark-branch-file-reviewed",
                  "mark-branch-file-reviewed", "Mark Branch File Reviewed", ""},
       ActionSpec{ActionId::UnmarkBranchFileReviewed, "unmark-branch-file-reviewed",

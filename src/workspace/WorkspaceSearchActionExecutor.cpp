@@ -30,6 +30,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       }
       context_.OpenTerminal(JoinCommandArguments(args, 0));
       return DispatchResult::Handled;
+    case ActionId::TerminalFind:
+      if (!context_.OpenTerminalFind(JoinCommandArguments(args, 0))) {
+        return reject("No terminal to search");
+      }
+      return DispatchResult::Handled;
     case ActionId::Find:
       if (!context_.HasProjectRoot()) {
         return reject("No active project");

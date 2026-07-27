@@ -228,6 +228,17 @@ struct BottomPanelSurfaceViewModel {
   // render TU paints this directly instead of resolving owner/id through state.
   const editor::SurfaceContent* plugin_surface = nullptr;
   float plugin_surface_scroll_y = 0.0f;
+
+  // Terminal find bar, floating over the terminal body. Filled by frame prep
+  // rather than by the builder: the bar's geometry needs the resolved layout, and
+  // its state lives in TerminalFindService (which the builder cannot reach).
+  bool find_visible = false;
+  OverlayFindWidgetViewModel find{};
+  const editor::SingleLineEditor* find_query = nullptr;
+  // Match list, ordered by (row, column) so the paint loop can walk it alongside
+  // the visible rows. Null when nothing is highlighted.
+  const std::vector<terminal::TerminalSearchMatch>* find_matches = nullptr;
+  std::size_t find_selected_index = 0;
 };
 
 // Right-side debug pane surface (Call Stack / Variables / Watch / Breakpoints).

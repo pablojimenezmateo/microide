@@ -363,6 +363,19 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
       },
       KeybindingSpec{
+          // VSCode binds Ctrl+F in a focused terminal to its find widget rather
+          // than passing ^F through to the shell; the bar closes on Escape, so
+          // readline's forward-char stays one keystroke away.
+          .id = "terminal-find",
+          .action = ActionId::TerminalFind,
+          .key = SDLK_F,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Terminal,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
           .id = "replace",
           .action = ActionId::ReplaceInBuffer,
           .key = SDLK_H,

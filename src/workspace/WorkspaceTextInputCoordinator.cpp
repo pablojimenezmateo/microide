@@ -99,6 +99,9 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
     case TextInputSurface::Editor:
       operations_.request_focused_editor_redraw();
       break;
+    case TextInputSurface::TerminalFind:
+      operations_.request_bottom_panel_content_redraw();
+      break;
     case TextInputSurface::None:
     case TextInputSurface::Terminal:
       break;
@@ -128,6 +131,9 @@ editor::SingleLineEditor* TextInputCoordinator::ActiveSingleLineTextState() {
       return operations_.settings_query_editor ? operations_.settings_query_editor() : nullptr;
     case TextInputSurface::SettingsValueEdit:
       return operations_.settings_value_editor ? operations_.settings_value_editor() : nullptr;
+    case TextInputSurface::TerminalFind:
+      return operations_.terminal_find_query_editor ? operations_.terminal_find_query_editor()
+                                                    : nullptr;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::SidebarSearchInclude:
@@ -187,6 +193,12 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       break;
     case TextInputSurface::BufferReplaceReplace:
       operations_.request_overlay_redraw();
+      break;
+    case TextInputSurface::TerminalFind:
+      if (text_changed && operations_.refresh_terminal_find) {
+        operations_.refresh_terminal_find();
+      }
+      operations_.request_bottom_panel_content_redraw();
       break;
     case TextInputSurface::ProjectSearchOverlay:
       if (text_changed) {
@@ -318,6 +330,7 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
     case TextInputSurface::SidebarSearchExclude:
     case TextInputSurface::DebugVariableEdit:
     case TextInputSurface::CommitSubject:
+    case TextInputSurface::TerminalFind:
       // These are single-line editors handled by ActiveSingleLineTextState above;
       // reaching here means it had no backing state, so there is nothing to insert.
       return false;

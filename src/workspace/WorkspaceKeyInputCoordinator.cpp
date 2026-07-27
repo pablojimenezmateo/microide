@@ -641,6 +641,11 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               },
           .text_input_handle_terminal_key_down =
               [this](const SDL_KeyboardEvent& event, SDL_Keymod modifiers) {
+                // The find bar floats over the terminal: while focused it takes the
+                // keys first, so typing a query never reaches the PTY.
+                if (HandleTerminalFindKeyDown(event, modifiers)) {
+                  return true;
+                }
                 return MakeTextInputCoordinator().HandleTerminalKeyDown(event, modifiers);
               },
           .confirm_dirty_prompt = [this]() { ConfirmDirtyPrompt(); },
