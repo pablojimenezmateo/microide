@@ -20,6 +20,7 @@ enum class DragTarget {
   MergeRightDivider,
   SidebarScrollbar,
   BottomPanelScrollbar,
+  DebugPaneScrollbar,
   OverlayScrollbar,
   EditorVerticalScrollbar,
   EditorHorizontalScrollbar,

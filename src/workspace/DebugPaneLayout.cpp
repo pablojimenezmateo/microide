@@ -232,7 +232,7 @@ void WorkspaceShell::OpenDebugPaneOnStop() { MakeDebugPaneService().OpenOnStop()
 
 DebugPaneMouseCoordinator WorkspaceShell::MakeDebugPaneMouseCoordinator() {
   return DebugPaneMouseCoordinator(
-      context_.current_project_state,
+      context_.current_project_state, context_.interaction_state,
       DebugPaneMouseCoordinator::Operations{
           .compute_debug_pane_list_layout =
               [this](const WorkspaceLayout& layout, std::size_t line_count) {

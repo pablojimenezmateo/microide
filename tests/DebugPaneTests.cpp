@@ -177,17 +177,18 @@ void TestDebugPaneClickFrameNavigates() {
   panel_layout.scroll.visible_rows = 20;
   panel_layout.scroll.vertical_scroll = 0;
 
+  microide::workspace::InteractionState interaction;
   DebugPaneMouseCoordinator coordinator(
-      state, DebugPaneMouseCoordinator::Operations{
-                 .compute_debug_pane_list_layout =
-                     [&](const WorkspaceLayout&, std::size_t) { return panel_layout; },
-                 .debug_pane_mode_row = [](const SDL_FRect&) { return DebugPaneModeRowLayout{}; },
-                 .open_file = [&](const std::filesystem::path& p) { opened = p.string(); },
-                 .active_editor_viewport = []() -> microide::editor::TextViewport* {
-                   return nullptr;
-                 },
-                 .on_debug_frame_focus_changed = [&](int id) { focused_frame = id; },
-             });
+      state, interaction,
+      DebugPaneMouseCoordinator::Operations{
+          .compute_debug_pane_list_layout =
+              [&](const WorkspaceLayout&, std::size_t) { return panel_layout; },
+          .debug_pane_mode_row = [](const SDL_FRect&) { return DebugPaneModeRowLayout{}; },
+          .debug_pane_active_row_count = [&]() { return state.debug_execution.PanelRowCount(); },
+          .open_file = [&](const std::filesystem::path& p) { opened = p.string(); },
+          .active_editor_viewport = []() -> microide::editor::TextViewport* { return nullptr; },
+          .on_debug_frame_focus_changed = [&](int id) { focused_frame = id; },
+      });
 
   WorkspaceLayout layout;
   layout.right_pane = MakeRect(0.0f, 0.0f, 200.0f, 400.0f);
@@ -201,6 +202,89 @@ void TestDebugPaneClickFrameNavigates() {
   Expect(coordinator.HandleButtonDown(event, layout), "the click is consumed by the pane");
   Expect(opened == "main.cpp", "clicking the frame row opens its source file");
   Expect(focused_frame == 7, "clicking the frame row focuses that DAP frame");
+}
+
+// The pane painted a vertical scrollbar from day one but never hit-tested it, so
+// the bar was decorative and a grab landed on whatever row was underneath (in
+// Breakpoints mode that navigated the editor away). Every other scrollable
+// surface in the shell drags; this one must too.
+void TestDebugPaneScrollbarDrags() {
+  ProjectWorkspaceState state;
+  state.debug_pane.visible = true;
+  state.debug_pane.mode = DebugPaneMode::CallStack;
+  state.debug_execution.stopped = true;
+  for (int i = 0; i < 200; ++i) {
+    microide::workspace::DebugStackFrameView frame;
+    frame.id = i;
+    frame.SetSource("main.cpp");
+    frame.line = static_cast<std::size_t>(i);
+    state.debug_execution.frames.push_back(frame);
+  }
+  const std::size_t row_count = state.debug_execution.PanelRowCount();
+  Expect(row_count > 20, "the fixture is tall enough to scroll");
+
+  const SDL_FRect content = MakeRect(0.0f, 30.0f, 200.0f, 320.0f);
+  WorkspaceShell::LogSurfaceLayout panel_layout;
+  panel_layout.content_rect = content;
+  panel_layout.text_x = 12.0f;
+  panel_layout.text_y = 38.0f;
+  panel_layout.line_height = 16.0f;
+
+  int scroll_row = 0;
+  auto rebuild = [&]() {
+    panel_layout.scroll = microide::workspace::ComputeScrollSurfaceLayout(content, row_count,
+                                                                         /*visible_rows=*/20,
+                                                                         scroll_row);
+  };
+  rebuild();
+  Expect(panel_layout.scroll.vertical_scrollbar.has_value(), "the pane shows a scrollbar");
+
+  int opened_count = 0;
+  microide::workspace::InteractionState interaction;
+  DebugPaneMouseCoordinator coordinator(
+      state, interaction,
+      DebugPaneMouseCoordinator::Operations{
+          .compute_debug_pane_list_layout =
+              [&](const WorkspaceLayout&, std::size_t) { return panel_layout; },
+          .debug_pane_mode_row = [](const SDL_FRect&) { return DebugPaneModeRowLayout{}; },
+          .debug_pane_active_row_count = [&]() { return row_count; },
+          .set_debug_pane_scroll_row =
+              [&](int row, std::size_t, int) {
+                scroll_row = row;
+                rebuild();
+              },
+          .open_file = [&](const std::filesystem::path&) { ++opened_count; },
+          .active_editor_viewport = []() -> microide::editor::TextViewport* { return nullptr; },
+          .on_debug_frame_focus_changed = [](int) {},
+      });
+
+  WorkspaceLayout layout;
+  layout.right_pane = MakeRect(0.0f, 0.0f, 200.0f, 400.0f);
+
+  const SDL_FRect track = panel_layout.scroll.vertical_scrollbar->track;
+  SDL_Event press{};
+  press.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  press.button.button = SDL_BUTTON_LEFT;
+  press.button.clicks = 1;
+  press.button.x = track.x + track.w * 0.5f;
+  press.button.y = track.y + track.h * 0.75f;
+  Expect(coordinator.HandleButtonDown(press, layout), "the scrollbar press is consumed");
+  Expect(interaction.drag_target == microide::workspace::DragTarget::DebugPaneScrollbar,
+         "pressing the track arms the pane scrollbar drag");
+  Expect(scroll_row > 0, "pressing low on the track jumps the view down");
+  Expect(opened_count == 0, "a scrollbar grab never activates the row behind it");
+
+  const int after_press = scroll_row;
+  SDL_Event drag{};
+  drag.type = SDL_EVENT_MOUSE_MOTION;
+  drag.motion.state = SDL_BUTTON_LMASK;
+  drag.motion.x = track.x + track.w * 0.5f;
+  drag.motion.y = track.y + 1.0f;
+  Expect(coordinator.HandleDrag(drag, layout), "the drag is consumed");
+  Expect(scroll_row == 0, "dragging the thumb to the top scrolls back to row 0");
+  Expect(after_press != scroll_row, "the drag actually moved the view");
+  Expect(state.surface.focus == microide::workspace::FocusTarget::DebugPane,
+         "grabbing the pane scrollbar focuses the pane");
 }
 
 // Row geometry must stay correct at scale: a 5000-row tree scrolled deep still
@@ -267,6 +351,7 @@ void RegisterDebugPaneTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugPane/RowAtPointHonorsScroll", TestDebugPaneRowAtPointHonorsScroll);
   AddTest(tests, "DebugPane/RowAtPointLargeScrolledList", TestDebugPaneRowAtPointLargeScrolledList);
   AddTest(tests, "DebugPane/ClickFrameNavigates", TestDebugPaneClickFrameNavigates);
+  AddTest(tests, "DebugPane/ScrollbarDrags", TestDebugPaneScrollbarDrags);
   AddTest(tests, "DebugPane/GutterMarkersClearLineNumbers", TestGutterMarkersClearLineNumbers);
 }
 

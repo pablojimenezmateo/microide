@@ -315,6 +315,14 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return handled;
     }
 
+    if (context_.interaction_state.drag_target == DragTarget::DebugPaneScrollbar) {
+      const bool handled = MakeDebugPaneMouseCoordinator().HandleDrag(event, drag_layout);
+      if (handled) {
+        EnsureRedraw([this]() { RequestWindowRedraw(); });
+      }
+      return handled;
+    }
+
     if (context_.interaction_state.drag_target == DragTarget::OverlayScrollbar &&
         context_.current_project_state.overlay.visible) {
       const SDL_FRect overlay = ComputeOverlayRect(drag_layout.editor_area);

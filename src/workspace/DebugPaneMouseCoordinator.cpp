@@ -1,6 +1,7 @@
 #include "workspace/DebugPaneMouseCoordinator.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 #include <vector>
 
@@ -28,8 +29,9 @@ std::optional<std::size_t> DebugPaneLineIndexAtPoint(
 }  // namespace
 
 DebugPaneMouseCoordinator::DebugPaneMouseCoordinator(ProjectWorkspaceState& state,
+                                                     InteractionState& interaction_state,
                                                      Operations operations)
-    : state_(state), operations_(std::move(operations)) {}
+    : state_(state), interaction_state_(interaction_state), operations_(std::move(operations)) {}
 
 bool DebugPaneMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                                  const WorkspaceLayout& layout) {
@@ -42,6 +44,12 @@ bool DebugPaneMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (!Contains(layout.right_pane, static_cast<float>(event.button.x),
                 static_cast<float>(event.button.y))) {
     return false;
+  }
+
+  // The scrollbar overlaps the row area, so it must claim the press before the
+  // row hit test turns a bar grab into a frame/breakpoint activation.
+  if (BeginScrollbarDrag(event, layout)) {
+    return true;
   }
 
   // Mode-row button switcher: a click on a tab activates that surface.
@@ -234,6 +242,57 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
   }
 
   return false;
+}
+
+bool DebugPaneMouseCoordinator::BeginScrollbarDrag(const SDL_Event& event,
+                                                   const WorkspaceLayout& layout) {
+  const std::size_t line_count = operations_.debug_pane_active_row_count();
+  const auto panel_layout = operations_.compute_debug_pane_list_layout(layout, line_count);
+  if (!panel_layout.scroll.vertical_scrollbar.has_value() ||
+      !Contains(VerticalScrollbarHitRect(*panel_layout.scroll.vertical_scrollbar),
+                static_cast<float>(event.button.x), static_cast<float>(event.button.y))) {
+    return false;
+  }
+
+  interaction_state_.drag_target = DragTarget::DebugPaneScrollbar;
+  interaction_state_.drag_scrollbar_offset =
+      Contains(panel_layout.scroll.vertical_scrollbar->thumb, static_cast<float>(event.button.x),
+               static_cast<float>(event.button.y))
+          ? static_cast<float>(event.button.y) - panel_layout.scroll.vertical_scrollbar->thumb.y
+          : panel_layout.scroll.vertical_scrollbar->thumb.h * 0.5f;
+  // Clicking the track jumps the thumb to the pointer, matching every other
+  // scrollbar in the shell.
+  operations_.set_debug_pane_scroll_row(
+      std::clamp(static_cast<int>(std::lround(ScrollUnitsForPointer(
+                     *panel_layout.scroll.vertical_scrollbar, static_cast<float>(event.button.y),
+                     interaction_state_.drag_scrollbar_offset))),
+                 0, panel_layout.scroll.max_vertical_scroll),
+      line_count, panel_layout.scroll.visible_rows);
+  state_.surface.focus = FocusTarget::DebugPane;
+  return true;
+}
+
+bool DebugPaneMouseCoordinator::HandleDrag(const SDL_Event& event, const WorkspaceLayout& layout) {
+  if (interaction_state_.drag_target != DragTarget::DebugPaneScrollbar ||
+      !state_.debug_pane.visible) {
+    return false;
+  }
+
+  const std::size_t line_count = operations_.debug_pane_active_row_count();
+  const auto panel_layout = operations_.compute_debug_pane_list_layout(layout, line_count);
+  if (!panel_layout.scroll.vertical_scrollbar.has_value()) {
+    interaction_state_.drag_target = DragTarget::None;
+    return false;
+  }
+
+  operations_.set_debug_pane_scroll_row(
+      std::clamp(static_cast<int>(std::lround(ScrollUnitsForPointer(
+                     *panel_layout.scroll.vertical_scrollbar, static_cast<float>(event.motion.y),
+                     interaction_state_.drag_scrollbar_offset))),
+                 0, panel_layout.scroll.max_vertical_scroll),
+      line_count, panel_layout.scroll.visible_rows);
+  state_.surface.focus = FocusTarget::DebugPane;
+  return true;
 }
 
 bool DebugPaneMouseCoordinator::HandleWheel(const SDL_Event& event, const WorkspaceLayout& layout,

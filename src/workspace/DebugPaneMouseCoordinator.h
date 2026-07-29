@@ -6,6 +6,7 @@
 
 #include "editor/TextViewport.h"
 #include "workspace/DebugPaneRegistry.h"
+#include "workspace/WorkspaceInteractionState.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspaceShell.h"
@@ -46,15 +47,22 @@ class DebugPaneMouseCoordinator {
     std::function<void(std::size_t)> toggle_debug_function_breakpoint_enabled;
   };
 
-  DebugPaneMouseCoordinator(ProjectWorkspaceState& state, Operations operations);
+  DebugPaneMouseCoordinator(ProjectWorkspaceState& state, InteractionState& interaction_state,
+                            Operations operations);
 
   bool HandleButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleWheel(const SDL_Event& event, const WorkspaceLayout& layout, int vertical_ticks);
+  // Drag the pane's vertical scrollbar. The pane painted a scrollbar from the
+  // start but had no grab path, so it was the one scrollable surface whose bar
+  // was decorative; these two mirror SidebarMouseCoordinator exactly.
+  bool HandleDrag(const SDL_Event& event, const WorkspaceLayout& layout);
 
  private:
   bool HandleRowClick(const SDL_Event& event, const WorkspaceLayout& layout);
+  bool BeginScrollbarDrag(const SDL_Event& event, const WorkspaceLayout& layout);
 
   ProjectWorkspaceState& state_;
+  InteractionState& interaction_state_;
   Operations operations_;
 };
 

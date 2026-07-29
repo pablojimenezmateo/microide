@@ -428,12 +428,12 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
                "Not paused — start a debug session and hit a breakpoint.");
   }
 
-  if (const auto geometry = MakeVerticalScrollbarGeometry(
-          panel_layout.content_rect, static_cast<float>(line_count),
-          static_cast<float>(panel_layout.scroll.visible_rows),
-          static_cast<float>(panel_layout.scroll.vertical_scroll));
-      geometry.has_value()) {
-    DrawScrollbar(renderer, theme_, geometry->track, geometry->thumb, false);
+  // Same geometry the grab path hit-tests (panel_layout.scroll), not a second
+  // hand-rolled MakeVerticalScrollbarGeometry call that could drift from it.
+  if (panel_layout.scroll.vertical_scrollbar.has_value()) {
+    DrawScrollbar(renderer, theme_, panel_layout.scroll.vertical_scrollbar->track,
+                  panel_layout.scroll.vertical_scrollbar->thumb,
+                  context_.interaction_state.drag_target == DragTarget::DebugPaneScrollbar);
   }
 
   // The debug pane is a keyboard focus target (arrows/Enter drive its rows), so it
