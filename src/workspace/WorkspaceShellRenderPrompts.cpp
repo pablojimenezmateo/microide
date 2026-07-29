@@ -82,9 +82,12 @@ void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
                       theme_.chrome_background, DirtyPromptTitle());
   DrawTextOn(text_renderer_, renderer, message_rect.x, message_rect.y, theme_.text_secondary,
              theme_.overlay_background, TruncateLabel(DirtyPromptMessage(), message_rect.w));
+  // Constant hint line: spelled out rather than re-joined per frame. The joiner
+  // lives in WorkspaceUiText.h for text assembled from live state, which belongs
+  // in RenderViewModelBuilder, not in a render TU.
   DrawTextOn(text_renderer_, renderer, message_rect.x, message_rect.y + 22.0f, theme_.text_muted,
              theme_.overlay_background,
-             JoinHintSegments({"Enter confirm", "Left/Right choose", "Esc cancel"}));
+             std::string_view("Enter confirm  |  Left/Right choose  |  Esc cancel"));
 
   const auto buttons = ComputeDirtyPromptButtonRects(dialog);
   const auto labels = DirtyPromptActionLabels();

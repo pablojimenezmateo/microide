@@ -3,6 +3,7 @@
 #include "TestSupport.h"
 #include "architecture/TerminalArchitectureRules.h"
 #include "architecture/WorkspaceCoordinatorArchitectureRules.h"
+#include "architecture/WorkspaceServiceArchitectureRules.h"
 #include "architecture/WorkspaceShellArchitectureRules.h"
 #include "architecture/WorkspaceViewModelArchitectureRules.h"
 
@@ -232,6 +233,57 @@ void RunRegisteredSettingsAreReadRuleFixtures() {
             "std::span<const SettingSpec> BuiltinSettingSpecs() { return {}; }\n");
   Expect(!CheckRegisteredSettingsAreRead(root).violations.empty(),
          "a registry the scan cannot parse must fail loudly, not pass vacuously");
+}
+
+void RunRenderTuTextCompositionRuleFixtures() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path();
+  std::filesystem::create_directories(root / "src/workspace");
+  std::filesystem::create_directories(root / "src/editor");
+  // Both rules scan a fixed set of render TUs and report anything absent as a
+  // missing target, so every scanned file has to exist even when this fixture
+  // only cares about one of them.
+  for (const char* name : {"WorkspaceShellRenderSidebar.cpp", "WorkspaceShellRenderCompare.cpp",
+                           "WorkspaceShellRenderMerge.cpp", "WorkspaceShellHoverPopup.cpp",
+                           "WorkspaceShellHoverTargets.cpp", "DebugPaneRender.cpp"}) {
+    WriteFile(root / "src/workspace" / name, "// clean render TU fixture\n");
+  }
+  WriteFile(root / "src/editor/EditorViewRenderer.cpp", "// clean render TU fixture\n");
+  WriteFile(root / "src/editor/DecoratedTextGridRenderer.cpp", "// clean render TU fixture\n");
+
+  const std::filesystem::path sidebar = root / "src/workspace/WorkspaceShellRenderSidebar.cpp";
+
+  WriteFile(sidebar, "void F(){ Draw(FormatEmptyState(\"matches\")); }\n");
+  Expect(!CheckRenderTuDoesNotCallToStringOrFormat(root).violations.empty(),
+         "the render-TU text rule must flag a WorkspaceUiText composer call");
+  WriteFile(sidebar, "void F(){ Draw(JoinHintSegments({\"a\", \"b\"})); }\n");
+  Expect(!CheckRenderTuDoesNotCallToStringOrFormat(root).violations.empty(),
+         "the render-TU text rule must flag JoinHintSegments too, not just one composer");
+
+  // Positive control: the composed text arriving as a view is exactly the shape
+  // the fix takes, and must produce nothing on either channel.
+  WriteFile(sidebar, "void F(std::string_view empty_text){ Draw(empty_text); }\n");
+  const RuleResult clean = CheckRenderTuDoesNotCallToStringOrFormat(root);
+  Expect(clean.violations.empty() && clean.missing_targets.empty(),
+         "the render-TU text rule must pass when composed text arrives as a view");
+
+  // literal+ident concatenation is enforced on the surface render TUs now, not
+  // only on the four hot per-row ones. Before this it was scoped away, which is
+  // what let `"Error: " + state.error` live in the sidebar paint path.
+  WriteFile(sidebar, "void F(const std::string& e){ auto s = \"Error: \" + e; (void)s; }\n");
+  Expect(!CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
+         "literal+ident concat in a surface render TU must be flagged");
+  WriteFile(sidebar, "void F(std::string_view e){ Draw(e); }\n");
+  Expect(CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
+         "a surface render TU drawing a precomposed view must pass");
+
+  // The hover popup keeps its word-wrap concatenation; that exemption is
+  // deliberate and must stay a *scoped* exemption rather than quietly disabling
+  // the rule for every surface TU.
+  WriteFile(root / "src/workspace/WorkspaceShellHoverPopup.cpp",
+            "void F(const std::string& a, const std::string& b){ auto s = a + \" \" + b; (void)s; }\n");
+  Expect(CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
+         "the hover popup's word-wrap concatenation stays exempt");
 }
 
 void RunMissingRuleTargetFixtures() {

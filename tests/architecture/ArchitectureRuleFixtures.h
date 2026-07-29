@@ -30,6 +30,14 @@ void RunActionIdReachabilityRuleFixtures();
 // overlay shows and persists while nothing reads it.
 void RunRegisteredSettingsAreReadRuleFixtures();
 
+// Negative + positive control for the two render-TU text rules. Every
+// WorkspaceUiText composer returns a fresh std::string by value, and none of the
+// to_string / std::format / `std::string(...) +` patterns names one — which is how
+// the project-search sidebar kept composing its empty-state placeholder on every
+// repaint. Also pins that literal+identifier concatenation is enforced on the
+// surface render TUs, not just the four hot per-row ones.
+void RunRenderTuTextCompositionRuleFixtures();
+
 // Control for the shared missing-target guard every file-scanning rule now goes
 // through. A rule pointed at a file that no longer exists scans nothing and
 // reports green; this pins that such a rule reports its target as missing

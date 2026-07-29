@@ -608,6 +608,7 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
   architecture::RunDirectGitRepositoryRuleFixtures();
   architecture::RunActionIdReachabilityRuleFixtures();
   architecture::RunRegisteredSettingsAreReadRuleFixtures();
+  architecture::RunRenderTuTextCompositionRuleFixtures();
   architecture::RunMissingRuleTargetFixtures();
 }
 

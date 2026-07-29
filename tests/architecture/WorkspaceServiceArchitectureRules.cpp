@@ -76,6 +76,16 @@ RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path&
   // belongs in RenderViewModelBuilder.
   const std::regex path_to_string_pattern(
       R"(\.\s*(generic_string|generic_u8string|u8string|string)\s*\(\s*\))");
+  // Every helper in WorkspaceUiText.h returns a fresh std::string by value, so a
+  // call from a render TU is a per-frame heap allocation that none of the patterns
+  // above name — `FormatEmptyState("matches")` and
+  // `JoinHintSegments({...})` are not to_string, not std::format, and not an
+  // `std::string(...) +` concat. The project-search sidebar composed its empty-state
+  // placeholder that way on every repaint of a running search, and the dirty-file
+  // prompt re-joined a constant hint line every frame. Composition belongs in
+  // RenderViewModelBuilder, which caches it; render TUs draw the resulting view.
+  const std::regex ui_text_composer_pattern(
+      R"(\b(JoinHintSegments|FormatEmptyState|BuildCountStatus|BuildSelectionSummary|BuildShownOfTotalStatus|BuildSearchProgressSuffix)\s*\()");
   for (const auto& path : render_files) {
     if (!RequireRuleTarget(result, path)) {
       continue;
@@ -102,6 +112,11 @@ RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path&
         result, path, text, concat_rhs_pattern,
         "render TU must not build concatenated strings in the hot path; measure across "
         "segments or compute the string in RenderViewModelBuilder");
+    AppendCodeMaskRegexViolations(
+        result, path, text, ui_text_composer_pattern,
+        "render TU must not call a WorkspaceUiText composer; every one returns a FRESH "
+        "std::string, so it allocates per frame — compose in RenderViewModelBuilder and "
+        "hand the render TU a string_view");
   }
   return result;
 }
@@ -600,19 +615,21 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
   const std::regex string_from_view_pattern(R"(std::string\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\.)");
 
   // single_char_pattern is enforced across every render TU. literal+ident
-  // concatenation is enforced only on the hot per-row render TUs
-  // (EditorViewRenderer/DecoratedTextGridRenderer plus the compare/merge
-  // surface render TUs), where it would allocate once per visible row at frame
-  // rate. The overlay/sidebar/hover paint surfaces also build prefix strings,
-  // but only once per visible-surface repaint (not per row at 60fps); routing
-  // those through the view model is a separate, larger refactor and is
-  // intentionally out of scope for this rule.
-  const std::array<std::filesystem::path, 4> hot_editor_render_files = {
-      repo_root / "src/editor/EditorViewRenderer.cpp",
-      repo_root / "src/editor/DecoratedTextGridRenderer.cpp",
-      repo_root / "src/workspace/WorkspaceShellRenderCompare.cpp",
-      repo_root / "src/workspace/WorkspaceShellRenderMerge.cpp",
-  };
+  // concatenation used to be enforced only on the four hot per-row render TUs,
+  // because the surface paints (sidebar/overlay/prompts) still built prefix
+  // strings and routing them through the view model was deferred. That deferral
+  // let the project-search sidebar keep composing `"Error: " + state.error` on
+  // every repaint of a running search — a per-frame allocation on a surface that
+  // repaints on every search-progress wake. Those sites are now precomposed in
+  // RenderViewModelBuilder, so the rule covers every render TU it scans.
+  //
+  // Sole exemption: WorkspaceShellHoverPopup.cpp, whose word-wrap routine
+  // (`line + " " + words[i]`) is a genuine text-layout algorithm rather than a
+  // message compose. Caching its wrapped lines by (text, width) is real remaining
+  // work — the card re-wraps on every frame it is visible — but it is a different
+  // change from "do not assemble UI text in a paint path".
+  const std::filesystem::path hover_popup_exemption =
+      repo_root / "src/workspace/WorkspaceShellHoverPopup.cpp";
 
   for (const auto& path : render_files) {
     if (!RequireRuleTarget(result, path)) {
@@ -622,19 +639,15 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
     AppendCodeMaskRegexViolations(
         result, path, text, single_char_pattern,
         "render TU must not build std::string(1, ch); use std::string_view over the char storage");
-  }
-
-  for (const auto& path : hot_editor_render_files) {
-    if (!RequireRuleTarget(result, path)) {
+    if (path == hover_popup_exemption) {
       continue;
     }
-    const std::string text = ReadText(path);
     // Trailing-anchored: the pattern starts on a string-literal quote, which
     // BuildCodeMask flags as non-code, so AppendCodeMaskRegexViolations would
     // never fire here.
     AppendTrailingCodeRegexViolations(
         result, path, text, literal_plus_pattern,
-        "hot editor render TU must not concatenate literal + identifier per row; use a "
+        "render TU must not concatenate literal + identifier in a paint path; use a "
         "thread_local scratch or compose the string in RenderViewModelBuilder");
   }
   (void)string_from_view_pattern;  // advisory; some derived-type constructors still match.

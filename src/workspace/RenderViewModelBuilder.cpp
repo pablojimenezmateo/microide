@@ -161,6 +161,51 @@ std::string_view CachedProjectSearchStatus(const ProjectSearchState& ps) {
   return cache.text;
 }
 
+// Placeholder drawn over an empty project-search result list. The render TU used
+// to build this with `"Error: " + state.error` / FormatEmptyState("matches")
+// EVERY frame — two heap allocations per repaint on a surface that repaints on
+// every search-progress wake. Same keyed-cache idiom as the status line above.
+struct ProjectSearchEmptyKey {
+  bool error_empty = true;
+  bool running = false;
+  bool query_empty = true;
+  std::size_t error_size = 0;
+  bool operator==(const ProjectSearchEmptyKey&) const = default;
+};
+
+thread_local struct ProjectSearchEmptyCache {
+  bool valid = false;
+  ProjectSearchEmptyKey key;
+  std::string text;
+} g_project_search_empty_cache;
+
+std::string_view CachedProjectSearchEmptyText(const ProjectSearchState& ps) {
+  const ProjectSearchEmptyKey key{
+      .error_empty = ps.error.empty(),
+      .running = ps.running,
+      .query_empty = ps.query.text().empty(),
+      // The error string itself is the only variable-length input; its length is
+      // enough of a discriminator to catch a swapped message without hashing it.
+      .error_size = ps.error.size(),
+  };
+  auto& cache = g_project_search_empty_cache;
+  if (!cache.valid || !(cache.key == key)) {
+    if (!ps.error.empty()) {
+      cache.text = "Error: ";
+      cache.text += ps.error;
+    } else if (ps.running) {
+      cache.text = "Searching…";
+    } else if (ps.query.text().empty()) {
+      cache.text = "Project Search is idle";
+    } else {
+      cache.text = FormatEmptyState("matches");
+    }
+    cache.key = key;
+    cache.valid = true;
+  }
+  return cache.text;
+}
+
 bool OccurrenceSeedCacheMatches(const editor::TextViewport& viewport,
                                 std::uintptr_t viewport_key,
                                 bool case_sensitive_flag) {
@@ -1035,6 +1080,10 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
   const SidebarMode mode = SidebarModeFromViewId(context_.current_project_state.sidebar.view_id);
   const std::string_view project_search_status_text =
       mode == SidebarMode::Search ? CachedProjectSearchStatus(project_search) : std::string_view{};
+  const std::string_view project_search_empty_text =
+      mode == SidebarMode::Search && project_search.results.empty()
+          ? CachedProjectSearchEmptyText(project_search)
+          : std::string_view{};
   const GitSidebarViewModel* git_sidebar = nullptr;
   const std::vector<GitSidebarLine>* git_sidebar_lines = nullptr;
   // Building the git VM walks every changed/staged/untracked/outgoing entry and
@@ -1066,6 +1115,8 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
       .exclude_fallback_text = exclude_fallback_text,
       .project_search_scope_expanded = project_search.scope_expanded,
       .project_search_status_text = project_search_status_text,
+      .project_search_empty_text = project_search_empty_text,
+      .project_search_empty_is_error = !project_search.error.empty(),
       .git_sidebar = git_sidebar,
       .git_sidebar_lines = git_sidebar_lines,
       .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),

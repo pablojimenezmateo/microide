@@ -186,6 +186,11 @@ struct SidebarSurfaceViewModel {
   // Prebuilt project-search status/hint line (empty unless mode == Search).
   // Points into a builder-owned thread-local cache; consume within the frame.
   std::string_view project_search_status_text;
+  // Prebuilt placeholder for an empty result list ("Searching…", "No matches",
+  // "Error: …"). Same cache contract as the status line. Empty when the list has
+  // rows. `project_search_empty_is_error` picks the error colour.
+  std::string_view project_search_empty_text;
+  bool project_search_empty_is_error = false;
   // Points into the frame-owned `CachedGitSidebarPresentation` memo (thread-local,
   // stable until the next mutating build on this thread — which cannot happen between
   // prep and render of one frame). Null unless the git sidebar is visible. Held as a
