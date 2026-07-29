@@ -448,6 +448,10 @@ struct DebugPaneState {
   int variables_scroll_row = 0;
   int watch_scroll_row = 0;
   int breakpoints_scroll_row = 0;
+  // Keyboard selection for the Breakpoints surface. The other three modes already
+  // had one: Variables/Watch keep it on their value tree, and the Call Stack's is
+  // the focused frame. This is the only mode that needed its own.
+  int breakpoints_selected_row = 0;
 };
 
 struct LspUiState {

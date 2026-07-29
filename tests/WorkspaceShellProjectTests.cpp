@@ -2541,6 +2541,57 @@ void TestWorkspaceShellDebugCallStackKeyboardNavigates() {
          "Home should scroll the pane back to the top");
 }
 
+// Breakpoints was the last of the debug pane's four modes with no keyboard. Unlike
+// the other three it had no selection concept at all, so it needed one — and a
+// highlight, or navigation would be invisible. Enter is the mouse's single click
+// (navigate to the line), Space its double click (toggle enabled).
+void TestWorkspaceShellDebugBreakpointsKeyboardNavigates() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int a();\nint b();\nint c();\nint d();\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::FocusDebugPaneBreakpoints(shell);
+  for (std::size_t line = 0; line < 3; ++line) {
+    WorkspaceShellTestAccess::ToggleBreakpointForTest(shell, source, line);
+  }
+  const std::size_t rows = WorkspaceShellTestAccess::DebugBreakpointRowCount(shell);
+  Expect(rows > 1, "the breakpoints fixture should build rows");
+  Expect(WorkspaceShellTestAccess::DebugBreakpointsSelectedRow(shell) == 0,
+         "the panel should start on its first row");
+
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE), "Down should be consumed by the panel");
+  Expect(WorkspaceShellTestAccess::DebugBreakpointsSelectedRow(shell) == 1,
+         "Down should move the panel selection");
+  Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE), "End should be consumed by the panel");
+  Expect(WorkspaceShellTestAccess::DebugBreakpointsSelectedRow(shell) ==
+             static_cast<int>(rows) - 1,
+         "End should select the last row");
+  Expect(SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE), "Home should be consumed by the panel");
+  Expect(WorkspaceShellTestAccess::DebugBreakpointsSelectedRow(shell) == 0,
+         "Home should select the first row");
+
+  // Walk to a real breakpoint row (row 0 is the section header) and toggle it.
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE), "Down should be consumed by the panel");
+  Expect(WorkspaceShellTestAccess::BreakpointEnabledForTest(shell, source, 0),
+         "the fixture's first breakpoint starts enabled");
+  Expect(SendKeyDown(shell, SDLK_SPACE, SDL_KMOD_NONE), "Space should be consumed by the panel");
+  Expect(!WorkspaceShellTestAccess::BreakpointEnabledForTest(shell, source, 0),
+         "Space should disable the selected breakpoint, as double-clicking it does");
+  Expect(WorkspaceShellTestAccess::FocusIsDebugPane(shell),
+         "toggling from the keyboard must leave focus in the pane");
+
+  // Enter navigates instead, and must not steal focus the way a click does.
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter should be consumed by the panel");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == source.lexically_normal(),
+         "Enter should navigate to the selected breakpoint's file");
+  Expect(WorkspaceShellTestAccess::FocusIsDebugPane(shell),
+         "navigating from the keyboard must leave focus in the pane");
+}
+
 // Third instance of the same bug as the debug pane's and Help/About's bars: the
 // font-picker dropdown painted a scrollbar from the day it shipped and nothing
 // hit-tested it, so a long family list was reachable by mouse wheel only. The
@@ -4801,6 +4852,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSettingsOverlayTrapsKeyboardInput);
   AddTest(tests, "WorkspaceShell/SettingsOverlayWheelScrolls",
           TestWorkspaceShellSettingsOverlayWheelScrolls);
+  AddTest(tests, "WorkspaceShell/DebugBreakpointsKeyboardNavigates",
+          TestWorkspaceShellDebugBreakpointsKeyboardNavigates);
   AddTest(tests, "WorkspaceShell/DebugCallStackKeyboardNavigates",
           TestWorkspaceShellDebugCallStackKeyboardNavigates);
   AddTest(tests, "WorkspaceShell/DebugPaneKeyboardRevealsAndPages",

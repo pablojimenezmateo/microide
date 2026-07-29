@@ -858,6 +858,38 @@
     shell.context_.current_project_state.debug_pane.mode = DebugPaneMode::CallStack;
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::DebugPane;
   }
+  static void FocusDebugPaneBreakpoints(WorkspaceShell& shell) {
+    SetDebugPaneVisible(shell, true);
+    shell.context_.current_project_state.debug_pane.mode = DebugPaneMode::Breakpoints;
+    shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::DebugPane;
+  }
+  static void ToggleBreakpointForTest(WorkspaceShell& shell, const std::filesystem::path& path,
+                                      std::size_t line) {
+    shell.context_.current_project_state.breakpoint_store.Toggle(path, line);
+    shell.context_.current_project_state.debug_breakpoints_panel.Rebuild(
+        shell.context_.current_project_state.breakpoint_store,
+        shell.context_.current_project_state.function_breakpoint_store);
+  }
+  static std::size_t DebugBreakpointRowCount(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.debug_breakpoints_panel.RowCount();
+  }
+  static int DebugBreakpointsSelectedRow(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.debug_pane.breakpoints_selected_row;
+  }
+  static bool BreakpointEnabledForTest(const WorkspaceShell& shell,
+                                       const std::filesystem::path& path, std::size_t line) {
+    const auto* file =
+        shell.context_.current_project_state.breakpoint_store.FindByPath(path);
+    if (file == nullptr) {
+      return false;
+    }
+    for (const editor::Breakpoint& breakpoint : *file) {
+      if (breakpoint.line == line) {
+        return breakpoint.enabled;
+      }
+    }
+    return false;
+  }
   static DebugExecutionView& DebugExecution(WorkspaceShell& shell) {
     return shell.context_.current_project_state.debug_execution;
   }

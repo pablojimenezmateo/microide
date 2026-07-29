@@ -95,11 +95,19 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     }
   }
 
-  // Call Stack was clickable but had no keyboard at all, in a pane the shell
-  // treats as a first-class focus target (focus ring, Ctrl+Tab, its own scrollbar).
+  // Call Stack and Breakpoints were clickable but had no keyboard at all, in a
+  // pane the shell treats as a first-class focus target (focus ring, Ctrl+Tab, its
+  // own scrollbar, row context menus).
   if (state_.surface.focus == FocusTarget::DebugPane &&
       state_.debug_pane.mode == DebugPaneMode::CallStack) {
     if (HandleDebugCallStackKeyDown(event)) {
+      ensure_redraw([this]() { operations_.request_window_redraw(); });
+      return true;
+    }
+  }
+  if (state_.surface.focus == FocusTarget::DebugPane &&
+      state_.debug_pane.mode == DebugPaneMode::Breakpoints) {
+    if (HandleDebugBreakpointsKeyDown(event)) {
       ensure_redraw([this]() { operations_.request_window_redraw(); });
       return true;
     }
@@ -377,6 +385,30 @@ bool KeyInputCoordinator::HandleDebugCallStackKeyDown(const SDL_KeyboardEvent& e
   operations_.focus_debug_call_stack_row(static_cast<std::size_t>(target));
   operations_.reveal_debug_pane_selection();
   return true;
+}
+
+bool KeyInputCoordinator::HandleDebugBreakpointsKeyDown(const SDL_KeyboardEvent& event) {
+  const std::size_t row_count = state_.debug_breakpoints_panel.Rows().size();
+  if (row_count == 0) {
+    return false;
+  }
+  int& selected = state_.debug_pane.breakpoints_selected_row;
+  const auto max_row = static_cast<int>(row_count) - 1;
+  selected = std::clamp(selected, 0, max_row);
+  if (const auto delta = ListNavigationKeyDelta(event.key, row_count); delta.has_value()) {
+    selected = std::clamp(selected + *delta, 0, max_row);
+    operations_.reveal_debug_pane_selection();
+    return true;
+  }
+  // Enter is the single click (navigate to the source line), Space the double
+  // click (toggle enabled) — the two gestures the mouse already distinguishes.
+  const bool is_enter = event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER;
+  if ((is_enter || event.key == SDLK_SPACE) && operations_.activate_debug_breakpoint_row) {
+    operations_.activate_debug_breakpoint_row(static_cast<std::size_t>(selected),
+                                              event.key == SDLK_SPACE);
+    return true;
+  }
+  return false;
 }
 
 bool KeyInputCoordinator::HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event,
@@ -726,6 +758,8 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .reveal_debug_pane_selection = [this]() { RevealDebugPaneSelection(); },
           .focus_debug_call_stack_row =
               [this](std::size_t row) { FocusDebugCallStackRow(row); },
+          .activate_debug_breakpoint_row =
+              [this](std::size_t row, bool toggle) { ActivateDebugBreakpointRow(row, toggle); },
           .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
           .move_project_search_selection = [this](int delta) { MoveProjectSearchSelection(delta); },

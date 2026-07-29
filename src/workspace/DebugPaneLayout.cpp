@@ -132,11 +132,11 @@ std::size_t WorkspaceShell::DebugPaneActiveRowCount() const {
 }
 
 void WorkspaceShell::RevealDebugPaneSelection() {
-  // Keyboard navigation in the Variables/Watch trees moved the selection without
-  // touching the scroll, so arrowing past the last visible row walked the highlight
-  // off screen — the same failure the git sidebar's visible-row walk was written to
-  // avoid. Every other list in the shell reveals; these two are the pane's only
-  // keyboard-navigable modes.
+  // Keyboard navigation moved the selection without touching the scroll, so
+  // arrowing past the last visible row walked the highlight off screen — the same
+  // failure the git sidebar's visible-row walk was written to avoid. Every other
+  // list in the shell reveals. Each mode names its selection differently, which is
+  // the whole of the switch below.
   const auto layout_state = CurrentWorkspaceLayout();
   if (!layout_state.has_value()) {
     return;
@@ -155,6 +155,9 @@ void WorkspaceShell::RevealDebugPaneSelection() {
       // also what the render highlights — there is no separate selection to track.
       selected = static_cast<int>(ps.debug_execution.FocusedPanelRow());
       break;
+    case DebugPaneMode::Breakpoints:
+      selected = ps.debug_pane.breakpoints_selected_row;
+      break;
     default:
       return;
   }
@@ -167,6 +170,11 @@ void WorkspaceShell::RevealDebugPaneSelection() {
 
 void WorkspaceShell::FocusDebugCallStackRow(std::size_t row) {
   MakeDebugPaneMouseCoordinator().ActivateCallStackRow(row, /*move_focus_to_editor=*/false);
+}
+
+void WorkspaceShell::ActivateDebugBreakpointRow(std::size_t row, bool toggle) {
+  MakeDebugPaneMouseCoordinator().ActivateBreakpointRow(row, toggle,
+                                                        /*move_focus_to_editor=*/false);
 }
 
 bool WorkspaceShell::DebugPaneRowIsActionable(std::size_t row) const {

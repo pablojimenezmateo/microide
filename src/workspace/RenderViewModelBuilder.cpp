@@ -1155,6 +1155,7 @@ DebugPaneSurfaceViewModel RenderViewModelBuilder::BuildDebugPaneSurface() const 
       .watch = pane.mode == DebugPaneMode::Watch ? &state.debug_watch : nullptr,
       .breakpoints =
           pane.mode == DebugPaneMode::Breakpoints ? &state.debug_breakpoints_panel : nullptr,
+      .breakpoints_selected_row = pane.breakpoints_selected_row,
   };
 }
 

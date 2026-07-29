@@ -103,6 +103,7 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
   const DebugVariablesModel* vars_model = pane_vm.variables;
   const DebugWatchModel* watch_model = pane_vm.watch;
   const DebugBreakpointsModel* breakpoints_model = pane_vm.breakpoints;
+  const int bp_selected_row = pane_vm.breakpoints_selected_row;
 
   const std::size_t line_count = DebugPaneActiveRowCount();
   const LogSurfaceLayout panel_layout = ComputeDebugPaneListLayout(layout, line_count);
@@ -375,11 +376,13 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
         continue;
       }
       // Non-header breakpoint rows are clickable (toggle/edit), so lift the row band on
-      // hover and use that as the text background for the whole row.
+      // hover and use that as the text background for the whole row. The keyboard
+      // selection lifts it the same way, matching the value trees one mode over —
+      // without it the Breakpoints surface would navigate invisibly.
       const SDL_FRect bp_band = MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
                                          panel_layout.content_rect.w, panel_layout.line_height);
       SDL_Color bp_bg = theme_.surface_background;
-      if (PointerOver(bp_band)) {
+      if (bp_selected_row == index || PointerOver(bp_band)) {
         bp_bg = theme_.row_highlight;
         DrawFilledRect(renderer, bp_band, bp_bg);
       }

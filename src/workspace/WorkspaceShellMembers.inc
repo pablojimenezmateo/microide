@@ -1618,6 +1618,7 @@
   void RevealDebugPaneSelection();
   // Focuses the Call Stack row at `row`, sharing the click path's activation.
   void FocusDebugCallStackRow(std::size_t row);
+  void ActivateDebugBreakpointRow(std::size_t row, bool toggle);
   // True when a click on `row` of the active surface does something (frame/thread/
   // session focus, variable/watch expand or edit, breakpoint navigate, filter
   // toggle). Drives the hover-cursor pointer/default decision for the pane.

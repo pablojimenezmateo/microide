@@ -117,6 +117,53 @@ void DebugPaneMouseCoordinator::ActivateCallStackRow(std::size_t line_index,
   state_.surface.focus = move_focus_to_editor ? FocusTarget::Editor : FocusTarget::DebugPane;
 }
 
+// Act on a Breakpoints row, exactly as a click does. Shared with the keyboard so
+// the two cannot drift: Enter is a single click (navigate to the source line) and
+// Space is a double click (toggle enabled), which is also how the exception-filter
+// and function-breakpoint rows already behave under the mouse. As in the Call
+// Stack, only the keyboard declines to hand focus to the editor.
+void DebugPaneMouseCoordinator::ActivateBreakpointRow(std::size_t line_index, bool toggle,
+                                                      bool move_focus_to_editor) {
+  const std::vector<DebugBreakpointRowView>& rows = state_.debug_breakpoints_panel.Rows();
+  if (line_index >= rows.size()) {
+    return;
+  }
+  const DebugBreakpointRowView& row = rows[line_index];
+  if (row.kind == DebugBreakpointRowView::Kind::ExceptionFilter) {
+    if (operations_.toggle_debug_exception_filter) {
+      operations_.toggle_debug_exception_filter(row.filter_id);
+    }
+    state_.surface.focus = FocusTarget::DebugPane;
+    return;
+  }
+  if (row.kind == DebugBreakpointRowView::Kind::FunctionBreakpoint) {
+    // No source location to navigate to, so either gesture toggles enabled.
+    if (operations_.toggle_debug_function_breakpoint_enabled) {
+      operations_.toggle_debug_function_breakpoint_enabled(row.function_index);
+    }
+    state_.surface.focus = FocusTarget::DebugPane;
+    return;
+  }
+  if (row.kind != DebugBreakpointRowView::Kind::Breakpoint || row.path.empty()) {
+    state_.surface.focus = FocusTarget::DebugPane;
+    return;
+  }
+  if (toggle) {
+    if (operations_.toggle_debug_breakpoint_enabled) {
+      operations_.toggle_debug_breakpoint_enabled(row.path, row.line);
+    }
+    state_.surface.focus = FocusTarget::DebugPane;
+    return;
+  }
+  operations_.open_file(row.path);
+  if (editor::TextViewport* viewport = operations_.active_editor_viewport();
+      viewport != nullptr) {
+    viewport->MoveCursorTo(row.line, 0);
+  }
+  // Opening the file focuses the editor by itself; see ActivateCallStackRow.
+  state_.surface.focus = move_focus_to_editor ? FocusTarget::Editor : FocusTarget::DebugPane;
+}
+
 bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
                                                const WorkspaceLayout& layout) {
   const DebugPaneMode mode = state_.debug_pane.mode;
@@ -229,35 +276,10 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
         DebugPaneLineIndexAtPoint(panel_layout, static_cast<float>(event.button.x),
                                   static_cast<float>(event.button.y), rows.size());
     if (line_index.has_value() && *line_index < rows.size()) {
-      const DebugBreakpointRowView& row = rows[*line_index];
-      if (row.kind == DebugBreakpointRowView::Kind::ExceptionFilter &&
-          operations_.toggle_debug_exception_filter) {
-        operations_.toggle_debug_exception_filter(row.filter_id);
-      } else if (row.kind == DebugBreakpointRowView::Kind::FunctionBreakpoint) {
-        // No source location to navigate to: a click toggles enabled.
-        if (operations_.toggle_debug_function_breakpoint_enabled) {
-          operations_.toggle_debug_function_breakpoint_enabled(row.function_index);
-        }
-        state_.surface.focus = FocusTarget::DebugPane;
-        return true;
-      } else if (row.kind == DebugBreakpointRowView::Kind::Breakpoint && !row.path.empty()) {
-        // Double-click toggles enabled (manage from the panel); single-click
-        // navigates to the breakpoint's source line.
-        if (event.button.clicks >= 2) {
-          if (operations_.toggle_debug_breakpoint_enabled) {
-            operations_.toggle_debug_breakpoint_enabled(row.path, row.line);
-          }
-          state_.surface.focus = FocusTarget::DebugPane;
-          return true;
-        }
-        operations_.open_file(row.path);
-        if (editor::TextViewport* viewport = operations_.active_editor_viewport();
-            viewport != nullptr) {
-          viewport->MoveCursorTo(row.line, 0);
-        }
-        state_.surface.focus = FocusTarget::Editor;
-        return true;
-      }
+      state_.debug_pane.breakpoints_selected_row = static_cast<int>(*line_index);
+      ActivateBreakpointRow(*line_index, /*toggle=*/event.button.clicks >= 2,
+                            /*move_focus_to_editor=*/true);
+      return true;
     }
     state_.surface.focus = FocusTarget::DebugPane;
     return true;

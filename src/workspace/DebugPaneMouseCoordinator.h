@@ -64,6 +64,8 @@ class DebugPaneMouseCoordinator {
   bool HandleDrag(const SDL_Event& event, const WorkspaceLayout& layout);
   // Row activation for the Call Stack surface, shared with the keyboard path.
   void ActivateCallStackRow(std::size_t line_index, bool move_focus_to_editor);
+  void ActivateBreakpointRow(std::size_t line_index, bool toggle,
+                             bool move_focus_to_editor);
 
  private:
   bool HandleRowClick(const SDL_Event& event, const WorkspaceLayout& layout);

@@ -99,6 +99,9 @@ class KeyInputCoordinator {
     // Focuses the session/thread/frame a Call Stack row names, running the same
     // path a click on that row does (minus handing focus to the editor).
     std::function<void(std::size_t)> focus_debug_call_stack_row;
+    // Enter (navigate) / Space (toggle) on a Breakpoints row, running the same
+    // path the mouse's single/double click does.
+    std::function<void(std::size_t, bool)> activate_debug_breakpoint_row;
     std::function<void(int)> move_buffer_search_selection;
     std::function<void()> refresh_buffer_search;
     std::function<void(int)> move_project_search_selection;
@@ -253,6 +256,7 @@ class KeyInputCoordinator {
   bool HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleDebugCallStackKeyDown(const SDL_KeyboardEvent& event);
+  bool HandleDebugBreakpointsKeyDown(const SDL_KeyboardEvent& event);
   bool HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
 
   ProjectWorkspaceState& state_;

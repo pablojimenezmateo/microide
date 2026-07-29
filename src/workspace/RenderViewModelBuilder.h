@@ -261,6 +261,11 @@ struct DebugPaneSurfaceViewModel {
   const DebugVariablesModel* variables = nullptr;      // Variables mode
   const DebugWatchModel* watch = nullptr;              // Watch mode
   const DebugBreakpointsModel* breakpoints = nullptr;  // Breakpoints mode
+  // Keyboard selection for Breakpoints mode. The other three surfaces carry theirs
+  // on the model the render already has (the value trees' SelectedRow, the call
+  // stack's focused frame); this one lives on the pane state, so it is published
+  // here rather than read out of project state in the paint pass.
+  int breakpoints_selected_row = -1;
 };
 
 struct HoverPopupViewModel {
