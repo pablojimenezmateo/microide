@@ -6,6 +6,7 @@
 #include "workspace/WorkspaceMenuRegistry.h"
 
 #include <algorithm>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -187,9 +188,47 @@ void TestBoundMenuActionsAdvertiseTheirAccelerator() {
          "every menu entry whose action has a keybinding must advertise it:" + missing);
 }
 
+// Built-in bindings are resolved in declaration order and FindKeybinding returns the
+// first match, so two built-ins on the same chord with overlapping contexts leave the
+// second permanently dead — advertised in Help and Settings, never dispatched. Plugin
+// contributions are already screened against the resolved set (ResolveKeybindings
+// skips a shadowed chord); nothing screened the built-ins against each other.
+void TestBuiltinKeybindingsDoNotShadowEachOther() {
+  const auto overlaps = [](microide::workspace::KeybindingContext a,
+                           microide::workspace::KeybindingContext b) {
+    return a == b || a == microide::workspace::KeybindingContext::Global ||
+           b == microide::workspace::KeybindingContext::Global;
+  };
+
+  std::string collisions;
+  const std::span<const KeybindingSpec> specs = BuiltinKeybindingSpecs();
+  for (std::size_t i = 0; i < specs.size(); ++i) {
+    for (std::size_t j = i + 1; j < specs.size(); ++j) {
+      if (specs[i].key != specs[j].key ||
+          microide::workspace::NormalizedKeyModifiers(specs[i].modifiers) !=
+              microide::workspace::NormalizedKeyModifiers(specs[j].modifiers) ||
+          !overlaps(specs[i].context, specs[j].context)) {
+        continue;
+      }
+      collisions += "\n  ";
+      collisions += specs[i].id;
+      collisions += " and ";
+      collisions += specs[j].id;
+      collisions += " both claim ";
+      collisions += FormatKeyChord(specs[i].key, specs[i].modifiers);
+      collisions += " in overlapping contexts (the second can never fire)";
+    }
+  }
+  Expect(collisions.empty(),
+         "no two built-in keybindings may claim the same chord in overlapping contexts:" +
+             collisions);
+}
+
 }  // namespace
 
 void RegisterMenuAcceleratorConsistencyTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "MenuAccelerators/BuiltinKeybindingsDoNotShadowEachOther",
+          TestBuiltinKeybindingsDoNotShadowEachOther);
   AddTest(tests, "MenuAccelerators/MatchTheirKeybindings",
           TestMenuAcceleratorsMatchTheirKeybindings);
   AddTest(tests, "MenuAccelerators/BoundActionsAdvertiseTheirAccelerator",
