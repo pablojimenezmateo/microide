@@ -126,7 +126,7 @@ bool AssistService::ShowCompletionOverlay(std::string* error_message) {
   session.selected_index = 0;
   session.replacement_range = CompletionReplacementRange(*viewport);
   session.source = "lsp";
-  session.error = "Loading...";
+  session.error = "Loading\xE2\x80\xA6";
   operations_.show_overlay(OverlayMode::Completion);
 
   auto merge = std::make_shared<CompletionMerge>();
@@ -237,7 +237,7 @@ void AssistService::PublishCompletionMerge(const std::shared_ptr<CompletionMerge
   }
   session.source = merge->lsp_items.empty() ? "plugin" : "lsp";
   if (merge->sources.AnyPending()) {
-    session.error = session.items.empty() ? "Loading..." : std::string{};
+    session.error = session.items.empty() ? "Loading\xE2\x80\xA6" : std::string{};
   } else if (session.items.empty()) {
     session.error = "No completions available";
     MaybeLogLspUnavailable(merge->language_id, merge->sources.lsp_authoritative);
@@ -586,7 +586,7 @@ bool AssistService::ShowCodeActionsOverlay(std::string* error_message,
   session.items.clear();
   session.selected_index = 0;
   session.source = "lsp";
-  session.error = "Loading...";
+  session.error = "Loading\xE2\x80\xA6";
   operations_.show_overlay(OverlayMode::CodeActions);
 
   auto merge = std::make_shared<CodeActionMerge>();
@@ -766,7 +766,7 @@ void AssistService::PublishCodeActionMerge(const std::shared_ptr<CodeActionMerge
   }
   session.source = merge->lsp_items.empty() ? "plugin" : "lsp";
   if (merge->sources.AnyPending()) {
-    session.error = session.items.empty() ? "Loading..." : std::string{};
+    session.error = session.items.empty() ? "Loading\xE2\x80\xA6" : std::string{};
   } else if (session.items.empty()) {
     session.error = "No code actions available";
     MaybeLogLspUnavailable(merge->language_id, merge->sources.lsp_authoritative);

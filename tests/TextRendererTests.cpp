@@ -1759,7 +1759,7 @@ void TestTruncateToWidthUsesUtf8BoundariesAndFewMeasurements() {
 
   const std::string truncated = renderer.TruncateToWidth("abcdefghijklmnop", 10.0f);
 
-  Expect(truncated == "abcdefg...",
+  Expect(truncated == "abcdefg\xE2\x80\xA6",
          "truncate-to-width should keep the longest fitting prefix plus ellipsis");
   Expect(backend_ptr->measure_width_calls() <= 8,
          "truncate-to-width should avoid probing every prefix width linearly");
@@ -2248,10 +2248,10 @@ void TestTruncateToWidthEphemeralViewIsInvalidatedByNextCall() {
 
   const std::string long_a(80, 'a');
   const std::string long_b(80, 'b');  // SAME length so the scratch does not reallocate
-  const float max_width = 80.0f;       // forces truncation (640px) yet fits the "..." (24px)
+  const float max_width = 80.0f;       // forces truncation (640px) yet fits the "…" (3 bytes)
 
   const std::string_view view_a = renderer.TruncateToWidthEphemeralView(long_a, max_width);
-  Expect(!view_a.empty() && view_a.substr(view_a.size() - 3) == "...",
+  Expect(!view_a.empty() && view_a.substr(view_a.size() - 3) == "\xE2\x80\xA6",
          "a too-wide string truncates with an ellipsis");
   Expect(view_a.front() == 'a', "the first ephemeral view initially reflects string A");
   const std::string captured_a(view_a);

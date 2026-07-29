@@ -305,7 +305,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     draw_search_button(project_search_panel::ScopeButtonRect(layout.sidebar),
                        // "..." mirrors VS Code's show/hide-scope affordance; a
                        // constant label needs no shell accessor.
-                       "...", ps.scope_expanded);
+                       "\xE2\x80\xA6", ps.scope_expanded);
 
     // The status/hint line is composed once (and cached) in
     // RenderViewModelBuilder::BuildSidebarSurface; draw the prebuilt view.

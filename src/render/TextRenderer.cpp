@@ -153,7 +153,12 @@ std::string_view TextRenderer::TruncateToWidthEphemeralView(std::string_view tex
     return text;
   }
 
-  static constexpr std::string_view kEllipsis = "...";
+  // U+2026, not three periods: one glyph instead of three leaves room for two more
+  // characters of the label being truncated, and it matches the "…" every label that
+  // spells its own ellipsis already uses ("Open File…", "Discard…"). Non-ASCII text
+  // skips the glyph atlas for the whole string, which costs nothing that matters here
+  // — truncation only ever runs on chrome labels, and each result is texture-cached.
+  static constexpr std::string_view kEllipsis = "\xE2\x80\xA6";
   const float ellipsis_width = MeasureWidth(kEllipsis);
   if (ellipsis_width >= max_width) {
     return {};

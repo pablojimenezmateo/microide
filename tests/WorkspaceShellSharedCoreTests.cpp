@@ -483,8 +483,10 @@ void TestWorkspaceMenuRegistry() {
   Expect(view->label == "View", "view menu should preserve its label");
   Expect(std::find_if(view->items.begin(), view->items.end(),
                       [](const auto& item) {
+                        // No label override: the item inherits "Word Wrap" from the
+                        // command registry, so the menu and the palette cannot drift.
                         return item.action == ActionId::Wrap && item.checkable &&
-                               item.label == "Word Wrap";
+                               item.label.empty();
                       }) != view->items.end(),
          "view menu should expose a checkable word-wrap toggle");
 

@@ -425,7 +425,7 @@ return ide.plugin({
   Expect(
       WaitForLspCondition(shell, [&] {
         const auto& session = WorkspaceShellTestAccess::CompletionSession(shell);
-        return !session.items.empty() || session.error != "Loading...";
+        return !session.items.empty() || session.error != "Loading\xE2\x80\xA6";
       }),
       "completion should populate overlay items from the language server");
   Expect(WorkspaceShellTestAccess::CompletionSession(shell).items.size() == 1 &&
@@ -442,7 +442,7 @@ return ide.plugin({
   Expect(
       WaitForLspCondition(shell, [&] {
         const auto& session = WorkspaceShellTestAccess::CodeActionSession(shell);
-        return !session.items.empty() || session.error != "Loading...";
+        return !session.items.empty() || session.error != "Loading\xE2\x80\xA6";
       }),
       "code actions should parse nested LSP command payloads");
   Expect(WorkspaceShellTestAccess::CodeActionSession(shell).items.size() == 1 &&

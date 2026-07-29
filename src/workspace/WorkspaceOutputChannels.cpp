@@ -25,7 +25,7 @@ void TruncateOutputLine(std::string& line) {
   if (line.size() <= kMaxChannelLineBytes) {
     return;
   }
-  static constexpr std::string_view kSuffix = "... [truncated]";
+  static constexpr std::string_view kSuffix = "\xE2\x80\xA6 [truncated]";
   line.resize(kMaxChannelLineBytes - kSuffix.size());
   line.append(kSuffix);
 }

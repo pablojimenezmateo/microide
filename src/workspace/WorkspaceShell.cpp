@@ -176,7 +176,7 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
         },
         MenuItemSpec{
             .action = ActionId::Colorscheme,
-            .label = "Branch or commit...",
+            .label = "Branch or commit\xE2\x80\xA6",
             .accelerator = {},
             .args = {},
             .arg_count = 0,

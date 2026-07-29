@@ -160,7 +160,7 @@ void CommandLineCoordinator::CompleteInput(editor::SingleLineEditor& input) {
     matches += candidates[i].value;
   }
   if (candidates.size() > visible_count) {
-    matches += "  ...";
+    matches += "  \xE2\x80\xA6";
   }
   SetFeedback(std::move(matches));
 }

@@ -96,7 +96,7 @@ for what is actually measured, and what is not.
 - Alternate-screen support, application cursor-key mode, origin mode, autowrap, bracketed paste
 - OSC 52 clipboard copy (opt-in, off by default), focus notifications, basic device/cursor query replies
 - Terminal text selection, copy, and paste shortcuts
-- Tab drag reordering; right-click for "Copy Last Command + Output"
+- Tab drag reordering; right-click for "Copy Last Command and Output"
 
 ### Debugging
 - Built-in DAP debugger (validated against gdb 17.2): per-language launch configs, line /
@@ -516,7 +516,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 Mouse: click to focus/open, drag to reorder tabs within their strip, wheel to scroll editor/sidebar/terminal.
 
 Right-click in editor: **Copy with Context** (copies `relative/path:line` + selection).  
-Right-click terminal tab: **Copy Last Command + Output**.
+Right-click terminal tab: **Copy Last Command and Output**.
 
 ## Commands
 

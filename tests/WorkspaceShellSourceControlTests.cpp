@@ -407,11 +407,11 @@ void TestWorkspaceShellGitOutgoingBaseButtonOpensMenuAndPrompt() {
   const auto labels =
       WorkspaceShellTestAccess::VisiblePopupMenuLabels(shell, WorkspaceShell::MenuId::GitOutgoingBase);
   Expect(labels.size() == 3 && labels[0] == "Auto (base branch)" &&
-             labels[1] == "Previous commit (HEAD~1)" && labels[2] == "Branch or commit...",
+             labels[1] == "Previous commit (HEAD~1)" && labels[2] == "Branch or commit\xE2\x80\xA6",
          "outgoing base menu should expose the three base-selection choices");
 
   const auto pick_ref_rect = WorkspaceShellTestAccess::PopupMenuItemRect(
-      shell, WorkspaceShell::MenuId::GitOutgoingBase, "Branch or commit...");
+      shell, WorkspaceShell::MenuId::GitOutgoingBase, "Branch or commit\xE2\x80\xA6");
   Expect(pick_ref_rect.has_value(),
          "outgoing base menu should expose the branch/commit picker entry");
   Expect(SendMouseDown(shell, pick_ref_rect->x + pick_ref_rect->w * 0.5f,

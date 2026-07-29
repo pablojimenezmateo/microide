@@ -141,7 +141,7 @@ std::string GitSidebarCommitSummaryLine(const GitSidebarState& git_state,
     return {};
   }
   if (git_state.commit_workflow.operation_in_flight) {
-    return "Commit in progress...";
+    return "Commit in progress\xE2\x80\xA6";
   }
   if (git_state.commit_workflow.open) {
     return "Commit draft open  |  Ctrl+Enter commit  |  Esc close";

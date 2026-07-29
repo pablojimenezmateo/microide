@@ -902,6 +902,7 @@ add_executable(microide_tests
   tests/EditorFoldingTests.cpp
   tests/EditorMultiCaretTests.cpp
   tests/WindowPresentationTests.cpp
+  tests/CommandLabelConsistencyTests.cpp
   tests/MenuAcceleratorConsistencyTests.cpp
   tests/WorkspaceMenuRegistryTests.cpp
   tests/SettingsStoreTests.cpp

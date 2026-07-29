@@ -41,13 +41,26 @@ std::vector<std::string_view> TopLevelLabels() {
   return labels;
 }
 
+// The label the shell paints: a menu item's own override, or the command registry's
+// title for its action. Most items carry no override precisely so that the menu and the
+// command palette cannot name one command two ways, so asserting on item.label alone
+// would only see the handful that do.
+std::string_view ResolvedMenuItemLabel(const MenuItemSpec& item) {
+  if (!item.label.empty()) {
+    return item.label;
+  }
+  const auto* action = FindWorkspaceActionSpec(item.action);
+  return action != nullptr ? action->label : std::string_view{};
+}
+
 bool MenuContainsLabel(MenuId id, std::string_view label) {
   const auto* spec = FindWorkspaceMenuSpec(id);
   if (spec == nullptr) {
     return false;
   }
-  return std::any_of(spec->items.begin(), spec->items.end(),
-                     [label](const MenuItemSpec& item) { return item.label == label; });
+  return std::any_of(spec->items.begin(), spec->items.end(), [label](const MenuItemSpec& item) {
+    return ResolvedMenuItemLabel(item) == label;
+  });
 }
 
 bool MenuContainsAction(MenuId id, ActionId action) {
@@ -81,8 +94,8 @@ void TestMenuRegistryTopLevelSnapshot() {
 void TestMenuRegistryExpandedMenusExposeExpectedEntries() {
   Expect(MenuContainsLabel(MenuId::File, "Open File…"),
          "File menu should expose Open File");
-  Expect(MenuContainsLabel(MenuId::File, "Open Folder / Project Tab…"),
-         "File menu should expose Open Folder / Project Tab");
+  Expect(MenuContainsLabel(MenuId::File, "Open Folder…"),
+         "File menu should expose Open Folder");
   Expect(MenuContainsLabel(MenuId::Go, "Go to File…"),
          "Go menu should expose file navigation");
   Expect(MenuContainsLabel(MenuId::Go, "Find in Buffer"),
@@ -117,7 +130,7 @@ void TestMenuRegistryDebugMenuLeadsWithEnableToggle() {
   const MenuItemSpec& first = spec->items.front();
   Expect(first.action == ActionId::DebugToggleEnabled,
          "Debug menu's first item should be the enable/disable toggle");
-  Expect(first.label == "Enable Debugger",
+  Expect(ResolvedMenuItemLabel(first) == "Enable Debugger",
          "Debug toggle should be labelled 'Enable Debugger'");
   Expect(first.checkable, "Debug toggle should be a checkable item");
   Expect(spec->items.size() > 1 && spec->items[1].separator,

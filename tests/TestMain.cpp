@@ -106,6 +106,7 @@ void RegisterTextLayoutTests(std::vector<TestCase>& tests);
 void RegisterPieceTreeTests(std::vector<TestCase>& tests);
 void RegisterWindowPresentationTests(std::vector<TestCase>& tests);
 void RegisterMenuAcceleratorConsistencyTests(std::vector<TestCase>& tests);
+void RegisterCommandLabelConsistencyTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceMenuRegistryTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests);
 void RegisterSettingsStoreTests(std::vector<TestCase>& tests);
@@ -480,6 +481,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterPieceTreeTests(tests);
   microide::tests::RegisterWindowPresentationTests(tests);
   microide::tests::RegisterMenuAcceleratorConsistencyTests(tests);
+  microide::tests::RegisterCommandLabelConsistencyTests(tests);
   microide::tests::RegisterWorkspaceMenuRegistryTests(tests);
   microide::tests::RegisterWorkspaceSettingsRegistryTests(tests);
   microide::tests::RegisterSettingsStoreTests(tests);

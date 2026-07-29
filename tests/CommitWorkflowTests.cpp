@@ -395,7 +395,7 @@ void TestCommitResultIsMarshaledToMainThread() {
   // Crucially, the result must NOT have been applied on the worker thread.
   Expect(state.operation_in_flight,
          "the commit result must not be published from the worker thread");
-  Expect(state.status_message == "Committing...",
+  Expect(state.status_message == "Committing\xE2\x80\xA6",
          "state must stay pending until the main thread drains the completion");
 
   // Draining on the main thread publishes the result.

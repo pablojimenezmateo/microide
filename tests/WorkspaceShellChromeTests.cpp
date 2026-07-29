@@ -816,7 +816,7 @@ void TestWorkspaceShellCommandPaletteRanksExactCommandNameFirst() {
   WorkspaceShellTestAccess::SetCommandPaletteQueryAndRefresh(shell, "open");
   Expect(WorkspaceShellTestAccess::CommandPaletteMatchCount(shell) > 1,
          "'open' should match more than one command");
-  Expect(WorkspaceShellTestAccess::CommandPaletteMatchLabelAt(shell, 0) == "Open File",
+  Expect(WorkspaceShellTestAccess::CommandPaletteMatchLabelAt(shell, 0) == "Open File…",
          "the command actually named 'open' should rank first");
 
   WorkspaceShellTestAccess::SetCommandPaletteQueryAndRefresh(shell, "search");

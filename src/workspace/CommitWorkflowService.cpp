@@ -283,7 +283,7 @@ void CommitWorkflowService::DispatchCommit(CommitWorkflowState& state,
   const std::string body = state.BodyText();
   const std::uint64_t repository_generation = repository_state.generation;
   state.operation_in_flight = true;
-  state.status_message = "Committing...";
+  state.status_message = "Committing\xE2\x80\xA6";
 
   std::uint64_t captured_generation = 0;
   {
