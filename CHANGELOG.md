@@ -8,7 +8,44 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ## [Unreleased]
 
-A cross-subsystem review sweep. No public API or persisted-format changes.
+A cross-subsystem review sweep, plus a UI/UX consistency pass over how the
+surfaces answer the mouse and the keyboard. No public API or persisted-format
+changes.
+
+### Added
+
+- **Double-click a resize divider to restore its default size.** Works on all
+  four — sidebar, right/debug pane, editor split, bottom panel.
+- **Word and line selection in the terminal.** Double-click selects the word
+  under the pointer, triple-click the whole row, matching the editor surface.
+  Path/URL punctuation counts as part of a word, so double-clicking
+  `src/foo/bar.cpp:42` in a build log selects the whole reference.
+- **File > Open File… actually opens a file.** It (and its Ctrl+O accelerator,
+  and the welcome screen's Open File action) now opens a native file picker;
+  previously all three reported "open requires a path" and did nothing. Ctrl+K
+  Ctrl+O for Open Folder, likewise advertised but unimplemented, now works.
+- **Page/Home/End in the file tree**, which every other sidebar list already had.
+
+### Changed
+
+- **The mouse wheel scrolls every list at the editor's speed.** Lists (file
+  tree, git, search, debug pane, bottom panel, Settings, the overlay pickers)
+  advanced one row per tick while the editor moved three, so the tree felt an
+  order of magnitude heavier than the code beside it. All of them now share one
+  step.
+- **Scrolling no longer steals keyboard focus.** Wheeling over the sidebar, the
+  panel or an unfocused editor pane used to hand focus to whatever was under the
+  pointer, silently redirecting the next keystroke.
+- **The wheel over a list overlay scrolls it instead of moving the selection**,
+  so a scroll can no longer change what Enter is about to run. Only the project
+  search overlay behaved this way before.
+- **Home/End edit the query in every overlay that has one.** The command palette,
+  commit picker and launch picker consumed them to jump the result list, leaving
+  no way to reach the start of a typed command line. They still address the list
+  in the two field-less popups (completion, code actions).
+- **The debug pane is a first-class focus surface**: it draws the focus ring the
+  other three surfaces draw, and Ctrl+Tab reaches it (the cycle previously
+  skipped it, so it was clickable but not tabbable).
 
 ### Fixed
 
