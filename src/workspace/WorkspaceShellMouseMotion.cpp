@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "util/PerformanceTrace.h"
+#include "workspace/ListSelection.h"
 #include "workspace/WorkspaceChromeMouseCoordinator.h"
 #include "workspace/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/WorkspaceEditorMouseCoordinator.h"
@@ -703,23 +704,25 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
           // pointer is over it, leaving the rows beneath untouched.
           if (vm.value_picker.visible &&
               Contains(vm.value_picker.rect, event.wheel.mouse_x, event.wheel.mouse_y)) {
-            settings_overlay_service_.SetPickerScroll(
-                settings_overlay_service_.PickerScroll() - vertical_ticks);
+            settings_overlay_service_.SetPickerScroll(settings_overlay_service_.PickerScroll() -
+                                                      vertical_ticks * kWheelScrollRows);
             EnsureRedraw([this]() { RequestOverlayRedraw(); });
             return true;
           }
           // Over the left rail: scroll the category list instead of the value rows.
           if (Contains(vm.left_pane_rect, event.wheel.mouse_x, event.wheel.mouse_y)) {
-            settings_overlay_service_.SetCategoryScrollRow(std::clamp(
-                settings_overlay_service_.CategoryScrollRow() - vertical_ticks, 0,
-                vm.category_max_scroll));
+            settings_overlay_service_.SetCategoryScrollRow(
+                std::clamp(settings_overlay_service_.CategoryScrollRow() -
+                               vertical_ticks * kWheelScrollRows,
+                           0, vm.category_max_scroll));
             EnsureRedraw([this]() { RequestOverlayRedraw(); });
             return true;
           }
           max_scroll = vm.max_scroll;
         }
-        settings_overlay_service_.SetScrollRow(
-            std::clamp(settings_overlay_service_.ScrollRow() - vertical_ticks, 0, max_scroll));
+        settings_overlay_service_.SetScrollRow(std::clamp(
+            settings_overlay_service_.ScrollRow() - vertical_ticks * kWheelScrollRows, 0,
+            max_scroll));
       }
     }
     EnsureRedraw([this]() { RequestOverlayRedraw(); });

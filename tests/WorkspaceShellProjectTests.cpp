@@ -2,6 +2,7 @@
 
 #include "util/PerformanceCounters.h"
 #include "util/TextFileIO.h"
+#include "workspace/ListSelection.h"
 #include "workspace/TabReorder.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 #include "platform/FileIndexWatcher.h"
@@ -1234,6 +1235,70 @@ void TestWorkspaceShellCommandPaletteTabCompletion() {
          "tab completion should report the wrap command completion");
 }
 
+// The wheel over a list overlay pans the rows and must NOT move the selection: a
+// scroll nudge can never change what Enter is about to run (VS Code behaves the same).
+// Before this, every overlay except project search stepped its selected index instead.
+void TestWorkspaceShellOverlayWheelScrollsWithoutMovingSelection() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+P should open the command palette");
+  Expect(WorkspaceShellTestAccess::CommandPaletteMatchCount(shell) > 20,
+         "the unfiltered palette should list more commands than fit on one page");
+  Expect(WorkspaceShellTestAccess::OverlayScrollRow(shell) == 0,
+         "a freshly opened palette should start unscrolled");
+  const std::size_t selected_before = WorkspaceShellTestAccess::OverlaySelectedIndex(shell);
+
+  const auto layout = microide::workspace::ComputeLayout(1280.0f, 720.0f, true, false, 288.0f,
+                                                          184.0f);
+  const float wheel_x = layout.editor_area.x + layout.editor_area.w * 0.5f;
+  const float wheel_y = layout.editor_area.y + layout.editor_area.h * 0.5f;
+
+  Expect(SendMouseWheel(shell, wheel_x, wheel_y, -2),
+         "wheel over an open palette should be handled");
+  Expect(WorkspaceShellTestAccess::OverlayScrollRow(shell) > 0,
+         "wheeling down should scroll the palette list");
+  Expect(WorkspaceShellTestAccess::OverlaySelectedIndex(shell) == selected_before,
+         "wheeling must leave the palette selection untouched");
+
+  const int scrolled = WorkspaceShellTestAccess::OverlayScrollRow(shell);
+  Expect(SendMouseWheel(shell, wheel_x, wheel_y, 1),
+         "wheel up over an open palette should be handled");
+  Expect(WorkspaceShellTestAccess::OverlayScrollRow(shell) < scrolled,
+         "wheeling up should scroll the palette list back");
+  Expect(WorkspaceShellTestAccess::OverlaySelectedIndex(shell) == selected_before,
+         "wheeling up must also leave the selection untouched");
+
+  // Keyboard navigation still owns the selection and pulls it back into view.
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE),
+         "Down should navigate the palette list");
+  Expect(WorkspaceShellTestAccess::OverlaySelectedIndex(shell) == selected_before + 1,
+         "Down should advance the palette selection by one row");
+}
+
+// Home/End belong to the query field in every overlay that has one, so the command
+// palette's command line can be edited like a text field (VS Code quick input). They
+// used to jump the result list, which left no way to reach the start of a typed line.
+void TestWorkspaceShellCommandPaletteHomeEndEditsQuery() {
+  WorkspaceShell shell;
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+P should open the command palette");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "wrap"),
+         "typing should populate the palette query");
+  Expect(SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE),
+         "Home should be consumed by the palette query field");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "x"),
+         "typing after Home should insert at the caret");
+  Expect(WorkspaceShellTestAccess::CommandPaletteQuery(shell) == "xwrap",
+         "Home should move the caret to the start of the query, not jump the list");
+  Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE),
+         "End should be consumed by the palette query field");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "y"),
+         "typing after End should append");
+  Expect(WorkspaceShellTestAccess::CommandPaletteQuery(shell) == "xwrapy",
+         "End should move the caret to the end of the query");
+}
+
 void TestWorkspaceShellCommandPaletteRunsCommandLineVsFuzzyPick() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1548,6 +1613,58 @@ void TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal() {
 
   Expect(!tree_contains_path(source),
          "reselecting the open file tab should preserve collapsed ancestors in the tree");
+}
+
+// Scrolling is not focusing. Wheeling over the sidebar (or the panel, or an unfocused
+// editor pane) used to hand keyboard focus to whatever surface was under the pointer,
+// so a nudge of the wheel silently redirected the user's next keystroke.
+void TestWorkspaceShellWheelDoesNotStealKeyboardFocus() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  for (int i = 0; i < 40; ++i) {
+    WriteFile(root / ("file" + std::to_string(i) + ".txt"), "line\n");
+  }
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 320);
+  WorkspaceShellTestAccess::OpenFile(shell, root / "file0.txt");
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+         "the fixture should start with the editor focused");
+
+  const auto layout = microide::workspace::ComputeLayout(
+      1280.0f, 320.0f, true, false, 288.0f, 184.0f);
+  Expect(SendMouseWheel(shell, layout.sidebar.x + layout.sidebar.w * 0.5f,
+                        layout.sidebar.y + 72.0f, -4),
+         "scrolling the sidebar should be handled");
+  Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) > 0,
+         "the sidebar should have scrolled");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+         "scrolling the sidebar must leave keyboard focus in the editor");
+}
+
+// The wheel advances every scrollable list by the same three rows per tick the editor
+// text surface uses; the lists used to crawl one row at a time.
+void TestWorkspaceShellWheelStepMatchesEditorAcrossSurfaces() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  for (int i = 0; i < 80; ++i) {
+    WriteFile(root / ("file" + std::to_string(i) + ".txt"), "line\n");
+  }
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 320);
+
+  const auto layout = microide::workspace::ComputeLayout(
+      1280.0f, 320.0f, true, false, 288.0f, 184.0f);
+  Expect(SendMouseWheel(shell, layout.sidebar.x + layout.sidebar.w * 0.5f,
+                        layout.sidebar.y + 72.0f, -1),
+         "one wheel tick over the sidebar should be handled");
+  Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) ==
+             microide::workspace::kWheelScrollRows,
+         "one wheel tick should advance the sidebar by the shared row step");
 }
 
 void TestWorkspaceShellTreeScrollDoesNotSnapToSelectionDuringRender() {
@@ -4264,6 +4381,14 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGlobalCommandsApplyTypedRequests);
   AddTest(tests, "WorkspaceShell/CommandPaletteTabCompletion",
           TestWorkspaceShellCommandPaletteTabCompletion);
+  AddTest(tests, "WorkspaceShell/OverlayWheelScrollsWithoutMovingSelection",
+          TestWorkspaceShellOverlayWheelScrollsWithoutMovingSelection);
+  AddTest(tests, "WorkspaceShell/CommandPaletteHomeEndEditsQuery",
+          TestWorkspaceShellCommandPaletteHomeEndEditsQuery);
+  AddTest(tests, "WorkspaceShell/WheelDoesNotStealKeyboardFocus",
+          TestWorkspaceShellWheelDoesNotStealKeyboardFocus);
+  AddTest(tests, "WorkspaceShell/WheelStepMatchesEditorAcrossSurfaces",
+          TestWorkspaceShellWheelStepMatchesEditorAcrossSurfaces);
   AddTest(tests, "WorkspaceShell/CommandPaletteRunsCommandLineVsFuzzyPick",
           TestWorkspaceShellCommandPaletteRunsCommandLineVsFuzzyPick);
   AddTest(tests, "WorkspaceShell/CtrlNOpensUntitledTab",

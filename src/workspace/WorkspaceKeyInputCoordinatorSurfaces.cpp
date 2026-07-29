@@ -3,10 +3,51 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <optional>
 
 #include "workspace/ListSelection.h"
 
 namespace microide::workspace {
+
+namespace {
+
+// The four keys every overlay list answers identically, mapped to the row delta they
+// move by. Anything else is not list navigation and belongs to the mode (or, for the
+// query-backed overlays, to the text field underneath).
+//
+// Home/End are deliberately absent: in the overlays that carry a query field they move
+// the *text caret*, exactly as they do in VS Code's quick input, so Ctrl-less Home in
+// the command palette jumps to the start of the command being typed instead of to the
+// first result. Only the two field-less popups (completion, code actions) map them to
+// first/last row.
+std::optional<int> ListNavigationDelta(SDL_Keycode key) {
+  switch (key) {
+    case SDLK_UP:
+      return -1;
+    case SDLK_DOWN:
+      return 1;
+    case SDLK_PAGEUP:
+      return -kListPageStep;
+    case SDLK_PAGEDOWN:
+      return kListPageStep;
+    default:
+      return std::nullopt;
+  }
+}
+
+}  // namespace
+
+void KeyInputCoordinator::MoveOverlayListSelection(std::size_t& selected_index,
+                                                   std::size_t item_count,
+                                                   int delta) {
+  if (item_count == 0) {
+    return;
+  }
+  selected_index = ClampListIndexMove(selected_index, item_count, delta);
+  if (const auto layout = operations_.current_workspace_layout(); layout.has_value()) {
+    operations_.reveal_overlay_selection(operations_.compute_overlay_rect(layout->editor_area));
+  }
+}
 
 // Match navigation and the Alt+R regex toggle behave identically in the find
 // widget and the find-and-replace widget. They used to be two copies of the same
@@ -15,77 +56,39 @@ namespace microide::workspace {
 // correct behavior for a plain `r`.
 bool KeyInputCoordinator::HandleSharedBufferSearchKey(const SDL_KeyboardEvent& event,
                                                       SDL_Keymod modifiers) {
-  switch (event.key) {
-    case SDLK_UP:
-      operations_.move_buffer_search_selection(-1);
-      return true;
-    case SDLK_DOWN:
-      operations_.move_buffer_search_selection(1);
-      return true;
-    case SDLK_PAGEUP:
-      operations_.move_buffer_search_selection(-kListPageStep);
-      return true;
-    case SDLK_PAGEDOWN:
-      operations_.move_buffer_search_selection(kListPageStep);
-      return true;
-    case SDLK_R:
-      // Alt+R toggles regex mode (VSCode's find-widget shortcut); a plain `r`
-      // still types into the focused field via the default text-input path.
-      if (modifiers & SDL_KMOD_ALT) {
-        state_.overlay.workflow.buffer_search.regex =
-            !state_.overlay.workflow.buffer_search.regex;
-        operations_.refresh_buffer_search();
-        return true;
-      }
-      return operations_.text_input_handle_single_line_key_down(event, modifiers);
-    default:
-      return operations_.text_input_handle_single_line_key_down(event, modifiers);
+  if (const auto delta = ListNavigationDelta(event.key); delta.has_value()) {
+    operations_.move_buffer_search_selection(*delta);
+    return true;
   }
+  // Alt+R toggles regex mode (VSCode's find-widget shortcut); a plain `r`
+  // still types into the focused field via the default text-input path.
+  if (event.key == SDLK_R && (modifiers & SDL_KMOD_ALT) != 0) {
+    state_.overlay.workflow.buffer_search.regex = !state_.overlay.workflow.buffer_search.regex;
+    operations_.refresh_buffer_search();
+    return true;
+  }
+  return operations_.text_input_handle_single_line_key_down(event, modifiers);
 }
 
 bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
                                                SDL_Keymod modifiers) {
+  const std::optional<int> nav_delta = ListNavigationDelta(event.key);
+  const bool is_enter = event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER;
+
   if (state_.overlay.mode == OverlayMode::CommitPicker) {
-    switch (event.key) {
-      case SDLK_ESCAPE:
-        operations_.dismiss_overlay(false);
-        return true;
-      case SDLK_RETURN:
-      case SDLK_KP_ENTER:
-        operations_.activate_overlay_selection();
-        return true;
-      case SDLK_UP:
-        operations_.move_compare_picker_selection(-1);
-        return true;
-      case SDLK_DOWN:
-        operations_.move_compare_picker_selection(1);
-        return true;
-      case SDLK_HOME:
-        if (!state_.overlay.workflow.compare_picker.matches.empty()) {
-          state_.overlay.workflow.compare_picker.selected_index = 0;
-          if (const auto layout = operations_.current_workspace_layout(); layout.has_value()) {
-            operations_.reveal_overlay_selection(operations_.compute_overlay_rect(layout->editor_area));
-          }
-        }
-        return true;
-      case SDLK_END:
-        if (!state_.overlay.workflow.compare_picker.matches.empty()) {
-          state_.overlay.workflow.compare_picker.selected_index =
-              state_.overlay.workflow.compare_picker.matches.size() - 1;
-          if (const auto layout = operations_.current_workspace_layout(); layout.has_value()) {
-            operations_.reveal_overlay_selection(operations_.compute_overlay_rect(layout->editor_area));
-          }
-        }
-        return true;
-      case SDLK_PAGEUP:
-        operations_.move_compare_picker_selection(-kListPageStep);
-        return true;
-      case SDLK_PAGEDOWN:
-        operations_.move_compare_picker_selection(kListPageStep);
-        return true;
-      default:
-        return operations_.text_input_handle_single_line_key_down(event, modifiers);
+    if (event.key == SDLK_ESCAPE) {
+      operations_.dismiss_overlay(false);
+      return true;
     }
+    if (is_enter) {
+      operations_.activate_overlay_selection();
+      return true;
+    }
+    if (nav_delta.has_value()) {
+      operations_.move_compare_picker_selection(*nav_delta);
+      return true;
+    }
+    return operations_.text_input_handle_single_line_key_down(event, modifiers);
   }
 
   if (state_.overlay.mode == OverlayMode::BufferSearch) {
@@ -135,129 +138,66 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
   }
 
   if (state_.overlay.mode == OverlayMode::ProjectSearch) {
-    switch (event.key) {
-      case SDLK_ESCAPE:
-        operations_.dismiss_overlay(true);
-        return true;
-      case SDLK_RETURN:
-      case SDLK_KP_ENTER:
-        operations_.activate_overlay_selection();
-        return true;
-      case SDLK_UP:
-        operations_.move_project_search_selection(-1);
-        return true;
-      case SDLK_DOWN:
-        operations_.move_project_search_selection(1);
-        return true;
-      case SDLK_PAGEUP:
-        operations_.move_project_search_selection(-kListPageStep);
-        return true;
-      case SDLK_PAGEDOWN:
-        operations_.move_project_search_selection(kListPageStep);
-        return true;
-      default:
-        return operations_.text_input_handle_single_line_key_down(event, modifiers);
+    if (event.key == SDLK_ESCAPE) {
+      operations_.dismiss_overlay(true);
+      return true;
     }
+    if (is_enter) {
+      operations_.activate_overlay_selection();
+      return true;
+    }
+    if (nav_delta.has_value()) {
+      operations_.move_project_search_selection(*nav_delta);
+      return true;
+    }
+    return operations_.text_input_handle_single_line_key_down(event, modifiers);
   }
 
   if (state_.overlay.mode == OverlayMode::CommandPalette) {
     auto& palette = state_.overlay.workflow.command_palette;
-    const std::size_t item_count = palette.matches.size();
-    const auto apply_selection = [&](std::size_t index) {
-      if (item_count == 0) {
-        return;
-      }
-      palette.selected_index = std::min(index, item_count - 1);
-      if (const auto layout = operations_.current_workspace_layout(); layout.has_value()) {
-        operations_.reveal_overlay_selection(operations_.compute_overlay_rect(layout->editor_area));
-      }
-    };
-    switch (event.key) {
-      case SDLK_ESCAPE:
-        operations_.dismiss_overlay(false);
-        return true;
-      case SDLK_RETURN:
-      case SDLK_KP_ENTER:
-        operations_.activate_overlay_selection();
-        return true;
-      case SDLK_TAB:
-        // The palette query doubles as a command line; Tab completes the active token.
-        operations_.complete_command_palette_query();
-        return true;
-      case SDLK_UP:
-        apply_selection(ClampListIndexMove(palette.selected_index, item_count, -1));
-        return true;
-      case SDLK_DOWN:
-        apply_selection(ClampListIndexMove(palette.selected_index, item_count, 1));
-        return true;
-      case SDLK_PAGEUP:
-        apply_selection(ClampListIndexMove(palette.selected_index, item_count, -kListPageStep));
-        return true;
-      case SDLK_PAGEDOWN:
-        apply_selection(ClampListIndexMove(palette.selected_index, item_count, kListPageStep));
-        return true;
-      case SDLK_HOME:
-        apply_selection(0);
-        return true;
-      case SDLK_END:
-        if (item_count > 0) {
-          apply_selection(item_count - 1);
-        }
-        return true;
-      default:
-        return operations_.text_input_handle_single_line_key_down(event, modifiers);
+    if (event.key == SDLK_ESCAPE) {
+      operations_.dismiss_overlay(false);
+      return true;
     }
+    if (is_enter) {
+      operations_.activate_overlay_selection();
+      return true;
+    }
+    if (event.key == SDLK_TAB) {
+      // The palette query doubles as a command line; Tab completes the active token.
+      operations_.complete_command_palette_query();
+      return true;
+    }
+    if (nav_delta.has_value()) {
+      MoveOverlayListSelection(palette.selected_index, palette.matches.size(), *nav_delta);
+      return true;
+    }
+    return operations_.text_input_handle_single_line_key_down(event, modifiers);
   }
 
   if (state_.overlay.mode == OverlayMode::LaunchConfigPicker) {
     auto& picker = state_.overlay.workflow.launch_config_picker;
-    const std::size_t item_count = picker.matches.size();
-    const auto apply_selection = [&](std::size_t index) {
-      if (item_count == 0) {
-        return;
-      }
-      picker.selected_index = std::min(index, item_count - 1);
-      if (const auto layout = operations_.current_workspace_layout(); layout.has_value()) {
-        operations_.reveal_overlay_selection(operations_.compute_overlay_rect(layout->editor_area));
-      }
-    };
-    switch (event.key) {
-      case SDLK_ESCAPE:
-        operations_.dismiss_overlay(false);
-        return true;
-      case SDLK_RETURN:
-      case SDLK_KP_ENTER:
-        operations_.activate_overlay_selection();
-        return true;
-      case SDLK_UP:
-        apply_selection(ClampListIndexMove(picker.selected_index, item_count, -1));
-        return true;
-      case SDLK_DOWN:
-        apply_selection(ClampListIndexMove(picker.selected_index, item_count, 1));
-        return true;
-      case SDLK_PAGEUP:
-        apply_selection(ClampListIndexMove(picker.selected_index, item_count, -kListPageStep));
-        return true;
-      case SDLK_PAGEDOWN:
-        apply_selection(ClampListIndexMove(picker.selected_index, item_count, kListPageStep));
-        return true;
-      case SDLK_HOME:
-        apply_selection(0);
-        return true;
-      case SDLK_END:
-        if (item_count > 0) {
-          apply_selection(item_count - 1);
-        }
-        return true;
-      default:
-        return operations_.text_input_handle_single_line_key_down(event, modifiers);
+    if (event.key == SDLK_ESCAPE) {
+      operations_.dismiss_overlay(false);
+      return true;
     }
+    if (is_enter) {
+      operations_.activate_overlay_selection();
+      return true;
+    }
+    if (nav_delta.has_value()) {
+      MoveOverlayListSelection(picker.selected_index, picker.matches.size(), *nav_delta);
+      return true;
+    }
+    return operations_.text_input_handle_single_line_key_down(event, modifiers);
   }
 
   if (state_.overlay.mode == OverlayMode::Completion ||
       state_.overlay.mode == OverlayMode::CodeActions) {
     // Completion and code-actions are the same list widget over different item vectors;
     // bind the active list once and drive it through the shared clamped-move helper.
+    // These two carry no query field, so they are the only overlays where Home/End
+    // address the list rather than a text caret.
     const bool is_completion = state_.overlay.mode == OverlayMode::Completion;
     const std::size_t item_count = is_completion
                                        ? state_.overlay.workflow.completion.items.size()
@@ -265,70 +205,38 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     std::size_t& selected_index = is_completion
                                       ? state_.overlay.workflow.completion.selected_index
                                       : state_.overlay.workflow.code_actions.selected_index;
-    const auto apply_selection = [&](std::size_t index) {
-      if (item_count == 0) {
-        return;
-      }
-      selected_index = std::min(index, item_count - 1);
-      if (const auto layout = operations_.current_workspace_layout(); layout.has_value()) {
-        operations_.reveal_overlay_selection(operations_.compute_overlay_rect(layout->editor_area));
-      }
-    };
-
-    switch (event.key) {
-      case SDLK_ESCAPE:
-        operations_.dismiss_overlay(false);
-        return true;
-      case SDLK_RETURN:
-      case SDLK_KP_ENTER:
-        operations_.activate_overlay_selection();
-        return true;
-      case SDLK_UP:
-        apply_selection(ClampListIndexMove(selected_index, item_count, -1));
-        return true;
-      case SDLK_DOWN:
-        apply_selection(ClampListIndexMove(selected_index, item_count, 1));
-        return true;
-      case SDLK_PAGEUP:
-        apply_selection(ClampListIndexMove(selected_index, item_count, -kListPageStep));
-        return true;
-      case SDLK_PAGEDOWN:
-        apply_selection(ClampListIndexMove(selected_index, item_count, kListPageStep));
-        return true;
-      case SDLK_HOME:
-        apply_selection(0);
-        return true;
-      case SDLK_END:
-        if (item_count > 0) {
-          apply_selection(item_count - 1);
-        }
-        return true;
-      default:
-        return false;
+    if (event.key == SDLK_ESCAPE) {
+      operations_.dismiss_overlay(false);
+      return true;
     }
-  }
-
-  switch (event.key) {
-    case SDLK_RETURN:
-    case SDLK_KP_ENTER:
+    if (is_enter) {
       operations_.activate_overlay_selection();
       return true;
-    case SDLK_UP:
-      operations_.move_file_finder_selection(-1);
+    }
+    if (nav_delta.has_value()) {
+      MoveOverlayListSelection(selected_index, item_count, *nav_delta);
       return true;
-    case SDLK_DOWN:
-      operations_.move_file_finder_selection(1);
+    }
+    if (event.key == SDLK_HOME || event.key == SDLK_END) {
+      const int to_end = static_cast<int>(std::min<std::size_t>(
+          item_count, static_cast<std::size_t>(std::numeric_limits<int>::max())));
+      MoveOverlayListSelection(selected_index, item_count,
+                               event.key == SDLK_HOME ? -to_end : to_end);
       return true;
-    case SDLK_PAGEUP:
-      operations_.move_file_finder_selection(-kListPageStep);
-      return true;
-    case SDLK_PAGEDOWN:
-      operations_.move_file_finder_selection(kListPageStep);
-      return true;
-    default:
-      return operations_.text_input_handle_single_line_key_down(event, modifiers);
+    }
+    return false;
   }
-}
 
+  // File finder (the default overlay list).
+  if (is_enter) {
+    operations_.activate_overlay_selection();
+    return true;
+  }
+  if (nav_delta.has_value()) {
+    operations_.move_file_finder_selection(*nav_delta);
+    return true;
+  }
+  return operations_.text_input_handle_single_line_key_down(event, modifiers);
+}
 
 }  // namespace microide::workspace

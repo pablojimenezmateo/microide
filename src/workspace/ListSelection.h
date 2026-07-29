@@ -8,6 +8,16 @@ namespace microide::workspace {
 // Standard page jump for keyboard list navigation (PageUp / PageDown) across pickers.
 inline constexpr int kListPageStep = 8;
 
+// Rows advanced per mouse-wheel tick in every scrollable *list* surface (sidebar tree/
+// git/search, debug pane, bottom panel, overlay pickers, Settings rows). The editor
+// text surface has always scrolled three lines per tick; the lists used to move one,
+// which made the tree and the panel feel an order of magnitude heavier than the code
+// next to them. One constant so they cannot drift apart again.
+//
+// Deliberately NOT used by: the tab strips (one tab per tick is the intent there) and
+// the terminal's mouse-capture path (a captured app expects one wheel report per tick).
+inline constexpr int kWheelScrollRows = 3;
+
 // New selected index after moving `delta` from `current` within `count` items, clamped to
 // [0, count - 1]. Returns 0 when the list is empty. For the non-wrapping pickers (file
 // finder, project search, completion, code actions, commit picker); buffer search

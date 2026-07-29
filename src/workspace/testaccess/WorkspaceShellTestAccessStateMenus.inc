@@ -607,6 +607,12 @@
   static bool SoftTabsEnabled(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_preferences.soft_tabs;
   }
+  static int OverlayScrollRow(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.scroll_row;
+  }
+  static std::size_t OverlaySelectedIndex(const WorkspaceShell& shell) {
+    return shell.OverlaySelectedIndex();
+  }
   static std::size_t CommandPaletteMatchCount(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.command_palette.matches.size();
   }
@@ -777,6 +783,9 @@
   }
   static void SetFocusSidebar(WorkspaceShell& shell) {
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Sidebar;
+  }
+  static void SetFocusEditor(WorkspaceShell& shell) {
+    shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Editor;
   }
   static void ResetCaretBlink(WorkspaceShell& shell) { shell.ResetCaretBlink(); }
   static void SetCaretBlinkEpochMs(WorkspaceShell& shell, Uint64 epoch_ms) {

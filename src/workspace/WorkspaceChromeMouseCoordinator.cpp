@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "util/PerformanceTrace.h"
+#include "workspace/ListSelection.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
@@ -117,54 +118,17 @@ bool ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
     operations_.request_overlay_redraw();
     return true;
   }
-  if (state_.overlay.mode == OverlayMode::CommitPicker) {
-    operations_.move_compare_picker_selection(-overlay_ticks);
-  } else if (state_.overlay.mode == OverlayMode::CommandPalette) {
-    if (!state_.overlay.workflow.command_palette.matches.empty()) {
-      const int current =
-          static_cast<int>(state_.overlay.workflow.command_palette.selected_index);
-      const int max_index =
-          static_cast<int>(state_.overlay.workflow.command_palette.matches.size()) - 1;
-      operations_.set_overlay_selected_index(
-          static_cast<std::size_t>(std::clamp(current - overlay_ticks, 0, max_index)));
-    }
-  } else if (state_.overlay.mode == OverlayMode::LaunchConfigPicker) {
-    if (!state_.overlay.workflow.launch_config_picker.matches.empty()) {
-      const int current =
-          static_cast<int>(state_.overlay.workflow.launch_config_picker.selected_index);
-      const int max_index =
-          static_cast<int>(state_.overlay.workflow.launch_config_picker.matches.size()) - 1;
-      operations_.set_overlay_selected_index(
-          static_cast<std::size_t>(std::clamp(current - overlay_ticks, 0, max_index)));
-    }
-  } else if (state_.overlay.mode == OverlayMode::ProjectSearch) {
-    // Detached scroll: the wheel pans the results list without moving the active
-    // selection, so the highlighted result can scroll off-screen instead of the
-    // view snapping to keep it visible.
-    const SDL_FRect overlay = operations_.compute_overlay_rect(layout.editor_area);
-    const auto list_layout = operations_.compute_overlay_list_layout(overlay);
-    state_.overlay.scroll_row =
-        std::clamp(state_.overlay.scroll_row - overlay_ticks, 0, list_layout.max_scroll);
-  } else if (state_.overlay.mode == OverlayMode::Completion ||
-             state_.overlay.mode == OverlayMode::CodeActions) {
-    if (state_.overlay.mode == OverlayMode::Completion &&
-        !state_.overlay.workflow.completion.items.empty()) {
-      const int current = static_cast<int>(state_.overlay.workflow.completion.selected_index);
-      const int max_index =
-          static_cast<int>(state_.overlay.workflow.completion.items.size()) - 1;
-      state_.overlay.workflow.completion.selected_index =
-          static_cast<std::size_t>(std::clamp(current - overlay_ticks, 0, max_index));
-    } else if (state_.overlay.mode == OverlayMode::CodeActions &&
-               !state_.overlay.workflow.code_actions.items.empty()) {
-      const int current = static_cast<int>(state_.overlay.workflow.code_actions.selected_index);
-      const int max_index =
-          static_cast<int>(state_.overlay.workflow.code_actions.items.size()) - 1;
-      state_.overlay.workflow.code_actions.selected_index =
-          static_cast<std::size_t>(std::clamp(current - overlay_ticks, 0, max_index));
-    }
-  } else {
-    operations_.move_file_finder_selection(-overlay_ticks);
-  }
+  // Every list overlay (file finder, project search, command palette, commit and
+  // launch pickers, completion, code actions) scrolls *detached*: the wheel pans the
+  // rows and leaves the selection where it is, so the highlighted row may scroll out
+  // of view instead of the list dragging the selection along. This is what VS Code
+  // does, and it means a wheel nudge can never change what Enter is about to run.
+  // Every mode shares one `overlay.scroll_row` and one list geometry, so this is a
+  // single clamp rather than the per-mode selection arithmetic it replaces.
+  const SDL_FRect overlay = operations_.compute_overlay_rect(layout.editor_area);
+  const auto list_layout = operations_.compute_overlay_list_layout(overlay);
+  state_.overlay.scroll_row = std::clamp(
+      state_.overlay.scroll_row - overlay_ticks * kWheelScrollRows, 0, list_layout.max_scroll);
   operations_.request_overlay_redraw();
   return true;
 }
@@ -660,7 +624,6 @@ ChromeMouseCoordinator WorkspaceShell::MakeChromeMouseCoordinator() {
                 MakeMenuCoordinator().OpenSubmenu(id, rect);
               },
           .close_submenu = [this]() { MakeMenuCoordinator().CloseSubmenu(); },
-          .move_compare_picker_selection = [this](int delta) { MoveComparePickerSelection(delta); },
           .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
           .replace_current_buffer_search_match = [this]() { ReplaceCurrentBufferSearchMatch(); },
           .replace_all_buffer_search_matches = [this]() { ReplaceAllBufferSearchMatches(); },
@@ -670,8 +633,6 @@ ChromeMouseCoordinator WorkspaceShell::MakeChromeMouseCoordinator() {
                 bs.regex = !bs.regex;
                 RefreshBufferSearch();
               },
-          .move_project_search_selection = [this](int delta) { MoveProjectSearchSelection(delta); },
-          .move_file_finder_selection = [this](int delta) { MoveFileFinderSelection(delta); },
           .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
           .dismiss_overlay = [this](bool focus_editor) { DismissOverlay(focus_editor); },
           .compute_overlay_rect = [this](const SDL_FRect& rect) { return ComputeOverlayRect(rect); },

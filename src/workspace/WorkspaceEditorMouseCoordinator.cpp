@@ -13,6 +13,7 @@
 #include "editor/PluginSurfaceStore.h"
 #include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/ListSelection.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceLayout.h"
@@ -645,9 +646,9 @@ bool EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
     viewport = operations_.active_editor_viewport();
   }
   if (viewport != nullptr) {
-    viewport->ScrollVertical(-vertical_ticks * 3);
+    viewport->ScrollVertical(-vertical_ticks * kWheelScrollRows);
   }
-  state_.surface.focus = FocusTarget::Editor;
+  // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
   return true;
 }
 

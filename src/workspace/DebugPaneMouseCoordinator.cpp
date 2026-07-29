@@ -4,6 +4,8 @@
 #include <utility>
 #include <vector>
 
+#include "workspace/ListSelection.h"
+
 namespace microide::workspace {
 
 namespace {
@@ -244,10 +246,10 @@ bool DebugPaneMouseCoordinator::HandleWheel(const SDL_Event& event, const Worksp
   const std::size_t line_count = operations_.debug_pane_active_row_count();
   const auto panel_layout = operations_.compute_debug_pane_list_layout(layout, line_count);
   operations_.set_debug_pane_scroll_row(
-      std::clamp(panel_layout.scroll.vertical_scroll - vertical_ticks, 0,
+      std::clamp(panel_layout.scroll.vertical_scroll - vertical_ticks * kWheelScrollRows, 0,
                  panel_layout.scroll.max_vertical_scroll),
       line_count, panel_layout.scroll.visible_rows);
-  state_.surface.focus = FocusTarget::DebugPane;
+  // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
   return true;
 }
 

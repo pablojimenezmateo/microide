@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "workspace/ListSelection.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -49,8 +50,10 @@ bool SidebarMouseCoordinator::HandleWheel(const SDL_Event& event,
   const auto list_layout = CurrentListLayout(layout);
   const SidebarMode sidebar_mode = operations_.active_sidebar_mode();
   int& scroll_row = ActiveSidebarScrollRow(state_, sidebar_mode);
-  scroll_row = std::clamp(scroll_row - vertical_ticks, 0, list_layout.max_scroll);
-  state_.surface.focus = FocusTarget::Sidebar;
+  scroll_row =
+      std::clamp(scroll_row - vertical_ticks * kWheelScrollRows, 0, list_layout.max_scroll);
+  // Scrolling is not focusing: the wheel must not pull keyboard focus out of whatever
+  // the user is typing into (VS Code behaves the same way).
   return true;
 }
 

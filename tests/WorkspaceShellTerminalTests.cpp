@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "TerminalSessionTestAccess.h"
+#include "workspace/ListSelection.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 
@@ -961,14 +962,17 @@ void TestWorkspaceShellBottomPanelWheelScrollsTranscript() {
   WorkspaceShellTestAccess::SetActiveTerminalFollowTail(shell, false);
   WorkspaceShellTestAccess::SetActiveTerminalScrollRow(shell, 0);
 
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
   const SDL_FRect panel_rect = WorkspaceShellTestAccess::BottomPanelContentRect(shell);
   Expect(SendMouseWheel(
              shell, panel_rect.x + 12.0f, panel_rect.y + 12.0f, -3),
          "mouse wheel over the bottom panel should be handled");
-  Expect(WorkspaceShellTestAccess::ActiveTerminalScrollRow(shell) == 3,
-         "mouse wheel over the bottom panel should advance the transcript scroll row");
-  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell),
-         "mouse wheel over the bottom panel should keep panel focus");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalScrollRow(shell) ==
+             3 * microide::workspace::kWheelScrollRows,
+         "mouse wheel over the bottom panel should advance the transcript by the shared "
+         "per-tick row step");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+         "scrolling the panel must not pull keyboard focus out of the editor");
 }
 
 void TestWorkspaceShellTerminalDragSelectsTranscriptText() {

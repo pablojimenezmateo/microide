@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "workspace/ListSelection.h"
 #include "workspace/PluginSurfacePreview.h"
 #include "workspace/TerminalPanelService.h"
 #include "workspace/WorkspaceLayout.h"
@@ -386,7 +387,7 @@ bool PanelMouseCoordinator::HandleWheel(const SDL_Event& event,
           terminal_tab->session.SendMouseButton(button, true, viewport_position->row,
                                                 viewport_position->column, SDL_GetModState());
         }
-        state_.surface.focus = FocusTarget::Panel;
+        // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
         return true;
       }
     }
@@ -406,22 +407,22 @@ bool PanelMouseCoordinator::HandleWheel(const SDL_Event& event,
       const float line_height =
           operations_.compute_bottom_panel_log_layout(layout, 0).line_height;
       const float step = line_height > 0.0f ? line_height : 14.0f;
-      state_.panel.surface_scroll_y = std::clamp(
-          state_.panel.surface_scroll_y -
-              static_cast<int>(std::lround(static_cast<float>(vertical_ticks) * step)),
-          0, MaxPluginSurfacePreviewScroll(*content, body.h));
+      state_.panel.surface_scroll_y =
+          std::clamp(state_.panel.surface_scroll_y -
+                         static_cast<int>(std::lround(
+                             static_cast<float>(vertical_ticks * kWheelScrollRows) * step)),
+                     0, MaxPluginSurfacePreviewScroll(*content, body.h));
     }
-    state_.surface.focus = FocusTarget::Panel;
     return true;
   }
 
   const std::size_t line_count = operations_.bottom_panel_line_count();
   const auto panel_layout = operations_.compute_bottom_panel_log_layout(layout, line_count);
   operations_.set_bottom_panel_scroll_row(
-      std::clamp(panel_layout.scroll.vertical_scroll - vertical_ticks, 0,
+      std::clamp(panel_layout.scroll.vertical_scroll - vertical_ticks * kWheelScrollRows, 0,
                  panel_layout.scroll.max_vertical_scroll),
       line_count, panel_layout.scroll.visible_rows);
-  state_.surface.focus = FocusTarget::Panel;
+  // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
   return true;
 }
 
