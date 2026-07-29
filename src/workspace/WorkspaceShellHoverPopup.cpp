@@ -335,6 +335,13 @@ std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_vi
   // handful of distinct strings, so a small memo turns every frame after the first
   // into a lookup. Metrics generation is part of the key: a font-size or UI-scale
   // change re-wraps at the new width.
+  //
+  // The memo is per-thread, not per-shell, and the key does not name the shell.
+  // That is safe because a process runs one WorkspaceShell; the several shells a
+  // test process builds all measure through a backend-less TextRenderer (a fixed
+  // advance per byte), so a cross-instance hit returns exactly what that instance
+  // would have computed. Give the key a renderer identity before letting two
+  // shells with different fonts coexist.
   struct WrapMemoEntry {
     std::string text;
     float max_width = 0.0f;
