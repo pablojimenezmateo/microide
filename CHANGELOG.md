@@ -15,7 +15,9 @@ changes.
 ### Added
 
 - **Double-click a resize divider to restore its default size.** Works on all
-  four — sidebar, right/debug pane, editor split, bottom panel.
+  six — sidebar, right/debug pane, editor split, bottom panel, and the compare
+  and merge pane dividers. Either merge divider resets both, so one gesture
+  recovers the layout.
 - **Word and line selection in the terminal.** Double-click selects the word
   under the pointer, triple-click the whole row, matching the editor surface.
   Path/URL punctuation counts as part of a word, so double-clicking
@@ -34,6 +36,11 @@ changes.
   as the editor gutter (Disable/Enable, Set Condition…, Set Hit Count…, Set Log
   Message…, Remove); Variables and Watch rows offer Copy Value and Add to Watch.
   The pane was the last interactive list in the shell with no menu at all.
+- **Keyboard scrolling in Help/About**, which swallowed every key but Escape. It
+  answers the same Up/Down, Page Up/Down and Home/End contract as every other
+  list, so a Help panel taller than the window is no longer mouse-only.
+- **Page Up/Down and Home/End in Settings**, in both the category rail and the
+  value list. Both moved one row at a time through lists hundreds of rows long.
 
 ### Changed
 
@@ -66,10 +73,22 @@ changes.
 
 ### Fixed
 
-- **The debug pane's scrollbar is grabbable.** It had been painted since the pane
-  shipped but never hit-tested, so it was decoration — and because the row hit
-  test covered the whole content rect, a press on the bar activated the row
-  behind it (in Breakpoints mode, navigating the editor to a random file).
+- **Every painted scrollbar can now be grabbed.** Three could not. The debug
+  pane's had been painted since the pane shipped but never hit-tested, so it was
+  decoration — and because the row hit test covered the whole content rect, a
+  press on the bar activated the row behind it (in Breakpoints mode, navigating
+  the editor to a random file). Help/About's was in the same state, with its
+  scroll bound resolved inside the paint pass, so wheel scrolling did nothing
+  until a frame had been drawn and used a stale bound after a resize. The
+  font-picker dropdown's was the third; worse, because the dropdown floats over
+  the settings scrollbar, clicking its bar jumped the rows behind it. An
+  architecture lint now fails the build on a scrollbar that can never render as
+  being dragged.
+- **The resize cursor holds for the whole drag.** Only the sidebar and bottom
+  panel kept their resize shape once the pointer left the divider; the right
+  pane, editor split, compare and merge dividers flickered back to an arrow
+  mid-drag. The merge dividers also had no widened grab margin, so they had to be
+  hit within a glyph's width — compare's 12px margin now applies to all three.
 - **Saving a file no longer leaks a phantom entry into the file finder.** Every
   save stages its bytes in a temp file beside the target and renames it into
   place; nothing filtered that temp, so a file-watcher batch landing inside the
@@ -108,6 +127,11 @@ changes.
 - **The project-search sidebar stops rebuilding its empty-state line every
   frame** — two heap allocations per repaint on a surface that repaints on every
   search-progress tick.
+- **Five paint paths stop allocating a string per label per frame.** Truncating a
+  label to fit returned an owning string in the Settings overlay (three per
+  visible row, plus six for the chrome), the debug pane (twelve sites), the
+  sidebar, the hover card and the breadcrumb/prompt chrome, while the other
+  render paths used the allocation-free variant. A lint keeps them aligned.
 - **Much faster terminal output.** Runs of plain printable text are now written
   to the grid in bulk instead of one byte at a time through the full escape
   parser: 3-4x on build logs and compiler diagnostics, ~1.7x on mixed
