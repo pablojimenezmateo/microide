@@ -613,6 +613,16 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
   // Plain `std::string("literal")` constructions in render TUs (occasional helpful in tests but
   // not in hot paint paths).
   const std::regex string_from_view_pattern(R"(std::string\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\.)");
+  // `TruncateToWidth` returns an owning std::string — it is literally
+  // `std::string(TruncateToWidthEphemeralView(...))`. Every call in a paint path
+  // is an allocation per label per frame, and none of the existing patterns above
+  // catch it because the allocation happens behind the helper's name. That gap
+  // let the Settings overlay allocate three strings per visible row per repaint
+  // (plus six for the chrome) while every other render TU used the view variant.
+  // The owning form stays correct for anything STORED past the draw — the blame
+  // overlay's view model, for instance — which is why the ban is scoped to TUs
+  // that only paint.
+  const std::regex owning_truncate_pattern(R"(\bTruncateToWidth\s*\()");
 
   // single_char_pattern is enforced across every render TU. literal+ident
   // concatenation used to be enforced only on the four hot per-row render TUs,
@@ -641,6 +651,11 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
         result, path, text, literal_plus_pattern,
         "render TU must not concatenate literal + identifier in a paint path; use a "
         "thread_local scratch or compose the string in RenderViewModelBuilder");
+    AppendCodeMaskRegexViolations(
+        result, path, text, owning_truncate_pattern,
+        "render TU must not call TruncateToWidth (it allocates an owning std::string per "
+        "call); draw TruncateToWidthEphemeralView / TruncateLabelView instead, and consume "
+        "the view before the next truncation on the same thread");
   }
   (void)string_from_view_pattern;  // advisory; some derived-type constructors still match.
   return result;

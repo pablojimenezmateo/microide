@@ -407,7 +407,8 @@ std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_vi
     words.push_back(std::move(word));
   }
   if (words.empty()) {
-    lines.push_back(text_renderer_.TruncateToWidth(normalized, max_width));
+    lines.push_back(
+        std::string(text_renderer_.TruncateToWidthEphemeralView(normalized, max_width)));
     return remember(std::move(lines));
   }
 
@@ -431,10 +432,14 @@ std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_vi
     }
     // A single word wider than the wrap width (a long mangled/template type name, a
     // URL) is taken unconditionally above; truncate it to the card width so it never
-    // paints past the card edge (hover cards draw with no clip). TruncateToWidth is a
-    // no-op when the line already fits, so multi-word lines are unaffected. Mirrors
-    // the empty-words and trailing-`remaining` truncation paths.
-    lines.push_back(text_renderer_.TruncateToWidth(line, max_width));
+    // paints past the card edge (hover cards draw with no clip). Truncation returns
+    // the input unchanged when the line already fits, so multi-word lines are
+    // unaffected. Mirrors the empty-words and trailing-`remaining` paths. These four
+    // are the only truncations in a render TU that legitimately own their result —
+    // they are memoized, not drawn — so the allocation is spelled out rather than
+    // hidden inside TruncateToWidth.
+    lines.push_back(
+        std::string(text_renderer_.TruncateToWidthEphemeralView(line, max_width)));
   }
 
   std::string remaining;
@@ -446,10 +451,12 @@ std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_vi
     ++index;
   }
   if (!remaining.empty() && lines.size() < max_lines) {
-    lines.push_back(text_renderer_.TruncateToWidth(remaining, max_width));
+    lines.push_back(
+        std::string(text_renderer_.TruncateToWidthEphemeralView(remaining, max_width)));
   }
   if (lines.empty()) {
-    lines.push_back(text_renderer_.TruncateToWidth(normalized, max_width));
+    lines.push_back(
+        std::string(text_renderer_.TruncateToWidthEphemeralView(normalized, max_width)));
   }
   return remember(std::move(lines));
 }
@@ -538,11 +545,11 @@ void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
           WrapEditorHoverPopupText(blame_line->summary, text_width, kEditorHoverPopupMaxSummaryLines);
       text_renderer_.DrawStringOn(
           renderer, text_x, text_y, theme_.text_primary, theme_.overlay_background,
-          text_renderer_.TruncateToWidth(blame_line->author, text_width));
+          text_renderer_.TruncateToWidthEphemeralView(blame_line->author, text_width));
       text_y += text_renderer_.LineHeight() + kEditorHoverPopupLineGap;
       text_renderer_.DrawStringOn(
           renderer, text_x, text_y, theme_.text_secondary, theme_.overlay_background,
-          text_renderer_.TruncateToWidth(blame_line->date, text_width));
+          text_renderer_.TruncateToWidthEphemeralView(blame_line->date, text_width));
       if (!summary_lines.empty()) {
         text_y += text_renderer_.LineHeight() + kEditorHoverPopupSectionGap;
         DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
@@ -565,8 +572,8 @@ void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
         popup->diagnostic->message, text_width, kEditorHoverPopupMaxDiagnosticLines);
     text_renderer_.DrawStringOn(
         renderer, text_x, text_y, severity_color, theme_.overlay_background,
-        text_renderer_.TruncateToWidth(DiagnosticSeverityLabel(popup->diagnostic->severity),
-                                       text_width));
+        text_renderer_.TruncateToWidthEphemeralView(
+            DiagnosticSeverityLabel(popup->diagnostic->severity), text_width));
     if (!message_lines.empty()) {
       text_y += text_renderer_.LineHeight() + kEditorHoverPopupSectionGap;
       DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,

@@ -116,7 +116,7 @@ void RenderCommitBodyField(const render::TextRenderer& tr, const render::Theme& 
     }
 
     DrawTextOn(tr, renderer, text_x, row_y, theme.text_primary, theme.surface_background,
-               tr.TruncateToWidth(text, avail_w));
+               tr.TruncateToWidthEphemeralView(text, avail_w));
 
     if (focused && line_index == caret_line) {
       const std::size_t clamped_col = std::min(caret_col, text.size());

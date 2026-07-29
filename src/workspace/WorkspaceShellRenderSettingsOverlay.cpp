@@ -172,7 +172,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
       }
       text_renderer_.DrawStringOn(renderer, cat.rect.x + 12.0f, cat.rect.y + 7.0f,
                                   cat.selected ? theme_.text_primary : theme_.text_muted, background,
-                                  text_renderer_.TruncateToWidth(cat.label, cat.rect.w - 24.0f));
+                                  TruncateLabelView(cat.label, cat.rect.w - 24.0f));
     }
     if (vm.category_scrollbar.has_value()) {
       DrawScrollbar(renderer, theme_, vm.category_scrollbar->track, vm.category_scrollbar->thumb,
@@ -188,12 +188,12 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
     text_renderer_.DrawStringOn(
         renderer, header_x, vm.section_header_rect.y + 6.0f, theme_.accent,
         theme_.surface_background,
-        text_renderer_.TruncateToWidth(vm.section_title, vm.section_header_rect.w - 24.0f));
+        TruncateLabelView(vm.section_title, vm.section_header_rect.w - 24.0f));
     if (!vm.section_subtitle.empty()) {
       text_renderer_.DrawStringOn(
           renderer, header_x, vm.section_header_rect.y + 6.0f + line_height, theme_.text_muted,
           theme_.surface_background,
-          text_renderer_.TruncateToWidth(vm.section_subtitle, vm.section_header_rect.w - 24.0f));
+          TruncateLabelView(vm.section_subtitle, vm.section_header_rect.w - 24.0f));
     }
     DrawFilledRect(renderer,
                    MakeRect(vm.section_header_rect.x,
@@ -224,7 +224,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
       text_renderer_.DrawStringOn(
           renderer, row.row_rect.x + 12.0f, row.row_rect.y - line_height + 3.0f, theme_.text_muted,
           theme_.surface_background,
-          text_renderer_.TruncateToWidth(row.group_subheader, row.row_rect.w - 24.0f));
+          TruncateLabelView(row.group_subheader, row.row_rect.w - 24.0f));
     }
 
     const SDL_Color background = row.selected ? theme_.selection_strong : theme_.surface_background;
@@ -260,7 +260,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
     const float text_width = std::max(40.0f, text_left - 8.0f - text_x);
 
     text_renderer_.DrawStringOn(renderer, text_x, row.row_rect.y + 6.0f, theme_.text_primary,
-                                background, text_renderer_.TruncateToWidth(row.label, text_width));
+                                background, TruncateLabelView(row.label, text_width));
     // The dim scope label ("User" / "Project") sits at the right end of the first
     // description line; the builder resolved its x (< 0 when absent or it did not fit).
     const float desc_top = row.row_rect.y + 6.0f + line_height;
@@ -289,7 +289,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
       DrawRect(renderer, row.scope_rect, theme_.border);
       DrawCenteredTextOn(text_renderer_, renderer, row.scope_rect, scope_color,
                          theme_.chrome_background,
-                         text_renderer_.TruncateToWidth(row.scope_text, row.scope_rect.w - 8.0f));
+                         TruncateLabelView(row.scope_text, row.scope_rect.w - 8.0f));
       if (!row.scope_help.empty() && last_mouse_position_valid_ &&
           Contains(row.scope_rect, last_mouse_x_, last_mouse_y_)) {
         hovered_scope_help = row.scope_help;
@@ -394,7 +394,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
       const float text_x = item.rect.x + 8.0f;
       const float text_y = item.rect.y + (item.rect.h - line_height) * 0.5f;
       text_renderer_.DrawStringOn(renderer, text_x, text_y, foreground, background,
-                                  text_renderer_.TruncateToWidth(item.text, item.rect.w - 16.0f));
+                                  TruncateLabelView(item.text, item.rect.w - 16.0f));
     }
     if (picker.scrollbar.has_value()) {
       DrawScrollbar(renderer, theme_, picker.scrollbar->track, picker.scrollbar->thumb, false);

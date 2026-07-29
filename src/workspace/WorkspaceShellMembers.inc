@@ -1781,7 +1781,6 @@
   std::string ProjectLabelForRoot(const std::filesystem::path& root) const;
   std::string ProjectTabDisplayTitle(std::size_t index) const;
   std::string ProjectTabTooltipLabel(std::size_t index) const;
-  std::string TruncateLabel(std::string_view text, float max_width) const;
   // Allocation-free truncate for render hot paths; see
   // render::TextRenderer::TruncateToWidthEphemeralView for the returned view's lifetime.
   std::string_view TruncateLabelView(std::string_view text, float max_width) const;

@@ -139,10 +139,10 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
   // semi-transparent action-button highlight — so no run shows a mismatched background box.
   const float inset_x = card.x + 20.0f;
   text_renderer.DrawString(renderer, inset_x, card.y + 8.0f, theme.chrome_text,
-                           text_renderer.TruncateToWidth(model.title, card.w - 40.0f));
-  text_renderer.DrawString(renderer, inset_x, card.y + layout.header.h - line_height - 4.0f,
-                           theme.text_secondary,
-                           text_renderer.TruncateToWidth(model.subtitle, card.w - 40.0f));
+                           text_renderer.TruncateToWidthEphemeralView(model.title, card.w - 40.0f));
+  text_renderer.DrawString(
+      renderer, inset_x, card.y + layout.header.h - line_height - 4.0f, theme.text_secondary,
+      text_renderer.TruncateToWidthEphemeralView(model.subtitle, card.w - 40.0f));
 
   // A primary-action button: opaque selection fill plus a 3px accent bar on the left edge —
   // the same selection-bar language used by the overlay list — instead of a muddy box.
@@ -153,18 +153,22 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
     const float text_y = button.y + std::floor(std::max(0.0f, button.h - line_height) * 0.5f);
     text_renderer.DrawStringOn(renderer, button.x + 12.0f, text_y, theme.surface_text,
                                theme.selection_strong,
-                               text_renderer.TruncateToWidth(label, button.w - 20.0f));
+                               text_renderer.TruncateToWidthEphemeralView(label, button.w - 20.0f));
   };
 
   // A recent-entry row: folder/file name (accent) + muted path tail.
   const auto draw_recent_row = [&](const WelcomeHitRegion& region, const WelcomeRecent& recent) {
-    const std::string name = text_renderer.TruncateToWidth(recent.name, region.rect.w * 0.5f);
+    // The name view must be measured AND drawn before the path is truncated: both
+    // share one thread-local scratch, so the second call would clobber the first.
+    const std::string_view name =
+        text_renderer.TruncateToWidthEphemeralView(recent.name, region.rect.w * 0.5f);
     const float name_w = text_renderer.MeasureWidth(name);
     text_renderer.DrawString(renderer, region.rect.x + 4.0f, region.rect.y + 2.0f, theme.accent,
                              name);
-    text_renderer.DrawString(
-        renderer, region.rect.x + 14.0f + name_w, region.rect.y + 2.0f, theme.text_muted,
-        text_renderer.TruncateToWidth(recent.path_display, region.rect.w - name_w - 26.0f));
+    text_renderer.DrawString(renderer, region.rect.x + 14.0f + name_w, region.rect.y + 2.0f,
+                             theme.text_muted,
+                             text_renderer.TruncateToWidthEphemeralView(
+                                 recent.path_display, region.rect.w - name_w - 26.0f));
   };
 
   const float caption_x = layout.recents_panel.x;
@@ -200,8 +204,8 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
     if (!drew_file) {
       text_renderer.DrawString(
           renderer, caption_x + 4.0f, layout.recents_rows_top, theme.text_muted,
-          text_renderer.TruncateToWidth(model.empty_recent_files_label,
-                                        layout.recents_panel.w - 16.0f));
+          text_renderer.TruncateToWidthEphemeralView(model.empty_recent_files_label,
+                                                    layout.recents_panel.w - 16.0f));
     }
   } else {
     // NoProject: a "Start" caption, the open-folder button, a "Recent" caption, recent rows.
@@ -221,8 +225,8 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
     if (!drew_recent) {
       text_renderer.DrawString(
           renderer, caption_x + 4.0f, layout.recents_rows_top, theme.text_muted,
-          text_renderer.TruncateToWidth(model.empty_recents_label,
-                                        layout.recents_panel.w - 16.0f));
+          text_renderer.TruncateToWidthEphemeralView(model.empty_recents_label,
+                                                    layout.recents_panel.w - 16.0f));
     }
   }
 
@@ -237,11 +241,13 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
     if (sc_y + line_height > layout.shortcuts_panel.y + layout.shortcuts_panel.h) {
       break;
     }
-    text_renderer.DrawString(renderer, layout.shortcuts_panel.x, sc_y, theme.surface_text,
-                             text_renderer.TruncateToWidth(shortcut.keys, keys_col - 8.0f));
     text_renderer.DrawString(
-        renderer, layout.shortcuts_panel.x + keys_col, sc_y, theme.text_secondary,
-        text_renderer.TruncateToWidth(shortcut.label, layout.shortcuts_panel.w - keys_col - 8.0f));
+        renderer, layout.shortcuts_panel.x, sc_y, theme.surface_text,
+        text_renderer.TruncateToWidthEphemeralView(shortcut.keys, keys_col - 8.0f));
+    text_renderer.DrawString(renderer, layout.shortcuts_panel.x + keys_col, sc_y,
+                             theme.text_secondary,
+                             text_renderer.TruncateToWidthEphemeralView(
+                                 shortcut.label, layout.shortcuts_panel.w - keys_col - 8.0f));
     sc_y += sc_row_step;
   }
 }

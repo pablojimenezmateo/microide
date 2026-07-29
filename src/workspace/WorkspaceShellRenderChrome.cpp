@@ -364,7 +364,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
       text_renderer_, renderer,
       MakeRect(breadcrumb_text_x, layout.breadcrumb.y, breadcrumb_text_width, layout.breadcrumb.h),
       0.0f, theme_.chrome_text, theme_.chrome_background,
-      TruncateLabel(BreadcrumbLabel(), breadcrumb_text_width));
+      TruncateLabelView(BreadcrumbLabel(), breadcrumb_text_width));
 }
 
 std::optional<SDL_FRect> WorkspaceShell::HoveredProjectTabTooltipRect(

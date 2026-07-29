@@ -117,7 +117,7 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
                                        SDL_Color background) {
     const float primary_w = text_renderer_.MeasureWidth(primary);
     DrawTextOn(text_renderer_, renderer, x, line_y, primary_color, background,
-               text_renderer_.TruncateToWidth(primary, text_width));
+               text_renderer_.TruncateToWidthEphemeralView(primary, text_width));
     if (secondary.empty()) {
       return;
     }
@@ -125,7 +125,7 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
     const float secondary_w = x + text_width - secondary_x;
     if (secondary_w > 0.0f) {
       DrawTextOn(text_renderer_, renderer, secondary_x, line_y, secondary_color, background,
-                 text_renderer_.TruncateToWidth(secondary, secondary_w));
+                 text_renderer_.TruncateToWidthEphemeralView(secondary, secondary_w));
     }
   };
   // Disclosure triangle for an expandable Variables/Watch row.
@@ -205,14 +205,14 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
     // Synthetic "loading…"/"<unavailable>" placeholder: dim, no disclosure, inert.
     if (var_row.is_placeholder) {
       DrawTextOn(text_renderer_, renderer, name_x, line_y, theme_.text_muted, background,
-                 text_renderer_.TruncateToWidth(var_row.display_name, name_avail));
+                 text_renderer_.TruncateToWidthEphemeralView(var_row.display_name, name_avail));
       return;
     }
     // Synthetic "show more…" affordance: accented to read as clickable; the click
     // routes through ToggleRow like any other row and fetches the next page.
     if (var_row.is_show_more) {
       DrawTextOn(text_renderer_, renderer, name_x, line_y, theme_.accent, background,
-                 text_renderer_.TruncateToWidth(var_row.display_name, name_avail));
+                 text_renderer_.TruncateToWidthEphemeralView(var_row.display_name, name_avail));
       return;
     }
     if (var_row.has_children) {
@@ -223,7 +223,7 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
     if (editing) {
       const float name_w = text_renderer_.MeasureWidth(var_row.display_name);
       DrawTextOn(text_renderer_, renderer, name_x, line_y, theme_.text_primary, background,
-                 text_renderer_.TruncateToWidth(var_row.display_name, name_avail));
+                 text_renderer_.TruncateToWidthEphemeralView(var_row.display_name, name_avail));
       const float value_x = name_x + std::min(name_w, name_avail) + 12.0f;
       const float value_w = panel_layout.text_x + panel_layout.text_width - value_x;
       if (value_w > 4.0f) {
@@ -264,12 +264,12 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
     // space is tight, then the value, then the name.
     if (var_row.kind == DebugValueKind::Scope) {
       DrawTextOn(text_renderer_, renderer, name_x, line_y, theme_.accent, background,
-                 text_renderer_.TruncateToWidth(var_row.display_name, name_avail));
+                 text_renderer_.TruncateToWidthEphemeralView(var_row.display_name, name_avail));
       return;
     }
     const float name_w = text_renderer_.MeasureWidth(var_row.display_name);
     DrawTextOn(text_renderer_, renderer, name_x, line_y, theme_.text_primary, background,
-               text_renderer_.TruncateToWidth(var_row.display_name, name_avail));
+               text_renderer_.TruncateToWidthEphemeralView(var_row.display_name, name_avail));
     // Reserve a dim, right-aligned type hint when one is present and fits.
     float values_right = content_right;
     if (!var_row.display_type.empty()) {
@@ -291,8 +291,9 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
     const float value_x = std::max(aligned_value_x, name_x + name_w + 12.0f);
     const float value_w = values_right - value_x;
     if (value_w > 0.0f) {
-      DrawTextOn(text_renderer_, renderer, value_x, line_y, value_kind_color(var_row.kind),
-                 background, text_renderer_.TruncateToWidth(var_row.display_value, value_w));
+      DrawTextOn(
+          text_renderer_, renderer, value_x, line_y, value_kind_color(var_row.kind), background,
+          text_renderer_.TruncateToWidthEphemeralView(var_row.display_value, value_w));
     }
   };
 
@@ -323,8 +324,9 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
         if (session.attention && !focused) {
           text = theme_.accent;
         }
-        DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y, text, background,
-                   text_renderer_.TruncateToWidth(session.display, panel_layout.text_width));
+        DrawTextOn(
+            text_renderer_, renderer, panel_layout.text_x, line_y, text, background,
+            text_renderer_.TruncateToWidthEphemeralView(session.display, panel_layout.text_width));
         continue;
       }
       const float thread_indent = debug_view->HasSessionSelector() ? kIndentStep : 0.0f;
@@ -334,7 +336,7 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
         const SDL_Color background = fill_row_background(focused);
         DrawTextOn(text_renderer_, renderer, panel_layout.text_x + thread_indent, line_y,
                    focused ? theme_.text_primary : theme_.text_secondary, background,
-                   text_renderer_.TruncateToWidth(thread.display,
+                   text_renderer_.TruncateToWidthEphemeralView(thread.display,
                                                   panel_layout.text_width - thread_indent));
         continue;
       }
@@ -366,9 +368,10 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
       }
       const DebugBreakpointRowView& bp_row = breakpoints_model->Rows()[row_index];
       if (bp_row.kind == DebugBreakpointRowView::Kind::Header) {
-        DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y, theme_.text_muted,
-                   theme_.surface_background,
-                   text_renderer_.TruncateToWidth(bp_row.display, panel_layout.text_width));
+        DrawTextOn(
+            text_renderer_, renderer, panel_layout.text_x, line_y, theme_.text_muted,
+            theme_.surface_background,
+            text_renderer_.TruncateToWidthEphemeralView(bp_row.display, panel_layout.text_width));
         continue;
       }
       // Non-header breakpoint rows are clickable (toggle/edit), so lift the row band on
@@ -389,7 +392,7 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
         DrawTextOn(text_renderer_, renderer, panel_layout.text_x + box_w, line_y,
                    bp_row.enabled ? theme_.text_primary : theme_.text_secondary,
                    bp_bg,
-                   text_renderer_.TruncateToWidth(bp_row.display,
+                   text_renderer_.TruncateToWidthEphemeralView(bp_row.display,
                                                   panel_layout.text_width - box_w));
         continue;
       }

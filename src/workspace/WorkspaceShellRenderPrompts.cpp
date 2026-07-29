@@ -25,10 +25,10 @@ void WorkspaceShell::RenderPromptSurface(
   DrawVCenteredTextOn(text_renderer_, renderer, header, 16.0f, theme_.chrome_text,
                       theme_.chrome_background, PromptSurfaceTitle());
   DrawTextOn(text_renderer_, renderer, message_rect.x, message_rect.y, theme_.text_muted,
-             theme_.overlay_background, TruncateLabel(PromptSurfaceMessage(), message_rect.w));
+             theme_.overlay_background, TruncateLabelView(PromptSurfaceMessage(), message_rect.w));
   if (const std::string detail = PromptSurfaceDetail(); !detail.empty()) {
     DrawTextOn(text_renderer_, renderer, detail_rect.x, detail_rect.y, theme_.text_secondary,
-               theme_.overlay_background, TruncateLabel(detail, detail_rect.w));
+               theme_.overlay_background, TruncateLabelView(detail, detail_rect.w));
   }
 
   if (context_.prompts.surface.kind == PromptSurfaceState::Kind::TextInput) {
@@ -81,7 +81,7 @@ void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
   DrawVCenteredTextOn(text_renderer_, renderer, header, 12.0f, theme_.chrome_text,
                       theme_.chrome_background, DirtyPromptTitle());
   DrawTextOn(text_renderer_, renderer, message_rect.x, message_rect.y, theme_.text_secondary,
-             theme_.overlay_background, TruncateLabel(DirtyPromptMessage(), message_rect.w));
+             theme_.overlay_background, TruncateLabelView(DirtyPromptMessage(), message_rect.w));
   // Constant hint line: spelled out rather than re-joined per frame. The joiner
   // lives in WorkspaceUiText.h for text assembled from live state, which belongs
   // in RenderViewModelBuilder, not in a render TU.

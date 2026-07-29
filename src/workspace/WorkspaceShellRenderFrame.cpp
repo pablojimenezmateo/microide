@@ -266,10 +266,6 @@ void WorkspaceShell::DrawRect(SDL_Renderer* renderer,
   SDL_RenderRect(renderer, &rect);
 }
 
-std::string WorkspaceShell::TruncateLabel(std::string_view text, float max_width) const {
-  return text_renderer_.TruncateToWidth(text, max_width);
-}
-
 std::string_view WorkspaceShell::TruncateLabelView(std::string_view text, float max_width) const {
   return text_renderer_.TruncateToWidthEphemeralView(text, max_width);
 }

@@ -284,6 +284,22 @@ void RunRenderTuTextCompositionRuleFixtures() {
             "void F(const std::string& a, const std::string& b){ auto s = a + \" \" + b; (void)s; }\n");
   Expect(!CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
          "the hover popup is no longer exempt from the concat rule");
+  WriteFile(root / "src/workspace/WorkspaceShellHoverPopup.cpp", "// clean render TU fixture\n");
+
+  // TruncateToWidth hides an allocation behind a helper name, so none of the
+  // patterns above see it. The Settings overlay called it once per label per
+  // frame for exactly that reason.
+  WriteFile(sidebar, "void F(){ Draw(text_renderer_.TruncateToWidth(label, w)); }\n");
+  Expect(!CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
+         "the owning TruncateToWidth must be flagged in a render TU");
+  // Positive control: the view variants are the fix and must not trip the rule --
+  // in particular the prefix-sharing Ephemeral name must not match.
+  WriteFile(sidebar,
+            "void F(){ Draw(text_renderer_.TruncateToWidthEphemeralView(label, w));"
+            " Draw(TruncateLabelView(other, w)); }\n");
+  const RuleResult truncation_ok = CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root);
+  Expect(truncation_ok.violations.empty() && truncation_ok.missing_targets.empty(),
+         "the allocation-free truncation helpers must pass the render-TU rule");
 }
 
 void RunMissingRuleTargetFixtures() {
