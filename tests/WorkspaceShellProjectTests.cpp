@@ -1667,6 +1667,42 @@ void TestWorkspaceShellWheelStepMatchesEditorAcrossSurfaces() {
          "one wheel tick should advance the sidebar by the shared row step");
 }
 
+// Ctrl+Tab cycles every on-screen surface in visual order. The debug pane is a full
+// keyboard focus target with its own row navigation, but the old nested-ternary chain
+// covered only sidebar/editor/panel, so it was reachable by click and never by keyboard.
+void TestWorkspaceShellCtrlTabCyclesEveryVisibleSurface() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "main.cpp", "int main() {}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetDebugPaneVisible(shell, true);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+
+  // Forward: editor -> debug pane -> (no panel open) wraps to sidebar -> editor.
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "Ctrl+Tab should be handled");
+  Expect(WorkspaceShellTestAccess::FocusIsDebugPane(shell),
+         "Ctrl+Tab from the editor should reach the visible debug pane");
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "Ctrl+Tab should keep cycling");
+  Expect(WorkspaceShellTestAccess::FocusIsSidebar(shell),
+         "Ctrl+Tab past the last surface should wrap to the first");
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "Ctrl+Tab should keep cycling");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+         "Ctrl+Tab should return to the editor after a full cycle");
+
+  // Reverse cycles the same ring the other way.
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+Tab should be handled");
+  Expect(WorkspaceShellTestAccess::FocusIsSidebar(shell),
+         "Ctrl+Shift+Tab should step backwards through the ring");
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+Tab should keep cycling backwards");
+  Expect(WorkspaceShellTestAccess::FocusIsDebugPane(shell),
+         "Ctrl+Shift+Tab should wrap backwards onto the debug pane");
+}
+
 // Every resize divider answers a double-click by restoring its default size, the way
 // a window-manager sash does. Before this there was no way back to the defaults short
 // of hand-editing the session file.
@@ -4447,6 +4483,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus);
   AddTest(tests, "WorkspaceShell/TreeCollapseAllowsOpenDescendantsAndReselectReveal",
           TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal);
+  AddTest(tests, "WorkspaceShell/CtrlTabCyclesEveryVisibleSurface",
+          TestWorkspaceShellCtrlTabCyclesEveryVisibleSurface);
   AddTest(tests, "WorkspaceShell/DoubleClickResetsResizeDividers",
           TestWorkspaceShellDoubleClickResetsResizeDividers);
   AddTest(tests, "WorkspaceShell/TreeScrollDoesNotSnapToSelectionDuringRender",

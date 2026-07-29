@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceKeyInputCoordinator.h"
 
+#include <array>
+#include <cstddef>
 #include <utility>
 
 #include "workspace/WorkspaceActionCoordinator.h"
@@ -556,35 +558,34 @@ bool KeyInputCoordinator::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent
           state_.surface.focus = FocusTarget::Overlay;
           return true;
         }
-        const bool include_panel = state_.panel.content != PanelContentKind::None;
-        if (include_panel) {
-          if (state_.sidebar.visible) {
-            if (modifiers & SDL_KMOD_SHIFT) {
-              state_.surface.focus = state_.surface.focus == FocusTarget::Sidebar
-                                         ? FocusTarget::Panel
-                                         : state_.surface.focus == FocusTarget::Panel
-                                               ? FocusTarget::Editor
-                                               : FocusTarget::Sidebar;
-            } else {
-              state_.surface.focus = state_.surface.focus == FocusTarget::Sidebar
-                                         ? FocusTarget::Editor
-                                         : state_.surface.focus == FocusTarget::Editor
-                                               ? FocusTarget::Panel
-                                               : FocusTarget::Sidebar;
-            }
-          } else {
-            state_.surface.focus =
-                state_.surface.focus == FocusTarget::Panel ? FocusTarget::Editor : FocusTarget::Panel;
-          }
-        } else if (state_.sidebar.visible && !(modifiers & SDL_KMOD_SHIFT)) {
-          state_.surface.focus =
-              state_.surface.focus == FocusTarget::Sidebar ? FocusTarget::Editor : FocusTarget::Sidebar;
-        } else if (state_.sidebar.visible) {
-          state_.surface.focus =
-              state_.surface.focus == FocusTarget::Editor ? FocusTarget::Sidebar : FocusTarget::Editor;
-        } else {
-          state_.surface.focus = FocusTarget::Editor;
+        // Cycle the on-screen surfaces in visual order — sidebar (left), editor
+        // (centre), debug pane (right), panel (bottom) — wrapping at both ends.
+        // Built as an ordered ring rather than nested ternaries so a surface cannot
+        // be left out of the rotation: the debug pane is a full focus target with
+        // its own keyboard navigation, yet the old chain could only reach three of
+        // the four, leaving it clickable-but-not-tabbable.
+        std::array<FocusTarget, 4> ring{};
+        std::size_t ring_size = 0;
+        if (state_.sidebar.visible) {
+          ring[ring_size++] = FocusTarget::Sidebar;
         }
+        ring[ring_size++] = FocusTarget::Editor;
+        if (state_.debug_pane.visible) {
+          ring[ring_size++] = FocusTarget::DebugPane;
+        }
+        if (state_.panel.content != PanelContentKind::None) {
+          ring[ring_size++] = FocusTarget::Panel;
+        }
+
+        std::size_t current = 0;
+        for (std::size_t i = 0; i < ring_size; ++i) {
+          if (ring[i] == state_.surface.focus) {
+            current = i;
+            break;
+          }
+        }
+        const std::size_t step = (modifiers & SDL_KMOD_SHIFT) ? ring_size - 1 : 1;
+        state_.surface.focus = ring[(current + step) % ring_size];
         return true;
       }
       break;

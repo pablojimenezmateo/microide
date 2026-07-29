@@ -435,6 +435,13 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
       geometry.has_value()) {
     DrawScrollbar(renderer, theme_, geometry->track, geometry->thumb, false);
   }
+
+  // The debug pane is a keyboard focus target (arrows/Enter drive its rows), so it
+  // marks focus the same way the other three focusable surfaces do. It was the one
+  // surface that took focus without ever saying so.
+  if (pane_vm.focus == FocusTarget::DebugPane) {
+    DrawSurfaceFocusRing(renderer, layout.right_pane);
+  }
 }
 
 }  // namespace microide::workspace

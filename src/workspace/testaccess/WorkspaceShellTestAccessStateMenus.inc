@@ -796,6 +796,16 @@
   static void SetFocusEditor(WorkspaceShell& shell) {
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Editor;
   }
+  static bool FocusIsDebugPane(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.surface.focus ==
+           WorkspaceShell::FocusTarget::DebugPane;
+  }
+  static void SetDebugPaneVisible(WorkspaceShell& shell, bool visible) {
+    shell.context_.current_project_state.debug_pane.visible = visible;
+    if (visible && shell.context_.current_project_state.debug_pane.width <= 0.0f) {
+      shell.context_.current_project_state.debug_pane.width = kWorkspaceDefaultRightPaneWidth;
+    }
+  }
   static void ResetCaretBlink(WorkspaceShell& shell) { shell.ResetCaretBlink(); }
   static void SetCaretBlinkEpochMs(WorkspaceShell& shell, Uint64 epoch_ms) {
     shell.caret_blink_epoch_ms_ = epoch_ms;
