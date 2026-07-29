@@ -215,7 +215,7 @@
       if (visible_item.separator) {
         continue;
       }
-      labels.push_back(shell.MenuItemLabel(items[visible_item.index]));
+      labels.emplace_back(shell.MenuItemLabel(items[visible_item.index]));
     }
     return labels;
   }
@@ -284,7 +284,7 @@
       if (item.separator) {
         continue;
       }
-      labels.push_back(shell.MenuItemLabel(item));
+      labels.emplace_back(shell.MenuItemLabel(item));
     }
     return labels;
   }

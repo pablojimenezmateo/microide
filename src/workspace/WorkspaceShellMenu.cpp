@@ -359,12 +359,12 @@ std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisible
                                                       popup_rect);
 }
 
-std::string WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
+std::string_view WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
   // The breakpoint gutter menu's enable/disable item flips its verb based on the
   // breakpoint's current state, captured into the menu when it opened.
   if (item.action == ActionId::DebugBreakpointToggleEnabled) {
     return context_.menu_state.tree_context_menu.breakpoint_enabled ? "Disable Breakpoint"
-                                                                     : "Enable Breakpoint";
+                                                                    : "Enable Breakpoint";
   }
   // The git entry menu's stage/unstage item flips its verb based on whether the
   // selected entry is currently staged.
@@ -379,62 +379,59 @@ std::string WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
   const ActionId effective_action =
       command_action != nullptr ? command_action->id : item.action;
 
+  // Every label the shell can paint is either a static literal (a MenuItemSpec's own
+  // label, an ActionSpec's title, a command name) or the one composed LSP-readiness
+  // form. Only that last case needs storage, so one reused buffer serves it: menu rows
+  // are laid out and painted one at a time, each label consumed before the next is
+  // resolved. See the header's "ephemeral view" contract.
+  const auto lsp_label = [&](std::string_view ready_label) -> std::string_view {
+    thread_local std::string composed;
+    return LspDrivenMenuActionLabel(
+        effective_action, ready_label,
+        const_cast<WorkspaceShell*>(this)->ActiveLspReadinessSnapshot(/*ensure_started=*/false),
+        composed);
+  };
+
   if (!item.label.empty()) {
-    if (IsLspDrivenMenuAction(effective_action)) {
-      return LspDrivenMenuActionLabel(
-          effective_action, item.label,
-          const_cast<WorkspaceShell*>(this)->ActiveLspReadinessSnapshot(
-          /*ensure_started=*/false));
-    }
-    return std::string(item.label);
+    return IsLspDrivenMenuAction(effective_action) ? lsp_label(item.label) : item.label;
   }
   if (!item.command_name.empty()) {
-    if (const ActionSpec* action = FindActionByCommand(item.command_name);
-        action != nullptr && !action->label.empty()) {
-      return IsLspDrivenMenuAction(effective_action)
-                 ? LspDrivenMenuActionLabel(
-                       effective_action, action->label,
-                       const_cast<WorkspaceShell*>(this)->ActiveLspReadinessSnapshot(
-          /*ensure_started=*/false))
-                 : std::string(action->label);
+    if (command_action != nullptr && !command_action->label.empty()) {
+      return IsLspDrivenMenuAction(effective_action) ? lsp_label(command_action->label)
+                                                     : command_action->label;
     }
-    if (const ActionSpec* action = FindActionByCommand(item.command_name);
-        action != nullptr && !action->command_name.empty()) {
-      return std::string(action->command_name);
+    if (command_action != nullptr && !command_action->command_name.empty()) {
+      return command_action->command_name;
     }
-    return std::string(item.command_name);
+    return item.command_name;
   }
-  if (const ActionSpec* action = FindActionSpec(item.action);
-      action != nullptr && !action->label.empty()) {
-    return IsLspDrivenMenuAction(effective_action)
-               ? LspDrivenMenuActionLabel(effective_action, action->label,
-                                          const_cast<WorkspaceShell*>(this)->ActiveLspReadinessSnapshot(
-          /*ensure_started=*/false))
-               : std::string(action->label);
-  }
-  if (const ActionSpec* action = FindActionSpec(item.action);
-      action != nullptr && !action->command_name.empty()) {
-    return std::string(action->command_name);
+  if (const ActionSpec* action = FindActionSpec(item.action); action != nullptr) {
+    if (!action->label.empty()) {
+      return IsLspDrivenMenuAction(effective_action) ? lsp_label(action->label) : action->label;
+    }
+    if (!action->command_name.empty()) {
+      return action->command_name;
+    }
   }
   return {};
 }
 
-std::string WorkspaceShell::MenuItemAccelerator(const MenuItemSpec& item) const {
+std::string_view WorkspaceShell::MenuItemAccelerator(const MenuItemSpec& item) const {
   if (item.submenu != MenuId::None) {
     return ">";
   }
   if (!item.accelerator.empty()) {
-    return std::string(item.accelerator);
+    return item.accelerator;
   }
   if (!item.command_name.empty()) {
     if (const ActionSpec* action = FindActionByCommand(item.command_name);
         action != nullptr && !action->accelerator.empty()) {
-      return std::string(action->accelerator);
+      return action->accelerator;
     }
   }
   if (const ActionSpec* action = FindActionSpec(item.action);
       action != nullptr && !action->accelerator.empty()) {
-    return std::string(action->accelerator);
+    return action->accelerator;
   }
   return {};
 }

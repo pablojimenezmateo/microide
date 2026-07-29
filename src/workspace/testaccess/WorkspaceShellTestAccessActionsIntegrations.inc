@@ -174,7 +174,7 @@
       if (item.separator) {
         continue;
       }
-      labels.push_back(shell.MenuItemLabel(item));
+      labels.emplace_back(shell.MenuItemLabel(item));
     }
     return labels;
   }
@@ -188,7 +188,7 @@
       if (item.separator) {
         continue;
       }
-      labels.push_back(shell.MenuItemLabel(item));
+      labels.emplace_back(shell.MenuItemLabel(item));
     }
     return labels;
   }

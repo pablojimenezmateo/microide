@@ -5,11 +5,15 @@
 
 #include <SDL3/SDL.h>
 
+#include <array>
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <unordered_map>
 #include <vector>
 
@@ -25,9 +29,55 @@ struct LspReadinessSnapshot {
   };
 
   State state = State::Idle;
+  // Extra detail beyond what `state` already says: the server's own progress title
+  // while indexing, or the startup error that failed it. Empty whenever the state is
+  // the whole story — it is NOT a place to restate the state's own name. Two
+  // vocabularies used to exist (the status bar said "Starting..." / "Ready", the
+  // LSP-gated menu entries said "LSP starting..." / "No LSP") and seven sites filled
+  // this field with a copy of its own state name to feed one of them.
   std::string message;
   int indexed_count = 0;
 };
+
+// The one word the shell uses for a readiness state, shared by the status bar
+// ("LSP: Starting…") and the LSP-gated menu entries ("Go to Definition (LSP:
+// Starting…)"). A static literal, so reading the state costs no allocation on either
+// path — both are per-frame, and the menu path runs once per visible row.
+constexpr std::string_view LspReadinessWord(LspReadinessSnapshot::State state) {
+  switch (state) {
+    case LspReadinessSnapshot::State::Idle:
+      return "Idle";
+    case LspReadinessSnapshot::State::Starting:
+      return "Starting…";
+    case LspReadinessSnapshot::State::Indexing:
+      return "Indexing…";
+    case LspReadinessSnapshot::State::Ready:
+      return "Ready";
+    case LspReadinessSnapshot::State::Failed:
+      return "Failed";
+  }
+  return "Idle";
+}
+
+// The readiness word with the indexed-file count folded in ("Indexing 42…") when the
+// server reported one. Only that single case needs a buffer; `scratch` stays untouched
+// for every other state, which is what keeps the per-frame callers allocation-free.
+inline std::string_view LspReadinessText(const LspReadinessSnapshot& snapshot,
+                                         std::string& scratch) {
+  if (snapshot.state != LspReadinessSnapshot::State::Indexing || snapshot.indexed_count <= 0) {
+    return LspReadinessWord(snapshot.state);
+  }
+  scratch.assign("Indexing ");
+  std::array<char, 16> digits{};
+  const auto [end, ec] =
+      std::to_chars(digits.data(), digits.data() + digits.size(), snapshot.indexed_count);
+  if (ec != std::errc{}) {
+    return LspReadinessWord(snapshot.state);
+  }
+  scratch.append(digits.data(), static_cast<std::size_t>(end - digits.data()));
+  scratch.append("…");
+  return scratch;
+}
 
 // Why a request ended, so callers can tell an authoritative empty answer apart
 // from a transport failure. Before this taxonomy every non-result collapsed to a

@@ -157,28 +157,6 @@ editor::DiagnosticSeverity DiagnosticSeverityFromLsp(int severity) {
   }
 }
 
-std::string LspReadinessMessage(const LspClient::ReadinessSnapshot& snapshot) {
-  using State = LspClient::ReadinessSnapshot::State;
-  switch (snapshot.state) {
-    case State::Idle:
-      return snapshot.message.empty() ? "Idle" : snapshot.message;
-    case State::Starting:
-      return snapshot.message.empty() ? "Starting..." : snapshot.message;
-    case State::Indexing:
-      if (!snapshot.message.empty()) {
-        return snapshot.message;
-      }
-      return snapshot.indexed_count > 0
-                 ? "Indexing " + std::to_string(snapshot.indexed_count) + "..."
-                 : "Indexing...";
-    case State::Ready:
-      return snapshot.message.empty() ? "Ready" : snapshot.message;
-    case State::Failed:
-      return snapshot.message.empty() ? "Failed" : snapshot.message;
-  }
-  return "Idle";
-}
-
 }  // namespace
 
 void LspService::Configure(WorkspaceContext& context, CompletionRegistry& completion_registry,
@@ -401,14 +379,12 @@ LspClient::ReadinessSnapshot LspService::ActiveLspReadinessSnapshot(bool ensure_
   }
   editor::TextViewport* viewport = operations_.active_editable_viewport();
   if (viewport == nullptr || viewport->path().empty()) {
-    snapshot.message = "Idle";
     return snapshot;
   }
 
   const std::string language_id =
       DetectActiveLanguageIdCached(*viewport, CurrentProjectState().lsp);
   if (language_id.empty()) {
-    snapshot.message = "Idle";
     return snapshot;
   }
 
@@ -428,7 +404,6 @@ LspClient::ReadinessSnapshot LspService::ActiveLspReadinessSnapshot(bool ensure_
       return snapshot;
     }
     snapshot.state = LspClient::ReadinessSnapshot::State::Starting;
-    snapshot.message = "Starting...";
     return snapshot;
   }
 
@@ -450,7 +425,7 @@ void LspService::ActiveLspStatusStrings(bool ensure_started, std::string& text,
   }
   const LspClient::ReadinessSnapshot snapshot = ActiveLspReadinessSnapshot(ensure_started);
   if (CurrentProjectState().lsp.request_in_flight_count > 0) {
-    text = "LSP: working...";
+    text = "LSP: Working…";
     tooltip = "Language server request in progress";
     set_severity(LspStatusSeverity::Busy);
     return;
@@ -469,9 +444,19 @@ void LspService::ActiveLspStatusStrings(bool ensure_started, std::string& text,
       set_severity(LspStatusSeverity::Idle);
       break;
   }
-  const std::string readiness = LspReadinessMessage(snapshot);
-  text = "LSP: " + readiness;
-  tooltip = "Language server: " + readiness;
+  // The status bar shows only the readiness word; whatever extra the server said (a
+  // progress title, a startup error) goes to the tooltip. It used to go into the bar
+  // itself, where a multi-line clangd startup error was truncated to noise.
+  std::string scratch;
+  const std::string_view readiness = LspReadinessText(snapshot, scratch);
+  text = "LSP: ";
+  text += readiness;
+  tooltip = "Language server: ";
+  tooltip += readiness;
+  if (!snapshot.message.empty() && snapshot.message != readiness) {
+    tooltip += " — ";
+    tooltip += snapshot.message;
+  }
 }
 
 void LspService::BeginTrackedLspRequest() {

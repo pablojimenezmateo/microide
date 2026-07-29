@@ -514,9 +514,11 @@ void TestWorkspaceMenuRegistryLspAvailabilityLabels() {
   using Snapshot = microide::workspace::LspClient::ReadinessSnapshot;
   using State = Snapshot::State;
 
+  // `message` now carries only detail beyond the state's own name (a server progress
+  // title, a startup error); the displayed word comes from LspReadinessWord.
   const Snapshot starting{
       .state = State::Starting,
-      .message = "Starting...",
+      .message = {},
       .indexed_count = 0,
   };
   const Snapshot indexing{
@@ -526,7 +528,7 @@ void TestWorkspaceMenuRegistryLspAvailabilityLabels() {
   };
   const Snapshot ready{
       .state = State::Ready,
-      .message = "Ready",
+      .message = {},
       .indexed_count = 0,
   };
   const Snapshot failed{
@@ -542,18 +544,27 @@ void TestWorkspaceMenuRegistryLspAvailabilityLabels() {
   Expect(!IsLspMenuActionReady(starting) && !IsLspMenuActionReady(indexing) &&
              IsLspMenuActionReady(ready) && !IsLspMenuActionReady(failed),
          "menu registry should only enable LSP-driven actions when the client is ready");
-  Expect(LspDrivenMenuActionLabel(ActionId::GoToDefinition, "Go to Definition", starting) ==
-             "Go to Definition (LSP starting...)",
+  std::string scratch;
+  Expect(LspDrivenMenuActionLabel(ActionId::GoToDefinition, "Go to Definition", starting,
+                                  scratch) == "Go to Definition (LSP: Starting…)",
          "menu registry should explain starting LSP state in disabled labels");
-  Expect(LspDrivenMenuActionLabel(ActionId::FindReferences, "Find References", indexing) ==
-             "Find References (LSP indexing 42...)",
+  Expect(LspDrivenMenuActionLabel(ActionId::FindReferences, "Find References", indexing,
+                                  scratch) == "Find References (LSP: Indexing 42…)",
          "menu registry should explain indexing LSP state in disabled labels");
-  Expect(LspDrivenMenuActionLabel(ActionId::GoToDefinition, "Go to Definition", ready) ==
-             "Go to Definition",
+  Expect(LspDrivenMenuActionLabel(ActionId::GoToDefinition, "Go to Definition", ready,
+                                  scratch) == "Go to Definition",
          "menu registry should keep the ready label unchanged");
-  Expect(LspDrivenMenuActionLabel(ActionId::FindReferences, "Find References", failed) ==
-             "Find References (LSP failed)",
+  Expect(LspDrivenMenuActionLabel(ActionId::FindReferences, "Find References", failed,
+                                  scratch) == "Find References (LSP: Failed)",
          "menu registry should explain failed LSP state in disabled labels");
+
+  // The menu suffix and the status bar must name the state with the same word; they
+  // used to keep two vocabularies ("LSP starting..." vs "Starting...").
+  std::string word_scratch;
+  Expect(microide::workspace::LspReadinessText(indexing, word_scratch) == "Indexing 42…" &&
+             microide::workspace::LspReadinessText(starting, word_scratch) == "Starting…" &&
+             microide::workspace::LspReadinessText(ready, word_scratch) == "Ready",
+         "readiness text should fold the indexed count in and otherwise be the state word");
 }
 
 void TestWorkspaceSidebarRegistry() {

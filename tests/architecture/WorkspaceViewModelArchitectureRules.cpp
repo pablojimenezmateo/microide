@@ -183,6 +183,37 @@ RuleResult CheckSidebarSurfaceFallbackUsesStringView(const std::filesystem::path
   return result;
 }
 
+RuleResult CheckMenuItemTextResolutionIsAllocationFree(const std::filesystem::path& repo_root) {
+  // A popup menu re-resolves every visible row's label and accelerator on each frame it
+  // is open — both while laying the popup out and while painting it. Both resolvers used
+  // to return std::string, so an open File menu cost two allocations per row per frame
+  // for as long as the pointer hovered it. They return borrowed views now (static
+  // registry literals, plus one reused buffer for the composed "(LSP: Starting…)" form).
+  RuleResult result;
+  result.label = "menu label/accelerator resolution returns borrowed views";
+  result.hard_fail = true;
+  const std::filesystem::path members = repo_root / "src/workspace/WorkspaceShellMembers.inc";
+  if (!RequireRuleTarget(result, members)) {
+    return result;
+  }
+  const std::string text = ReadText(members);
+  for (const std::string_view name : {"MenuItemLabel", "MenuItemAccelerator"}) {
+    const std::regex view_pattern(R"(std::string_view\s+)" + std::string(name) +
+                                  R"(\s*\(\s*const\s+MenuItemSpec)");
+    if (std::regex_search(text, view_pattern)) {
+      continue;
+    }
+    result.violations.push_back(Violation{
+        .path = members,
+        .line = 1,
+        .message = "WorkspaceShell::" + std::string(name) +
+                   " must return std::string_view: it is called once per visible menu row "
+                   "per frame, in both the popup layout and the paint path",
+    });
+  }
+  return result;
+}
+
 RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& repo_root) {
   // TD-2026-07-17-084/26: render view models must be owned/precomputed data, not
   // live pointers into project state, and the converted render TUs must not name

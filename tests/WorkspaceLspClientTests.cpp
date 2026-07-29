@@ -18,6 +18,7 @@
 namespace microide::tests {
 namespace {
 
+using microide::workspace::LspReadinessWord;
 using microide::workspace::LspClient;
 using microide::workspace::LspRequestOutcome;
 using microide::workspace::LspResult;
@@ -397,8 +398,12 @@ while True:
 
   Expect(WaitForLspReadinessState(client, LspClient::ReadinessSnapshot::State::Ready, 1000),
          "readiness snapshot should return to ready after progress ends");
-  Expect(client.GetReadinessSnapshot().message == "Ready",
-         "ready readiness snapshot should use the canonical ready message");
+  // `message` is detail beyond the state, not a restatement of it: a Ready server has
+  // nothing extra to say, and the displayed word comes from LspReadinessWord.
+  Expect(client.GetReadinessSnapshot().message.empty(),
+         "a ready readiness snapshot should carry no extra message");
+  Expect(LspReadinessWord(LspClient::ReadinessSnapshot::State::Ready) == "Ready",
+         "the shared vocabulary should supply the ready word");
   client.Shutdown();
 }
 

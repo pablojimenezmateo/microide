@@ -540,8 +540,14 @@
       const SDL_FRect& popup_rect) const;
   std::vector<VisiblePopupMenuItem> ComputeVisiblePopupMenuItems(MenuId id,
                                                                  const SDL_FRect& popup_rect) const;
-  std::string MenuItemLabel(const MenuItemSpec& item) const;
-  std::string MenuItemAccelerator(const MenuItemSpec& item) const;
+  // The label/accelerator a menu row paints. Both return borrowed views: static registry
+  // literals in every case but one — an LSP-gated entry's "(LSP: Starting…)" form, which
+  // borrows a single reused buffer. Consume the view before resolving the next row's
+  // label (which every caller does: layout measures one row at a time, paint draws one
+  // row at a time). Returning std::string here cost two allocations per visible row per
+  // frame for as long as a menu stayed open.
+  std::string_view MenuItemLabel(const MenuItemSpec& item) const;
+  std::string_view MenuItemAccelerator(const MenuItemSpec& item) const;
   bool IsMenuItemEnabled(const MenuItemSpec& item) const;
   bool IsMenuItemChecked(const MenuItemSpec& item) const;
   bool ExecuteCustomMenuItem(MenuId id, std::size_t item_index);

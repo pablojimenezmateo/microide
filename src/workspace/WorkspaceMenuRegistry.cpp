@@ -24,25 +24,6 @@ MenuItemSpec MenuSeparator() {
       ActionId::Colorscheme, {}, {}, {}, 0, true, false, MenuId::None, {}};
 }
 
-std::string LspReadinessSuffix(const LspClient::ReadinessSnapshot& snapshot) {
-  using State = LspClient::ReadinessSnapshot::State;
-  switch (snapshot.state) {
-    case State::Idle:
-      return "No LSP";
-    case State::Starting:
-      return "LSP starting...";
-    case State::Indexing:
-      return snapshot.indexed_count > 0
-                 ? "LSP indexing " + std::to_string(snapshot.indexed_count) + "..."
-                 : "LSP indexing...";
-    case State::Ready:
-      return {};
-    case State::Failed:
-      return "LSP failed";
-  }
-  return {};
-}
-
 }  // namespace
 
 bool IsLspDrivenMenuAction(ActionId id) {
@@ -76,21 +57,22 @@ bool IsLspMenuActionReady(const LspClient::ReadinessSnapshot& snapshot) {
   return snapshot.state == LspClient::ReadinessSnapshot::State::Ready;
 }
 
-std::string LspDrivenMenuActionLabel(ActionId id,
-                                     std::string_view ready_label,
-                                     const LspClient::ReadinessSnapshot& snapshot) {
+std::string_view LspDrivenMenuActionLabel(ActionId id,
+                                          std::string_view ready_label,
+                                          const LspClient::ReadinessSnapshot& snapshot,
+                                          std::string& scratch) {
   if (!IsLspDrivenMenuAction(id) || IsLspMenuActionReady(snapshot)) {
-    return std::string(ready_label);
+    return ready_label;
   }
-
-  std::string label(ready_label);
-  const std::string suffix = LspReadinessSuffix(snapshot);
-  if (!suffix.empty()) {
-    label += " (";
-    label += suffix;
-    label += ")";
-  }
-  return label;
+  // "Go to Definition (LSP: Starting…)" — the same word the status bar shows, so the
+  // greyed-out entry and the bar never disagree about why the action is unavailable.
+  std::string word_scratch;
+  const std::string_view word = LspReadinessText(snapshot, word_scratch);
+  scratch.assign(ready_label);
+  scratch += " (LSP: ";
+  scratch += word;
+  scratch += ")";
+  return scratch;
 }
 
 std::span<const MenuSpec> WorkspaceMenuSpecs() {

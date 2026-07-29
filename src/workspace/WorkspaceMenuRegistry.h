@@ -81,9 +81,15 @@ bool IsLspDrivenMenuAction(ActionId id);
 // for non-LSP menu actions. Drives hiding the entry when its feature is disabled.
 std::string_view LspMenuActionFeatureId(ActionId id);
 bool IsLspMenuActionReady(const LspClient::ReadinessSnapshot& snapshot);
-std::string LspDrivenMenuActionLabel(ActionId id,
-                                     std::string_view ready_label,
-                                     const LspClient::ReadinessSnapshot& snapshot);
+// The label an LSP-gated menu entry paints: `ready_label` when the server can answer,
+// otherwise that label plus the readiness word the status bar is showing. The returned
+// view borrows `scratch` in the not-ready case and the caller's `ready_label` otherwise,
+// so it stays valid exactly as long as both do — the menu paints one row at a time and
+// reuses a single buffer rather than allocating a label per row per frame.
+std::string_view LspDrivenMenuActionLabel(ActionId id,
+                                          std::string_view ready_label,
+                                          const LspClient::ReadinessSnapshot& snapshot,
+                                          std::string& scratch);
 
 // Map a plugin menu string ("file", "edit", "view", "go", "terminal") to a MenuId.
 // Returns MenuId::None for unrecognised values.

@@ -27,14 +27,14 @@ void LspClient::Impl::SetProgressReadiness(const util::JsonValue& value) {
       readiness_snapshot.state = initialized.load(std::memory_order_acquire)
                                      ? LspClient::ReadinessSnapshot::State::Ready
                                      : LspClient::ReadinessSnapshot::State::Starting;
-      readiness_snapshot.message =
-          initialized.load(std::memory_order_acquire) ? "Ready" : "Starting...";
+      readiness_snapshot.message.clear();
       readiness_snapshot.indexed_count = 0;
     } else {
       readiness_snapshot.state = LspClient::ReadinessSnapshot::State::Indexing;
-      readiness_snapshot.message = !message.empty() ? message
-                                 : !title.empty()   ? title
-                                                    : "Indexing...";
+      // The server's own progress text is genuine extra detail (it names what is
+      // being indexed); the bare state name is not, so leave it empty when the
+      // server said nothing and let the shared vocabulary supply "Indexing…".
+      readiness_snapshot.message = !message.empty() ? message : title;
       readiness_snapshot.indexed_count = std::max({ExtractIndexedCount(message),
                                                    ExtractIndexedCount(title), percentage});
     }
@@ -49,7 +49,7 @@ void LspClient::Impl::DoInitializeBlocking() {
   {
     std::lock_guard lock(mutex);
     readiness_snapshot.state = LspClient::ReadinessSnapshot::State::Starting;
-    readiness_snapshot.message = "Starting...";
+    readiness_snapshot.message.clear();
     readiness_snapshot.indexed_count = 0;
   }
 
@@ -529,7 +529,7 @@ void LspClient::Impl::DoInitializeBlocking() {
     std::lock_guard lock(mutex);
     if (readiness_snapshot.state != LspClient::ReadinessSnapshot::State::Indexing) {
       readiness_snapshot.state = LspClient::ReadinessSnapshot::State::Ready;
-      readiness_snapshot.message = "Ready";
+      readiness_snapshot.message.clear();
       readiness_snapshot.indexed_count = 0;
     }
     is_indexing = readiness_snapshot.state == LspClient::ReadinessSnapshot::State::Indexing;

@@ -28,7 +28,7 @@ bool LspClient::Start(const std::vector<std::string>& command, const std::string
   {
     std::lock_guard lock(impl_->mutex);
     impl_->readiness_snapshot.state = ReadinessSnapshot::State::Starting;
-    impl_->readiness_snapshot.message = "Starting...";
+    impl_->readiness_snapshot.message.clear();
     impl_->readiness_snapshot.indexed_count = 0;
   }
 
@@ -114,32 +114,20 @@ LspClient::ReadinessSnapshot LspClient::GetReadinessSnapshot() const {
     return snapshot;
   }
   if (snapshot.state == LspClient::ReadinessSnapshot::State::Indexing) {
-    if (snapshot.message.empty()) {
-      snapshot.message = "Indexing...";
-    }
     return snapshot;
   }
   if (impl_->initializing.load(std::memory_order_acquire)) {
     snapshot.state = LspClient::ReadinessSnapshot::State::Starting;
-    if (snapshot.message.empty()) {
-      snapshot.message = "Starting...";
-    }
     snapshot.indexed_count = 0;
     return snapshot;
   }
   if (impl_->initialized.load(std::memory_order_acquire)) {
     snapshot.state = LspClient::ReadinessSnapshot::State::Ready;
-    if (snapshot.message.empty()) {
-      snapshot.message = "Ready";
-    }
     snapshot.indexed_count = 0;
     return snapshot;
   }
   if (impl_->proc.IsRunning()) {
     snapshot.state = LspClient::ReadinessSnapshot::State::Starting;
-    if (snapshot.message.empty()) {
-      snapshot.message = "Starting...";
-    }
     snapshot.indexed_count = 0;
     return snapshot;
   }
@@ -147,7 +135,6 @@ LspClient::ReadinessSnapshot LspClient::GetReadinessSnapshot() const {
     return snapshot;
   }
   snapshot.state = LspClient::ReadinessSnapshot::State::Idle;
-  snapshot.message = "Idle";
   snapshot.indexed_count = 0;
   return snapshot;
 }
@@ -356,7 +343,7 @@ void LspClient::EnableTestStubMode() {
   impl_->initialized.store(true, std::memory_order_release);
   impl_->initializing.store(false, std::memory_order_release);
   impl_->readiness_snapshot.state = ReadinessSnapshot::State::Ready;
-  impl_->readiness_snapshot.message = "Ready";
+  impl_->readiness_snapshot.message.clear();
   impl_->readiness_snapshot.indexed_count = 0;
 }
 
