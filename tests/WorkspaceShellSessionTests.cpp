@@ -26,15 +26,9 @@ using microide::workspace::PersistenceCoordinator;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
-// Divider grab rects for the active compare / merge tab. DiffDividerGeometry.h
-// takes WorkspaceShell by name, so it cannot be reached from inside the TestAccess
-// class body; these live here instead and read the same geometry production does.
-SDL_FRect CompareDividerRectOf(microide::workspace::WorkspaceShell& shell) {
-  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
-  return microide::workspace::CompareDividerHitRect(
-      layout.editor_surface, WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell));
-}
-
+// Divider grab rects for the active merge tab. DiffDividerGeometry.h takes
+// WorkspaceShell by name, so it cannot be reached from inside the TestAccess class
+// body; this lives here instead and reads the same geometry production does.
 std::array<SDL_FRect, 2> MergeDividerRectsOf(microide::workspace::WorkspaceShell& shell) {
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   return microide::workspace::MergeDividerHitRects(
@@ -2097,10 +2091,15 @@ void TestWorkspaceShellMergeWheelScrollsRows() {
   const SDL_FRect result_rect = WorkspaceShellTestAccess::ActiveMergeResultRect(shell);
   const float wheel_x = result_rect.x + 24.0f;
   const float wheel_y = result_rect.y + 24.0f;
+  // Same contract as the compare surface and the other five scrollable surfaces:
+  // the wheel scrolls, it does not focus. See CompareWheelScrollsRows.
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
   Expect(SendMouseWheel(shell, wheel_x, wheel_y, -1),
          "scrolling the merge result pane should be handled");
   Expect(merge.scroll_row > before_scroll,
          "scrolling the merge result pane should advance the visible row");
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell),
+         "scrolling the merge result pane should leave keyboard focus where it was");
 }
 
 void TestWorkspaceShellMergeToolbarButtonsNavigateConflicts() {

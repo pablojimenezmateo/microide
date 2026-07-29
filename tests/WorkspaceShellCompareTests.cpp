@@ -690,10 +690,17 @@ void TestWorkspaceShellCompareWheelScrollsRows() {
   const int before_scroll = compare.scroll_row;
   const float wheel_x = surface.right_x + 24.0f;
   const float wheel_y = surface.rows_y + surface.line_height * 0.5f;
+  // The wheel must not pull keyboard focus out of whatever the user is typing into,
+  // which is what every other scrollable surface already promises. Compare and merge
+  // were the two that claimed focus for the editor on every tick, so a wheel nudge
+  // over the diff silently redirected the next keystroke away from the terminal.
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
   Expect(SendMouseWheel(shell, wheel_x, wheel_y, -1),
          "scrolling the compare surface should be handled");
   Expect(compare.scroll_row > before_scroll,
          "scrolling the compare surface should advance the visible row");
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell),
+         "scrolling the compare surface should leave keyboard focus where it was");
 }
 
 void TestWorkspaceShellCompareWheelScrollsColumns() {

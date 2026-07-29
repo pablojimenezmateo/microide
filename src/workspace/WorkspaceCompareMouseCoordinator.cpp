@@ -418,7 +418,7 @@ bool CompareMouseCoordinator::HandleWheel(const SDL_Event& event,
   if (auto* compare_tab = ActiveCompareTab(); compare_tab != nullptr) {
     operations_.sync_compare_viewport_scroll(*compare_tab);
   }
-  state_.surface.focus = FocusTarget::Editor;
+  // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
   return true;
 }
 

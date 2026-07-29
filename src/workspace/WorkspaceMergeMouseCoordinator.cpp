@@ -492,13 +492,13 @@ bool MergeMouseCoordinator::HandleWheel(const SDL_Event& event,
       const auto scroll_layout =
           operations_.compute_merge_scroll_layout(layout.editor_surface, surface_layout, *merge_tab);
       merge_tab->scroll_row =
-          std::clamp(scroll_layout.vertical_scroll - vertical_ticks * 3, 0,
+          std::clamp(scroll_layout.vertical_scroll - vertical_ticks * kWheelScrollRows, 0,
                      scroll_layout.max_vertical_scroll);
       merge_tab->result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
       merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
     }
   }
-  state_.surface.focus = FocusTarget::Editor;
+  // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
   return true;
 }
 

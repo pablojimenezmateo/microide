@@ -836,6 +836,9 @@
   static void SetFocusEditor(WorkspaceShell& shell) {
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Editor;
   }
+  static void SetFocusPanel(WorkspaceShell& shell) {
+    shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Panel;
+  }
   static bool FocusIsDebugPane(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.surface.focus ==
            WorkspaceShell::FocusTarget::DebugPane;
