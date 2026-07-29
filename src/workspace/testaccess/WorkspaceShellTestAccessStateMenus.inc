@@ -604,6 +604,15 @@
     return shell.context_.current_project_state.sidebar.plugin.placeholder;
   }
   static float SidebarWidth(const WorkspaceShell& shell) { return shell.context_.current_project_state.sidebar.width; }
+  static void SetSidebarWidth(WorkspaceShell& shell, float width) {
+    shell.context_.current_project_state.sidebar.width = width;
+  }
+  static float BottomPanelHeight(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.panel.height;
+  }
+  static void SetBottomPanelHeight(WorkspaceShell& shell, float height) {
+    shell.context_.current_project_state.panel.height = height;
+  }
   static bool SoftTabsEnabled(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_preferences.soft_tabs;
   }

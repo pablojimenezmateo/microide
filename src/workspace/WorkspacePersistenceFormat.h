@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "editor/TextViewport.h"
+#include "workspace/WorkspaceLayout.h"
 #include "workspace/BranchReviewPersistence.h"
 #include "workspace/CommitWorkflowPersistence.h"
 #include "workspace/WorkspaceSidebarState.h"
@@ -86,8 +87,8 @@ struct PersistedEditorGroupState {
 
 struct PersistedProjectSessionState {
   bool sidebar_visible = true;
-  float sidebar_width = 288.0f;
-  float bottom_panel_height = 156.0f;
+  float sidebar_width = kWorkspaceDefaultSidebarWidth;
+  float bottom_panel_height = kWorkspaceDefaultBottomPanelHeight;
   OutgoingBaseChoice outgoing_base_choice;
   // Editor groups (1 or 2; decode caps at 2). `group_split_orientation` is an
   // EditorSplitOrientation cast to u8; `group_split_fraction` is the first group's

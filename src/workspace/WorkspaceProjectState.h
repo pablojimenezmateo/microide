@@ -18,6 +18,7 @@
 #include "editor/SingleLineEditor.h"
 #include "editor/TextViewport.h"
 #include "workspace/WorkspaceActionTypes.h"
+#include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceFileIconRegistry.h"
 #include "project/DirectoryTree.h"
 #include "project/FileFinder.h"
@@ -465,7 +466,7 @@ struct LspUiState {
 
 struct PanelState {
   PanelContentKind content = PanelContentKind::None;
-  float height = 156.0f;
+  float height = kWorkspaceDefaultBottomPanelHeight;
   // Horizontal scroll offset (first visible tab index) for the bottom-panel tab
   // strip, shared by terminal and output tabs so an overflowed strip stays
   // reachable via the chevrons or the header wheel.

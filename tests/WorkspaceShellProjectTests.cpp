@@ -1667,6 +1667,40 @@ void TestWorkspaceShellWheelStepMatchesEditorAcrossSurfaces() {
          "one wheel tick should advance the sidebar by the shared row step");
 }
 
+// Every resize divider answers a double-click by restoring its default size, the way
+// a window-manager sash does. Before this there was no way back to the defaults short
+// of hand-editing the session file.
+void TestWorkspaceShellDoubleClickResetsResizeDividers() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "main.cpp", "int main() {}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetSidebarWidth(shell, 420.0f);
+  WorkspaceShellTestAccess::SetBottomPanelHeight(shell, 320.0f);
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);  // opens the bottom panel
+
+  const SDL_FRect sidebar_handle = microide::workspace::SidebarResizeHitRect(
+      WorkspaceShellTestAccess::CurrentLayout(shell));
+  Expect(SendMouseDown(shell, sidebar_handle.x + sidebar_handle.w * 0.5f,
+                       sidebar_handle.y + sidebar_handle.h * 0.5f, SDL_BUTTON_LEFT, 2),
+         "double-clicking the sidebar divider should be handled");
+  Expect(WorkspaceShellTestAccess::SidebarWidth(shell) ==
+             microide::workspace::kWorkspaceDefaultSidebarWidth,
+         "double-clicking the sidebar divider should restore the default width");
+
+  const SDL_FRect panel_handle = microide::workspace::BottomPanelResizeHandleRect(
+      WorkspaceShellTestAccess::CurrentLayout(shell));
+  Expect(SendMouseDown(shell, panel_handle.x + panel_handle.w * 0.5f,
+                       panel_handle.y + panel_handle.h * 0.5f, SDL_BUTTON_LEFT, 2),
+         "double-clicking the bottom panel divider should be handled");
+  Expect(WorkspaceShellTestAccess::BottomPanelHeight(shell) ==
+             microide::workspace::kWorkspaceDefaultBottomPanelHeight,
+         "double-clicking the bottom panel divider should restore the default height");
+}
+
 void TestWorkspaceShellTreeScrollDoesNotSnapToSelectionDuringRender() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4413,6 +4447,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus);
   AddTest(tests, "WorkspaceShell/TreeCollapseAllowsOpenDescendantsAndReselectReveal",
           TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal);
+  AddTest(tests, "WorkspaceShell/DoubleClickResetsResizeDividers",
+          TestWorkspaceShellDoubleClickResetsResizeDividers);
   AddTest(tests, "WorkspaceShell/TreeScrollDoesNotSnapToSelectionDuringRender",
           TestWorkspaceShellTreeScrollDoesNotSnapToSelectionDuringRender);
   AddTest(tests, "WorkspaceShell/TabSwitchSelectsActiveTreePath",

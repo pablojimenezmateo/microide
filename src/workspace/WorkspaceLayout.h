@@ -224,6 +224,15 @@ inline constexpr float kWorkspaceScrollbarInset = 2.0f;
 inline constexpr float kWorkspaceScrollbarMinThumbLength = 24.0f;
 inline constexpr float kWorkspaceMaxSidebarWidth = 520.0f;
 inline constexpr float kWorkspaceMaxRightPaneWidth = 520.0f;
+// Out-of-the-box pane sizes. These are what a fresh project gets, what a session
+// restore falls back to when the persisted value is unusable, and what
+// double-clicking a resize divider returns to — one definition so all three agree.
+inline constexpr float kWorkspaceDefaultSidebarWidth = 288.0f;
+inline constexpr float kWorkspaceDefaultBottomPanelHeight = 156.0f;
+inline constexpr float kWorkspaceDefaultRightPaneWidth = 320.0f;
+// An even split is the default for two editor groups, and what double-clicking the
+// split divider restores.
+inline constexpr float kWorkspaceDefaultEditorSplitFraction = 0.5f;
 inline constexpr float kWorkspaceMinEditorAreaWidth = 280.0f;
 inline constexpr float kWorkspaceMinEditorAreaHeight = 120.0f;
 inline constexpr float kWorkspaceBottomPanelHeaderHeight = 28.0f;

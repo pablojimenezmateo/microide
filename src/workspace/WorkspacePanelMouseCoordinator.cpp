@@ -44,6 +44,16 @@ bool PanelMouseCoordinator::HandleResizeButtonDown(const SDL_Event& event,
                 event.button.y)) {
     return false;
   }
+  // Double-click restores the default height — the same gesture the other three
+  // resize dividers answer (see WorkspaceShell::HandleMouseButtonDown).
+  if (event.button.clicks >= 2) {
+    if (const auto window_rect = operations_.current_window_rect(); window_rect.has_value()) {
+      state_.panel.height = operations_.clamp_bottom_panel_height(
+          kWorkspaceDefaultBottomPanelHeight, window_rect->h);
+    }
+    interaction_state_.drag_target = DragTarget::None;
+    return true;
+  }
   interaction_state_.drag_target = DragTarget::BottomPanelDivider;
   return true;
 }

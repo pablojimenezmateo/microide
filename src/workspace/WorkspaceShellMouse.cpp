@@ -249,14 +249,40 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     }
   }
 
+  // Every resize divider answers a double-click by restoring its default size, the
+  // way a window-manager sash does (and VS Code). One rule for all four dividers:
+  // sidebar, right pane, editor split, bottom panel (the last lives in
+  // PanelMouseCoordinator::HandleResizeButtonDown with the rest of its geometry).
+  const bool divider_reset_click = event.button.clicks >= 2;
+
   if (event.button.button == SDL_BUTTON_LEFT && context_.current_project_state.sidebar.visible &&
       Contains(SidebarResizeHitRect(layout), event.button.x, event.button.y)) {
+    if (divider_reset_click) {
+      const float window_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
+      context_.current_project_state.sidebar.width =
+          ClampSidebarWidth(kWorkspaceDefaultSidebarWidth, window_width);
+      ClearDragState();
+      RequestSidebarLayoutChangeRedraw(layout);
+      return true;
+    }
     context_.interaction_state.drag_target = DragTarget::SidebarDivider;
     return true;
   }
 
   if (event.button.button == SDL_BUTTON_LEFT && context_.current_project_state.debug_pane.visible &&
       Contains(RightPaneResizeHitRect(layout), event.button.x, event.button.y)) {
+    if (divider_reset_click) {
+      const float window_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
+      const float resolved_sidebar_width = context_.current_project_state.sidebar.visible
+                                               ? context_.current_project_state.sidebar.width
+                                               : 0.0f;
+      context_.current_project_state.debug_pane.width = ClampRightPaneWidth(
+          kWorkspaceDefaultRightPaneWidth, window_width, resolved_sidebar_width);
+      ClearDragState();
+      MarkLayoutDirty();
+      EnsureRedraw([this]() { RequestWindowRedraw(); });
+      return true;
+    }
     context_.interaction_state.drag_target = DragTarget::RightPaneDivider;
     return true;
   }
@@ -269,6 +295,14 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       // exactly (see CursorKindForPosition), so the drag starts in the same span and
       // does not extend past where the cursor changes.
       if (Contains(divider.rect, event.button.x, event.button.y)) {
+        if (divider_reset_click) {
+          context_.current_project_state.group_split_fraction =
+              kWorkspaceDefaultEditorSplitFraction;
+          ClearDragState();
+          MarkLayoutDirty();
+          EnsureRedraw([this]() { RequestWindowRedraw(); });
+          return true;
+        }
         context_.interaction_state.drag_target = DragTarget::EditorSplitDivider;
         context_.interaction_state.drag_editor_split_divider_index = divider.divider_index;
         context_.interaction_state.drag_editor_split_path = divider.node_path;

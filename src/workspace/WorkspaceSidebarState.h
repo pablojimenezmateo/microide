@@ -15,6 +15,7 @@
 #include "plugin/PluginHost.h"
 #include "project/GitStatusService.h"
 #include "workspace/CommitWorkflowState.h"
+#include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
 
@@ -209,7 +210,7 @@ struct SidebarState {
   std::string view_id = "tree";
   std::string prev_view_id;
   bool temporary = false;
-  float width = 288.0f;
+  float width = kWorkspaceDefaultSidebarWidth;
   int scroll_row = 0;
   GitSidebarState git;
   ProblemsSidebarState problems;

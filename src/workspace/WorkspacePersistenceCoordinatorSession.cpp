@@ -525,8 +525,8 @@ bool PersistenceCoordinator::RestoreSessionState() {
       return std::min(value, 100000.0f);
     };
     state.sidebar.visible = persisted_session.sidebar_visible;
-    state.sidebar.width = sanitize_pixels(persisted_session.sidebar_width, 288.0f);
-    state.panel.height = sanitize_pixels(persisted_session.bottom_panel_height, 156.0f);
+    state.sidebar.width = sanitize_pixels(persisted_session.sidebar_width, kWorkspaceDefaultSidebarWidth);
+    state.panel.height = sanitize_pixels(persisted_session.bottom_panel_height, kWorkspaceDefaultBottomPanelHeight);
     state.sidebar.git.outgoing_base_choice = persisted_session.outgoing_base_choice;
     // Right-side debug pane: restore width/mode always, but only re-open it when the
     // debugger feature is currently enabled (else a pane left open in a prior session
