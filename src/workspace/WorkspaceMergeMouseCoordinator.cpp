@@ -65,12 +65,25 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   const SDL_FRect right_divider_rect =
       MakeRect(surface_layout.right_x - surface_layout.divider_width, layout.editor_surface.y,
                surface_layout.divider_width, layout.editor_surface.h);
-  if (Contains(left_divider_rect, event.button.x, event.button.y)) {
+  // Double-click restores the equal thirds, the same contract the sidebar, right
+  // pane, editor split and bottom panel dividers already answer. Either divider
+  // resets both, so one double-click recovers the layout instead of two.
+  const bool reset_click = event.button.clicks >= 2;
+  const bool on_left = Contains(left_divider_rect, event.button.x, event.button.y);
+  const bool on_right = Contains(right_divider_rect, event.button.x, event.button.y);
+  if ((on_left || on_right) && reset_click) {
+    merge_tab->left_divider_fraction = kWorkspaceDefaultMergeLeftDividerFraction;
+    merge_tab->right_divider_fraction = kWorkspaceDefaultMergeRightDividerFraction;
+    operations_.clear_drag_state();
+    state_.surface.focus = FocusTarget::Editor;
+    return true;
+  }
+  if (on_left) {
     interaction_state_.drag_target = DragTarget::MergeLeftDivider;
     state_.surface.focus = FocusTarget::Editor;
     return true;
   }
-  if (Contains(right_divider_rect, event.button.x, event.button.y)) {
+  if (on_right) {
     interaction_state_.drag_target = DragTarget::MergeRightDivider;
     state_.surface.focus = FocusTarget::Editor;
     return true;

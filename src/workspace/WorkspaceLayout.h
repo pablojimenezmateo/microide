@@ -233,6 +233,13 @@ inline constexpr float kWorkspaceDefaultRightPaneWidth = 320.0f;
 // An even split is the default for two editor groups, and what double-clicking the
 // split divider restores.
 inline constexpr float kWorkspaceDefaultEditorSplitFraction = 0.5f;
+// Compare splits evenly; merge splits into equal thirds. Same three roles as the
+// pane sizes above (fresh tab, session-restore fallback, double-click reset), and
+// the values were previously written out twice — once in the tab state and once in
+// the persisted-state defaults — with nothing tying them together.
+inline constexpr float kWorkspaceDefaultCompareDividerFraction = 0.5f;
+inline constexpr float kWorkspaceDefaultMergeLeftDividerFraction = 1.0f / 3.0f;
+inline constexpr float kWorkspaceDefaultMergeRightDividerFraction = 2.0f / 3.0f;
 inline constexpr float kWorkspaceMinEditorAreaWidth = 280.0f;
 inline constexpr float kWorkspaceMinEditorAreaHeight = 120.0f;
 inline constexpr float kWorkspaceBottomPanelHeaderHeight = 28.0f;

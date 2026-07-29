@@ -74,6 +74,15 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       operations_.compare_divider_hit_rect(layout.editor_surface, surface_layout);
 
   if (Contains(divider_rect, event.button.x, event.button.y)) {
+    // Double-click restores the even split, the same contract the sidebar, right
+    // pane, editor split and bottom panel dividers already answer. Compare and
+    // merge were the two the rule missed.
+    if (event.button.clicks >= 2) {
+      compare_tab->divider_fraction = kWorkspaceDefaultCompareDividerFraction;
+      operations_.clear_drag_state();
+      state_.surface.focus = FocusTarget::Editor;
+      return true;
+    }
     interaction_state_.drag_target = DragTarget::CompareDivider;
     state_.surface.focus = FocusTarget::Editor;
     return true;

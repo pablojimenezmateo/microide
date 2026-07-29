@@ -148,7 +148,7 @@ struct CompareTabState {
   std::uint64_t scrollbar_marker_cache_theme_token = 0;
   SDL_FRect scrollbar_marker_cache_track{};
   std::vector<overview::Marker> scrollbar_marker_cache;
-  float divider_fraction = 0.5f;
+  float divider_fraction = kWorkspaceDefaultCompareDividerFraction;
   bool right_editable = false;
   bool right_view_active = false;
   bool persistable = true;
@@ -212,8 +212,8 @@ struct MergeTabState {
   std::size_t preview_lines_cache_conflict = 0;
   compare::MergeChoice preview_lines_cache_choice = compare::MergeChoice::Base;
   std::uint64_t preview_lines_cache_revision = 0;
-  float left_divider_fraction = 1.0f / 3.0f;
-  float right_divider_fraction = 2.0f / 3.0f;
+  float left_divider_fraction = kWorkspaceDefaultMergeLeftDividerFraction;
+  float right_divider_fraction = kWorkspaceDefaultMergeRightDividerFraction;
   bool persistable = true;
 };
 

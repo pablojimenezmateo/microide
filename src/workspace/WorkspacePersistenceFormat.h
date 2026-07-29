@@ -41,7 +41,7 @@ struct PersistedEditorTabState {
   std::size_t compare_selected_row = 0;
   std::size_t compare_scroll_row = 0;
   std::size_t compare_horizontal_scroll = 0;
-  float compare_divider_fraction = 0.5f;
+  float compare_divider_fraction = kWorkspaceDefaultCompareDividerFraction;
   std::string compare_review_mode;
   std::string compare_staging_view;
   std::filesystem::path merge_base_path;
@@ -51,8 +51,8 @@ struct PersistedEditorTabState {
   std::size_t merge_selected_hunk = 0;
   std::size_t merge_scroll_row = 0;
   std::size_t merge_horizontal_scroll = 0;
-  float merge_left_divider_fraction = 1.0f / 3.0f;
-  float merge_right_divider_fraction = 2.0f / 3.0f;
+  float merge_left_divider_fraction = kWorkspaceDefaultMergeLeftDividerFraction;
+  float merge_right_divider_fraction = kWorkspaceDefaultMergeRightDividerFraction;
   std::vector<std::string> merge_hunk_choices;
 };
 

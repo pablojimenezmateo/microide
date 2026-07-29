@@ -332,6 +332,11 @@
     const auto toolbar = shell.ComputeMergeToolbarLayout(layout.editor_surface, surface);
     return {toolbar.prev_rect, toolbar.next_rect};
   }
+  static SDL_FRect CompareDividerRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto surface = ActiveCompareSurfaceLayout(shell);
+    return shell.CompareDividerHitRect(layout.editor_surface, surface);
+  }
   static std::array<SDL_FRect, 2> MergeDividerRects(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const auto surface = ActiveMergeSurfaceLayout(shell);

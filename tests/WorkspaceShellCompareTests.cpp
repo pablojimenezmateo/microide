@@ -1158,6 +1158,66 @@ void TestWorkspaceShellComparePaneResizeKeepsWiderPaneTextVisible() {
          "widening the right compare pane should preserve more visible text on the right");
 }
 
+// "Every resize divider answers a double-click by restoring its default size" was
+// implemented for four of the six: the sidebar, right pane, editor split and bottom
+// panel. Compare and merge — the two whose panes you are most likely to have dragged
+// far off balance while reading a diff — had no way back but dragging by hand.
+void TestWorkspaceShellCompareAndMergeDividersResetOnDoubleClick() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path compare_source = root / "src" / "compare.cpp";
+  const std::filesystem::path base = root / "src" / "base.cpp";
+  const std::filesystem::path incoming = root / "src" / "incoming.cpp";
+  const std::filesystem::path current = root / "src" / "current.cpp";
+  const std::filesystem::path output = root / "src" / "output.cpp";
+
+  WriteFile(compare_source, "abcdefghijklmnopqrstuvwxyz0123456789\n");
+  WriteFile(base, "int answer() {\n  return 0;\n}\n");
+  WriteFile(incoming, "int answer() {\n  return 1;\n}\n");
+  WriteFile(current, "int answer() {\n  return 2;\n}\n");
+  WriteFile(output, "int answer() {\n  return 0;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add divider reset fixture", "divider reset fixture");
+  WriteFile(compare_source, "abcdefghijklmnopqrstuvwxyz9876543210\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, compare_source, "HEAD", "HEAD"),
+         "divider reset compare fixture should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  compare.divider_fraction = 0.8f;
+  const SDL_FRect compare_divider = WorkspaceShellTestAccess::CompareDividerRect(shell);
+  Expect(SendMouseDown(shell, compare_divider.x + compare_divider.w * 0.5f,
+                       compare_divider.y + compare_divider.h * 0.5f, SDL_BUTTON_LEFT, 2),
+         "double-clicking the compare divider should be handled");
+  Expect(std::abs(compare.divider_fraction -
+                  microide::workspace::kWorkspaceDefaultCompareDividerFraction) < 0.001f,
+         "double-clicking the compare divider should restore the even split");
+  Expect(WorkspaceShellTestAccess::TransientDragTargetIsNone(shell),
+         "a divider reset must not leave a drag armed behind it");
+
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "divider reset merge fixture should open");
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  merge.left_divider_fraction = 0.15f;
+  merge.right_divider_fraction = 0.85f;
+  const auto merge_dividers = WorkspaceShellTestAccess::MergeDividerRects(shell);
+  // Either divider resets both, so one gesture recovers the whole layout.
+  Expect(SendMouseDown(shell, merge_dividers[1].x + merge_dividers[1].w * 0.5f,
+                       merge_dividers[1].y + merge_dividers[1].h * 0.5f, SDL_BUTTON_LEFT, 2),
+         "double-clicking the merge right divider should be handled");
+  Expect(std::abs(merge.left_divider_fraction -
+                  microide::workspace::kWorkspaceDefaultMergeLeftDividerFraction) < 0.001f &&
+             std::abs(merge.right_divider_fraction -
+                      microide::workspace::kWorkspaceDefaultMergeRightDividerFraction) < 0.001f,
+         "double-clicking a merge divider should restore both to equal thirds");
+  Expect(WorkspaceShellTestAccess::TransientDragTargetIsNone(shell),
+         "a merge divider reset must not leave a drag armed behind it");
+}
+
 void TestWorkspaceShellCompareAndMergePaneMinimaPreserveVisibleColumns() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1746,6 +1806,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareRenderKeepsDividerBorderOnUnchangedRows);
   AddTest(tests, "WorkspaceShell/ComparePaneResizeKeepsWiderPaneTextVisible",
           TestWorkspaceShellComparePaneResizeKeepsWiderPaneTextVisible);
+  AddTest(tests, "WorkspaceShell/CompareAndMergeDividersResetOnDoubleClick",
+          TestWorkspaceShellCompareAndMergeDividersResetOnDoubleClick);
   AddTest(tests, "WorkspaceShell/CompareAndMergePaneMinimaPreserveVisibleColumns",
           TestWorkspaceShellCompareAndMergePaneMinimaPreserveVisibleColumns);
   AddTest(tests, "WorkspaceShell/MergeToolbarLayoutClearsPaneHeaders",
