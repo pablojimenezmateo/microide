@@ -25,6 +25,15 @@ changes.
   previously all three reported "open requires a path" and did nothing. Ctrl+K
   Ctrl+O for Open Folder, likewise advertised but unimplemented, now works.
 - **Page/Home/End in the file tree**, which every other sidebar list already had.
+- **Right-click menus on the search, problems and tests lists.** The file tree
+  and git sidebar had them; the other three swallowed the right button, so the
+  path of a search hit could only be copied by opening the file first. All three
+  share one row menu: Reveal in File Tree, Show in File Explorer, Copy Relative
+  Path, Copy Absolute Path.
+- **Right-click menus in the debug pane.** Breakpoints rows open the same menu
+  as the editor gutter (Disable/Enable, Set Condition…, Set Hit Count…, Set Log
+  Message…, Remove); Variables and Watch rows offer Copy Value and Add to Watch.
+  The pane was the last interactive list in the shell with no menu at all.
 
 ### Changed
 
@@ -46,9 +55,26 @@ changes.
 - **The debug pane is a first-class focus surface**: it draws the focus ring the
   other three surfaces draw, and Ctrl+Tab reaches it (the cycle previously
   skipped it, so it was clickable but not tabbable).
+- **Every sidebar mode answers the same navigation keys.** Up/Down, Page Up/Down
+  and Home/End resolved through six near-identical per-mode blocks that had
+  already drifted: Home in the git sidebar could select a row hidden under a
+  collapsed directory. They now share one resolver.
+- **Escape peels one layer at a time in the sidebar.** It closes an auto-opened
+  panel from every mode (the file tree and git sidebar previously ignored it),
+  but no longer tears the whole search panel down while you are typing a query —
+  that first Escape cancels the field edit, as it does everywhere else.
 
 ### Fixed
 
+- **The debug pane's scrollbar is grabbable.** It had been painted since the pane
+  shipped but never hit-tested, so it was decoration — and because the row hit
+  test covered the whole content rect, a press on the bar activated the row
+  behind it (in Breakpoints mode, navigating the editor to a random file).
+- **Saving a file no longer leaks a phantom entry into the file finder.** Every
+  save stages its bytes in a temp file beside the target and renames it into
+  place; nothing filtered that temp, so a file-watcher batch landing inside the
+  save window put it in the index, where it showed up in Ctrl+P and in project
+  search results pointing at a file that no longer exists.
 - **The control channel's client socket leaked into every spawned process.** It
   was created without close-on-exec, so terminal shells, LSP servers, DAP
   adapters, git, and plugin-launched tools all inherited a live connected handle
@@ -75,6 +101,13 @@ changes.
 
 ### Changed
 
+- **Hover cards stop re-wrapping their text every frame.** Wrapping normalizes,
+  tokenizes and measures the whole string, and ran several times per frame for as
+  long as a card was on screen. It is now memoized on (text, width, line cap,
+  font metrics).
+- **The project-search sidebar stops rebuilding its empty-state line every
+  frame** — two heap allocations per repaint on a surface that repaints on every
+  search-progress tick.
 - **Much faster terminal output.** Runs of plain printable text are now written
   to the grid in bulk instead of one byte at a time through the full escape
   parser: 3-4x on build logs and compiler diagnostics, ~1.7x on mixed
