@@ -48,6 +48,12 @@ changes.
   `tabmove` has always accepted.
 - **Home/End in the menu bar and the context menus**, the last two lists that
   answered Up/Down and nothing else.
+- **The debug pane is fully keyboard-navigable.** Call Stack and Breakpoints were
+  clickable but had no keyboard at all, in a pane that already has a focus ring, a
+  place in the Ctrl+Tab ring, a grabbable scrollbar and row context menus. Arrow
+  keys walk the Call Stack's frames (navigating the editor, as clicking does);
+  Breakpoints gains a selection, with Enter to jump to the line and Space to
+  toggle. Variables and Watch gained Page Up/Down and Home/End alongside them.
 
 ### Changed
 
@@ -98,6 +104,9 @@ changes.
   the settings scrollbar, clicking its bar jumped the rows behind it. An
   architecture lint now fails the build on a scrollbar that can never render as
   being dragged.
+- **The debug pane scrolls to its keyboard selection.** Variables and Watch moved
+  the selection without touching the scroll, so arrowing past the last visible row
+  walked the highlight off screen and kept going.
 - **The resize cursor holds for the whole drag.** Only the sidebar and bottom
   panel kept their resize shape once the pointer left the divider; the right
   pane, editor split, compare and merge dividers flickered back to an arrow
