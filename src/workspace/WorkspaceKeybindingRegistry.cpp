@@ -354,6 +354,28 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      // Editor tabs had no key chord at all: openable (Ctrl+P) and closable
+      // (Ctrl+W), but reachable only with the mouse. These are VS Code's.
+      KeybindingSpec{
+          .id = "next-tab",
+          .action = ActionId::TabSwitch,
+          .key = SDLK_PAGEDOWN,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Editor,
+          .args = {"+1", {}},
+          .arg_count = 1,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "previous-tab",
+          .action = ActionId::TabSwitch,
+          .key = SDLK_PAGEUP,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Editor,
+          .args = {"-1", {}},
+          .arg_count = 1,
+          .command_name = {},
+      },
       KeybindingSpec{
           .id = "close-tab",
           .action = ActionId::CloseActiveTab,

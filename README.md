@@ -632,7 +632,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `tab [path]`
 - `tab-size [n]`
 - `tabmove <n>`
-- `tabswitch <tab>`
+- `tabswitch <tab|+n|-n>`
 - `term [command]`
 - `tests-discover`
 - `tests-run [test-id...]`

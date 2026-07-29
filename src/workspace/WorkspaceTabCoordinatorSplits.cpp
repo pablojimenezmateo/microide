@@ -115,6 +115,35 @@ std::optional<std::size_t> TabCoordinator::FindIndexBySpecifier(std::string_view
     return std::nullopt;
   }
 
+  // A signed offset selects relative to the active tab and wraps, so `tabswitch +1`
+  // is "next tab" (what Ctrl+PageDown is bound to) and `-1` is "previous". `tabmove`
+  // has taken the same +N/-N form all along; tabswitch only accepted an absolute
+  // slot or a title, so the two sibling commands read the same argument differently.
+  // Move clamps at the ends because sliding a tab past the edge is meaningless;
+  // switching wraps, as it does in VS Code.
+  const std::size_t tab_count = state_.focused_group().open_tabs.size();
+  if ((specifier.front() == '+' || specifier.front() == '-') && specifier.size() > 1) {
+    const bool forward = specifier.front() == '+';
+    const std::optional<int> magnitude = util::ParseInt(specifier.substr(1));
+    if (!magnitude.has_value() || *magnitude < 0) {
+      if (error_message != nullptr) {
+        *error_message = "Invalid tab offset";
+      }
+      return std::nullopt;
+    }
+    if (tab_count == 0) {
+      if (error_message != nullptr) {
+        *error_message = "No open tabs";
+      }
+      return std::nullopt;
+    }
+    const auto count = static_cast<std::int64_t>(tab_count);
+    const std::int64_t offset =
+        (static_cast<std::int64_t>(*magnitude) % count) * (forward ? 1 : -1);
+    const auto active = static_cast<std::int64_t>(state_.focused_group().active_tab_index);
+    return static_cast<std::size_t>(((active + offset) % count + count) % count);
+  }
+
   const std::string lowered_specifier = util::ToLowerAscii(specifier);
   if (const auto tab_number = util::ParseInt(specifier); tab_number.has_value()) {
     if (*tab_number >= 1 && static_cast<std::size_t>(*tab_number) <= state_.focused_group().open_tabs.size()) {

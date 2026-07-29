@@ -2220,6 +2220,62 @@ void TestEditorTabStripOverflowControlsScrollAndCount() {
          "after one right-scroll the right-hidden count should decrement by one");
 }
 
+// Editor tabs were openable (Ctrl+P) and closable (Ctrl+W) from the keyboard, but
+// there was no chord to move between them at all — the only way was the mouse.
+// Ctrl+PageDown/PageUp cycle, wrapping at both ends as they do in VS Code, and the
+// typed `tabswitch` now reads +N/-N the way its sibling `tabmove` always has.
+void TestEditorTabSwitchAcceptsRelativeOffsetsAndKeyChords() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "tab switch\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  for (int i = 0; i < 3; ++i) {
+    const std::filesystem::path file = root / ("switch_" + std::to_string(i) + ".txt");
+    WriteFile(file, "alpha\n");
+    WorkspaceShellTestAccess::OpenFile(shell, file);
+  }
+  const std::size_t tab_count = WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell);
+  Expect(tab_count >= 3, "fixture should open at least three tabs");
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  Expect(SendKeyDown(shell, SDLK_PAGEDOWN, SDL_KMOD_CTRL),
+         "Ctrl+PageDown should be consumed by the editor");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 1,
+         "Ctrl+PageDown should activate the next tab");
+  Expect(SendKeyDown(shell, SDLK_PAGEUP, SDL_KMOD_CTRL),
+         "Ctrl+PageUp should be consumed by the editor");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
+         "Ctrl+PageUp should activate the previous tab");
+
+  // Wrapping: previous from the first tab lands on the last, and next from the
+  // last comes back to the first.
+  Expect(SendKeyDown(shell, SDLK_PAGEUP, SDL_KMOD_CTRL), "Ctrl+PageUp at the first tab is handled");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == tab_count - 1,
+         "Ctrl+PageUp on the first tab should wrap to the last");
+  Expect(SendKeyDown(shell, SDLK_PAGEDOWN, SDL_KMOD_CTRL),
+         "Ctrl+PageDown at the last tab is handled");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
+         "Ctrl+PageDown on the last tab should wrap to the first");
+
+  // The same offsets through the typed command, which is what the chords run.
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tabswitch +2"),
+         "tabswitch should accept a relative forward offset");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 2,
+         "tabswitch +2 should move two tabs forward");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tabswitch -2"),
+         "tabswitch should accept a relative backward offset");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
+         "tabswitch -2 should move two tabs back");
+  // An absolute slot still resolves, so the relative form is additive.
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tabswitch 2"),
+         "tabswitch should still accept an absolute one-based slot");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 1,
+         "tabswitch 2 should activate the second tab");
+}
+
 // The wheel and the ⟨ ⟩ overflow buttons scroll the same strip, so they must stop
 // at the same place. The buttons stop correctly — they disappear once nothing is
 // hidden on that side — but the wheel clamped on the raw scroll index instead, so
@@ -2592,6 +2648,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestEditorTabStripOverflowControlsScrollAndCount);
   AddTest(tests, "WorkspaceShell/EditorTabStripUsesLeftGapWhenOnlyRightOverflowRemains",
           TestEditorTabStripUsesLeftGapWhenOnlyRightOverflowRemains);
+  AddTest(tests, "WorkspaceShell/EditorTabSwitchAcceptsRelativeOffsetsAndKeyChords",
+          TestEditorTabSwitchAcceptsRelativeOffsetsAndKeyChords);
   AddTest(tests, "WorkspaceShell/EditorTabStripWheelStopsWhereTheOverflowButtonDoes",
           TestEditorTabStripWheelStopsWhereTheOverflowButtonDoes);
   AddTest(tests, "WorkspaceShell/EditorTabOverflowButtonExpandsForDoubleDigitHiddenCount",

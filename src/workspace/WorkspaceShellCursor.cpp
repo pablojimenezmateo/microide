@@ -229,6 +229,22 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     if (vm.mode != SettingsOverlayMode::Settings) {
       return CursorKind::Default;
     }
+    // The font-picker dropdown floats over the value rows, so it is probed first —
+    // the same order the click handler uses. Without this its rows fell through to
+    // whatever row happened to be underneath, which is how a click-through
+    // mismatch hides: the pointer looked right over a family but came from the
+    // wrong surface, and over the pinned "Choose file…" footer it could be an
+    // arrow instead.
+    if (vm.value_picker.visible) {
+      for (const SettingsPickerItemViewModel& item : vm.value_picker.items) {
+        if (Contains(item.rect, x, y)) {
+          return CursorKind::Pointer;
+        }
+      }
+      if (Contains(vm.value_picker.rect, x, y)) {
+        return CursorKind::Default;
+      }
+    }
     if (Contains(vm.filter_rect, x, y)) {
       return CursorKind::Text;
     }
