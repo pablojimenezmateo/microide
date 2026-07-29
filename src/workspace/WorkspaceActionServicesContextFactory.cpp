@@ -407,6 +407,11 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](ActionSource source) { return TreeMutationBasePath(source); },
           .resolve_tree_action_path =
               [this](ActionSource source) { return ResolveTreeActionPath(source); },
+          .row_context_menu_path =
+              [this]() {
+                const auto& menu = context_.menu_state.tree_context_menu;
+                return menu.open ? menu.path.lexically_normal() : std::filesystem::path{};
+              },
           .active_tab_path = [this]() { return ActiveTabPath(); },
           .open_prompt_surface =
               [this](PromptSurfaceState::Action action, PromptSurfaceState::Kind kind,

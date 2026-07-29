@@ -89,6 +89,9 @@ class SidebarMouseCoordinator {
   bool HandleSearchButtonDown(const SDL_Event& event,
                               const WorkspaceLayout& layout,
                               float local_y);
+  bool HandleSearchResultContextMenu(const SDL_Event& event,
+                                     const WorkspaceLayout& layout,
+                                     float local_y);
   bool HandleGitButtonDown(const SDL_Event& event,
                            const WorkspaceLayout& layout,
                            float local_y);

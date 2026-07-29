@@ -220,6 +220,11 @@ std::filesystem::path WorkspaceActionContext::ResolveTreeActionPath(ActionSource
   return operations_.resolve_tree_action_path(source);
 }
 
+std::filesystem::path WorkspaceActionContext::RowContextMenuPath() const {
+  return operations_.row_context_menu_path ? operations_.row_context_menu_path()
+                                           : std::filesystem::path{};
+}
+
 std::filesystem::path WorkspaceActionContext::ActiveTabPath() const {
   return operations_.active_tab_path();
 }

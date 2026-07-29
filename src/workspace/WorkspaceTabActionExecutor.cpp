@@ -266,9 +266,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      const std::filesystem::path path = context_.ActiveTabPath();
+      // A context menu supplies its own row's path (the editor tab menu leaves it
+      // empty and falls back to the active tab), so the same item can reveal a
+      // search hit, a problem or a test from the sidebar list it was opened on.
+      std::filesystem::path path = context_.RowContextMenuPath();
       if (path.empty()) {
-        return reject("Active tab has no path");
+        path = context_.ActiveTabPath();
+      }
+      if (path.empty()) {
+        return reject("Nothing to reveal");
       }
       // Full VSCode-style reveal: open the sidebar on the Tree view (switching from
       // Search/Git if needed), then force-expand ancestors + select + scroll to the file.

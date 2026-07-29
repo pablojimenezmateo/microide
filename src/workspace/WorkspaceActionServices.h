@@ -78,6 +78,11 @@ class WorkspaceActionContext {
     std::function<std::string(ActionId, const std::vector<std::string>&)> dispatch_git_operation;
     std::function<std::filesystem::path(ActionSource)> tree_mutation_base_path;
     std::function<std::filesystem::path(ActionSource)> resolve_tree_action_path;
+    // The path the *open* row context menu targets, or empty when no such menu is
+    // open. Unlike resolve_tree_action_path this never falls back to the tree
+    // selection, so an action shared between the row menus and the editor-tab menu
+    // can tell "this menu named a row" from "ask the tree what is selected".
+    std::function<std::filesystem::path()> row_context_menu_path;
     std::function<std::filesystem::path()> active_tab_path;
     std::function<void(PromptSurfaceState::Action,
                        PromptSurfaceState::Kind,
@@ -331,6 +336,7 @@ class WorkspaceActionContext {
   std::string DispatchGitOperation(ActionId id, const std::vector<std::string>& args);
   std::filesystem::path TreeMutationBasePath(ActionSource source) const;
   std::filesystem::path ResolveTreeActionPath(ActionSource source) const;
+  std::filesystem::path RowContextMenuPath() const;
   std::filesystem::path ActiveTabPath() const;
   void OpenCreatePathPrompt(bool directory, const std::filesystem::path& base_path);
   void OpenRenamePathPrompt(const std::filesystem::path& path);

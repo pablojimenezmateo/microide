@@ -379,9 +379,23 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuItem(ActionId::CopyAbsolutePath),
   });
 
+  // Search hits, problems and tests are all "a row that points at a file". The
+  // file tree and git sidebar had context menus from the start; these three
+  // swallowed the right button entirely, so the path of a search hit could only
+  // be copied by opening the file and using the tab menu.
+  static const auto kResultRowItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::RevealInFileTree, "Reveal in File Tree"),
+      MenuSeparator(),
+      MenuItem(ActionId::ShowInFileExplorer),
+      MenuItem(ActionId::CopyRelativePath),
+      MenuItem(ActionId::CopyAbsolutePath),
+  });
+
   switch (target) {
     case TreeContextTargetKind::File:
       return kFileItems;
+    case TreeContextTargetKind::ResultRow:
+      return kResultRowItems;
     case TreeContextTargetKind::Directory:
       return kDirectoryItems;
     case TreeContextTargetKind::Root:

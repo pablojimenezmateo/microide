@@ -19,6 +19,9 @@ class ActionAvailability {
   struct Operations {
     std::function<TreeContextTargetKind()> selected_tree_target_kind;
     std::function<std::filesystem::path(ActionSource)> resolve_tree_action_path;
+    // Path the currently open row context menu targets, empty when none is open.
+    // See the matching field on WorkspaceActionContext::Operations.
+    std::function<std::filesystem::path()> row_context_menu_path;
     std::function<std::filesystem::path()> active_tab_path;
     std::function<const editor::TextViewport*()> active_navigable_viewport;
     std::function<const editor::TextViewport*()> active_editable_viewport;

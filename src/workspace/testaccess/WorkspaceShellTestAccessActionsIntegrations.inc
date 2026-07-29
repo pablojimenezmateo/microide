@@ -151,6 +151,25 @@
   static bool BreakpointContextMenuEnabledFlag(const WorkspaceShell& shell) {
     return shell.context_.menu_state.tree_context_menu.breakpoint_enabled;
   }
+  static TreeContextTargetKind TreeContextMenuTarget(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.tree_context_menu.open
+               ? shell.context_.menu_state.tree_context_menu.target
+               : TreeContextTargetKind::None;
+  }
+  static std::filesystem::path TreeContextMenuPath(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.tree_context_menu.path;
+  }
+  static std::vector<std::string> TreeContextMenuLabels(const WorkspaceShell& shell,
+                                                        TreeContextTargetKind target) {
+    std::vector<std::string> labels;
+    for (const auto& item : WorkspaceTreeContextMenuItems(target)) {
+      if (item.separator) {
+        continue;
+      }
+      labels.push_back(shell.MenuItemLabel(item));
+    }
+    return labels;
+  }
   static bool GitEntryContextMenuOpen(const WorkspaceShell& shell) {
     return shell.context_.menu_state.tree_context_menu.open &&
            shell.context_.menu_state.tree_context_menu.target == TreeContextTargetKind::GitEntry;
@@ -488,6 +507,13 @@
         shell.ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
     const int line_index = shell.ProjectSearchLineForResult(result_index);
     return ScrollableListRowRect(list_layout, line_index - list_layout.scroll_row);
+  }
+  static SDL_FRect ProblemsSidebarRowRect(WorkspaceShell& shell, std::size_t row_index) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto list_layout = shell.ComputeProblemsSidebarListLayout(
+        layout.sidebar, shell.context_.current_project_state.sidebar.problems.entries.size());
+    return ScrollableListRowRect(list_layout,
+                                 static_cast<int>(row_index) - list_layout.scroll_row);
   }
   static SDL_FRect ProjectTabRect(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout = CurrentLayout(shell);

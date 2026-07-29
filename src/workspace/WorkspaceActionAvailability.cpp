@@ -365,9 +365,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return !operations_.resolve_tree_action_path(ActionSource::ContextMenu).empty() ||
              !operations_.active_tab_path().empty();
     case ActionId::RevealInFileTree:
-      // Acts on the active editor tab; needs a project root to reveal within.
+      // Acts on the row a context menu named, else the active editor tab; either
+      // way it needs a project root to reveal within.
       return !context_.current_project_state.root.empty() &&
-             !operations_.active_tab_path().empty();
+             (!operations_.row_context_menu_path().empty() ||
+              !operations_.active_tab_path().empty());
     case ActionId::CopyRelativePath: {
       const std::filesystem::path path =
           !operations_.resolve_tree_action_path(ActionSource::ContextMenu).empty()

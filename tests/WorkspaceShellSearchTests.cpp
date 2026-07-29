@@ -868,9 +868,57 @@ void TestWorkspaceShellSearchSidebarEscapeCancelsEditBeforeClosing() {
          "the second Escape should dismiss the temporary search panel");
 }
 
+// The file tree and the git sidebar have had row context menus from the start;
+// the search results list swallowed the right button entirely, so the path of a
+// hit could only be copied by opening the file and using the tab menu.
+void TestWorkspaceShellSearchResultRightClickOpensRowMenu() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "alpha\nbeta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
+         "the fixture should produce one hit");
+
+  const SDL_FRect result_rect = WorkspaceShellTestAccess::ProjectSearchResultRect(shell, 0);
+  Expect(SendMouseDown(shell, result_rect.x + result_rect.w * 0.5f,
+                       result_rect.y + result_rect.h * 0.5f, SDL_BUTTON_RIGHT),
+         "right-clicking a search hit should be handled");
+  Expect(WorkspaceShellTestAccess::TreeContextMenuTarget(shell) ==
+             microide::workspace::TreeContextTargetKind::ResultRow,
+         "right-clicking a search hit should open the shared row menu");
+  Expect(WorkspaceShellTestAccess::TreeContextMenuPath(shell).lexically_normal() ==
+             source.lexically_normal(),
+         "the menu should target the hit's file, not the tree selection");
+  // Right-click must not also open the file — that is the left button's job.
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() != source.lexically_normal(),
+         "right-clicking a hit should not open it");
+
+  const auto labels = WorkspaceShellTestAccess::TreeContextMenuLabels(
+      shell, microide::workspace::TreeContextTargetKind::ResultRow);
+  Expect(std::find(labels.begin(), labels.end(), "Copy Relative Path") != labels.end() &&
+             std::find(labels.begin(), labels.end(), "Reveal in File Tree") != labels.end(),
+         "the row menu should offer the path-scoped items");
+
+  // Reveal must act on the row the menu named. Before this it read the active tab
+  // path, so it either did nothing or revealed an unrelated file.
+  Expect(WorkspaceShellTestAccess::ExecuteContextMenuAction(
+             shell, WorkspaceShell::ActionId::RevealInFileTree),
+         "Reveal in File Tree should run from the row menu");
+  Expect(WorkspaceShellTestAccess::SelectedTreePath(shell) == source.lexically_normal(),
+         "Reveal should select the hit's file in the tree");
+}
+
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/SearchSidebarEscapeCancelsEditBeforeClosing",
           TestWorkspaceShellSearchSidebarEscapeCancelsEditBeforeClosing);
+  AddTest(tests, "WorkspaceShell/SearchResultRightClickOpensRowMenu",
+          TestWorkspaceShellSearchResultRightClickOpensRowMenu);
   AddTest(tests, "WorkspaceShell/BufferRegexReplaceAll",
           TestWorkspaceShellBufferRegexReplaceAll);
   AddTest(tests, "WorkspaceShell/BufferRegexReplaceCurrent",

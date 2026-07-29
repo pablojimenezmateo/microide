@@ -3722,6 +3722,53 @@ void TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic() {
          "opening a problem should return focus to the editor");
 }
 
+// The Problems list answered the right button by selecting the row and then
+// doing nothing — no menu, no feedback. It now opens the same path-scoped row
+// menu the search results and tests lists use.
+void TestWorkspaceShellProblemsSidebarRightClickOpensRowMenu() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path readme = project_root / "README.md";
+  const std::filesystem::path source = project_root / "src" / "main.txt";
+  WriteFile(readme, "workspace problems\n");
+  WriteFile(source, "alpha\nbeta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, project_root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, readme);
+  Expect(WorkspaceShellTestAccess::PublishDiagnostics(
+             shell, "diagnostics", source,
+             {microide::editor::Diagnostic{
+                 .range =
+                     microide::editor::SelectionRange{
+                         .start = microide::editor::TextPosition{.line = 1, .column = 1},
+                         .end = microide::editor::TextPosition{.line = 1, .column = 4},
+                     },
+                 .severity = microide::editor::DiagnosticSeverity::Error,
+                 .message = "Unexpected beta token",
+             }}),
+         "the fixture should publish one diagnostic");
+  Expect(WorkspaceShellTestAccess::RefreshProblemsSidebar(shell),
+         "the problems sidebar should snapshot the diagnostic");
+  WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).size() == 1,
+         "the problems sidebar should hold one row");
+
+  const SDL_FRect row = WorkspaceShellTestAccess::ProblemsSidebarRowRect(shell, 0);
+  Expect(row.w > 0.0f && row.h > 0.0f, "the problem row should be laid out");
+  Expect(SendMouseDown(shell, row.x + row.w * 0.5f, row.y + row.h * 0.5f, SDL_BUTTON_RIGHT),
+         "right-clicking a problem row should be handled");
+  Expect(WorkspaceShellTestAccess::TreeContextMenuTarget(shell) ==
+             microide::workspace::TreeContextTargetKind::ResultRow,
+         "right-clicking a problem should open the shared row menu");
+  Expect(WorkspaceShellTestAccess::TreeContextMenuPath(shell).lexically_normal() ==
+             source.lexically_normal(),
+         "the menu should target the diagnostic's file");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == readme.lexically_normal(),
+         "right-clicking a problem should not navigate the editor");
+}
+
 void TestWorkspaceShellProblemsSidebarPersistsAcrossProjectSwitches() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_a = temp_dir.path() / "project-a";
@@ -5488,6 +5535,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave);
   AddTest(tests, "WorkspaceShell/RepoEslintPluginPublishesTypescriptConfigDiagnostics",
           TestWorkspaceShellRepoEslintPluginPublishesTypescriptConfigDiagnostics);
+  AddTest(tests, "WorkspaceShell/ProblemsSidebarRightClickOpensRowMenu",
+          TestWorkspaceShellProblemsSidebarRightClickOpensRowMenu);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarOpensSelectedDiagnostic",
           TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarPersistsAcrossProjectSwitches",

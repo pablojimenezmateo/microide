@@ -116,6 +116,11 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
               [shell](WorkspaceShell::ActionSource source) {
                 return shell->ResolveTreeActionPath(source);
               },
+          .row_context_menu_path =
+              [shell]() {
+                const auto& menu = shell->context_.menu_state.tree_context_menu;
+                return menu.open ? menu.path.lexically_normal() : std::filesystem::path{};
+              },
           .active_tab_path = [shell]() { return shell->ActiveTabPath(); },
           .active_navigable_viewport = [shell]() { return shell->ActiveNavigableViewport(); },
           .active_editable_viewport = [shell]() { return shell->ActiveEditableViewport(); },

@@ -46,6 +46,10 @@ enum class TreeContextTargetKind {
   BreakpointLine,
   // Git sidebar: right-click on a changed-file entry row.
   GitEntry,
+  // Any sidebar row that points at a file location — a search hit, a problem, a
+  // discovered test. All three carry a path, so they share one menu of
+  // path-scoped items instead of each growing its own.
+  ResultRow,
 };
 
 struct MenuItemSpec {

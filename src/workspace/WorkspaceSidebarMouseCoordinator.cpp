@@ -12,6 +12,11 @@ namespace {
 
 constexpr float kSidebarHeaderHeight = 26.0f;
 
+SDL_FRect PointerAnchor(const SDL_Event& event) {
+  return MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
+                  1.0f);
+}
+
 }  // namespace
 
 SidebarMouseCoordinator::SidebarMouseCoordinator(ProjectWorkspaceState& state,
@@ -54,8 +59,14 @@ bool SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 bool SidebarMouseCoordinator::HandleSearchButtonDown(const SDL_Event& event,
                                                      const WorkspaceLayout& layout,
                                                      float local_y) {
-  if (event.button.button != SDL_BUTTON_LEFT) {
+  const bool is_right = event.button.button == SDL_BUTTON_RIGHT;
+  if (event.button.button != SDL_BUTTON_LEFT && !is_right) {
     return true;
+  }
+  // The header chrome (fields, toggles) is left-click only; the right button only
+  // means anything over a result row.
+  if (is_right) {
+    return HandleSearchResultContextMenu(event, layout, local_y);
   }
   const SDL_FPoint point{static_cast<float>(event.button.x), static_cast<float>(event.button.y)};
   for (const auto& field : project_search_panel::SidebarSearchFieldRects(
@@ -113,6 +124,31 @@ bool SidebarMouseCoordinator::HandleSearchButtonDown(const SDL_Event& event,
     state_.surface.focus = FocusTarget::Editor;
     operations_.seed_buffer_search_from_project_search();
   }
+  return true;
+}
+
+bool SidebarMouseCoordinator::HandleSearchResultContextMenu(const SDL_Event& event,
+                                                            const WorkspaceLayout& layout,
+                                                            float local_y) {
+  if (local_y < 0.0f) {
+    return true;
+  }
+  const auto line_map = operations_.build_project_search_line_map();
+  const auto list_layout =
+      operations_.compute_project_search_sidebar_list_layout(layout.sidebar, line_map.size());
+  const auto line_index = ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
+  if (!line_index.has_value() || *line_index < 0 ||
+      *line_index >= static_cast<int>(line_map.size()) ||
+      line_map[static_cast<std::size_t>(*line_index)] < 0) {
+    return true;
+  }
+  // Select first, then open the menu on the selection — the same order the tree
+  // and git sidebars use, so the menu and the highlight can never disagree.
+  auto& search = state_.overlay.workflow.project_search;
+  search.selected_index = static_cast<std::size_t>(line_map[static_cast<std::size_t>(*line_index)]);
+  operations_.open_tree_context_menu(TreeContextTargetKind::ResultRow,
+                                     state_.root / search.results[search.selected_index].relative_path,
+                                     PointerAnchor(event));
   return true;
 }
 
@@ -195,8 +231,7 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
     operations_.open_tree_context_menu(
         TreeContextTargetKind::GitEntry,
         state_.sidebar.git.entries[state_.sidebar.git.selected_index].path,
-        MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
-                 1.0f));
+        PointerAnchor(event));
     return true;
   }
   return operations_.dispatch_git_sidebar_action(GitSidebarActionId::DefaultView,
@@ -222,6 +257,11 @@ bool SidebarMouseCoordinator::HandleProblemsButtonDown(const SDL_Event& event,
   operations_.reveal_selected_problems_sidebar_line();
   if (event.button.button == SDL_BUTTON_LEFT) {
     operations_.open_selected_problem_sidebar_item();
+  } else if (event.button.button == SDL_BUTTON_RIGHT) {
+    operations_.open_tree_context_menu(
+        TreeContextTargetKind::ResultRow,
+        state_.sidebar.problems.entries[state_.sidebar.problems.selected_index].diagnostic.path,
+        PointerAnchor(event));
   }
   return true;
 }
@@ -247,6 +287,11 @@ bool SidebarMouseCoordinator::HandleTestsButtonDown(const SDL_Event& event,
     operations_.open_selected_test_sidebar_item();
   } else if (event.button.button == SDL_BUTTON_MIDDLE) {
     operations_.run_selected_test_sidebar_item();
+  } else if (event.button.button == SDL_BUTTON_RIGHT) {
+    operations_.open_tree_context_menu(
+        TreeContextTargetKind::ResultRow,
+        state_.sidebar.tests.entries[state_.sidebar.tests.selected_index].file,
+        PointerAnchor(event));
   }
   return true;
 }
@@ -310,10 +355,8 @@ bool SidebarMouseCoordinator::HandleTreeButtonDown(const SDL_Event& event,
 
   if (local_y < 0.0f) {
     if (event.button.button == SDL_BUTTON_RIGHT) {
-      operations_.open_tree_context_menu(
-          TreeContextTargetKind::Background, {},
-          MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
-                   1.0f));
+      operations_.open_tree_context_menu(TreeContextTargetKind::Background, {},
+                                         PointerAnchor(event));
     }
     return true;
   }
@@ -332,10 +375,7 @@ bool SidebarMouseCoordinator::HandleTreeButtonDown(const SDL_Event& event,
           !entry.is_directory ? TreeContextTargetKind::File
           : entry.path == state_.root ? TreeContextTargetKind::Root
                                       : TreeContextTargetKind::Directory;
-      operations_.open_tree_context_menu(
-          target, entry.path,
-          MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
-                   1.0f));
+      operations_.open_tree_context_menu(target, entry.path, PointerAnchor(event));
       return true;
     }
     if (Contains(row_rect, event.button.x, event.button.y) &&
