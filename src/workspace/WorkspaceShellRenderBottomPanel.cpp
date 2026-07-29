@@ -416,6 +416,13 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                       context_.interaction_state.drag_target == DragTarget::BottomPanelScrollbar);
       }
     }
+    // The plugin surface is as focusable as the terminal and the Output channel —
+    // it is in the Ctrl+Tab ring and now answers the navigation keys — but this
+    // early return used to skip the ring the other two contents draw, so a focused
+    // preview was the one surface in the shell with no visible focus.
+    if (panel_vm.focus == FocusTarget::Panel) {
+      DrawSurfaceFocusRing(renderer, layout.bottom_panel);
+    }
     return;
   }
 

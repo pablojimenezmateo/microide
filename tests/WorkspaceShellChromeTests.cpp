@@ -1153,6 +1153,56 @@ void TestWorkspaceShellPromptInputRendersSharedFramedField() {
   SDL_DestroySurface(pixels);
 }
 
+// The bottom panel draws a focus ring for its terminal and Output contents, but
+// the plugin-surface branch returned before reaching it — so a focused preview was
+// the one surface in the shell with no visible focus, in a panel that is in the
+// Ctrl+Tab ring and answers the navigation keys.
+void TestWorkspaceShellPluginSurfacePanelDrawsItsFocusRing() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "file.txt", "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  state.panel.content = WorkspaceShell::PanelContentKind::PluginSurface;
+  state.panel.surface_owner = "plug";
+  state.panel.surface_id = "chart";
+
+  const auto theme = microide::render::MakeDefaultTheme();
+  const auto is_accent = [&](const SDL_Color& color) {
+    return color.r == theme.accent.r && color.g == theme.accent.g &&
+           color.b == theme.accent.b && color.a == theme.accent.a;
+  };
+  // DrawSurfaceFocusRing outlines the region inset by one pixel, so the ring's
+  // left edge sits one pixel inside the panel.
+  const auto ring_pixel = [&]() {
+    const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+    SoftwareCanvas canvas(1280, 720);
+    shell.Render(canvas.renderer(), 1280, 720);
+    SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+    Expect(pixels != nullptr, "the panel focus fixture should capture rendered pixels");
+    const SDL_Color color = ReadSurfacePixelOrThrow(
+        pixels, static_cast<int>(std::floor(layout.bottom_panel.x + 1.0f)),
+        static_cast<int>(std::floor(layout.bottom_panel.y + layout.bottom_panel.h * 0.5f)));
+    SDL_DestroySurface(pixels);
+    return color;
+  };
+
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  Expect(!is_accent(ring_pixel()),
+         "an unfocused plugin surface panel should not draw a focus ring");
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+  Expect(is_accent(ring_pixel()),
+         "a focused plugin surface panel should draw the same focus ring as every other surface");
+}
+
 void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2744,6 +2794,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard);
   AddTest(tests, "WorkspaceShell/ProjectTabTooltipDismissRetainedRedrawMatchesFullRender",
           TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender);
+  AddTest(tests, "WorkspaceShell/PluginSurfacePanelDrawsItsFocusRing",
+          TestWorkspaceShellPluginSurfacePanelDrawsItsFocusRing);
   AddTest(tests, "WorkspaceShell/PromptInputRendersSharedFramedField",
           TestWorkspaceShellPromptInputRendersSharedFramedField);
   AddTest(tests, "WorkspaceShell/ShortcutEditActionsReturnEditorInvalidation",
