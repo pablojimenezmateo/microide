@@ -48,7 +48,7 @@ std::string LspReadinessSuffix(const LspClient::ReadinessSnapshot& snapshot) {
 bool IsLspDrivenMenuAction(ActionId id) {
   return id == ActionId::GoToDefinition || id == ActionId::GoToTypeDefinition ||
          id == ActionId::GoToImplementation || id == ActionId::GoToDeclaration ||
-         id == ActionId::FindReferences;
+         id == ActionId::FindReferences || id == ActionId::CallHierarchy;
 }
 
 std::string_view LspMenuActionFeatureId(ActionId id) {
@@ -61,6 +61,8 @@ std::string_view LspMenuActionFeatureId(ActionId id) {
       return "lsp.navigation.enabled";
     case ActionId::FindReferences:
       return "lsp.find_references.enabled";
+    case ActionId::CallHierarchy:
+      return "lsp.call_hierarchy.enabled";
     case ActionId::CodeActions:
       return "lsp.code_actions.enabled";
     case ActionId::Completion:
@@ -191,6 +193,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::GoToImplementation),
       MenuItem(ActionId::GoToDeclaration),
       MenuItem(ActionId::FindReferences),
+      MenuItem(ActionId::CallHierarchy, "Show Call Hierarchy"),
   });
   static const auto kGitItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::SidebarShow, "Source Control Sidebar", {},

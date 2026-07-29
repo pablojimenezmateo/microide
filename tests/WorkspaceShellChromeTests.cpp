@@ -1457,6 +1457,37 @@ void TestWorkspaceShellEditorTabContextMenuShowsAndExecutesPathActions() {
          "Copy Absolute Path should copy the active tab path");
 }
 
+// Call Hierarchy shipped as a command with no availability rule, no feature
+// setting and no menu entry, while its four LSP navigation siblings have all
+// three. Falling off the availability switch reached the trailing `return true`,
+// so it read as enabled with no editor open at all — the only LSP action that did.
+void TestWorkspaceShellCallHierarchyIsGatedLikeItsSiblings() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "alpha.cpp";
+  WriteFile(source, "int alpha() { return 1; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::CallHierarchy),
+         "Call Hierarchy should be disabled with no editor open");
+
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::CallHierarchy),
+         "Call Hierarchy should be enabled for a saved buffer");
+
+  // Its own feature toggle now exists and gates it, like every other LSP feature.
+  WorkspaceShellTestAccess::SetSettingValue(shell, "lsp.call_hierarchy.enabled", "false");
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::CallHierarchy),
+         "turning off lsp.call_hierarchy.enabled should disable Call Hierarchy");
+  WorkspaceShellTestAccess::SetSettingValue(shell, "lsp.call_hierarchy.enabled", "true");
+  WorkspaceShellTestAccess::SetSettingValue(shell, "lsp.enabled", "false");
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::CallHierarchy),
+         "the LSP master switch should disable Call Hierarchy too");
+}
+
 void TestWorkspaceShellProjectTabContextMenuCopiesProjectRoot() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2850,6 +2881,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard);
   AddTest(tests, "WorkspaceShell/ProjectTabTooltipDismissRetainedRedrawMatchesFullRender",
           TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender);
+  AddTest(tests, "WorkspaceShell/CallHierarchyIsGatedLikeItsSiblings",
+          TestWorkspaceShellCallHierarchyIsGatedLikeItsSiblings);
   AddTest(tests, "WorkspaceShell/SettingsRowsLiftOnHover",
           TestWorkspaceShellSettingsRowsLiftOnHover);
   AddTest(tests, "WorkspaceShell/PluginSurfacePanelDrawsItsFocusRing",

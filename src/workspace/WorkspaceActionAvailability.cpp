@@ -84,6 +84,12 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::FindReferences:
       return active_viewport != nullptr && operations_.active_references_available() &&
              LspFeatureAvailable(operations_, "lsp.find_references.enabled");
+    case ActionId::CallHierarchy:
+      // The last LSP action with no availability rule at all: it fell through the
+      // switch to the trailing `return true`, so it read as enabled with no editor
+      // open. Gated like RenameSymbol, which is what its executor already requires.
+      return active_editable_viewport != nullptr && !active_editable_viewport->path().empty() &&
+             LspFeatureAvailable(operations_, "lsp.call_hierarchy.enabled");
     case ActionId::GoToDefinition:
       return active_viewport != nullptr && operations_.active_definition_available() &&
              LspFeatureAvailable(operations_, "lsp.goto_definition.enabled");

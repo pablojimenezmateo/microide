@@ -943,6 +943,15 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "LSP → Features",
       },
       SettingSpec{
+          .id = "lsp.call_hierarchy.enabled",
+          .label = "Call Hierarchy",
+          .description = "Enable language-server incoming/outgoing call hierarchy.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .group = "LSP → Features",
+      },
+      SettingSpec{
           .id = "lsp.navigation.enabled",
           .label = "Extended Navigation",
           .description = "Enable language-server go-to type definition, implementation, and "
