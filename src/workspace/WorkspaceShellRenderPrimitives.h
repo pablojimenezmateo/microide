@@ -815,7 +815,12 @@ inline void DrawPrimarySecondaryRowText(const render::TextRenderer& text_rendere
   const float text_y =
       rect.y + std::floor(std::max(0.0f, rect.h - text_renderer.LineHeight()) * 0.5f);
   const float max_width = std::max(20.0f, right_edge - text_x);
-  const std::string primary_text = text_renderer.TruncateToWidth(
+  // Ephemeral views, not owned strings: this runs once per visible row per frame in
+  // the secondary sidebars and the debug pane, and the common case (a label that
+  // fits) then costs no allocation at all instead of a std::string copy. The two
+  // views never overlap — the primary is drawn and measured before the secondary
+  // truncation overwrites the shared scratch.
+  const std::string_view primary_text = text_renderer.TruncateToWidthEphemeralView(
       primary, secondary.empty() ? max_width : max_width * primary_width_fraction);
   DrawTextOn(text_renderer, renderer, text_x, text_y, primary_color, background, primary_text);
   if (secondary.empty()) {
@@ -827,7 +832,7 @@ inline void DrawPrimarySecondaryRowText(const render::TextRenderer& text_rendere
     return;
   }
   DrawTextOn(text_renderer, renderer, secondary_x, text_y, secondary_color, background,
-             text_renderer.TruncateToWidth(secondary, secondary_width));
+             text_renderer.TruncateToWidthEphemeralView(secondary, secondary_width));
 }
 
 inline void DrawStripTab(const render::TextRenderer& text_renderer,
@@ -873,10 +878,13 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
                                badge_color, badge_text);
     text_left_padding += style.badge_size + style.badge_gap;
   }
+  // Every visible tab in the project, editor and panel strips passes through here on
+  // every frame, and most tab labels fit — so an owned truncation was a per-tab
+  // per-frame std::string copy for nothing. The view is consumed by this one call.
   DrawVCenteredTextOn(
       text_renderer, renderer, rect, text_left_padding,
       active ? palette.active_text : palette.inactive_text, background,
-      text_renderer.TruncateToWidth(
+      text_renderer.TruncateToWidthEphemeralView(
           label, std::max(8.0f, rect.w - style.close_right_reserve - (text_left_padding - style.text_left_padding))));
 }
 
@@ -989,9 +997,12 @@ inline void DrawMenuRow(const render::TextRenderer& text_renderer,
   const float accelerator_width =
       accelerator.empty() ? 0.0f : text_renderer.MeasureWidth(accelerator);
   const float label_width = std::max(0.0f, rect.w - 42.0f - accelerator_width);
+  // Ephemeral view: consumed by this call, and the accelerator drawn below is a
+  // separate borrowed view that does not touch the truncation scratch. An open menu
+  // repaints on every pointer move, so this was an allocation per row per frame.
   DrawVCenteredTextOn(text_renderer, renderer,
                       MakeRect(rect.x + 24.0f, rect.y, label_width, rect.h), 0.0f, text_color,
-                      background, text_renderer.TruncateToWidth(label, label_width));
+                      background, text_renderer.TruncateToWidthEphemeralView(label, label_width));
   if (!accelerator.empty()) {
     DrawVCenteredTextOn(
         text_renderer, renderer,
