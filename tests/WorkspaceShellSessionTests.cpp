@@ -2,6 +2,7 @@
 
 #include "platform/AppDirectories.h"
 #include "persistence/PersistedRecordWriter.h"
+#include "workspace/DiffDividerGeometry.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspacePersistenceFormat.h"
@@ -20,9 +21,25 @@
 namespace microide::tests {
 namespace {
 
+
 using microide::workspace::PersistenceCoordinator;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
+
+// Divider grab rects for the active compare / merge tab. DiffDividerGeometry.h
+// takes WorkspaceShell by name, so it cannot be reached from inside the TestAccess
+// class body; these live here instead and read the same geometry production does.
+SDL_FRect CompareDividerRectOf(microide::workspace::WorkspaceShell& shell) {
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  return microide::workspace::CompareDividerHitRect(
+      layout.editor_surface, WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell));
+}
+
+std::array<SDL_FRect, 2> MergeDividerRectsOf(microide::workspace::WorkspaceShell& shell) {
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  return microide::workspace::MergeDividerHitRects(
+      layout.editor_surface, WorkspaceShellTestAccess::ActiveMergeSurfaceLayout(shell));
+}
 using microide::compare::MergeChoice;
 
 class ScopedSessionAppHomes {
@@ -2050,7 +2067,7 @@ void TestWorkspaceShellMergeDividerDragUpdatesPaneFractions() {
 
   auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
   const float before_fraction = merge.left_divider_fraction;
-  const auto divider_rects = WorkspaceShellTestAccess::MergeDividerRects(shell);
+  const auto divider_rects = MergeDividerRectsOf(shell);
   const float start_x = divider_rects[0].x + divider_rects[0].w * 0.5f;
   const float y = divider_rects[0].y + divider_rects[0].h * 0.5f;
 

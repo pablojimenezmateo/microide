@@ -567,6 +567,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/DebugPaneRegistry.cpp
   src/workspace/DebugPaneLayout.cpp
   src/workspace/DebugPaneRender.cpp
+  src/workspace/DiffDividerGeometry.cpp
   src/workspace/DebugPaneService.cpp
   src/workspace/DebugPaneMouseCoordinator.cpp
   # Provider registries (completion/code-action/formatter/annotation/tool/scm/

@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "workspace/DiffDividerGeometry.h"
 #include "workspace/CompareTabReview.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 #include "render/Theme.h"
@@ -20,8 +21,24 @@
 namespace microide::tests {
 namespace {
 
+
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
+
+// Divider grab rects for the active compare / merge tab. DiffDividerGeometry.h
+// takes WorkspaceShell by name, so it cannot be reached from inside the TestAccess
+// class body; these live here instead and read the same geometry production does.
+SDL_FRect CompareDividerRectOf(microide::workspace::WorkspaceShell& shell) {
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  return microide::workspace::CompareDividerHitRect(
+      layout.editor_surface, WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell));
+}
+
+std::array<SDL_FRect, 2> MergeDividerRectsOf(microide::workspace::WorkspaceShell& shell) {
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  return microide::workspace::MergeDividerHitRects(
+      layout.editor_surface, WorkspaceShellTestAccess::ActiveMergeSurfaceLayout(shell));
+}
 
 #if MICROIDE_HAS_SDL3_TTF
 
@@ -1189,7 +1206,7 @@ void TestWorkspaceShellCompareAndMergeDividersResetOnDoubleClick() {
 
   auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
   compare.divider_fraction = 0.8f;
-  const SDL_FRect compare_divider = WorkspaceShellTestAccess::CompareDividerRect(shell);
+  const SDL_FRect compare_divider = CompareDividerRectOf(shell);
   Expect(SendMouseDown(shell, compare_divider.x + compare_divider.w * 0.5f,
                        compare_divider.y + compare_divider.h * 0.5f, SDL_BUTTON_LEFT, 2),
          "double-clicking the compare divider should be handled");
@@ -1204,7 +1221,7 @@ void TestWorkspaceShellCompareAndMergeDividersResetOnDoubleClick() {
   auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
   merge.left_divider_fraction = 0.15f;
   merge.right_divider_fraction = 0.85f;
-  const auto merge_dividers = WorkspaceShellTestAccess::MergeDividerRects(shell);
+  const auto merge_dividers = MergeDividerRectsOf(shell);
   // Either divider resets both, so one gesture recovers the whole layout.
   Expect(SendMouseDown(shell, merge_dividers[1].x + merge_dividers[1].w * 0.5f,
                        merge_dividers[1].y + merge_dividers[1].h * 0.5f, SDL_BUTTON_LEFT, 2),
@@ -1216,6 +1233,20 @@ void TestWorkspaceShellCompareAndMergeDividersResetOnDoubleClick() {
          "double-clicking a merge divider should restore both to equal thirds");
   Expect(WorkspaceShellTestAccess::TransientDragTargetIsNone(shell),
          "a merge divider reset must not leave a drag armed behind it");
+
+  // Grabbing a merge divider must hold the resize cursor for the whole gesture.
+  // Dragging necessarily moves the pointer off the thin divider band, and only the
+  // sidebar and bottom-panel drags used to keep their shape through that.
+  // Re-read the geometry: the reset moved both dividers.
+  const auto reset_dividers = MergeDividerRectsOf(shell);
+  Expect(SendMouseDown(shell, reset_dividers[0].x + reset_dividers[0].w * 0.5f,
+                       reset_dividers[0].y + reset_dividers[0].h * 0.5f, SDL_BUTTON_LEFT),
+         "grabbing the merge left divider should be handled");
+  Expect(!WorkspaceShellTestAccess::TransientDragTargetIsNone(shell),
+         "a single click on the merge divider should arm the resize drag");
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsEwResize(shell, 10.0f, 10.0f),
+         "a merge divider drag should hold the resize cursor away from the divider");
+  SendMouseUp(shell, reset_dividers[0].x, reset_dividers[0].y, SDL_BUTTON_LEFT);
 }
 
 void TestWorkspaceShellCompareAndMergePaneMinimaPreserveVisibleColumns() {

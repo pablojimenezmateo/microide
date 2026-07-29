@@ -18,8 +18,6 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kCompareDividerHitWidth = 12.0f;
-
 std::size_t CompareMaxVisualColumns(const compare::CompareModel& model) {
   std::size_t max_columns = 0;
   for (const auto& row : model.rows) {
@@ -181,13 +179,6 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffe
       .compare = std::move(compare_tab),
       .merge = std::nullopt,
   };
-}
-
-SDL_FRect WorkspaceShell::CompareDividerHitRect(const SDL_FRect& editor_surface,
-                                                const CompareSurfaceLayout& surface) const {
-  const float hit_width = std::max(kCompareDividerHitWidth, surface.divider_width);
-  const float center_x = surface.center_x + surface.divider_width * 0.5f;
-  return MakeRect(center_x - hit_width * 0.5f, editor_surface.y, hit_width, editor_surface.h);
 }
 
 bool WorkspaceShell::ActiveTabIsCompare() const {

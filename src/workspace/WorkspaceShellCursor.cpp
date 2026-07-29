@@ -1,3 +1,4 @@
+#include "workspace/DiffDividerGeometry.h"
 #include "workspace/WorkspaceShell.h"
 
 #include "workspace/ProjectSearchPanelLayout.h"
@@ -141,8 +142,19 @@ WorkspaceShell::WindowAction WorkspaceShell::ConsumeWindowAction() {
 }
 
 WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float y) const {
+  // A divider drag holds its resize cursor for the whole gesture, wherever the
+  // pointer travels — dragging necessarily moves off the divider, so resolving the
+  // cursor from the position under it would drop the shape mid-drag. This used to
+  // cover only the sidebar and bottom panel, so the other five resize drags
+  // (right pane, editor split, compare, and both merge dividers) flickered back to
+  // an arrow the moment the pointer left the thin divider band.
   switch (context_.interaction_state.drag_target) {
     case DragTarget::SidebarDivider:
+    case DragTarget::RightPaneDivider:
+    case DragTarget::EditorSplitDivider:
+    case DragTarget::CompareDivider:
+    case DragTarget::MergeLeftDivider:
+    case DragTarget::MergeRightDivider:
       return CursorKind::EwResize;
     case DragTarget::BottomPanelDivider:
       return CursorKind::NsResize;
@@ -785,13 +797,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
     const auto scroll_layout =
         ComputeMergeScrollLayout(layout.editor_surface, surface_layout, *merge_tab);
-    const SDL_FRect left_divider_rect =
-        MakeRect(surface_layout.center_x - surface_layout.divider_width, layout.editor_surface.y,
-                 surface_layout.divider_width, layout.editor_surface.h);
-    const SDL_FRect right_divider_rect =
-        MakeRect(surface_layout.right_x - surface_layout.divider_width, layout.editor_surface.y,
-                 surface_layout.divider_width, layout.editor_surface.h);
-    if (Contains(left_divider_rect, x, y) || Contains(right_divider_rect, x, y)) {
+    const auto divider_rects = MergeDividerHitRects(layout.editor_surface, surface_layout);
+    if (Contains(divider_rects[0], x, y) || Contains(divider_rects[1], x, y)) {
       return CursorKind::EwResize;
     }
     const MergeToolbarLayout toolbar = ComputeMergeToolbarLayout(layout.editor_surface, surface_layout);

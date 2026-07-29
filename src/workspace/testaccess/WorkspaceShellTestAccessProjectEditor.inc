@@ -332,19 +332,9 @@
     const auto toolbar = shell.ComputeMergeToolbarLayout(layout.editor_surface, surface);
     return {toolbar.prev_rect, toolbar.next_rect};
   }
-  static SDL_FRect CompareDividerRect(WorkspaceShell& shell) {
-    const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto surface = ActiveCompareSurfaceLayout(shell);
-    return shell.CompareDividerHitRect(layout.editor_surface, surface);
-  }
-  static std::array<SDL_FRect, 2> MergeDividerRects(WorkspaceShell& shell) {
-    const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto surface = ActiveMergeSurfaceLayout(shell);
-    return {MakeRect(surface.center_x - surface.divider_width, layout.editor_surface.y,
-                     surface.divider_width, layout.editor_surface.h),
-            MakeRect(surface.right_x - surface.divider_width, layout.editor_surface.y,
-                     surface.divider_width, layout.editor_surface.h)};
-  }
+  // The divider grab rects themselves come from workspace/DiffDividerGeometry.h,
+  // which tests include directly: it takes WorkspaceShell by name, so it cannot be
+  // reached from inside the class body this file is textually part of.
 
   static void PrepareRenamePrompt(WorkspaceShell& shell,
                                   const std::filesystem::path& path,

@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceMergeMouseCoordinator.h"
 
+#include "workspace/DiffDividerGeometry.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -59,18 +61,13 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
   const auto interaction =
       operations_.build_merge_interaction_layout(layout.editor_surface, surface_layout, *merge_tab);
-  const SDL_FRect left_divider_rect =
-      MakeRect(surface_layout.center_x - surface_layout.divider_width, layout.editor_surface.y,
-               surface_layout.divider_width, layout.editor_surface.h);
-  const SDL_FRect right_divider_rect =
-      MakeRect(surface_layout.right_x - surface_layout.divider_width, layout.editor_surface.y,
-               surface_layout.divider_width, layout.editor_surface.h);
+  const auto divider_rects = MergeDividerHitRects(layout.editor_surface, surface_layout);
   // Double-click restores the equal thirds, the same contract the sidebar, right
   // pane, editor split and bottom panel dividers already answer. Either divider
   // resets both, so one double-click recovers the layout instead of two.
   const bool reset_click = event.button.clicks >= 2;
-  const bool on_left = Contains(left_divider_rect, event.button.x, event.button.y);
-  const bool on_right = Contains(right_divider_rect, event.button.x, event.button.y);
+  const bool on_left = Contains(divider_rects[0], event.button.x, event.button.y);
+  const bool on_right = Contains(divider_rects[1], event.button.x, event.button.y);
   if ((on_left || on_right) && reset_click) {
     merge_tab->left_divider_fraction = kWorkspaceDefaultMergeLeftDividerFraction;
     merge_tab->right_divider_fraction = kWorkspaceDefaultMergeRightDividerFraction;

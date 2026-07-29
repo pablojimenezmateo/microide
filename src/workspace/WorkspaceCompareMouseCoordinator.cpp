@@ -1,6 +1,8 @@
-#include "workspace/CompareTabReview.h"
-#include "workspace/CompareMergeRender.h"
 #include "workspace/WorkspaceCompareMouseCoordinator.h"
+
+#include "workspace/CompareMergeRender.h"
+#include "workspace/CompareTabReview.h"
+#include "workspace/DiffDividerGeometry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -70,8 +72,7 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   compare_tab->scroll_row = scroll_layout.vertical_scroll;
   compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
   operations_.sync_compare_viewport_scroll(*compare_tab);
-  const SDL_FRect divider_rect =
-      operations_.compare_divider_hit_rect(layout.editor_surface, surface_layout);
+  const SDL_FRect divider_rect = CompareDividerHitRect(layout.editor_surface, surface_layout);
 
   if (Contains(divider_rect, event.button.x, event.button.y)) {
     // Double-click restores the even split, the same contract the sidebar, right
@@ -436,10 +437,6 @@ CompareMouseCoordinator WorkspaceShell::MakeCompareMouseCoordinator() {
               },
           .sync_compare_viewport_scroll =
               [this](CompareTabState& compare_tab) { SyncCompareViewportScroll(compare_tab); },
-          .compare_divider_hit_rect =
-              [this](const SDL_FRect& rect, const CompareSurfaceLayout& surface) {
-                return CompareDividerHitRect(rect, surface);
-              },
           .build_compare_right_interaction_layout =
               [this](const CompareSurfaceLayout& surface, CompareTabState& compare_tab) {
                 return BuildCompareRightInteractionLayout(surface, compare_tab);

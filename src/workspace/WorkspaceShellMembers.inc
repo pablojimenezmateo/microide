@@ -1897,8 +1897,6 @@
   bool CaretVisibleNow() const;
   std::optional<SDL_FRect> ActiveEditorCaretRect(const WorkspaceLayout& layout) const;
   std::optional<SDL_FRect> ActiveTerminalCaretRect(const WorkspaceLayout& layout) const;
-  SDL_FRect CompareDividerHitRect(const SDL_FRect& editor_surface,
-                                  const CompareSurfaceLayout& surface) const;
   std::optional<TextInputVisual> BuildCompareTextInputVisual(const SDL_FRect& editor_surface) const;
   std::optional<TextInputVisual> BuildMergeTextInputVisual(const SDL_FRect& editor_surface) const;
   void RenderCompareScrollbars(SDL_Renderer* renderer,

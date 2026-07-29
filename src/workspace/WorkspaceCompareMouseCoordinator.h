@@ -18,8 +18,6 @@ class CompareMouseCoordinator {
                                       const CompareTabState&)>
         compute_compare_scroll_layout;
     std::function<void(CompareTabState&)> sync_compare_viewport_scroll;
-    std::function<SDL_FRect(const SDL_FRect&, const WorkspaceShell::CompareSurfaceLayout&)>
-        compare_divider_hit_rect;
     std::function<TextGridInteractionLayout(const WorkspaceShell::CompareSurfaceLayout&,
                                             CompareTabState&)>
         build_compare_right_interaction_layout;
