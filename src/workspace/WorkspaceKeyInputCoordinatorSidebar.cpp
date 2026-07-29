@@ -1,7 +1,12 @@
 #include "workspace/WorkspaceKeyInputCoordinator.h"
 
+#include <algorithm>
+#include <cstddef>
+#include <limits>
+
 #include "project/CommitWorkflowTypes.h"
 #include "workspace/GitSidebarCommandCenter.h"
+#include "workspace/ListSelection.h"
 
 namespace microide::workspace {
 bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
@@ -102,10 +107,10 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
         }
         return true;
       case SDLK_PAGEUP:
-        operations_.move_project_search_selection(-8);
+        operations_.move_project_search_selection(-kListPageStep);
         return true;
       case SDLK_PAGEDOWN:
-        operations_.move_project_search_selection(8);
+        operations_.move_project_search_selection(kListPageStep);
         return true;
       case SDLK_R:
         if (input_character == 'R') {
@@ -221,10 +226,10 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
         }
         return true;
       case SDLK_PAGEUP:
-        operations_.move_git_sidebar_selection(-8);
+        operations_.move_git_sidebar_selection(-kListPageStep);
         return true;
       case SDLK_PAGEDOWN:
-        operations_.move_git_sidebar_selection(8);
+        operations_.move_git_sidebar_selection(kListPageStep);
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
@@ -292,10 +297,10 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
         }
         return true;
       case SDLK_PAGEUP:
-        operations_.move_problems_sidebar_selection(-8);
+        operations_.move_problems_sidebar_selection(-kListPageStep);
         return true;
       case SDLK_PAGEDOWN:
-        operations_.move_problems_sidebar_selection(8);
+        operations_.move_problems_sidebar_selection(kListPageStep);
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
@@ -335,10 +340,10 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
         }
         return true;
       case SDLK_PAGEUP:
-        operations_.move_tests_sidebar_selection(-8);
+        operations_.move_tests_sidebar_selection(-kListPageStep);
         return true;
       case SDLK_PAGEDOWN:
-        operations_.move_tests_sidebar_selection(8);
+        operations_.move_tests_sidebar_selection(kListPageStep);
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
@@ -389,10 +394,10 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
         }
         return true;
       case SDLK_PAGEUP:
-        operations_.move_plugin_sidebar_selection(-8);
+        operations_.move_plugin_sidebar_selection(-kListPageStep);
         return true;
       case SDLK_PAGEDOWN:
-        operations_.move_plugin_sidebar_selection(8);
+        operations_.move_plugin_sidebar_selection(kListPageStep);
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
@@ -430,6 +435,27 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       state_.directory_tree.MoveSelection(1);
       operations_.reveal_selected_tree_sidebar_line();
       return true;
+    // Page/Home/End were the one sidebar keyboard gap: git, search, problems, tests
+    // and plugin sidebars all answer these, so the file tree — the default and most
+    // navigated one — could only be walked a row at a time.
+    case SDLK_PAGEUP:
+      state_.directory_tree.MoveSelection(-kListPageStep);
+      operations_.reveal_selected_tree_sidebar_line();
+      return true;
+    case SDLK_PAGEDOWN:
+      state_.directory_tree.MoveSelection(kListPageStep);
+      operations_.reveal_selected_tree_sidebar_line();
+      return true;
+    case SDLK_HOME:
+    case SDLK_END: {
+      // MoveSelection clamps, so a delta of the whole row count lands on either end.
+      const int span = static_cast<int>(std::min<std::size_t>(
+          state_.directory_tree.entries().size(),
+          static_cast<std::size_t>(std::numeric_limits<int>::max())));
+      state_.directory_tree.MoveSelection(event.key == SDLK_HOME ? -span : span);
+      operations_.reveal_selected_tree_sidebar_line();
+      return true;
+    }
     case SDLK_LEFT:
       state_.directory_tree.CollapseSelection();
       operations_.reveal_selected_tree_sidebar_line();

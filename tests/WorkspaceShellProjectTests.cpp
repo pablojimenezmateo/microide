@@ -1667,6 +1667,44 @@ void TestWorkspaceShellWheelStepMatchesEditorAcrossSurfaces() {
          "one wheel tick should advance the sidebar by the shared row step");
 }
 
+// The file tree answers Page/Home/End like every other sidebar list. It used to
+// support arrows only, so a large tree could be walked one row at a time.
+void TestWorkspaceShellTreeSidebarSupportsPageAndHomeEndKeys() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  for (int i = 0; i < 40; ++i) {
+    WriteFile(root / ("file" + std::to_string(i) + ".txt"), "line\n");
+  }
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+
+  const std::filesystem::path first = WorkspaceShellTestAccess::SelectedTreePath(shell);
+  Expect(first == root.lexically_normal(), "the tree should start on the root row");
+
+  Expect(SendKeyDown(shell, SDLK_PAGEDOWN, SDL_KMOD_NONE),
+         "PageDown should be handled by the tree sidebar");
+  const std::filesystem::path after_page = WorkspaceShellTestAccess::SelectedTreePath(shell);
+  Expect(after_page != first, "PageDown should move the tree selection off the first row");
+
+  Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE),
+         "End should be handled by the tree sidebar");
+  const std::filesystem::path last = WorkspaceShellTestAccess::SelectedTreePath(shell);
+  Expect(last != after_page, "End should jump past a single page");
+
+  Expect(SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE),
+         "Home should be handled by the tree sidebar");
+  Expect(WorkspaceShellTestAccess::SelectedTreePath(shell) == first,
+         "Home should return the tree selection to the first row");
+
+  Expect(SendKeyDown(shell, SDLK_PAGEUP, SDL_KMOD_NONE),
+         "PageUp should be handled by the tree sidebar");
+  Expect(WorkspaceShellTestAccess::SelectedTreePath(shell) == first,
+         "PageUp at the top should clamp rather than wrap");
+}
+
 // Ctrl+Tab cycles every on-screen surface in visual order. The debug pane is a full
 // keyboard focus target with its own row navigation, but the old nested-ternary chain
 // covered only sidebar/editor/panel, so it was reachable by click and never by keyboard.
@@ -4483,6 +4521,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus);
   AddTest(tests, "WorkspaceShell/TreeCollapseAllowsOpenDescendantsAndReselectReveal",
           TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal);
+  AddTest(tests, "WorkspaceShell/TreeSidebarSupportsPageAndHomeEndKeys",
+          TestWorkspaceShellTreeSidebarSupportsPageAndHomeEndKeys);
   AddTest(tests, "WorkspaceShell/CtrlTabCyclesEveryVisibleSurface",
           TestWorkspaceShellCtrlTabCyclesEveryVisibleSurface);
   AddTest(tests, "WorkspaceShell/DoubleClickResetsResizeDividers",
