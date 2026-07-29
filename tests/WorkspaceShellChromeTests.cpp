@@ -1457,6 +1457,66 @@ void TestWorkspaceShellEditorTabContextMenuShowsAndExecutesPathActions() {
          "Copy Absolute Path should copy the active tab path");
 }
 
+// The sidebar renderer dispatches on mode and ends in an unguarded `else` that
+// paints the file tree, so any mode without its own branch would silently render
+// the tree's rows under another view's header. Problems keeps its own entry list
+// and its own list layout rather than the plugin item surface the other secondary
+// views share, which makes it the mode most exposed to that fall-through. Pins
+// that it paints something of its own.
+void TestWorkspaceShellProblemsSidebarDoesNotPaintTheFileTree() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "src" / "alpha.cpp", "int alpha() { return 1; }\n");
+  WriteFile(root / "src" / "beta.cpp", "int beta() { return 2; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const auto sidebar_pixels = [&]() {
+    const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+    SoftwareCanvas canvas(1280, 720);
+    shell.Render(canvas.renderer(), 1280, 720);
+    SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+    Expect(pixels != nullptr, "the sidebar fixture should capture rendered pixels");
+    std::vector<SDL_Color> sample;
+    for (int y = static_cast<int>(layout.sidebar.y);
+         y < static_cast<int>(layout.sidebar.y + layout.sidebar.h); ++y) {
+      for (int x = static_cast<int>(layout.sidebar.x);
+           x < static_cast<int>(layout.sidebar.x + layout.sidebar.w); ++x) {
+        sample.push_back(ReadSurfacePixelOrThrow(pixels, x, y));
+      }
+    }
+    SDL_DestroySurface(pixels);
+    return sample;
+  };
+  const auto same = [](const std::vector<SDL_Color>& lhs, const std::vector<SDL_Color>& rhs) {
+    if (lhs.size() != rhs.size()) {
+      return false;
+    }
+    for (std::size_t i = 0; i < lhs.size(); ++i) {
+      if (lhs[i].r != rhs[i].r || lhs[i].g != rhs[i].g || lhs[i].b != rhs[i].b ||
+          lhs[i].a != rhs[i].a) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  const std::vector<SDL_Color> tree_pixels = sidebar_pixels();
+  WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
+  const std::vector<SDL_Color> problems_pixels = sidebar_pixels();
+
+  Expect(!same(tree_pixels, problems_pixels),
+         "the Problems sidebar must not render the file tree's contents");
+}
+
 // Call Hierarchy shipped as a command with no availability rule, no feature
 // setting and no menu entry, while its four LSP navigation siblings have all
 // three. Falling off the availability switch reached the trailing `return true`,
@@ -2881,6 +2941,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard);
   AddTest(tests, "WorkspaceShell/ProjectTabTooltipDismissRetainedRedrawMatchesFullRender",
           TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender);
+  AddTest(tests, "WorkspaceShell/ProblemsSidebarDoesNotPaintTheFileTree",
+          TestWorkspaceShellProblemsSidebarDoesNotPaintTheFileTree);
   AddTest(tests, "WorkspaceShell/CallHierarchyIsGatedLikeItsSiblings",
           TestWorkspaceShellCallHierarchyIsGatedLikeItsSiblings);
   AddTest(tests, "WorkspaceShell/SettingsRowsLiftOnHover",

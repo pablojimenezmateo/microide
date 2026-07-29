@@ -269,6 +269,7 @@
                                 bool temporary = false) {
     shell.ShowSearchSidebar(std::move(query), temporary);
   }
+  static void ShowTreeSidebar(WorkspaceShell& shell) { shell.ShowTreeSidebar(); }
   static void ShowProblemsSidebar(WorkspaceShell& shell) { shell.ShowProblemsSidebar(); }
   static void ShowGitSidebar(WorkspaceShell& shell) { shell.ShowGitSidebar(); }
   static void MaybeRequestTreeGitBadgesAfterFirstPaint(WorkspaceShell& shell) {
