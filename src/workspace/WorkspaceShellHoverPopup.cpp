@@ -1,10 +1,12 @@
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "editor/DiagnosticsRender.h"
 #include "util/PerformanceTrace.h"
@@ -325,10 +327,53 @@ bool WorkspaceShell::EditorHoverPopupPrimaryActionHovered(float x, float y) cons
 std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_view text,
                                                                   float max_width,
                                                                   std::size_t max_lines) const {
+  // Wrapping is pure in (text, width, line cap, font metrics) but expensive: a
+  // normalize copy, an istringstream tokenize into a vector<string>, then a
+  // MeasureWidth per candidate line. The layout path calls it several times per
+  // frame (title, content, blame summary, diagnostic message) for as long as the
+  // card is on screen — i.e. for as long as the user is reading it. A card shows a
+  // handful of distinct strings, so a small memo turns every frame after the first
+  // into a lookup. Metrics generation is part of the key: a font-size or UI-scale
+  // change re-wraps at the new width.
+  struct WrapMemoEntry {
+    std::string text;
+    float max_width = 0.0f;
+    std::size_t max_lines = 0;
+    std::size_t metrics_generation = 0;
+    std::vector<std::string> lines;
+    bool valid = false;
+  };
+  static thread_local std::array<WrapMemoEntry, 4> memo;
+  static thread_local std::size_t memo_next = 0;
+
   std::vector<std::string> lines;
   if (max_lines == 0 || max_width <= 0.0f) {
     return lines;
   }
+
+  // Keyed on the caller's text, captured BEFORE the byte clamp below reassigns
+  // `text` — otherwise a stored key would be the clamped prefix and never match
+  // the lookup that produced it.
+  const std::string_view key_text = text;
+  const std::size_t metrics_generation = text_renderer_.MetricsGeneration();
+  for (const WrapMemoEntry& entry : memo) {
+    if (entry.valid && entry.max_width == max_width && entry.max_lines == max_lines &&
+        entry.metrics_generation == metrics_generation && entry.text == key_text) {
+      return entry.lines;
+    }
+  }
+
+  const auto remember = [&](std::vector<std::string> wrapped) {
+    WrapMemoEntry& slot = memo[memo_next];
+    memo_next = (memo_next + 1) % memo.size();
+    slot.text.assign(key_text);
+    slot.max_width = max_width;
+    slot.max_lines = max_lines;
+    slot.metrics_generation = metrics_generation;
+    slot.lines = std::move(wrapped);
+    slot.valid = true;
+    return slot.lines;
+  };
 
   // Bound the input before any full-length pass (the normalize copy, MeasureWidth,
   // and the word tokenize below). Every hover string funnels through here — plugin
@@ -342,11 +387,11 @@ std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_vi
 
   const std::string normalized = NormalizeHoverPopupText(text);
   if (normalized.empty()) {
-    return lines;
+    return remember(std::move(lines));
   }
   if (text_renderer_.MeasureWidth(normalized) <= max_width) {
     lines.push_back(normalized);
-    return lines;
+    return remember(std::move(lines));
   }
 
   std::istringstream stream(normalized);
@@ -356,19 +401,25 @@ std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_vi
   }
   if (words.empty()) {
     lines.push_back(text_renderer_.TruncateToWidth(normalized, max_width));
-    return lines;
+    return remember(std::move(lines));
   }
 
   std::size_t index = 0;
+  // Reused across every candidate: the old `line + " " + words[index]` allocated a
+  // fresh string per word tried, and only the ones that fit were kept.
+  std::string line;
+  std::string candidate;
   while (index < words.size() && lines.size() + 1 < max_lines) {
-    std::string line = words[index];
+    line.assign(words[index]);
     ++index;
     while (index < words.size()) {
-      const std::string candidate = line + " " + words[index];
+      candidate.assign(line);
+      candidate += ' ';
+      candidate += words[index];
       if (text_renderer_.MeasureWidth(candidate) > max_width) {
         break;
       }
-      line = candidate;
+      line.swap(candidate);
       ++index;
     }
     // A single word wider than the wrap width (a long mangled/template type name, a
@@ -393,7 +444,7 @@ std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_vi
   if (lines.empty()) {
     lines.push_back(text_renderer_.TruncateToWidth(normalized, max_width));
   }
-  return lines;
+  return remember(std::move(lines));
 }
 
 SDL_FRect WorkspaceShell::ComputeTwoBlockHoverCardRect(std::string_view title,

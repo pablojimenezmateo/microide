@@ -113,6 +113,12 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.HoveredGitSidebarTooltipLabel(layout.sidebar);
   }
+  static std::vector<std::string> WrapHoverPopupText(const WorkspaceShell& shell,
+                                                     std::string_view text,
+                                                     float max_width,
+                                                     std::size_t max_lines) {
+    return shell.WrapEditorHoverPopupText(text, max_width, max_lines);
+  }
   static std::optional<SDL_FRect> HoveredGitSidebarTooltipRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const std::string label = shell.HoveredGitSidebarTooltipLabel(layout.sidebar);

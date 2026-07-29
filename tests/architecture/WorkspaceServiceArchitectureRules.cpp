@@ -621,16 +621,11 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
   // let the project-search sidebar keep composing `"Error: " + state.error` on
   // every repaint of a running search — a per-frame allocation on a surface that
   // repaints on every search-progress wake. Those sites are now precomposed in
-  // RenderViewModelBuilder, so the rule covers every render TU it scans.
-  //
-  // Sole exemption: WorkspaceShellHoverPopup.cpp, whose word-wrap routine
-  // (`line + " " + words[i]`) is a genuine text-layout algorithm rather than a
-  // message compose. Caching its wrapped lines by (text, width) is real remaining
-  // work — the card re-wraps on every frame it is visible — but it is a different
-  // change from "do not assemble UI text in a paint path".
-  const std::filesystem::path hover_popup_exemption =
-      repo_root / "src/workspace/WorkspaceShellHoverPopup.cpp";
-
+  // RenderViewModelBuilder, so the rule covers every render TU it scans — with no
+  // carve-outs. The last one would have been the hover popup's word wrapper
+  // (`line + " " + words[i]`), which is genuine text layout rather than a message
+  // compose; it now builds candidates in a reused scratch buffer instead, so the
+  // rule applies there too.
   for (const auto& path : render_files) {
     if (!RequireRuleTarget(result, path)) {
       continue;
@@ -639,9 +634,6 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
     AppendCodeMaskRegexViolations(
         result, path, text, single_char_pattern,
         "render TU must not build std::string(1, ch); use std::string_view over the char storage");
-    if (path == hover_popup_exemption) {
-      continue;
-    }
     // Trailing-anchored: the pattern starts on a string-literal quote, which
     // BuildCodeMask flags as non-code, so AppendCodeMaskRegexViolations would
     // never fire here.

@@ -277,13 +277,13 @@ void RunRenderTuTextCompositionRuleFixtures() {
   Expect(CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
          "a surface render TU drawing a precomposed view must pass");
 
-  // The hover popup keeps its word-wrap concatenation; that exemption is
-  // deliberate and must stay a *scoped* exemption rather than quietly disabling
-  // the rule for every surface TU.
+  // No carve-outs: the hover popup was the last render TU that concatenated
+  // (its word wrapper), and it now builds candidates in a reused scratch buffer.
+  // A regression there must fail like anywhere else.
   WriteFile(root / "src/workspace/WorkspaceShellHoverPopup.cpp",
             "void F(const std::string& a, const std::string& b){ auto s = a + \" \" + b; (void)s; }\n");
-  Expect(CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
-         "the hover popup's word-wrap concatenation stays exempt");
+  Expect(!CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
+         "the hover popup is no longer exempt from the concat rule");
 }
 
 void RunMissingRuleTargetFixtures() {

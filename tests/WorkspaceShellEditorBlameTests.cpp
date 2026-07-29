@@ -344,9 +344,58 @@ void TestWorkspaceShellEditorBlamePopupWrapsLongSummary() {
          "long blame summaries should wrap into a taller popup instead of truncating to one line");
 }
 
+// Hover wrapping is memoized (it runs several times per frame for as long as a
+// card is on screen). A memo is only ever wrong by being stale, so what needs
+// pinning is that every key component actually participates: text, wrap width,
+// line cap, and the font metrics generation.
+void TestWorkspaceShellHoverWrapMemoKeysOnEveryInput() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  const std::string_view text =
+      "the quick brown fox jumps over the lazy dog and keeps on running past the end";
+
+  const auto narrow = WorkspaceShellTestAccess::WrapHoverPopupText(shell, text, 120.0f, 8);
+  const auto narrow_again = WorkspaceShellTestAccess::WrapHoverPopupText(shell, text, 120.0f, 8);
+  Expect(!narrow.empty(), "the fixture text should wrap to at least one line");
+  Expect(narrow == narrow_again, "a repeated wrap must return the same lines");
+
+  // Width is part of the key: a wider card fits more per line.
+  const auto wide = WorkspaceShellTestAccess::WrapHoverPopupText(shell, text, 600.0f, 8);
+  Expect(wide != narrow, "changing the wrap width must not return the narrow cache entry");
+  Expect(wide.size() < narrow.size(), "a wider card should need fewer lines");
+
+  // Line cap is part of the key.
+  const auto capped = WorkspaceShellTestAccess::WrapHoverPopupText(shell, text, 120.0f, 2);
+  Expect(capped.size() <= 2, "the line cap must be honored");
+  Expect(capped != narrow, "changing the line cap must not return the uncapped cache entry");
+
+  // Different text with identical width/cap must not collide.
+  const auto other = WorkspaceShellTestAccess::WrapHoverPopupText(
+      shell, "a completely different hover string entirely", 120.0f, 8);
+  Expect(other != narrow, "different text must not return another entry's lines");
+
+  // The memo holds a small fixed number of entries; cycling past it must not
+  // corrupt a later lookup of an evicted key.
+  for (int i = 1; i <= 12; ++i) {
+    WorkspaceShellTestAccess::WrapHoverPopupText(shell, text, 120.0f + static_cast<float>(i), 8);
+  }
+  Expect(WorkspaceShellTestAccess::WrapHoverPopupText(shell, text, 120.0f, 8) == narrow,
+         "an evicted key must be recomputed to the same lines, not served from a wrong slot");
+
+  // The memo's fourth key component — the text renderer's metrics generation — is
+  // deliberately NOT asserted here: these tests run with no text backend, where
+  // MeasureWidth is a fixed 8px per byte and SetFontPointSize is a no-op that does
+  // not even bump the generation. Nothing observable would change, so an assertion
+  // would pass whether or not the term were in the key. The term guards a real case
+  // (a font size / family / presentation-scale change re-wraps at new advances);
+  // its three invalidation points are ClearWidthCache's call sites in TextRenderer.
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/HoverWrapMemoKeysOnEveryInput",
+          TestWorkspaceShellHoverWrapMemoKeysOnEveryInput);
   AddTest(tests, "WorkspaceShell/EditorBlameLoadsForCleanTrackedFile",
           TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile);
   AddTest(tests, "WorkspaceShell/EditorBlameLoadsForLargeTrackedFile",
