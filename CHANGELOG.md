@@ -41,9 +41,23 @@ changes.
   list, so a Help panel taller than the window is no longer mouse-only.
 - **Page Up/Down and Home/End in Settings**, in both the category rail and the
   value list. Both moved one row at a time through lists hundreds of rows long.
+- **Ctrl+PageDown / Ctrl+PageUp switch editor tabs**, wrapping at both ends.
+  There was no key chord for this at all: tabs could be opened (Ctrl+P) and
+  closed (Ctrl+W) from the keyboard, but moving between two open files needed the
+  mouse. The typed `tabswitch` also takes `+n`/`-n` now, the form its sibling
+  `tabmove` has always accepted.
+- **Home/End in the menu bar and the context menus**, the last two lists that
+  answered Up/Down and nothing else.
 
 ### Changed
 
+- **Shift+wheel scrolls the editor sideways.** It already did in the compare and
+  merge surfaces, so the same gesture moved sideways in a diff and downwards in
+  the file being diffed.
+- **The wheel no longer scrolls a tab strip past its last tab.** It clamped on
+  the raw scroll index rather than on what was still hidden, so wheeling right
+  ran on until one tab sat in an otherwise blank strip — a state the ⟨ ⟩ overflow
+  buttons cannot produce. Affected the project, editor and panel strips.
 - **The mouse wheel scrolls every list at the editor's speed.** Lists (file
   tree, git, search, debug pane, bottom panel, Settings, the overlay pickers)
   advanced one row per tick while the editor moved three, so the tree felt an
