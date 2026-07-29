@@ -783,6 +783,25 @@
     }
     return false;
   }
+  // Opens the font-picker dropdown with a supplied family list. The production path
+  // enumerates installed fonts, which is environment-dependent, so tests that need
+  // an overflowing list seed it here.
+  static void BeginSettingsFontValueEdit(WorkspaceShell& shell, std::string row_id,
+                                         std::vector<std::string> families) {
+    shell.settings_overlay_service_.BeginFontValueEdit(std::move(row_id), std::move(families));
+  }
+  static int SettingsOverlayPickerScroll(const WorkspaceShell& shell) {
+    return shell.settings_overlay_service_.PickerScroll();
+  }
+  static std::optional<ScrollbarGeometry> SettingsOverlayPickerScrollbar(WorkspaceShell& shell) {
+    const auto layout = shell.CurrentWorkspaceLayout();
+    if (!layout.has_value()) {
+      return std::nullopt;
+    }
+    return RenderViewModelBuilder(shell.context_)
+        .BuildSettingsOverlay(*layout, shell.settings_overlay_service_, shell.text_renderer_)
+        .value_picker.scrollbar;
+  }
   static void SetSettingsOverlayQueryAndRefresh(WorkspaceShell& shell, std::string query) {
     shell.settings_overlay_service_.SetQuery(std::move(query));
     shell.RefreshSettingsOverlayCatalog();

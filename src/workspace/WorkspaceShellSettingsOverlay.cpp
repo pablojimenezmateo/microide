@@ -822,7 +822,8 @@ void WorkspaceShell::OpenHelpAboutOverlay() {
 void WorkspaceShell::CloseSettingsOverlay() {
   settings_overlay_service_.Close();
   if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar ||
-      context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar) {
+      context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar ||
+      context_.interaction_state.drag_target == DragTarget::SettingsPickerScrollbar) {
     context_.interaction_state.drag_target = DragTarget::None;
   }
   InvalidateCursorKindFingerprint();
@@ -852,9 +853,9 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
   if (!left && !right) {
     return true;  // consume other buttons inside the modal
   }
-  // The row-list scrollbar is grabbable in both modes: read-only content still
-  // scrolls, and Help/About painted a bar that nothing hit-tested until this ran
-  // ahead of the mode gate.
+  // Track-click jump + drag arm, shared by all three of the overlay's scrollbars
+  // (row list, left rail, font picker). Each of them paints a bar, so each of them
+  // has to answer a grab.
   const auto begin_scrollbar_drag = [&](const ScrollbarGeometry& bar, DragTarget target,
                                         int max_scroll, auto&& set_scroll) {
     context_.interaction_state.drag_target = target;
@@ -865,21 +866,22 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
                           0, max_scroll));
     RequestOverlayRedraw();
   };
-  if (left && vm.scrollbar.has_value() && Contains(vm.scrollbar->track, mx, my)) {
-    begin_scrollbar_drag(*vm.scrollbar, DragTarget::SettingsScrollbar, vm.max_scroll,
-                         [this](int row) { settings_overlay_service_.SetScrollRow(row); });
-    return true;
-  }
-
-  if (vm.mode != SettingsOverlayMode::Settings) {
-    return true;  // Help / About has no other interactive chrome
-  }
-
   // Font-picker dropdown: a click on an item applies it (a family, or "Choose
   // file…" which launches the native picker); a click elsewhere inside the card is
   // swallowed so the picker stays open. Clicks outside fall through to the cancel
   // logic below.
   if (left && vm.value_picker.visible) {
+    // Ahead of the item rows, which span the card width and would otherwise
+    // swallow the grab — the same ordering the left rail needs. This bar was
+    // painted from the day the picker shipped with nothing hit-testing it, so the
+    // family list was wheel-only.
+    if (vm.value_picker.scrollbar.has_value() &&
+        Contains(vm.value_picker.scrollbar->track, mx, my)) {
+      begin_scrollbar_drag(*vm.value_picker.scrollbar, DragTarget::SettingsPickerScrollbar,
+                           vm.value_picker.max_scroll,
+                           [this](int row) { settings_overlay_service_.SetPickerScroll(row); });
+      return true;
+    }
     for (const SettingsPickerItemViewModel& item : vm.value_picker.items) {
       if (Contains(item.rect, mx, my)) {
         ApplySettingsFontPickerIndex(item.dropdown_index);
@@ -889,6 +891,19 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
     if (Contains(vm.value_picker.rect, mx, my)) {
       return true;
     }
+  }
+
+  // The row-list bar is grabbable in both modes: read-only content still scrolls,
+  // and Help/About painted a bar that nothing hit-tested until this ran ahead of
+  // the mode gate.
+  if (left && vm.scrollbar.has_value() && Contains(vm.scrollbar->track, mx, my)) {
+    begin_scrollbar_drag(*vm.scrollbar, DragTarget::SettingsScrollbar, vm.max_scroll,
+                         [this](int row) { settings_overlay_service_.SetScrollRow(row); });
+    return true;
+  }
+
+  if (vm.mode != SettingsOverlayMode::Settings) {
+    return true;  // Help / About has no other interactive chrome
   }
 
   // A click anywhere but inside the active inline value editor commits nothing and

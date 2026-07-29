@@ -175,8 +175,9 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
                                   TruncateLabelView(cat.label, cat.rect.w - 24.0f));
     }
     if (vm.category_scrollbar.has_value()) {
-      DrawScrollbar(renderer, theme_, vm.category_scrollbar->track, vm.category_scrollbar->thumb,
-                    false);
+      DrawScrollbar(
+          renderer, theme_, vm.category_scrollbar->track, vm.category_scrollbar->thumb,
+          context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar);
     }
   }
 
@@ -397,7 +398,8 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
                                   TruncateLabelView(item.text, item.rect.w - 16.0f));
     }
     if (picker.scrollbar.has_value()) {
-      DrawScrollbar(renderer, theme_, picker.scrollbar->track, picker.scrollbar->thumb, false);
+      DrawScrollbar(renderer, theme_, picker.scrollbar->track, picker.scrollbar->thumb,
+                    context_.interaction_state.drag_target == DragTarget::SettingsPickerScrollbar);
     }
   }
 }

@@ -609,6 +609,7 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
   architecture::RunActionIdReachabilityRuleFixtures();
   architecture::RunRegisteredSettingsAreReadRuleFixtures();
   architecture::RunRenderTuTextCompositionRuleFixtures();
+  architecture::RunPaintedScrollbarRuleFixtures();
   architecture::RunMissingRuleTargetFixtures();
 }
 

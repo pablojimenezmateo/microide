@@ -42,6 +42,7 @@ void RunRenderTuTextCompositionRuleFixtures();
 // through. A rule pointed at a file that no longer exists scans nothing and
 // reports green; this pins that such a rule reports its target as missing
 // instead, and reports nothing when the target is there.
+void RunPaintedScrollbarRuleFixtures();
 void RunMissingRuleTargetFixtures();
 
 }  // namespace microide::tests::architecture

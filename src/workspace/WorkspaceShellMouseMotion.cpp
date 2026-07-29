@@ -59,24 +59,38 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   // row list scrolls in Help/About too; only the left rail is Settings-only, and
   // it self-gates by having no scrollbar in the other mode.
   if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar ||
-      context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar) {
-    const bool category = context_.interaction_state.drag_target ==
-                          DragTarget::SettingsCategoryScrollbar;
+      context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar ||
+      context_.interaction_state.drag_target == DragTarget::SettingsPickerScrollbar) {
+    const DragTarget target = context_.interaction_state.drag_target;
     if (settings_overlay_service_.Visible()) {
       const SettingsOverlayViewModel vm =
           RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_,
                                                                 text_renderer_);
-      const std::optional<ScrollbarGeometry>& bar = category ? vm.category_scrollbar : vm.scrollbar;
-      if (bar.has_value()) {
+      const std::optional<ScrollbarGeometry>* bar = &vm.scrollbar;
+      int max_scroll = vm.max_scroll;
+      if (target == DragTarget::SettingsCategoryScrollbar) {
+        bar = &vm.category_scrollbar;
+        max_scroll = vm.category_max_scroll;
+      } else if (target == DragTarget::SettingsPickerScrollbar) {
+        bar = &vm.value_picker.scrollbar;
+        max_scroll = vm.value_picker.max_scroll;
+      }
+      if (bar->has_value()) {
         const int row = std::clamp(
             static_cast<int>(std::lround(ScrollUnitsForPointer(
-                *bar, static_cast<float>(event.motion.y),
+                **bar, static_cast<float>(event.motion.y),
                 context_.interaction_state.drag_scrollbar_offset))),
-            0, category ? vm.category_max_scroll : vm.max_scroll);
-        if (category) {
-          settings_overlay_service_.SetCategoryScrollRow(row);
-        } else {
-          settings_overlay_service_.SetScrollRow(row);
+            0, max_scroll);
+        switch (target) {
+          case DragTarget::SettingsCategoryScrollbar:
+            settings_overlay_service_.SetCategoryScrollRow(row);
+            break;
+          case DragTarget::SettingsPickerScrollbar:
+            settings_overlay_service_.SetPickerScroll(row);
+            break;
+          default:
+            settings_overlay_service_.SetScrollRow(row);
+            break;
         }
       }
     }

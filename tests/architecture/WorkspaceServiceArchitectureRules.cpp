@@ -661,6 +661,51 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
   return result;
 }
 
+RuleResult CheckPaintedScrollbarsAreGrabbable(const std::filesystem::path& repo_root) {
+  // A scrollbar drawn with a hardcoded `false` for its active flag can never
+  // render as being dragged, which means nothing hit-tests it -- it is decoration
+  // that looks like a control. Three shipped that way before this rule: the debug
+  // pane's, Help/About's, and the Settings font-picker's, each reachable by mouse
+  // wheel only. The active flag has to be a live expression (a drag-target
+  // comparison, or a flag threaded down from one), so this bans the literal.
+  //
+  // The rule is deliberately about the argument rather than about hit-testing,
+  // which is not decidable from the text: the literal is the exact tell that
+  // caught all three, and there is no surface in this app whose scrollbar should
+  // legitimately be undraggable.
+  RuleResult result;
+  result.label = "painted scrollbars are grabbable (no hardcoded inactive flag)";
+  result.hard_fail = true;
+  // `DrawScrollbar(a, b, c, d, false)` -- the active flag is the last argument, so
+  // match a `false` followed by the closing paren of the call.
+  const std::regex pattern(R"(DrawScrollbar\s*\((?:[^();]|\([^()]*\))*\bfalse\s*\))");
+
+  std::vector<std::filesystem::path> targets;
+  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    targets.push_back(entry.path());
+  }
+  if (targets.empty()) {
+    result.violations.push_back(Violation{
+        .path = repo_root / "src/workspace",
+        .line = 1,
+        .message = "scrollbar rule found no workspace translation units to scan",
+    });
+    return result;
+  }
+  for (const auto& path : targets) {
+    const std::string text = ReadRuleTarget(result, path);
+    AppendCodeMaskRegexViolations(
+        result, path, text, pattern,
+        "a scrollbar painted with a literal `false` active flag is decoration: pass the "
+        "drag-target comparison for its DragTarget so the bar can be grabbed and lights up "
+        "while it is");
+  }
+  return result;
+}
+
 RuleResult CheckDebugSubsystemThreadingBehindDapClient(const std::filesystem::path& repo_root) {
   // The debug subsystem's entire threading model lives behind WorkspaceDapClient:
   // it owns the adapter I/O thread (plus the init/shutdown threads) and marshals

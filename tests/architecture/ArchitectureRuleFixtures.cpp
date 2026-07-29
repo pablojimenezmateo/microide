@@ -302,6 +302,40 @@ void RunRenderTuTextCompositionRuleFixtures() {
          "the allocation-free truncation helpers must pass the render-TU rule");
 }
 
+void RunPaintedScrollbarRuleFixtures() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path();
+  std::filesystem::create_directories(root / "src/workspace");
+  const std::filesystem::path pane = root / "src/workspace/SomePaneRender.cpp";
+
+  // Negative control: the literal that marks a bar nothing can drag.
+  WriteFile(pane, "void F(){ DrawScrollbar(r, t, bar->track, bar->thumb, false); }\n");
+  Expect(!CheckPaintedScrollbarsAreGrabbable(root).violations.empty(),
+         "a scrollbar painted with a literal false active flag must be flagged");
+
+  // Positive control: the live drag-target comparison every grabbable bar passes.
+  WriteFile(pane,
+            "void F(){ DrawScrollbar(r, t, bar->track, bar->thumb,\n"
+            "    state.drag_target == DragTarget::SomeScrollbar); }\n");
+  const RuleResult clean = CheckPaintedScrollbarsAreGrabbable(root);
+  Expect(clean.violations.empty() && clean.missing_targets.empty(),
+         "a scrollbar whose active flag is a live drag-target comparison must pass");
+
+  // A flag threaded in as a parameter is equally live, and must not trip on the
+  // `false` that may appear elsewhere in the same statement.
+  WriteFile(pane,
+            "void F(bool active){ DrawScrollbar(r, t, MakeBar(x, false), bar->thumb, active); }\n");
+  Expect(CheckPaintedScrollbarsAreGrabbable(root).violations.empty(),
+         "a threaded active flag must pass even when the call has another false argument");
+
+  // Vacuity guard: an empty tree means the scan found nothing, which must fail
+  // loudly rather than read as a clean pass.
+  TemporaryDirectory empty_dir;
+  std::filesystem::create_directories(empty_dir.path() / "src/workspace");
+  Expect(!CheckPaintedScrollbarsAreGrabbable(empty_dir.path()).violations.empty(),
+         "a scan with no translation units must report a violation, not pass vacuously");
+}
+
 void RunMissingRuleTargetFixtures() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path();

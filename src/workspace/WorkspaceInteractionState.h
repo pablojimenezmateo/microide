@@ -29,6 +29,7 @@ enum class DragTarget {
   CompareHorizontalScrollbar,
   SettingsScrollbar,
   SettingsCategoryScrollbar,
+  SettingsPickerScrollbar,
   SingleLineSelection,
 };
 

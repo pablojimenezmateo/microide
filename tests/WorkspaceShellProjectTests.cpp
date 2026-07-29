@@ -2430,6 +2430,37 @@ void TestWorkspaceShellSettingsOverlayWheelScrolls() {
          "scrolling up should reduce the settings scroll row");
 }
 
+// Third instance of the same bug as the debug pane's and Help/About's bars: the
+// font-picker dropdown painted a scrollbar from the day it shipped and nothing
+// hit-tested it, so a long family list was reachable by mouse wheel only. The
+// grab has to run ahead of the item rows, which span the card width.
+void TestWorkspaceShellSettingsFontPickerScrollbarIsGrabbable() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
+
+  std::vector<std::string> families;
+  for (int i = 0; i < microide::workspace::SettingsOverlayService::kPickerVisibleFamilies + 12;
+       ++i) {
+    families.push_back("Family " + std::to_string(i));
+  }
+  WorkspaceShellTestAccess::BeginSettingsFontValueEdit(shell, "editor.font_family", families);
+
+  const auto scrollbar = WorkspaceShellTestAccess::SettingsOverlayPickerScrollbar(shell);
+  Expect(scrollbar.has_value(), "an overflowing family list should publish a picker scrollbar");
+  Expect(WorkspaceShellTestAccess::SettingsOverlayPickerScroll(shell) == 0,
+         "the picker should start unscrolled");
+  Expect(SendMouseDown(shell, scrollbar->track.x + scrollbar->track.w * 0.5f,
+                       scrollbar->track.y + scrollbar->track.h - 2.0f, SDL_BUTTON_LEFT),
+         "clicking the picker scrollbar track should be handled");
+  Expect(WorkspaceShellTestAccess::SettingsOverlayPickerScroll(shell) > 0,
+         "clicking near the bottom of the picker track should scroll the family list");
+  // The grab must not be mistaken for a click on the family row behind the bar,
+  // which would apply that family and close the picker.
+  Expect(WorkspaceShellTestAccess::SettingsOverlayPickerScrollbar(shell).has_value(),
+         "grabbing the picker scrollbar must leave the dropdown open");
+}
+
 // Help/About is read-only *content*, which is not the same as inert chrome. It is a
 // scrollable list, so it must answer the shared Up/Down/Page/Home/End contract and
 // its painted scrollbar must be grabbable. Until 2026-07-29 the overlay swallowed
@@ -4659,6 +4690,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSettingsOverlayTrapsKeyboardInput);
   AddTest(tests, "WorkspaceShell/SettingsOverlayWheelScrolls",
           TestWorkspaceShellSettingsOverlayWheelScrolls);
+  AddTest(tests, "WorkspaceShell/SettingsFontPickerScrollbarIsGrabbable",
+          TestWorkspaceShellSettingsFontPickerScrollbarIsGrabbable);
   AddTest(tests, "WorkspaceShell/HelpAboutIsKeyboardAndScrollbarNavigable",
           TestWorkspaceShellHelpAboutIsKeyboardAndScrollbarNavigable);
   AddTest(tests, "WorkspaceShell/HelpAboutOmitsAuthCommands",

@@ -76,6 +76,7 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
        CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings},
       {"CheckEditorViewModelStickyAndOccurrenceAreSpans",
        CheckEditorViewModelStickyAndOccurrenceAreSpans},
+      {"CheckPaintedScrollbarsAreGrabbable", CheckPaintedScrollbarsAreGrabbable},
       {"CheckDebugSubsystemThreadingBehindDapClient", CheckDebugSubsystemThreadingBehindDapClient},
   };
   return rules;

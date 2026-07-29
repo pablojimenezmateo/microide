@@ -2158,6 +2158,7 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     picker.rect = MakeRect(card_x, card_y, card_w, card_h);
     picker.more_above = start > 0;
     picker.more_below = end < family_count;
+    picker.max_scroll = std::max(0, family_count - kMaxVisibleFamilies);
     if (family_count > kMaxVisibleFamilies) {
       // Scrollbar spans just the family-rows region (above the pinned footer).
       const SDL_FRect families_rect = MakeRect(
