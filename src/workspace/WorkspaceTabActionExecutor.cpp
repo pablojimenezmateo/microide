@@ -26,12 +26,32 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
 
   switch (id) {
     case ActionId::Open: {
+      const std::optional<OpenPathRequest> request =
+          context_.HasProjectRoot()
+              ? BuildOpenPathRequest(args, context_.ProjectRoot())
+              : BuildOpenPathRequest(args, std::filesystem::path{});
+      if (!request.has_value()) {
+        // Bare `open` (File > Open File…, Ctrl+O, the welcome screen's Open File
+        // action) means "ask me for a path" — the same contract `project-open` has
+        // always had. It used to reject with "open requires a path", so the menu
+        // entry, its ellipsis and the welcome button were all dead ends.
+        switch (context_.OpenNativeFilePicker()) {
+          case ProjectOpenPickerResult::Launched:
+          case ProjectOpenPickerResult::AlreadyOpen:
+            return DispatchResult::Handled;
+          case ProjectOpenPickerResult::Unavailable:
+            if (source == ActionSource::Menu) {
+              // No native picker: seed the command palette with the verb so the user
+              // only types the path, mirroring the project-open fallback.
+              context_.OpenCommandPalette("open ");
+              return DispatchResult::Handled;
+            }
+            return reject("open requires a path");
+        }
+        return DispatchResult::Handled;
+      }
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
-      }
-      const std::optional<OpenPathRequest> request = BuildOpenPathRequest(args, context_.ProjectRoot());
-      if (!request.has_value()) {
-        return reject("open requires a path");
       }
       std::string error_message;
       if (!context_.OpenPath(request->path, &error_message)) {

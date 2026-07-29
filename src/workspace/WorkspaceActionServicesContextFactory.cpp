@@ -368,6 +368,18 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
                 }
                 return ProjectOpenPickerResult::Unavailable;
               },
+          .open_native_file_picker =
+              [this]() {
+                switch (OpenNativeFilePicker(nullptr)) {
+                  case ProjectOpenDialogLaunchResult::Launched:
+                    return ProjectOpenPickerResult::Launched;
+                  case ProjectOpenDialogLaunchResult::AlreadyOpen:
+                    return ProjectOpenPickerResult::AlreadyOpen;
+                  case ProjectOpenDialogLaunchResult::Unavailable:
+                    return ProjectOpenPickerResult::Unavailable;
+                }
+                return ProjectOpenPickerResult::Unavailable;
+              },
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .toggle_sidebar = [this]() { ToggleSidebar(); },
           .close_sidebar = [this]() { CloseSidebar(); },

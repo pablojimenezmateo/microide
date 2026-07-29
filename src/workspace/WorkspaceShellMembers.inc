@@ -581,6 +581,14 @@
                                                   const char* const* filelist,
                                                   int filter);
   void ConsumePendingProjectOpenDialogResult();
+  // Native "Open File…" picker behind File > Open File… / Ctrl+O / the welcome
+  // screen's Open File action. Async in the same shape as the project picker: the
+  // result is staged under a mutex and consumed on the shared dialog wake event.
+  ProjectOpenDialogLaunchResult OpenNativeFilePicker(std::string* error_message = nullptr);
+  static void SDLCALL OnOpenFileDialogComplete(void* userdata,
+                                               const char* const* filelist,
+                                               int filter);
+  void ConsumePendingOpenFileDialogResult();
   // Native "Choose font file…" picker for a font-family setting row. Async: mirrors
   // the project picker (result staged under a mutex, consumed on the shared dialog
   // wake event + frame prep). On success writes the chosen .ttf/.otf path into the
@@ -2145,6 +2153,7 @@
   std::function<bool(const std::filesystem::path&)> file_manager_opener_;
   SDL_Window* dialog_window_ = nullptr;
   ProjectDialogState project_dialog_state_;
+  OpenFileDialogState open_file_dialog_state_;
   FontFileDialogState font_file_dialog_state_;
   // Installed font families for the settings font picker, enumerated lazily on the
   // first picker open (scanning the system is not cheap) and reused thereafter.

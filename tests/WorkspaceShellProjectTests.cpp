@@ -1667,6 +1667,46 @@ void TestWorkspaceShellWheelStepMatchesEditorAcrossSurfaces() {
          "one wheel tick should advance the sidebar by the shared row step");
 }
 
+// File > Open File… (and its Ctrl+O accelerator, and the welcome screen's Open File
+// action) opens the native file picker. All three used to funnel into a bare `open`
+// with no arguments, which the executor rejected with "open requires a path" — so the
+// menu entry's ellipsis, the welcome button and the advertised shortcut were dead
+// ends, while `project-open` had had a working picker all along.
+void TestWorkspaceShellCtrlOOpensNativeFilePicker() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path picked = root / "picked.cpp";
+  WriteFile(picked, "int main() {}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  std::filesystem::path requested_default;
+  int launch_count = 0;
+  WorkspaceShellTestAccess::SetOpenFileDialogLauncher(
+      shell, [&](WorkspaceShell&, const std::filesystem::path& default_location) {
+        ++launch_count;
+        requested_default = default_location.lexically_normal();
+        return true;
+      });
+
+  Expect(SendKeyDown(shell, SDLK_O, SDL_KMOD_CTRL), "Ctrl+O should be bound");
+  Expect(launch_count == 1, "Ctrl+O should launch the native file picker exactly once");
+  Expect(requested_default == root.lexically_normal(),
+         "the picker should open at the project root");
+  Expect(WorkspaceShellTestAccess::OpenFileDialogActive(shell),
+         "the file picker should be marked active while waiting for a selection");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).empty(),
+         "launching the picker should not open a tab on its own");
+
+  WorkspaceShellTestAccess::QueueOpenFileDialogSelection(shell, picked);
+  WorkspaceShellTestAccess::ConsumePendingOpenFileDialogResult(shell);
+
+  Expect(!WorkspaceShellTestAccess::OpenFileDialogActive(shell),
+         "the file picker should clear its active state after a selection");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 1,
+         "the picked file should open as an editor tab");
+}
+
 // The file tree answers Page/Home/End like every other sidebar list. It used to
 // support arrows only, so a large tree could be walked one row at a time.
 void TestWorkspaceShellTreeSidebarSupportsPageAndHomeEndKeys() {
@@ -4521,6 +4561,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus);
   AddTest(tests, "WorkspaceShell/TreeCollapseAllowsOpenDescendantsAndReselectReveal",
           TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal);
+  AddTest(tests, "WorkspaceShell/CtrlOOpensNativeFilePicker",
+          TestWorkspaceShellCtrlOOpensNativeFilePicker);
   AddTest(tests, "WorkspaceShell/TreeSidebarSupportsPageAndHomeEndKeys",
           TestWorkspaceShellTreeSidebarSupportsPageAndHomeEndKeys);
   AddTest(tests, "WorkspaceShell/CtrlTabCyclesEveryVisibleSurface",

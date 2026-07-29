@@ -226,8 +226,14 @@ void TestArchitectureFileSizes() {
              // workspace/TerminalFindService. -1 as RenderFindWidget lost its unused
              // layout/overlay parameters and now takes the find view model alone, so
              // the bottom panel can reuse it.
+             // 1694: +6 for the native "Open File…" picker (OpenNativeFilePicker,
+             // its SDL completion callback across three lines, and
+             // ConsumePendingOpenFileDialogResult) plus its OpenFileDialogState
+             // member. It mirrors the project picker exactly; File > Open File…,
+             // Ctrl+O and the welcome screen's Open File action all needed a real
+             // dialog instead of the "open requires a path" rejection they hit.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1688);
+                                                     1694);
            });
 
   AssertRuleResultsPass(results);

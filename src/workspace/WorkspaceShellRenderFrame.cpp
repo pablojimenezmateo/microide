@@ -290,6 +290,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   util::PerformanceTrace::Scope trace_scope("WorkspaceShell::PrepareFrameOnce");
   util::AddPerformanceCounter(util::PerfCounterId::FramePrepareCalls);
   ConsumePendingProjectOpenDialogResult();
+  ConsumePendingOpenFileDialogResult();
   ConsumePendingFontFileDialogResult();
   ConsumeProjectSearchUpdates();
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);

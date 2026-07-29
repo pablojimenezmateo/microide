@@ -325,6 +325,12 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
         if (event.key == SDLK_J) {
           return operations_.execute_action(ActionId::UnfoldAll, {}, ActionSource::Shortcut);
         }
+        if (event.key == SDLK_O) {
+          // File > Open Folder / Project Tab… advertises Ctrl+K Ctrl+O (VS Code's
+          // chord for the same command); the leader handler used to implement only
+          // the two fold sequences, so the advertised chord did nothing.
+          return operations_.execute_action(ActionId::ProjectOpen, {}, ActionSource::Shortcut);
+        }
       }
     }
   } else if (editor_chord_allowed && event.key == SDLK_K &&

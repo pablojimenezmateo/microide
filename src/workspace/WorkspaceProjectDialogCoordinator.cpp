@@ -109,6 +109,103 @@ void WorkspaceShell::ConsumePendingProjectOpenDialogResult() {
   OpenProjectTab(pending.selected_path, true, true);
 }
 
+WorkspaceShell::ProjectOpenDialogLaunchResult WorkspaceShell::OpenNativeFilePicker(
+    std::string* error_message) {
+  if (open_file_dialog_state_.active) {
+    if (error_message != nullptr) {
+      *error_message = "File picker already open";
+    }
+    return ProjectOpenDialogLaunchResult::AlreadyOpen;
+  }
+
+  // Open where the user is working: the project root, falling back to the process
+  // working directory when no project is open (the picker is reachable from the
+  // cold-start welcome screen too).
+  std::error_code error;
+  const std::filesystem::path default_location =
+      context_.current_project_state.root.empty() ? std::filesystem::current_path(error)
+                                                  : context_.current_project_state.root;
+  const std::filesystem::path normalized_default =
+      error ? std::filesystem::path{} : default_location.lexically_normal();
+
+  open_file_dialog_state_.active = true;
+  if (open_file_dialog_state_.launcher) {
+    if (!open_file_dialog_state_.launcher(*this, normalized_default)) {
+      open_file_dialog_state_.active = false;
+      if (error_message != nullptr) {
+        *error_message = "Native dialog backend unavailable";
+      }
+      return ProjectOpenDialogLaunchResult::Unavailable;
+    }
+    return ProjectOpenDialogLaunchResult::Launched;
+  }
+
+  const std::string default_location_string = normalized_default.string();
+  SDL_ClearError();
+  SDL_ShowOpenFileDialog(&WorkspaceShell::OnOpenFileDialogComplete, this, dialog_window_,
+                         /*filters=*/nullptr, /*nfilters=*/0,
+                         default_location_string.empty() ? nullptr
+                                                         : default_location_string.c_str(),
+                         /*allow_many=*/false);
+  const std::string dialog_error = SDL_GetError();
+  if (!dialog_error.empty()) {
+    open_file_dialog_state_.active = false;
+    if (error_message != nullptr) {
+      *error_message = dialog_error;
+    }
+    return ProjectOpenDialogLaunchResult::Unavailable;
+  }
+
+  return ProjectOpenDialogLaunchResult::Launched;
+}
+
+void SDLCALL WorkspaceShell::OnOpenFileDialogComplete(void* userdata,
+                                                      const char* const* filelist,
+                                                      int /*filter*/) {
+  auto* shell = static_cast<WorkspaceShell*>(userdata);
+  if (shell == nullptr) {
+    return;
+  }
+
+  PendingOpenFileDialogResult pending;
+  pending.ready = true;
+  if (filelist == nullptr) {
+    pending.error_message = SDL_GetError();
+  } else if (filelist[0] == nullptr) {
+    pending.cancelled = true;
+  } else {
+    pending.selected_path = std::filesystem::path(filelist[0]).lexically_normal();
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(shell->open_file_dialog_state_.mutex);
+    shell->open_file_dialog_state_.pending_result = std::move(pending);
+  }
+
+  // Shared dialog wake event — see OnFontFileDialogComplete: every dialog consumer
+  // runs off it and is an idempotent no-op when its own result is not ready.
+  util::PushSdlWake(shell->project_open_dialog_event_type_);
+}
+
+void WorkspaceShell::ConsumePendingOpenFileDialogResult() {
+  PendingOpenFileDialogResult pending;
+  {
+    std::lock_guard<std::mutex> lock(open_file_dialog_state_.mutex);
+    if (!open_file_dialog_state_.pending_result.ready) {
+      return;
+    }
+    pending = std::move(open_file_dialog_state_.pending_result);
+    open_file_dialog_state_.pending_result = PendingOpenFileDialogResult{};
+  }
+
+  open_file_dialog_state_.active = false;
+  if (!pending.error_message.empty() || pending.cancelled || pending.selected_path.empty()) {
+    return;
+  }
+
+  OpenFile(pending.selected_path);
+}
+
 void WorkspaceShell::OpenNativeFontFilePicker(std::string setting_id) {
   if (font_file_dialog_state_.active) {
     return;

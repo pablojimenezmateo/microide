@@ -94,6 +94,10 @@ ProjectOpenPickerResult WorkspaceActionContext::OpenNativeProjectPicker() {
   return operations_.open_native_project_picker();
 }
 
+ProjectOpenPickerResult WorkspaceActionContext::OpenNativeFilePicker() {
+  return operations_.open_native_file_picker();
+}
+
 bool WorkspaceActionContext::SidebarVisible() const {
   return state_.sidebar.visible;
 }

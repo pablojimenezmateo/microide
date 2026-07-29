@@ -104,6 +104,18 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
       },
       KeybindingSpec{
+          // File > Open File… has advertised Ctrl+O since the menu was written; this
+          // is the binding that makes it true. A bare `open` opens the native picker.
+          .id = "open-file",
+          .action = ActionId::Open,
+          .key = SDLK_O,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
           .id = "sidebar-outline",
           .action = ActionId::SidebarShow,
           .key = SDLK_O,

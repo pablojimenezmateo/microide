@@ -553,6 +553,27 @@
   static void ConsumePendingProjectOpenDialogResult(WorkspaceShell& shell) {
     shell.ConsumePendingProjectOpenDialogResult();
   }
+  static void SetOpenFileDialogLauncher(
+      WorkspaceShell& shell,
+      std::function<bool(WorkspaceShell&, const std::filesystem::path&)> launcher) {
+    shell.open_file_dialog_state_.launcher = std::move(launcher);
+  }
+  static bool OpenFileDialogActive(const WorkspaceShell& shell) {
+    return shell.open_file_dialog_state_.active;
+  }
+  static void QueueOpenFileDialogSelection(WorkspaceShell& shell,
+                                           const std::filesystem::path& path) {
+    std::lock_guard<std::mutex> lock(shell.open_file_dialog_state_.mutex);
+    shell.open_file_dialog_state_.pending_result = microide::workspace::PendingOpenFileDialogResult{
+        .ready = true,
+        .cancelled = false,
+        .selected_path = path.lexically_normal(),
+        .error_message = {},
+    };
+  }
+  static void ConsumePendingOpenFileDialogResult(WorkspaceShell& shell) {
+    shell.ConsumePendingOpenFileDialogResult();
+  }
   static bool SwitchProject(WorkspaceShell& shell,
                             std::size_t index,
                             bool log_feedback = false) {

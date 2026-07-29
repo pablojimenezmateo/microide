@@ -58,6 +58,7 @@ class WorkspaceActionContext {
     std::function<void(std::size_t)> request_close_project;
     std::function<bool(std::size_t, bool)> switch_project;
     std::function<ProjectOpenPickerResult()> open_native_project_picker;
+    std::function<ProjectOpenPickerResult()> open_native_file_picker;
     std::function<SidebarMode()> active_sidebar_mode;
     std::function<void()> toggle_sidebar;
     std::function<void()> close_sidebar;
@@ -308,6 +309,7 @@ class WorkspaceActionContext {
   void RequestCloseProject(std::size_t index);
   bool SwitchProject(std::size_t index, bool log_feedback);
   ProjectOpenPickerResult OpenNativeProjectPicker();
+  ProjectOpenPickerResult OpenNativeFilePicker();
 
   bool SidebarVisible() const;
   bool SidebarTemporary() const;
