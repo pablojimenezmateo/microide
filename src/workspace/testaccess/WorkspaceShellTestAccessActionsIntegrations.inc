@@ -159,6 +159,14 @@
   static std::filesystem::path TreeContextMenuPath(const WorkspaceShell& shell) {
     return shell.context_.menu_state.tree_context_menu.path;
   }
+  static int TreeContextMenuActiveItemIndex(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.tree_context_menu.active_item_index;
+  }
+  // Count of items the keyboard can land on (separators are skipped by the mover
+  // but still occupy an index, so this is the raw item count).
+  static std::size_t TreeContextMenuItemCount(TreeContextTargetKind target) {
+    return WorkspaceTreeContextMenuItems(target).size();
+  }
   static std::vector<std::string> TreeContextMenuLabels(const WorkspaceShell& shell,
                                                         TreeContextTargetKind target) {
     std::vector<std::string> labels;

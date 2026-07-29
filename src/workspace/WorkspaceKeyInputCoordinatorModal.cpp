@@ -60,6 +60,20 @@ bool KeyInputCoordinator::HandleTreeContextMenuKeyDown(const SDL_KeyboardEvent& 
       menu_state_.tree_context_menu.active_item_index = operations_.next_enabled_tree_context_menu_item_index(
           menu_state_.tree_context_menu.active_item_index, -1);
       return true;
+    // Home/End were the two keys the menus did not answer, in a shell where every
+    // other list does. They cannot go through ListNavigationKeyDelta: that resolver
+    // expresses them as a ±count delta, which lands on the ends only for a mover
+    // that clamps — this one wraps, so ±count is a full lap back to where it
+    // started. Stepping once from "no selection" is the primitive's own way of
+    // naming the first/last enabled item, skipping separators and disabled rows.
+    case SDLK_HOME:
+      menu_state_.tree_context_menu.active_item_index =
+          operations_.next_enabled_tree_context_menu_item_index(-1, 1);
+      return true;
+    case SDLK_END:
+      menu_state_.tree_context_menu.active_item_index =
+          operations_.next_enabled_tree_context_menu_item_index(-1, -1);
+      return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       if (menu_state_.tree_context_menu.active_item_index >= 0) {
@@ -88,6 +102,12 @@ bool KeyInputCoordinator::HandleMenuBarKeyDown(const SDL_KeyboardEvent& event,
       return operations_.move_active_menu_item(1);
     case SDLK_UP:
       return operations_.move_active_menu_item(-1);
+    // See the tree context menu above for why these step from "no selection"
+    // rather than by a ±count delta.
+    case SDLK_HOME:
+    case SDLK_END:
+      menu_state_.active_menu_item_index = -1;
+      return operations_.move_active_menu_item(event.key == SDLK_HOME ? 1 : -1);
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       if (menu_state_.active_menu_item_index >= 0) {

@@ -914,9 +914,51 @@ void TestWorkspaceShellSearchResultRightClickOpensRowMenu() {
          "Reveal should select the hit's file in the tree");
 }
 
+// The context menu was the last list in the shell that answered Up/Down and
+// nothing else. Home/End cannot go through ListNavigationKeyDelta here — that
+// resolver expresses them as a ±count delta, which lands on the ends only for a
+// mover that clamps, and this one wraps.
+void TestWorkspaceShellContextMenuAnswersHomeAndEnd() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "alpha.cpp";
+  WriteFile(source, "int alpha() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+
+  const SDL_FRect result_rect = WorkspaceShellTestAccess::ProjectSearchResultRect(shell, 0);
+  Expect(SendMouseDown(shell, result_rect.x + result_rect.w * 0.5f,
+                       result_rect.y + result_rect.h * 0.5f, SDL_BUTTON_RIGHT),
+         "right-clicking a search hit should open the row menu");
+  const std::size_t item_count = WorkspaceShellTestAccess::TreeContextMenuItemCount(
+      microide::workspace::TreeContextTargetKind::ResultRow);
+  Expect(item_count > 2, "the row menu should have several items");
+
+  Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE), "End should be consumed by the menu");
+  const int last = WorkspaceShellTestAccess::TreeContextMenuActiveItemIndex(shell);
+  Expect(last == static_cast<int>(item_count) - 1,
+         "End should activate the last item in the menu");
+
+  Expect(SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE), "Home should be consumed by the menu");
+  Expect(WorkspaceShellTestAccess::TreeContextMenuActiveItemIndex(shell) == 0,
+         "Home should activate the first item in the menu");
+
+  // Down from the first item still walks one step, so Home/End did not replace
+  // the existing contract.
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE), "Down should be consumed by the menu");
+  Expect(WorkspaceShellTestAccess::TreeContextMenuActiveItemIndex(shell) > 0,
+         "Down should still advance one item from the top");
+}
+
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/SearchSidebarEscapeCancelsEditBeforeClosing",
           TestWorkspaceShellSearchSidebarEscapeCancelsEditBeforeClosing);
+  AddTest(tests, "WorkspaceShell/ContextMenuAnswersHomeAndEnd",
+          TestWorkspaceShellContextMenuAnswersHomeAndEnd);
   AddTest(tests, "WorkspaceShell/SearchResultRightClickOpensRowMenu",
           TestWorkspaceShellSearchResultRightClickOpensRowMenu);
   AddTest(tests, "WorkspaceShell/BufferRegexReplaceAll",
