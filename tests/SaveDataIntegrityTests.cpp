@@ -19,6 +19,7 @@ namespace microide::tests {
 namespace {
 
 using microide::editor::TextViewport;
+namespace util = microide::util;
 using microide::util::WriteTextFileAtomically;
 
 #if !defined(_WIN32)
@@ -48,17 +49,40 @@ std::pair<ino_t, nlink_t> PosixInodeAndLinks(const std::filesystem::path& path) 
 #endif
 
 // No directory entry beside `path` should be a leftover staging temp once a save
-// settles. The staging name is "<file>.tmp.<pid>.<seq>" — note the trailing dot, so a
-// stray exact "<file>.tmp" sibling used as a decoy elsewhere is intentionally excluded.
+// settles. Asks the generator's own predicate rather than re-spelling the naming
+// scheme here: this helper previously hardcoded "<file>.tmp." and would have gone
+// silently vacuous the moment the staging name changed.
 bool NoStagingTempLeftBehind(const std::filesystem::path& path) {
-  const std::string stem = path.filename().string() + ".tmp.";
   std::error_code error;
   for (const auto& entry : std::filesystem::directory_iterator(path.parent_path(), error)) {
-    if (entry.path().filename().string().rfind(stem, 0) == 0) {
+    if (util::IsTemporaryStagingFilename(entry.path().filename().string())) {
       return false;
     }
   }
   return true;
+}
+
+// The generator and the predicate must agree — the file index's staging filter and
+// this suite's leftover check both go through the predicate, so a naming change that
+// the predicate did not follow would hide staging files from every check at once.
+void TestStagingTempNameIsRecognizedByItsOwnPredicate() {
+  const std::filesystem::path target = std::filesystem::path("/tmp/project") / "main.cpp";
+  const std::filesystem::path staging = util::UniqueTemporaryPath(target);
+  Expect(staging.parent_path() == target.parent_path(),
+         "the staging temp must sit beside its target so the rename stays atomic");
+  Expect(util::IsTemporaryStagingFilename(staging.filename().string()),
+         "UniqueTemporaryPath output must be recognized by IsTemporaryStagingFilename");
+  Expect(staging.filename().string().front() == '.',
+         "the staging temp must be hidden so the default file index skips it");
+  Expect(util::UniqueTemporaryPath(target) != staging,
+         "two staging paths for the same target must be distinct");
+
+  // False-positive control: ordinary project files that merely look temp-ish.
+  for (const char* name : {"build.tmp.json", "notes.tmp", ".gitignore", "main.cpp",
+                           ".microide-staging"}) {
+    Expect(!util::IsTemporaryStagingFilename(name),
+           "an ordinary project file must not be mistaken for a staging temp");
+  }
 }
 
 // A2/A3: the atomic writer stages to a unique per-write temp, so a pre-existing file
@@ -527,6 +551,8 @@ void TestAtomicWriteSupportsRelativeFilenameInCurrentDirectory() {
 }  // namespace
 
 void RegisterSaveDataIntegrityTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "SaveDataIntegrity/StagingTempNameIsRecognizedByItsOwnPredicate",
+          TestStagingTempNameIsRecognizedByItsOwnPredicate);
   AddTest(tests, "SaveDataIntegrity/AtomicWriteRefusesDirectoryDestination",
           TestAtomicWriteRefusesDirectoryDestination);
   AddTest(tests, "SaveDataIntegrity/RenameReplacingRefusesDirectoryDestination",

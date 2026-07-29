@@ -9,6 +9,7 @@
 
 #include "platform/HostPlatform.h"
 #include "project/ProjectFileScanner.h"
+#include "util/DurableFile.h"
 #include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 
@@ -351,6 +352,10 @@ bool FileIndex::IsGitMetadataRelativePath(const std::filesystem::path& path) {
   return false;
 }
 
+bool FileIndex::IsTemporaryStagingRelativePath(const std::filesystem::path& path) {
+  return util::IsTemporaryStagingFilename(path.filename().string());
+}
+
 bool FileIndex::LessProjectPath(const ProjectFile& lhs, const std::filesystem::path& rhs) {
   return lhs.relative_path.native() < rhs.native();
 }
@@ -424,6 +429,15 @@ void FileIndex::RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache)
   rebuilt->reserve(files_.size());
   for (const auto& file : files_) {
     if (mode == ProjectFileScanMode::ExcludeHidden && IsHiddenRelativePath(file.relative_path)) {
+      continue;
+    }
+    // Every document save stages a temp beside its target inside the project tree
+    // and renames it into place. A watcher batch that lands in that window would
+    // otherwise leave a phantom entry in the file finder and in the project-search
+    // candidate set until the next full rescan. Filtered here (rather than only at
+    // the batch sites) so the full-scan path is covered too, and in both modes so
+    // "include hidden files" does not expose them either.
+    if (IsTemporaryStagingRelativePath(file.relative_path)) {
       continue;
     }
     rebuilt->push_back(file.relative_path);

@@ -130,11 +130,23 @@ std::filesystem::path UniqueTemporaryPath(const std::filesystem::path& path) {
 #else
   const long long pid = static_cast<long long>(::getpid());
 #endif
-  std::string suffix = ".tmp.";
-  suffix += std::to_string(pid);
-  suffix += '.';
-  suffix += std::to_string(seq);
-  return path.string() + suffix;
+  // Leading dot + a distinctive marker. The staging file lives INSIDE the project
+  // tree for the duration of a save, so anything that walks the tree can observe
+  // it: the dot makes it hidden (the file index already excludes hidden paths) and
+  // the marker lets IsTemporaryStagingFilename recognise it even when the user has
+  // asked to include hidden files.
+  std::string name(".");
+  name += path.filename().string();
+  name += kTemporaryStagingMarker;
+  name += std::to_string(pid);
+  name += '.';
+  name += std::to_string(seq);
+  return path.parent_path() / name;
+}
+
+bool IsTemporaryStagingFilename(std::string_view filename) {
+  return filename.starts_with('.') &&
+         filename.find(kTemporaryStagingMarker) != std::string_view::npos;
 }
 
 FilePermissions CaptureFilePermissions(const std::filesystem::path& path) {

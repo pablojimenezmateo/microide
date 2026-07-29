@@ -120,6 +120,11 @@ class FileIndex {
   static std::size_t CacheIndex(ProjectFileScanMode mode);
   static bool IsGitMetadataRelativePath(const std::filesystem::path& path);
   static bool IsHiddenRelativePath(const std::filesystem::path& path);
+  // True for an in-flight atomic-write staging temp (util::UniqueTemporaryPath).
+  // Excluded from every snapshot in both scan modes: it exists only between a
+  // save's write and its rename, so surfacing it in the finder or the search
+  // candidate set only ever shows the user a file that is already gone.
+  static bool IsTemporaryStagingRelativePath(const std::filesystem::path& path);
   static bool LessProjectPath(const ProjectFile& lhs, const std::filesystem::path& rhs);
   static bool LessProjectFile(const ProjectFile& lhs, const ProjectFile& rhs);
   static ProjectFile ToProjectFile(const platform::IndexFileEntry& entry);

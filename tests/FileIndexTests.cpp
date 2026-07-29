@@ -1,7 +1,9 @@
 #include "TestSupport.h"
 
 #include "project/FileIndex.h"
+#include "util/DurableFile.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -318,7 +320,43 @@ void TestFileIndexReplaceScannedFilesCarriesTruncation() {
   Expect(!index.scan_status().incomplete(), "a complete rescan clears every cause");
 }
 
+// Every document save stages `.＜name＞.microide-staging.<pid>.<seq>` beside its
+// target inside the project tree and renames it into place. A watcher batch that
+// lands inside that window used to leave the staging path in the index, so it
+// showed up in the Ctrl+P file finder and in the project-search candidate set
+// until the next full rescan (it also made the replace-all read-count test flaky,
+// ~12% of runs). Both scan modes must filter it — "include hidden files" too,
+// since the leading dot alone only covers the default mode.
+void TestFileIndexHidesAtomicWriteStagingFiles() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred),
+         "staging-filter fixture should initialize the file index root");
+
+  const std::filesystem::path staging =
+      microide::util::UniqueTemporaryPath(root / "main.cpp").filename();
+  IndexUpdateBatch batch;
+  batch.is_initial = true;
+  batch.changes.push_back(MakeCreateChange("main.cpp", 10));
+  batch.changes.push_back(MakeCreateChange(staging, 10));
+  Expect(index.ApplyBatch(batch), "the batch should populate the index");
+
+  for (const ProjectFileScanMode mode :
+       {ProjectFileScanMode::ExcludeHidden, ProjectFileScanMode::IncludeHidden}) {
+    const auto paths = index.SnapshotPaths(mode);
+    Expect(std::find(paths.begin(), paths.end(), staging) == paths.end(),
+           "an in-flight staging temp must never appear in a file index snapshot");
+    Expect(std::find(paths.begin(), paths.end(), std::filesystem::path("main.cpp")) != paths.end(),
+           "the real file beside the staging temp must still be indexed");
+  }
+}
+
 void RegisterFileIndexTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileIndex/HidesAtomicWriteStagingFiles",
+          TestFileIndexHidesAtomicWriteStagingFiles);
   AddTest(tests, "FileIndex/ReplaceScannedFilesCarriesTruncation",
           TestFileIndexReplaceScannedFilesCarriesTruncation);
   AddTest(tests, "FileIndex/MovePreservesFollowSymlinksFlag",

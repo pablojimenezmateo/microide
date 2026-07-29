@@ -27,14 +27,30 @@ bool WriteFileBytesDurable(const std::filesystem::path& path, std::span<const st
 // success.
 bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::path& to);
 
-// Per-process, per-call unique staging path for `path` (`path` + ".tmp.<pid>.<seq>").
+// Marks a file as an in-flight atomic-write staging temp. Kept distinctive (rather
+// than a bare ".tmp") because ordinary project files are called things like
+// `build.tmp.json`, and mistaking one for staging would hide it from the finder.
+inline constexpr std::string_view kTemporaryStagingMarker = ".microide-staging.";
+
+// Per-process, per-call unique staging path beside `path`, named
+// ".<filename>.microide-staging.<pid>.<seq>".
+//
 // A fixed shared ".tmp" lets two instances writing the same file corrupt each other:
 // one process's O_TRUNC zeroes the other's in-flight temp. A unique suffix keeps each
 // writer's staging file private up to the final atomic rename, degrading concurrent
-// writers to harmless last-writer-wins instead of a truncated/partial file. Callers
-// that must survive the process dying mid-write should place the temp beside the final
-// destination (same directory) so the rename stays atomic on the same filesystem.
+// writers to harmless last-writer-wins instead of a truncated/partial file. The temp
+// sits in the target's directory so the rename stays atomic on one filesystem.
+//
+// That also means it briefly exists INSIDE the project tree on every document save.
+// The leading dot keeps it out of the default (hidden-excluding) file index, and
+// IsTemporaryStagingFilename below covers the include-hidden case; without both, a
+// save racing the file watcher could leave a phantom staging entry in the file
+// finder and in the project-search candidate set until the next full rescan.
 std::filesystem::path UniqueTemporaryPath(const std::filesystem::path& path);
+
+// True for a filename produced by UniqueTemporaryPath. Lives next to the generator
+// so the naming and the filtering cannot drift apart.
+bool IsTemporaryStagingFilename(std::string_view filename);
 
 // POSIX permission + ownership snapshot of an existing file, used to carry a file's
 // mode/owner across an atomic save (which otherwise creates a fresh 0644 inode and
