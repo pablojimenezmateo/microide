@@ -208,6 +208,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::TabMove, "tabmove", "tabmove <n>", "Move Tab", ""},
       ActionSpec{ActionId::TabSwitch, "tabswitch", "tabswitch <tab|+n|-n>", "Switch Tab", ""},
       ActionSpec{ActionId::Term, "term", "term [command]", "New Terminal", ""},
+      ActionSpec{ActionId::TermClose, "term-close", "term-close", "Close Terminal", ""},
       ActionSpec{ActionId::TestsDiscover, "tests-discover", "tests-discover",
                  "Discover Tests", ""},
       ActionSpec{ActionId::TestsRun, "tests-run", "tests-run [test-id...]", "Run Tests", ""},

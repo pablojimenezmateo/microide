@@ -96,6 +96,7 @@ class WorkspaceActionContext {
     // and scroll it into view. Returns whether a matching row was found.
     std::function<bool(const std::filesystem::path&)> reveal_path_in_tree;
     std::function<void(std::string)> open_terminal;
+    std::function<bool()> close_active_terminal;
     // Opens/refocuses the terminal find bar; false when no terminal is showing.
     std::function<bool(std::string)> open_terminal_find;
     std::function<void(OverlayMode)> show_overlay;
@@ -361,6 +362,9 @@ class WorkspaceActionContext {
   bool RevealPathInTree(const std::filesystem::path& path) const;
 
   void OpenTerminal(std::string command);
+  // Closes the active terminal tab. False when there is none — the terminal
+  // strip was the one tab strip whose tabs could only be closed by mouse.
+  bool CloseActiveTerminal();
   bool OpenTerminalFind(std::string query);
   void ShowFileFinderWithQuery(std::string query);
   void ShowFileFinder();

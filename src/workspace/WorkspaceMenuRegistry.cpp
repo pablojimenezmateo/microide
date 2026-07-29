@@ -215,6 +215,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   static const auto kTerminalItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Term, "New Terminal"),
       MenuItem(ActionId::CopyLastTerminalCommand, "Copy Last Command"),
+      MenuItem(ActionId::TermClose, "Close Terminal"),
   });
   static const auto kDebugItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::DebugToggleEnabled, "Enable Debugger", {}, {}, 0, true),
@@ -271,6 +272,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   });
   static const auto kTerminalTabContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::CopyLastTerminalCommand),
+      MenuSeparator(),
+      MenuItem(ActionId::TermClose, "Close Terminal"),
   });
   static const auto kProjectTabContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::ProjectCopyAbsolutePath, "Copy Absolute Path"),

@@ -110,6 +110,7 @@ enum class ActionId {
   TabMove,
   TabSwitch,
   Term,
+  TermClose,
   TestsDiscover,
   TestsRun,
   Tree,

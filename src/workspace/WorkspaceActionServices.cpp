@@ -282,6 +282,10 @@ void WorkspaceActionContext::OpenTerminal(std::string command) {
   operations_.open_terminal(std::move(command));
 }
 
+bool WorkspaceActionContext::CloseActiveTerminal() {
+  return operations_.close_active_terminal && operations_.close_active_terminal();
+}
+
 bool WorkspaceActionContext::OpenTerminalFind(std::string query) {
   return operations_.open_terminal_find(std::move(query));
 }

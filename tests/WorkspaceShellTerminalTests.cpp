@@ -1582,7 +1582,38 @@ void TestWorkspaceShellOutputPanelBodyClickFocusesThePanel() {
          "clicking the output panel body should focus the panel");
 }
 
+// Editor tabs close from the File menu, a context menu, Ctrl+W and the palette;
+// project tabs close from their context menu. Terminal tabs could only be closed
+// with the mouse — the ✕ or a middle click — with no command, no menu item and so
+// no keyboard route at all.
+void TestWorkspaceShellTerminalClosesFromTheCommandLine() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::AddTerminalTab(shell);
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 2,
+         "the close fixture should start with two terminals");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term-close"),
+         "term-close should close the active terminal");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 1,
+         "term-close should leave the other terminal open");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term-close"),
+         "term-close should close the last terminal too");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 0,
+         "term-close should close the last terminal");
+
+  // With nothing left to close the action reports rather than silently doing
+  // nothing, and the menu/palette entry greys out.
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term-close"),
+         "term-close should reject when there is no terminal");
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::TermClose),
+         "Close Terminal should be disabled with no terminal open");
+}
+
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/TerminalClosesFromTheCommandLine",
+          TestWorkspaceShellTerminalClosesFromTheCommandLine);
   AddTest(tests, "WorkspaceShell/OutputPanelIsKeyboardNavigable",
           TestWorkspaceShellOutputPanelIsKeyboardNavigable);
   AddTest(tests, "WorkspaceShell/OutputPanelBodyClickFocusesThePanel",

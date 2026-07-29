@@ -634,6 +634,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `tabmove <n>`
 - `tabswitch <tab|+n|-n>`
 - `term [command]`
+- `term-close`
 - `tests-discover`
 - `tests-run [test-id...]`
 - `tree [root]`

@@ -475,6 +475,15 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
                 return found;
               },
           .open_terminal = [this](std::string command) { OpenTerminal(std::move(command)); },
+          .close_active_terminal =
+              [this]() {
+                auto& state = context_.current_project_state;
+                if (state.active_terminal_tab() == nullptr) {
+                  return false;
+                }
+                CloseTerminalTab(state.active_terminal_tab_index);
+                return true;
+              },
           .open_terminal_find =
               [this](std::string query) {
                 // A seedless invocation preloads the terminal selection, matching
