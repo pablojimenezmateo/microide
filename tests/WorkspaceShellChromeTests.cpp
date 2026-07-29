@@ -1458,12 +1458,16 @@ void TestWorkspaceShellEditorTabContextMenuShowsAndExecutesPathActions() {
 }
 
 // The sidebar renderer dispatches on mode and ends in an unguarded `else` that
-// paints the file tree, so any mode without its own branch would silently render
-// the tree's rows under another view's header. Problems keeps its own entry list
-// and its own list layout rather than the plugin item surface the other secondary
-// views share, which makes it the mode most exposed to that fall-through. Pins
-// that it paints something of its own.
-void TestWorkspaceShellProblemsSidebarDoesNotPaintTheFileTree() {
+// paints the file tree, and for a long time neither Problems nor Tests had a branch
+// of its own: both fell through and painted the tree's rows under their own header,
+// while their hit-testing, keyboard and context menus acted on the entry list nobody
+// could see. Clicking what looked like a file in Problems jumped to a diagnostic.
+//
+// The earlier version of this test sampled the WHOLE sidebar rect, which the
+// mode-tab row alone makes differ between any two views — so it passed throughout.
+// It samples the list body only (from the first row down), which is the region the
+// fall-through actually corrupted.
+void TestWorkspaceShellSecondarySidebarsDoNotPaintTheFileTree() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
 #endif
@@ -1471,21 +1475,29 @@ void TestWorkspaceShellProblemsSidebarDoesNotPaintTheFileTree() {
 
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
-  WriteFile(root / "src" / "alpha.cpp", "int alpha() { return 1; }\n");
+  const std::filesystem::path source = root / "src" / "alpha.cpp";
+  WriteFile(source, "int alpha() { return 1; }\n");
   WriteFile(root / "src" / "beta.cpp", "int beta() { return 2; }\n");
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  const auto sidebar_pixels = [&]() {
+  // Sample from the secondary views' list origin down. Comparing two renders of the
+  // SAME view (before and after a diagnostic arrives) is what keeps this honest: the
+  // file tree's Collapse/Refresh row sits inside this window and its enabled state
+  // differs between views, so 866 pixels of button chrome were enough to satisfy a
+  // bare "Problems must not look like the tree" — which is how the fall-through
+  // survived a test written to catch it.
+  const auto body_pixels = [&]() {
     const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+    const float body_top = WorkspaceShellTestAccess::ProblemsSidebarRowRect(shell, 0).y;
     SoftwareCanvas canvas(1280, 720);
     shell.Render(canvas.renderer(), 1280, 720);
     SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
     Expect(pixels != nullptr, "the sidebar fixture should capture rendered pixels");
     std::vector<SDL_Color> sample;
-    for (int y = static_cast<int>(layout.sidebar.y);
+    for (int y = static_cast<int>(body_top);
          y < static_cast<int>(layout.sidebar.y + layout.sidebar.h); ++y) {
       for (int x = static_cast<int>(layout.sidebar.x);
            x < static_cast<int>(layout.sidebar.x + layout.sidebar.w); ++x) {
@@ -1508,13 +1520,37 @@ void TestWorkspaceShellProblemsSidebarDoesNotPaintTheFileTree() {
     return true;
   };
 
-  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
-  const std::vector<SDL_Color> tree_pixels = sidebar_pixels();
+  // The load-bearing assertion is not "Problems looks different from the tree" — any
+  // stray pixel of chrome satisfies that. It is "Problems reacts to a diagnostic". A
+  // view that paints the file tree cannot: its body is the same before and after.
   WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
-  const std::vector<SDL_Color> problems_pixels = sidebar_pixels();
+  const std::vector<SDL_Color> problems_empty = body_pixels();
 
-  Expect(!same(tree_pixels, problems_pixels),
-         "the Problems sidebar must not render the file tree's contents");
+  Expect(WorkspaceShellTestAccess::PublishDiagnostics(
+             shell, "diagnostics", source,
+             {microide::editor::Diagnostic{
+                 .range =
+                     microide::editor::SelectionRange{
+                         .start = microide::editor::TextPosition{.line = 0, .column = 0},
+                         .end = microide::editor::TextPosition{.line = 0, .column = 3},
+                     },
+                 .severity = microide::editor::DiagnosticSeverity::Error,
+                 .message = "problems row must be painted",
+             }}),
+         "the Problems fixture should publish one diagnostic");
+  Expect(WorkspaceShellTestAccess::RefreshProblemsSidebar(shell),
+         "the Problems sidebar should pick the published diagnostic up");
+  Expect(!WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).empty(),
+         "the Problems sidebar should hold an entry to paint");
+  Expect(!same(problems_empty, body_pixels()),
+         "the Problems sidebar must paint its own rows, not the file tree's");
+
+  // Same property for Tests, the other view that had no branch of its own.
+  WorkspaceShellTestAccess::ShowTestsSidebar(shell);
+  const std::vector<SDL_Color> tests_body = body_pixels();
+  WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
+  Expect(!same(tests_body, body_pixels()),
+         "the Tests and Problems sidebars must paint their own rows, not one shared tree");
 }
 
 // Call Hierarchy shipped as a command with no availability rule, no feature
@@ -2941,8 +2977,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard);
   AddTest(tests, "WorkspaceShell/ProjectTabTooltipDismissRetainedRedrawMatchesFullRender",
           TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender);
-  AddTest(tests, "WorkspaceShell/ProblemsSidebarDoesNotPaintTheFileTree",
-          TestWorkspaceShellProblemsSidebarDoesNotPaintTheFileTree);
+  AddTest(tests, "WorkspaceShell/SecondarySidebarsDoNotPaintTheFileTree",
+          TestWorkspaceShellSecondarySidebarsDoNotPaintTheFileTree);
   AddTest(tests, "WorkspaceShell/CallHierarchyIsGatedLikeItsSiblings",
           TestWorkspaceShellCallHierarchyIsGatedLikeItsSiblings);
   AddTest(tests, "WorkspaceShell/SettingsRowsLiftOnHover",

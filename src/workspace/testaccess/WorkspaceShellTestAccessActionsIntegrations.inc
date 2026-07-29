@@ -271,6 +271,7 @@
   }
   static void ShowTreeSidebar(WorkspaceShell& shell) { shell.ShowTreeSidebar(); }
   static void ShowProblemsSidebar(WorkspaceShell& shell) { shell.ShowProblemsSidebar(); }
+  static void ShowTestsSidebar(WorkspaceShell& shell) { shell.ShowTestsSidebar(); }
   static void ShowGitSidebar(WorkspaceShell& shell) { shell.ShowGitSidebar(); }
   static void MaybeRequestTreeGitBadgesAfterFirstPaint(WorkspaceShell& shell) {
     shell.MaybeRequestTreeGitBadgesAfterFirstPaint();

@@ -9,6 +9,7 @@
 #include "workspace/SidebarService.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePathMutationCoordinator.h"
+#include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceGitOutgoingBase.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
@@ -566,6 +567,18 @@ bool WorkspaceShell::RefreshTestsSidebarState() {
           break;
       }
     }
+    // "passed · src/foo_test.cpp:42" — composed here, not per paint.
+    std::string detail = status;
+    const std::string location =
+        RelativePathLabel(context_.current_project_state.root, item.file);
+    if (!location.empty()) {
+      detail += " \xC2\xB7 ";
+      detail += location;
+      if (item.line > 0) {
+        detail += ':';
+        detail += std::to_string(item.line);
+      }
+    }
     context_.current_project_state.sidebar.tests.entries.push_back(TestsSidebarEntry{
         .id = item.id,
         .label = item.label,
@@ -573,6 +586,7 @@ bool WorkspaceShell::RefreshTestsSidebarState() {
         .line = item.line,
         .parent_id = item.parent_id,
         .status = status,
+        .detail_label = std::move(detail),
     });
   }
 

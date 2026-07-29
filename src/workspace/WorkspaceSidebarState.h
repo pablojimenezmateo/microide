@@ -184,6 +184,10 @@ struct TestsSidebarEntry {
   int line = 0;
   std::string parent_id;
   std::string status;
+  // The row's right-hand column ("passed · src/foo_test.cpp:42"), built when the
+  // entry is refreshed rather than per paint, so the sidebar render path stays
+  // allocation-free. Mirrors ProblemsSidebarEntry::detail_label.
+  std::string detail_label;
 };
 
 struct TestsSidebarState {
