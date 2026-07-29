@@ -738,6 +738,27 @@
   static std::size_t SettingsOverlayRowCountInSelectedCategory(const WorkspaceShell& shell) {
     return shell.settings_overlay_service_.RowCountInSelectedCategory();
   }
+  // Row-list scroll model as the builder resolves it, for both modes. Help/About
+  // used to resolve its own inside the paint pass, so the painted scrollbar had no
+  // hit rect and the wheel bound came from whatever the last frame published.
+  static int SettingsOverlayMaxScroll(WorkspaceShell& shell) {
+    const auto layout = shell.CurrentWorkspaceLayout();
+    if (!layout.has_value()) {
+      return 0;
+    }
+    return RenderViewModelBuilder(shell.context_)
+        .BuildSettingsOverlay(*layout, shell.settings_overlay_service_, shell.text_renderer_)
+        .max_scroll;
+  }
+  static std::optional<ScrollbarGeometry> SettingsOverlayScrollbar(WorkspaceShell& shell) {
+    const auto layout = shell.CurrentWorkspaceLayout();
+    if (!layout.has_value()) {
+      return std::nullopt;
+    }
+    return RenderViewModelBuilder(shell.context_)
+        .BuildSettingsOverlay(*layout, shell.settings_overlay_service_, shell.text_renderer_)
+        .scrollbar;
+  }
   static void EnsureSettingsSelectionVisible(WorkspaceShell& shell) {
     shell.EnsureSettingsSelectionVisible();
   }

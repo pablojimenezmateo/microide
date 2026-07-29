@@ -55,81 +55,46 @@ void DrawFocusRing(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color colo
 }
 
 // Help / About is a two-column read-only list with word-wrapped detail and
-// whole-entry vertical scrolling. Returns the resolved max scroll so the caller
-// can feed the wheel handler. Kept a free function so the shell stays thin.
-int RenderHelpAboutRows(SDL_Renderer* renderer, const SettingsOverlayViewModel& vm,
-                        const render::TextRenderer& text_renderer, const render::Theme& theme) {
+// whole-entry vertical scrolling. Pure paint: the column geometry, the fitted
+// row count, the clamped scroll and the scrollbar all arrive on the view model,
+// so the wheel handler and the scrollbar grab share this pass's scroll model
+// instead of waiting for it to be published back out of paint.
+void RenderHelpAboutRows(SDL_Renderer* renderer, const SettingsOverlayViewModel& vm,
+                         const render::TextRenderer& text_renderer, const render::Theme& theme,
+                         bool scrollbar_active) {
   const float content_x = vm.rect.x + 18.0f;
-  const float content_right = vm.rect.x + vm.rect.w - 16.0f;
   const float line_height = text_renderer.LineHeight();
-  const float help_entry_gap = 6.0f;
-  const float help_inner_width = std::max(1.0f, content_right - content_x);
-  float label_col = 0.0f;
-  for (const HelpAboutRow& row : vm.help_rows) {
-    label_col = std::max(label_col, text_renderer.MeasureWidth(row.label));
-  }
-  label_col = std::clamp(label_col, 100.0f, help_inner_width * 0.40f);
-  const float column_gap = 16.0f;
-  const float detail_x = content_x + label_col + column_gap;
-  const float detail_width = std::max(40.0f, content_right - detail_x);
-
-  const auto help_entry_height = [&](std::string_view detail) {
-    int lines = 0;
-    text_renderer.ForEachWrappedLine(detail, detail_width, [&](std::string_view) { ++lines; });
-    return static_cast<float>(std::max(1, lines)) * line_height + help_entry_gap;
-  };
-
-  const float list_top = vm.rect.y + vm.header_rect.h + 10.0f;
-  const float list_bottom = vm.rect.y + vm.rect.h - 10.0f;
-  const float available_height = std::max(0.0f, list_bottom - list_top);
-  const int total_rows = static_cast<int>(vm.help_rows.size());
-  float accumulated = 0.0f;
-  int fit = 0;
-  for (int i = total_rows - 1; i >= 0; --i) {
-    accumulated += help_entry_height(vm.help_rows[static_cast<std::size_t>(i)].detail);
-    if (accumulated > available_height) {
-      break;
-    }
-    ++fit;
-  }
-  const int visible_rows = std::max(1, fit);
-  const int max_scroll = std::max(0, total_rows - visible_rows);
-  const int effective_scroll = std::clamp(vm.scroll_row, 0, max_scroll);
+  const float list_top = vm.help_list_rect.y;
+  const float list_bottom = vm.help_list_rect.y + vm.help_list_rect.h;
 
   float y = list_top;
   int entry_index = 0;
   for (const HelpAboutRow& row : vm.help_rows) {
-    if (entry_index++ < effective_scroll) {
+    if (entry_index++ < vm.scroll_row) {
       continue;
     }
     if (y + line_height > list_bottom) {
       break;
     }
-    const std::string label_text = text_renderer.TruncateToWidth(row.label, label_col);
-    text_renderer.DrawStringOn(renderer, content_x, y, theme.text_primary, theme.surface_background,
-                               label_text);
+    text_renderer.DrawStringOn(
+        renderer, content_x, y, theme.text_primary, theme.surface_background,
+        text_renderer.TruncateToWidthEphemeralView(row.label, vm.help_label_column));
     float detail_y = y;
-    text_renderer.ForEachWrappedLine(row.detail, detail_width, [&](std::string_view line) {
-      if (detail_y + line_height <= list_bottom) {
-        text_renderer.DrawStringOn(renderer, detail_x, detail_y, theme.text_muted,
-                                   theme.surface_background, line);
-      }
-      detail_y += line_height;
-    });
-    y = std::max(y + line_height, detail_y) + help_entry_gap;
+    text_renderer.ForEachWrappedLine(row.detail, vm.help_detail_width,
+                                     [&](std::string_view line) {
+                                       if (detail_y + line_height <= list_bottom) {
+                                         text_renderer.DrawStringOn(renderer, vm.help_detail_x,
+                                                                    detail_y, theme.text_muted,
+                                                                    theme.surface_background, line);
+                                       }
+                                       detail_y += line_height;
+                                     });
+    y = std::max(y + line_height, detail_y) + vm.help_entry_gap;
   }
 
-  if (max_scroll > 0) {
-    const float track_h = std::max(1.0f, list_bottom - list_top);
-    const SDL_FRect list_area = MakeRect(vm.rect.x, list_top, vm.rect.w, track_h);
-    if (const auto geometry = MakeVerticalScrollbarGeometry(
-            list_area, static_cast<float>(total_rows), static_cast<float>(visible_rows),
-            static_cast<float>(effective_scroll), false);
-        geometry.has_value()) {
-      DrawScrollbar(renderer, theme, geometry->track, geometry->thumb, false);
-    }
+  if (vm.scrollbar.has_value()) {
+    DrawScrollbar(renderer, theme, vm.scrollbar->track, vm.scrollbar->thumb, scrollbar_active);
   }
-  return max_scroll;
 }
 
 }  // namespace
@@ -154,7 +119,8 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
                               theme_.accent, theme_.chrome_background, vm.title);
 
   if (vm.mode == SettingsOverlayMode::HelpAbout) {
-    settings_overlay_max_scroll_row_ = RenderHelpAboutRows(renderer, vm, text_renderer_, theme_);
+    RenderHelpAboutRows(renderer, vm, text_renderer_, theme_,
+                        context_.interaction_state.drag_target == DragTarget::SettingsScrollbar);
     return;
   }
 

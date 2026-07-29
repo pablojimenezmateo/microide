@@ -66,6 +66,12 @@ class KeyInputCoordinator {
     std::function<void(int)> settings_cycle_focus;
     std::function<void(int)> settings_move_category;
     std::function<void(int)> settings_move_row;
+    // Item count of a pane, used to size the Home/End jump so the overlay lists
+    // answer the same navigation contract as every other list in the shell.
+    std::function<std::size_t(int)> settings_pane_item_count;
+    // Scrolls the row list by whole entries, clamped against the live layout.
+    // Help/About has no selection to move, so this is how it navigates.
+    std::function<void(int)> settings_scroll_rows;
     std::function<void(int)> settings_step_selected;
     std::function<void()> settings_toggle_or_activate_selected;
     std::function<void()> settings_reset_selected;
@@ -224,6 +230,16 @@ class KeyInputCoordinator {
   // index into a match vector (command palette, launch picker, completion, code
   // actions). The pickers with extra reveal side effects keep their own helpers.
   void MoveOverlayListSelection(std::size_t& selected_index, std::size_t item_count, int delta);
+  // Requests a redraw only when none is already pending. A member rather than a
+  // local lambda so the key handlers that live in their own translation units
+  // (settings, sidebar) coalesce redraws the same way HandleKeyDown does.
+  template <typename Fn>
+  void EnsureRedraw(Fn&& request_redraw) {
+    if (!operations_.has_pending_redraw()) {
+      request_redraw();
+    }
+  }
+  bool HandleSettingsOverlayKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleSidebarKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);

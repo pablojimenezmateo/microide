@@ -407,7 +407,18 @@ struct SettingsOverlayViewModel {
   std::string_view section_title;     // view into service-owned category label
   std::string_view section_subtitle;  // static blurb (empty for unknown categories)
   std::vector<SettingsRowViewModel> rows;  // rows of the selected category only
-  std::vector<HelpAboutRow> help_rows;     // unchanged Help/About path
+  std::vector<HelpAboutRow> help_rows;
+  // Help/About column geometry. The rest of its scroll model reuses the shared
+  // fields above (scroll_row / max_scroll / visible_rows / scrollbar), so the
+  // wheel handler, the scrollbar grab and the paint all read one source. It used
+  // to be resolved inside the render pass and published into a mutable shell
+  // member, which left the painted scrollbar with no hit rect and made wheel
+  // scrolling depend on a paint having already happened.
+  SDL_FRect help_list_rect{};
+  float help_label_column = 0.0f;
+  float help_detail_x = 0.0f;
+  float help_detail_width = 0.0f;
+  float help_entry_gap = 0.0f;
   SettingsPickerViewModel value_picker;    // font dropdown (visible while editing)
 };
 

@@ -1671,6 +1671,12 @@ constexpr float kSettingsCatRowH = 28.0f;
 constexpr float kSettingsRowPadTop = 6.0f;     // title baseline offset from row top
 constexpr float kSettingsRowPadBottom = 8.0f;  // gap below the last description line
 constexpr float kSettingsScrollbarMargin = 14.0f;
+// Help/About column metrics, moved here with the rest of its scroll model.
+constexpr float kSettingsHelpPadX = 18.0f;
+constexpr float kSettingsHelpPadRight = 16.0f;
+constexpr float kSettingsHelpPadY = 10.0f;
+constexpr float kSettingsHelpColumnGap = 16.0f;
+constexpr float kSettingsHelpEntryGap = 6.0f;
 constexpr float kSettingsBtnW = 24.0f;
 constexpr float kSettingsBtnH = 22.0f;
 constexpr float kSettingsValueSlotW = 100.0f;
@@ -1736,6 +1742,53 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   if (vm.mode == SettingsOverlayMode::HelpAbout) {
     vm.title = "Help / About";
     vm.help_rows = service.HelpRows();
+
+    // Two read-only columns with a word-wrapped detail, scrolled a whole entry at
+    // a time. The label column sizes to the widest label, bounded so a long one
+    // cannot starve the detail column.
+    const float content_x = vm.rect.x + kSettingsHelpPadX;
+    const float content_right = vm.rect.x + vm.rect.w - kSettingsHelpPadRight;
+    const float inner_width = std::max(1.0f, content_right - content_x);
+    float label_column = 0.0f;
+    for (const HelpAboutRow& row : vm.help_rows) {
+      label_column = std::max(label_column, text_renderer.MeasureWidth(row.label));
+    }
+    vm.help_label_column = std::clamp(label_column, 100.0f, inner_width * 0.40f);
+    vm.help_detail_x = content_x + vm.help_label_column + kSettingsHelpColumnGap;
+    vm.help_detail_width = std::max(40.0f, content_right - vm.help_detail_x);
+    vm.help_entry_gap = kSettingsHelpEntryGap;
+
+    const float list_top = vm.rect.y + vm.header_rect.h + kSettingsHelpPadY;
+    const float list_bottom = vm.rect.y + vm.rect.h - kSettingsHelpPadY;
+    const float available_height = std::max(0.0f, list_bottom - list_top);
+    vm.help_list_rect = MakeRect(vm.rect.x, list_top, vm.rect.w, std::max(1.0f, available_height));
+
+    // Entries are variable-height, so the count that fits is measured from the
+    // bottom up: that is exactly the window shown at max scroll.
+    const float line_height = text_renderer.LineHeight();
+    const int total_rows = static_cast<int>(vm.help_rows.size());
+    float accumulated = 0.0f;
+    int fit = 0;
+    for (int i = total_rows - 1; i >= 0; --i) {
+      int wrapped_lines = 0;
+      text_renderer.ForEachWrappedLine(vm.help_rows[static_cast<std::size_t>(i)].detail,
+                                       vm.help_detail_width,
+                                       [&](std::string_view) { ++wrapped_lines; });
+      accumulated +=
+          static_cast<float>(std::max(1, wrapped_lines)) * line_height + vm.help_entry_gap;
+      if (accumulated > available_height) {
+        break;
+      }
+      ++fit;
+    }
+    vm.visible_rows = std::max(1, fit);
+    vm.max_scroll = std::max(0, total_rows - vm.visible_rows);
+    vm.scroll_row = std::clamp(vm.scroll_row, 0, vm.max_scroll);
+    if (vm.max_scroll > 0) {
+      vm.scrollbar = MakeVerticalScrollbarGeometry(
+          vm.help_list_rect, static_cast<float>(total_rows),
+          static_cast<float>(vm.visible_rows), static_cast<float>(vm.scroll_row), false);
+    }
     return vm;
   }
 

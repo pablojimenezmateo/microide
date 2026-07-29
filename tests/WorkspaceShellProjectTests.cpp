@@ -2430,6 +2430,46 @@ void TestWorkspaceShellSettingsOverlayWheelScrolls() {
          "scrolling up should reduce the settings scroll row");
 }
 
+// Help/About is read-only *content*, which is not the same as inert chrome. It is a
+// scrollable list, so it must answer the shared Up/Down/Page/Home/End contract and
+// its painted scrollbar must be grabbable. Until 2026-07-29 the overlay swallowed
+// every key but Escape, and the scrollbar had no hit rect at all because the render
+// pass resolved the scroll model and published it into a mutable shell member.
+void TestWorkspaceShellHelpAboutIsKeyboardAndScrollbarNavigable() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenHelpAboutOverlay(shell);
+  const int max_scroll = WorkspaceShellTestAccess::SettingsOverlayMaxScroll(shell);
+  Expect(max_scroll > microide::workspace::kListPageStep,
+         "help/about should overflow the fixture window by more than one page");
+
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE), "Down should be consumed by help/about");
+  Expect(WorkspaceShellTestAccess::SettingsOverlayScrollRow(shell) == 1,
+         "Down should scroll help/about by one entry");
+  Expect(SendKeyDown(shell, SDLK_PAGEDOWN, SDL_KMOD_NONE), "PageDown should be consumed");
+  Expect(WorkspaceShellTestAccess::SettingsOverlayScrollRow(shell) ==
+             1 + microide::workspace::kListPageStep,
+         "PageDown should scroll help/about by the shared page step");
+  Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE), "End should be consumed");
+  Expect(WorkspaceShellTestAccess::SettingsOverlayScrollRow(shell) == max_scroll,
+         "End should scroll help/about to the last entry");
+  Expect(SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE), "Home should be consumed");
+  Expect(WorkspaceShellTestAccess::SettingsOverlayScrollRow(shell) == 0,
+         "Home should scroll help/about back to the top");
+
+  const auto scrollbar = WorkspaceShellTestAccess::SettingsOverlayScrollbar(shell);
+  Expect(scrollbar.has_value(),
+         "an overflowing help/about list should publish a scrollbar on the view model");
+  // Grab near the bottom of the track: the bar the paint draws is the bar the
+  // hit test uses, so this must move the list.
+  const float track_x = scrollbar->track.x + scrollbar->track.w * 0.5f;
+  const float track_y = scrollbar->track.y + scrollbar->track.h - 2.0f;
+  Expect(SendMouseDown(shell, track_x, track_y, SDL_BUTTON_LEFT),
+         "clicking the help/about scrollbar track should be handled");
+  Expect(WorkspaceShellTestAccess::SettingsOverlayScrollRow(shell) > 0,
+         "clicking near the bottom of the track should jump the help/about list down");
+}
+
 void TestWorkspaceShellHelpAboutOmitsAuthCommands() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::OpenHelpAboutOverlay(shell);
@@ -4619,6 +4659,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSettingsOverlayTrapsKeyboardInput);
   AddTest(tests, "WorkspaceShell/SettingsOverlayWheelScrolls",
           TestWorkspaceShellSettingsOverlayWheelScrolls);
+  AddTest(tests, "WorkspaceShell/HelpAboutIsKeyboardAndScrollbarNavigable",
+          TestWorkspaceShellHelpAboutIsKeyboardAndScrollbarNavigable);
   AddTest(tests, "WorkspaceShell/HelpAboutOmitsAuthCommands",
           TestWorkspaceShellHelpAboutOmitsAuthCommands);
   AddTest(tests, "WorkspaceShell/HelpAboutShowsBoundKeyChords",

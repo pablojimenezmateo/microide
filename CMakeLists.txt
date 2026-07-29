@@ -399,6 +399,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceKeyInputCoordinator.cpp
   src/workspace/WorkspaceKeyInputCoordinatorModal.cpp
   src/workspace/WorkspaceKeyInputCoordinatorSurfaces.cpp
+  src/workspace/WorkspaceKeyInputCoordinatorSettings.cpp
   src/workspace/WorkspaceKeyInputCoordinatorSidebar.cpp
   src/workspace/WorkspaceKeyInputCoordinatorEditor.cpp
   src/workspace/WorkspaceMergeMouseCoordinator.cpp

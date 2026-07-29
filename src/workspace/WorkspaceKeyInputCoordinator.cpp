@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <utility>
 
+#include "workspace/ListSelection.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
@@ -22,11 +23,7 @@ KeyInputCoordinator::KeyInputCoordinator(ProjectWorkspaceState& state,
       operations_(std::move(operations)) {}
 
 bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
-  const auto ensure_redraw = [this](auto request_redraw) {
-    if (!operations_.has_pending_redraw()) {
-      request_redraw();
-    }
-  };
+  const auto ensure_redraw = [this](auto request_redraw) { EnsureRedraw(request_redraw); };
 
   const SDL_Keymod modifiers = event.mod != SDL_KMOD_NONE ? event.mod : SDL_GetModState();
 
@@ -60,116 +57,10 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     return handled;
   }
   // Settings / Help is a modal overlay: while it is visible it owns all keyboard
-  // input so keystrokes cannot leak into (and edit) the surface underneath. The
-  // two-pane Settings view is fully keyboard navigable; Help/About is read-only.
+  // input so keystrokes cannot leak into (and edit) the surface underneath.
   // Every key is consumed regardless so nothing reaches the editor below.
   if (operations_.settings_overlay_visible()) {
-    const auto overlay_redraw = [&]() {
-      ensure_redraw([this]() { operations_.request_overlay_redraw(); });
-    };
-    // An active inline String-value edit owns the keyboard: Enter commits, Escape
-    // cancels the edit (not the overlay), everything else types into the editor.
-    if (operations_.settings_value_edit_active && operations_.settings_value_edit_active()) {
-      const bool picker = operations_.settings_value_edit_is_picker &&
-                          operations_.settings_value_edit_is_picker();
-      if (event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER) {
-        operations_.settings_commit_value_edit();
-      } else if (event.key == SDLK_ESCAPE) {
-        operations_.settings_cancel_value_edit();
-      } else if (picker && (event.key == SDLK_DOWN || event.key == SDLK_UP)) {
-        operations_.settings_picker_move(event.key == SDLK_DOWN ? 1 : -1);
-      } else {
-        operations_.text_input_handle_single_line_key_down(event, modifiers);
-        // Typing re-filters the family list; drop the stale highlight so a
-        // follow-up Enter commits the typed text rather than an offset row.
-        if (picker && operations_.settings_picker_reset_highlight) {
-          operations_.settings_picker_reset_highlight();
-        }
-      }
-      overlay_redraw();
-      return true;
-    }
-    if (event.key == SDLK_ESCAPE) {
-      operations_.close_settings_overlay();
-      ensure_redraw([this]() { operations_.request_window_redraw(); });
-      return true;
-    }
-    if (!operations_.settings_overlay_is_settings_mode()) {
-      return true;  // Help / About: read-only apart from Escape.
-    }
-    if (event.key == SDLK_TAB) {
-      operations_.settings_cycle_focus((modifiers & SDL_KMOD_SHIFT) != 0 ? -1 : 1);
-      overlay_redraw();
-      return true;
-    }
-    constexpr int kFilterPane = 0;
-    constexpr int kCategoryPane = 1;
-    constexpr int kValuePane = 2;
-    const int pane = operations_.settings_focused_pane();
-    if (pane == kFilterPane) {
-      if (event.key == SDLK_DOWN || event.key == SDLK_UP) {
-        operations_.settings_focus_pane(kValuePane);
-        operations_.settings_move_row(event.key == SDLK_DOWN ? 1 : -1);
-      } else {
-        operations_.text_input_handle_single_line_key_down(event, modifiers);
-      }
-      overlay_redraw();
-      return true;
-    }
-    if (pane == kCategoryPane) {
-      switch (event.key) {
-        case SDLK_DOWN:
-          operations_.settings_move_category(1);
-          break;
-        case SDLK_UP:
-          operations_.settings_move_category(-1);
-          break;
-        case SDLK_RIGHT:
-        case SDLK_RETURN:
-        case SDLK_KP_ENTER:
-          operations_.settings_focus_pane(kValuePane);
-          break;
-        case SDLK_LEFT:
-          operations_.settings_focus_pane(kFilterPane);
-          break;
-        default:
-          break;
-      }
-      overlay_redraw();
-      return true;
-    }
-    // Value pane.
-    switch (event.key) {
-      case SDLK_DOWN:
-        operations_.settings_move_row(1);
-        break;
-      case SDLK_UP:
-        operations_.settings_move_row(-1);
-        break;
-      case SDLK_RIGHT:
-      case SDLK_EQUALS:
-      case SDLK_PLUS:
-      case SDLK_KP_PLUS:
-        operations_.settings_step_selected(1);
-        break;
-      case SDLK_LEFT:
-      case SDLK_MINUS:
-      case SDLK_KP_MINUS:
-        operations_.settings_step_selected(-1);
-        break;
-      case SDLK_SPACE:
-      case SDLK_RETURN:
-      case SDLK_KP_ENTER:
-        operations_.settings_toggle_or_activate_selected();
-        break;
-      case SDLK_DELETE:
-        operations_.settings_reset_selected();
-        break;
-      default:
-        break;
-    }
-    overlay_redraw();
-    return true;
+    return HandleSettingsOverlayKeyDown(event, modifiers);
   }
   if (operations_.text_input_composition_consumes_key(event.key, modifiers)) {
     return true;
@@ -730,6 +621,22 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
                 settings_overlay_service_.MoveRow(delta);
                 EnsureSettingsSelectionVisible();
               },
+          .settings_pane_item_count =
+              [this](int pane) -> std::size_t {
+                switch (static_cast<SettingsPane>(pane)) {
+                  case SettingsPane::Categories:
+                    return settings_overlay_service_.Categories().size();
+                  case SettingsPane::Values:
+                    // In Help/About the "value pane" is the help row list, which is
+                    // what VisibleRowCount reports in that mode.
+                    return settings_overlay_service_.Mode() == SettingsOverlayMode::Settings
+                               ? settings_overlay_service_.RowCountInSelectedCategory()
+                               : settings_overlay_service_.VisibleRowCount();
+                  default:
+                    return 0;
+                }
+              },
+          .settings_scroll_rows = [this](int delta) { ScrollSettingsOverlayRows(delta); },
           .settings_step_selected =
               [this](int direction) {
                 if (const SettingsOverlayRow* row = settings_overlay_service_.SelectedSettingRow();

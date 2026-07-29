@@ -55,38 +55,29 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
   }
 
-  // Settings scrollbar drag tracks the pointer regardless of where it moves.
-  if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar) {
-    if (settings_overlay_service_.Visible() &&
-        settings_overlay_service_.Mode() == SettingsOverlayMode::Settings) {
+  // Settings scrollbar drags track the pointer regardless of where it moves. The
+  // row list scrolls in Help/About too; only the left rail is Settings-only, and
+  // it self-gates by having no scrollbar in the other mode.
+  if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar ||
+      context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar) {
+    const bool category = context_.interaction_state.drag_target ==
+                          DragTarget::SettingsCategoryScrollbar;
+    if (settings_overlay_service_.Visible()) {
       const SettingsOverlayViewModel vm =
           RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_,
                                                                 text_renderer_);
-      if (vm.scrollbar.has_value()) {
-        settings_overlay_service_.SetScrollRow(std::clamp(
+      const std::optional<ScrollbarGeometry>& bar = category ? vm.category_scrollbar : vm.scrollbar;
+      if (bar.has_value()) {
+        const int row = std::clamp(
             static_cast<int>(std::lround(ScrollUnitsForPointer(
-                *vm.scrollbar, static_cast<float>(event.motion.y),
+                *bar, static_cast<float>(event.motion.y),
                 context_.interaction_state.drag_scrollbar_offset))),
-            0, vm.max_scroll));
-      }
-    }
-    EnsureRedraw([this]() { RequestOverlayRedraw(); });
-    return true;
-  }
-
-  // Settings left-rail (category) scrollbar drag.
-  if (context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar) {
-    if (settings_overlay_service_.Visible() &&
-        settings_overlay_service_.Mode() == SettingsOverlayMode::Settings) {
-      const SettingsOverlayViewModel vm =
-          RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_,
-                                                                text_renderer_);
-      if (vm.category_scrollbar.has_value()) {
-        settings_overlay_service_.SetCategoryScrollRow(std::clamp(
-            static_cast<int>(std::lround(ScrollUnitsForPointer(
-                *vm.category_scrollbar, static_cast<float>(event.motion.y),
-                context_.interaction_state.drag_scrollbar_offset))),
-            0, vm.category_max_scroll));
+            0, category ? vm.category_max_scroll : vm.max_scroll);
+        if (category) {
+          settings_overlay_service_.SetCategoryScrollRow(row);
+        } else {
+          settings_overlay_service_.SetScrollRow(row);
+        }
       }
     }
     EnsureRedraw([this]() { RequestOverlayRedraw(); });
@@ -700,14 +691,15 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     if (vertical_ticks != 0) {
       const SDL_FRect overlay_rect = ComputeSettingsOverlaySurfaceRect(layout.editor_area);
       if (Contains(overlay_rect, event.wheel.mouse_x, event.wheel.mouse_y)) {
-        // Settings rows measure their own (variable) height in the builder, so the
-        // view model resolves the exact max scroll; Help/About rows are wrapped in
-        // the render pass, which publishes its bound into settings_overlay_max_scroll_row_.
-        int max_scroll = settings_overlay_max_scroll_row_;
+        // Both modes resolve their (variable-height) row geometry in the builder,
+        // so the exact max scroll comes from the view model. Help/About used to
+        // read a bound published out of the render pass, which meant the wheel did
+        // nothing until a paint had happened and could act on a stale bound after a
+        // resize.
+        const SettingsOverlayViewModel vm =
+            RenderViewModelBuilder(context_)
+                .BuildSettingsOverlay(layout, settings_overlay_service_, text_renderer_);
         if (settings_overlay_service_.Mode() == SettingsOverlayMode::Settings) {
-          const SettingsOverlayViewModel vm =
-              RenderViewModelBuilder(context_)
-                  .BuildSettingsOverlay(layout, settings_overlay_service_, text_renderer_);
           // While the font picker is open, the wheel scrolls the dropdown when the
           // pointer is over it, leaving the rows beneath untouched.
           if (vm.value_picker.visible &&
@@ -726,11 +718,10 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
             EnsureRedraw([this]() { RequestOverlayRedraw(); });
             return true;
           }
-          max_scroll = vm.max_scroll;
         }
         settings_overlay_service_.SetScrollRow(std::clamp(
             settings_overlay_service_.ScrollRow() - vertical_ticks * kWheelScrollRows, 0,
-            max_scroll));
+            vm.max_scroll));
       }
     }
     EnsureRedraw([this]() { RequestOverlayRedraw(); });

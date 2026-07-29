@@ -732,6 +732,17 @@ void WorkspaceShell::StepSetting(std::string_view id, bool forward) {
   }
 }
 
+void WorkspaceShell::ScrollSettingsOverlayRows(int delta) {
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const SettingsOverlayViewModel vm = RenderViewModelBuilder(context_).BuildSettingsOverlay(
+      *layout_state, settings_overlay_service_, text_renderer_);
+  settings_overlay_service_.SetScrollRow(
+      std::clamp(settings_overlay_service_.ScrollRow() + delta, 0, vm.max_scroll));
+}
+
 void WorkspaceShell::EnsureSettingsSelectionVisible() {
   const auto layout_state = CurrentWorkspaceLayout();
   if (!layout_state.has_value()) {
@@ -841,8 +852,27 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
   if (!left && !right) {
     return true;  // consume other buttons inside the modal
   }
+  // The row-list scrollbar is grabbable in both modes: read-only content still
+  // scrolls, and Help/About painted a bar that nothing hit-tested until this ran
+  // ahead of the mode gate.
+  const auto begin_scrollbar_drag = [&](const ScrollbarGeometry& bar, DragTarget target,
+                                        int max_scroll, auto&& set_scroll) {
+    context_.interaction_state.drag_target = target;
+    context_.interaction_state.drag_scrollbar_offset =
+        Contains(bar.thumb, mx, my) ? my - bar.thumb.y : bar.thumb.h * 0.5f;
+    set_scroll(std::clamp(static_cast<int>(std::lround(ScrollUnitsForPointer(
+                              bar, my, context_.interaction_state.drag_scrollbar_offset))),
+                          0, max_scroll));
+    RequestOverlayRedraw();
+  };
+  if (left && vm.scrollbar.has_value() && Contains(vm.scrollbar->track, mx, my)) {
+    begin_scrollbar_drag(*vm.scrollbar, DragTarget::SettingsScrollbar, vm.max_scroll,
+                         [this](int row) { settings_overlay_service_.SetScrollRow(row); });
+    return true;
+  }
+
   if (vm.mode != SettingsOverlayMode::Settings) {
-    return true;  // Help / About is read-only
+    return true;  // Help / About has no other interactive chrome
   }
 
   // Font-picker dropdown: a click on an item applies it (a family, or "Choose
@@ -876,20 +906,6 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
     }
   }
 
-  // Scrollbar: clicking the track jumps and begins a drag (tracked via motion).
-  if (left && vm.scrollbar.has_value() && Contains(vm.scrollbar->track, mx, my)) {
-    context_.interaction_state.drag_target = DragTarget::SettingsScrollbar;
-    context_.interaction_state.drag_scrollbar_offset =
-        Contains(vm.scrollbar->thumb, mx, my) ? my - vm.scrollbar->thumb.y
-                                              : vm.scrollbar->thumb.h * 0.5f;
-    settings_overlay_service_.SetScrollRow(std::clamp(
-        static_cast<int>(std::lround(ScrollUnitsForPointer(
-            *vm.scrollbar, my, context_.interaction_state.drag_scrollbar_offset))),
-        0, vm.max_scroll));
-    RequestOverlayRedraw();
-    return true;
-  }
-
   // Filter box: focus it so typing filters.
   if (Contains(vm.filter_rect, mx, my)) {
     settings_overlay_service_.SetFocusedPane(SettingsPane::Filter);
@@ -902,15 +918,9 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
   // category rows, which span the pane width and would otherwise swallow the click).
   if (left && vm.category_scrollbar.has_value() &&
       Contains(vm.category_scrollbar->track, mx, my)) {
-    context_.interaction_state.drag_target = DragTarget::SettingsCategoryScrollbar;
-    context_.interaction_state.drag_scrollbar_offset =
-        Contains(vm.category_scrollbar->thumb, mx, my) ? my - vm.category_scrollbar->thumb.y
-                                                       : vm.category_scrollbar->thumb.h * 0.5f;
-    settings_overlay_service_.SetCategoryScrollRow(std::clamp(
-        static_cast<int>(std::lround(ScrollUnitsForPointer(
-            *vm.category_scrollbar, my, context_.interaction_state.drag_scrollbar_offset))),
-        0, vm.category_max_scroll));
-    RequestOverlayRedraw();
+    begin_scrollbar_drag(
+        *vm.category_scrollbar, DragTarget::SettingsCategoryScrollbar, vm.category_max_scroll,
+        [this](int row) { settings_overlay_service_.SetCategoryScrollRow(row); });
     return true;
   }
 

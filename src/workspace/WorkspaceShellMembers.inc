@@ -1679,6 +1679,9 @@
   const std::vector<std::string>& CachedFontFamilies();
   void TogglePluginEnabled(std::string_view plugin_id);
   void EnsureSettingsSelectionVisible();
+  // Scrolls the Settings/Help row list by whole entries, clamped against the max
+  // scroll the view model resolves for the live layout.
+  void ScrollSettingsOverlayRows(int delta);
   void RenderPromptSurface(
       SDL_Renderer* renderer,
       const WorkspaceLayout& layout,
@@ -2078,9 +2081,6 @@
   TerminalFindService terminal_find_service_;
   bool HandleTerminalFindKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleTerminalFindMouseDown(float x, float y);
-  // Settings/Help overlay max scroll row, resolved by the const render pass (it
-  // owns the list geometry) and consumed by the wheel handler to clamp scrolling.
-  mutable int settings_overlay_max_scroll_row_ = 0;
   AssistService assist_service_;
   LspService lsp_service_;
   DebugService debug_service_;
