@@ -48,6 +48,12 @@ changes.
   `tabmove` has always accepted.
 - **Home/End in the menu bar and the context menus**, the last two lists that
   answered Up/Down and nothing else.
+- **The bottom panel answers the keyboard in all of its contents.** Only a
+  terminal ever did; with an Output channel or a plugin surface showing, every
+  navigation key fell through to the editor *behind* the panel and scrolled that
+  instead, in a surface that is in the Ctrl+Tab ring and draws a focus ring. Both
+  now answer Up/Down, Page Up/Down and Home/End on the shared step, through one
+  scroll model the wheel also uses.
 - **The debug pane is fully keyboard-navigable.** Call Stack and Breakpoints were
   clickable but had no keyboard at all, in a pane that already has a focus ring, a
   place in the Ctrl+Tab ring, a grabbable scrollbar and row context menus. Arrow
@@ -104,6 +110,19 @@ changes.
   the settings scrollbar, clicking its bar jumped the rows behind it. An
   architecture lint now fails the build on a scrollbar that can never render as
   being dragged.
+- **Notification toasts are dismissable, and stop swallowing nothing.** They were
+  painted and never hit-tested, so a click on one fell through to whatever it
+  covered — over the editor, that moved the caret — and a message you had read
+  still sat there for its full four seconds. A click now dismisses the toast it
+  lands on, and the pointer says so.
+- **Scrolling a diff no longer steals keyboard focus.** Compare and merge set
+  focus to the editor on every wheel tick while the other five scrollable
+  surfaces explicitly did not, so a wheel nudge over a diff redirected the next
+  keystroke away from whatever you were typing into. An architecture lint now
+  enforces the rule the other five only stated in a comment.
+- **A focused plugin surface draws its focus ring.** The panel's plugin-surface
+  branch returned before painting it, leaving the only surface in the shell that
+  could hold the keyboard without showing it.
 - **The debug pane scrolls to its keyboard selection.** Variables and Watch moved
   the selection without touching the scroll, so arrowing past the last visible row
   walked the highlight off screen and kept going.
