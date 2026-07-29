@@ -48,6 +48,12 @@ changes.
   `tabmove` has always accepted.
 - **Home/End in the menu bar and the context menus**, the last two lists that
   answered Up/Down and nothing else.
+- **`term-close` closes a terminal**, from the command palette, the Terminal menu
+  and a terminal tab's context menu. Every other tab kind could be closed without
+  the mouse; terminal tabs had the ✕ and a middle click and nothing else.
+- **Call Hierarchy has a feature toggle** (`lsp.call_hierarchy.enabled`) in the
+  Settings LSP → Features group, and an entry in the Go menu beside Find
+  References. It was the one LSP feature with no switch and no menu entry.
 - **The bottom panel answers the keyboard in all of its contents.** Only a
   terminal ever did; with an Output channel or a plugin surface showing, every
   navigation key fell through to the editor *behind* the panel and scrolled that
@@ -110,6 +116,14 @@ changes.
   the settings scrollbar, clicking its bar jumped the rows behind it. An
   architecture lint now fails the build on a scrollbar that can never render as
   being dragged.
+- **Settings rows lift under the pointer.** Every other list in the shell does —
+  sidebar, overlay pickers, debug pane, tab strips — but the largest list in the
+  app, whose rows already turn the cursor into a hand, painted only its keyboard
+  selection. Both the value rows and the category rail were affected.
+- **Call Hierarchy is greyed out when it cannot run.** It had no availability rule
+  at all, so it fell through to the default and offered itself as enabled with no
+  editor open, then failed on invocation. It was also the only enumerator the
+  build's -Wswitch warning was pointing at.
 - **Notification toasts are dismissable, and stop swallowing nothing.** They were
   painted and never hit-tested, so a click on one fell through to whatever it
   covered — over the editor, that moved the caret — and a message you had read
