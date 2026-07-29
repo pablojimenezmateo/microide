@@ -38,12 +38,17 @@ bool DebugPaneMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (!state_.debug_pane.visible || layout.right_pane.w <= 0.0f || layout.right_pane.h <= 0.0f) {
     return false;
   }
-  if (event.button.button != SDL_BUTTON_LEFT) {
+  const bool is_right = event.button.button == SDL_BUTTON_RIGHT;
+  if (event.button.button != SDL_BUTTON_LEFT && !is_right) {
     return false;
   }
   if (!Contains(layout.right_pane, static_cast<float>(event.button.x),
                 static_cast<float>(event.button.y))) {
     return false;
+  }
+
+  if (is_right) {
+    return HandleRowContextMenu(event, layout);
   }
 
   // The scrollbar overlaps the row area, so it must claim the press before the
@@ -242,6 +247,57 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
   }
 
   return false;
+}
+
+bool DebugPaneMouseCoordinator::HandleRowContextMenu(const SDL_Event& event,
+                                                     const WorkspaceLayout& layout) {
+  const DebugPaneMode mode = state_.debug_pane.mode;
+  if (mode == DebugPaneMode::CallStack) {
+    return true;  // Frames/threads/sessions have no row-scoped commands yet.
+  }
+
+  const std::size_t row_count = operations_.debug_pane_active_row_count();
+  if (row_count == 0) {
+    return true;
+  }
+  const auto panel_layout = operations_.compute_debug_pane_list_layout(layout, row_count);
+  const auto line_index =
+      DebugPaneLineIndexAtPoint(panel_layout, static_cast<float>(event.button.x),
+                                static_cast<float>(event.button.y), row_count);
+  if (!line_index.has_value() || *line_index >= row_count) {
+    return true;
+  }
+
+  const SDL_FRect anchor = MakeRect(static_cast<float>(event.button.x),
+                                    static_cast<float>(event.button.y), 1.0f, 1.0f);
+  // Select the row first, then open on the selection — the order every other list
+  // surface uses, so the menu and the highlight cannot disagree.
+  state_.surface.focus = FocusTarget::DebugPane;
+
+  if (mode == DebugPaneMode::Breakpoints) {
+    const std::vector<DebugBreakpointRowView>& rows = state_.debug_breakpoints_panel.Rows();
+    if (*line_index >= rows.size()) {
+      return true;
+    }
+    const DebugBreakpointRowView& row = rows[*line_index];
+    // Only line breakpoints carry the (path, line) the gutter menu acts on;
+    // function breakpoints and exception filters have no source location.
+    if (row.kind == DebugBreakpointRowView::Kind::Breakpoint && !row.path.empty() &&
+        operations_.open_breakpoint_context_menu) {
+      operations_.open_breakpoint_context_menu(row.path, row.line, anchor);
+    }
+    return true;
+  }
+
+  if (mode == DebugPaneMode::Variables) {
+    state_.debug_variables.SetSelectedRow(*line_index);
+  } else {
+    state_.debug_watch.SetSelectedRow(*line_index);
+  }
+  if (operations_.open_debug_value_context_menu) {
+    operations_.open_debug_value_context_menu(anchor);
+  }
+  return true;
 }
 
 bool DebugPaneMouseCoordinator::BeginScrollbarDrag(const SDL_Event& event,

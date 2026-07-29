@@ -262,6 +262,10 @@ enum class ActionId {
   // Surface the active debug session's console output in the bottom panel. Gated
   // on `debug.enabled`; a no-op when no session is active.
   DebugShowOutput,
+  // Debug pane row context menu (Variables / Watch). Both act on the selected row
+  // of whichever value surface is showing.
+  DebugCopyValue,
+  DebugAddToWatch,
 };
 
 enum class ActionSource {

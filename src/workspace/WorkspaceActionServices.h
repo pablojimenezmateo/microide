@@ -273,6 +273,9 @@ class WorkspaceActionContext {
     std::function<void(DebugPaneMode)> show_debug_pane_mode;
     // Surface the active debug session's console output in the bottom panel.
     std::function<void()> show_debug_output;
+    // Add a watch expression directly (no prompt) — the "Add to Watch" row menu
+    // item, which takes the expression from the row it was invoked on.
+    std::function<void(std::string)> add_debug_watch_expression;
     // Headless breakpoint control (control channel + cold-start spec): re-send a
     // file's breakpoints to the active session after the store is mutated.
     std::function<void(const std::filesystem::path&)> resend_breakpoints_for_file;
@@ -335,6 +338,17 @@ class WorkspaceActionContext {
   void ReloadCleanOpenBuffersFromDisk();
   std::string DispatchGitOperation(ActionId id, const std::vector<std::string>& args);
   std::filesystem::path TreeMutationBasePath(ActionSource source) const;
+  // The selected row of whichever debug value surface (Variables / Watch) the pane
+  // is showing. `valid` is false in Call Stack / Breakpoints mode, with no rows, or
+  // when the selection points at a synthetic placeholder / "show more…" row.
+  struct DebugValueRowSelection {
+    bool valid = false;
+    std::string name;
+    std::string value;
+  };
+  DebugValueRowSelection SelectedDebugValueRow() const;
+  void AddDebugWatchExpression(std::string expression);
+
   std::filesystem::path ResolveTreeActionPath(ActionSource source) const;
   std::filesystem::path RowContextMenuPath() const;
   std::filesystem::path ActiveTabPath() const;

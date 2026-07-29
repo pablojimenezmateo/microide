@@ -17,6 +17,7 @@ namespace {
 
 using microide::workspace::BuiltinDebugPaneSurfaceSpecs;
 using microide::workspace::Contains;
+using microide::workspace::DebugBreakpointRowView;
 using microide::workspace::DebugPaneMode;
 using microide::workspace::DebugPaneModeRowLayout;
 using microide::workspace::DebugPaneMouseCoordinator;
@@ -287,6 +288,100 @@ void TestDebugPaneScrollbarDrags() {
          "grabbing the pane scrollbar focuses the pane");
 }
 
+// The debug pane was the last interactive list surface in the shell that ignored
+// the right button entirely. Its Variables/Watch rows now open a shared row menu,
+// and a Breakpoints row reuses the editor gutter's breakpoint menu — and neither
+// may double as an activation, which is what the left button is for.
+void TestDebugPaneRightClickOpensRowMenus() {
+  ProjectWorkspaceState state;
+  state.debug_pane.visible = true;
+  state.debug_pane.mode = DebugPaneMode::Breakpoints;
+  state.breakpoint_store.Toggle("main.cpp", 4);
+
+  WorkspaceShell::LogSurfaceLayout panel_layout;
+  panel_layout.content_rect = MakeRect(0.0f, 30.0f, 200.0f, 370.0f);
+  panel_layout.text_x = 12.0f;
+  panel_layout.text_y = 38.0f;
+  panel_layout.line_height = 16.0f;
+  panel_layout.scroll.visible_rows = 20;
+  panel_layout.scroll.vertical_scroll = 0;
+
+  state.debug_breakpoints_panel.Rebuild(state.breakpoint_store,
+                                        state.function_breakpoint_store);
+  const std::size_t breakpoint_rows = state.debug_breakpoints_panel.RowCount();
+  Expect(breakpoint_rows > 0, "the breakpoints panel fixture should have rows");
+
+  std::string breakpoint_menu_path;
+  int value_menus_opened = 0;
+  int opened_files = 0;
+  microide::workspace::InteractionState interaction;
+  DebugPaneMouseCoordinator coordinator(
+      state, interaction,
+      DebugPaneMouseCoordinator::Operations{
+          .compute_debug_pane_list_layout =
+              [&](const WorkspaceLayout&, std::size_t) { return panel_layout; },
+          .debug_pane_mode_row = [](const SDL_FRect&) { return DebugPaneModeRowLayout{}; },
+          .debug_pane_active_row_count =
+              [&]() -> std::size_t {
+                return state.debug_pane.mode == DebugPaneMode::Breakpoints
+                           ? state.debug_breakpoints_panel.RowCount()
+                           : state.debug_watch.Rows().size();
+              },
+          .open_file = [&](const std::filesystem::path&) { ++opened_files; },
+          .active_editor_viewport = []() -> microide::editor::TextViewport* { return nullptr; },
+          .open_debug_value_context_menu = [&](const SDL_FRect&) { ++value_menus_opened; },
+          .open_breakpoint_context_menu =
+              [&](const std::filesystem::path& path, std::size_t, const SDL_FRect&) {
+                breakpoint_menu_path = path.string();
+              },
+      });
+
+  WorkspaceLayout layout;
+  layout.right_pane = MakeRect(0.0f, 0.0f, 200.0f, 400.0f);
+  const auto press_at = [&](float y, Uint8 button) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    event.button.button = button;
+    event.button.clicks = 1;
+    event.button.x = 100.0f;
+    event.button.y = y;
+    return coordinator.HandleButtonDown(event, layout);
+  };
+
+  // Find the row band of the line breakpoint (the panel also emits headers).
+  const auto& rows = state.debug_breakpoints_panel.Rows();
+  std::size_t breakpoint_row = rows.size();
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    if (rows[i].kind == DebugBreakpointRowView::Kind::Breakpoint && !rows[i].path.empty()) {
+      breakpoint_row = i;
+      break;
+    }
+  }
+  Expect(breakpoint_row < rows.size(), "the fixture should contain a line breakpoint row");
+  const float breakpoint_y =
+      panel_layout.text_y + static_cast<float>(breakpoint_row) * panel_layout.line_height + 8.0f;
+
+  Expect(press_at(breakpoint_y, SDL_BUTTON_RIGHT), "the right-click should be consumed");
+  Expect(breakpoint_menu_path.find("main.cpp") != std::string::npos,
+         "right-clicking a breakpoint row should open the gutter breakpoint menu for its file");
+  Expect(opened_files == 0, "right-clicking a breakpoint row must not navigate the editor");
+  Expect(state.surface.focus == microide::workspace::FocusTarget::DebugPane,
+         "a right-click in the pane should focus the pane");
+
+  // A value-surface row opens the shared row menu and selects the row under the
+  // pointer first (Watch is used here because its rows are seedable standalone).
+  state.debug_pane.mode = DebugPaneMode::Watch;
+  state.debug_watch.AddExpression("counter");
+  state.debug_watch.AddExpression("total");
+  Expect(state.debug_watch.Rows().size() >= 2, "the watch fixture should have two rows");
+
+  Expect(press_at(panel_layout.text_y + panel_layout.line_height + 4.0f, SDL_BUTTON_RIGHT),
+         "a right-click on a watch row should be consumed");
+  Expect(value_menus_opened == 1, "a value row should open the shared value row menu");
+  Expect(state.debug_watch.SelectedRow() == 1,
+         "the row under the pointer should be selected before the menu opens");
+}
+
 // Row geometry must stay correct at scale: a 5000-row tree scrolled deep still
 // maps each rendered band's center to the right absolute row, and a band past the
 // last populated row resolves to "in content, no row". Guards the geometry the
@@ -352,6 +447,7 @@ void RegisterDebugPaneTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugPane/RowAtPointLargeScrolledList", TestDebugPaneRowAtPointLargeScrolledList);
   AddTest(tests, "DebugPane/ClickFrameNavigates", TestDebugPaneClickFrameNavigates);
   AddTest(tests, "DebugPane/ScrollbarDrags", TestDebugPaneScrollbarDrags);
+  AddTest(tests, "DebugPane/RightClickOpensRowMenus", TestDebugPaneRightClickOpensRowMenus);
   AddTest(tests, "DebugPane/GutterMarkersClearLineNumbers", TestGutterMarkersClearLineNumbers);
 }
 

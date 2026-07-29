@@ -171,6 +171,46 @@ void WorkspaceActionContext::ShowDebugOutput() {
   }
 }
 
+WorkspaceActionContext::DebugValueRowSelection WorkspaceActionContext::SelectedDebugValueRow()
+    const {
+  // Reads the pane's own models rather than routing through an Operations hook:
+  // both live on project state, which this context already owns.
+  const auto row_from = [](const auto& model) {
+    DebugValueRowSelection selection;
+    const std::vector<DebugVariableRowView>& rows = model.Rows();
+    const std::size_t index = model.SelectedRow();
+    if (index >= rows.size()) {
+      return selection;
+    }
+    const DebugVariableRowView& row = rows[index];
+    // Synthetic rows ("loading…", "show more…") name nothing and hold no value.
+    if (row.is_placeholder || row.is_show_more) {
+      return selection;
+    }
+    selection.valid = true;
+    selection.name = row.display_name;
+    selection.value = row.display_value;
+    return selection;
+  };
+
+  switch (state_.debug_pane.mode) {
+    case DebugPaneMode::Variables:
+      return row_from(state_.debug_variables);
+    case DebugPaneMode::Watch:
+      return row_from(state_.debug_watch);
+    case DebugPaneMode::CallStack:
+    case DebugPaneMode::Breakpoints:
+      break;
+  }
+  return {};
+}
+
+void WorkspaceActionContext::AddDebugWatchExpression(std::string expression) {
+  if (operations_.add_debug_watch_expression) {
+    operations_.add_debug_watch_expression(std::move(expression));
+  }
+}
+
 void WorkspaceActionContext::StopAllDebugSessions() {
   if (operations_.stop_all_debug_sessions) {
     operations_.stop_all_debug_sessions();
@@ -773,6 +813,13 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .toggle_debug_pane = [this]() { ToggleDebugPane(); },
           .show_debug_pane_mode = [this](DebugPaneMode mode) { ShowDebugPaneMode(mode); },
           .show_debug_output = [this]() { ShowDebugOutput(); },
+          .add_debug_watch_expression =
+              [this](std::string expression) {
+                debug_service_.AddWatch(std::move(expression));
+                // Show the surface the expression just landed on, so the item has
+                // visible feedback when invoked from the Variables list.
+                ShowDebugPaneMode(DebugPaneMode::Watch);
+              },
           .resend_breakpoints_for_file =
               [this](const std::filesystem::path& path) { ResendBreakpointsForFile(path); },
           .start_named_debug_config =

@@ -8,6 +8,7 @@
 #include "workspace/DebugPaneRegistry.h"
 #include "workspace/DebugPaneService.h"
 #include "workspace/DebugService.h"
+#include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspaceLayout.h"
 
 // Geometry + scroll helpers for the right-side debug pane. These read project
@@ -282,6 +283,14 @@ DebugPaneMouseCoordinator WorkspaceShell::MakeDebugPaneMouseCoordinator() {
               [this](std::size_t index) {
                 debug_service_.ToggleFunctionBreakpointEnabled(index);
               },
+          .open_debug_value_context_menu =
+              [this](const SDL_FRect& anchor) {
+                MakeMenuCoordinator().OpenTreeContextMenu(TreeContextTargetKind::DebugValueRow, {},
+                                                          anchor);
+              },
+          .open_breakpoint_context_menu =
+              [this](const std::filesystem::path& path, std::size_t line,
+                     const SDL_FRect& anchor) { OpenBreakpointContextMenu(path, line, anchor); },
       });
 }
 

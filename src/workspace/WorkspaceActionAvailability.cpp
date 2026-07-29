@@ -215,6 +215,32 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // debugger is enabled (the breakpoints/watch surfaces are useful before a
       // session starts; Show Output no-ops gracefully without a live session).
       return SettingEnabled(operations_, "debug.enabled", false);
+    case ActionId::DebugCopyValue:
+    case ActionId::DebugAddToWatch: {
+      // Row menu items on the pane's two value surfaces. Enabled only when the
+      // selected row actually carries the thing the item copies/watches, so the
+      // menu never offers a no-op on a scope header or a "show more…" row.
+      if (!SettingEnabled(operations_, "debug.enabled", false)) {
+        return false;
+      }
+      const auto& state = context_.current_project_state;
+      const auto row_ready = [&](const auto& model) {
+        const auto& rows = model.Rows();
+        const std::size_t index = model.SelectedRow();
+        if (index >= rows.size() || rows[index].is_placeholder || rows[index].is_show_more) {
+          return false;
+        }
+        return id == ActionId::DebugCopyValue ? !rows[index].display_value.empty()
+                                              : !rows[index].display_name.empty();
+      };
+      if (state.debug_pane.mode == DebugPaneMode::Variables) {
+        return row_ready(state.debug_variables);
+      }
+      if (state.debug_pane.mode == DebugPaneMode::Watch) {
+        return row_ready(state.debug_watch);
+      }
+      return false;
+    }
     case ActionId::CloseActiveTab:
       return !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::CloseAllTabs:

@@ -304,6 +304,32 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       context_.ShowDebugOutput();
       return DispatchResult::Handled;
+    case ActionId::DebugCopyValue:
+    case ActionId::DebugAddToWatch: {
+      // Context-menu only, like the breakpoint items: both act on the row the menu
+      // was opened over, which the pane selects before opening it.
+      if (source != ActionSource::ContextMenu || !context_.DebuggerEnabled()) {
+        return DispatchResult::Unhandled;
+      }
+      const WorkspaceActionContext::DebugValueRowSelection row =
+          context_.SelectedDebugValueRow();
+      if (!row.valid) {
+        return reject("No debug value selected");
+      }
+      if (id == ActionId::DebugCopyValue) {
+        if (row.value.empty()) {
+          return reject("That row has no value to copy");
+        }
+        context_.WriteClipboardText(row.value);
+        context_.WritePrimarySelectionText(row.value);
+        return DispatchResult::Handled;
+      }
+      if (row.name.empty()) {
+        return reject("That row has no expression to watch");
+      }
+      context_.AddDebugWatchExpression(row.name);
+      return DispatchResult::Handled;
+    }
     case ActionId::DebugBreakpointEditCondition:
     case ActionId::DebugBreakpointEditHitCondition:
     case ActionId::DebugBreakpointEditLogMessage:

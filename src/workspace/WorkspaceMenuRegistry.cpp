@@ -391,11 +391,23 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuItem(ActionId::CopyAbsolutePath),
   });
 
+  // Debug pane Variables / Watch rows. The pane was the last interactive list
+  // surface in the shell with no right-click menu at all; its Breakpoints rows
+  // reuse the gutter's BreakpointLine menu, and its two value surfaces share this
+  // one. Both items act on the pane's selected row and disable themselves when
+  // that row carries nothing to copy or watch.
+  static const auto kDebugValueRowItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::DebugCopyValue, "Copy Value"),
+      MenuItem(ActionId::DebugAddToWatch, "Add to Watch"),
+  });
+
   switch (target) {
     case TreeContextTargetKind::File:
       return kFileItems;
     case TreeContextTargetKind::ResultRow:
       return kResultRowItems;
+    case TreeContextTargetKind::DebugValueRow:
+      return kDebugValueRowItems;
     case TreeContextTargetKind::Directory:
       return kDirectoryItems;
     case TreeContextTargetKind::Root:

@@ -45,6 +45,12 @@ class DebugPaneMouseCoordinator {
     // Enable/disable a function breakpoint from the Breakpoints panel (click toggles;
     // there is no source location to navigate to).
     std::function<void(std::size_t)> toggle_debug_function_breakpoint_enabled;
+    // Right-click menus. A Variables/Watch row opens the shared DebugValueRow menu
+    // (Copy Value / Add to Watch); a Breakpoints row reuses the editor gutter's
+    // breakpoint menu verbatim, which already takes (path, line).
+    std::function<void(const SDL_FRect&)> open_debug_value_context_menu;
+    std::function<void(const std::filesystem::path&, std::size_t, const SDL_FRect&)>
+        open_breakpoint_context_menu;
   };
 
   DebugPaneMouseCoordinator(ProjectWorkspaceState& state, InteractionState& interaction_state,
@@ -59,6 +65,7 @@ class DebugPaneMouseCoordinator {
 
  private:
   bool HandleRowClick(const SDL_Event& event, const WorkspaceLayout& layout);
+  bool HandleRowContextMenu(const SDL_Event& event, const WorkspaceLayout& layout);
   bool BeginScrollbarDrag(const SDL_Event& event, const WorkspaceLayout& layout);
 
   ProjectWorkspaceState& state_;

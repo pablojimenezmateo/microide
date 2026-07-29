@@ -50,6 +50,9 @@ enum class TreeContextTargetKind {
   // discovered test. All three carry a path, so they share one menu of
   // path-scoped items instead of each growing its own.
   ResultRow,
+  // Debug pane Variables / Watch row. Acts on the pane's selected row rather than
+  // a path, so it carries no path of its own.
+  DebugValueRow,
 };
 
 struct MenuItemSpec {
