@@ -29,6 +29,13 @@ class KeyInputCoordinator {
     std::function<void()> request_overlay_redraw;
     std::function<void()> request_sidebar_redraw;
     std::function<void()> request_bottom_panel_content_redraw;
+    // Bottom-panel scroll for the keyboard. The Output channel and the plugin
+    // surface preview are focusable and scrollable but had no key handling at all,
+    // so arrowing in a focused panel scrolled the editor behind it instead. Both
+    // route through PanelMouseCoordinator::ScrollPanelRows, the same clamped
+    // scroll model the wheel uses; the span only sizes the Home/End jump.
+    std::function<void(int)> scroll_bottom_panel_rows;
+    std::function<int()> bottom_panel_scroll_span_rows;
     std::function<void()> request_focused_editor_redraw;
     std::function<bool(SDL_Keycode, SDL_Keymod)> text_input_composition_consumes_key;
     std::function<TextInputSurface()> current_text_input_surface;
@@ -250,6 +257,7 @@ class KeyInputCoordinator {
   }
   bool HandleSettingsOverlayKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleSidebarKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
+  bool HandleBottomPanelKeyDown(const SDL_KeyboardEvent& event);
   bool HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleMergeKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);

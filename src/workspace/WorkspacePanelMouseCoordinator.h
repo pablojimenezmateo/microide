@@ -88,7 +88,17 @@ class PanelMouseCoordinator {
                    const WorkspaceLayout& layout,
                    int vertical_ticks);
 
+  // The bottom panel's scroll model, shared by the wheel and the keyboard.
+  // `row_delta` counts text rows toward the end of the content; the plugin-surface
+  // preview scrolls by pixels and converts. Both clamp, so passing ScrollSpanRows()
+  // reliably lands on either end — which is what Home/End do.
+  void ScrollPanelRows(const WorkspaceLayout& layout, int row_delta);
+  int ScrollSpanRows(const WorkspaceLayout& layout);
+
  private:
+  // Pixel height of one scroll row, used to convert the shared row delta for the
+  // pixel-scrolled plugin surface preview.
+  float PanelPixelsPerScrollRow(const WorkspaceLayout& layout);
   bool HandleMouseCaptureButton(const SDL_Event& event, bool pressed);
   // Active terminal tab when the bottom panel is showing a terminal, else null.
   // Consolidates the "panel is a terminal AND a live tab exists" guard and routes

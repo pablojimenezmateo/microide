@@ -111,6 +111,41 @@ void TestWheelScrollsAndClampsPreview() {
   Expect(state.panel.surface_scroll_y == 0, "wheel up should clamp back to zero");
 }
 
+// The preview is a focus target with a scrollbar and a wheel, but it answered no
+// key at all: arrowing in a focused panel scrolled the editor behind it. It now
+// shares the panel's row-based scroll model with the Output channel, converting
+// rows to the pixels this surface scrolls in.
+void TestKeyboardScrollsAndClampsPreview() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 900, 700);
+  ShowPreviewPanel(shell, TallSurface(5000.0f));
+  auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const float body_height = layout.bottom_panel.h - kWorkspaceBottomPanelHeaderHeight;
+
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE),
+         "a focused preview should answer Down");
+  const int after_down = state.panel.surface_scroll_y;
+  Expect(after_down > 0, "Down should scroll the preview content");
+  Expect(SendKeyDown(shell, SDLK_PAGEDOWN, SDL_KMOD_NONE),
+         "a focused preview should answer Page Down");
+  Expect(state.panel.surface_scroll_y > after_down,
+         "Page Down should scroll further than Down did");
+
+  const SurfaceContent* content =
+      state.plugin_presentation_if_present()->surfaces.Find("plug", "chart");
+  Expect(content != nullptr, "the preview surface should stay published");
+  Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE),
+         "a focused preview should answer End");
+  Expect(state.panel.surface_scroll_y == MaxPluginSurfacePreviewScroll(*content, body_height),
+         "End should land on the bottom of the preview");
+  Expect(SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE),
+         "a focused preview should answer Home");
+  Expect(state.panel.surface_scroll_y == 0, "Home should land back at the top");
+}
+
 void TestHitRegionClickDispatchesCommand() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 900, 700);
@@ -195,6 +230,8 @@ void TestScrollbarDragScrollsPreview() {
 void RegisterPluginSurfacePreviewTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginSurfacePreview/HitRegionMappingIsScrollAndPaddingAware",
           TestHitRegionMappingIsScrollAndPaddingAware);
+  AddTest(tests, "PluginSurfacePreview/KeyboardScrollsAndClampsPreview",
+          TestKeyboardScrollsAndClampsPreview);
   AddTest(tests, "PluginSurfacePreview/WheelScrollsAndClampsPreview",
           TestWheelScrollsAndClampsPreview);
   AddTest(tests, "PluginSurfacePreview/HitRegionClickDispatchesCommand",

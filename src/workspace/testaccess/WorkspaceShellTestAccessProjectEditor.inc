@@ -760,6 +760,30 @@
     panel.output.open_channel_ids = std::move(open_channel_ids);
     panel.output.channel_id = std::move(active_channel_id);
   }
+  // Drives the bottom panel's Output channel: fill one channel with more lines
+  // than fit, show it, and park the scroll at the top so a keyboard or wheel move
+  // has somewhere to go in both directions.
+  static void ShowOutputChannelWithLines(WorkspaceShell& shell,
+                                         std::string_view id,
+                                         std::size_t line_count) {
+    for (std::size_t i = 0; i < line_count; ++i) {
+      shell.output_channels_.AppendLine(id, "Test Output",
+                                        "output line " + std::to_string(i));
+    }
+    auto& panel = shell.context_.current_project_state.panel;
+    panel.content = WorkspaceShell::PanelContentKind::Output;
+    panel.output.open_channel_ids = {std::string(id)};
+    panel.output.channel_id = std::string(id);
+    panel.output.follow_tail = false;
+    panel.output.scroll_row = 0;
+  }
+  static int OutputPanelScrollRow(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.panel.output.scroll_row;
+  }
+  static int BottomPanelVisibleRowsForTest(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.BottomPanelVisibleRows(layout.bottom_panel.h);
+  }
   static const std::vector<std::string>& OutputChannelTabOrder(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.panel.output.open_channel_ids;
   }

@@ -9,6 +9,7 @@
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
+#include "workspace/WorkspacePanelMouseCoordinator.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 
@@ -140,6 +141,14 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
       state_.panel.content == PanelContentKind::Terminal &&
       operations_.active_terminal_tab() != nullptr) {
     const bool handled = operations_.text_input_handle_terminal_key_down(event, modifiers);
+    if (handled) {
+      ensure_redraw([this]() { operations_.request_bottom_panel_content_redraw(); });
+    }
+    return handled;
+  }
+  if (state_.surface.focus == FocusTarget::Panel &&
+      state_.panel.content != PanelContentKind::None) {
+    const bool handled = HandleBottomPanelKeyDown(event);
     if (handled) {
       ensure_redraw([this]() { operations_.request_bottom_panel_content_redraw(); });
     }
@@ -387,6 +396,30 @@ bool KeyInputCoordinator::HandleDebugCallStackKeyDown(const SDL_KeyboardEvent& e
   return true;
 }
 
+bool KeyInputCoordinator::HandleBottomPanelKeyDown(const SDL_KeyboardEvent& event) {
+  // The panel is one of the four surfaces in the Ctrl+Tab ring and its Output and
+  // plugin-surface contents are freely scrollable, but neither answered a key: the
+  // arrows fell through to the editor behind the panel and scrolled *that*. Only
+  // the terminal content, handled above, ever had a keyboard.
+  //
+  // There is no selection to move here, so the navigation keys pan the view — the
+  // detached-scroll contract the overlay lists already use.
+  if (!operations_.scroll_bottom_panel_rows || !operations_.bottom_panel_scroll_span_rows) {
+    return false;
+  }
+  const auto span = static_cast<std::size_t>(
+      std::max(0, operations_.bottom_panel_scroll_span_rows()));
+  if (span == 0) {
+    return false;
+  }
+  const auto delta = ListNavigationKeyDelta(event.key, span);
+  if (!delta.has_value()) {
+    return false;
+  }
+  operations_.scroll_bottom_panel_rows(*delta);
+  return true;
+}
+
 bool KeyInputCoordinator::HandleDebugBreakpointsKeyDown(const SDL_KeyboardEvent& event) {
   const std::size_t row_count = state_.debug_breakpoints_panel.Rows().size();
   if (row_count == 0) {
@@ -595,6 +628,19 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .request_sidebar_redraw = [this]() { RequestSidebarRedraw(); },
           .request_bottom_panel_content_redraw =
               [this]() { RequestBottomPanelContentRedraw(); },
+          .scroll_bottom_panel_rows =
+              [this](int row_delta) {
+                if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+                  MakePanelMouseCoordinator().ScrollPanelRows(*layout, row_delta);
+                }
+              },
+          .bottom_panel_scroll_span_rows =
+              [this]() {
+                const auto layout = CurrentWorkspaceLayout();
+                return layout.has_value()
+                           ? MakePanelMouseCoordinator().ScrollSpanRows(*layout)
+                           : 0;
+              },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
           .text_input_composition_consumes_key =
               [this](SDL_Keycode key, SDL_Keymod modifiers) {

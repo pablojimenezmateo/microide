@@ -1528,7 +1528,65 @@ void TestWorkspaceShellTerminalFindClipboardShortcutsTargetTheQuery() {
          "neither shortcut should reach the shell as a control byte");
 }
 
+// The bottom panel is one of the four surfaces in the Ctrl+Tab ring, but only its
+// terminal content ever answered a key. With an Output channel showing, every
+// navigation key fell through to the editor behind the panel and scrolled *that*,
+// leaving a focused, visibly-scrollable surface with no keyboard at all.
+void TestWorkspaceShellOutputPanelIsKeyboardNavigable() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowOutputChannelWithLines(shell, "test.output", 400);
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+
+  const int visible_rows = WorkspaceShellTestAccess::BottomPanelVisibleRowsForTest(shell);
+  Expect(visible_rows > 0 && visible_rows < 400,
+         "the output fixture should overflow the panel");
+  const int max_scroll = 400 - visible_rows;
+
+  Expect(WorkspaceShellTestAccess::OutputPanelScrollRow(shell) == 0,
+         "the output fixture should start at the top");
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE),
+         "a focused output panel should answer Down");
+  Expect(WorkspaceShellTestAccess::OutputPanelScrollRow(shell) == 1,
+         "Down should advance the output panel by one row");
+
+  Expect(SendKeyDown(shell, SDLK_PAGEDOWN, SDL_KMOD_NONE),
+         "a focused output panel should answer Page Down");
+  Expect(WorkspaceShellTestAccess::OutputPanelScrollRow(shell) == 1 + workspace::kListPageStep,
+         "Page Down should advance the output panel by the shared page step");
+
+  Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE),
+         "a focused output panel should answer End");
+  Expect(WorkspaceShellTestAccess::OutputPanelScrollRow(shell) == max_scroll,
+         "End should land on the last screenful of output");
+
+  Expect(SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE),
+         "a focused output panel should answer Home");
+  Expect(WorkspaceShellTestAccess::OutputPanelScrollRow(shell) == 0,
+         "Home should land back on the first line of output");
+}
+
+// Clicking the channel body focuses the panel, the way clicking a terminal or a
+// plugin surface already did. Output was the one content kind whose body could not
+// take focus, so its keyboard was unreachable without Ctrl+Tab.
+void TestWorkspaceShellOutputPanelBodyClickFocusesThePanel() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowOutputChannelWithLines(shell, "test.output", 400);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+
+  const SDL_FRect body = WorkspaceShellTestAccess::BottomPanelContentRect(shell);
+  Expect(SendMouseDown(shell, body.x + body.w * 0.5f, body.y + body.h * 0.5f, SDL_BUTTON_LEFT),
+         "clicking the output panel body should be handled");
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell),
+         "clicking the output panel body should focus the panel");
+}
+
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/OutputPanelIsKeyboardNavigable",
+          TestWorkspaceShellOutputPanelIsKeyboardNavigable);
+  AddTest(tests, "WorkspaceShell/OutputPanelBodyClickFocusesThePanel",
+          TestWorkspaceShellOutputPanelBodyClickFocusesThePanel);
   AddTest(tests, "WorkspaceShell/TerminalSelectionPreservesInternalSpaces",
           TestWorkspaceShellSelectionPreservesInternalSpaces);
   AddTest(tests, "WorkspaceShell/TerminalSelectionSkipsWideTrailingSpacer",

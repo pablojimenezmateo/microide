@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -204,6 +205,9 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   }
 
   if (state_.panel.content == PanelContentKind::Output) {
+    // Clicking the channel body focuses the panel, exactly as clicking a terminal
+    // or a plugin surface does. Output was the one content kind a click could not
+    // focus, so its (now real) keyboard was unreachable by mouse.
     const auto* output_entries = operations_.output_channel_entries();
     if (output_entries != nullptr && !output_entries->empty()) {
       const auto panel_layout =
@@ -425,32 +429,57 @@ bool PanelMouseCoordinator::HandleWheel(const SDL_Event& event,
     return false;
   }
 
-  // Plugin surface preview: pixel-scroll the content one text row per tick,
+  ScrollPanelRows(layout, -vertical_ticks * kWheelScrollRows);
+  // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
+  return true;
+}
+
+void PanelMouseCoordinator::ScrollPanelRows(const WorkspaceLayout& layout, int row_delta) {
+  // Plugin surface preview: pixel-scroll the content one text row per unit,
   // clamped to the padded content height (TD-2026-07-16-60).
   if (state_.panel.content == PanelContentKind::PluginSurface) {
-    if (const editor::SurfaceContent* content = operations_.active_plugin_surface();
-        content != nullptr && content->has_body()) {
-      const SDL_FRect body = operations_.bottom_panel_content_rect(layout);
-      const float line_height =
-          operations_.compute_bottom_panel_log_layout(layout, 0).line_height;
-      const float step = line_height > 0.0f ? line_height : 14.0f;
-      state_.panel.surface_scroll_y =
-          std::clamp(state_.panel.surface_scroll_y -
-                         static_cast<int>(std::lround(
-                             static_cast<float>(vertical_ticks * kWheelScrollRows) * step)),
-                     0, MaxPluginSurfacePreviewScroll(*content, body.h));
+    const editor::SurfaceContent* content = operations_.active_plugin_surface();
+    if (content == nullptr || !content->has_body()) {
+      return;
     }
-    return true;
+    const SDL_FRect body = operations_.bottom_panel_content_rect(layout);
+    state_.panel.surface_scroll_y = std::clamp(
+        state_.panel.surface_scroll_y +
+            static_cast<int>(std::lround(static_cast<float>(row_delta) *
+                                         PanelPixelsPerScrollRow(layout))),
+        0, MaxPluginSurfacePreviewScroll(*content, body.h));
+    return;
   }
 
   const std::size_t line_count = operations_.bottom_panel_line_count();
   const auto panel_layout = operations_.compute_bottom_panel_log_layout(layout, line_count);
   operations_.set_bottom_panel_scroll_row(
-      std::clamp(panel_layout.scroll.vertical_scroll - vertical_ticks * kWheelScrollRows, 0,
+      std::clamp(panel_layout.scroll.vertical_scroll + row_delta, 0,
                  panel_layout.scroll.max_vertical_scroll),
       line_count, panel_layout.scroll.visible_rows);
-  // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
-  return true;
+}
+
+int PanelMouseCoordinator::ScrollSpanRows(const WorkspaceLayout& layout) {
+  // Only sizes the Home/End jump: every scroll path above clamps, so any value at
+  // or beyond the real extent lands on the end.
+  if (state_.panel.content == PanelContentKind::PluginSurface) {
+    const editor::SurfaceContent* content = operations_.active_plugin_surface();
+    if (content == nullptr || !content->has_body()) {
+      return 0;
+    }
+    const SDL_FRect body = operations_.bottom_panel_content_rect(layout);
+    const float step = PanelPixelsPerScrollRow(layout);
+    return static_cast<int>(std::lround(
+        static_cast<float>(MaxPluginSurfacePreviewScroll(*content, body.h)) / step)) + 1;
+  }
+  const std::size_t line_count = operations_.bottom_panel_line_count();
+  return static_cast<int>(std::min<std::size_t>(
+      line_count, static_cast<std::size_t>(std::numeric_limits<int>::max())));
+}
+
+float PanelMouseCoordinator::PanelPixelsPerScrollRow(const WorkspaceLayout& layout) {
+  const float line_height = operations_.compute_bottom_panel_log_layout(layout, 0).line_height;
+  return line_height > 0.0f ? line_height : 14.0f;
 }
 
 TerminalTabState* PanelMouseCoordinator::ActivePanelTerminalTab() {
