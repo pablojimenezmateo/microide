@@ -93,9 +93,12 @@ class KeyInputCoordinator {
     std::function<std::optional<WorkspaceLayout>()> current_workspace_layout;
     std::function<SDL_FRect(const SDL_FRect&)> compute_overlay_rect;
     std::function<void(const SDL_FRect&)> reveal_overlay_selection;
-    // Keeps the debug pane's Variables/Watch selection on screen after a move or
-    // an expand, like every other list's reveal.
+    // Keeps the debug pane's selection on screen after a move or an expand, like
+    // every other list's reveal.
     std::function<void()> reveal_debug_pane_selection;
+    // Focuses the session/thread/frame a Call Stack row names, running the same
+    // path a click on that row does (minus handing focus to the editor).
+    std::function<void(std::size_t)> focus_debug_call_stack_row;
     std::function<void(int)> move_buffer_search_selection;
     std::function<void()> refresh_buffer_search;
     std::function<void(int)> move_project_search_selection;
@@ -249,6 +252,7 @@ class KeyInputCoordinator {
   bool HandleMergeKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
+  bool HandleDebugCallStackKeyDown(const SDL_KeyboardEvent& event);
   bool HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
 
   ProjectWorkspaceState& state_;

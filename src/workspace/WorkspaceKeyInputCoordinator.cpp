@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceKeyInputCoordinator.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <utility>
@@ -89,6 +90,16 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   if (state_.surface.focus == FocusTarget::DebugPane &&
       state_.debug_pane.mode == DebugPaneMode::Watch) {
     if (HandleDebugWatchKeyDown(event, modifiers)) {
+      ensure_redraw([this]() { operations_.request_window_redraw(); });
+      return true;
+    }
+  }
+
+  // Call Stack was clickable but had no keyboard at all, in a pane the shell
+  // treats as a first-class focus target (focus ring, Ctrl+Tab, its own scrollbar).
+  if (state_.surface.focus == FocusTarget::DebugPane &&
+      state_.debug_pane.mode == DebugPaneMode::CallStack) {
+    if (HandleDebugCallStackKeyDown(event)) {
       ensure_redraw([this]() { operations_.request_window_redraw(); });
       return true;
     }
@@ -343,6 +354,29 @@ bool KeyInputCoordinator::HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& e
     default:
       return false;
   }
+}
+
+bool KeyInputCoordinator::HandleDebugCallStackKeyDown(const SDL_KeyboardEvent& event) {
+  const DebugExecutionView& exec = state_.debug_execution;
+  const std::size_t row_count = exec.PanelRowCount();
+  if (row_count == 0 || !operations_.focus_debug_call_stack_row) {
+    return false;
+  }
+  // The panel's selection IS the focused session/thread/frame, which the render
+  // already highlights, so moving it is the same act as clicking the row — the
+  // reason arrow keys navigate the editor here as they do in VS Code. Enter
+  // re-activates, which is how you get back to the frame after scrolling away.
+  const auto delta = ListNavigationKeyDelta(event.key, row_count);
+  const bool is_enter = event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER;
+  if (!delta.has_value() && !is_enter) {
+    return false;
+  }
+  const auto current = static_cast<int>(exec.FocusedPanelRow());
+  const auto max_row = static_cast<int>(row_count) - 1;
+  const int target = delta.has_value() ? std::clamp(current + *delta, 0, max_row) : current;
+  operations_.focus_debug_call_stack_row(static_cast<std::size_t>(target));
+  operations_.reveal_debug_pane_selection();
+  return true;
 }
 
 bool KeyInputCoordinator::HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event,
@@ -690,6 +724,8 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .compute_overlay_rect = [this](const SDL_FRect& rect) { return ComputeOverlayRect(rect); },
           .reveal_overlay_selection = [this](const SDL_FRect& rect) { RevealOverlaySelection(rect); },
           .reveal_debug_pane_selection = [this]() { RevealDebugPaneSelection(); },
+          .focus_debug_call_stack_row =
+              [this](std::size_t row) { FocusDebugCallStackRow(row); },
           .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
           .move_project_search_selection = [this](int delta) { MoveProjectSearchSelection(delta); },

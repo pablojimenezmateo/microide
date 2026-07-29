@@ -160,6 +160,31 @@ struct DebugExecutionView {
     }
     return PanelRowRef{PanelRowRef::Kind::Frame, row - thread_rows};
   }
+  // Inverse of PanelRowAt for whatever is currently focused: the frame row when a
+  // frame is focused, else the focused thread's or session's row. Keyboard
+  // navigation walks the panel rows, so it needs to know which one the focus is
+  // already sitting on; deriving it here keeps the row layout in one place.
+  std::size_t FocusedPanelRow() const {
+    const std::size_t session_rows = SessionRowCount();
+    const std::size_t thread_rows = ThreadRowCount();
+    if (!frames.empty()) {
+      return session_rows + thread_rows + std::min(focused_frame_index, frames.size() - 1);
+    }
+    if (thread_rows > 0) {
+      for (std::size_t i = 0; i < threads.size(); ++i) {
+        if (threads[i].id == focused_thread_id) {
+          return session_rows + i;
+        }
+      }
+      return session_rows;
+    }
+    for (std::size_t i = 0; i < sessions.size(); ++i) {
+      if (sessions[i].id == focused_session_id) {
+        return i;
+      }
+    }
+    return 0;
+  }
 };
 
 // Transient hover-to-inspect cache (Phase 5). Holds the single in-flight / most

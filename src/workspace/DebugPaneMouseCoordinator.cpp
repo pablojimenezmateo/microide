@@ -73,6 +73,50 @@ bool DebugPaneMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   return HandleRowClick(event, layout);
 }
 
+// Focus the session, thread or frame a Call Stack row names, exactly as a click
+// does. Shared with the keyboard so the two cannot answer the same row
+// differently. `move_focus_to_editor` is the one difference between them: a click
+// hands focus to the editor it just navigated, while an arrow key must leave focus
+// in the pane or the next arrow key would go somewhere else.
+void DebugPaneMouseCoordinator::ActivateCallStackRow(std::size_t line_index,
+                                                     bool move_focus_to_editor) {
+  DebugExecutionView& exec = state_.debug_execution;
+  if (line_index >= exec.PanelRowCount()) {
+    return;
+  }
+  const auto row_ref = exec.PanelRowAt(line_index);
+  if (row_ref.kind == DebugExecutionView::PanelRowRef::Kind::Session) {
+    const int session_id = exec.sessions[row_ref.index].id;
+    if (session_id != exec.focused_session_id && operations_.on_debug_session_focus_changed) {
+      operations_.on_debug_session_focus_changed(session_id);
+    }
+    return;
+  }
+  if (row_ref.kind == DebugExecutionView::PanelRowRef::Kind::Thread) {
+    const int thread_id = exec.threads[row_ref.index].id;
+    if (thread_id != exec.focused_thread_id && operations_.on_debug_thread_focus_changed) {
+      operations_.on_debug_thread_focus_changed(thread_id);
+    }
+    return;
+  }
+  exec.focused_frame_index = row_ref.index;
+  const DebugStackFrameView& frame = exec.frames[row_ref.index];
+  if (operations_.on_debug_frame_focus_changed) {
+    operations_.on_debug_frame_focus_changed(frame.id);
+  }
+  if (frame.source_path.empty()) {
+    return;
+  }
+  operations_.open_file(frame.source_path);
+  if (editor::TextViewport* viewport = operations_.active_editor_viewport();
+      viewport != nullptr) {
+    viewport->MoveCursorTo(frame.line, 0);
+  }
+  // Opening the frame's file focuses the editor on its own, so the keyboard path
+  // has to claim focus back rather than merely decline to hand it over.
+  state_.surface.focus = move_focus_to_editor ? FocusTarget::Editor : FocusTarget::DebugPane;
+}
+
 bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
                                                const WorkspaceLayout& layout) {
   const DebugPaneMode mode = state_.debug_pane.mode;
@@ -95,34 +139,7 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
       state_.surface.focus = FocusTarget::DebugPane;
       return true;
     }
-    const auto row_ref = exec.PanelRowAt(*line_index);
-    if (row_ref.kind == DebugExecutionView::PanelRowRef::Kind::Session) {
-      const int session_id = exec.sessions[row_ref.index].id;
-      if (session_id != exec.focused_session_id && operations_.on_debug_session_focus_changed) {
-        operations_.on_debug_session_focus_changed(session_id);
-      }
-      return true;
-    }
-    if (row_ref.kind == DebugExecutionView::PanelRowRef::Kind::Thread) {
-      const int thread_id = exec.threads[row_ref.index].id;
-      if (thread_id != exec.focused_thread_id && operations_.on_debug_thread_focus_changed) {
-        operations_.on_debug_thread_focus_changed(thread_id);
-      }
-      return true;
-    }
-    exec.focused_frame_index = row_ref.index;
-    const DebugStackFrameView& frame = exec.frames[row_ref.index];
-    if (operations_.on_debug_frame_focus_changed) {
-      operations_.on_debug_frame_focus_changed(frame.id);
-    }
-    if (!frame.source_path.empty()) {
-      operations_.open_file(frame.source_path);
-      if (editor::TextViewport* viewport = operations_.active_editor_viewport();
-          viewport != nullptr) {
-        viewport->MoveCursorTo(frame.line, 0);
-      }
-      state_.surface.focus = FocusTarget::Editor;
-    }
+    ActivateCallStackRow(*line_index, /*move_focus_to_editor=*/true);
     return true;
   }
 

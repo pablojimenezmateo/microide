@@ -62,6 +62,8 @@ class DebugPaneMouseCoordinator {
   // start but had no grab path, so it was the one scrollable surface whose bar
   // was decorative; these two mirror SidebarMouseCoordinator exactly.
   bool HandleDrag(const SDL_Event& event, const WorkspaceLayout& layout);
+  // Row activation for the Call Stack surface, shared with the keyboard path.
+  void ActivateCallStackRow(std::size_t line_index, bool move_focus_to_editor);
 
  private:
   bool HandleRowClick(const SDL_Event& event, const WorkspaceLayout& layout);

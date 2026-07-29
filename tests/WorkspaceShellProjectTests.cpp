@@ -2484,6 +2484,63 @@ void TestWorkspaceShellDebugPaneKeyboardRevealsAndPages() {
          "Home should scroll the pane back to the top");
 }
 
+// Call Stack rows were clickable but had no keyboard at all, in a pane the shell
+// otherwise treats as a first-class focus target (focus ring, Ctrl+Tab, its own
+// scrollbar, row context menus). Its selection is the focused frame, which the
+// render already highlights, so arrowing is the same act as clicking — except
+// that it must not hand focus to the editor, or the next arrow key would land
+// somewhere else.
+void TestWorkspaceShellDebugCallStackKeyboardNavigates() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  std::string body;
+  for (int i = 0; i < 200; ++i) {
+    body += "int line_" + std::to_string(i) + "() { return " + std::to_string(i) + "; }\n";
+  }
+  WriteFile(source, body);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::FocusDebugPaneCallStack(shell);
+
+  auto& exec = WorkspaceShellTestAccess::DebugExecution(shell);
+  exec.stopped = true;
+  for (int i = 0; i < 80; ++i) {
+    microide::workspace::DebugStackFrameView frame;
+    frame.id = i;
+    frame.SetSource(source.string());
+    frame.line = static_cast<std::size_t>(i);
+    exec.frames.push_back(frame);
+  }
+  const int visible = WorkspaceShellTestAccess::DebugPaneVisibleRows(shell);
+  Expect(visible > 0 && exec.PanelRowCount() > static_cast<std::size_t>(visible),
+         "the call stack fixture should overflow the pane");
+  Expect(exec.focused_frame_index == 0, "the top frame starts focused");
+
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE), "Down should be consumed by the call stack");
+  Expect(WorkspaceShellTestAccess::DebugExecution(shell).focused_frame_index == 1,
+         "Down should focus the next frame, as clicking it would");
+  Expect(WorkspaceShellTestAccess::FocusIsDebugPane(shell),
+         "arrowing the call stack must keep focus in the pane, unlike a click");
+
+  Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE), "End should be consumed by the call stack");
+  const std::size_t last = WorkspaceShellTestAccess::DebugExecution(shell).frames.size() - 1;
+  Expect(WorkspaceShellTestAccess::DebugExecution(shell).focused_frame_index == last,
+         "End should focus the deepest frame");
+  const int scroll = WorkspaceShellTestAccess::DebugPaneCallStackScrollRow(shell);
+  Expect(scroll > 0, "focusing the deepest frame should scroll the pane to it");
+  Expect(static_cast<int>(last) >= scroll && static_cast<int>(last) < scroll + visible,
+         "the focused frame must stay inside the visible window");
+
+  Expect(SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE), "Home should be consumed by the call stack");
+  Expect(WorkspaceShellTestAccess::DebugExecution(shell).focused_frame_index == 0,
+         "Home should focus the top frame again");
+  Expect(WorkspaceShellTestAccess::DebugPaneCallStackScrollRow(shell) == 0,
+         "Home should scroll the pane back to the top");
+}
+
 // Third instance of the same bug as the debug pane's and Help/About's bars: the
 // font-picker dropdown painted a scrollbar from the day it shipped and nothing
 // hit-tested it, so a long family list was reachable by mouse wheel only. The
@@ -4744,6 +4801,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSettingsOverlayTrapsKeyboardInput);
   AddTest(tests, "WorkspaceShell/SettingsOverlayWheelScrolls",
           TestWorkspaceShellSettingsOverlayWheelScrolls);
+  AddTest(tests, "WorkspaceShell/DebugCallStackKeyboardNavigates",
+          TestWorkspaceShellDebugCallStackKeyboardNavigates);
   AddTest(tests, "WorkspaceShell/DebugPaneKeyboardRevealsAndPages",
           TestWorkspaceShellDebugPaneKeyboardRevealsAndPages);
   AddTest(tests, "WorkspaceShell/SettingsFontPickerScrollbarIsGrabbable",

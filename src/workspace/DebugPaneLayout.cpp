@@ -150,6 +150,11 @@ void WorkspaceShell::RevealDebugPaneSelection() {
     case DebugPaneMode::Watch:
       selected = static_cast<int>(ps.debug_watch.SelectedRow());
       break;
+    case DebugPaneMode::CallStack:
+      // The Call Stack's selection is the focused session/thread/frame, which is
+      // also what the render highlights — there is no separate selection to track.
+      selected = static_cast<int>(ps.debug_execution.FocusedPanelRow());
+      break;
     default:
       return;
   }
@@ -158,6 +163,10 @@ void WorkspaceShell::RevealDebugPaneSelection() {
   SetDebugPaneScrollRow(RevealedScrollRow(panel_layout.scroll.vertical_scroll,
                                           panel_layout.scroll.visible_rows, selected),
                         line_count, panel_layout.scroll.visible_rows);
+}
+
+void WorkspaceShell::FocusDebugCallStackRow(std::size_t row) {
+  MakeDebugPaneMouseCoordinator().ActivateCallStackRow(row, /*move_focus_to_editor=*/false);
 }
 
 bool WorkspaceShell::DebugPaneRowIsActionable(std::size_t row) const {

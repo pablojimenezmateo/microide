@@ -853,6 +853,17 @@
     shell.context_.current_project_state.debug_pane.mode = DebugPaneMode::Watch;
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::DebugPane;
   }
+  static void FocusDebugPaneCallStack(WorkspaceShell& shell) {
+    SetDebugPaneVisible(shell, true);
+    shell.context_.current_project_state.debug_pane.mode = DebugPaneMode::CallStack;
+    shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::DebugPane;
+  }
+  static DebugExecutionView& DebugExecution(WorkspaceShell& shell) {
+    return shell.context_.current_project_state.debug_execution;
+  }
+  static int DebugPaneCallStackScrollRow(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.debug_pane.call_stack_scroll_row;
+  }
   static void AddDebugWatchExpressionForTest(WorkspaceShell& shell, std::string expression) {
     shell.context_.current_project_state.debug_watch.AddExpression(std::move(expression));
   }
