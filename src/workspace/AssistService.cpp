@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "editor/EditTypes.h"
 #include "editor/SnippetEngine.h"
 #include "util/JsonValue.h"
 #include "util/StringUtil.h"
@@ -1321,13 +1322,6 @@ bool AssistService::ShowWorkspaceSymbols(const std::string& query, std::string* 
   return true;
 }
 
-namespace {
-bool IsIdentifierByte(char ch) {
-  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
-         ch == '_';
-}
-}  // namespace
-
 std::string AssistService::SymbolAtCursor() const {
   editor::TextViewport* viewport = operations_.active_editable_viewport();
   if (viewport == nullptr) {
@@ -1336,10 +1330,10 @@ std::string AssistService::SymbolAtCursor() const {
   const std::string_view line = LspLineView(*viewport, viewport->cursor_line());
   std::size_t begin = std::min(viewport->cursor_column(), line.size());
   std::size_t end = begin;
-  while (begin > 0 && IsIdentifierByte(line[begin - 1])) {
+  while (begin > 0 && editor::IsIdentifierByte(line[begin - 1])) {
     --begin;
   }
-  while (end < line.size() && IsIdentifierByte(line[end])) {
+  while (end < line.size() && editor::IsIdentifierByte(line[end])) {
     ++end;
   }
   return std::string(line.substr(begin, end - begin));
