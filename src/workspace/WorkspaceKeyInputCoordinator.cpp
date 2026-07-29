@@ -469,8 +469,13 @@ bool KeyInputCoordinator::HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event
   const std::vector<DebugVariableRowView>& rows = model.Rows();
   const std::size_t selected = model.SelectedRow();
   const DebugVariableRowView* row = selected < rows.size() ? &rows[selected] : nullptr;
-  const std::optional<std::size_t> expr_index =
-      row != nullptr ? model.ExpressionIndexForRow(selected) : std::nullopt;
+  // Written as a statement rather than a `row != nullptr ? ... : std::nullopt`
+  // ternary: GCC inlines ExpressionIndexForRow's search loop into the ternary and
+  // then reports a -Wmaybe-uninitialized false positive on the optional's payload.
+  std::optional<std::size_t> expr_index;
+  if (row != nullptr) {
+    expr_index = model.ExpressionIndexForRow(selected);
+  }
   if (const auto delta = ListNavigationKeyDelta(event.key, rows.size()); delta.has_value()) {
     model.MoveSelection(*delta);
     operations_.reveal_debug_pane_selection();
