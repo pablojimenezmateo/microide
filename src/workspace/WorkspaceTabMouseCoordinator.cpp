@@ -546,15 +546,36 @@ void TabMouseCoordinator::CommitDrag() {
 bool TabMouseCoordinator::HandleWheel(const SDL_Event& event,
                                       const WorkspaceLayout& layout,
                                       int vertical_ticks) {
-  const auto scroll_strip = [vertical_ticks](std::size_t entry_count, int& scroll_index) {
-    const int max_scroll = std::max(0, static_cast<int>(entry_count) - 1);
-    scroll_index = std::clamp(scroll_index - vertical_ticks, 0, max_scroll);
+  if (vertical_ticks == 0) {
+    return false;
+  }
+  // Wheel and the ⟨ ⟩ overflow buttons scroll the same strip, so they answer to the
+  // same stop: keep stepping only while something is still hidden on that side.
+  // The wheel used to bypass that and clamp on the raw index instead, so it ran on
+  // to the last tab and left most of the strip empty — a state the buttons cannot
+  // produce, because they disappear the moment nothing is hidden.
+  const auto step_while_hidden = [&](auto&& overflow_for_now, auto&& scroll_one) {
+    const int direction = vertical_ticks > 0 ? -1 : 1;
+    for (int step = 0; step < std::abs(vertical_ticks); ++step) {
+      const auto overflow = overflow_for_now();
+      const std::size_t hidden = direction < 0 ? overflow.hidden_left : overflow.hidden_right;
+      if (hidden == 0 || !scroll_one(direction)) {
+        break;
+      }
+    }
+    return true;
   };
 
   if (Contains(layout.project_tab_strip, event.wheel.mouse_x, event.wheel.mouse_y) &&
-      !project_catalog_.entries.empty()) {
-    scroll_strip(project_catalog_.entries.size(), project_catalog_.tab_scroll_index);
-    return true;
+      !project_catalog_.entries.empty() && operations_.scroll_project_tab_strip &&
+      operations_.compute_project_tab_overflow_controls) {
+    const SDL_FRect strip = layout.project_tab_strip;
+    return step_while_hidden(
+        [&]() {
+          return operations_.compute_project_tab_overflow_controls(
+              strip, operations_.compute_visible_project_tabs(strip));
+        },
+        [&](int direction) { return operations_.scroll_project_tab_strip(direction); });
   }
 
   {
@@ -571,25 +592,39 @@ bool TabMouseCoordinator::HandleWheel(const SDL_Event& event,
           state_.editor_groups[group_index].open_tabs.empty()) {
         continue;
       }
-      EditorGroup& group = state_.editor_groups[group_index];
-      scroll_strip(group.open_tabs.size(), group.tab_scroll_index);
-      return true;
+      if (!operations_.scroll_editor_tab_strip || !operations_.compute_tab_overflow_controls) {
+        return false;
+      }
+      // The scroll operation acts on the focused group, so wheeling an unfocused
+      // group's strip has to focus it first (a left-click on the strip does the
+      // same thing).
+      if (group_index != state_.focused_group_index && operations_.focus_editor_group) {
+        operations_.focus_editor_group(group_index);
+      }
+      const SDL_FRect strip = group_strip;
+      return step_while_hidden(
+          [&]() {
+            return operations_.compute_tab_overflow_controls(
+                strip, operations_.compute_visible_tabs(strip));
+          },
+          [&](int direction) { return operations_.scroll_editor_tab_strip(direction); });
     }
   }
 
   // Bottom-panel tab strip. Gated strictly to the header band so wheeling over
   // the terminal/output content below still scrolls the transcript.
   if (operations_.bottom_panel_visible() && operations_.scroll_bottom_panel_tab_strip &&
-      vertical_ticks != 0) {
+      operations_.compute_bottom_panel_tab_overflow_controls) {
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                  kWorkspaceBottomPanelHeaderHeight);
     if (Contains(panel_header, event.wheel.mouse_x, event.wheel.mouse_y)) {
-      const int steps = std::abs(vertical_ticks);
-      for (int i = 0; i < steps; ++i) {
-        operations_.scroll_bottom_panel_tab_strip(vertical_ticks > 0 ? -1 : 1);
-      }
-      return true;
+      return step_while_hidden(
+          [&]() {
+            return operations_.compute_bottom_panel_tab_overflow_controls(
+                panel_header, operations_.compute_visible_bottom_panel_tabs(panel_header));
+          },
+          [&](int direction) { return operations_.scroll_bottom_panel_tab_strip(direction); });
     }
   }
 

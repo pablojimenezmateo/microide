@@ -2220,6 +2220,61 @@ void TestEditorTabStripOverflowControlsScrollAndCount() {
          "after one right-scroll the right-hidden count should decrement by one");
 }
 
+// The wheel and the ⟨ ⟩ overflow buttons scroll the same strip, so they must stop
+// at the same place. The buttons stop correctly — they disappear once nothing is
+// hidden on that side — but the wheel clamped on the raw scroll index instead, so
+// it ran on to the last tab and left most of the strip blank.
+void TestEditorTabStripWheelStopsWhereTheOverflowButtonDoes() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "wheel stop\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  for (int i = 0; i < 16; ++i) {
+    const std::filesystem::path file =
+        root / ("wheel_" + std::to_string(i) + "_long_name_for_overflow_test.txt");
+    WriteFile(file, "alpha\n");
+    WorkspaceShellTestAccess::OpenFile(shell, file);
+  }
+
+  constexpr std::size_t kTotalTabs = 16;
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  const auto at_left = WorkspaceShellTestAccess::EditorTabOverflowControls(shell);
+  Expect(at_left.hidden_left == 0 && at_left.hidden_right > 0,
+         "fixture should expose right-side editor-tab overflow");
+  // A full strip at the left end: everything not hidden on the right is on screen.
+  const std::size_t visible_when_full = kTotalTabs - at_left.hidden_right;
+  Expect(visible_when_full > 1, "fixture should fit more than one tab at a time");
+
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const float wheel_x = layout.tab_strip.x + layout.tab_strip.w * 0.5f;
+  const float wheel_y = layout.tab_strip.y + layout.tab_strip.h * 0.5f;
+  // Far more notches than there are tabs, so an ungated wheel runs off the end.
+  for (int i = 0; i < 40; ++i) {
+    SendMouseWheel(shell, wheel_x, wheel_y, -1);
+  }
+
+  const auto at_right = WorkspaceShellTestAccess::EditorTabOverflowControls(shell);
+  Expect(at_right.hidden_right == 0, "wheeling right should reach the last tab");
+  // The point of the stop: the strip is still FULL. Clamping on the raw scroll
+  // index instead left exactly one tab on screen with the rest of the strip blank,
+  // which is what a hidden_left of kTotalTabs - 1 means.
+  const std::size_t visible_at_right = kTotalTabs - at_right.hidden_left;
+  Expect(visible_at_right > 1,
+         "wheeling to the end must leave the strip full, not scroll past the last tab");
+  Expect(visible_at_right + 1 >= visible_when_full,
+         "the strip at the right end should hold about as many tabs as at the left end");
+
+  // And the same on the way back: it stops with the first tab flush left.
+  for (int i = 0; i < 40; ++i) {
+    SendMouseWheel(shell, wheel_x, wheel_y, 1);
+  }
+  Expect(WorkspaceShellTestAccess::EditorTabOverflowControls(shell).hidden_left == 0,
+         "wheeling left should return the strip to the first tab");
+}
+
 void TestEditorTabStripUsesLeftGapWhenOnlyRightOverflowRemains() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2537,6 +2592,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestEditorTabStripOverflowControlsScrollAndCount);
   AddTest(tests, "WorkspaceShell/EditorTabStripUsesLeftGapWhenOnlyRightOverflowRemains",
           TestEditorTabStripUsesLeftGapWhenOnlyRightOverflowRemains);
+  AddTest(tests, "WorkspaceShell/EditorTabStripWheelStopsWhereTheOverflowButtonDoes",
+          TestEditorTabStripWheelStopsWhereTheOverflowButtonDoes);
   AddTest(tests, "WorkspaceShell/EditorTabOverflowButtonExpandsForDoubleDigitHiddenCount",
           TestEditorTabOverflowButtonExpandsForDoubleDigitHiddenCount);
   AddTest(tests, "WorkspaceShell/ClosingTabsWhileScrolledRecomputesOverflowImmediately",
