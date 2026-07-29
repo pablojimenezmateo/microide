@@ -59,7 +59,8 @@ class EditorMouseCoordinator {
   bool HandleSelectionMotion(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleWheel(const SDL_Event& event,
                    const WorkspaceLayout& layout,
-                   int vertical_ticks);
+                   int vertical_ticks,
+                   int horizontal_ticks);
 
  private:
   ProjectWorkspaceState& state_;

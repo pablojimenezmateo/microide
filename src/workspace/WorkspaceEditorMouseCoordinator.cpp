@@ -623,7 +623,8 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
 
 bool EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
                                          const WorkspaceLayout& layout,
-                                         int vertical_ticks) {
+                                         int vertical_ticks,
+                                         int horizontal_ticks) {
   if (!Contains(layout.editor_surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
     return false;
   }
@@ -646,7 +647,20 @@ bool EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
     viewport = operations_.active_editor_viewport();
   }
   if (viewport != nullptr) {
-    viewport->ScrollVertical(-vertical_ticks * kWheelScrollRows);
+    // Shift+wheel (and a real horizontal wheel) scrolls sideways, as it does in the
+    // compare and merge surfaces one tab over and in VS Code. The shell has been
+    // resolving horizontal ticks all along — synthesizing them from Shift+vertical —
+    // and handing them to compare, merge and the chrome; the editor was the one
+    // surface that ignored them and scrolled down instead.
+    if (horizontal_ticks != 0) {
+      const auto columns = static_cast<std::size_t>(kWheelScrollRows);
+      const std::size_t current = viewport->horizontal_scroll();
+      viewport->SetHorizontalScroll(horizontal_ticks > 0
+                                        ? (current < columns ? 0 : current - columns)
+                                        : current + columns);
+    } else {
+      viewport->ScrollVertical(-vertical_ticks * kWheelScrollRows);
+    }
   }
   // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
   return true;

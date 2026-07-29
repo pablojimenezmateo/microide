@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "workspace/CompareMergeService.h"
+#include "workspace/ListSelection.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -410,9 +411,9 @@ bool CompareMouseCoordinator::HandleWheel(const SDL_Event& event,
   }
 
   if (horizontal_ticks != 0) {
-    operations_.scroll_compare_columns(-horizontal_ticks * 3);
+    operations_.scroll_compare_columns(-horizontal_ticks * kWheelScrollRows);
   } else {
-    operations_.scroll_compare_rows(-vertical_ticks * 3);
+    operations_.scroll_compare_rows(-vertical_ticks * kWheelScrollRows);
   }
   if (auto* compare_tab = ActiveCompareTab(); compare_tab != nullptr) {
     operations_.sync_compare_viewport_scroll(*compare_tab);

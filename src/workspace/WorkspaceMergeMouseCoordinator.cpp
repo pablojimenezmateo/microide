@@ -10,6 +10,7 @@
 
 #include "workspace/CompareMergeService.h"
 #include "workspace/WorkspaceActionCoordinator.h"
+#include "workspace/ListSelection.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -482,7 +483,7 @@ bool MergeMouseCoordinator::HandleWheel(const SDL_Event& event,
   }
 
   if (horizontal_ticks != 0) {
-    operations_.scroll_merge_columns(-horizontal_ticks * 3);
+    operations_.scroll_merge_columns(-horizontal_ticks * kWheelScrollRows);
   } else {
     MergeTabState* merge_tab = ActiveMergeTab();
     if (merge_tab != nullptr) {

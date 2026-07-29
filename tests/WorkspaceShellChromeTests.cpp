@@ -2220,6 +2220,42 @@ void TestEditorTabStripOverflowControlsScrollAndCount() {
          "after one right-scroll the right-hidden count should decrement by one");
 }
 
+// The shell resolves horizontal wheel ticks (synthesizing them from Shift+wheel)
+// and hands them to compare, merge and the chrome. The editor ignored them and
+// scrolled down instead, so the same gesture moved sideways in a diff and
+// downwards in the file it was diffing.
+void TestEditorWheelScrollsHorizontally() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path wide = root / "wide.txt";
+  // One line far wider than the viewport, so horizontal scroll has somewhere to go.
+  WriteFile(wide, std::string(4000, 'x') + "\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, wide);
+
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const float wheel_x = layout.editor_surface.x + layout.editor_surface.w * 0.5f;
+  const float wheel_y = layout.editor_surface.y + layout.editor_surface.h * 0.5f;
+
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).horizontal_scroll() == 0,
+         "the editor should start unscrolled horizontally");
+  const std::size_t scroll_line_before =
+      WorkspaceShellTestAccess::ActiveEditor(shell).scroll_line();
+  Expect(SendMouseWheel(shell, wheel_x, wheel_y, 0, -2),
+         "a horizontal wheel over the editor should be handled");
+  const std::size_t scrolled = WorkspaceShellTestAccess::ActiveEditor(shell).horizontal_scroll();
+  Expect(scrolled > 0, "a horizontal wheel should scroll the editor sideways");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).scroll_line() == scroll_line_before,
+         "a horizontal wheel must not scroll the editor vertically");
+
+  Expect(SendMouseWheel(shell, wheel_x, wheel_y, 0, 2), "the reverse direction is handled too");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).horizontal_scroll() < scrolled,
+         "wheeling back should reduce the horizontal scroll");
+}
+
 // Editor tabs were openable (Ctrl+P) and closable (Ctrl+W) from the keyboard, but
 // there was no chord to move between them at all — the only way was the mouse.
 // Ctrl+PageDown/PageUp cycle, wrapping at both ends as they do in VS Code, and the
@@ -2648,6 +2684,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestEditorTabStripOverflowControlsScrollAndCount);
   AddTest(tests, "WorkspaceShell/EditorTabStripUsesLeftGapWhenOnlyRightOverflowRemains",
           TestEditorTabStripUsesLeftGapWhenOnlyRightOverflowRemains);
+  AddTest(tests, "WorkspaceShell/EditorWheelScrollsHorizontally",
+          TestEditorWheelScrollsHorizontally);
   AddTest(tests, "WorkspaceShell/EditorTabSwitchAcceptsRelativeOffsetsAndKeyChords",
           TestEditorTabSwitchAcceptsRelativeOffsetsAndKeyChords);
   AddTest(tests, "WorkspaceShell/EditorTabStripWheelStopsWhereTheOverflowButtonDoes",

@@ -784,7 +784,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
       }
       return handled;
     }
-    const bool handled = MakeEditorMouseCoordinator().HandleWheel(event, layout, vertical_ticks);
+    const bool handled = MakeEditorMouseCoordinator().HandleWheel(event, layout, vertical_ticks, horizontal_ticks);
     if (handled) {
       EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
     }
