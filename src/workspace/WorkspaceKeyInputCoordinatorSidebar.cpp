@@ -1,8 +1,7 @@
 #include "workspace/WorkspaceKeyInputCoordinator.h"
 
-#include <algorithm>
 #include <cstddef>
-#include <limits>
+#include <vector>
 
 #include "project/CommitWorkflowTypes.h"
 #include "workspace/GitSidebarCommandCenter.h"
@@ -12,6 +11,27 @@ namespace microide::workspace {
 bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
                                                SDL_Keymod modifiers) {
   const SidebarMode sidebar_mode = operations_.active_sidebar_mode();
+
+  // Escape closes an auto-opened (temporary) sidebar from *every* mode. Search,
+  // Problems, Tests and the plugin/outline list already did; the file tree and
+  // the git sidebar silently ignored it, so the one key users reach for to
+  // dismiss a transient panel worked in four modes out of six. Sub-editors that
+  // own the keyboard (the search field editor, the commit workflow) keep their
+  // own Escape below — this only fires when neither is active.
+  if (event.key == SDLK_ESCAPE) {
+    const bool sub_editor_active =
+        (sidebar_mode == SidebarMode::Search &&
+         state_.overlay.workflow.project_search.editing) ||
+        (sidebar_mode == SidebarMode::Git && state_.sidebar.git.commit_workflow.open);
+    if (!sub_editor_active) {
+      if (!state_.sidebar.temporary) {
+        return false;
+      }
+      operations_.close_sidebar();
+      return true;
+    }
+  }
+
   if (sidebar_mode == SidebarMode::Search) {
     const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
     auto& search_state = state_.overlay.workflow.project_search;
@@ -60,13 +80,14 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       }
     }
 
+    if (const auto delta = ListNavigationKeyDelta(
+            event.key, state_.overlay.workflow.project_search.results.size());
+        delta.has_value()) {
+      operations_.move_project_search_selection(*delta);
+      return true;
+    }
+
     switch (event.key) {
-      case SDLK_ESCAPE:
-        if (state_.sidebar.temporary) {
-          operations_.close_sidebar();
-          return true;
-        }
-        return false;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
       case SDLK_RIGHT:
@@ -86,31 +107,6 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
           state_.surface.focus = FocusTarget::Editor;
           operations_.seed_buffer_search_from_project_search();
         }
-        return true;
-      case SDLK_UP:
-        operations_.move_project_search_selection(-1);
-        return true;
-      case SDLK_DOWN:
-        operations_.move_project_search_selection(1);
-        return true;
-      case SDLK_HOME:
-        // Route through move-selection (clamped) so the reveal-into-view logic runs.
-        if (!state_.overlay.workflow.project_search.results.empty()) {
-          operations_.move_project_search_selection(
-              -static_cast<int>(state_.overlay.workflow.project_search.results.size()));
-        }
-        return true;
-      case SDLK_END:
-        if (!state_.overlay.workflow.project_search.results.empty()) {
-          operations_.move_project_search_selection(
-              static_cast<int>(state_.overlay.workflow.project_search.results.size()));
-        }
-        return true;
-      case SDLK_PAGEUP:
-        operations_.move_project_search_selection(-kListPageStep);
-        return true;
-      case SDLK_PAGEDOWN:
-        operations_.move_project_search_selection(kListPageStep);
         return true;
       case SDLK_R:
         if (input_character == 'R') {
@@ -206,31 +202,16 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       return operations_.text_input_handle_single_line_key_down(event, modifiers);
     }
     const std::size_t selected_index = state_.sidebar.git.selected_index;
+    if (const auto delta =
+            ListNavigationKeyDelta(event.key, state_.sidebar.git.entries.size());
+        delta.has_value()) {
+      // Home/End used to assign the raw first/last index, which can point at an
+      // entry hidden under a collapsed directory. MoveGitSidebarSelection walks
+      // visible rows only, so routing through it keeps the highlight on screen.
+      operations_.move_git_sidebar_selection(*delta);
+      return true;
+    }
     switch (event.key) {
-      case SDLK_UP:
-        operations_.move_git_sidebar_selection(-1);
-        return true;
-      case SDLK_DOWN:
-        operations_.move_git_sidebar_selection(1);
-        return true;
-      case SDLK_HOME:
-        if (!state_.sidebar.git.entries.empty()) {
-          state_.sidebar.git.selected_index = 0;
-          operations_.reveal_selected_git_sidebar_line();
-        }
-        return true;
-      case SDLK_END:
-        if (!state_.sidebar.git.entries.empty()) {
-          state_.sidebar.git.selected_index = state_.sidebar.git.entries.size() - 1;
-          operations_.reveal_selected_git_sidebar_line();
-        }
-        return true;
-      case SDLK_PAGEUP:
-        operations_.move_git_sidebar_selection(-kListPageStep);
-        return true;
-      case SDLK_PAGEDOWN:
-        operations_.move_git_sidebar_selection(kListPageStep);
-        return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
         return operations_.dispatch_git_sidebar_action(GitSidebarActionId::DefaultView,
@@ -271,37 +252,13 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
   }
 
   if (sidebar_mode == SidebarMode::Problems) {
+    if (const auto delta =
+            ListNavigationKeyDelta(event.key, state_.sidebar.problems.entries.size());
+        delta.has_value()) {
+      operations_.move_problems_sidebar_selection(*delta);
+      return true;
+    }
     switch (event.key) {
-      case SDLK_ESCAPE:
-        if (state_.sidebar.temporary) {
-          operations_.close_sidebar();
-          return true;
-        }
-        return false;
-      case SDLK_UP:
-        operations_.move_problems_sidebar_selection(-1);
-        return true;
-      case SDLK_DOWN:
-        operations_.move_problems_sidebar_selection(1);
-        return true;
-      case SDLK_HOME:
-        if (!state_.sidebar.problems.entries.empty()) {
-          state_.sidebar.problems.selected_index = 0;
-          operations_.reveal_selected_problems_sidebar_line();
-        }
-        return true;
-      case SDLK_END:
-        if (!state_.sidebar.problems.entries.empty()) {
-          state_.sidebar.problems.selected_index = state_.sidebar.problems.entries.size() - 1;
-          operations_.reveal_selected_problems_sidebar_line();
-        }
-        return true;
-      case SDLK_PAGEUP:
-        operations_.move_problems_sidebar_selection(-kListPageStep);
-        return true;
-      case SDLK_PAGEDOWN:
-        operations_.move_problems_sidebar_selection(kListPageStep);
-        return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
       case SDLK_RIGHT:
@@ -314,37 +271,13 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
   }
 
   if (sidebar_mode == SidebarMode::Tests) {
+    if (const auto delta =
+            ListNavigationKeyDelta(event.key, state_.sidebar.tests.entries.size());
+        delta.has_value()) {
+      operations_.move_tests_sidebar_selection(*delta);
+      return true;
+    }
     switch (event.key) {
-      case SDLK_ESCAPE:
-        if (state_.sidebar.temporary) {
-          operations_.close_sidebar();
-          return true;
-        }
-        return false;
-      case SDLK_UP:
-        operations_.move_tests_sidebar_selection(-1);
-        return true;
-      case SDLK_DOWN:
-        operations_.move_tests_sidebar_selection(1);
-        return true;
-      case SDLK_HOME:
-        if (!state_.sidebar.tests.entries.empty()) {
-          state_.sidebar.tests.selected_index = 0;
-          operations_.reveal_selected_tests_sidebar_line();
-        }
-        return true;
-      case SDLK_END:
-        if (!state_.sidebar.tests.entries.empty()) {
-          state_.sidebar.tests.selected_index = state_.sidebar.tests.entries.size() - 1;
-          operations_.reveal_selected_tests_sidebar_line();
-        }
-        return true;
-      case SDLK_PAGEUP:
-        operations_.move_tests_sidebar_selection(-kListPageStep);
-        return true;
-      case SDLK_PAGEDOWN:
-        operations_.move_tests_sidebar_selection(kListPageStep);
-        return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
       case SDLK_RIGHT:
@@ -368,37 +301,13 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
             : nullptr;
     const bool selection_is_collapsible =
         selected_plugin_item != nullptr && selected_plugin_item->collapsible;
+    if (const auto delta =
+            ListNavigationKeyDelta(event.key, state_.sidebar.plugin.items.size());
+        delta.has_value()) {
+      operations_.move_plugin_sidebar_selection(*delta);
+      return true;
+    }
     switch (event.key) {
-      case SDLK_ESCAPE:
-        if (state_.sidebar.temporary) {
-          operations_.close_sidebar();
-          return true;
-        }
-        return false;
-      case SDLK_UP:
-        operations_.move_plugin_sidebar_selection(-1);
-        return true;
-      case SDLK_DOWN:
-        operations_.move_plugin_sidebar_selection(1);
-        return true;
-      case SDLK_HOME:
-        if (!state_.sidebar.plugin.items.empty()) {
-          state_.sidebar.plugin.selected_index = 0;
-          operations_.reveal_selected_plugin_sidebar_line();
-        }
-        return true;
-      case SDLK_END:
-        if (!state_.sidebar.plugin.items.empty()) {
-          state_.sidebar.plugin.selected_index = state_.sidebar.plugin.items.size() - 1;
-          operations_.reveal_selected_plugin_sidebar_line();
-        }
-        return true;
-      case SDLK_PAGEUP:
-        operations_.move_plugin_sidebar_selection(-kListPageStep);
-        return true;
-      case SDLK_PAGEDOWN:
-        operations_.move_plugin_sidebar_selection(kListPageStep);
-        return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
         return operations_.open_selected_plugin_sidebar_item();
@@ -426,36 +335,14 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
     }
   }
 
+  if (const auto delta =
+          ListNavigationKeyDelta(event.key, state_.directory_tree.entries().size());
+      delta.has_value()) {
+    state_.directory_tree.MoveSelection(*delta);
+    operations_.reveal_selected_tree_sidebar_line();
+    return true;
+  }
   switch (event.key) {
-    case SDLK_UP:
-      state_.directory_tree.MoveSelection(-1);
-      operations_.reveal_selected_tree_sidebar_line();
-      return true;
-    case SDLK_DOWN:
-      state_.directory_tree.MoveSelection(1);
-      operations_.reveal_selected_tree_sidebar_line();
-      return true;
-    // Page/Home/End were the one sidebar keyboard gap: git, search, problems, tests
-    // and plugin sidebars all answer these, so the file tree — the default and most
-    // navigated one — could only be walked a row at a time.
-    case SDLK_PAGEUP:
-      state_.directory_tree.MoveSelection(-kListPageStep);
-      operations_.reveal_selected_tree_sidebar_line();
-      return true;
-    case SDLK_PAGEDOWN:
-      state_.directory_tree.MoveSelection(kListPageStep);
-      operations_.reveal_selected_tree_sidebar_line();
-      return true;
-    case SDLK_HOME:
-    case SDLK_END: {
-      // MoveSelection clamps, so a delta of the whole row count lands on either end.
-      const int span = static_cast<int>(std::min<std::size_t>(
-          state_.directory_tree.entries().size(),
-          static_cast<std::size_t>(std::numeric_limits<int>::max())));
-      state_.directory_tree.MoveSelection(event.key == SDLK_HOME ? -span : span);
-      operations_.reveal_selected_tree_sidebar_line();
-      return true;
-    }
     case SDLK_LEFT:
       state_.directory_tree.CollapseSelection();
       operations_.reveal_selected_tree_sidebar_line();

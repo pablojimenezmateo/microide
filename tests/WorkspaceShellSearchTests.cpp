@@ -839,7 +839,38 @@ void TestWorkspaceShellProjectSearchReplaceAllHonorsScopeGlobs() {
          "replace-all must not rewrite a file the scope excluded");
 }
 
+// Escape must peel one layer at a time. "Close a temporary sidebar on Escape"
+// used to be duplicated in the surface-navigation fallback (Search only, and it
+// ran first) and in the per-mode sidebar handler, so Escape while typing a query
+// tore the whole panel down and the search field's own Escape was dead code.
+void TestWorkspaceShellSearchSidebarEscapeCancelsEditBeforeClosing() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "main.cpp", "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "", /*temporary=*/true);
+  Expect(WorkspaceShellTestAccess::SidebarVisible(shell), "the search sidebar should be open");
+  Expect(WorkspaceShellTestAccess::ProjectSearchEditing(shell),
+         "an empty query should open straight into the field editor");
+
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape should be handled");
+  Expect(!WorkspaceShellTestAccess::ProjectSearchEditing(shell),
+         "the first Escape should cancel the field edit");
+  Expect(WorkspaceShellTestAccess::SidebarVisible(shell),
+         "the first Escape should leave the panel open");
+
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "the second Escape should be handled");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) !=
+             microide::workspace::SidebarMode::Search,
+         "the second Escape should dismiss the temporary search panel");
+}
+
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/SearchSidebarEscapeCancelsEditBeforeClosing",
+          TestWorkspaceShellSearchSidebarEscapeCancelsEditBeforeClosing);
   AddTest(tests, "WorkspaceShell/BufferRegexReplaceAll",
           TestWorkspaceShellBufferRegexReplaceAll);
   AddTest(tests, "WorkspaceShell/BufferRegexReplaceCurrent",

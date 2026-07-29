@@ -611,11 +611,12 @@ bool KeyInputCoordinator::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent
         operations_.dismiss_overlay(false);
         return true;
       }
-      if (state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible &&
-          state_.sidebar.temporary && operations_.active_sidebar_mode() == SidebarMode::Search) {
-        operations_.close_sidebar();
-        return true;
-      }
+      // "Escape closes a temporary sidebar" used to live BOTH here (Search only)
+      // and inside HandleSidebarKeyDown (Search/Problems/Tests/Plugin). Because
+      // this path runs first, the Search copy also shadowed the search field's own
+      // Escape — typing a query and pressing Escape tore the whole panel down
+      // instead of cancelling the edit. The rule now lives once, in
+      // HandleSidebarKeyDown, which runs after the sub-editors have had their say.
       break;
     default:
       break;
