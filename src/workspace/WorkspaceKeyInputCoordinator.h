@@ -93,6 +93,9 @@ class KeyInputCoordinator {
     std::function<std::optional<WorkspaceLayout>()> current_workspace_layout;
     std::function<SDL_FRect(const SDL_FRect&)> compute_overlay_rect;
     std::function<void(const SDL_FRect&)> reveal_overlay_selection;
+    // Keeps the debug pane's Variables/Watch selection on screen after a move or
+    // an expand, like every other list's reveal.
+    std::function<void()> reveal_debug_pane_selection;
     std::function<void(int)> move_buffer_search_selection;
     std::function<void()> refresh_buffer_search;
     std::function<void(int)> move_project_search_selection;

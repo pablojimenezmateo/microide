@@ -306,17 +306,19 @@ bool KeyInputCoordinator::HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& e
   const std::vector<DebugVariableRowView>& rows = model.Rows();
   const std::size_t selected = model.SelectedRow();
   const DebugVariableRowView* row = selected < rows.size() ? &rows[selected] : nullptr;
+  // Same resolver the sidebar modes and the Settings panes use. Left/Right collapse
+  // and expand here, so only the vertical keys go through it.
+  if (const auto delta = ListNavigationKeyDelta(event.key, rows.size()); delta.has_value()) {
+    model.MoveSelection(*delta);
+    operations_.reveal_debug_pane_selection();
+    return true;
+  }
   switch (event.key) {
-    case SDLK_UP:
-      model.MoveSelection(-1);
-      return true;
-    case SDLK_DOWN:
-      model.MoveSelection(1);
-      return true;
     case SDLK_RIGHT:
       if (row != nullptr && row->has_children && !row->expanded &&
           operations_.toggle_debug_variable_row) {
         operations_.toggle_debug_variable_row(selected);
+        operations_.reveal_debug_pane_selection();
       }
       return true;
     case SDLK_LEFT:
@@ -370,13 +372,12 @@ bool KeyInputCoordinator::HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event
   const DebugVariableRowView* row = selected < rows.size() ? &rows[selected] : nullptr;
   const std::optional<std::size_t> expr_index =
       row != nullptr ? model.ExpressionIndexForRow(selected) : std::nullopt;
+  if (const auto delta = ListNavigationKeyDelta(event.key, rows.size()); delta.has_value()) {
+    model.MoveSelection(*delta);
+    operations_.reveal_debug_pane_selection();
+    return true;
+  }
   switch (event.key) {
-    case SDLK_UP:
-      model.MoveSelection(-1);
-      return true;
-    case SDLK_DOWN:
-      model.MoveSelection(1);
-      return true;
     case SDLK_RIGHT:
       if (row != nullptr && row->has_children && !row->expanded &&
           operations_.toggle_debug_watch_row) {
@@ -688,6 +689,7 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },
           .compute_overlay_rect = [this](const SDL_FRect& rect) { return ComputeOverlayRect(rect); },
           .reveal_overlay_selection = [this](const SDL_FRect& rect) { RevealOverlaySelection(rect); },
+          .reveal_debug_pane_selection = [this]() { RevealDebugPaneSelection(); },
           .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
           .move_project_search_selection = [this](int delta) { MoveProjectSearchSelection(delta); },

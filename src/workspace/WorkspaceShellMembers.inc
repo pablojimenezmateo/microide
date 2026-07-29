@@ -1614,6 +1614,8 @@
                                                   std::size_t line_count) const;
   // Row count + clamped scroll for the currently active debug-pane surface.
   std::size_t DebugPaneActiveRowCount() const;
+  // Scrolls the debug pane so its keyboard selection stays on screen.
+  void RevealDebugPaneSelection();
   // True when a click on `row` of the active surface does something (frame/thread/
   // session focus, variable/watch expand or edit, breakpoint navigate, filter
   // toggle). Drives the hover-cursor pointer/default decision for the pane.

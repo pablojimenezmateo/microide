@@ -131,6 +131,35 @@ std::size_t WorkspaceShell::DebugPaneActiveRowCount() const {
   return 0;
 }
 
+void WorkspaceShell::RevealDebugPaneSelection() {
+  // Keyboard navigation in the Variables/Watch trees moved the selection without
+  // touching the scroll, so arrowing past the last visible row walked the highlight
+  // off screen — the same failure the git sidebar's visible-row walk was written to
+  // avoid. Every other list in the shell reveals; these two are the pane's only
+  // keyboard-navigable modes.
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const ProjectWorkspaceState& ps = context_.current_project_state;
+  int selected = -1;
+  switch (ps.debug_pane.mode) {
+    case DebugPaneMode::Variables:
+      selected = static_cast<int>(ps.debug_variables.SelectedRow());
+      break;
+    case DebugPaneMode::Watch:
+      selected = static_cast<int>(ps.debug_watch.SelectedRow());
+      break;
+    default:
+      return;
+  }
+  const std::size_t line_count = DebugPaneActiveRowCount();
+  const LogSurfaceLayout panel_layout = ComputeDebugPaneListLayout(*layout_state, line_count);
+  SetDebugPaneScrollRow(RevealedScrollRow(panel_layout.scroll.vertical_scroll,
+                                          panel_layout.scroll.visible_rows, selected),
+                        line_count, panel_layout.scroll.visible_rows);
+}
+
 bool WorkspaceShell::DebugPaneRowIsActionable(std::size_t row) const {
   const ProjectWorkspaceState& ps = context_.current_project_state;
   switch (ps.debug_pane.mode) {

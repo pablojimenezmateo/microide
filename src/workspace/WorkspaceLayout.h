@@ -395,6 +395,13 @@ ScrollableListLayout ComputeScrollableListLayout(const SDL_FRect& container,
                                                  float list_bottom_padding = 0.0f,
                                                  float scrollbar_bottom_padding = 0.0f,
                                                  bool fractional_visible_units = false);
+// Smallest scroll offset that keeps `selected_index` inside the window of
+// `visible_rows` rows starting at `scroll_row`: unchanged when the row is already
+// on screen, otherwise just far enough to bring it to the near edge. Callers clamp
+// against their own max. Split out of RevealScrollableListIndex so the surfaces
+// whose scroll model is a ScrollSurfaceLayout rather than a ScrollableListLayout
+// (the debug pane) reveal by the same rule instead of restating it.
+int RevealedScrollRow(int scroll_row, int visible_rows, int selected_index);
 int RevealScrollableListIndex(const ScrollableListLayout& layout, int selected_index);
 std::optional<int> ScrollableListIndexAtY(const ScrollableListLayout& layout, float y);
 SDL_FRect ScrollableListRowRect(const ScrollableListLayout& layout, int visible_row);

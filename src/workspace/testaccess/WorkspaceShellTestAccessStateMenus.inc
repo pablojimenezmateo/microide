@@ -846,6 +846,33 @@
       shell.context_.current_project_state.debug_pane.width = kWorkspaceDefaultRightPaneWidth;
     }
   }
+  // Drives the debug pane's keyboard-navigable Watch surface: focus it, seed it
+  // with more rows than fit, and read back the selection and the pane's scroll.
+  static void FocusDebugPaneWatch(WorkspaceShell& shell) {
+    SetDebugPaneVisible(shell, true);
+    shell.context_.current_project_state.debug_pane.mode = DebugPaneMode::Watch;
+    shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::DebugPane;
+  }
+  static void AddDebugWatchExpressionForTest(WorkspaceShell& shell, std::string expression) {
+    shell.context_.current_project_state.debug_watch.AddExpression(std::move(expression));
+  }
+  static std::size_t DebugWatchRowCount(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.debug_watch.Rows().size();
+  }
+  static std::size_t DebugWatchSelectedRow(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.debug_watch.SelectedRow();
+  }
+  static int DebugPaneWatchScrollRow(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.debug_pane.watch_scroll_row;
+  }
+  static int DebugPaneVisibleRows(WorkspaceShell& shell) {
+    const auto layout = shell.CurrentWorkspaceLayout();
+    if (!layout.has_value()) {
+      return 0;
+    }
+    return shell.ComputeDebugPaneListLayout(*layout, shell.DebugPaneActiveRowCount())
+        .scroll.visible_rows;
+  }
   static void ResetCaretBlink(WorkspaceShell& shell) { shell.ResetCaretBlink(); }
   static void SetCaretBlinkEpochMs(WorkspaceShell& shell, Uint64 epoch_ms) {
     shell.caret_blink_epoch_ms_ = epoch_ms;

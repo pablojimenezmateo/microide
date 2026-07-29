@@ -688,18 +688,22 @@ ScrollableListLayout ComputeScrollableListLayout(const SDL_FRect& container,
   return layout;
 }
 
-int RevealScrollableListIndex(const ScrollableListLayout& layout, int selected_index) {
+int RevealedScrollRow(int scroll_row, int visible_rows, int selected_index) {
   if (selected_index < 0) {
-    return layout.scroll_row;
+    return scroll_row;
   }
-
-  int scroll_row = layout.scroll_row;
   if (selected_index < scroll_row) {
-    scroll_row = selected_index;
-  } else if (selected_index >= scroll_row + layout.visible_rows) {
-    scroll_row = selected_index - layout.visible_rows + 1;
+    return selected_index;
   }
-  return std::clamp(scroll_row, 0, layout.max_scroll);
+  if (selected_index >= scroll_row + visible_rows) {
+    return selected_index - visible_rows + 1;
+  }
+  return scroll_row;
+}
+
+int RevealScrollableListIndex(const ScrollableListLayout& layout, int selected_index) {
+  return std::clamp(RevealedScrollRow(layout.scroll_row, layout.visible_rows, selected_index), 0,
+                    layout.max_scroll);
 }
 
 std::optional<int> ScrollableListIndexAtY(const ScrollableListLayout& layout, float y) {

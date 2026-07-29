@@ -2430,6 +2430,60 @@ void TestWorkspaceShellSettingsOverlayWheelScrolls() {
          "scrolling up should reduce the settings scroll row");
 }
 
+// The debug pane's Variables and Watch trees were the last keyboard-navigable
+// lists that answered Up/Down only, and the only ones that moved a selection
+// without scrolling it into view: arrowing past the last visible row walked the
+// highlight off screen, which is exactly the failure the git sidebar's
+// visible-row walk was written to avoid.
+void TestWorkspaceShellDebugPaneKeyboardRevealsAndPages() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::FocusDebugPaneWatch(shell);
+  for (int i = 0; i < 60; ++i) {
+    WorkspaceShellTestAccess::AddDebugWatchExpressionForTest(shell, "expr_" + std::to_string(i));
+  }
+  const std::size_t rows = WorkspaceShellTestAccess::DebugWatchRowCount(shell);
+  const int visible = WorkspaceShellTestAccess::DebugPaneVisibleRows(shell);
+  Expect(visible > 0 && rows > static_cast<std::size_t>(visible) + 1,
+         "the watch fixture should overflow the pane");
+  Expect(WorkspaceShellTestAccess::DebugPaneWatchScrollRow(shell) == 0,
+         "the pane should start unscrolled");
+
+  // The initial window is rows [0, visible); `visible` presses land one row past
+  // its last, which is the first press that has to move the pane.
+  for (int i = 0; i < visible; ++i) {
+    Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE), "Down should be consumed by the pane");
+  }
+  const std::size_t selected = WorkspaceShellTestAccess::DebugWatchSelectedRow(shell);
+  Expect(selected == static_cast<std::size_t>(visible),
+         "Down should have advanced one row past the visible window");
+  const int scroll = WorkspaceShellTestAccess::DebugPaneWatchScrollRow(shell);
+  Expect(scroll > 0, "moving past the last visible row should scroll the pane");
+  Expect(static_cast<int>(selected) >= scroll &&
+             static_cast<int>(selected) < scroll + visible,
+         "the selection must stay inside the visible window");
+
+  // The rest of the shared contract, which the pane did not answer at all.
+  Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE), "End should be consumed by the pane");
+  Expect(WorkspaceShellTestAccess::DebugWatchSelectedRow(shell) == rows - 1,
+         "End should select the last row");
+  const int end_scroll = WorkspaceShellTestAccess::DebugPaneWatchScrollRow(shell);
+  Expect(static_cast<int>(rows) - 1 >= end_scroll &&
+             static_cast<int>(rows) - 1 < end_scroll + visible,
+         "End should reveal the last row too");
+
+  Expect(SendKeyDown(shell, SDLK_PAGEUP, SDL_KMOD_NONE), "PageUp should be consumed by the pane");
+  Expect(WorkspaceShellTestAccess::DebugWatchSelectedRow(shell) ==
+             rows - 1 - static_cast<std::size_t>(microide::workspace::kListPageStep),
+         "PageUp should move by the shared page step");
+
+  Expect(SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE), "Home should be consumed by the pane");
+  Expect(WorkspaceShellTestAccess::DebugWatchSelectedRow(shell) == 0,
+         "Home should select the first row");
+  Expect(WorkspaceShellTestAccess::DebugPaneWatchScrollRow(shell) == 0,
+         "Home should scroll the pane back to the top");
+}
+
 // Third instance of the same bug as the debug pane's and Help/About's bars: the
 // font-picker dropdown painted a scrollbar from the day it shipped and nothing
 // hit-tested it, so a long family list was reachable by mouse wheel only. The
@@ -4690,6 +4744,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSettingsOverlayTrapsKeyboardInput);
   AddTest(tests, "WorkspaceShell/SettingsOverlayWheelScrolls",
           TestWorkspaceShellSettingsOverlayWheelScrolls);
+  AddTest(tests, "WorkspaceShell/DebugPaneKeyboardRevealsAndPages",
+          TestWorkspaceShellDebugPaneKeyboardRevealsAndPages);
   AddTest(tests, "WorkspaceShell/SettingsFontPickerScrollbarIsGrabbable",
           TestWorkspaceShellSettingsFontPickerScrollbarIsGrabbable);
   AddTest(tests, "WorkspaceShell/HelpAboutIsKeyboardAndScrollbarNavigable",
