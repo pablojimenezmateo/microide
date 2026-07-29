@@ -2,6 +2,7 @@
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "render/ScopedRenderClip.h"
+#include "workspace/NotificationLayout.h"
 #include "workspace/StatusBarService.h"
 
 #include <algorithm>
@@ -101,25 +102,17 @@ void WorkspaceShell::RenderNotifications(SDL_Renderer* renderer,
     return;
   }
 
-  constexpr float kMargin = 12.0f;
-  constexpr float kPadding = 10.0f;
-  constexpr float kGap = 8.0f;
-  constexpr float kAccentWidth = 3.0f;
-  constexpr float kMaxTextWidth = 320.0f;
-
-  const float toast_height = text_renderer_.LineHeight() + kPadding * 2.0f;
-  const float right_edge = layout.status_bar.x + layout.status_bar.w - kMargin;
-  // Stack upward from just above the status bar, newest toast at the bottom.
-  float bottom = layout.status_bar.y - kMargin;
-
-  for (auto it = vm.entries.rbegin(); it != vm.entries.rend(); ++it) {
+  // Stack upward from just above the status bar, newest toast at the bottom. The
+  // geometry lives in NotificationLayout.h because the click that dismisses a
+  // toast has to hit exactly the card that was painted.
+  std::size_t stack_position = 0;
+  for (auto it = vm.entries.rbegin(); it != vm.entries.rend(); ++it, ++stack_position) {
     const std::string_view message = it->message;
-    const float text_width = std::min(kMaxTextWidth, text_renderer_.MeasureWidth(message));
-    const float toast_width = kAccentWidth + kPadding * 2.0f + text_width;
-    const SDL_FRect rect =
-        MakeRect(right_edge - toast_width, bottom - toast_height, toast_width, toast_height);
+    const NotificationToastLayout toast =
+        NotificationToastLayoutAt(layout.status_bar, text_renderer_.LineHeight(), stack_position,
+                                  text_renderer_.MeasureWidth(message));
 
-    DrawCardFrame(renderer, theme_, rect, CardStyle::Overlay);
+    DrawCardFrame(renderer, theme_, toast.rect, CardStyle::Overlay);
     SDL_Color accent = theme_.diagnostic_info;
     switch (it->tone) {
       case NotificationService::Tone::Error:
@@ -131,20 +124,16 @@ void WorkspaceShell::RenderNotifications(SDL_Renderer* renderer,
       case NotificationService::Tone::Info:
         break;
     }
-    DrawFilledRect(renderer, MakeRect(rect.x, rect.y, kAccentWidth, rect.h), accent);
+    DrawFilledRect(renderer, toast.accent, accent);
 
-    const SDL_FRect text_rect =
-        MakeRect(rect.x + kAccentWidth + kPadding, rect.y, text_width, rect.h);
-    const SDL_Rect clip{static_cast<int>(text_rect.x), static_cast<int>(text_rect.y),
-                        static_cast<int>(std::ceil(text_rect.w)),
-                        static_cast<int>(std::ceil(text_rect.h))};
+    const SDL_Rect clip{static_cast<int>(toast.text.x), static_cast<int>(toast.text.y),
+                        static_cast<int>(std::ceil(toast.text.w)),
+                        static_cast<int>(std::ceil(toast.text.h))};
     {
       const render::ScopedRenderClip clip_scope(renderer, clip);
-      DrawVCenteredTextOn(text_renderer_, renderer, text_rect, 0.0f, theme_.text_primary,
+      DrawVCenteredTextOn(text_renderer_, renderer, toast.text, 0.0f, theme_.text_primary,
                           theme_.overlay_background, message);
     }
-
-    bottom = rect.y - kGap;
   }
 }
 

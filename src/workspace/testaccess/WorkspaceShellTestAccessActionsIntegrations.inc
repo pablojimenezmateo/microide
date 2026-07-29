@@ -379,6 +379,22 @@
       const WorkspaceShell& shell) {
     return shell.notification_service_.Active();
   }
+  static void ShowNotification(WorkspaceShell& shell,
+                               NotificationService::Tone tone,
+                               std::string message) {
+    shell.notification_service_.Show(tone, std::move(message), 0);
+  }
+  // Grab rect of the toast at `stack_position` (0 = newest, just above the status
+  // bar), resolved through the same NotificationLayout helper the painter uses.
+  static SDL_FRect NotificationToastRect(WorkspaceShell& shell, std::size_t stack_position) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto& active = shell.notification_service_.Active();
+    const std::size_t index = active.size() - 1 - stack_position;
+    return NotificationToastLayoutAt(layout.status_bar, shell.text_renderer_.LineHeight(),
+                                     stack_position,
+                                     shell.text_renderer_.MeasureWidth(active[index].message))
+        .rect;
+  }
   static void EnsureTerminalTab(WorkspaceShell& shell) {
     if (shell.context_.current_project_state.terminal_tabs.empty()) {
       shell.context_.current_project_state.terminal_tabs.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());

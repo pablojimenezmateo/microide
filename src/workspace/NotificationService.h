@@ -40,6 +40,14 @@ class NotificationService {
   // Milliseconds until the earliest expiry (0 if already due), or nullopt when empty.
   std::optional<std::uint64_t> NextExpiryDelayMs(std::uint64_t now_ms) const;
 
+  // Drop a single notification by its index in Active(). Out-of-range indices are
+  // ignored, so a click resolved against a stale frame cannot corrupt the stack.
+  void Dismiss(std::size_t index) {
+    if (index < notifications_.size()) {
+      notifications_.erase(notifications_.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+  }
+
   const std::vector<Notification>& Active() const { return notifications_; }
   bool Empty() const { return notifications_.empty(); }
   void Clear() { notifications_.clear(); }

@@ -551,9 +551,60 @@ void TestWorkspaceShellCursorChangeRequestsPresent() {
          "an unchanged cursor must not request a present");
 }
 
+// Toasts were painted and never hit-tested: a click on one fell straight through
+// to whatever it covered — over the editor, that moved the caret — and there was
+// no way to get rid of a message before its four seconds were up. Both the click
+// and the cursor now resolve through the same NotificationLayout helper the
+// painter uses.
+void TestWorkspaceShellNotificationToastIsClickable() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  std::string body;
+  for (int i = 0; i < 400; ++i) {
+    body += "int line_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  WriteFile(source, body);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ShowNotification(
+      shell, microide::workspace::NotificationService::Tone::Error, "build failed");
+  Expect(WorkspaceShellTestAccess::ActiveNotifications(shell).size() == 1,
+         "the toast fixture should post one notification");
+
+  const SDL_FRect toast = WorkspaceShellTestAccess::NotificationToastRect(shell, 0);
+  Expect(toast.w > 0.0f && toast.h > 0.0f, "the toast should have a real card rect");
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  Expect(Contains(layout.editor_surface, toast.x + toast.w * 0.5f, toast.y + toast.h * 0.5f),
+         "the toast fixture should float over the editor, so a fall-through is observable");
+
+  const float toast_x = toast.x + toast.w * 0.5f;
+  const float toast_y = toast.y + toast.h * 0.5f;
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, toast_x, toast_y),
+         "a dismissable toast should show the pointer cursor");
+
+  const std::size_t line_before =
+      WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).cursor_line();
+  const std::size_t column_before =
+      WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).cursor_column();
+  Expect(SendMouseDown(shell, toast_x, toast_y, SDL_BUTTON_LEFT),
+         "clicking a toast should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveNotifications(shell).empty(),
+         "clicking a toast should dismiss it");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).cursor_line() == line_before &&
+             WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).cursor_column() ==
+                 column_before,
+         "a click consumed by a toast must not fall through to the editor underneath");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/NotificationToastIsClickable",
+          TestWorkspaceShellNotificationToastIsClickable);
   AddTest(tests, "WorkspaceShell/CursorUpdatesWhenBottomPanelHidesWithoutMotion",
           TestWorkspaceShellCursorUpdatesWhenBottomPanelHidesWithoutMotion);
   AddTest(tests, "WorkspaceShell/CursorRestoresAfterMouseLeave",

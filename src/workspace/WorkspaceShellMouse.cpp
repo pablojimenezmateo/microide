@@ -18,6 +18,7 @@
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspaceMergeMouseCoordinator.h"
 #include "workspace/DebugPaneMouseCoordinator.h"
+#include "workspace/NotificationLayout.h"
 #include "workspace/WorkspacePanelMouseCoordinator.h"
 #include "workspace/WorkspaceSidebarMouseCoordinator.h"
 #include "workspace/WorkspaceTabMouseCoordinator.h"
@@ -63,6 +64,22 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     }
     EnsureRedraw([this]() { RequestChromeRedraw(); });
     return true;
+  }
+
+  // Toasts float above every surface, and until now they were painted and never
+  // hit-tested: a click on one fell straight through to whatever it was covering
+  // (over the editor, that moved the caret). They also auto-expire after four
+  // seconds with no way to get rid of one sooner. A click now dismisses the toast
+  // it lands on and stops there, which is what the card's own bounds imply.
+  if (event.button.button == SDL_BUTTON_LEFT) {
+    if (const auto toast = NotificationToastIndexAt(
+            notification_service_, text_renderer_, layout.status_bar,
+            static_cast<float>(event.button.x), static_cast<float>(event.button.y));
+        toast.has_value()) {
+      notification_service_.Dismiss(*toast);
+      EnsureRedraw([this]() { RequestWindowRedraw(); });
+      return true;
+    }
   }
 
   const auto visible_hover_popup = ActiveEditorHoverPopupLayout();

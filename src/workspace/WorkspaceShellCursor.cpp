@@ -16,6 +16,7 @@
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceOutputReference.h"
 #include "util/StringUtil.h"
+#include "workspace/NotificationLayout.h"
 
 namespace microide::workspace {
 
@@ -218,6 +219,15 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
   const WorkspaceLayout layout = *layout_state;
+
+  // Toasts float above every surface and a click dismisses one, so the pointer has
+  // to say so — probed ahead of the modal surfaces for the same reason it is
+  // probed first on the click path.
+  if (!notification_service_.Empty() &&
+      NotificationToastIndexAt(notification_service_, text_renderer_, layout.status_bar, x, y)
+          .has_value()) {
+    return CursorKind::Pointer;
+  }
 
   if (settings_overlay_service_.Visible()) {
     const SettingsOverlayViewModel vm =
