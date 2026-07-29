@@ -336,6 +336,56 @@ void RunPaintedScrollbarRuleFixtures() {
          "a scan with no translation units must report a violation, not pass vacuously");
 }
 
+void RunWheelFocusRuleFixtures() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path();
+  std::filesystem::create_directories(root / "src/workspace");
+  const std::filesystem::path coordinator = root / "src/workspace/SomeMouseCoordinator.cpp";
+
+  // Negative control: the focus grab compare and merge shipped with.
+  WriteFile(coordinator,
+            "bool C::HandleWheel(const SDL_Event& e, int t) {\n"
+            "  Scroll(-t);\n"
+            "  state_.surface.focus = FocusTarget::Editor;\n"
+            "  return true;\n"
+            "}\n");
+  Expect(!CheckWheelHandlersDoNotMoveFocus(root).violations.empty(),
+         "a wheel handler that assigns surface.focus must be flagged");
+
+  // Positive control: scrolling and leaving focus alone, including a *read* of
+  // surface.focus, which is legitimate — only the write steals the keyboard.
+  WriteFile(coordinator,
+            "bool C::HandleWheel(const SDL_Event& e, int t) {\n"
+            "  if (state_.surface.focus == FocusTarget::Panel) { return false; }\n"
+            "  Scroll(-t);\n"
+            "  return true;\n"
+            "}\n");
+  const RuleResult clean = CheckWheelHandlersDoNotMoveFocus(root);
+  Expect(clean.violations.empty() && clean.missing_targets.empty(),
+         "a wheel handler that only reads surface.focus must pass");
+
+  // A focus assignment OUTSIDE the wheel handler is none of this rule's business:
+  // a click handler taking focus is exactly right.
+  WriteFile(coordinator,
+            "bool C::HandleWheel(const SDL_Event& e, int t) {\n"
+            "  Scroll(-t);\n"
+            "  return true;\n"
+            "}\n"
+            "bool C::HandleButtonDown(const SDL_Event& e) {\n"
+            "  state_.surface.focus = FocusTarget::Panel;\n"
+            "  return true;\n"
+            "}\n");
+  Expect(CheckWheelHandlersDoNotMoveFocus(root).violations.empty(),
+         "a click handler taking focus must not be flagged by the wheel rule");
+
+  // Vacuity guard: no HandleWheel definitions at all means the rule scanned
+  // nothing and must fail loudly rather than report green forever.
+  TemporaryDirectory empty_dir;
+  std::filesystem::create_directories(empty_dir.path() / "src/workspace");
+  Expect(!CheckWheelHandlersDoNotMoveFocus(empty_dir.path()).violations.empty(),
+         "a scan with no wheel handlers must report a violation, not pass vacuously");
+}
+
 void RunMissingRuleTargetFixtures() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path();
@@ -361,6 +411,21 @@ void RunMissingRuleTargetFixtures() {
          "a present target must not be reported as missing");
   Expect(present.violations.empty(),
          "a present target satisfying the rule must produce no violations");
+}
+
+// One entry point for every rule fixture, so ArchitectureInvariantsTests.cpp stays
+// the thin dispatcher its own size rule asks for: adding a fixture no longer costs
+// a line there.
+void RunAllRuleFixtures() {
+  RunDescriptorCloseOnExecRuleFixtures();
+  RunTerminalExtractedImplRuleFixtures();
+  RunDirectGitRepositoryRuleFixtures();
+  RunActionIdReachabilityRuleFixtures();
+  RunRegisteredSettingsAreReadRuleFixtures();
+  RunRenderTuTextCompositionRuleFixtures();
+  RunPaintedScrollbarRuleFixtures();
+  RunWheelFocusRuleFixtures();
+  RunMissingRuleTargetFixtures();
 }
 
 }  // namespace microide::tests::architecture

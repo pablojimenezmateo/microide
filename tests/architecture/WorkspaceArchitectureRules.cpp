@@ -77,6 +77,7 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckEditorViewModelStickyAndOccurrenceAreSpans",
        CheckEditorViewModelStickyAndOccurrenceAreSpans},
       {"CheckPaintedScrollbarsAreGrabbable", CheckPaintedScrollbarsAreGrabbable},
+      {"CheckWheelHandlersDoNotMoveFocus", CheckWheelHandlersDoNotMoveFocus},
       {"CheckDebugSubsystemThreadingBehindDapClient", CheckDebugSubsystemThreadingBehindDapClient},
   };
   return rules;

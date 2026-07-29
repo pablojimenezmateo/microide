@@ -43,6 +43,10 @@ void RunRenderTuTextCompositionRuleFixtures();
 // reports green; this pins that such a rule reports its target as missing
 // instead, and reports nothing when the target is there.
 void RunPaintedScrollbarRuleFixtures();
+void RunWheelFocusRuleFixtures();
 void RunMissingRuleTargetFixtures();
+
+// Runs every fixture above.
+void RunAllRuleFixtures();
 
 }  // namespace microide::tests::architecture

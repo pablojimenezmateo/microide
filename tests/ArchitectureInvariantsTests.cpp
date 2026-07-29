@@ -603,14 +603,7 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
            "lua_State mentions, and the sanctioned SyntaxDefinitionLoader sandbox");
   }
 
-  architecture::RunDescriptorCloseOnExecRuleFixtures();
-  architecture::RunTerminalExtractedImplRuleFixtures();
-  architecture::RunDirectGitRepositoryRuleFixtures();
-  architecture::RunActionIdReachabilityRuleFixtures();
-  architecture::RunRegisteredSettingsAreReadRuleFixtures();
-  architecture::RunRenderTuTextCompositionRuleFixtures();
-  architecture::RunPaintedScrollbarRuleFixtures();
-  architecture::RunMissingRuleTargetFixtures();
+  architecture::RunAllRuleFixtures();
 }
 
 }  // namespace

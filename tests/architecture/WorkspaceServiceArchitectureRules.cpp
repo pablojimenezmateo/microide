@@ -706,6 +706,67 @@ RuleResult CheckPaintedScrollbarsAreGrabbable(const std::filesystem::path& repo_
   return result;
 }
 
+RuleResult CheckWheelHandlersDoNotMoveFocus(const std::filesystem::path& repo_root) {
+  // Scrolling is not focusing. The wheel must never pull the keyboard out of
+  // whatever the user is typing into — VS Code behaves the same way, and five of
+  // the shell's seven wheel handlers say so in a comment. Compare and merge were
+  // the two that assigned `surface.focus = FocusTarget::Editor` on every tick, so
+  // a wheel nudge over a diff while typing in the terminal silently redirected the
+  // next keystroke.
+  //
+  // The rule scans the body of each coordinator's HandleWheel for an assignment to
+  // surface.focus. Reads are fine (a handler may branch on who has focus); it is
+  // the write that steals it.
+  RuleResult result;
+  result.label = "wheel handlers scroll without taking keyboard focus";
+  result.hard_fail = true;
+  const std::regex focus_write(R"(surface\.focus\s*=[^=])");
+
+  std::vector<std::filesystem::path> scanned;
+  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    const auto body_with_offset = ExtractMemberFunctionBodyWithOffset(text, "::HandleWheel(");
+    if (!body_with_offset.has_value()) {
+      continue;
+    }
+    scanned.push_back(entry.path());
+    const std::string& body = body_with_offset->first;
+    const std::size_t body_offset = body_with_offset->second;
+    const auto is_code = BuildCodeMask(body);
+    for (std::sregex_iterator it(body.begin(), body.end(), focus_write), end; it != end; ++it) {
+      const auto local_start = static_cast<std::size_t>(it->position());
+      const auto local_len = static_cast<std::size_t>(it->length());
+      bool in_code = true;
+      for (std::size_t i = 0; i < local_len; ++i) {
+        if (local_start + i >= is_code.size() || !is_code[local_start + i]) {
+          in_code = false;
+          break;
+        }
+      }
+      if (!in_code) {
+        continue;
+      }
+      result.violations.push_back(Violation{
+          .path = entry.path(),
+          .line = LineNumberAt(text, body_offset + local_start),
+          .message = "HandleWheel must not assign surface.focus: scrolling a surface must not "
+                     "pull the keyboard away from whatever the user is typing into",
+      });
+    }
+  }
+  if (scanned.empty()) {
+    result.violations.push_back(Violation{
+        .path = repo_root / "src/workspace",
+        .line = 1,
+        .message = "wheel-focus rule found no HandleWheel definitions to scan",
+    });
+  }
+  return result;
+}
+
 RuleResult CheckDebugSubsystemThreadingBehindDapClient(const std::filesystem::path& repo_root) {
   // The debug subsystem's entire threading model lives behind WorkspaceDapClient:
   // it owns the adapter I/O thread (plus the init/shutdown threads) and marshals
