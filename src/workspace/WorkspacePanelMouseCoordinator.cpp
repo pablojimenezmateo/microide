@@ -538,7 +538,7 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
                      int y,
                      const std::vector<terminal::TerminalLine>& lines,
                      std::size_t first_row) {
-                return TerminalSelectionPointForPoint(x, y, lines, first_row);
+                return TerminalSelectionPointAt(x, y, lines, first_row);
               },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },
           .terminal_viewport_position_for_point =

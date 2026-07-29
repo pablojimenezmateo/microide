@@ -31,22 +31,28 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
               ? BuildOpenPathRequest(args, context_.ProjectRoot())
               : BuildOpenPathRequest(args, std::filesystem::path{});
       if (!request.has_value()) {
-        // Bare `open` (File > Open File…, Ctrl+O, the welcome screen's Open File
-        // action) means "ask me for a path" — the same contract `project-open` has
-        // always had. It used to reject with "open requires a path", so the menu
-        // entry, its ellipsis and the welcome button were all dead ends.
+        // Bare `open` from a UI surface (File > Open File…, Ctrl+O, the welcome
+        // screen's Open File action) means "ask me for a path" — the same contract
+        // `project-open` has always had. It used to reject with "open requires a
+        // path", so the menu entry, its ellipsis and the welcome button were all
+        // dead ends.
+        //
+        // A *typed* `open` keeps rejecting: the user is already at a command line
+        // with the path in reach, and popping a native dialog out of a text command
+        // would be both surprising and untestable (the headless control channel
+        // drives this same path).
+        if (source == ActionSource::Command) {
+          return reject("open requires a path");
+        }
         switch (context_.OpenNativeFilePicker()) {
           case ProjectOpenPickerResult::Launched:
           case ProjectOpenPickerResult::AlreadyOpen:
             return DispatchResult::Handled;
           case ProjectOpenPickerResult::Unavailable:
-            if (source == ActionSource::Menu) {
-              // No native picker: seed the command palette with the verb so the user
-              // only types the path, mirroring the project-open fallback.
-              context_.OpenCommandPalette("open ");
-              return DispatchResult::Handled;
-            }
-            return reject("open requires a path");
+            // No native picker: seed the command palette with the verb so the user
+            // only types the path, mirroring the project-open fallback.
+            context_.OpenCommandPalette("open ");
+            return DispatchResult::Handled;
         }
         return DispatchResult::Handled;
       }

@@ -330,7 +330,7 @@ std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) 
   }
   const std::vector<terminal::TerminalLine>& lines = *lines_ptr;
   const auto position =
-      TerminalSelectionPointForPoint(static_cast<int>(std::lround(x)),
+      TerminalSelectionPointAt(static_cast<int>(std::lround(x)),
                                         static_cast<int>(std::lround(y)), lines, first_row);
   if (!position.has_value() || position->row < first_row ||
       position->row - first_row >= lines.size()) {
@@ -560,7 +560,7 @@ bool WorkspaceShell::TerminalHasSelection() const {
 }
 
 std::optional<WorkspaceShell::TerminalSelectionPoint>
-WorkspaceShell::TerminalSelectionPointForPoint(
+WorkspaceShell::TerminalSelectionPointAt(
     int x,
     int y,
     const std::vector<terminal::TerminalLine>& lines,

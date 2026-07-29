@@ -137,6 +137,13 @@ namespace {
 // Multi-byte cells are treated as word bytes so a UTF-8 identifier is not split
 // mid-token by the click.
 bool IsTerminalWordCell(const terminal::TerminalCell& cell) {
+  // The trailing spacer of a double-width glyph carries no text of its own but is
+  // part of the glyph in front of it, so it must not break a word — otherwise a
+  // double-click on CJK text stops at every second column. TerminalLineSliceText
+  // skips these cells when copying for the same reason.
+  if (cell.style.wide_trailing()) {
+    return true;
+  }
   const std::string_view text = cell.DisplayText();
   if (text.empty() || text == " ") {
     return false;

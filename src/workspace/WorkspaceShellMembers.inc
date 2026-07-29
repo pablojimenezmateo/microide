@@ -1526,7 +1526,7 @@
   void ClearTerminalSelection();
   bool TerminalHasSelection() const;
   std::optional<std::string> TerminalUrlAtPoint(float x, float y) const;
-  std::optional<TerminalSelectionPoint> TerminalSelectionPointForPoint(
+  std::optional<TerminalSelectionPoint> TerminalSelectionPointAt(
       int x,
       int y,
       const std::vector<terminal::TerminalLine>& lines,

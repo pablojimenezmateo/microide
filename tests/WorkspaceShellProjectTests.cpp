@@ -699,6 +699,18 @@ void TestWorkspaceShellOpenCommandRequiresPath() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
 
+  // A *typed* bare `open` rejects and must never reach for a native dialog — the
+  // picker belongs to the UI surfaces (menu, shortcut, welcome button), and the
+  // headless control channel drives this same command path. Installing a launcher
+  // that fails the test if invoked pins that: previously the shared bare-`open`
+  // branch called SDL_ShowOpenFileDialog here, firing a real XDG portal request
+  // mid-test (and leaking its allocation, which is how ASAN caught it).
+  WorkspaceShellTestAccess::SetOpenFileDialogLauncher(
+      shell, [](WorkspaceShell&, const std::filesystem::path&) {
+        Expect(false, "a typed `open` must not launch the native file picker");
+        return false;
+      });
+
   Expect(!RunCommandLine(shell, "open"),
          "open without a path should fail");
   Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) == "open requires a path",
