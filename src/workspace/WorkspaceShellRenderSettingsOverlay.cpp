@@ -163,10 +163,15 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
       if (cat.rect.y + cat.rect.h > pane_bottom + 0.5f) {
         break;
       }
-      const SDL_Color background = cat.selected ? theme_.selection_strong : theme_.surface_background;
-      if (cat.selected) {
+      // Hover lifts the row under the pointer, as it does in every other list in
+      // the shell. The keyboard selection keeps its stronger fill and focus ring.
+      const bool hovered = !cat.selected && PointerOver(cat.rect);
+      const SDL_Color background = cat.selected  ? theme_.selection_strong
+                                   : hovered     ? theme_.row_highlight
+                                                 : theme_.surface_background;
+      if (cat.selected || hovered) {
         DrawFilledRect(renderer, cat.rect, background);
-        if (pane_focused) {
+        if (cat.selected && pane_focused) {
           DrawFocusRing(renderer, cat.rect, theme_.accent);
         }
       }
@@ -228,10 +233,13 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
           TruncateLabelView(row.group_subheader, row.row_rect.w - 24.0f));
     }
 
-    const SDL_Color background = row.selected ? theme_.selection_strong : theme_.surface_background;
-    if (row.selected) {
+    const bool hovered = !row.selected && PointerOver(row.row_rect);
+    const SDL_Color background = row.selected ? theme_.selection_strong
+                                 : hovered    ? theme_.row_highlight
+                                              : theme_.surface_background;
+    if (row.selected || hovered) {
       DrawFilledRect(renderer, row.row_rect, background);
-      if (values_focused) {
+      if (row.selected && values_focused) {
         DrawFocusRing(renderer, row.row_rect, theme_.accent);
       }
     }
@@ -291,8 +299,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
       DrawCenteredTextOn(text_renderer_, renderer, row.scope_rect, scope_color,
                          theme_.chrome_background,
                          TruncateLabelView(row.scope_text, row.scope_rect.w - 8.0f));
-      if (!row.scope_help.empty() && last_mouse_position_valid_ &&
-          Contains(row.scope_rect, last_mouse_x_, last_mouse_y_)) {
+      if (!row.scope_help.empty() && PointerOver(row.scope_rect)) {
         hovered_scope_help = row.scope_help;
         hovered_scope_rect = row.scope_rect;
       }

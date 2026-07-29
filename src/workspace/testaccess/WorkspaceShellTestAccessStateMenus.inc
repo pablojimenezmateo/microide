@@ -783,6 +783,18 @@
     }
     return false;
   }
+  // Row rect of the Nth visible value row, and of the Nth category in the rail.
+  // Both come from the same view model the painter consumes.
+  static SDL_FRect SettingsOverlayVisibleRowRect(WorkspaceShell& shell, std::size_t index) {
+    const auto layout = shell.CurrentWorkspaceLayout();
+    const SettingsOverlayViewModel vm =
+        RenderViewModelBuilder(shell.context_)
+            .BuildSettingsOverlay(*layout, shell.settings_overlay_service_, shell.text_renderer_);
+    return index < vm.rows.size() ? vm.rows[index].row_rect : SDL_FRect{};
+  }
+  static int SettingsOverlaySelectedRowIndex(const WorkspaceShell& shell) {
+    return shell.settings_overlay_service_.SelectedRow();
+  }
   // Opens the font-picker dropdown with a supplied family list. The production path
   // enumerates installed fonts, which is environment-dependent, so tests that need
   // an overflowing list seed it here.

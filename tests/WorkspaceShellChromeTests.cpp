@@ -1153,6 +1153,62 @@ void TestWorkspaceShellPromptInputRendersSharedFramedField() {
   SDL_DestroySurface(pixels);
 }
 
+// Every list in the shell lifts the row under the pointer — sidebar, overlay
+// pickers, debug pane, tab strips. Settings, the largest list in the app and one
+// whose rows already turn the cursor into a hand, painted only its keyboard
+// selection: the pointer moved over a hundred clickable rows with no feedback.
+void TestWorkspaceShellSettingsRowsLiftOnHover() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "file.txt", "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
+  WorkspaceShellTestAccess::SetSettingsOverlayCategory(shell, 0);
+  WorkspaceShellTestAccess::SetSettingsOverlaySelectedRow(shell, 0);
+
+  // Hover the *second* visible row, so the selection is somewhere else and the
+  // lift under test cannot be the selected fill.
+  const SDL_FRect row = WorkspaceShellTestAccess::SettingsOverlayVisibleRowRect(shell, 1);
+  Expect(row.w > 0.0f && row.h > 0.0f, "the settings fixture should expose a second value row");
+  Expect(WorkspaceShellTestAccess::SettingsOverlaySelectedRowIndex(shell) == 0,
+         "the settings fixture should keep the selection off the hovered row");
+
+  const auto theme = microide::render::MakeDefaultTheme();
+  const auto row_pixel = [&](float x, float y) {
+    SoftwareCanvas canvas(1280, 720);
+    shell.Render(canvas.renderer(), 1280, 720);
+    SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+    Expect(pixels != nullptr, "the settings hover fixture should capture rendered pixels");
+    const SDL_Color color = ReadSurfacePixelOrThrow(pixels, static_cast<int>(std::floor(x)),
+                                                    static_cast<int>(std::floor(y)));
+    SDL_DestroySurface(pixels);
+    return color;
+  };
+  const auto is_row_highlight = [&](const SDL_Color& color) {
+    return color.r == theme.row_highlight.r && color.g == theme.row_highlight.g &&
+           color.b == theme.row_highlight.b && color.a == theme.row_highlight.a;
+  };
+  // Sample the row's left edge, clear of the label text and of any control.
+  const float sample_x = row.x + 3.0f;
+  const float sample_y = row.y + row.h * 0.5f;
+
+  (void)SendMouseMotion(shell, row.x + row.w * 0.5f, row.y - 1000.0f, 0);
+  Expect(!is_row_highlight(row_pixel(sample_x, sample_y)),
+         "an unhovered, unselected settings row should keep the pane background");
+
+  (void)SendMouseMotion(shell, row.x + row.w * 0.5f, sample_y, 0);
+  Expect(is_row_highlight(row_pixel(sample_x, sample_y)),
+         "the settings row under the pointer should lift like every other list row");
+}
+
 // The bottom panel draws a focus ring for its terminal and Output contents, but
 // the plugin-surface branch returned before reaching it — so a focused preview was
 // the one surface in the shell with no visible focus, in a panel that is in the
@@ -2794,6 +2850,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard);
   AddTest(tests, "WorkspaceShell/ProjectTabTooltipDismissRetainedRedrawMatchesFullRender",
           TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender);
+  AddTest(tests, "WorkspaceShell/SettingsRowsLiftOnHover",
+          TestWorkspaceShellSettingsRowsLiftOnHover);
   AddTest(tests, "WorkspaceShell/PluginSurfacePanelDrawsItsFocusRing",
           TestWorkspaceShellPluginSurfacePanelDrawsItsFocusRing);
   AddTest(tests, "WorkspaceShell/PromptInputRendersSharedFramedField",
