@@ -21,6 +21,7 @@
 #include "terminal/TerminalSession.h"
 #include "workspace/OverviewRuler.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceTerminalSelection.h"
 
 namespace microide::workspace {
 
@@ -272,11 +273,6 @@ struct TabEntry {
   std::optional<MergeTabState> merge;
 };
 
-struct TerminalSelectionPosition {
-  std::size_t row = 0;
-  std::size_t column = 0;
-};
-
 struct TerminalTabState {
   terminal::TerminalSession session;
   terminal::TerminalLineRangeSnapshot visible_lines_snapshot;
@@ -286,8 +282,8 @@ struct TerminalTabState {
   bool follow_tail = true;
   bool focus_events_active = false;
   bool mouse_selecting = false;
-  std::optional<TerminalSelectionPosition> selection_anchor;
-  std::optional<TerminalSelectionPosition> selection_head;
+  std::optional<TerminalSelectionPoint> selection_anchor;
+  std::optional<TerminalSelectionPoint> selection_head;
   // Host-side capture of bytes typed/pasted since the last Enter, used ONLY to strip
   // the prompt prefix from the copy-last-command transcript (never sent to the PTY).
   // Bounded by kMaxPendingInputBytes: repeated pastes/programmatic input before a

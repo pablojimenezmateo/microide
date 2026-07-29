@@ -224,7 +224,7 @@
   using MergeHoverState = workspace::MergeHoverState;
   using MergeTabState = workspace::MergeTabState;
   using TabEntry = workspace::TabEntry;
-  using TerminalSelectionPosition = workspace::TerminalSelectionPosition;
+  using TerminalSelectionPoint = workspace::TerminalSelectionPoint;
   using TerminalTabState = workspace::TerminalTabState;
   using EditorPreferences = workspace::EditorPreferences;
   using ProjectSurfaceState = workspace::ProjectSurfaceState;
@@ -1518,12 +1518,12 @@
   void ClearTerminalSelection();
   bool TerminalHasSelection() const;
   std::optional<std::string> TerminalUrlAtPoint(float x, float y) const;
-  std::optional<TerminalSelectionPosition> TerminalSelectionPositionForPoint(
+  std::optional<TerminalSelectionPoint> TerminalSelectionPointForPoint(
       int x,
       int y,
       const std::vector<terminal::TerminalLine>& lines,
       std::size_t first_row = 0) const;
-  std::optional<TerminalSelectionPosition> TerminalViewportPositionForPoint(int x, int y) const;
+  std::optional<TerminalSelectionPoint> TerminalViewportPositionForPoint(int x, int y) const;
   terminal::TerminalSession::MouseButton TerminalMouseButtonForSdl(Uint8 button) const;
   std::optional<TerminalSelectionBounds> ActiveTerminalSelectionBounds() const;
   std::string SelectedTerminalText() const;

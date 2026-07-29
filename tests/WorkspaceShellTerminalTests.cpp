@@ -1000,6 +1000,42 @@ void TestWorkspaceShellTerminalDragSelectsTranscriptText() {
          "terminal drag selection should capture the selected transcript text");
 }
 
+// Double-click selects the word under the pointer and triple-click the whole row, the
+// same gestures the editor surface answers. The terminal used to offer drag-select
+// only, so the two text surfaces in one window disagreed about what a click means.
+void TestWorkspaceShellTerminalDoubleClickSelectsWordTripleClickSelectsLine() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "warn src/foo/bar.cpp:42 done");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  // Column 8 is inside "src/foo/bar.cpp:42" — the path separators and the ':' line
+  // suffix are word characters, so the whole reference comes out as one token.
+  const SDL_FPoint inside_path = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 8);
+  Expect(SendMouseDown(shell, inside_path.x, inside_path.y, SDL_BUTTON_LEFT, 2),
+         "double-clicking inside the terminal should be handled");
+  Expect(WorkspaceShellTestAccess::TerminalHasSelection(shell),
+         "double-clicking a word should create a selection");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell) == "src/foo/bar.cpp:42",
+         "double-click should select the whole path token under the pointer");
+
+  Expect(SendMouseDown(shell, inside_path.x, inside_path.y, SDL_BUTTON_LEFT, 3),
+         "triple-clicking inside the terminal should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell) ==
+             "warn src/foo/bar.cpp:42 done",
+         "triple-click should select the whole row without its trailing blanks");
+
+  // A double-click on blank space leaves the empty caret-style selection alone rather
+  // than selecting the run of spaces.
+  const SDL_FPoint blank = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 60);
+  Expect(SendMouseDown(shell, blank.x, blank.y, SDL_BUTTON_LEFT, 2),
+         "double-clicking blank terminal space should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell).empty(),
+         "double-clicking blank space should not select anything");
+}
+
 void TestWorkspaceShellTerminalSelectionWritesPrimaryBufferAndMiddleClickPastes() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1569,6 +1605,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBottomPanelWheelScrollsTranscript);
   AddTest(tests, "WorkspaceShell/TerminalDragSelectsTranscriptText",
           TestWorkspaceShellTerminalDragSelectsTranscriptText);
+  AddTest(tests, "WorkspaceShell/TerminalDoubleClickSelectsWordTripleClickSelectsLine",
+          TestWorkspaceShellTerminalDoubleClickSelectsWordTripleClickSelectsLine);
   AddTest(tests, "WorkspaceShell/TerminalSelectionWritesPrimaryBufferAndMiddleClickPastes",
           TestWorkspaceShellTerminalSelectionWritesPrimaryBufferAndMiddleClickPastes);
   AddTest(tests, "WorkspaceShell/TerminalLeftClickOpensUrls",

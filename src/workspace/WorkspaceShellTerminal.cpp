@@ -330,7 +330,7 @@ std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) 
   }
   const std::vector<terminal::TerminalLine>& lines = *lines_ptr;
   const auto position =
-      TerminalSelectionPositionForPoint(static_cast<int>(std::lround(x)),
+      TerminalSelectionPointForPoint(static_cast<int>(std::lround(x)),
                                         static_cast<int>(std::lround(y)), lines, first_row);
   if (!position.has_value() || position->row < first_row ||
       position->row - first_row >= lines.size()) {
@@ -559,8 +559,8 @@ bool WorkspaceShell::TerminalHasSelection() const {
           selection->start.column != selection->end.column);
 }
 
-std::optional<WorkspaceShell::TerminalSelectionPosition>
-WorkspaceShell::TerminalSelectionPositionForPoint(
+std::optional<WorkspaceShell::TerminalSelectionPoint>
+WorkspaceShell::TerminalSelectionPointForPoint(
     int x,
     int y,
     const std::vector<terminal::TerminalLine>& lines,
@@ -592,13 +592,13 @@ WorkspaceShell::TerminalSelectionPositionForPoint(
   const float local_x = std::max(0.0f, static_cast<float>(x) - panel_layout.text_x);
   const std::size_t column = static_cast<std::size_t>(
       std::max(0L, std::lround(local_x / std::max(1.0f, terminal_text_renderer_.CharWidth()))));
-  return TerminalSelectionPosition{
+  return TerminalSelectionPoint{
       .row = row,
       .column = std::min(column, lines[row - first_row].cells.size()),
   };
 }
 
-std::optional<WorkspaceShell::TerminalSelectionPosition>
+std::optional<WorkspaceShell::TerminalSelectionPoint>
 WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
   if (!BottomPanelVisible() || ActiveTerminalTab() == nullptr) {
     return std::nullopt;
@@ -641,7 +641,7 @@ WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
 
   const float local_x = std::max(0.0f, static_cast<float>(x) - text_x);
   const std::size_t column = static_cast<std::size_t>(std::floor(local_x / char_width));
-  return TerminalSelectionPosition{
+  return TerminalSelectionPoint{
       .row = row,
       .column = std::min(column, columns - 1),
   };
@@ -659,15 +659,7 @@ std::optional<TerminalSelectionBounds> WorkspaceShell::ActiveTerminalSelectionBo
     return std::nullopt;
   }
 
-  return NormalizeTerminalSelection(
-      TerminalSelectionPoint{
-          .row = terminal_tab->selection_anchor->row,
-          .column = terminal_tab->selection_anchor->column,
-      },
-      TerminalSelectionPoint{
-          .row = terminal_tab->selection_head->row,
-          .column = terminal_tab->selection_head->column,
-      });
+  return NormalizeTerminalSelection(terminal_tab->selection_anchor, terminal_tab->selection_head);
 }
 
 std::string WorkspaceShell::SelectedTerminalText() const {

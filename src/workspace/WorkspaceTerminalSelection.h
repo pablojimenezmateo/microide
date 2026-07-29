@@ -48,6 +48,21 @@ bool TerminalSelectionContainsCell(const TerminalSelectionBounds& selection,
                                    std::size_t row,
                                    std::size_t column);
 
+// Double-click word bounds around `column` in `line` (rows are absolute, so the
+// caller passes the row the click landed on). Word characters are the editor's
+// identifier bytes plus the punctuation that makes a path or URL one token in a
+// terminal (`.`/`-`/`/`/`~`/`+`/`:`/`@`), which is what every terminal emulator
+// selects and what makes double-click useful on `src/foo/bar.cpp:42`.
+// Returns nullopt when the clicked cell is blank or not a word character, so the
+// caller can leave the caret-style empty selection alone.
+std::optional<TerminalSelectionBounds> TerminalWordBoundsAt(const terminal::TerminalLine& line,
+                                                            std::size_t row,
+                                                            std::size_t column);
+// Triple-click line bounds: the whole row, trailing blanks excluded. Returns nullopt
+// for a blank row.
+std::optional<TerminalSelectionBounds> TerminalLineBoundsAt(const terminal::TerminalLine& line,
+                                                            std::size_t row);
+
 // Default line/byte budgets for a "Copy Last Command" transcript. A long-running
 // command with large output can retain up to the full scrollback cap (100k lines),
 // so the invoke path must not snapshot + join an unbounded transcript on the UI

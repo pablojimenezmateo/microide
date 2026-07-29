@@ -33,13 +33,13 @@ class PanelMouseCoordinator {
     std::function<bool(float, float)> terminal_find_mouse_down;
     std::function<std::optional<std::string>(float, float)> terminal_url_at_point;
     std::function<bool(std::string_view)> open_external_url;
-    std::function<std::optional<TerminalSelectionPosition>(int,
+    std::function<std::optional<TerminalSelectionPoint>(int,
                                                            int,
                                                            const std::vector<terminal::TerminalLine>&,
                                                            std::size_t)>
         terminal_selection_position_for_point;
     std::function<std::optional<WorkspaceLayout>()> current_workspace_layout;
-    std::function<std::optional<TerminalSelectionPosition>(int, int)> terminal_viewport_position_for_point;
+    std::function<std::optional<TerminalSelectionPoint>(int, int)> terminal_viewport_position_for_point;
     std::function<terminal::TerminalSession::MouseButton(Uint8)> terminal_mouse_button_for_sdl;
     std::function<const std::vector<std::string>*()> output_channel_entries;
     std::function<void(const std::filesystem::path&)> open_file;

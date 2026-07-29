@@ -163,8 +163,25 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
               operations_.terminal_selection_position_for_point(event.button.x, event.button.y,
                                                                 terminal_lines, first_row);
           position.has_value()) {
-        terminal_tab->selection_anchor = *position;
-        terminal_tab->selection_head = *position;
+        // Double-click selects the word under the pointer and triple-click the whole
+        // row, exactly as they do in the editor surface one pane over (and as every
+        // terminal emulator does). Multi-click still arms the drag, so dragging after
+        // a double-click extends from the word, matching the editor.
+        std::optional<TerminalSelectionBounds> expanded;
+        if (event.button.clicks >= 2 && position->row >= first_row &&
+            position->row - first_row < terminal_lines.size()) {
+          const terminal::TerminalLine& line = terminal_lines[position->row - first_row];
+          expanded = event.button.clicks == 2
+                         ? TerminalWordBoundsAt(line, position->row, position->column)
+                         : TerminalLineBoundsAt(line, position->row);
+        }
+        if (expanded.has_value()) {
+          terminal_tab->selection_anchor = expanded->start;
+          terminal_tab->selection_head = expanded->end;
+        } else {
+          terminal_tab->selection_anchor = *position;
+          terminal_tab->selection_head = *position;
+        }
         terminal_tab->mouse_selecting = true;
         terminal_tab->follow_tail = false;
       } else {
@@ -511,7 +528,7 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
                      int y,
                      const std::vector<terminal::TerminalLine>& lines,
                      std::size_t first_row) {
-                return TerminalSelectionPositionForPoint(x, y, lines, first_row);
+                return TerminalSelectionPointForPoint(x, y, lines, first_row);
               },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },
           .terminal_viewport_position_for_point =

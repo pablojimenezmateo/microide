@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "editor/EditTypes.h"
 #include "util/StringUtil.h"
 
 namespace microide::workspace {
@@ -127,6 +128,60 @@ std::string BuildLastTerminalCommandTranscript(
     transcript += "\n[output truncated]";
   }
   return transcript;
+}
+
+namespace {
+
+// A cell counts as part of a double-click word when it holds a single-byte
+// identifier char or one of the path/URL joiners a terminal token is made of.
+// Multi-byte cells are treated as word bytes so a UTF-8 identifier is not split
+// mid-token by the click.
+bool IsTerminalWordCell(const terminal::TerminalCell& cell) {
+  const std::string_view text = cell.DisplayText();
+  if (text.empty() || text == " ") {
+    return false;
+  }
+  if (text.size() > 1) {
+    return true;
+  }
+  const char ch = text.front();
+  return editor::IsIdentifierByte(ch) || ch == '.' || ch == '-' || ch == '/' || ch == '~' ||
+         ch == '+' || ch == ':' || ch == '@';
+}
+
+}  // namespace
+
+std::optional<TerminalSelectionBounds> TerminalWordBoundsAt(const terminal::TerminalLine& line,
+                                                            std::size_t row,
+                                                            std::size_t column) {
+  if (column >= line.cells.size() || !IsTerminalWordCell(line.cells[column])) {
+    return std::nullopt;
+  }
+  std::size_t start = column;
+  while (start > 0 && IsTerminalWordCell(line.cells[start - 1])) {
+    --start;
+  }
+  std::size_t end = column + 1;
+  while (end < line.cells.size() && IsTerminalWordCell(line.cells[end])) {
+    ++end;
+  }
+  return TerminalSelectionBounds{.start = {row, start}, .end = {row, end}};
+}
+
+std::optional<TerminalSelectionBounds> TerminalLineBoundsAt(const terminal::TerminalLine& line,
+                                                            std::size_t row) {
+  std::size_t end = line.cells.size();
+  while (end > 0) {
+    const std::string_view text = line.cells[end - 1].DisplayText();
+    if (!text.empty() && text != " ") {
+      break;
+    }
+    --end;
+  }
+  if (end == 0) {
+    return std::nullopt;
+  }
+  return TerminalSelectionBounds{.start = {row, 0}, .end = {row, end}};
 }
 
 bool TerminalSelectionContainsCell(const TerminalSelectionBounds& selection,
