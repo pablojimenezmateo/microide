@@ -163,10 +163,6 @@ void SidebarCoordinator::MovePluginSelection(int delta) {
                           operations_.compute_plugin_sidebar_list_layout, delta);
 }
 
-bool SidebarCoordinator::OpenGitEntry(const std::size_t entry_index) {
-  return DispatchGitSidebarAction(GitSidebarActionId::DefaultView, entry_index);
-}
-
 bool SidebarCoordinator::DispatchGitSidebarAction(const GitSidebarActionId action,
                                                 const std::size_t entry_index) {
   const GitSidebarEntry* entry = GitEntry(entry_index);

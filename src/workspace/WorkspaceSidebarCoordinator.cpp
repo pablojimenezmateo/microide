@@ -654,10 +654,6 @@ void WorkspaceShell::MovePluginSidebarSelection(int delta) {
   MakeSidebarService().MovePluginSelection(delta);
 }
 
-bool WorkspaceShell::OpenGitSidebarEntry(std::size_t entry_index) {
-  return MakeSidebarService().OpenGitEntry(entry_index);
-}
-
 bool WorkspaceShell::OpenSelectedProblemSidebarItem() {
   return MakeSidebarService().OpenProblemItem();
 }
@@ -709,10 +705,6 @@ bool WorkspaceShell::DiscardAllGitSidebarEntries() {
 
 bool WorkspaceShell::StageGitSidebarEntry(std::size_t entry_index) {
   return MakeSidebarService().StageGitEntry(entry_index);
-}
-
-bool WorkspaceShell::UnstageGitSidebarEntry(std::size_t entry_index) {
-  return MakeSidebarService().UnstageGitEntry(entry_index);
 }
 
 bool WorkspaceShell::DiscardGitSidebarEntry(std::size_t entry_index,

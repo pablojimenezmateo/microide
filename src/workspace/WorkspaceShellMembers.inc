@@ -1116,7 +1116,6 @@
   void MoveProblemsSidebarSelection(int delta);
   void MoveTestsSidebarSelection(int delta);
   void MovePluginSidebarSelection(int delta);
-  bool OpenGitSidebarEntry(std::size_t entry_index);
   bool OpenSelectedProblemSidebarItem();
   bool OpenSelectedTestSidebarItem();
   bool OpenSelectedPluginSidebarItem();
@@ -1137,7 +1136,6 @@
   void PrepareCommitBodyViewportForFrame(const SDL_FRect& sidebar_rect);
   bool DiscardAllGitSidebarEntries();
   bool StageGitSidebarEntry(std::size_t entry_index);
-  bool UnstageGitSidebarEntry(std::size_t entry_index);
   bool DiscardGitSidebarEntry(std::size_t entry_index, const std::optional<std::filesystem::path>& expected_path = {});
   bool DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index);
   void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);

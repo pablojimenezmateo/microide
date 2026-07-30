@@ -39,7 +39,6 @@ class SidebarService {
   void MoveProblemsSelection(int delta);
   void MoveTestsSelection(int delta);
   void MovePluginSelection(int delta);
-  bool OpenGitEntry(std::size_t entry_index);
   bool OpenProblemItem();
   bool OpenTestItem();
   bool RunTestItem();
@@ -51,7 +50,6 @@ class SidebarService {
   void OpenDiscardAllGitPrompt();
   bool DiscardAllGitEntries();
   bool StageGitEntry(std::size_t entry_index);
-  bool UnstageGitEntry(std::size_t entry_index);
   bool DiscardGitEntry(std::size_t entry_index,
                        const std::optional<std::filesystem::path>& expected_path = {});
   void OpenDiscardGitEntryPrompt(std::size_t entry_index);

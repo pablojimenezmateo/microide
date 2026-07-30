@@ -107,10 +107,6 @@ void SidebarService::MovePluginSelection(int delta) {
   coordinator_.MovePluginSelection(delta);
 }
 
-bool SidebarService::OpenGitEntry(std::size_t entry_index) {
-  return coordinator_.OpenGitEntry(entry_index);
-}
-
 bool SidebarService::OpenProblemItem() {
   return coordinator_.OpenProblemItem();
 }
@@ -153,10 +149,6 @@ bool SidebarService::DiscardAllGitEntries() {
 
 bool SidebarService::StageGitEntry(std::size_t entry_index) {
   return coordinator_.StageGitEntry(entry_index);
-}
-
-bool SidebarService::UnstageGitEntry(std::size_t entry_index) {
-  return coordinator_.UnstageGitEntry(entry_index);
 }
 
 bool SidebarService::DiscardGitEntry(std::size_t entry_index,

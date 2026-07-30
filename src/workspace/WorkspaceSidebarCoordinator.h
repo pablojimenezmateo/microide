@@ -151,7 +151,6 @@ class SidebarCoordinator {
   void MoveProblemsSelection(int delta);
   void MoveTestsSelection(int delta);
   void MovePluginSelection(int delta);
-  bool OpenGitEntry(std::size_t entry_index);
   bool OpenProblemItem();
   bool OpenTestItem();
   bool RunTestItem();
