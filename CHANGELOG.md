@@ -138,6 +138,19 @@ or persisted-format changes.
 - **The find widget's five buttons lift under the pointer**, like every other
   button in the shell. They stayed flat while the cursor over them was already a
   hand.
+- **A partial redraw no longer leaves the last pixel row of its range stale.** The
+  three row-range dirty-rect builders — editor, compare, merge — each nudged the
+  rect's top up by a pixel and left the height alone, so the bottom row of a
+  partially repainted range was never invalidated and kept whatever had been drawn
+  there. Visible where a blame overlay line sat: typing to dirty a buffer
+  suppresses blame, but one row of the old blame text survived.
+- **The compare surface's collapsed-context buttons agree with their cursor.** The
+  click, the hover highlight, the cursor shape and the test accessor each derived
+  the action-button rects independently, against a rule the header states in prose
+  ("every hit-test path must derive them from this same rect"). The accessor was
+  the one that got it wrong, so the test asserting these buttons offer a hand
+  cursor had been probing coordinates several pixels off the painted buttons — it
+  passed only because it probed the centre of a 140px-wide button.
 - **Every painted scrollbar can now be grabbed.** Three could not. The debug
   pane's had been painted since the pane shipped but never hit-tested, so it was
   decoration — and because the row hit test covered the whole content rect, a
