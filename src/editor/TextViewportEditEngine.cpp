@@ -328,23 +328,31 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   }
 
   if (replacements > 0) {
-    document_->lines.ReplaceLineRange(first_changed_line, before_changed_lines.size(),
-                                      after_changed_lines);
-    document_->dirty = true;
-    undo_history_.ClearRedo();
-    RefreshEncoding();
-    InvalidateLayoutCaches();
-    EnsureCursorVisible();
-    const ViewState after_state = CaptureViewState();
-    PushHistoryEntry(HistoryEntry{
-        .start_line = first_changed_line,
-        .before_lines = std::move(before_changed_lines),
-        .after_lines = std::move(after_changed_lines),
-        .before_state = before_state,
-        .after_state = after_state,
-    });
+    CommitLineRangeEdit(first_changed_line, std::move(before_changed_lines),
+                        std::move(after_changed_lines), before_state);
   }
   return replacements;
+}
+
+void TextViewport::CommitLineRangeEdit(std::size_t first_changed_line,
+                                       std::vector<std::string> before_changed_lines,
+                                       std::vector<std::string> after_changed_lines,
+                                       const ViewState& before_state) {
+  document_->lines.ReplaceLineRange(first_changed_line, before_changed_lines.size(),
+                                    after_changed_lines);
+  document_->dirty = true;
+  undo_history_.ClearRedo();
+  RefreshEncoding();
+  InvalidateLayoutCaches();
+  EnsureCursorVisible();
+  const ViewState after_state = CaptureViewState();
+  PushHistoryEntry(HistoryEntry{
+      .start_line = first_changed_line,
+      .before_lines = std::move(before_changed_lines),
+      .after_lines = std::move(after_changed_lines),
+      .before_state = before_state,
+      .after_state = after_state,
+  });
 }
 
 std::optional<std::size_t> TextViewport::ReplaceAllRanges(
@@ -424,21 +432,8 @@ std::optional<std::size_t> TextViewport::ReplaceAllRanges(
   }
 
   const std::size_t replacements = matches.size();
-  document_->lines.ReplaceLineRange(first_changed_line, before_changed_lines.size(),
-                                    after_changed_lines);
-  document_->dirty = true;
-  undo_history_.ClearRedo();
-  RefreshEncoding();
-  InvalidateLayoutCaches();
-  EnsureCursorVisible();
-  const ViewState after_state = CaptureViewState();
-  PushHistoryEntry(HistoryEntry{
-      .start_line = first_changed_line,
-      .before_lines = std::move(before_changed_lines),
-      .after_lines = std::move(after_changed_lines),
-      .before_state = before_state,
-      .after_state = after_state,
-  });
+  CommitLineRangeEdit(first_changed_line, std::move(before_changed_lines),
+                      std::move(after_changed_lines), before_state);
   return replacements;
 }
 

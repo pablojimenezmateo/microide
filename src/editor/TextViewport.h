@@ -494,6 +494,17 @@ class TextViewport {
   ViewState CaptureViewState() const;
   void RestoreViewState(const ViewState& state);
   void PushHistoryEntry(HistoryEntry entry, CoalesceHint hint = CoalesceHint{});
+  // Swap a contiguous run of lines for its replacement and do everything that
+  // has to follow: mark dirty, drop redo, re-sniff the encoding, drop the
+  // layout caches, keep the caret on screen, and push the undo entry. Both
+  // replace-all paths need exactly this sequence, and a copy that forgets one
+  // step fails quietly — a missed InvalidateLayoutCaches paints stale rows, a
+  // missed ClearRedo leaves a redo stack that replays against text that no
+  // longer exists. Consumes both line vectors into the undo entry.
+  void CommitLineRangeEdit(std::size_t first_changed_line,
+                           std::vector<std::string> before_changed_lines,
+                           std::vector<std::string> after_changed_lines,
+                           const ViewState& before_state);
   void FlushActiveUndoGroup();
   void ApplyHistoryEntry(const HistoryEntry& entry, bool forward);
   std::optional<HistoryEntry> BuildRangeHistoryEntry(const SelectionRange& range,
