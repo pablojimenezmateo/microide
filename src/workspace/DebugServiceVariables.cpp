@@ -68,7 +68,12 @@ void DebugService::ToggleVariableRow(std::size_t row) {
   }
 }
 
-void DebugService::FetchVariablesPage(int reference, int start, int count) {
+template <typename Model>
+void DebugService::FetchTreeChildrenPage(Model ProjectWorkspaceState::*model_member,
+                                         util::Generation& generation,
+                                         int reference,
+                                         int start,
+                                         int count) {
   if (reference <= 0) {
     return;
   }
@@ -76,35 +81,41 @@ void DebugService::FetchVariablesPage(int reference, int start, int count) {
   if (session == nullptr) {
     // No live session to service the fetch: clear the loading state so the row
     // does not spin forever.
-    CurrentProjectState().debug_variables.MarkChildrenError(reference);
+    (CurrentProjectState().*model_member).MarkChildrenError(reference);
     return;
   }
-  // Bind this fetch to the current frame generation. A page that returns after a
-  // frame switch / stop / clear is dropped — the adapter recycles
-  // variablesReference values, so applying it could attach children to an unrelated
-  // node of the new frame.
-  const std::uint64_t generation = frame_generation_.current();
+  // Bind this fetch to the current generation. A page that returns after a frame
+  // switch / stop / clear (or, for watch, a re-evaluation pass) is dropped — the
+  // adapter recycles variablesReference values, so applying it could attach
+  // children to an unrelated node.
+  const std::uint64_t token = generation.current();
   session->RequestVariables(
       reference, start, count,
-      [this, reference, start, generation](bool ok,
-                                           std::vector<dap_protocol::DapVariable> variables) {
-        if (!frame_generation_.is_current(generation)) {
+      [this, model_member, &generation, reference, start, token](
+          bool ok, std::vector<dap_protocol::DapVariable> variables) {
+        if (!generation.is_current(token)) {
           return;
         }
         if (ok) {
-          // Restoring expansion can cascade: applying a page may re-expand
-          // descendants the user had open, whose own pages we fetch in turn.
+          // Applying a page can cascade: it may re-expand descendants the user
+          // had open, whose own pages must be fetched in turn.
           for (const DebugValueTree::ChildFetch& fetch :
-               CurrentProjectState().debug_variables.ApplyVariables(reference, variables, start)) {
-            FetchVariablesPage(fetch.reference, fetch.start, fetch.count);
+               (CurrentProjectState().*model_member).ApplyVariables(reference, variables, start)) {
+            FetchTreeChildrenPage(model_member, generation, fetch.reference, fetch.start,
+                                  fetch.count);
           }
         } else {
-          CurrentProjectState().debug_variables.MarkChildrenError(reference);
+          (CurrentProjectState().*model_member).MarkChildrenError(reference);
         }
         if (operations_.request_debug_pane_redraw) {
           operations_.request_debug_pane_redraw();
         }
       });
+}
+
+void DebugService::FetchVariablesPage(int reference, int start, int count) {
+  FetchTreeChildrenPage(&ProjectWorkspaceState::debug_variables, frame_generation_, reference,
+                        start, count);
 }
 
 void DebugService::BeginVariableEdit(std::size_t row) {
@@ -305,41 +316,8 @@ void DebugService::RemoveWatch(std::size_t index) {
 }
 
 void DebugService::FetchWatchChildren(int reference, int start, int count) {
-  if (reference <= 0) {
-    return;
-  }
-  DebugSession* session = CurrentDapManager().ActiveSession();
-  if (session == nullptr) {
-    // No live session to service the fetch: clear the loading state so the row does
-    // not spin forever.
-    CurrentProjectState().debug_watch.MarkChildrenError(reference);
-    return;
-  }
-  // A re-evaluation pass (add/remove/edit/step) clears the watch tree and the adapter
-  // recycles references; drop a child page that returns after one.
-  const std::uint64_t generation = watch_generation_.current();
-  session->RequestVariables(
-      reference, start, count,
-      [this, reference, start, generation](bool ok,
-                                           std::vector<dap_protocol::DapVariable> variables) {
-        if (!watch_generation_.is_current(generation)) {
-          return;
-        }
-        if (ok) {
-          // Applying a page can auto-expand remembered descendants whose own pages we
-          // must fetch in turn — the same cascade the Variables pane runs. Dropping
-          // these (the old code did) left a nested watch child on "loading…" forever.
-          for (const DebugValueTree::ChildFetch& fetch :
-               CurrentProjectState().debug_watch.ApplyVariables(reference, variables, start)) {
-            FetchWatchChildren(fetch.reference, fetch.start, fetch.count);
-          }
-        } else {
-          CurrentProjectState().debug_watch.MarkChildrenError(reference);
-        }
-        if (operations_.request_debug_pane_redraw) {
-          operations_.request_debug_pane_redraw();
-        }
-      });
+  FetchTreeChildrenPage(&ProjectWorkspaceState::debug_watch, watch_generation_, reference, start,
+                        count);
 }
 
 void DebugService::ToggleWatchRow(std::size_t row) {

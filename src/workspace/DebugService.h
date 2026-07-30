@@ -253,13 +253,28 @@ class DebugService {
   // (0 on failure). Shared by StartDebugging and the restart relaunch fallback.
   int LaunchSession(const LaunchConfig& config, const std::string& cwd, bool replace);
   // Issue one bounded `variables` page request on the active session and feed the
-  // result back into the model. Applying a page can cascade (restoring expansion
-  // re-opens descendants), so the callback re-invokes this for each returned fetch.
-  // Used by both manual expand (ToggleVariableRow) and stop-time expansion restore.
+  // result back into `model`, guarded by `generation`.
+  //
+  // The Variables and Watch panes need exactly this and had a copy each. The
+  // guard is the reason it must not be two copies: the adapter recycles
+  // variablesReference values, so a page that lands after the generation moved on
+  // would attach children to an unrelated node. So would forgetting to re-invoke
+  // for the cascade the apply returns — applying a page can auto-expand
+  // remembered descendants, and dropping their fetches strands them on
+  // "loading…" forever, which is a bug the watch copy had and the variables copy
+  // did not.
+  //
+  // Templated on the model because DebugVariablesModel and DebugWatchModel are
+  // separate types with the same MarkChildrenError/ApplyVariables surface. Both
+  // instantiations live in DebugServiceVariables.cpp, which is where it is
+  // defined.
+  template <typename Model>
+  void FetchTreeChildrenPage(Model ProjectWorkspaceState::*model_member,
+                             util::Generation& generation,
+                             int reference,
+                             int start,
+                             int count);
   void FetchVariablesPage(int reference, int start, int count);
-  // Watch-tree sibling of FetchVariablesPage: fetches a watch child page under the
-  // watch_generation_ guard and re-invokes itself for each cascade fetch the apply
-  // returns, so an auto-expanded nested watch child does not strand on "loading…".
   void FetchWatchChildren(int reference, int start, int count);
   // Project a stop (call stack + focused frame) of the active session into the
   // shared transient views: build the execution view, focus the top frame, surface
