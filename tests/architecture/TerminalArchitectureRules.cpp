@@ -4,6 +4,7 @@
 
 #include <array>
 #include <fstream>
+#include <map>
 #include <regex>
 #include <string_view>
 #include <algorithm>
@@ -464,6 +465,142 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
 // Scans the balanced argument list of each Setting* read helper for its first
 // dotted string literal, code-masked so comments and unrelated literals are not
 // mistaken for call sites.
+// A bool setting's fallback default, where a caller spells one out, must match
+// what the registry declares.
+//
+// GetSettingValue resolves an unset key to its registered default, so today the
+// caller-supplied default only decides what happens when the getter itself is
+// absent or unresolvable. That makes a disagreement latent rather than live —
+// and latent is exactly why it goes unnoticed. Two were found this way:
+// `chrome.project_tabs.hide_when_single` and `editor.inlay_hints.enabled` are
+// both registered on-by-default, and both had a read that would have fallen back
+// to off. `editor.inlay_hints.enabled` disagreed with *itself* — the same file
+// read it twice, once with an explicit true and once with the implicit false.
+//
+// Reading with no explicit default means false, which is why an omitted default
+// on an on-by-default setting is reported.
+RuleResult CheckSettingDefaultsMatchRegistry(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "bool setting reads use the registry's default";
+  result.hard_fail = true;
+
+  const std::filesystem::path registry_path =
+      repo_root / "src/workspace/WorkspaceSettingsRegistry.cpp";
+  const std::string registry_text = ReadRuleTarget(result, registry_path);
+  if (registry_text.empty()) {
+    result.violations.push_back(Violation{
+        .path = registry_path,
+        .line = 1,
+        .message = "rule target moved — the settings registry could not be read; re-anchor "
+                   "CheckSettingDefaultsMatchRegistry",
+    });
+    return result;
+  }
+
+  // Registered Bool settings and their declared defaults. A SettingSpec with no
+  // explicit `.default_bool` defaults to false.
+  std::map<std::string, bool> bool_defaults;
+  {
+    const std::regex spec_pattern(R"RX(\.id\s*=\s*"([a-z][a-z0-9_.]*)")RX");
+    for (std::sregex_iterator it(registry_text.begin(), registry_text.end(), spec_pattern), last;
+         it != last; ++it) {
+      const std::string key = (*it)[1].str();
+      const std::size_t start = static_cast<std::size_t>(it->position());
+      // The spec body runs until the next `.id =` (or the end).
+      std::size_t end = registry_text.find(".id =", start + 1);
+      if (end == std::string::npos) {
+        end = registry_text.size();
+      }
+      const std::string body = registry_text.substr(start, end - start);
+      if (body.find("SettingType::Bool") == std::string::npos) {
+        continue;
+      }
+      bool_defaults[key] = body.find(".default_bool = true") != std::string::npos;
+    }
+  }
+  if (bool_defaults.size() < 20) {
+    result.violations.push_back(Violation{
+        .path = registry_path,
+        .line = 1,
+        .message = "parsed only " + std::to_string(bool_defaults.size()) +
+                   " bool settings; the registry's declaration shape changed and this lint has "
+                   "gone vacuous — fix the scan rather than deleting the rule",
+    });
+    return result;
+  }
+
+  const std::regex read_pattern(R"(\bSettingFlagEnabled\s*\()");
+  const std::regex literal_pattern(R"RX("([a-z][a-z0-9_.]*)")RX");
+  std::size_t scanned_reads = 0;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::filesystem::path extension = entry.path().extension();
+    if (extension != ".cpp" && extension != ".h" && extension != ".inc") {
+      continue;
+    }
+    if (entry.path().filename() == "WorkspaceSettingsRegistry.cpp") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    for (std::sregex_iterator it(text.begin(), text.end(), read_pattern), last; it != last; ++it) {
+      const std::size_t open_paren = static_cast<std::size_t>(it->position() + it->length()) - 1;
+      if (open_paren >= is_code.size() || !is_code[open_paren]) {
+        continue;
+      }
+      std::size_t depth = 0;
+      std::size_t close_paren = open_paren;
+      for (std::size_t i = open_paren; i < text.size(); ++i) {
+        if (text[i] == '(') {
+          ++depth;
+        } else if (text[i] == ')') {
+          if (--depth == 0) {
+            close_paren = i;
+            break;
+          }
+        }
+      }
+      const std::string call = text.substr(open_paren, close_paren - open_paren + 1);
+      std::smatch key_match;
+      if (!std::regex_search(call, key_match, literal_pattern)) {
+        continue;  // reads a value held in a variable
+      }
+      const std::string key = key_match[1].str();
+      const auto declared = bool_defaults.find(key);
+      if (declared == bool_defaults.end()) {
+        continue;  // not a registered bool setting; a sibling rule covers registration
+      }
+      ++scanned_reads;
+      // The call's trailing argument, if any, is the caller's fallback default.
+      const bool caller_default = call.find("true", key_match.position(0) + key.size()) !=
+                                  std::string::npos;
+      if (caller_default == declared->second) {
+        continue;
+      }
+      result.violations.push_back(Violation{
+          .path = entry.path(),
+          .line = LineNumberAt(text, open_paren),
+          .message = "setting `" + key + "` is registered with default " +
+                     (declared->second ? "true" : "false") + " but read here with default " +
+                     (caller_default ? "true" : "false") +
+                     " — the two must agree, or the read silently disagrees with the Settings "
+                     "overlay whenever the getter cannot resolve the key",
+      });
+    }
+  }
+  if (scanned_reads == 0) {
+    result.violations.push_back(Violation{
+        .path = repo_root / "src/workspace",
+        .line = 1,
+        .message = "found no bool setting reads to check; this lint's scan broke and it has gone "
+                   "vacuous",
+    });
+  }
+  return result;
+}
+
 RuleResult CheckSettingsReadAreRegistered(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "settings read in code must be declared in the settings registry";
@@ -582,6 +719,7 @@ std::vector<RuleResult> RunTerminalArchitectureRules(const std::filesystem::path
       CheckDescriptorCreationIsCloseOnExec(repo_root),
       CheckSettingsReadAreRegistered(repo_root),
       CheckRegisteredSettingsAreRead(repo_root),
+      CheckSettingDefaultsMatchRegistry(repo_root),
   };
 }
 

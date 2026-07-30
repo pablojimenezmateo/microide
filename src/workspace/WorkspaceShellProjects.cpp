@@ -193,7 +193,8 @@ bool WorkspaceShell::ProjectTabStripVisible() const {
   if (settings_revision != project_tabs_hide_when_single_revision_) {
     project_tabs_hide_when_single_revision_ = settings_revision;
     project_tabs_hide_when_single_ =
-        SettingFlagEnabled(GetSettingValue("chrome.project_tabs.hide_when_single"));
+        SettingFlagEnabled(GetSettingValue("chrome.project_tabs.hide_when_single"),
+                           /*default_value=*/true);
   }
   return !project_tabs_hide_when_single_;
 }

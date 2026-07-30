@@ -792,7 +792,8 @@ void LspService::RequestLspInlayHints(const editor::TextViewport& viewport, LspC
   // LSP master switch is off.
   if (operations_.get_setting_value &&
       (!LspMasterEnabled(operations_.get_setting_value) ||
-       !SettingFlagEnabled(operations_.get_setting_value("editor.inlay_hints.enabled")))) {
+       !SettingFlagEnabled(operations_.get_setting_value("editor.inlay_hints.enabled"),
+                           /*default_value=*/true))) {
     return;
   }
   ProjectWorkspaceState* const project = &CurrentProjectState();
