@@ -606,34 +606,26 @@ class LspClient {
   void DisableTestStubMode();
   void SetTestDocumentSymbolHandler(
       std::function<void(std::string uri, DocumentSymbolCallback cb)> handler);
-  void ClearTestDocumentSymbolHandler();
   // Unit tests: feed a canned hover response (raw LSP hover result JSON).
   void SetTestHoverHandler(std::function<void(std::string uri, HoverCallback cb)> handler);
-  void ClearTestHoverHandler();
   // Unit tests: feed a canned formatting response (a TextEdit[]).
   void SetTestFormattingHandler(std::function<void(std::string uri, FormattingCallback cb)> handler);
-  void ClearTestFormattingHandler();
   // Unit tests: feed a canned rename response (a WorkspaceEdit).
   void SetTestRenameHandler(
       std::function<void(std::string uri, std::string new_name, RenameCallback cb)> handler);
-  void ClearTestRenameHandler();
   // Unit tests: feed a canned completion response (a CompletionItem[]).
   void SetTestCompletionHandler(
       std::function<void(std::string uri, Position pos, CompletionCallback cb)> handler);
-  void ClearTestCompletionHandler();
   // Unit tests: feed a canned signature-help response.
   void SetTestSignatureHelpHandler(
       std::function<void(std::string uri, Position pos, SignatureHelpCallback cb)> handler);
-  void ClearTestSignatureHelpHandler();
   // Unit tests: feed a canned prepareRename response (also marks the capability
   // supported so the request is not short-circuited).
   void SetTestPrepareRenameHandler(
       std::function<void(std::string uri, Position pos, PrepareRenameCallback cb)> handler);
-  void ClearTestPrepareRenameHandler();
   // Unit tests: feed a canned workspace/symbol response.
   void SetTestWorkspaceSymbolHandler(
       std::function<void(std::string query, WorkspaceSymbolCallback cb)> handler);
-  void ClearTestWorkspaceSymbolHandler();
   // Unit tests: drive the server-request path (as the I/O thread would) so a
   // simulated workspace/applyEdit exercises the real dispatch → main-thread apply.
   // The reply is enqueued to the outbound queue (swallowed in stub mode).

@@ -359,19 +359,9 @@ void LspClient::SetTestDocumentSymbolHandler(
   impl_->test_handlers.document_symbol = std::move(handler);
 }
 
-void LspClient::ClearTestDocumentSymbolHandler() {
-  std::lock_guard lock(impl_->mutex);
-  impl_->test_handlers.document_symbol = nullptr;
-}
-
 void LspClient::SetTestHoverHandler(std::function<void(std::string uri, HoverCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
   impl_->test_handlers.hover = std::move(handler);
-}
-
-void LspClient::ClearTestHoverHandler() {
-  std::lock_guard lock(impl_->mutex);
-  impl_->test_handlers.hover = nullptr;
 }
 
 void LspClient::SetTestFormattingHandler(
@@ -380,20 +370,10 @@ void LspClient::SetTestFormattingHandler(
   impl_->test_handlers.formatting = std::move(handler);
 }
 
-void LspClient::ClearTestFormattingHandler() {
-  std::lock_guard lock(impl_->mutex);
-  impl_->test_handlers.formatting = nullptr;
-}
-
 void LspClient::SetTestRenameHandler(
     std::function<void(std::string uri, std::string new_name, RenameCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
   impl_->test_handlers.rename = std::move(handler);
-}
-
-void LspClient::ClearTestRenameHandler() {
-  std::lock_guard lock(impl_->mutex);
-  impl_->test_handlers.rename = nullptr;
 }
 
 void LspClient::SetTestCompletionHandler(
@@ -402,20 +382,10 @@ void LspClient::SetTestCompletionHandler(
   impl_->test_handlers.completion = std::move(handler);
 }
 
-void LspClient::ClearTestCompletionHandler() {
-  std::lock_guard lock(impl_->mutex);
-  impl_->test_handlers.completion = nullptr;
-}
-
 void LspClient::SetTestSignatureHelpHandler(
     std::function<void(std::string uri, Position pos, SignatureHelpCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
   impl_->test_handlers.signature_help = std::move(handler);
-}
-
-void LspClient::ClearTestSignatureHelpHandler() {
-  std::lock_guard lock(impl_->mutex);
-  impl_->test_handlers.signature_help = nullptr;
 }
 
 void LspClient::SetApplyEditHandler(std::function<bool(WorkspaceEdit)> handler) {
@@ -537,20 +507,10 @@ void LspClient::SetTestPrepareRenameHandler(
   impl_->supports_prepare_rename.store(true, std::memory_order_release);
 }
 
-void LspClient::ClearTestPrepareRenameHandler() {
-  std::lock_guard lock(impl_->mutex);
-  impl_->test_handlers.prepare_rename = nullptr;
-}
-
 void LspClient::SetTestWorkspaceSymbolHandler(
     std::function<void(std::string query, WorkspaceSymbolCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
   impl_->test_handlers.workspace_symbol = std::move(handler);
-}
-
-void LspClient::ClearTestWorkspaceSymbolHandler() {
-  std::lock_guard lock(impl_->mutex);
-  impl_->test_handlers.workspace_symbol = nullptr;
 }
 
 void LspClient::SetTestSemanticTokensHandler(
