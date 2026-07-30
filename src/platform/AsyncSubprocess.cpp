@@ -55,6 +55,34 @@ struct AsyncSubprocess::Impl {
     CloseStdin();
     CloseStdout();
   }
+
+  // Non-blocking reap of `expected_pid`, translating wait status into the
+  // exit_code this class reports (signals become 128 + signo, matching a shell;
+  // stopped/continued leaves it unset). Only reaps when `expected_pid` is still
+  // the live child, so a caller that sampled the pid before dropping the lock
+  // cannot reap a successor process that reused the slot.
+  //
+  // Caller must hold state_mutex. Returns true when the child was reaped.
+  bool ReapIfExited(pid_t expected_pid) {
+    if (expected_pid < 0 || pid.load(std::memory_order_acquire) != expected_pid) {
+      return false;
+    }
+    int status = 0;
+    if (waitpid(expected_pid, &status, WNOHANG) != expected_pid) {
+      return false;
+    }
+    running.store(false, std::memory_order_release);
+    Close();
+    pid.store(-1, std::memory_order_release);
+    if (WIFEXITED(status)) {
+      exit_code = WEXITSTATUS(status);
+    } else if (WIFSIGNALED(status)) {
+      exit_code = 128 + WTERMSIG(status);
+    } else {
+      exit_code = std::nullopt;
+    }
+    return true;
+  }
 };
 
 #else
@@ -214,20 +242,7 @@ bool AsyncSubprocess::IsRunning() const {
     return false;
   }
   // Non-blocking reap — updates running flag as a side effect.
-  int status = 0;
-  const pid_t result = waitpid(current_pid, &status, WNOHANG);
-  if (result == current_pid) {
-    impl_->running.store(false, std::memory_order_release);
-    impl_->Close();
-    impl_->pid.store(-1, std::memory_order_release);
-    if (WIFEXITED(status)) {
-      impl_->exit_code = WEXITSTATUS(status);
-    } else if (WIFSIGNALED(status)) {
-      impl_->exit_code = 128 + WTERMSIG(status);
-    } else {
-      impl_->exit_code = std::nullopt;
-    }
-  }
+  impl_->ReapIfExited(current_pid);
   return impl_->running.load(std::memory_order_acquire);
 }
 
@@ -349,22 +364,7 @@ std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int time
       if (impl_->stdout_fd == stdout_fd) {
         impl_->CloseStdout();
       }
-      if (current_pid >= 0 && impl_->pid.load(std::memory_order_acquire) == current_pid) {
-        int status = 0;
-        const pid_t result = waitpid(current_pid, &status, WNOHANG);
-        if (result == current_pid) {
-          impl_->running.store(false, std::memory_order_release);
-          impl_->Close();
-          impl_->pid.store(-1, std::memory_order_release);
-          if (WIFEXITED(status)) {
-            impl_->exit_code = WEXITSTATUS(status);
-          } else if (WIFSIGNALED(status)) {
-            impl_->exit_code = 128 + WTERMSIG(status);
-          } else {
-            impl_->exit_code = std::nullopt;
-          }
-        }
-      }
+      impl_->ReapIfExited(current_pid);
       return std::nullopt;
     }
 
@@ -394,22 +394,7 @@ std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int time
       if (impl_->stdout_fd == stdout_fd) {
         impl_->CloseStdout();
       }
-      if (current_pid >= 0 && impl_->pid.load(std::memory_order_acquire) == current_pid) {
-        int status = 0;
-        const pid_t result = waitpid(current_pid, &status, WNOHANG);
-        if (result == current_pid) {
-          impl_->running.store(false, std::memory_order_release);
-          impl_->Close();
-          impl_->pid.store(-1, std::memory_order_release);
-          if (WIFEXITED(status)) {
-            impl_->exit_code = WEXITSTATUS(status);
-          } else if (WIFSIGNALED(status)) {
-            impl_->exit_code = 128 + WTERMSIG(status);
-          } else {
-            impl_->exit_code = std::nullopt;
-          }
-        }
-      }
+      impl_->ReapIfExited(current_pid);
       return std::nullopt;
     }
     return std::string{};
@@ -503,17 +488,7 @@ void AsyncSubprocess::Shutdown(int timeout_ms) {
   const int kSliceMs = 20;
   int elapsed = 0;
   while (elapsed < timeout_ms) {
-    int status = 0;
-    if (waitpid(pid, &status, WNOHANG) == pid) {
-      impl_->pid.store(-1, std::memory_order_release);
-      impl_->running.store(false, std::memory_order_release);
-      if (WIFEXITED(status)) {
-        impl_->exit_code = WEXITSTATUS(status);
-      } else if (WIFSIGNALED(status)) {
-        impl_->exit_code = 128 + WTERMSIG(status);
-      } else {
-        impl_->exit_code = std::nullopt;
-      }
+    if (impl_->ReapIfExited(pid)) {
       return;
     }
     struct timespec ts{.tv_sec = 0, .tv_nsec = kSliceMs * 1'000'000L};
