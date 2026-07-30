@@ -115,11 +115,13 @@ ThemeStyle ParseThemeStyle(std::string_view text) {
   const std::string foreground = comma == std::string::npos ? colors : colors.substr(0, comma);
   const std::string background =
       comma == std::string::npos ? std::string{} : colors.substr(comma + 1);
-  style.foreground = ParseThemeColor(foreground);
-  style.background = ParseThemeColor(background);
-  if (style.reverse) {
-    std::swap(style.foreground, style.background);
-  }
+  // Assigned in the final order rather than parsed-then-swapped: std::swap over
+  // two std::optional<SDL_Color> is what makes GCC 13 emit a -Wmaybe-uninitialized
+  // false positive here, and picking the order up front reads better anyway.
+  std::optional<SDL_Color> parsed_foreground = ParseThemeColor(foreground);
+  std::optional<SDL_Color> parsed_background = ParseThemeColor(background);
+  style.foreground = style.reverse ? parsed_background : parsed_foreground;
+  style.background = style.reverse ? parsed_foreground : parsed_background;
   return style;
 }
 
