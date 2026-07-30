@@ -1001,14 +1001,14 @@ void TestWorkspaceShellCompareBlameLoadsForWorkingTreePane() {
   auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
   compare.right_viewport.MoveCursorTo(1, 0);
 
-  const auto overlay = WaitForActiveCompareBlameOverlay(shell, 3);
+  const auto overlay = WaitForActiveCompareBlameOverlay(shell, 1);
   Expect(overlay.has_value(),
          "clean working-tree comparison should eventually expose compare blame");
-  Expect(overlay->lines.size() == 3,
-         "compare blame should stay focused on the caret line and adjacent rows");
-  Expect(overlay->lines[1].author == "Microide Tests",
+  Expect(overlay->lines.size() == 1,
+         "compare blame should annotate the caret line only, like the editor surface");
+  Expect(overlay->lines[0].author == "Microide Tests",
          "compare blame should keep the blame author metadata");
-  Expect(overlay->lines[1].summary == "Add compare blame fixture",
+  Expect(overlay->lines[0].summary == "Add compare blame fixture",
          "compare blame should keep the blame summary metadata");
 }
 
@@ -1034,14 +1034,14 @@ void TestWorkspaceShellMergeBlameLoadsForResultPane() {
   auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
   merge.result_viewport.MoveCursorTo(1, 0);
 
-  const auto overlay = WaitForActiveMergeBlameOverlay(shell, 3);
+  const auto overlay = WaitForActiveMergeBlameOverlay(shell, 1);
   Expect(overlay.has_value(),
          "clean merge result pane should eventually expose blame");
-  Expect(overlay->lines.size() == 3,
-         "merge blame should stay focused on the caret line and adjacent rows");
-  Expect(overlay->lines[1].author == "Microide Tests",
+  Expect(overlay->lines.size() == 1,
+         "merge blame should annotate the caret line only, like the editor surface");
+  Expect(overlay->lines[0].author == "Microide Tests",
          "merge blame should keep the blame author metadata");
-  Expect(overlay->lines[1].summary == "Add merge blame fixture",
+  Expect(overlay->lines[0].summary == "Add merge blame fixture",
          "merge blame should keep the blame summary metadata");
 }
 

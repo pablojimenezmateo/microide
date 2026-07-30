@@ -11,7 +11,11 @@
 namespace microide::workspace {
 namespace {
 
-constexpr std::size_t kCaretBlameRadius = 1;
+// Inline blame annotates the caret line only, the way VSCode/GitLens does. A
+// wider radius painted the same "author, date" string on the rows above and
+// below the caret too, which read as a rendering bug and cost 3x the snapshot
+// copies, truncation, and text measurement every painted frame.
+constexpr std::size_t kCaretBlameRadius = 0;
 constexpr std::size_t kInlineBlameGapColumns = 8;
 constexpr std::size_t kMinimumCodeColumnsWithBlame = 24;
 

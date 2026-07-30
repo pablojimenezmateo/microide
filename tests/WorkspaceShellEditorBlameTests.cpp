@@ -43,16 +43,15 @@ void TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(2, 0);
 
-  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 3);
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 1);
   Expect(overlay.has_value(), "clean tracked editor should eventually expose blame overlay");
-  Expect(overlay->lines.size() == 3,
-         "editor blame overlay should stay focused on the caret line and adjacent rows");
-  Expect(overlay->lines[0].line_index == 1 && overlay->lines[1].line_index == 2 &&
-             overlay->lines[2].line_index == 3,
-         "editor blame overlay should only include the caret line, above, and below");
-  Expect(overlay->lines[1].author == "Microide Tests",
+  Expect(overlay->lines.size() == 1,
+         "editor blame overlay should annotate the caret line only, like VSCode/GitLens");
+  Expect(overlay->lines[0].line_index == 2,
+         "editor blame overlay should only include the caret line");
+  Expect(overlay->lines[0].author == "Microide Tests",
          "editor blame overlay should keep the blame author metadata");
-  Expect(overlay->lines[1].summary == "Add editor blame fixture",
+  Expect(overlay->lines[0].summary == "Add editor blame fixture",
          "editor blame overlay should keep the blame summary metadata");
 
   const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
@@ -61,7 +60,7 @@ void TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile() {
   const float expected_x = metrics.text_x +
                            static_cast<float>(layout.visual_columns + 8) *
                                WorkspaceShellTestAccess::TextCharWidth(shell);
-  Expect(std::fabs(overlay->lines[1].rect.x - expected_x) < 0.5f,
+  Expect(std::fabs(overlay->lines[0].rect.x - expected_x) < 0.5f,
          "editor blame overlay should anchor eight columns after the visible line end");
 }
 
@@ -177,6 +176,10 @@ void TestWorkspaceShellEditorBlameHidesForDirtyBufferAndResumesAfterSave() {
   Expect(WorkspaceShellTestAccess::SaveTab(shell, 0),
          "saving the dirty editor should succeed");
 
+  // Inline blame annotates the caret line only, so park the caret on the line
+  // that exists in the working tree but not in HEAD to observe its marker.
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+
   const auto overlay = WaitForActiveEditorBlameOverlay(shell);
   Expect(overlay.has_value(),
          "saved tracked editor should resume blame after the file reaches disk");
@@ -201,9 +204,9 @@ void TestWorkspaceShellEditorDirtyTransitionRedrawsBlameNeighborhood() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
 
-  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 3);
-  Expect(overlay.has_value() && overlay->lines.size() == 3,
-         "clean tracked editor should expose three blame lines before editing");
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 1);
+  Expect(overlay.has_value() && overlay->lines.size() == 1,
+         "clean tracked editor should expose the caret blame line before editing");
   (void)shell.ConsumePendingRenderInvalidation();
 
   SDL_Event event{};
@@ -218,9 +221,7 @@ void TestWorkspaceShellEditorDirtyTransitionRedrawsBlameNeighborhood() {
   Expect(!WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell).has_value(),
          "dirty editor buffers should suppress blame immediately after typing");
   Expect(AnyRectCovers(result.redraw.rects, overlay->lines.front().rect),
-         "dirty-state redraw should include the blame line above the caret");
-  Expect(AnyRectCovers(result.redraw.rects, overlay->lines.back().rect),
-         "dirty-state redraw should include the blame line below the caret");
+         "dirty-state redraw should include the caret blame line it just erased");
 }
 
 void TestWorkspaceShellEditorBlameSuppressesNarrowPanes() {
@@ -256,12 +257,12 @@ void TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
 
-  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 3);
-  Expect(overlay.has_value() && overlay->lines.size() == 3,
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 1);
+  Expect(overlay.has_value() && overlay->lines.size() == 1,
          "hover popup fixture should have visible inline blame");
 
   WorkspaceShellTestAccess::SetVisibleEditorBlameOverlay(shell, overlay);
-  const auto& blame_line = overlay->lines[1];
+  const auto& blame_line = overlay->lines[0];
   const float hover_x = blame_line.rect.x + 4.0f;
   const float hover_y = blame_line.rect.y + blame_line.rect.h * 0.5f;
   Expect(SendMouseMotion(shell, hover_x, hover_y, 0),
@@ -317,12 +318,12 @@ void TestWorkspaceShellEditorBlamePopupWrapsLongSummary() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
 
-  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 3);
-  Expect(overlay.has_value() && overlay->lines.size() == 3,
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 1);
+  Expect(overlay.has_value() && overlay->lines.size() == 1,
          "long-summary popup fixture should have visible inline blame");
 
   WorkspaceShellTestAccess::SetVisibleEditorBlameOverlay(shell, overlay);
-  const auto& blame_line = overlay->lines[1];
+  const auto& blame_line = overlay->lines[0];
   const float hover_x = blame_line.rect.x + 4.0f;
   const float hover_y = blame_line.rect.y + blame_line.rect.h * 0.5f;
   Expect(SendMouseMotion(shell, hover_x, hover_y, 0),

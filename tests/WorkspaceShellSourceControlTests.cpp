@@ -68,16 +68,16 @@ void TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(2, 0);
 
-  const auto loaded_overlay = WaitForActiveEditorBlameOverlay(shell, 3);
-  Expect(loaded_overlay.has_value() && loaded_overlay->lines.size() == 3,
+  const auto loaded_overlay = WaitForActiveEditorBlameOverlay(shell, 1);
+  Expect(loaded_overlay.has_value() && loaded_overlay->lines.size() == 1,
          "refresh-preservation fixture should start with loaded blame lines");
 
   WorkspaceShellTestAccess::RefreshGitSidebar(shell);
 
   const auto refreshed_overlay = WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
-  Expect(refreshed_overlay.has_value() && refreshed_overlay->lines.size() == 3,
+  Expect(refreshed_overlay.has_value() && refreshed_overlay->lines.size() == 1,
          "refreshing the git sidebar should not flush an unrelated active editor blame cache");
-  Expect(refreshed_overlay->lines[1].author == "Microide Tests",
+  Expect(refreshed_overlay->lines[0].author == "Microide Tests",
          "refreshing the git sidebar should preserve blame metadata for the active editor");
 }
 
