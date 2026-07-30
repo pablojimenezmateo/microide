@@ -289,11 +289,16 @@
     if (row == nullptr || row->kind != compare::ComparePresentationRowKind::CollapsedContext) {
       return {};
     }
-    const SDL_FRect row_rect = MakeRect(layout.editor_surface.x,
-                                        surface.rows_y +
-                                            static_cast<float>(visible_row) * surface.line_height - 1.0f,
-                                        layout.editor_surface.w, surface.line_height);
-    return BuildCollapsedContextActionRects(shell.text_renderer_, row_rect,
+    // Must be CompareCollapsedContextBlockRect, not a hand-rolled row rect: the
+    // block excludes the vertical-scrollbar reserve and applies a 4px inset, so
+    // rects built from the full row are shifted from the painted buttons. This
+    // accessor used to hand-roll it, which made every test asserting on these
+    // rects assert against the wrong place — the centered `all` button still
+    // overlapped enough to pass, the left-aligned `previous` button did not.
+    const SDL_FRect block_rect = CompareCollapsedContextBlockRect(
+        layout.editor_surface, surface.rows_y, surface.line_height, surface.show_vertical,
+        visible_row);
+    return BuildCollapsedContextActionRects(shell.text_renderer_, block_rect,
                                             row->previous_hunk_index >= 0,
                                             row->next_hunk_index >= 0);
   }

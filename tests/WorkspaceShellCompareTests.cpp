@@ -360,6 +360,59 @@ void TestWorkspaceShellCompareCollapsedContextButtonsHoverAsInteractive() {
   Expect(WorkspaceShellTestAccess::CachedCursorIsPointer(shell),
          "hovering a collapsed-context action button should cache the pointer cursor");
 
+  // The cursor shape, the hover highlight and the click each used to re-derive
+  // "which collapsed-context action is under this point" from scratch. They share
+  // CompareCollapsedContextRowAt + CompareCollapsedContextActionAt now; assert the
+  // two observable halves agree on every button, so a future divergence shows up
+  // as a hand cursor over something that does not highlight.
+  //
+  // Rects are re-read per button: a motion event re-clamps compare scroll, which
+  // moves the row under the pointer.
+  const microide::workspace::CompareHoverKind kinds[] = {
+      microide::workspace::CompareHoverKind::CollapsedContextPreviousAction,
+      microide::workspace::CompareHoverKind::CollapsedContextAllAction,
+      microide::workspace::CompareHoverKind::CollapsedContextNextAction,
+  };
+  for (const microide::workspace::CompareHoverKind expected_kind : kinds) {
+    const auto rects =
+        WorkspaceShellTestAccess::ActiveCompareCollapsedContextActionRects(shell, *collapsed_row);
+    const std::optional<SDL_FRect> rect =
+        expected_kind == microide::workspace::CompareHoverKind::CollapsedContextPreviousAction
+            ? rects.previous_rect
+        : expected_kind == microide::workspace::CompareHoverKind::CollapsedContextNextAction
+            ? rects.next_rect
+            : std::optional<SDL_FRect>(rects.all_rect);
+    Expect(rect.has_value() && rect->w > 0.0f,
+           "the fixture row should expose all three action buttons");
+    const float by = rect->y + rect->h * 0.5f;
+    // Probe the edges, not just the centre: the buttons are ~140px wide, so a
+    // centre probe survives the whole button shifting by the scrollbar reserve
+    // plus the block inset — which is exactly how the two paths drift apart.
+    for (const float bx : {rect->x + 1.0f, rect->x + rect->w * 0.5f, rect->x + rect->w - 1.0f}) {
+      Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, bx, by),
+             "every collapsed-context action button should advertise a pointer cursor");
+      SendMouseMotion(shell, bx, by, 0);
+      Expect(WorkspaceShellTestAccess::ActiveCompareHoverKind(shell) == expected_kind,
+             "the hover highlight should resolve the same button the cursor points at");
+    }
+  }
+
+  // Inside the block but off every button: neither half may claim a hit.
+  {
+    const auto rects =
+        WorkspaceShellTestAccess::ActiveCompareCollapsedContextActionRects(shell, *collapsed_row);
+    const float gap_x = rects.all_rect.x - 6.0f;
+    const float gap_y = rects.all_rect.y + rects.all_rect.h * 0.5f;
+    if (gap_x > surface.left_x && (!rects.previous_rect.has_value() ||
+                                   gap_x > rects.previous_rect->x + rects.previous_rect->w)) {
+      SendMouseMotion(shell, gap_x, gap_y, 0);
+      Expect(!WorkspaceShellTestAccess::ActiveCompareHoverKind(shell).has_value(),
+             "the gap between action buttons should not highlight one");
+      Expect(!WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, gap_x, gap_y),
+             "the cursor may only offer a hand where the hover highlight agrees");
+    }
+  }
+
   const float clear_x = surface.right_x + 12.0f;
   SendMouseMotion(shell, clear_x, hover_y, 0);
   Expect(WorkspaceShellTestAccess::CachedCursorIsText(shell),

@@ -18,21 +18,6 @@ namespace {
 
 constexpr float kCompareScrollbarReserve = 12.0f;
 
-std::optional<CompareHoverKind> CompareHoverKindAtPoint(const CollapsedContextActionRects& rects,
-                                                        float x,
-                                                        float y) {
-  if (rects.previous_rect.has_value() && Contains(*rects.previous_rect, x, y)) {
-    return CompareHoverKind::CollapsedContextPreviousAction;
-  }
-  if (Contains(rects.all_rect, x, y)) {
-    return CompareHoverKind::CollapsedContextAllAction;
-  }
-  if (rects.next_rect.has_value() && Contains(*rects.next_rect, x, y)) {
-    return CompareHoverKind::CollapsedContextNextAction;
-  }
-  return std::nullopt;
-}
-
 }  // namespace
 
 CompareMouseCoordinator::CompareMouseCoordinator(ProjectWorkspaceState& state,
@@ -154,23 +139,23 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         operations_.build_compare_collapsed_context_action_rects != nullptr
             ? operations_.build_compare_collapsed_context_action_rects(block_rect, *row)
             : CollapsedContextActionRects{};
-    const float mouse_x = static_cast<float>(event.button.x);
-    const float mouse_y = static_cast<float>(event.button.y);
-    const auto handle_expand = [&](const std::optional<SDL_FRect>& rect,
-                                   CompareCollapsedContextAction action) {
-      return rect.has_value() && Contains(*rect, mouse_x, mouse_y) &&
-             operations_.expand_compare_collapsed_context &&
-             operations_.expand_compare_collapsed_context(*compare_tab, compare_tab->selected_row,
-                                                          action);
-    };
-    if (handle_expand(action_rects.previous_rect, CompareCollapsedContextAction::ShowPrevious) ||
-        handle_expand(action_rects.next_rect, CompareCollapsedContextAction::ShowNext) ||
-        (Contains(action_rects.all_rect, mouse_x, mouse_y) &&
-         operations_.expand_compare_collapsed_context &&
-         operations_.expand_compare_collapsed_context(*compare_tab, compare_tab->selected_row,
-                                                      CompareCollapsedContextAction::ShowAll))) {
-      state_.surface.focus = FocusTarget::Editor;
-      return true;
+    // Same predicate the hover highlight and the cursor shape use, so the hand
+    // cursor cannot appear over a button this click will ignore.
+    if (const auto kind = CompareCollapsedContextActionAt(
+            action_rects, static_cast<float>(event.button.x), static_cast<float>(event.button.y));
+        kind.has_value()) {
+      const CompareCollapsedContextAction action =
+          *kind == CompareHoverKind::CollapsedContextPreviousAction
+              ? CompareCollapsedContextAction::ShowPrevious
+          : *kind == CompareHoverKind::CollapsedContextNextAction
+              ? CompareCollapsedContextAction::ShowNext
+              : CompareCollapsedContextAction::ShowAll;
+      if (operations_.expand_compare_collapsed_context &&
+          operations_.expand_compare_collapsed_context(*compare_tab, compare_tab->selected_row,
+                                                       action)) {
+        state_.surface.focus = FocusTarget::Editor;
+        return true;
+      }
     }
     compare_tab->right_view_active = false;
     operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
@@ -356,30 +341,26 @@ bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
     compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
     operations_.sync_compare_viewport_scroll(*compare_tab);
 
-    const int hovered_row =
-        static_cast<int>((event.motion.y - surface_layout.rows_y) / surface_layout.line_height);
-    const int presentation_row = compare_tab->scroll_row + hovered_row;
-    if (hovered_row >= 0 && presentation_row >= 0 &&
-        static_cast<std::size_t>(presentation_row) < CompareTabPresentationRowCount(*compare_tab)) {
-      if (const compare::ComparePresentationRow* row =
-              CompareTabPresentationRowAt(*compare_tab, static_cast<std::size_t>(presentation_row));
-          row != nullptr && row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
-        const SDL_FRect block_rect = CompareCollapsedContextBlockRect(
-            layout.editor_surface, surface_layout.rows_y, surface_layout.line_height,
-            surface_layout.show_vertical, hovered_row);
+    if (const auto hit = CompareCollapsedContextRowAt(
+            *compare_tab, layout.editor_surface, surface_layout.rows_y,
+            surface_layout.line_height, surface_layout.show_vertical,
+            static_cast<float>(event.motion.y));
+        hit.has_value()) {
+      {
         const auto action_rects =
             operations_.build_compare_collapsed_context_action_rects != nullptr
-                ? operations_.build_compare_collapsed_context_action_rects(block_rect, *row)
+                ? operations_.build_compare_collapsed_context_action_rects(hit->block_rect,
+                                                                           *hit->row)
                 : CollapsedContextActionRects{};
-        if (const std::optional<CompareHoverKind> kind =
-                CompareHoverKindAtPoint(action_rects, static_cast<float>(event.motion.x),
-                                        static_cast<float>(event.motion.y));
+        if (const std::optional<CompareHoverKind> kind = CompareCollapsedContextActionAt(
+                action_rects, static_cast<float>(event.motion.x),
+                static_cast<float>(event.motion.y));
             kind.has_value()) {
           next_hover = CompareHoverState{
               .kind = *kind,
-              .presentation_row = static_cast<std::size_t>(presentation_row),
-              .collapsed_run_start_model_row = row->collapsed_run_start_model_row,
-              .collapsed_run_length = row->collapsed_run_length,
+              .presentation_row = hit->presentation_row,
+              .collapsed_run_start_model_row = hit->row->collapsed_run_start_model_row,
+              .collapsed_run_length = hit->row->collapsed_run_length,
           };
         }
       }

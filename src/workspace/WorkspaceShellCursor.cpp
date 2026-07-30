@@ -789,24 +789,18 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     if (Contains(divider_rect, x, y)) {
       return CursorKind::EwResize;
     }
-    const int hovered_row =
-        static_cast<int>((y - surface_layout.rows_y) / surface_layout.line_height);
-    const int presentation_row = compare_tab->scroll_row + hovered_row;
-    if (hovered_row >= 0 && presentation_row >= 0 &&
-        static_cast<std::size_t>(presentation_row) < CompareTabPresentationRowCount(*compare_tab)) {
-      if (const compare::ComparePresentationRow* row =
-              CompareTabPresentationRowAt(*compare_tab, static_cast<std::size_t>(presentation_row));
-          row != nullptr && row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
-        const SDL_FRect block_rect = CompareCollapsedContextBlockRect(
-            layout.editor_surface, surface_layout.rows_y, surface_layout.line_height,
-            surface_layout.show_vertical, hovered_row);
-        const auto action_rects = BuildCollapsedContextActionRects(
-            text_renderer_, block_rect, row->previous_hunk_index >= 0, row->next_hunk_index >= 0);
-        if ((action_rects.previous_rect.has_value() && Contains(*action_rects.previous_rect, x, y)) ||
-            Contains(action_rects.all_rect, x, y) ||
-            (action_rects.next_rect.has_value() && Contains(*action_rects.next_rect, x, y))) {
-          return CursorKind::Pointer;
-        }
+    // Resolved through the same two helpers the click and the hover highlight use,
+    // so the hand cursor cannot appear over a button the click will ignore.
+    if (const auto hit = CompareCollapsedContextRowAt(
+            *compare_tab, layout.editor_surface, surface_layout.rows_y,
+            surface_layout.line_height, surface_layout.show_vertical, y);
+        hit.has_value()) {
+      const auto action_rects =
+          BuildCollapsedContextActionRects(text_renderer_, hit->block_rect,
+                                           hit->row->previous_hunk_index >= 0,
+                                           hit->row->next_hunk_index >= 0);
+      if (CompareCollapsedContextActionAt(action_rects, x, y).has_value()) {
+        return CursorKind::Pointer;
       }
     }
     if (compare_tab->right_editable && x >= surface_layout.right_x) {

@@ -418,4 +418,51 @@ bool ExpandCompareCollapsedContext(CompareTabState& compare_tab,
   return true;
 }
 
+std::optional<CompareCollapsedContextRowHit> CompareCollapsedContextRowAt(
+    const CompareTabState& compare_tab,
+    const SDL_FRect& editor_surface,
+    float rows_y,
+    float line_height,
+    bool show_vertical_scrollbar,
+    float y) {
+  if (line_height <= 0.0f) {
+    return std::nullopt;
+  }
+  const int visible_row = static_cast<int>((y - rows_y) / line_height);
+  const int presentation_row = compare_tab.scroll_row + visible_row;
+  if (visible_row < 0 || presentation_row < 0 ||
+      static_cast<std::size_t>(presentation_row) >= CompareTabPresentationRowCount(compare_tab)) {
+    return std::nullopt;
+  }
+  const compare::ComparePresentationRow* row =
+      CompareTabPresentationRowAt(compare_tab, static_cast<std::size_t>(presentation_row));
+  if (row == nullptr || row->kind != compare::ComparePresentationRowKind::CollapsedContext) {
+    return std::nullopt;
+  }
+  return CompareCollapsedContextRowHit{
+      .row = row,
+      .presentation_row = static_cast<std::size_t>(presentation_row),
+      .visible_row = visible_row,
+      .block_rect = CompareCollapsedContextBlockRect(editor_surface, rows_y, line_height,
+                                                     show_vertical_scrollbar, visible_row),
+  };
+}
+
+std::optional<CompareHoverKind> CompareCollapsedContextActionAt(
+    const CollapsedContextActionRects& rects, float x, float y) {
+  const auto contains = [&](const SDL_FRect& rect) {
+    return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+  };
+  if (rects.previous_rect.has_value() && contains(*rects.previous_rect)) {
+    return CompareHoverKind::CollapsedContextPreviousAction;
+  }
+  if (contains(rects.all_rect)) {
+    return CompareHoverKind::CollapsedContextAllAction;
+  }
+  if (rects.next_rect.has_value() && contains(*rects.next_rect)) {
+    return CompareHoverKind::CollapsedContextNextAction;
+  }
+  return std::nullopt;
+}
+
 }  // namespace microide::workspace
