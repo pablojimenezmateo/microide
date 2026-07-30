@@ -42,6 +42,34 @@ void NoteContributionId(std::unordered_set<std::string>* id_index, const T& cand
   }
 }
 
+// Register a contribution kind that needs no id-uniqueness check: null-guard the
+// storage, refuse past the per-kind cap, parse, append.
+//
+// The four id-less kinds (bracket sets, comment markers, indent rules, snippets)
+// each wrote that out; only the registration type and its parser differed. The
+// kinds that DO carry an id keep their own bodies — they additionally run
+// DuplicateContributionId / NoteContributionId, and that ordering (check cap,
+// parse, check duplicate, append, note) is worth reading in full at each site.
+template <typename Contributed, typename Registration, typename Parse>
+bool RegisterSimpleContribution(lua_State* state,
+                                std::string_view plugin_id,
+                                std::vector<Contributed>* storage,
+                                std::string* error_message,
+                                Parse&& parse) {
+  if (storage == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(storage, error_message)) {
+    return false;
+  }
+  Registration registration;
+  if (!parse(state, std::string(plugin_id), &registration, error_message)) {
+    return false;
+  }
+  storage->push_back(std::move(registration.contributed));
+  return true;
+}
+
 }  // namespace
 
 bool RegisterFormatter(lua_State* state,
@@ -372,76 +400,40 @@ bool RegisterBracketSet(lua_State* state,
                         std::string_view plugin_id,
                         std::vector<PluginHost::ContributedBracketSet>* sets,
                         std::string* error_message) {
-  if (sets == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(sets, error_message)) {
-    return false;
-  }
-  registration_parsers::BracketSetRegistration registration;
-  if (!registration_parsers::ParseBracketSetRegistration(state, std::string(plugin_id),
-                                                         &registration, error_message)) {
-    return false;
-  }
-  sets->push_back(std::move(registration.contributed));
-  return true;
+  return RegisterSimpleContribution<PluginHost::ContributedBracketSet,
+                                    registration_parsers::BracketSetRegistration>(
+      state, plugin_id, sets, error_message,
+      registration_parsers::ParseBracketSetRegistration);
 }
 
 bool RegisterCommentMarkers(lua_State* state,
                             std::string_view plugin_id,
                             std::vector<PluginHost::ContributedCommentMarkers>* markers,
                             std::string* error_message) {
-  if (markers == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(markers, error_message)) {
-    return false;
-  }
-  registration_parsers::CommentMarkersRegistration registration;
-  if (!registration_parsers::ParseCommentMarkersRegistration(state, std::string(plugin_id),
-                                                             &registration, error_message)) {
-    return false;
-  }
-  markers->push_back(std::move(registration.contributed));
-  return true;
+  return RegisterSimpleContribution<PluginHost::ContributedCommentMarkers,
+                                    registration_parsers::CommentMarkersRegistration>(
+      state, plugin_id, markers, error_message,
+      registration_parsers::ParseCommentMarkersRegistration);
 }
 
 bool RegisterIndentRules(lua_State* state,
                          std::string_view plugin_id,
                          std::vector<PluginHost::ContributedIndentRules>* rules,
                          std::string* error_message) {
-  if (rules == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(rules, error_message)) {
-    return false;
-  }
-  registration_parsers::IndentRulesRegistration registration;
-  if (!registration_parsers::ParseIndentRulesRegistration(state, std::string(plugin_id),
-                                                          &registration, error_message)) {
-    return false;
-  }
-  rules->push_back(std::move(registration.contributed));
-  return true;
+  return RegisterSimpleContribution<PluginHost::ContributedIndentRules,
+                                    registration_parsers::IndentRulesRegistration>(
+      state, plugin_id, rules, error_message,
+      registration_parsers::ParseIndentRulesRegistration);
 }
 
 bool RegisterSnippet(lua_State* state,
                      std::string_view plugin_id,
                      std::vector<PluginHost::ContributedSnippet>* snippets,
                      std::string* error_message) {
-  if (snippets == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(snippets, error_message)) {
-    return false;
-  }
-  registration_parsers::SnippetRegistration registration;
-  if (!registration_parsers::ParseSnippetRegistration(state, std::string(plugin_id),
-                                                      &registration, error_message)) {
-    return false;
-  }
-  snippets->push_back(std::move(registration.contributed));
-  return true;
+  return RegisterSimpleContribution<PluginHost::ContributedSnippet,
+                                    registration_parsers::SnippetRegistration>(
+      state, plugin_id, snippets, error_message,
+      registration_parsers::ParseSnippetRegistration);
 }
 
 }  // namespace microide::plugin::contribution_interop
