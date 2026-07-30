@@ -534,7 +534,7 @@
   static void QueueProjectOpenDialogSelection(WorkspaceShell& shell,
                                               const std::filesystem::path& path) {
     std::lock_guard<std::mutex> lock(shell.project_dialog_state_.mutex);
-    shell.project_dialog_state_.pending_result = microide::workspace::PendingProjectOpenDialogResult{
+    shell.project_dialog_state_.pending_result = microide::workspace::PendingDialogResult{
         .ready = true,
         .cancelled = false,
         .selected_path = path.lexically_normal(),
@@ -543,7 +543,7 @@
   }
   static void QueueProjectOpenDialogCancel(WorkspaceShell& shell) {
     std::lock_guard<std::mutex> lock(shell.project_dialog_state_.mutex);
-    shell.project_dialog_state_.pending_result = microide::workspace::PendingProjectOpenDialogResult{
+    shell.project_dialog_state_.pending_result = microide::workspace::PendingDialogResult{
         .ready = true,
         .cancelled = true,
         .selected_path = {},
@@ -564,7 +564,7 @@
   static void QueueOpenFileDialogSelection(WorkspaceShell& shell,
                                            const std::filesystem::path& path) {
     std::lock_guard<std::mutex> lock(shell.open_file_dialog_state_.mutex);
-    shell.open_file_dialog_state_.pending_result = microide::workspace::PendingOpenFileDialogResult{
+    shell.open_file_dialog_state_.pending_result = microide::workspace::PendingDialogResult{
         .ready = true,
         .cancelled = false,
         .selected_path = path.lexically_normal(),

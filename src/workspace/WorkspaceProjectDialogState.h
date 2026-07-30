@@ -10,7 +10,14 @@ namespace microide::workspace {
 
 class WorkspaceShell;
 
-struct PendingProjectOpenDialogResult {
+// What an SDL file-dialog callback latches for the shell thread to pick up.
+// Exactly one of `error_message`, `cancelled` and `selected_path` is meaningful;
+// `ready` is what the consumer tests before taking it.
+//
+// The project (folder) picker and the "Open File…" picker declared this
+// separately, with a comment on the second noting it was "structurally identical
+// to the project picker". It was — field for field.
+struct PendingDialogResult {
   bool ready = false;
   bool cancelled = false;
   std::filesystem::path selected_path;
@@ -21,28 +28,23 @@ struct ProjectDialogState {
   std::function<bool(WorkspaceShell&, const std::filesystem::path&)> launcher;
   bool active = false;
   std::mutex mutex;
-  PendingProjectOpenDialogResult pending_result;
+  PendingDialogResult pending_result;
 };
 
-// "Open File…" native picker. Structurally identical to the project (folder) picker —
-// same staged-result-under-a-mutex + shared wake event shape — but it opens a file into
-// an editor tab instead of a project tab.
-struct PendingOpenFileDialogResult {
-  bool ready = false;
-  bool cancelled = false;
-  std::filesystem::path selected_path;
-  std::string error_message;
-};
-
+// "Open File…" native picker. Same staged-result-under-a-mutex + shared wake
+// event shape as the project picker; it opens a file into an editor tab instead
+// of a project tab.
 struct OpenFileDialogState {
   // Optional test seam mirroring ProjectDialogState::launcher: returns false when no
   // native backend is available. Receives the default location the picker opens at.
   std::function<bool(WorkspaceShell&, const std::filesystem::path&)> launcher;
   bool active = false;
   std::mutex mutex;
-  PendingOpenFileDialogResult pending_result;
+  PendingDialogResult pending_result;
 };
 
+// The font picker latches the same outcome plus the setting row that launched it,
+// so it keeps its own type rather than carrying a dead field on the shared one.
 struct PendingFontFileDialogResult {
   bool ready = false;
   bool cancelled = false;

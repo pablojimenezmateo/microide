@@ -7,6 +7,46 @@
 #include <string>
 
 namespace microide::workspace {
+namespace {
+
+// Decode SDL's file-dialog callback arguments into the outcome fields every
+// pending-result type shares. SDL signals three distinct things through one
+// callback: a null list is a failure (reason in SDL_GetError), an empty list is
+// the user cancelling, and anything else is a selection.
+//
+// The three dialogs (project folder, Open File…, font file) each decoded this by
+// hand. Getting the null-vs-empty distinction backwards would report a cancel as
+// an error or, worse, treat a failure as a silent no-op.
+template <typename Pending>
+void DecodeDialogFilelist(Pending& pending, const char* const* filelist) {
+  pending.ready = true;
+  if (filelist == nullptr) {
+    pending.error_message = SDL_GetError();
+  } else if (filelist[0] == nullptr) {
+    pending.cancelled = true;
+  } else {
+    pending.selected_path = std::filesystem::path(filelist[0]).lexically_normal();
+  }
+}
+
+// Publish a decoded result to the shell thread: store it under the dialog's own
+// mutex, then wake.
+//
+// The wake is a *checked* push. The result is already stored by the time it
+// runs, so a rejected push latches the shared "wake owed" bit for the idle-poll
+// fallback rather than leaving the dialog active with its result unapplied. All
+// three dialogs share one wake event and each consumer is an idempotent no-op
+// when its own result is not ready.
+template <typename DialogState, typename Pending>
+void LatchDialogResult(DialogState& state, Pending pending, Uint32 wake_event) {
+  {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    state.pending_result = std::move(pending);
+  }
+  util::PushSdlWake(wake_event);
+}
+
+}  // namespace
 
 WorkspaceShell::ProjectOpenDialogLaunchResult WorkspaceShell::OpenNativeProjectPicker(
     std::string* error_message) {
@@ -62,37 +102,21 @@ void SDLCALL WorkspaceShell::OnProjectOpenDialogComplete(void* userdata,
   if (shell == nullptr) {
     return;
   }
-
-  PendingProjectOpenDialogResult pending;
-  pending.ready = true;
-  if (filelist == nullptr) {
-    pending.error_message = SDL_GetError();
-  } else if (filelist[0] == nullptr) {
-    pending.cancelled = true;
-  } else {
-    pending.selected_path = std::filesystem::path(filelist[0]).lexically_normal();
-  }
-
-  {
-    std::lock_guard<std::mutex> lock(shell->project_dialog_state_.mutex);
-    shell->project_dialog_state_.pending_result = std::move(pending);
-  }
-
-  // Checked push: the selected path is already stored under the dialog mutex, so a
-  // rejected push latches the shared "wake owed" bit for the idle-poll fallback
-  // rather than leaving the dialog active with its result unapplied.
-  util::PushSdlWake(shell->project_open_dialog_event_type_);
+  PendingDialogResult pending;
+  DecodeDialogFilelist(pending, filelist);
+  LatchDialogResult(shell->project_dialog_state_, std::move(pending),
+                    shell->project_open_dialog_event_type_);
 }
 
 void WorkspaceShell::ConsumePendingProjectOpenDialogResult() {
-  PendingProjectOpenDialogResult pending;
+  PendingDialogResult pending;
   {
     std::lock_guard<std::mutex> lock(project_dialog_state_.mutex);
     if (!project_dialog_state_.pending_result.ready) {
       return;
     }
     pending = std::move(project_dialog_state_.pending_result);
-    project_dialog_state_.pending_result = PendingProjectOpenDialogResult{};
+    project_dialog_state_.pending_result = PendingDialogResult{};
   }
 
   project_dialog_state_.active = false;
@@ -166,36 +190,21 @@ void SDLCALL WorkspaceShell::OnOpenFileDialogComplete(void* userdata,
   if (shell == nullptr) {
     return;
   }
-
-  PendingOpenFileDialogResult pending;
-  pending.ready = true;
-  if (filelist == nullptr) {
-    pending.error_message = SDL_GetError();
-  } else if (filelist[0] == nullptr) {
-    pending.cancelled = true;
-  } else {
-    pending.selected_path = std::filesystem::path(filelist[0]).lexically_normal();
-  }
-
-  {
-    std::lock_guard<std::mutex> lock(shell->open_file_dialog_state_.mutex);
-    shell->open_file_dialog_state_.pending_result = std::move(pending);
-  }
-
-  // Shared dialog wake event — see OnFontFileDialogComplete: every dialog consumer
-  // runs off it and is an idempotent no-op when its own result is not ready.
-  util::PushSdlWake(shell->project_open_dialog_event_type_);
+  PendingDialogResult pending;
+  DecodeDialogFilelist(pending, filelist);
+  LatchDialogResult(shell->open_file_dialog_state_, std::move(pending),
+                    shell->project_open_dialog_event_type_);
 }
 
 void WorkspaceShell::ConsumePendingOpenFileDialogResult() {
-  PendingOpenFileDialogResult pending;
+  PendingDialogResult pending;
   {
     std::lock_guard<std::mutex> lock(open_file_dialog_state_.mutex);
     if (!open_file_dialog_state_.pending_result.ready) {
       return;
     }
     pending = std::move(open_file_dialog_state_.pending_result);
-    open_file_dialog_state_.pending_result = PendingOpenFileDialogResult{};
+    open_file_dialog_state_.pending_result = PendingDialogResult{};
   }
 
   open_file_dialog_state_.active = false;
@@ -240,27 +249,13 @@ void SDLCALL WorkspaceShell::OnFontFileDialogComplete(void* userdata, const char
   if (shell == nullptr) {
     return;
   }
-
   PendingFontFileDialogResult pending;
-  pending.ready = true;
+  // Echo the setting row that launched the picker so the consumer knows which
+  // font-family field to write back to.
   pending.target_setting_id = shell->font_file_dialog_state_.target_setting_id;
-  if (filelist == nullptr) {
-    pending.error_message = SDL_GetError();
-  } else if (filelist[0] == nullptr) {
-    pending.cancelled = true;
-  } else {
-    pending.selected_path = std::filesystem::path(filelist[0]).lexically_normal();
-  }
-
-  {
-    std::lock_guard<std::mutex> lock(shell->font_file_dialog_state_.mutex);
-    shell->font_file_dialog_state_.pending_result = std::move(pending);
-  }
-
-  // Reuse the project-dialog wake event: both dialog consumers run off it and are
-  // idempotent no-ops when their own result isn't ready. Checked push latches the
-  // shared "wake owed" bit on failure for the idle-poll fallback.
-  util::PushSdlWake(shell->project_open_dialog_event_type_);
+  DecodeDialogFilelist(pending, filelist);
+  LatchDialogResult(shell->font_file_dialog_state_, std::move(pending),
+                    shell->project_open_dialog_event_type_);
 }
 
 void WorkspaceShell::ConsumePendingFontFileDialogResult() {
