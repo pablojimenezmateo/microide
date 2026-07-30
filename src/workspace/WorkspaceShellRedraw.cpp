@@ -196,23 +196,29 @@ void WorkspaceShell::RequestSidebarRedraw() {
   RequestWindowRedraw();
 }
 
-void WorkspaceShell::RequestSidebarLayoutChangeRedraw(
-    const WorkspaceLayout& previous_layout) {
+void WorkspaceShell::RequestOuterLayoutChangeRedraw(const WorkspaceLayout& previous_layout,
+                                                    SDL_FRect WorkspaceLayout::*first,
+                                                    SDL_FRect WorkspaceLayout::*second) {
   MarkLayoutDirty();
   const auto current_layout = CurrentWorkspaceLayout();
   if (!current_layout.has_value()) {
     RequestWindowRedraw();
     return;
   }
-
-  if (RectsEqual(previous_layout.sidebar, current_layout->sidebar) &&
-      RectsEqual(previous_layout.content, current_layout->content)) {
+  if (RectsEqual(previous_layout.*first, (*current_layout).*first) &&
+      RectsEqual(previous_layout.*second, (*current_layout).*second)) {
     return;
   }
-
-  // Sidebar dragging changes the outer workspace geometry. Repaint the whole scene while the
-  // divider is moving so retained redraw does not leave stale pixels in the newly exposed area.
+  // A divider drag changes outer workspace geometry — several surface boundaries
+  // move at once. Repaint the whole scene while it moves so retained redraw does
+  // not leave stale pixels in the newly exposed area.
   RequestFullRedraw();
+}
+
+void WorkspaceShell::RequestSidebarLayoutChangeRedraw(
+    const WorkspaceLayout& previous_layout) {
+  RequestOuterLayoutChangeRedraw(previous_layout, &WorkspaceLayout::sidebar,
+                                 &WorkspaceLayout::content);
 }
 
 void WorkspaceShell::RequestBreadcrumbRedraw() {
@@ -497,21 +503,8 @@ void WorkspaceShell::RequestDebugPaneRedraw() {
 
 void WorkspaceShell::RequestBottomPanelLayoutChangeRedraw(
     const WorkspaceLayout& previous_layout) {
-  MarkLayoutDirty();
-  const auto current_layout = CurrentWorkspaceLayout();
-  if (!current_layout.has_value()) {
-    RequestWindowRedraw();
-    return;
-  }
-
-  if (RectsEqual(previous_layout.content, current_layout->content) &&
-      RectsEqual(previous_layout.bottom_panel, current_layout->bottom_panel)) {
-    return;
-  }
-
-  // Bottom-panel resize changes multiple surface boundaries at once. Until retained redraw
-  // can prove equivalence here, fall back to a full redraw for correctness.
-  RequestFullRedraw();
+  RequestOuterLayoutChangeRedraw(previous_layout, &WorkspaceLayout::content,
+                                 &WorkspaceLayout::bottom_panel);
 }
 
 void WorkspaceShell::RequestBottomPanelContentRedraw() {

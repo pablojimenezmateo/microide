@@ -315,10 +315,21 @@ void RebuildCompareInlineDiffCache(ComparePresentationModel* presentation,
   }
 }
 
-const std::vector<CompareTextSpan>& CompareInlineLeftSpans(
+namespace {
+
+// Resolve one side's intra-line change spans: prefer the presentation cache when
+// it has been built and holds a non-empty entry for the row, otherwise fall back
+// to the spans the diff model carried.
+//
+// Both sides need exactly this, and the empty-entry test is the subtle part — a
+// cached row with no spans means "not computed for this row", not "no changes",
+// so it has to fall through to the model rather than report none.
+const std::vector<CompareTextSpan>& InlineSpansForSide(
     const ComparePresentationModel& presentation,
     const CompareModel& model,
-    std::size_t model_row_index) {
+    std::size_t model_row_index,
+    const std::vector<std::vector<CompareTextSpan>>& cached_by_row,
+    const std::vector<CompareTextSpan> CompareRow::*model_spans) {
   // Defensive bound: callers pass in-range indices today, but the model.rows
   // fallback below would be UB for an out-of-range index; return no spans instead.
   static const std::vector<CompareTextSpan> kEmptySpans;
@@ -326,27 +337,30 @@ const std::vector<CompareTextSpan>& CompareInlineLeftSpans(
     return kEmptySpans;
   }
   if (presentation.inline_cache.model_generation != 0 &&
-      model_row_index < presentation.inline_cache.left_spans_by_row.size() &&
-      !presentation.inline_cache.left_spans_by_row[model_row_index].empty()) {
-    return presentation.inline_cache.left_spans_by_row[model_row_index];
+      model_row_index < cached_by_row.size() && !cached_by_row[model_row_index].empty()) {
+    return cached_by_row[model_row_index];
   }
-  return model.rows[model_row_index].left_changed_spans;
+  return model.rows[model_row_index].*model_spans;
+}
+
+}  // namespace
+
+const std::vector<CompareTextSpan>& CompareInlineLeftSpans(
+    const ComparePresentationModel& presentation,
+    const CompareModel& model,
+    std::size_t model_row_index) {
+  return InlineSpansForSide(presentation, model, model_row_index,
+                            presentation.inline_cache.left_spans_by_row,
+                            &CompareRow::left_changed_spans);
 }
 
 const std::vector<CompareTextSpan>& CompareInlineRightSpans(
     const ComparePresentationModel& presentation,
     const CompareModel& model,
     std::size_t model_row_index) {
-  static const std::vector<CompareTextSpan> kEmptySpans;
-  if (model_row_index >= model.rows.size()) {
-    return kEmptySpans;
-  }
-  if (presentation.inline_cache.model_generation != 0 &&
-      model_row_index < presentation.inline_cache.right_spans_by_row.size() &&
-      !presentation.inline_cache.right_spans_by_row[model_row_index].empty()) {
-    return presentation.inline_cache.right_spans_by_row[model_row_index];
-  }
-  return model.rows[model_row_index].right_changed_spans;
+  return InlineSpansForSide(presentation, model, model_row_index,
+                            presentation.inline_cache.right_spans_by_row,
+                            &CompareRow::right_changed_spans);
 }
 
 }  // namespace microide::compare

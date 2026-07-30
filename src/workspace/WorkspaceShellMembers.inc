@@ -1812,6 +1812,13 @@
   void RequestCursorPresent();
   void RequestChromeRedraw();
   void RequestSidebarRedraw();
+  // Repaint after a divider drag changed the outer geometry. Both the sidebar and
+  // the bottom panel need the same rule — mark layout dirty, and if either of the
+  // two rects the drag can move actually moved, fall back to a full redraw because
+  // retained redraw cannot prove the exposed area is clean.
+  void RequestOuterLayoutChangeRedraw(const WorkspaceLayout& previous_layout,
+                                      SDL_FRect WorkspaceLayout::*first,
+                                      SDL_FRect WorkspaceLayout::*second);
   void RequestSidebarLayoutChangeRedraw(const WorkspaceLayout& previous_layout);
   void RequestBreadcrumbRedraw();
   void RequestTabStripRedraw();
