@@ -567,6 +567,11 @@ class WorkspaceActionContext {
   void ToggleWindowFullscreen();
 
  private:
+  // Undo and Redo differ only in which viewport call they make; everything around
+  // it (merge/compare bookkeeping, fold-model rescan, the redraw requests) has to
+  // stay identical, so it lives here once instead of as two 55-line copies.
+  void ApplyUndoRedo(bool redo);
+
   // Mark layout dirty and request a full-window repaint after a live config
   // change (theme, UI scale). Shared so the redraw idiom is not duplicated.
   void RequestLiveConfigRedraw();

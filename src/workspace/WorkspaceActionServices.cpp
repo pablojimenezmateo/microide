@@ -842,140 +842,82 @@ void WorkspaceActionContext::SelectAll() {
   }
 }
 
-void WorkspaceActionContext::Undo() {
-  util::PerformanceTrace::Scope perf_scope("WorkspaceActionContext::Undo");
-  if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
-    const bool was_dirty = viewport->dirty();
-    const std::size_t cursor_before_line = viewport->cursor_line();
-    std::optional<editor::SelectionRange> selection_before;
-    std::optional<editor::TextPosition> cursor_before;
-    if (auto* merge_tab = operations_.active_merge_tab();
-        merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-      selection_before = viewport->selection_range();
-      cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
-    }
-    bool changed = false;
-    {
-      util::PerformanceTrace::Scope scope("WorkspaceActionContext::Undo::ViewportUndo");
-      changed = viewport->Undo();
-    }
-    if (changed && operations_.clear_active_snippet_session_after_undo) {
-      operations_.clear_active_snippet_session_after_undo();
-    }
-    if (changed) {
-      // Undo mutates the document like any other edit, so the fold model must be
-      // recomputed. The content_revision fingerprint alone does not force a rescan
-      // once a file is fully resolved, so mark the fold model dirty explicitly
-      // (mirroring NotifyEditorViewportChanged); otherwise restored/removed folds
-      // go stale — a phantom fold marker can hide an arbitrary line range.
-      if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
-        editor_tab->folding_model->MarkDirty();
-      }
-      if (auto* compare_tab = operations_.active_compare_tab();
-          compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-        util::PerformanceTrace::Scope scope(
-            "WorkspaceActionContext::Undo::RefreshCompareDerivedState");
-        operations_.refresh_compare_tab_derived_state(*compare_tab);
-        operations_.sync_compare_selection_from_viewport(*compare_tab, true);
-      }
-      if (auto* merge_tab = operations_.active_merge_tab();
-          merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-        util::PerformanceTrace::Scope scope(
-            "WorkspaceActionContext::Undo::UpdateMergeTracking");
-        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
-                                                              *cursor_before);
-      }
-      {
-        util::PerformanceTrace::Scope scope("WorkspaceActionContext::Undo::ResetCaretBlink");
-        operations_.reset_caret_blink();
-      }
-      {
-        util::PerformanceTrace::Scope scope("WorkspaceActionContext::Undo::RequestTabRedraw");
-        operations_.request_active_tab_redraw(false);
-      }
-      {
-        util::PerformanceTrace::Scope scope(
-            "WorkspaceActionContext::Undo::RequestFocusedEditorRedraw");
-        operations_.request_focused_editor_redraw();
-      }
-      {
-        util::PerformanceTrace::Scope scope(
-            "WorkspaceActionContext::Undo::RequestLastChangeRedraw");
-        operations_.request_active_editable_last_change_redraw();
-      }
-      if (viewport->dirty() != was_dirty) {
-        util::PerformanceTrace::Scope scope("WorkspaceActionContext::Undo::DirtyStateSideEffects");
-        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                      viewport->cursor_line());
-        operations_.request_tab_strip_redraw();
-      }
-    }
+// Undo and Redo differ in exactly two things: which viewport call they make, and
+// the perf-trace name. Everything else — the merge selection capture, the
+// fold-model rescan, the compare/merge bookkeeping and the five redraw requests —
+// has to stay identical between them, and used to be two 55-line copies, so a fix
+// to one silently left the other behind.
+void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
+  util::PerformanceTrace::Scope perf_scope(redo ? "WorkspaceActionContext::Redo"
+                                                : "WorkspaceActionContext::Undo");
+  auto* viewport = operations_.active_editable_viewport();
+  if (viewport == nullptr) {
+    return;
+  }
+
+  const bool was_dirty = viewport->dirty();
+  const std::size_t cursor_before_line = viewport->cursor_line();
+  std::optional<editor::SelectionRange> selection_before;
+  std::optional<editor::TextPosition> cursor_before;
+  auto* merge_tab = operations_.active_merge_tab();
+  const bool viewport_is_merge_result =
+      merge_tab != nullptr && viewport == &merge_tab->result_viewport;
+  if (viewport_is_merge_result) {
+    selection_before = viewport->selection_range();
+    cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
+  }
+
+  bool changed = false;
+  {
+    util::PerformanceTrace::Scope scope(redo ? "WorkspaceActionContext::Redo::ViewportRedo"
+                                             : "WorkspaceActionContext::Undo::ViewportUndo");
+    changed = redo ? viewport->Redo() : viewport->Undo();
+  }
+  // An undo that rewinds past a snippet insertion leaves the session's mirror
+  // positions pointing at text that is gone. Redo cannot reach an active session
+  // (the undo that made redo possible already dropped it), and clearing an
+  // inactive one is a no-op, so this runs unconditionally rather than only on undo.
+  if (changed && operations_.clear_active_snippet_session_after_undo) {
+    operations_.clear_active_snippet_session_after_undo();
+  }
+  if (!changed) {
+    return;
+  }
+
+  // Undo/redo mutate the document like any other edit, so the fold model must be
+  // recomputed. The content_revision fingerprint alone does not force a rescan
+  // once a file is fully resolved, so mark the fold model dirty explicitly
+  // (mirroring NotifyEditorViewportChanged); otherwise restored/removed folds go
+  // stale — a phantom fold marker can hide an arbitrary line range.
+  if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
+    editor_tab->folding_model->MarkDirty();
+  }
+  if (auto* compare_tab = operations_.active_compare_tab();
+      compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
+    util::PerformanceTrace::Scope scope("WorkspaceActionContext::UndoRedo::RefreshCompare");
+    operations_.refresh_compare_tab_derived_state(*compare_tab);
+    operations_.sync_compare_selection_from_viewport(*compare_tab, true);
+  }
+  if (viewport_is_merge_result) {
+    util::PerformanceTrace::Scope scope("WorkspaceActionContext::UndoRedo::UpdateMergeTracking");
+    operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
+                                                          *cursor_before);
+  }
+  operations_.reset_caret_blink();
+  operations_.request_active_tab_redraw(false);
+  operations_.request_focused_editor_redraw();
+  operations_.request_active_editable_last_change_redraw();
+  if (viewport->dirty() != was_dirty) {
+    util::PerformanceTrace::Scope scope("WorkspaceActionContext::UndoRedo::DirtyStateSideEffects");
+    operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
+                                                                  viewport->cursor_line());
+    operations_.request_tab_strip_redraw();
   }
 }
 
-void WorkspaceActionContext::Redo() {
-  util::PerformanceTrace::Scope perf_scope("WorkspaceActionContext::Redo");
-  if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
-    const bool was_dirty = viewport->dirty();
-    const std::size_t cursor_before_line = viewport->cursor_line();
-    std::optional<editor::SelectionRange> selection_before;
-    std::optional<editor::TextPosition> cursor_before;
-    if (auto* merge_tab = operations_.active_merge_tab();
-        merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-      selection_before = viewport->selection_range();
-      cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
-    }
-    bool changed = false;
-    {
-      util::PerformanceTrace::Scope scope("WorkspaceActionContext::Redo::ViewportRedo");
-      changed = viewport->Redo();
-    }
-    if (changed) {
-      // See Undo: redo mutates the document, so force a fold-model rescan.
-      if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
-        editor_tab->folding_model->MarkDirty();
-      }
-      if (auto* compare_tab = operations_.active_compare_tab();
-          compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-        util::PerformanceTrace::Scope scope(
-            "WorkspaceActionContext::Redo::RefreshCompareDerivedState");
-        operations_.refresh_compare_tab_derived_state(*compare_tab);
-        operations_.sync_compare_selection_from_viewport(*compare_tab, true);
-      }
-      if (auto* merge_tab = operations_.active_merge_tab();
-          merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-        util::PerformanceTrace::Scope scope(
-            "WorkspaceActionContext::Redo::UpdateMergeTracking");
-        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
-                                                              *cursor_before);
-      }
-      {
-        util::PerformanceTrace::Scope scope("WorkspaceActionContext::Redo::ResetCaretBlink");
-        operations_.reset_caret_blink();
-      }
-      {
-        util::PerformanceTrace::Scope scope("WorkspaceActionContext::Redo::RequestTabRedraw");
-        operations_.request_active_tab_redraw(false);
-      }
-      {
-        util::PerformanceTrace::Scope scope(
-            "WorkspaceActionContext::Redo::RequestFocusedEditorRedraw");
-        operations_.request_focused_editor_redraw();
-      }
-      {
-        util::PerformanceTrace::Scope scope(
-            "WorkspaceActionContext::Redo::RequestLastChangeRedraw");
-        operations_.request_active_editable_last_change_redraw();
-      }
-      if (viewport->dirty() != was_dirty) {
-        util::PerformanceTrace::Scope scope("WorkspaceActionContext::Redo::DirtyStateSideEffects");
-        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                      viewport->cursor_line());
-        operations_.request_tab_strip_redraw();
-      }
-    }
-  }
-}
+void WorkspaceActionContext::Undo() { ApplyUndoRedo(/*redo=*/false); }
+
+void WorkspaceActionContext::Redo() { ApplyUndoRedo(/*redo=*/true); }
 
 std::string WorkspaceActionContext::CopySelectionText() const {
   // A focused single-line field owns the keystroke even when the panel holds
