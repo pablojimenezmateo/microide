@@ -39,20 +39,6 @@ void CloseIfValid(int fd) {
 using microide::util::MakeCloexecPipe;
 #endif
 
-PathType PathTypeFromStatus(const std::filesystem::file_status& status) {
-  switch (status.type()) {
-    case std::filesystem::file_type::none:
-    case std::filesystem::file_type::not_found:
-      return PathType::Missing;
-    case std::filesystem::file_type::regular:
-      return PathType::RegularFile;
-    case std::filesystem::file_type::directory:
-      return PathType::Directory;
-    default:
-      return PathType::Other;
-  }
-}
-
 std::vector<std::filesystem::path> CollectRecursiveWatchPaths(
     const std::vector<std::filesystem::path>& roots,
     const TreeTraversalFilter& filter,

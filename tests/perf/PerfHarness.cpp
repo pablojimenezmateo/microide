@@ -11,7 +11,6 @@
 #include <thread>
 #include <limits>
 #include <sstream>
-#include <thread>
 
 #include "perf/AllocationCounter.h"
 #include "perf/PerfHarnessIsolation.h"

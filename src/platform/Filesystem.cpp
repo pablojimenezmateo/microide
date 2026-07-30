@@ -7,20 +7,6 @@ namespace microide::platform {
 
 namespace {
 
-PathType PathTypeFromStatus(const std::filesystem::file_status& status) {
-  switch (status.type()) {
-    case std::filesystem::file_type::none:
-    case std::filesystem::file_type::not_found:
-      return PathType::Missing;
-    case std::filesystem::file_type::regular:
-      return PathType::RegularFile;
-    case std::filesystem::file_type::directory:
-      return PathType::Directory;
-    default:
-      return PathType::Other;
-  }
-}
-
 void SortPaths(auto* entries) {
   std::sort(entries->begin(), entries->end(), [](const auto& lhs, const auto& rhs) {
     // Entries come from directory_iterator, so paths are already normal; native()

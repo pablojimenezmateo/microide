@@ -44,6 +44,26 @@ struct TreeSnapshotEntry {
 
 using TreeTraversalFilter = std::function<bool(const std::filesystem::path&, PathType)>;
 
+// Classify a std::filesystem::file_status. Split out because both the directory
+// walkers in Filesystem.cpp and the watcher's tree scan in FileWatcher.cpp need
+// it and each had a byte-identical private copy — and the mapping is a policy
+// choice, not a formality: `none` (a status the OS could not determine) is
+// deliberately folded in with `not_found` as Missing rather than Other, so a
+// stat that fails reads as "gone" to both callers.
+inline PathType PathTypeFromStatus(const std::filesystem::file_status& status) {
+  switch (status.type()) {
+    case std::filesystem::file_type::none:
+    case std::filesystem::file_type::not_found:
+      return PathType::Missing;
+    case std::filesystem::file_type::regular:
+      return PathType::RegularFile;
+    case std::filesystem::file_type::directory:
+      return PathType::Directory;
+    default:
+      return PathType::Other;
+  }
+}
+
 PathType ReadPathType(const std::filesystem::path& path);
 std::vector<DirectoryEntry> ListDirectory(const std::filesystem::path& directory);
 // Captures size+mtime for every file under `roots` (directories excluded),
