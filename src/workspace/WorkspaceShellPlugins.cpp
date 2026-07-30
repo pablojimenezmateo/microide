@@ -401,10 +401,28 @@ WorkspaceShell::WorkspaceShell() {
       .open_file =
           [this](const plugin::PluginHost::OpenFileRequest& request) {
             const std::filesystem::path normalized_path = request.path.lexically_normal();
-            const bool opened = IsVirtualDocumentUri(request.path.generic_string())
-                                    ? OpenVirtualDocumentInNewTab(request.path.generic_string())
-                                    : OpenFileInNewTab(normalized_path);
+            const std::string requested = request.path.generic_string();
+            const bool is_virtual = IsVirtualDocumentUri(requested);
+            const bool opened = is_virtual ? OpenVirtualDocumentInNewTab(requested)
+                                           : OpenFileInNewTab(normalized_path);
             if (!opened) {
+              // Say why on the Plugin Errors channel rather than failing mutely.
+              // The bool is not a usable signal: PluginHostCallbacks routes
+              // open_file through ApplyHostMutation on the non-direct path and
+              // returns true unconditionally there, so a plugin never observes
+              // this false at all (TD-2026-07-27-001).
+              //
+              // The virtual-document case is worth naming specifically: the
+              // consumer side is complete, but no plugin API exists to REGISTER
+              // a virtual document yet, so every virtual:// open fails and the
+              // reason is not discoverable from the plugin side.
+              std::string reason =
+                  is_virtual
+                      ? "open_file: no virtual document is registered for '" + requested +
+                            "' (no plugin API contributes virtual documents yet)"
+                      : "open_file: could not open '" + normalized_path.generic_string() + "'";
+              output_channels_.AppendLine("plugins.error", "Plugin Errors", reason);
+              plugin_runtime_.AppendError(std::move(reason));
               return false;
             }
             if (request.line > 0) {

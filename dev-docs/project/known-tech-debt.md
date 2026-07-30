@@ -189,8 +189,17 @@ shell's registries answered no. One was deleted; the other is filed below.
   one contribution kind away from shipping. Closing it means designing a plugin
   API (`ctx.virtual_documents` or similar) plus its lifetime/ownership rules,
   which is a feature decision rather than a missing wire — hence filed, not fixed.
-  At minimum the `open_file` virtual-document branch should report *why* it
-  failed instead of returning a silent false.
+  **[PARTIAL 2026-07-30]** The diagnostic half is done: the `open_file` branch
+  now writes a specific reason to the Plugin Errors output channel naming the
+  URI and stating that no plugin API contributes virtual documents yet, instead
+  of failing mutely. Note the return value was never a usable signal —
+  `PluginHostCallbacks` routes `open_file` through `ApplyHostMutation` on the
+  non-direct path and returns `true` unconditionally there, so a plugin never
+  observes the `false` at all. The registry/producer half (designing
+  `ctx.virtual_documents` plus its lifetime rules) remains open and is still a
+  feature decision. Not unit-tested: reaching the shell's `open_file` lambda
+  from a test would need a callbacks accessor on `PluginHost`, which would widen
+  a deliberately narrow boundary for a log line.
   Files: `src/workspace/WorkspaceVirtualDocument.*`,
   `src/workspace/WorkspaceShellPlugins.cpp`,
   `src/workspace/WorkspaceTabCoordinatorShellBridge.cpp`.
