@@ -9,8 +9,10 @@ project (see [README](README.md)); versions track meaningful shipped work.
 ## [Unreleased]
 
 A cross-subsystem review sweep, plus a UI/UX consistency pass over how the
-surfaces answer the mouse, the keyboard, and the hovering pointer. No public API
-or persisted-format changes.
+surfaces answer the mouse, the keyboard, and the hovering pointer — and a second
+pass driven by screenshots of every surface, which is what turned up the text
+being cut mid-word and the quick-open modals not agreeing on where they sit. No
+public API or persisted-format changes.
 
 ### Added
 
@@ -86,6 +88,36 @@ or persisted-format changes.
 
 ### Changed
 
+- **One quick-open surface for all five list modals.** The file finder, project
+  search, command palette and the git commit/launch pickers are the same
+  interaction, but painted as three different dialogs: on a 1440x900 window their
+  cards measured 666x290, 757x357 and 814x355, at three different positions, so
+  flipping between Ctrl+P and Ctrl+Shift+P moved and resized the surface under the
+  pointer. They now share one card, one header, and one set of row offsets. The
+  file finder and project search also gain the result count and the
+  `↑↓ select · Enter choose · Esc cancel` hint the pickers already had — the two
+  most-used quick-opens were the ones that never said Enter and Esc worked.
+- **Help/About is searchable.** It lists every command with its key chord — about
+  190 rows — and could only be scrolled, in a surface whose whole purpose is
+  looking one up. It now opens with a filter field focused. (The filtering itself
+  had been implemented all along; nothing ever drew a field to type into.)
+- **The regex toggle reads `.*` everywhere.** The project-search sidebar spelled it
+  `Rx`/`Lit` while both find bars — and VSCode — use `.*` for the identical
+  concept.
+- **Inline git blame annotates the caret line only**, the way VSCode/GitLens does.
+  It painted the same "author, date" string on the rows above and below the caret
+  too, which read as a rendering fault — and on blank neighbour lines the text
+  floated at the left margin, far from any code. Also strictly less per-frame work:
+  one blame-line copy, truncation and measurement instead of three.
+- **The status bar names the branch before the first git refresh.** An ordinary
+  checkout reported `no-scm [clean]` — a contradiction, since only source control
+  can know a tree is clean — until something ran `git status`, which for many
+  sessions is never. The branch now comes from `<gitdir>/HEAD` (one file read, no
+  subprocess). A detached HEAD reads `detached`; a project outside any repository
+  still reads `no-scm`.
+- **An all-ASCII file reports UTF-8**, not a separate `ASCII` encoding that flipped
+  to `UTF-8` the moment you typed an accented character, as though the editor had
+  re-encoded the file.
 - **Shift+wheel scrolls the editor sideways.** It already did in the compare and
   merge surfaces, so the same gesture moved sideways in a diff and downwards in
   the file being diffed.
@@ -122,6 +154,22 @@ or persisted-format changes.
 
 ### Fixed
 
+- **Toast messages are no longer sheared mid-word.** A notification capped its text
+  at a flat 320px and let the clip rect cut the rest, so `review-branch main:
+  opened 1, reused 0, skipped 2` rendered as `review-branch main: opened 1, reused
+  0,` — with no ellipsis, on a 1440px window with room to spare, losing exactly the
+  part the message was about. The width now scales with the window and anything
+  still too long ends in `…`.
+- **Empty states in narrow rails wrap instead of being cut.** The Problems panel
+  said `No problems detected in this pro…`, and the debug pane's hints ("No
+  breakpoints — click the editor gutter to add one.") had no truncation at all and
+  simply ran off the panel edge. They word-wrap now. The debug pane's Variables
+  mode, which had no empty state whatsoever and painted as a blank box, has one.
+- **The search sidebar's status line fits the sidebar.** It packed a five-segment
+  key cheat-sheet onto one line inside a 288px rail — about twice the available
+  width — so it always rendered as `26 matches | / query | = rep…`, cutting away
+  the keys it existed to teach. It is status only now; the keys moved to Help/About
+  next to the git sidebar's, where the column has room for them.
 - **Tooltips no longer come and go at random.** Each one was its own pair of shell
   methods with a private copy of the placement maths, and every caller had to
   remember to list all six; they had drifted. The project-search option tooltips

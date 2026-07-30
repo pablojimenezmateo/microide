@@ -61,6 +61,23 @@ These are implemented and should not be treated as open migration work:
 - shell cards, compact tooltips, framed text inputs, buttons, selectable-list backgrounds,
   popup-menu rows, strip tabs, and common shell glyphs now route through shared workspace render
   primitives instead of staying fully surface-local
+- **one quick-open surface** (2026-07-30 UI/UX pass): the file finder, project search, command
+  palette, and the git commit/launch pickers share `ComputeQuickOpenOverlaySurfaceRect`, one header
+  block (title, query field, result summary, `↑↓ select · Enter choose · Esc cancel` hint), and one
+  set of row offsets — `OverlayQueryRowOffset` / `OverlaySummaryRowOffset` / `OverlayListStartOffset`,
+  read by both the view-model builder and the click hit-test so a field cannot be painted off its own
+  hit target. They previously split across two card geometries in three sizes, and the two most-used
+  ones carried neither a result count nor a key hint. Do not reintroduce a per-mode overlay rect.
+- **text that does not fit is truncated or wrapped, never sheared** (same pass): notification toasts
+  scale their width with the window and ellipsize through `TruncateToWidthEphemeralView`; narrow-rail
+  empty states (sidebar placeholders, every debug-pane mode) word-wrap through
+  `DrawWrappedPlaceholder` / `ForEachWrappedLabelLine` in the shared render primitives; the project
+  search sidebar's status line is status only, with its key cheat-sheet moved to Help/About beside
+  the git sidebar's. Hint lists join on `" · "` everywhere (`JoinHintSegments`)
+- inline git blame annotates the caret line only (`kCaretBlameRadius = 0`), matching VSCode/GitLens;
+  the regex toggle reads `.*` in both the find bars and the search sidebar; the status bar names the
+  branch from `<gitdir>/HEAD` before the first `git status` snapshot rather than reporting `no-scm`
+  for a real checkout, and reports UTF-8 for ASCII files; Help/About opens filter-focused
 - project-local workspace state plus app-level restore of open project tabs
 - normal editor tabs, compare tabs, and merge tabs, with deferred-commit tab drag (ghost preview) consistent across all three tab types
 - first-class editor groups (`EditorGroup`): split right/down from tab and tree context menus, per-group layout/render/tab-strips, group-aware keyboard input, split/focus/close commands, and session persistence/restore (this supersedes the older nested in-tab shared-buffer split model, collapsed in v2.1.0)
