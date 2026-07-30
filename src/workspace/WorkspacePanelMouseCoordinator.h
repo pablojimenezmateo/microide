@@ -47,27 +47,10 @@ class PanelMouseCoordinator {
     std::function<std::optional<SDL_FRect>()> current_window_rect;
     std::function<float(float, float)> clamp_bottom_panel_height;
     std::function<void()> sync_primary_selection_with_terminal_selection;
-    // Debug Variables panel (Phase 4): re-fetch scopes/variables when a different
-    // call-stack frame is focused; lazily expand/collapse a tree row; enter inline
-    // value edit on a leaf.
-    std::function<void(int)> on_debug_frame_focus_changed;
-    // Call Stack thread selector (Phase 7 multi-thread): switch the active thread,
-    // re-resolving its frames.
-    std::function<void(int)> on_debug_thread_focus_changed;
-    // Call Stack session selector (Phase 8 multi-session): switch the active
-    // session, re-projecting its stop.
-    std::function<void(int)> on_debug_session_focus_changed;
-    std::function<void(std::size_t)> toggle_debug_variable_row;
-    std::function<void(std::size_t)> begin_debug_variable_edit;
-    // Debug Watch panel (Phase 6): toggle a watched value's subtree; begin inline
-    // setVariable edit on a watched child leaf; add/edit a watch expression
-    // string (routed to a prompt on the shell side; `edit` takes its index).
-    std::function<void(std::size_t)> toggle_debug_watch_row;
-    std::function<void(std::size_t)> begin_debug_watch_edit;
-    std::function<void()> add_debug_watch_expression;
-    std::function<void(std::size_t)> edit_debug_watch_expression;
-    // Debug Breakpoints panel (Phase 7): toggle an exception-breakpoint filter.
-    std::function<void(const std::string&)> toggle_debug_exception_filter;
+    // The debug pane's callbacks used to live here too, back when this
+    // coordinator owned the Variables/Watch/Call Stack/Breakpoints hit testing.
+    // That moved to DebugPaneMouseCoordinator, which declares and uses its own
+    // copies; these were left behind, wired to live lambdas and never called.
     // Plugin surface preview (TD-2026-07-16-60/61): resolve the active preview's
     // content (null when none), and dispatch a hit-region command through the
     // host's validated command runner (the same path code-lens clicks use).

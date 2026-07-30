@@ -586,27 +586,6 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
               [terminal_panel]() mutable {
                 terminal_panel.SyncPrimarySelectionWithTerminalSelection();
               },
-          .on_debug_frame_focus_changed =
-              [this](int frame_id) { debug_service_.FocusFrame(frame_id); },
-          .on_debug_thread_focus_changed =
-              [this](int thread_id) { debug_service_.FocusThread(thread_id); },
-          .on_debug_session_focus_changed =
-              [this](int session_id) { debug_service_.FocusSession(session_id); },
-          .toggle_debug_variable_row =
-              [this](std::size_t row) { debug_service_.ToggleVariableRow(row); },
-          .begin_debug_variable_edit =
-              [this](std::size_t row) { debug_service_.BeginVariableEdit(row); },
-          .toggle_debug_watch_row =
-              [this](std::size_t row) { debug_service_.ToggleWatchRow(row); },
-          .begin_debug_watch_edit =
-              [this](std::size_t row) { debug_service_.BeginWatchEdit(row); },
-          .add_debug_watch_expression = [this]() { OpenWatchExpressionPrompt(std::nullopt); },
-          .edit_debug_watch_expression =
-              [this](std::size_t index) { OpenWatchExpressionPrompt(index); },
-          .toggle_debug_exception_filter =
-              [this](const std::string& filter_id) {
-                debug_service_.ToggleExceptionFilter(filter_id);
-              },
           .active_plugin_surface =
               [this]() -> const editor::SurfaceContent* {
                 const auto& panel = context_.current_project_state.panel;
