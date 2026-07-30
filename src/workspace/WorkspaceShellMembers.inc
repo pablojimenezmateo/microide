@@ -1273,6 +1273,10 @@
   void RevealBufferSearchMatch(const editor::SelectionRange& match);
   void ResetBufferSearchFoldRevealState(bool preserve_expanded_folds);
   void RefreshBufferSearch();
+  // Flips one of the in-file find widget's three toggles (Aa / ab / .*) and
+  // recomputes the match set. One entry point for the button, the Alt chord and
+  // the tests, so the three cannot disagree about what a toggle does.
+  void ToggleBufferSearchOption(BufferFindToggle toggle);
   void OpenBufferSearchFromProjectSearchResult();
   void RefreshProjectSearch();
   void StopProjectSearch();

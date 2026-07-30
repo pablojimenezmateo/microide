@@ -682,11 +682,18 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
     const BufferSearchState& buffer_search = overlay.workflow.buffer_search;
     OverlayFindWidgetViewModel& fw_vm = out.find_widget;
     fw_vm.replace_mode = overlay.mode == OverlayMode::BufferReplace;
-    fw_vm.fw = ComputeFindWidgetLayout(layout.editor_surface, fw_vm.replace_mode);
+    fw_vm.fw = ComputeBufferFindWidgetLayout(layout.editor_surface, fw_vm.replace_mode);
     fw_vm.search_focused = current_surface == TextInputSurface::BufferSearch ||
                            current_surface == TextInputSurface::BufferReplaceSearch;
     fw_vm.replace_focused = current_surface == TextInputSurface::BufferReplaceReplace;
-    fw_vm.toggles[0] = FindWidgetToggleViewModel{.label = ".*", .active = buffer_search.regex};
+    // Aa / ab / .*, the same order and the same first two glyphs as the terminal
+    // find bar three pixels below it.
+    fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::MatchCase)] =
+        FindWidgetToggleViewModel{.label = "Aa", .active = buffer_search.match_case};
+    fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::WholeWord)] =
+        FindWidgetToggleViewModel{.label = "ab", .active = buffer_search.whole_word};
+    fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::Regex)] =
+        FindWidgetToggleViewModel{.label = ".*", .active = buffer_search.regex};
     fw_vm.has_matches = !buffer_search.matches.empty();
     fw_vm.has_query = !buffer_search.query.text().empty();
 

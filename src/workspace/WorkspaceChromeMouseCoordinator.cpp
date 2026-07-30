@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <optional>
 #include <utility>
 
 #include "util/PerformanceTrace.h"
@@ -109,7 +110,7 @@ bool ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
   // is over it (to cycle matches); otherwise let the editor scroll normally.
   if (state_.overlay.mode == OverlayMode::BufferSearch ||
       state_.overlay.mode == OverlayMode::BufferReplace) {
-    const FindWidgetLayout fw = ComputeFindWidgetLayout(
+    const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(
         layout.editor_area, state_.overlay.mode == OverlayMode::BufferReplace);
     if (!Contains(fw.widget, event.wheel.mouse_x, event.wheel.mouse_y)) {
       return false;
@@ -432,7 +433,7 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
   if (state_.overlay.mode == OverlayMode::BufferSearch ||
       state_.overlay.mode == OverlayMode::BufferReplace) {
     const bool replace_mode = state_.overlay.mode == OverlayMode::BufferReplace;
-    const FindWidgetLayout fw = ComputeFindWidgetLayout(layout.editor_surface, replace_mode);
+    const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(layout.editor_surface, replace_mode);
     if (!Contains(fw.widget, event.button.x, event.button.y)) {
       // Repaint the widget (it will render unfocused once the editor takes focus)
       // and let the press fall through to the editor mouse path.
@@ -443,8 +444,16 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
       operations_.dismiss_overlay(true);
       return true;
     }
-    if (Contains(fw.toggle_buttons[0], event.button.x, event.button.y)) {
-      operations_.toggle_buffer_search_regex();
+    const auto hovered_toggle = [&]() -> std::optional<BufferFindToggle> {
+      for (std::size_t index = 0; index < fw.toggle_count; ++index) {
+        if (Contains(fw.toggle_buttons[index], event.button.x, event.button.y)) {
+          return static_cast<BufferFindToggle>(index);
+        }
+      }
+      return std::nullopt;
+    }();
+    if (hovered_toggle.has_value()) {
+      operations_.toggle_buffer_search_option(*hovered_toggle);
     } else if (Contains(fw.prev_button, event.button.x, event.button.y)) {
       operations_.move_buffer_search_selection(-1);
     } else if (Contains(fw.next_button, event.button.x, event.button.y)) {
@@ -627,12 +636,8 @@ ChromeMouseCoordinator WorkspaceShell::MakeChromeMouseCoordinator() {
           .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
           .replace_current_buffer_search_match = [this]() { ReplaceCurrentBufferSearchMatch(); },
           .replace_all_buffer_search_matches = [this]() { ReplaceAllBufferSearchMatches(); },
-          .toggle_buffer_search_regex =
-              [this]() {
-                auto& bs = context_.current_project_state.overlay.workflow.buffer_search;
-                bs.regex = !bs.regex;
-                RefreshBufferSearch();
-              },
+          .toggle_buffer_search_option =
+              [this](BufferFindToggle toggle) { ToggleBufferSearchOption(toggle); },
           .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
           .dismiss_overlay = [this](bool focus_editor) { DismissOverlay(focus_editor); },
           .compute_overlay_rect = [this](const SDL_FRect& rect) { return ComputeOverlayRect(rect); },

@@ -40,6 +40,18 @@ std::optional<std::size_t> ReplaceRegexMatchesInText(std::string& content,
                                                      const util::CompiledRegex& pattern,
                                                      std::string_view replacement);
 
+// The in-file find widget's two option toggles, threaded through every matcher so
+// the literal and regex paths cannot disagree about what the user asked for.
+// `case_sensitive` false folds both sides; `whole_word` keeps only matches bounded
+// by non-word bytes (util::SearchMatchStandsAlone), applied as a filter rather than
+// as a query rewrite so literal and regex mean the same thing by it.
+struct BufferSearchOptions {
+  bool case_sensitive = false;
+  bool whole_word = false;
+
+  friend bool operator==(const BufferSearchOptions&, const BufferSearchOptions&) = default;
+};
+
 // Whole-buffer regex scan for the in-file find widget (navigation + overview
 // ruler). Matches run over the '\n'-joined buffer (NOT per line), so a pattern can
 // span line breaks — `\n`, `^`/`$` under PCRE2_MULTILINE, or `foo\nbar` — and a
@@ -48,6 +60,7 @@ std::optional<std::size_t> ReplaceRegexMatchesInText(std::string& content,
 // setting `*truncated` when the cap trims matches.
 std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuffer& buffer,
                                                            const util::CompiledRegex& pattern,
+                                                           BufferSearchOptions options = {},
                                                            bool* truncated = nullptr);
 
 // Splits a (whole-buffer, possibly multi-line) match set into single-line highlight
@@ -70,6 +83,7 @@ inline constexpr std::size_t kMaxBufferSearchMatches = 100000;
 std::vector<editor::SelectionRange> FindLiteralSearchMatches(
     const std::vector<std::string>& lines,
     std::string_view query,
+    BufferSearchOptions options = {},
     bool* truncated = nullptr);
 
 // Same all-occurrences case-insensitive search, but scanned directly over the
@@ -79,6 +93,7 @@ std::vector<editor::SelectionRange> FindLiteralSearchMatches(
 std::vector<editor::SelectionRange> FindLiteralSearchMatches(
     const editor::TextBuffer& buffer,
     std::string_view query,
+    BufferSearchOptions options = {},
     bool* truncated = nullptr);
 
 // Find-as-you-type fast path. `previous` must be the complete match set for some
@@ -92,6 +107,7 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
     const editor::TextBuffer& buffer,
     std::string_view query,
     const std::vector<editor::SelectionRange>& previous,
+    BufferSearchOptions options = {},
     bool* truncated = nullptr);
 
 // True when `query` equals `prefix` followed by zero or more characters, compared

@@ -176,6 +176,7 @@ std::optional<std::size_t> ReplaceRegexMatchesInText(std::string& content,
 
 std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuffer& buffer,
                                                            const util::CompiledRegex& pattern,
+                                                           BufferSearchOptions options,
                                                            bool* truncated) {
   std::vector<editor::SelectionRange> matches;
   if (truncated != nullptr) {
@@ -235,6 +236,12 @@ std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuf
         *truncated = true;
       }
       return matches;
+    }
+    // Whole-word is a filter over the joined content, not a `\b`-wrapped pattern:
+    // the same predicate the literal path and the terminal find bar use, so one
+    // `ab` toggle means one thing everywhere.
+    if (options.whole_word && !util::SearchMatchStandsAlone(content, match_start, match_end)) {
+      continue;
     }
     matches.push_back(editor::SelectionRange{
         .start = to_position(match_start),
@@ -392,6 +399,7 @@ template <typename LineAt>
 std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_count,
                                                            LineAt&& line_at,
                                                            std::string_view query,
+                                                           BufferSearchOptions options,
                                                            bool* truncated) {
   std::vector<editor::SelectionRange> matches;
   if (truncated != nullptr) {
@@ -401,12 +409,28 @@ std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_coun
     return matches;
   }
 
-  const std::string lowered_query = ToLower(query);
-  std::string lowered_line;
+  // Case-sensitive search compares the raw bytes; case-insensitive folds both
+  // sides. The fold is length-preserving, so match offsets are byte offsets into
+  // the raw line either way (which is what the whole-word check below needs).
+  std::string folded_query;
+  if (!options.case_sensitive) {
+    util::Utf8CaseFoldInto(query, folded_query);
+  }
+  const std::string_view needle = options.case_sensitive ? query : std::string_view(folded_query);
+  std::string folded_line;
   for (std::size_t line_index = 0; line_index < line_count; ++line_index) {
-    util::Utf8CaseFoldInto(line_at(line_index), lowered_line);
-    std::size_t offset = lowered_line.find(lowered_query);
-    while (offset != std::string::npos) {
+    const std::string_view raw_line = line_at(line_index);
+    std::string_view haystack = raw_line;
+    if (!options.case_sensitive) {
+      util::Utf8CaseFoldInto(raw_line, folded_line);
+      haystack = folded_line;
+    }
+    std::size_t offset = haystack.find(needle);
+    while (offset != std::string_view::npos) {
+      if (options.whole_word && !util::SearchMatchStandsAlone(haystack, offset, offset + needle.size())) {
+        offset = haystack.find(needle, offset + 1);
+        continue;
+      }
       // TD-2026-07-17A-029: cap the retained match set so a one-character query in a
       // huge minified buffer cannot allocate millions of ranges. Navigation re-scans
       // via FindNextLiteralMatchAfterSeedWrapOnce, so it stays correct past the cap.
@@ -418,12 +442,12 @@ std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_coun
       }
       matches.push_back(editor::SelectionRange{
           .start = editor::TextPosition{line_index, offset},
-          .end = editor::TextPosition{line_index, offset + lowered_query.size()},
+          .end = editor::TextPosition{line_index, offset + needle.size()},
       });
       // Advance past the whole match so self-overlapping needles (e.g. "aa" in
       // "aaaa") yield non-overlapping ranges, matching find-next/replace which
       // advance by the needle length (see ReplaceLiteralMatchesInText).
-      offset = lowered_line.find(lowered_query, offset + lowered_query.size());
+      offset = haystack.find(needle, offset + needle.size());
     }
   }
 
@@ -435,17 +459,21 @@ std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_coun
 std::vector<editor::SelectionRange> FindLiteralSearchMatches(
     const std::vector<std::string>& lines,
     std::string_view query,
+    BufferSearchOptions options,
     bool* truncated) {
   return FindLiteralMatchesImpl(
-      lines.size(), [&](std::size_t i) -> std::string_view { return lines[i]; }, query, truncated);
+      lines.size(), [&](std::size_t i) -> std::string_view { return lines[i]; }, query, options,
+      truncated);
 }
 
 std::vector<editor::SelectionRange> FindLiteralSearchMatches(
     const editor::TextBuffer& buffer,
     std::string_view query,
+    BufferSearchOptions options,
     bool* truncated) {
   return FindLiteralMatchesImpl(
-      buffer.LineCount(), [&](std::size_t i) { return buffer.LineView(i); }, query, truncated);
+      buffer.LineCount(), [&](std::size_t i) { return buffer.LineView(i); }, query, options,
+      truncated);
 }
 
 AddCursorMatchScan CollectAddCursorMatchRanges(const editor::TextBuffer& buffer,
@@ -510,6 +538,7 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
     const editor::TextBuffer& buffer,
     std::string_view query,
     const std::vector<editor::SelectionRange>& previous,
+    BufferSearchOptions options,
     bool* truncated) {
   std::vector<editor::SelectionRange> matches;
   if (truncated != nullptr) {
@@ -522,8 +551,13 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
     return matches;
   }
 
-  const std::string lowered_query = ToLower(query);
-  const std::size_t needle = lowered_query.size();
+  std::string folded_query;
+  if (!options.case_sensitive) {
+    util::Utf8CaseFoldInto(query, folded_query);
+  }
+  const std::string_view expected =
+      options.case_sensitive ? query : std::string_view(folded_query);
+  const std::size_t needle = expected.size();
   matches.reserve(previous.size());
   // Reproduce the cold path's advance-by-needle de-overlap: `previous` (the shorter
   // prefix query's match set) holds a hit at EVERY offset, so a self-overlapping
@@ -551,8 +585,12 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
     // starts/ends on scalar boundaries (match offsets came from a length-preserving
     // folded find). (TD-2026-07-16-58.)
     thread_local std::string folded_slice;
-    util::Utf8CaseFoldInto(text.substr(column, needle), folded_slice);
-    const bool still_matches = folded_slice == lowered_query;
+    std::string_view slice = text.substr(column, needle);
+    if (!options.case_sensitive) {
+      util::Utf8CaseFoldInto(slice, folded_slice);
+      slice = folded_slice;
+    }
+    const bool still_matches = slice == expected;
     if (still_matches) {
       if (matches.size() >= kMaxBufferSearchMatches) {
         if (truncated != nullptr) {

@@ -236,9 +236,12 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
     // Count Unicode scalar values, not bytes: a non-ASCII subject (accented or
     // CJK text) has more bytes than visible characters, so a byte-length gate
     // would reject a subject the user sees as well within the limit.
-    checks.push_back(MakeCheck(
-        CommitPreCheckKind::LongSubject, CommitPreCheckSeverity::Blocking,
-        "Commit subject exceeds " + std::to_string(kCommitSubjectMaxLength) + " characters"));
+    // The limit is a compile-time constant, so the message is too: spelling it out
+    // keeps the check allocation-free and sidesteps a GCC 13 -Warray-bounds false
+    // positive on the std::to_string concatenation.
+    static_assert(kCommitSubjectMaxLength == 72, "keep the long-subject message in sync");
+    checks.push_back(MakeCheck(CommitPreCheckKind::LongSubject, CommitPreCheckSeverity::Blocking,
+                               "Commit subject exceeds 72 characters"));
   }
 
   const bool has_conflicts = std::any_of(

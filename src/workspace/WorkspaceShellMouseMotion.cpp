@@ -4,8 +4,10 @@
 #include "workspace/GitSidebarHeaderLayout.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <optional>
+#include <span>
 
 #include "util/PerformanceTrace.h"
 #include "workspace/ListSelection.h"
@@ -521,32 +523,68 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       status_segment_hover_changed = true;
     }
 
-    // Floating debug toolbar: repaint on hover enter/leave so the button
-    // highlight and tooltip track the pointer like the other chrome buttons.
+    // Floating widgets whose buttons highlight under the pointer (the debug
+    // toolbar and the two find widgets): repaint the card on hover enter/leave so
+    // the highlight tracks the pointer like the rest of the chrome does. `-1` is
+    // "off the card", `-2` "on the card but between buttons".
+    const auto floating_widget_hover_changed =
+        [&](const SDL_FRect& card, std::span<const SDL_FRect> buttons) {
+          const auto hovered_button = [&](float px, float py) -> int {
+            if (!Contains(card, px, py)) {
+              return -1;
+            }
+            for (std::size_t i = 0; i < buttons.size(); ++i) {
+              if (Contains(buttons[i], px, py)) {
+                return static_cast<int>(i);
+              }
+            }
+            return -2;
+          };
+          const int previous_button = previous_mouse_position_valid
+                                          ? hovered_button(previous_mouse_x, previous_mouse_y)
+                                          : -1;
+          const int current_button = hovered_button(static_cast<float>(event.motion.x),
+                                                    static_cast<float>(event.motion.y));
+          if (previous_button == current_button ||
+              (previous_button == -1 && current_button == -1)) {
+            return false;
+          }
+          RequestRedrawRect(
+              MakeRect(card.x - 2.0f, card.y - 2.0f, card.w + 4.0f, card.h + 4.0f));
+          return true;
+        };
+
     if (DebugToolbarVisible()) {
       const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
           layout.editor_surface, DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
-      const auto hovered_button = [&](float px, float py) -> int {
-        if (!Contains(tb.widget, px, py)) {
-          return -1;
-        }
-        for (std::size_t i = 0; i < tb.button_count; ++i) {
-          if (Contains(tb.buttons[i], px, py)) {
-            return static_cast<int>(i);
-          }
-        }
-        return -2;  // over the bar but between buttons
-      };
-      const int previous_button =
-          previous_mouse_position_valid ? hovered_button(previous_mouse_x, previous_mouse_y) : -1;
-      const int current_button = hovered_button(static_cast<float>(event.motion.x),
-                                                static_cast<float>(event.motion.y));
-      if (previous_button != current_button && (previous_button != -1 || current_button != -1)) {
-        // Pad below the bar to cover the tooltip card that pops under a button.
-        RequestRedrawRect(MakeRect(tb.widget.x - 2.0f, tb.widget.y - 2.0f, tb.widget.w + 4.0f,
-                                   tb.widget.h + 40.0f));
-        hover_visual_changed = true;
+      hover_visual_changed =
+          floating_widget_hover_changed(tb.widget,
+                                        std::span<const SDL_FRect>(tb.buttons.data(),
+                                                                   tb.button_count)) ||
+          hover_visual_changed;
+    }
+
+    const OverlayMode overlay_mode = context_.current_project_state.overlay.mode;
+    if (context_.current_project_state.overlay.visible &&
+        (overlay_mode == OverlayMode::BufferSearch || overlay_mode == OverlayMode::BufferReplace)) {
+      const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(
+          layout.editor_surface, overlay_mode == OverlayMode::BufferReplace);
+      std::array<SDL_FRect, kFindWidgetMaxToggles + 5> buttons{};
+      std::size_t count = 0;
+      for (std::size_t i = 0; i < fw.toggle_count; ++i) {
+        buttons[count++] = fw.toggle_buttons[i];
       }
+      buttons[count++] = fw.prev_button;
+      buttons[count++] = fw.next_button;
+      buttons[count++] = fw.close_button;
+      if (fw.replace_mode) {
+        buttons[count++] = fw.replace_button;
+        buttons[count++] = fw.replace_all_button;
+      }
+      hover_visual_changed =
+          floating_widget_hover_changed(fw.widget,
+                                        std::span<const SDL_FRect>(buttons.data(), count)) ||
+          hover_visual_changed;
     }
   }
 

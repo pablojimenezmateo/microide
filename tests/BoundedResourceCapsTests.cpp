@@ -179,7 +179,7 @@ void TestBufferSearchMatchesAreCapped() {
   std::vector<std::string> lines;
   lines.emplace_back(workspace::kMaxBufferSearchMatches + 250, 'a');
   bool truncated = false;
-  const auto matches = workspace::FindLiteralSearchMatches(lines, "a", &truncated);
+  const auto matches = workspace::FindLiteralSearchMatches(lines, "a", {}, &truncated);
   Expect(matches.size() == workspace::kMaxBufferSearchMatches,
          "the retained buffer-search match set must be capped");
   Expect(truncated, "hitting the match cap must set the truncated flag");
@@ -188,7 +188,7 @@ void TestBufferSearchMatchesAreCapped() {
 void TestBufferSearchSmallResultIsNotTruncated() {
   std::vector<std::string> lines = {"alpha beta alpha", "gamma alpha"};
   bool truncated = true;
-  const auto matches = workspace::FindLiteralSearchMatches(lines, "alpha", &truncated);
+  const auto matches = workspace::FindLiteralSearchMatches(lines, "alpha", {}, &truncated);
   Expect(matches.size() == 3, "all in-budget matches are returned");
   Expect(!truncated, "an in-budget result must not be flagged truncated");
 }

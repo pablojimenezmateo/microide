@@ -469,6 +469,19 @@ bool Utf8QueryHasCaseVariation(std::string_view text) {
   return false;
 }
 
+bool IsSearchWordByte(char c) {
+  const auto byte = static_cast<unsigned char>(c);
+  return byte >= 0x80 || (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'z') ||
+         (byte >= 'A' && byte <= 'Z') || byte == '_';
+}
+
+bool SearchMatchStandsAlone(std::string_view text, std::size_t start, std::size_t end) {
+  if (start > 0 && start <= text.size() && IsSearchWordByte(text[start - 1])) {
+    return false;
+  }
+  return end >= text.size() || !IsSearchWordByte(text[end]);
+}
+
 bool Utf8IsIdentifierCodepoint(char32_t cp) {
   if (cp < 0x80) {
     return (cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') ||

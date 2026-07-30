@@ -12,15 +12,20 @@ namespace microide::workspace {
 
 namespace {
 
-// Compiles the in-file find query as a regex. Smart-case (an uppercase letter in
-// the query forces case-sensitivity, matching project search) plus PCRE2_MULTILINE
-// so `^`/`$` anchor at every line boundary and `\n` matches line breaks — the query
-// runs over the whole '\n'-joined buffer, not per line, so multi-line patterns work.
-util::CompiledRegex CompileBufferSearchRegex(const std::string& query) {
+// Compiles the in-file find query as a regex. Case sensitivity comes from the
+// widget's `Aa` toggle, exactly as it does in literal mode — regex used to be
+// smart-case while literal was always insensitive, so flipping `.*` silently
+// changed whether `Alpha` matched `alpha`. PCRE2_MULTILINE so `^`/`$` anchor at
+// every line boundary and `\n` matches line breaks: the query runs over the whole
+// '\n'-joined buffer, not per line, so multi-line patterns work.
+util::CompiledRegex CompileBufferSearchRegex(const std::string& query, bool case_sensitive) {
   const std::uint32_t options =
-      util::SearchRegexCompileOptions(query, UsesCaseSensitiveLiteralMatch(query)) |
-      PCRE2_MULTILINE;
+      util::SearchRegexCompileOptions(query, case_sensitive) | PCRE2_MULTILINE;
   return util::CompiledRegex(query, options);
+}
+
+BufferSearchOptions OptionsOf(const BufferSearchState& state) {
+  return BufferSearchOptions{.case_sensitive = state.match_case, .whole_word = state.whole_word};
 }
 
 // Whole-document range [(0,0) .. (last_line, last_line_length)].
@@ -52,11 +57,12 @@ std::string BuildWholeBufferContent(const editor::TextViewport& viewport) {
 // replacement escape (rc < 0) leaves the document untouched.
 void ApplyBufferRegexReplaceAll(editor::TextViewport& viewport,
                                 const std::string& query,
-                                std::string_view replacement) {
+                                std::string_view replacement,
+                                bool case_sensitive) {
   if (query.empty()) {
     return;
   }
-  const util::CompiledRegex pattern = CompileBufferSearchRegex(query);
+  const util::CompiledRegex pattern = CompileBufferSearchRegex(query, case_sensitive);
   if (!pattern.valid()) {
     return;
   }
@@ -71,6 +77,24 @@ void ApplyBufferRegexReplaceAll(editor::TextViewport& viewport,
 }
 
 }  // namespace
+
+void WorkspaceShell::ToggleBufferSearchOption(BufferFindToggle toggle) {
+  auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
+  switch (toggle) {
+    case BufferFindToggle::MatchCase:
+      buffer_search.match_case = !buffer_search.match_case;
+      break;
+    case BufferFindToggle::WholeWord:
+      buffer_search.whole_word = !buffer_search.whole_word;
+      break;
+    case BufferFindToggle::Regex:
+      buffer_search.regex = !buffer_search.regex;
+      break;
+    case BufferFindToggle::Count:
+      return;
+  }
+  RefreshBufferSearch();
+}
 
 void WorkspaceShell::RefreshBufferSearch() {
   editor::TextViewport* viewport = ActiveEditorViewport();
@@ -99,24 +123,37 @@ void WorkspaceShell::RefreshBufferSearch() {
     // patterns match), full-scan every keystroke. An invalid pattern yields no
     // matches (the widget shows 0/0). The literal refine cache is bypassed and
     // invalidated so switching back to literal rescans.
-    const util::CompiledRegex pattern = CompileBufferSearchRegex(query);
-    buffer_search.matches =
-        pattern.valid() ? FindRegexSearchMatches(buffer, pattern)
-                        : std::vector<editor::SelectionRange>{};
+    const util::CompiledRegex pattern = CompileBufferSearchRegex(query, buffer_search.match_case);
+    buffer_search.matches = pattern.valid()
+                                ? FindRegexSearchMatches(buffer, pattern, OptionsOf(buffer_search))
+                                : std::vector<editor::SelectionRange>{};
     incremental.valid = false;
   } else {
-    const bool can_refine = incremental.valid &&
+    // Refining is only sound when the options are unchanged AND whole-word is
+    // off: a longer query's whole-word hits are NOT a subset of a shorter
+    // prefix's (typing "alpha" over "al" adds standalone matches the prefix scan
+    // rejected), so whole-word always takes the cold path.
+    const bool options_unchanged = incremental.match_case == buffer_search.match_case &&
+                                   incremental.whole_word == buffer_search.whole_word;
+    const bool query_extends =
+        buffer_search.match_case
+            ? query.size() >= incremental.query.size() && query.starts_with(incremental.query)
+            : QueryExtendsCaseInsensitive(incremental.query, query);
+    const bool can_refine = incremental.valid && options_unchanged &&
+                            !buffer_search.whole_word &&
                             incremental.viewport == static_cast<const void*>(viewport) &&
                             incremental.content_revision == content_revision &&
-                            !incremental.query.empty() &&
-                            QueryExtendsCaseInsensitive(incremental.query, query);
-    buffer_search.matches = can_refine
-                                ? RefineLiteralSearchMatches(buffer, query, buffer_search.matches)
-                                : FindLiteralSearchMatches(buffer, query);
+                            !incremental.query.empty() && query_extends;
+    buffer_search.matches =
+        can_refine ? RefineLiteralSearchMatches(buffer, query, buffer_search.matches,
+                                                OptionsOf(buffer_search))
+                   : FindLiteralSearchMatches(buffer, query, OptionsOf(buffer_search));
     incremental.valid = true;
     incremental.viewport = viewport;
     incremental.content_revision = content_revision;
     incremental.query = query;
+    incremental.match_case = buffer_search.match_case;
+    incremental.whole_word = buffer_search.whole_word;
   }
   ++buffer_search.matches_revision;
 
@@ -218,7 +255,7 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
     // buffer (so capture groups + lookarounds resolve in full context and a multi-
     // line match works), then apply it to the match span.
     const std::string& query = buffer_search.query.text();
-    const util::CompiledRegex pattern = CompileBufferSearchRegex(query);
+    const util::CompiledRegex pattern = CompileBufferSearchRegex(query, buffer_search.match_case);
     if (!pattern.valid() || match.start.line >= viewport->lines().LineCount()) {
       return;
     }
@@ -256,7 +293,7 @@ void WorkspaceShell::ReplaceAllBufferSearchMatches() {
   if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
     if (buffer_search.regex) {
       ApplyBufferRegexReplaceAll(*viewport, buffer_search.query.text(),
-                                 buffer_search.replace_text.text());
+                                 buffer_search.replace_text.text(), buffer_search.match_case);
     } else {
       // TD-2026-07-17A-028: RefreshBufferSearch already computed the exact match
       // set (same case-insensitive fold ReplaceAll uses) for this query over the
@@ -270,13 +307,25 @@ void WorkspaceShell::ReplaceAllBufferSearchMatches() {
           incremental.valid && incremental.viewport == static_cast<const void*>(viewport) &&
           incremental.content_revision == viewport->content_revision() &&
           incremental.query == buffer_search.query.text() &&
+          incremental.match_case == buffer_search.match_case &&
+          incremental.whole_word == buffer_search.whole_word &&
           buffer_search.matches.size() < kMaxBufferSearchMatches;
       const bool applied =
           matches_fresh &&
           viewport->ReplaceAllRanges(buffer_search.matches, buffer_search.replace_text.text())
               .has_value();
       if (!applied) {
-        viewport->ReplaceAll(buffer_search.query.text(), buffer_search.replace_text.text());
+        // TextViewport::ReplaceAll is the case-insensitive whole-needle scan, so it
+        // can only stand in for the default options. Under Aa/ab, rescan here and
+        // apply the ranges rather than silently replacing more than was highlighted.
+        if (buffer_search.match_case || buffer_search.whole_word) {
+          const auto rescanned = FindLiteralSearchMatches(viewport->lines(),
+                                                          buffer_search.query.text(),
+                                                          OptionsOf(buffer_search));
+          viewport->ReplaceAllRanges(rescanned, buffer_search.replace_text.text());
+        } else {
+          viewport->ReplaceAll(buffer_search.query.text(), buffer_search.replace_text.text());
+        }
       }
     }
   }

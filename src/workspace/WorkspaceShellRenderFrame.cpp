@@ -401,7 +401,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     panel_out.find_selected_index = terminal_find_service_.selected_index();
     OverlayFindWidgetViewModel& find_vm = panel_out.find;
     find_vm.fw = ComputeFindWidgetLayout(BottomPanelContentRect(layout), /*replace_mode=*/false,
-                                         /*toggle_count=*/2);
+                                         kTerminalFindToggleCount);
     find_vm.search_focused = terminal_find_service_.focused();
     find_vm.toggles[0] = FindWidgetToggleViewModel{
         .label = "Aa", .active = terminal_find_service_.case_sensitive()};

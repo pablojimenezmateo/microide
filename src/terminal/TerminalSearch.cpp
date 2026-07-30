@@ -3,26 +3,6 @@
 #include "util/StringUtil.h"
 
 namespace microide::terminal {
-namespace {
-
-// Word constituents for the whole-word toggle. Every non-ASCII byte counts as a
-// word byte so a match inside a multi-byte word is not reported as standing
-// alone; the alternative (decoding each boundary codepoint) buys nothing for the
-// paths that use this.
-bool IsWordByte(char c) {
-  const auto byte = static_cast<unsigned char>(c);
-  return byte >= 0x80 || (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'z') ||
-         (byte >= 'A' && byte <= 'Z') || byte == '_';
-}
-
-bool MatchStandsAlone(std::string_view text, std::size_t start, std::size_t end) {
-  if (start > 0 && IsWordByte(text[start - 1])) {
-    return false;
-  }
-  return end >= text.size() || !IsWordByte(text[end]);
-}
-
-}  // namespace
 
 TerminalSearchQuery MakeTerminalSearchQuery(const std::string_view text,
                                             const bool case_sensitive,
@@ -113,7 +93,7 @@ bool FindTerminalLineMatches(const TerminalLine& line,
     // Advance by one byte, not by the needle length: overlapping occurrences
     // ("aa" in "aaa") are distinct matches, and the caller navigates between them.
     from = start + 1;
-    if (query.whole_word && !MatchStandsAlone(text, start, end)) {
+    if (query.whole_word && !util::SearchMatchStandsAlone(text, start, end)) {
       continue;
     }
     const std::size_t first_column = scratch.columns[start];

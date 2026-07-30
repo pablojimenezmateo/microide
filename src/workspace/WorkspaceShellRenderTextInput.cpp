@@ -211,7 +211,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const bool replace_mode = surface == TextInputSurface::BufferReplaceSearch ||
                                 surface == TextInputSurface::BufferReplaceReplace;
       const bool replace_field = surface == TextInputSurface::BufferReplaceReplace;
-      const FindWidgetLayout fw = ComputeFindWidgetLayout(layout.editor_surface, replace_mode);
+      const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(layout.editor_surface, replace_mode);
       const SDL_FRect field = replace_field ? fw.replace_field : fw.search_field;
       const float text_x = field.x + 6.0f;
       const float text_y = field.y + std::floor((field.h - line_height) * 0.5f);

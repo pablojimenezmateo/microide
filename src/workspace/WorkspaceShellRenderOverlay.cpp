@@ -155,8 +155,12 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
   enum class Icon { Prev, Next, Close };
   const auto icon_button = [&](const SDL_FRect& rect, Icon icon, bool enabled) {
     const ButtonTone tone = icon == Icon::Close ? ButtonTone::Destructive : ButtonTone::Neutral;
-    const ButtonColors colors =
-        ResolveButtonColors(theme_, tone, ButtonVisualState{.enabled = enabled});
+    // Lift under the pointer like every other button in the shell; the find
+    // widget's five buttons were the last that stayed flat while the cursor over
+    // them already turned into a hand.
+    const ButtonColors colors = ResolveButtonColors(
+        theme_, tone,
+        ButtonVisualState{.enabled = enabled, .hovered = enabled && PointerOver(rect)});
     FillRect(renderer, rect, colors.fill);
     OutlineRect(renderer, rect, colors.border);
     switch (icon) {
@@ -180,7 +184,9 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
     DrawButtonCentered(text_renderer_, renderer, theme_, fw.toggle_buttons[index],
                        fw_vm.toggles[index].label,
                        fw_vm.toggles[index].active ? ButtonTone::Accent : ButtonTone::Neutral,
-                       ButtonVisualState{.enabled = true});
+                       ButtonVisualState{.enabled = true,
+                                         .hovered = PointerOver(fw.toggle_buttons[index]),
+                                         .active = fw_vm.toggles[index].active});
   }
 
   if (!fw_vm.count_text.empty()) {
@@ -196,9 +202,14 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
   if (fw_vm.replace_mode) {
     draw_field(fw.replace_field, fw_vm.replace_focused, fw_vm.replace_display_text);
     DrawButtonCentered(text_renderer_, renderer, theme_, fw.replace_button, "Replace",
-                       ButtonTone::Neutral, ButtonVisualState{.enabled = fw_vm.has_matches});
-    DrawButtonCentered(text_renderer_, renderer, theme_, fw.replace_all_button, "All",
-                       ButtonTone::Neutral, ButtonVisualState{.enabled = fw_vm.has_query});
+                       ButtonTone::Neutral,
+                       ButtonVisualState{.enabled = fw_vm.has_matches,
+                                         .hovered = fw_vm.has_matches &&
+                                                    PointerOver(fw.replace_button)});
+    DrawButtonCentered(
+        text_renderer_, renderer, theme_, fw.replace_all_button, "All", ButtonTone::Neutral,
+        ButtonVisualState{.enabled = fw_vm.has_query,
+                          .hovered = fw_vm.has_query && PointerOver(fw.replace_all_button)});
   }
 }
 

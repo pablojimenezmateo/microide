@@ -521,6 +521,16 @@
     shell.context_.current_project_state.overlay.workflow.buffer_search.regex = enabled;
     shell.RefreshBufferSearch();
   }
+  // The one entry point the `Aa`/`ab`/`.*` buttons and the Alt chords share.
+  static void ToggleBufferSearchOption(WorkspaceShell& shell, BufferFindToggle toggle) {
+    shell.ToggleBufferSearchOption(toggle);
+  }
+  static bool BufferSearchMatchCase(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.buffer_search.match_case;
+  }
+  static bool BufferSearchWholeWord(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.buffer_search.whole_word;
+  }
   static void SetBufferReplaceText(WorkspaceShell& shell, std::string text) {
     shell.context_.current_project_state.overlay.workflow.buffer_search.replace_text.SetText(
         std::move(text));
@@ -538,7 +548,7 @@
     return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::BufferSearch;
   }
   static FindWidgetLayout FindWidgetControls(WorkspaceShell& shell, bool replace_mode) {
-    return ComputeFindWidgetLayout(CurrentLayout(shell).editor_surface, replace_mode);
+    return ComputeBufferFindWidgetLayout(CurrentLayout(shell).editor_surface, replace_mode);
   }
   static SDL_FRect FindWidgetRect(WorkspaceShell& shell, bool replace_mode) {
     return ComputeFindWidgetRect(CurrentLayout(shell).editor_surface, replace_mode);

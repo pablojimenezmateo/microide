@@ -713,6 +713,99 @@ void TestWorkspaceShellBufferRegexToggleViaAltR() {
 }
 
 
+// The in-file find widget gained the `Aa` and `ab` toggles the terminal find bar
+// already had. Aa applies in literal AND regex mode: regex used to be smart-case
+// while literal was always insensitive, so flipping `.*` silently changed whether
+// `Alpha` matched `alpha`.
+void TestWorkspaceShellBufferFindMatchCaseAppliesToBothModes() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "case.txt";
+  WriteFile(source, "Alpha alpha ALPHA\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should open the find widget");
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "Alpha");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3,
+         "with Aa off, a literal query matches every casing");
+
+  Expect(SendKeyDown(shell, SDLK_C, SDL_KMOD_ALT), "Alt+C should toggle match case");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCase(shell), "Alt+C should enable match case");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 1,
+         "with Aa on, a literal query matches only the exact casing");
+
+  // Regex mode reads the same toggle rather than deciding case for itself.
+  WorkspaceShellTestAccess::SetBufferSearchRegexAndRefresh(shell, true);
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 1,
+         "regex should honour the Aa toggle, not its own smart-case rule");
+  Expect(SendKeyDown(shell, SDLK_C, SDL_KMOD_ALT), "Alt+C should toggle match case back off");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3,
+         "turning Aa off should make the same regex case-insensitive");
+}
+
+void TestWorkspaceShellBufferFindWholeWordFiltersMatches() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "words.txt";
+  WriteFile(source, "cat concat cat_x cat\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should open the find widget");
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "cat");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 4,
+         "without ab, 'cat' also matches inside concat and cat_x");
+
+  Expect(SendKeyDown(shell, SDLK_W, SDL_KMOD_ALT), "Alt+W should toggle whole word");
+  Expect(WorkspaceShellTestAccess::BufferSearchWholeWord(shell),
+         "Alt+W should enable whole-word matching");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2,
+         "with ab on, only the standalone 'cat' occurrences match");
+
+  // Typing further would normally take the find-as-you-type refine fast path.
+  // Under whole word that path is unsound (a longer query's standalone hits are
+  // NOT a subset of a shorter prefix's), so it must cold-scan and still be right.
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "cat_x");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 1,
+         "extending the query under whole word must not inherit the prefix filter");
+}
+
+// Replace-all has to change exactly the matches the widget highlighted. Under Aa
+// or ab the whole-buffer fallback scan means something different from the match
+// set, so the two must not be allowed to disagree.
+void TestWorkspaceShellBufferFindReplaceAllHonoursOptions() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "replace.txt";
+  WriteFile(source, "cat concat Cat\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should open the find widget");
+  WorkspaceShellTestAccess::ToggleBufferSearchOption(
+      shell, microide::workspace::BufferFindToggle::MatchCase);
+  WorkspaceShellTestAccess::ToggleBufferSearchOption(
+      shell, microide::workspace::BufferFindToggle::WholeWord);
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "cat");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 1,
+         "Aa + ab should leave exactly the standalone lowercase 'cat'");
+
+  WorkspaceShellTestAccess::SetBufferReplaceText(shell, "dog");
+  WorkspaceShellTestAccess::ReplaceAllBufferSearchMatches(shell);
+  Expect(ActiveEditorDocText(shell) == "dog concat Cat\n",
+         "replace-all should change only what the options matched");
+}
+
 // The scope section is collapsed by default (the result list keeps its space) and
 // the "..." button expands it, exactly as VS Code's search view does.
 void TestWorkspaceShellProjectSearchScopeToggleRevealsGlobFields() {
@@ -969,6 +1062,12 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBufferRegexMultilineNewline);
   AddTest(tests, "WorkspaceShell/BufferRegexToggleViaAltR",
           TestWorkspaceShellBufferRegexToggleViaAltR);
+  AddTest(tests, "WorkspaceShell/BufferFindMatchCaseAppliesToBothModes",
+          TestWorkspaceShellBufferFindMatchCaseAppliesToBothModes);
+  AddTest(tests, "WorkspaceShell/BufferFindWholeWordFiltersMatches",
+          TestWorkspaceShellBufferFindWholeWordFiltersMatches);
+  AddTest(tests, "WorkspaceShell/BufferFindReplaceAllHonoursOptions",
+          TestWorkspaceShellBufferFindReplaceAllHonoursOptions);
   AddTest(tests, "WorkspaceShell/ProjectSearchSidebarScrollPastSelection",
           TestWorkspaceShellProjectSearchSidebarScrollPastSelection);
   AddTest(tests, "WorkspaceShell/ProjectSearchHiddenToggleReruns",

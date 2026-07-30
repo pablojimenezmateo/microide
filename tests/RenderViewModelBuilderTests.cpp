@@ -190,6 +190,7 @@ void TestBuildOverlaySurfaceFindWidgetSubmodel() {
   auto& buffer_search = context.current_project_state.overlay.workflow.buffer_search;
   buffer_search.query.SetText("needle");
   buffer_search.regex = true;
+  buffer_search.whole_word = true;
   buffer_search.matches.push_back(microide::editor::SelectionRange{});
   buffer_search.matches.push_back(microide::editor::SelectionRange{});
   buffer_search.selected_index = 1;
@@ -205,9 +206,15 @@ void TestBuildOverlaySurfaceFindWidgetSubmodel() {
 
   const auto& fw = vm.find_widget;
   Expect(fw.replace_mode, "BufferReplace builds the replace-mode widget");
-  Expect(fw.toggles[0].label == ".*" && fw.toggles[0].active,
-         "the in-file widget's single toggle should be the regex mode");
-  Expect(fw.fw.toggle_count == 1, "the in-file widget reserves exactly one toggle slot");
+  // Aa / ab / .*, the same order and first two glyphs as the terminal find bar.
+  Expect(fw.toggles[0].label == "Aa" && !fw.toggles[0].active,
+         "the in-file widget's first toggle should be match case");
+  Expect(fw.toggles[1].label == "ab" && fw.toggles[1].active,
+         "the in-file widget's second toggle should be whole word");
+  Expect(fw.toggles[2].label == ".*" && fw.toggles[2].active,
+         "the in-file widget's third toggle should be regex mode");
+  Expect(fw.fw.toggle_count == microide::workspace::kBufferFindToggleCount,
+         "the in-file widget should lay out one slot per toggle");
   Expect(fw.has_matches && fw.has_query, "widget flags should be forwarded");
   Expect(fw.count_text == "2/2", "the selected/total counter should be composed");
   Expect(fw.search_display_text == "needle",

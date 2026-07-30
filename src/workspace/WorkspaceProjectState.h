@@ -140,11 +140,20 @@ struct CommandFeedbackState {
 struct BufferSearchState {
   editor::SingleLineEditor query;
   editor::SingleLineEditor replace_text;
-  // When true, `query` is a PCRE2 regex (smart-case, per-line) and replace expands
-  // capture groups ($1, \n, \U, ...); the incremental find-as-you-type refine cache
-  // below is bypassed (regex always full-scans). Toggled by the find widget's `.*`
-  // button / Alt+R.
+  // When true, `query` is a PCRE2 regex and replace expands capture groups
+  // ($1, \n, \U, ...); the incremental find-as-you-type refine cache below is
+  // bypassed (regex always full-scans). Toggled by the find widget's `.*` button
+  // / Alt+R.
   bool regex = false;
+  // The find widget's `Aa` and `ab` toggles (Alt+C / Alt+W) — the same two the
+  // terminal find bar has, in the same order. Both apply in literal AND regex
+  // mode: before they existed, literal find was always case-insensitive while
+  // regex find was smart-case, so flipping `.*` silently changed whether `Alpha`
+  // matched `alpha`. `whole_word` filters the match set on word boundaries
+  // (util::SearchMatchStandsAlone) instead of rewriting the query, so literal and
+  // regex agree on what "whole word" means.
+  bool match_case = false;
+  bool whole_word = false;
   std::vector<editor::SelectionRange> matches;
   // Bumped whenever `matches` is reassigned (see WorkspaceShell::RefreshBufferSearch) so
   // the editor overview ruler can cheaply detect when its cached markers are stale.
@@ -164,6 +173,10 @@ struct BufferSearchState {
     const void* viewport = nullptr;
     std::uint64_t content_revision = 0;
     std::string query;
+    // The options the cached matches were taken under. Refining a set found with
+    // different options would silently keep the old semantics.
+    bool match_case = false;
+    bool whole_word = false;
   };
   IncrementalSearchCache incremental;
 };

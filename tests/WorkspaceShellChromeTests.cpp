@@ -1028,7 +1028,8 @@ void TestWorkspaceShellFindWidgetControlsNameThemselvesOnHover() {
          "the find widget fixture should open the in-file find surface");
 
   const microide::workspace::FindWidgetLayout fw = WorkspaceShellTestAccess::FindWidgetControls(shell, false);
-  Expect(fw.toggle_count >= 1, "the in-file find widget should expose its regex toggle");
+  Expect(fw.toggle_count == microide::workspace::kBufferFindToggleCount,
+         "the in-file find widget should expose all three option toggles");
 
   // The find widget is five unlabelled or two-glyph buttons; none of them said
   // what it was.
@@ -1036,7 +1037,11 @@ void TestWorkspaceShellFindWidgetControlsNameThemselvesOnHover() {
     (void)SendMouseMotion(shell, rect.x + rect.w * 0.5f, rect.y + rect.h * 0.5f, 0);
     return WorkspaceShellTestAccess::HoveredTooltipLabel(shell);
   };
-  Expect(hover(fw.toggle_buttons[0]) == "Use Regular Expression (Alt+R)",
+  Expect(hover(fw.toggle_buttons[0]) == "Match Case (Alt+C)",
+         "the Aa toggle should name itself and its chord");
+  Expect(hover(fw.toggle_buttons[1]) == "Match Whole Word (Alt+W)",
+         "the ab toggle should name itself and its chord");
+  Expect(hover(fw.toggle_buttons[2]) == "Use Regular Expression (Alt+R)",
          "the .* toggle should name itself and its chord");
   Expect(hover(fw.next_button) == "Next Match (Enter)",
          "the next-match button should name itself and its chord");

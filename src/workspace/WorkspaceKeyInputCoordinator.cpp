@@ -813,6 +813,8 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               [this](std::size_t row, bool toggle) { ActivateDebugBreakpointRow(row, toggle); },
           .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
+          .toggle_buffer_search_option =
+              [this](BufferFindToggle toggle) { ToggleBufferSearchOption(toggle); },
           .move_project_search_selection = [this](int delta) { MoveProjectSearchSelection(delta); },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .replace_all_buffer_search_matches = [this]() { ReplaceAllBufferSearchMatches(); },

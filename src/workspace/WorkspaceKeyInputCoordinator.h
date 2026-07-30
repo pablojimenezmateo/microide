@@ -111,6 +111,7 @@ class KeyInputCoordinator {
     std::function<void(std::size_t, bool)> activate_debug_breakpoint_row;
     std::function<void(int)> move_buffer_search_selection;
     std::function<void()> refresh_buffer_search;
+    std::function<void(BufferFindToggle)> toggle_buffer_search_option;
     std::function<void(int)> move_project_search_selection;
     std::function<void()> refresh_project_search;
     std::function<void()> replace_all_buffer_search_matches;

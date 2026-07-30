@@ -346,7 +346,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     // editor cursor logic so the live editor underneath behaves as usual.
     if (overlay_mode == OverlayMode::BufferSearch || overlay_mode == OverlayMode::BufferReplace) {
       const FindWidgetLayout fw =
-          ComputeFindWidgetLayout(layout.editor_surface, overlay_mode == OverlayMode::BufferReplace);
+          ComputeBufferFindWidgetLayout(layout.editor_surface, overlay_mode == OverlayMode::BufferReplace);
       if (Contains(fw.search_field, x, y) ||
           (fw.replace_mode && Contains(fw.replace_field, x, y))) {
         return CursorKind::Text;

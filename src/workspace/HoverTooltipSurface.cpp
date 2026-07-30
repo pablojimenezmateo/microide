@@ -195,19 +195,23 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
     const OverlayState& overlay = context_.current_project_state.overlay;
     if (overlay.visible && (overlay.mode == OverlayMode::BufferSearch ||
                             overlay.mode == OverlayMode::BufferReplace)) {
-      static constexpr std::array<std::string_view, 1> kEditorToggles = {
-          "Use Regular Expression (Alt+R)"};
+      static constexpr std::array<std::string_view, kBufferFindToggleCount> kEditorToggles = {
+          "Match Case (Alt+C)",
+          "Match Whole Word (Alt+W)",
+          "Use Regular Expression (Alt+R)",
+      };
       found = find_widget_hit(
-          ComputeFindWidgetLayout(layout.editor_surface,
-                                  overlay.mode == OverlayMode::BufferReplace),
+          ComputeBufferFindWidgetLayout(layout.editor_surface,
+                                        overlay.mode == OverlayMode::BufferReplace),
           kEditorToggles);
     }
   }
   if (!found && BottomPanelVisible() && terminal_find_service_.visible()) {
-    static constexpr std::array<std::string_view, 2> kTerminalToggles = {"Match Case",
-                                                                         "Match Whole Word"};
+    static constexpr std::array<std::string_view, kTerminalFindToggleCount> kTerminalToggles = {
+        "Match Case (Alt+C)", "Match Whole Word (Alt+W)"};
     found = find_widget_hit(ComputeFindWidgetLayout(BottomPanelContentRect(layout),
-                                                    /*replace_mode=*/false, /*toggle_count=*/2),
+                                                    /*replace_mode=*/false,
+                                                    kTerminalFindToggleCount),
                             kTerminalToggles);
   }
 

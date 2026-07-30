@@ -513,10 +513,24 @@ SDL_FRect ComputeSettingsOverlaySurfaceRect(const SDL_FRect& editor_area);
 // shared by the renderer, the field hit-test, and button mouse handling so they
 // cannot drift apart. Rects for controls that only exist in replace mode are
 // zero-sized when replace_mode is false.
-// Upper bound on the mode toggles a find widget can carry. The in-file widget has
-// one (`.*` regex); the terminal find bar has two (`Aa`, `ab|`). Fixed-size so the
+// Upper bound on the mode toggles a find widget can carry. Fixed-size so the
 // layout stays a trivially copyable value.
 inline constexpr std::size_t kFindWidgetMaxToggles = 3;
+
+// The in-file find widget's toggles, in paint / hit-test / tooltip order. The
+// first two match the terminal find bar's `Aa` and `ab` exactly, so the two find
+// surfaces read the same left to right.
+enum class BufferFindToggle : std::size_t {
+  MatchCase = 0,
+  WholeWord = 1,
+  Regex = 2,
+  Count = 3,
+};
+inline constexpr std::size_t kBufferFindToggleCount =
+    static_cast<std::size_t>(BufferFindToggle::Count);
+static_assert(kBufferFindToggleCount <= kFindWidgetMaxToggles);
+// Toggles on the terminal find bar: `Aa` and `ab`, the same first two.
+inline constexpr std::size_t kTerminalFindToggleCount = 2;
 
 struct FindWidgetLayout {
   SDL_FRect widget{};
@@ -540,7 +554,15 @@ struct FindWidgetLayout {
 SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area, bool replace_mode);
 FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
                                          bool replace_mode,
-                                         std::size_t toggle_count = 1);
+                                         std::size_t toggle_count);
+
+// The in-file find widget's layout. Resolve it through this rather than calling
+// ComputeFindWidgetLayout directly: paint, hit-test and the tooltip resolver all
+// have to agree on the toggle count or the buttons move out from under the mouse.
+inline FindWidgetLayout ComputeBufferFindWidgetLayout(const SDL_FRect& editor_area,
+                                                      bool replace_mode) {
+  return ComputeFindWidgetLayout(editor_area, replace_mode, kBufferFindToggleCount);
+}
 
 // Floating, icon-only debug control bar anchored top-right of the editor area
 // while a session is active. Like FindWidgetLayout, a single shared layout drives

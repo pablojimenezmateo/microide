@@ -178,7 +178,7 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
       case OverlayMode::BufferSearch: {
         // Compact find widget: fields carry no inline prefix, so the field rect
         // from the shared layout (matching the renderer) is the hit target.
-        const FindWidgetLayout fw = ComputeFindWidgetLayout(layout.editor_surface, false);
+        const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(layout.editor_surface, false);
         if (Contains(fw.search_field, x, y)) {
           return FilledHit(TextInputSurface::BufferSearch, fw.search_field, "",
                            &state.overlay.workflow.buffer_search.query);
@@ -186,7 +186,7 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
         break;
       }
       case OverlayMode::BufferReplace: {
-        const FindWidgetLayout fw = ComputeFindWidgetLayout(layout.editor_surface, true);
+        const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(layout.editor_surface, true);
         if (Contains(fw.search_field, x, y)) {
           return FilledHit(TextInputSurface::BufferReplaceSearch, fw.search_field, "",
                            &state.overlay.workflow.buffer_search.query);
@@ -262,7 +262,7 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
   if (terminal_find_service_.visible() && BottomPanelShowsTerminal()) {
     const FindWidgetLayout fw =
         ComputeFindWidgetLayout(BottomPanelContentRect(layout), /*replace_mode=*/false,
-                                /*toggle_count=*/2);
+                                kTerminalFindToggleCount);
     if (Contains(fw.search_field, x, y)) {
       return FilledHit(TextInputSurface::TerminalFind, fw.search_field, "",
                        &terminal_find_service_.query());
@@ -463,19 +463,19 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
           break;
         case TextInputSurface::BufferSearch:
           if (proj.overlay.visible) {
-            hit = FilledHit(surface, ComputeFindWidgetLayout(layout.editor_surface, false).search_field,
+            hit = FilledHit(surface, ComputeBufferFindWidgetLayout(layout.editor_surface, false).search_field,
                             "", &proj.overlay.workflow.buffer_search.query);
           }
           break;
         case TextInputSurface::BufferReplaceSearch:
           if (proj.overlay.visible) {
-            hit = FilledHit(surface, ComputeFindWidgetLayout(layout.editor_surface, true).search_field,
+            hit = FilledHit(surface, ComputeBufferFindWidgetLayout(layout.editor_surface, true).search_field,
                             "", &proj.overlay.workflow.buffer_search.query);
           }
           break;
         case TextInputSurface::BufferReplaceReplace:
           if (proj.overlay.visible) {
-            hit = FilledHit(surface, ComputeFindWidgetLayout(layout.editor_surface, true).replace_field,
+            hit = FilledHit(surface, ComputeBufferFindWidgetLayout(layout.editor_surface, true).replace_field,
                             "", &proj.overlay.workflow.buffer_search.replace_text);
           }
           break;

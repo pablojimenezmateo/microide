@@ -187,6 +187,15 @@ bool Utf8QueryHasCaseVariation(std::string_view text);
 // Used by word motion and identifier-range extraction so multi-byte identifiers
 // are not split mid-scalar.
 bool Utf8IsIdentifierCodepoint(char32_t cp);
+// Word constituent for the whole-word search toggle: ASCII alphanumerics, `_`,
+// and every non-ASCII byte (so a hit inside a multi-byte word is not reported as
+// standing alone). Byte-oriented on purpose — decoding the boundary codepoint
+// buys nothing for the callers, which only ask "is this a word character".
+bool IsSearchWordByte(char c);
+// True when the span [start, end) of `text` is bounded by non-word bytes on both
+// sides — the whole-word predicate shared by the terminal find bar and the
+// in-file find widget so their `ab` toggles mean the same thing.
+bool SearchMatchStandsAlone(std::string_view text, std::size_t start, std::size_t end);
 // True when `haystack` contains `needle` as a case-insensitive (ASCII) substring.
 // An empty needle matches. Allocation-free.
 bool ContainsCaseInsensitiveAscii(std::string_view haystack, std::string_view needle);

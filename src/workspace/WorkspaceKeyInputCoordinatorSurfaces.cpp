@@ -49,23 +49,30 @@ void KeyInputCoordinator::MoveOverlayListSelection(std::size_t& selected_index,
   }
 }
 
-// Match navigation and the Alt+R regex toggle behave identically in the find
-// widget and the find-and-replace widget. They used to be two copies of the same
-// switch arms, so a fix to one silently left the other behind. Anything not
-// handled here falls through to the focused single-line field, which is also the
-// correct behavior for a plain `r`.
+// Match navigation and the option chords behave identically in the find widget
+// and the find-and-replace widget. They used to be two copies of the same switch
+// arms, so a fix to one silently left the other behind. Anything not handled here
+// falls through to the focused single-line field, which is also the correct
+// behavior for a plain `c`/`w`/`r`.
 bool KeyInputCoordinator::HandleSharedBufferSearchKey(const SDL_KeyboardEvent& event,
                                                       SDL_Keymod modifiers) {
   if (const auto delta = ListNavigationDelta(event.key); delta.has_value()) {
     operations_.move_buffer_search_selection(*delta);
     return true;
   }
-  // Alt+R toggles regex mode (VSCode's find-widget shortcut); a plain `r`
-  // still types into the focused field via the default text-input path.
-  if (event.key == SDLK_R && (modifiers & SDL_KMOD_ALT) != 0) {
-    state_.overlay.workflow.buffer_search.regex = !state_.overlay.workflow.buffer_search.regex;
-    operations_.refresh_buffer_search();
-    return true;
+  // Alt+C / Alt+W / Alt+R toggle match case, whole word and regex — VSCode's
+  // find-widget chords, one per button, in button order. A plain letter still
+  // types into the focused field via the default text-input path.
+  if ((modifiers & SDL_KMOD_ALT) != 0) {
+    const std::optional<BufferFindToggle> toggle =
+        event.key == SDLK_C   ? std::optional(BufferFindToggle::MatchCase)
+        : event.key == SDLK_W ? std::optional(BufferFindToggle::WholeWord)
+        : event.key == SDLK_R ? std::optional(BufferFindToggle::Regex)
+                              : std::nullopt;
+    if (toggle.has_value()) {
+      operations_.toggle_buffer_search_option(*toggle);
+      return true;
+    }
   }
   return operations_.text_input_handle_single_line_key_down(event, modifiers);
 }
