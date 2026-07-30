@@ -298,64 +298,6 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   util::SetSdlWakeRegistrationDegraded(any_registration_failed);
 }
 
-void WorkspaceShell::DestroyLifecycleCursors() {
-  if (SDL_Cursor* default_cursor = SDL_GetDefaultCursor(); default_cursor != nullptr) {
-    SDL_SetCursor(default_cursor);
-  }
-
-  if (text_cursor_ != nullptr) {
-    SDL_DestroyCursor(text_cursor_);
-    text_cursor_ = nullptr;
-  }
-  if (pointer_cursor_ != nullptr) {
-    SDL_DestroyCursor(pointer_cursor_);
-    pointer_cursor_ = nullptr;
-  }
-  if (ew_resize_cursor_ != nullptr) {
-    SDL_DestroyCursor(ew_resize_cursor_);
-    ew_resize_cursor_ = nullptr;
-  }
-  if (ns_resize_cursor_ != nullptr) {
-    SDL_DestroyCursor(ns_resize_cursor_);
-    ns_resize_cursor_ = nullptr;
-  }
-  if (n_resize_cursor_ != nullptr) {
-    SDL_DestroyCursor(n_resize_cursor_);
-    n_resize_cursor_ = nullptr;
-  }
-  if (e_resize_cursor_ != nullptr) {
-    SDL_DestroyCursor(e_resize_cursor_);
-    e_resize_cursor_ = nullptr;
-  }
-  if (s_resize_cursor_ != nullptr) {
-    SDL_DestroyCursor(s_resize_cursor_);
-    s_resize_cursor_ = nullptr;
-  }
-  if (w_resize_cursor_ != nullptr) {
-    SDL_DestroyCursor(w_resize_cursor_);
-    w_resize_cursor_ = nullptr;
-  }
-  if (ne_resize_cursor_ != nullptr) {
-    SDL_DestroyCursor(ne_resize_cursor_);
-    ne_resize_cursor_ = nullptr;
-  }
-  if (se_resize_cursor_ != nullptr) {
-    SDL_DestroyCursor(se_resize_cursor_);
-    se_resize_cursor_ = nullptr;
-  }
-  if (sw_resize_cursor_ != nullptr) {
-    SDL_DestroyCursor(sw_resize_cursor_);
-    sw_resize_cursor_ = nullptr;
-  }
-  if (nw_resize_cursor_ != nullptr) {
-    SDL_DestroyCursor(nw_resize_cursor_);
-    nw_resize_cursor_ = nullptr;
-  }
-
-  cursor_kind_ = CursorKind::Default;
-  last_mouse_position_valid_ = false;
-}
-
 LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
   return LifecycleCoordinator(
       context_,
@@ -405,9 +347,6 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
               [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
           .stop_control_channel = [this]() { control_channel_service_.Stop(); },
-          .clear_terminal_tabs =
-              [this]() { context_.current_project_state.terminal_tabs.clear(); },
-          .destroy_cursors = [this]() { DestroyLifecycleCursors(); },
       });
 }
 

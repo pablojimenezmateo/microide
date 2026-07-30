@@ -47,8 +47,6 @@ class ChromeMouseCoordinator {
     std::function<std::optional<SDL_FRect>(const SDL_FRect&, MenuId)> compute_popup_menu_rect;
     std::function<const MenuSpec*(MenuId)> find_menu_spec;
     std::function<std::span<const MenuItemSpec>(MenuId)> menu_items;
-    std::function<void(MenuId, const SDL_FRect&)> open_submenu;
-    std::function<void()> close_submenu;
     // The find widget is the one overlay whose wheel/buttons still move a selection
     // (they step through matches); every list overlay scrolls detached instead, so no
     // per-mode "move selection" hook is needed here.

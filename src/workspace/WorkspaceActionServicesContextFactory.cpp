@@ -696,10 +696,6 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](std::string_view text) {
                 return MakeTextInputCoordinator().InsertTextAtActiveSurface(text);
               },
-          .has_selection_at_active_single_line_text_surface =
-              [this]() {
-                return MakeTextInputCoordinator().HasSelectionAtActiveSingleLineSurface();
-              },
           .has_active_single_line_text_surface =
               [this]() {
                 return MakeTextInputCoordinator().HasActiveSingleLineTextSurface();
@@ -778,7 +774,6 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](NotificationService::Tone tone, std::string message) {
                 Notify(tone, std::move(message));
               },
-          .normalize_sidebar_view_selection = [this]() { NormalizeSidebarViewSelection(); },
           .apply_ui_scale =
               [this](float scale) { MakePersistenceCoordinator().ApplyUiScale(scale, true, true); },
           .mark_layout_dirty = [this]() { MarkLayoutDirty(); },
@@ -792,7 +787,6 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .request_quit = [this]() { RequestQuit(); },
           .start_debugging = [this]() { return StartDebuggingWithDefaultConfig(); },
           .stop_debugging = [this]() { StopDebugging(); },
-          .has_debug_adapters = [this]() { return CurrentDapManager().HasRegisteredAdapters(); },
           .debug_session_active = [this]() { return IsDebugSessionActive(); },
           .debug_session_stopped = [this]() { return IsDebugSessionStopped(); },
           .debug_continue = [this]() { DebugContinue(); },

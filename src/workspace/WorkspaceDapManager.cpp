@@ -57,7 +57,6 @@ bool DapManager::HasAdapter(const std::string& type) const {
   return adapters_.find(type) != adapters_.end();
 }
 
-bool DapManager::HasRegisteredAdapters() const { return !adapters_.empty(); }
 
 std::vector<std::string> DapManager::AdapterTypes() const {
   std::vector<std::string> types;

@@ -29,8 +29,9 @@ class LifecycleCoordinator {
     std::function<void()> save_workspace_session;
     std::function<void()> shutdown_project_search_runtime;
     std::function<void()> stop_control_channel;
-    std::function<void()> clear_terminal_tabs;
-    std::function<void()> destroy_cursors;
+    // There is deliberately no clear_terminal_tabs / destroy_cursors here: see
+    // the note at the end of Shutdown(). Both existed as wired-but-never-called
+    // fields for long enough to read as steps the coordinator performs.
   };
 
   LifecycleCoordinator(WorkspaceContext& context, bool& quit_requested, Operations operations);

@@ -248,11 +248,6 @@ MenuCoordinator WorkspaceShell::MakeMenuCoordinator() {
           .menu_items = [this](MenuId id) { return MenuItems(id); },
           .is_menu_item_enabled =
               [this](const MenuItemSpec& item) { return IsMenuItemEnabled(item); },
-          .menu_popup_rect =
-              [this](MenuId id) -> std::optional<SDL_FRect> {
-                const auto layout = CurrentWorkspaceLayout();
-                return layout.has_value() ? ComputePopupMenuRect(layout->menu_bar, id) : std::nullopt;
-              },
           .menu_popup_item_rect =
               [this](MenuId id, std::size_t item_index) -> std::optional<SDL_FRect> {
                 const auto layout = CurrentWorkspaceLayout();

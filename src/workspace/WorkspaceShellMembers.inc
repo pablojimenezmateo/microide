@@ -649,7 +649,6 @@
   TerminalPanelService MakeTerminalPanelService();
   void ResetLifecycleStartupState();
   void RegisterLifecycleWakeEvents();
-  void DestroyLifecycleCursors();
   void ConsumeHighlightPrefetchResults();  // installs worker prefetch results (main thread)
   void RebindProjectState(ProjectWorkspaceState& state);
   void ResetCurrentProjectStateStorage();

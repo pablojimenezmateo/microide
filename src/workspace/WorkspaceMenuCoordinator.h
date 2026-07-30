@@ -17,7 +17,6 @@ class MenuCoordinator {
     std::function<void()> request_chrome_redraw;
     std::function<std::span<const MenuItemSpec>(MenuId)> menu_items;
     std::function<bool(const MenuItemSpec&)> is_menu_item_enabled;
-    std::function<std::optional<SDL_FRect>(MenuId)> menu_popup_rect;
     std::function<std::optional<SDL_FRect>(MenuId, std::size_t)> menu_popup_item_rect;
     std::function<bool(MenuId, std::size_t)> execute_custom_menu_item;
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;

@@ -626,11 +626,6 @@ ChromeMouseCoordinator WorkspaceShell::MakeChromeMouseCoordinator() {
               },
           .find_menu_spec = [](MenuId id) { return WorkspaceShell::FindMenuSpec(id); },
           .menu_items = [this](MenuId id) { return MenuItems(id); },
-          .open_submenu =
-              [this](MenuId id, const SDL_FRect& rect) {
-                MakeMenuCoordinator().OpenSubmenu(id, rect);
-              },
-          .close_submenu = [this]() { MakeMenuCoordinator().CloseSubmenu(); },
           .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
           .replace_current_buffer_search_match = [this]() { ReplaceCurrentBufferSearchMatch(); },
           .replace_all_buffer_search_matches = [this]() { ReplaceAllBufferSearchMatches(); },

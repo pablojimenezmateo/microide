@@ -170,7 +170,6 @@ class WorkspaceActionContext {
     std::function<void()> request_focused_editor_redraw;
     std::function<editor::TextViewport*()> active_editable_viewport;
     std::function<bool(std::string_view)> insert_text_into_active_text_surface;
-    std::function<bool()> has_selection_at_active_single_line_text_surface;
     std::function<bool()> has_active_single_line_text_surface;
     std::function<std::string()> selected_text_at_active_single_line_text_surface;
     std::function<bool()> select_all_at_active_single_line_text_surface;
@@ -209,7 +208,6 @@ class WorkspaceActionContext {
     std::function<bool(std::string_view, std::string)> set_setting_value;
     // Post a transient host notification toast (and schedule a redraw).
     std::function<void(NotificationService::Tone, std::string)> notify;
-    std::function<void()> normalize_sidebar_view_selection;
     std::function<void(float)> apply_ui_scale;
     std::function<void()> mark_layout_dirty;
     std::function<void()> request_window_redraw;
@@ -227,7 +225,6 @@ class WorkspaceActionContext {
     // on success). has_debug_adapters reports whether any adapter is registered.
     std::function<std::string()> start_debugging;
     std::function<void()> stop_debugging;
-    std::function<bool()> has_debug_adapters;
     std::function<bool()> debug_session_active;
     // True when the active session is paused (`stopped`); gates continue/step
     // (require stopped) vs. pause (requires running). Execution-control verbs

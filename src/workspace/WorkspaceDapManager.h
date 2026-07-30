@@ -66,7 +66,6 @@ class DapManager {
   void RetainAdaptersIn(const std::unordered_set<std::string>& types);
 
   bool HasAdapter(const std::string& type) const;
-  bool HasRegisteredAdapters() const;
   // Registered adapter type ids (unordered). Used to build a default launch
   // config until per-project launch-config selection lands in a later phase.
   std::vector<std::string> AdapterTypes() const;
