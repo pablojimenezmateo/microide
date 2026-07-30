@@ -823,6 +823,18 @@
   static void SetTransientDragTargetBottomPanelScrollbar(WorkspaceShell& shell) {
     shell.context_.interaction_state.drag_target = WorkspaceShell::DragTarget::BottomPanelScrollbar;
   }
+  static void SetTransientDragTarget(WorkspaceShell& shell, DragTarget target) {
+    shell.context_.interaction_state.drag_target = target;
+  }
+  static float TransientDragScrollbarOffset(const WorkspaceShell& shell) {
+    return shell.context_.interaction_state.drag_scrollbar_offset;
+  }
+  static void SetTransientDragScrollbarOffset(WorkspaceShell& shell, float offset) {
+    shell.context_.interaction_state.drag_scrollbar_offset = offset;
+  }
+  static bool HandleMouseButtonUp(WorkspaceShell& shell, const SDL_Event& event) {
+    return shell.HandleMouseButtonUp(event);
+  }
   static bool TransientDragTargetIsNone(const WorkspaceShell& shell) {
     return shell.context_.interaction_state.drag_target == WorkspaceShell::DragTarget::None;
   }

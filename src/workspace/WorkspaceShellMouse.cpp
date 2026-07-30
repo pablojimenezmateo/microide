@@ -591,9 +591,15 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   if (event.button.button != SDL_BUTTON_LEFT) {
     return false;
   }
+  // All three Settings-overlay scrollbars release the same way. The picker bar
+  // used to be missing here and fell through to the generic drag-release below,
+  // which repaints the whole window — the two named bars got the targeted overlay
+  // repaint. ClearDragState (rather than assigning drag_target) also drops the
+  // grab offset, which is what every other scrollbar release does.
   if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar ||
-      context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar) {
-    context_.interaction_state.drag_target = DragTarget::None;
+      context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar ||
+      context_.interaction_state.drag_target == DragTarget::SettingsPickerScrollbar) {
+    ClearDragState();
     EnsureRedraw([this]() { RequestOverlayRedraw(); });
     return true;
   }

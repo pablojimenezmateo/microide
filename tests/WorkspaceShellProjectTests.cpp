@@ -837,6 +837,41 @@ void TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState() {
          "switching forward should restore the second project's sidebar width");
 }
 
+// Regression: the Settings overlay has three scrollbars — the row list, the
+// category rail, and the font-picker dropdown. The release path named only the
+// first two, so the picker fell through to the generic drag-release, which
+// repaints the whole window instead of just the overlay. Pin that all three
+// release identically: consumed, drag cleared, grab offset dropped.
+void TestWorkspaceShellSettingsScrollbarsReleaseAlike() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "settings-scrollbar-project";
+  WriteFile(root / "README.md", "hello\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the project should open");
+
+  const std::array<std::pair<microide::workspace::DragTarget, const char*>, 3> bars = {{
+      {microide::workspace::DragTarget::SettingsScrollbar, "settings row list"},
+      {microide::workspace::DragTarget::SettingsCategoryScrollbar, "settings category rail"},
+      {microide::workspace::DragTarget::SettingsPickerScrollbar, "settings picker dropdown"},
+  }};
+  for (const auto& [target, label] : bars) {
+    WorkspaceShellTestAccess::SetTransientDragTarget(shell, target);
+    WorkspaceShellTestAccess::SetTransientDragScrollbarOffset(shell, 17.5f);
+
+    SDL_Event release{};
+    release.type = SDL_EVENT_MOUSE_BUTTON_UP;
+    release.button.button = SDL_BUTTON_LEFT;
+    Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, release),
+           std::string("releasing the ") + label + " scrollbar should be consumed");
+    Expect(WorkspaceShellTestAccess::TransientDragTargetIsNone(shell),
+           std::string("releasing the ") + label + " scrollbar should clear the drag target");
+    Expect(WorkspaceShellTestAccess::TransientDragScrollbarOffset(shell) == 0.0f,
+           std::string("releasing the ") + label + " scrollbar should drop the grab offset");
+  }
+}
+
 void TestWorkspaceShellProjectSwitchClearsTransientInteractionState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
@@ -4748,6 +4783,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState);
   AddTest(tests, "WorkspaceShell/ProjectSwitchClearsTransientInteractionState",
           TestWorkspaceShellProjectSwitchClearsTransientInteractionState);
+  AddTest(tests, "WorkspaceShell/SettingsScrollbarsReleaseAlike",
+          TestWorkspaceShellSettingsScrollbarsReleaseAlike);
   AddTest(tests, "WorkspaceShell/ProjectOpenShowsDefaultTerminalPanel",
           TestWorkspaceShellProjectOpenShowsDefaultTerminalPanel);
   AddTest(tests, "WorkspaceShell/TermCommandRequestsBottomPanelRedraw",
