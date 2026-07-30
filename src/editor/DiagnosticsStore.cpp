@@ -1,5 +1,6 @@
 #include "editor/DiagnosticsStore.h"
 
+#include "editor/OwnerPathIndexOps.h"
 #include "editor/PathKey.h"
 #include "util/PathMatch.h"
 
@@ -358,139 +359,32 @@ bool DiagnosticsStore::TransformOwnerFile(
 }
 
 bool DiagnosticsStore::ClearOwner(std::string_view owner) {
-  const auto owner_it = diagnostics_by_owner_.find(owner);
-  if (owner_it == diagnostics_by_owner_.end()) {
-    return false;
-  }
-
-  std::vector<std::string> path_keys;
-  path_keys.reserve(owner_it->second.size());
-  for (const auto& entry : owner_it->second) {
-    path_keys.push_back(entry.first);
-  }
-  diagnostics_by_owner_.erase(owner_it);
-  for (const auto& path_key : path_keys) {
-    RebuildPath(path_key);
-  }
-  return !path_keys.empty();
+  return ClearOwnerEntries(diagnostics_by_owner_, owner,
+                           [this](const std::string& path_key) { RebuildPath(path_key); });
 }
 
 bool DiagnosticsStore::ClearOwnerFile(std::string_view owner, const std::filesystem::path& path) {
-  const std::string owner_key(owner);
-  const std::string path_key = PathKey(path);
-  if (owner_key.empty() || path_key.empty()) {
-    return false;
-  }
-
-  const auto owner_it = diagnostics_by_owner_.find(owner_key);
-  if (owner_it == diagnostics_by_owner_.end()) {
-    return false;
-  }
-  if (owner_it->second.erase(path_key) == 0) {
-    return false;
-  }
-  if (owner_it->second.empty()) {
-    diagnostics_by_owner_.erase(owner_it);
-  }
-  RebuildPath(path_key);
-  return true;
+  return ClearOwnerFileEntry(diagnostics_by_owner_, std::string(owner), PathKey(path),
+                             [this](const std::string& path_key) { RebuildPath(path_key); });
 }
 
 bool DiagnosticsStore::RetargetPathPrefix(const std::filesystem::path& old_prefix,
                                           const std::filesystem::path& new_prefix) {
-  const std::filesystem::path normalized_old = old_prefix.lexically_normal();
-  const std::filesystem::path normalized_new = new_prefix.lexically_normal();
-  if (normalized_old.empty() || normalized_new.empty() || normalized_old == normalized_new) {
-    return false;
-  }
-
-  bool changed = false;
-  std::vector<std::string> affected_path_keys;
-  for (auto owner_it = diagnostics_by_owner_.begin(); owner_it != diagnostics_by_owner_.end();) {
-    auto& owner_entries = owner_it->second;
-    std::vector<std::string> old_keys;
-    std::vector<std::pair<std::string, FileDiagnostics>> replacements;
-
-    for (const auto& [path_key, file_diagnostics] : owner_entries) {
-      if (!PathEqualsOrWithin(file_diagnostics.path, normalized_old)) {
-        continue;
-      }
-
-      FileDiagnostics moved = file_diagnostics;
-      moved.path = ReplacePathPrefix(file_diagnostics.path, normalized_old, normalized_new);
-      for (auto& diagnostic : moved.diagnostics) {
-        diagnostic.path = ReplacePathPrefix(diagnostic.path, normalized_old, normalized_new);
-      }
-      const std::string moved_key = PathKey(moved.path);
-      if (moved_key.empty()) {
-        continue;
-      }
-
-      old_keys.push_back(path_key);
-      replacements.push_back({moved_key, std::move(moved)});
-      affected_path_keys.push_back(path_key);
-      affected_path_keys.push_back(moved_key);
-      changed = true;
-    }
-
-    for (const auto& old_key : old_keys) {
-      owner_entries.erase(old_key);
-    }
-    for (auto& [new_key, moved] : replacements) {
-      owner_entries[new_key] = std::move(moved);
-    }
-
-    if (owner_entries.empty()) {
-      owner_it = diagnostics_by_owner_.erase(owner_it);
-    } else {
-      ++owner_it;
-    }
-  }
-
-  std::sort(affected_path_keys.begin(), affected_path_keys.end());
-  affected_path_keys.erase(std::unique(affected_path_keys.begin(), affected_path_keys.end()),
-                           affected_path_keys.end());
-  for (const auto& path_key : affected_path_keys) {
-    RebuildPath(path_key);
-  }
-  return changed;
+  return RetargetEntriesUnderPrefix(
+      diagnostics_by_owner_, old_prefix, new_prefix,
+      [](FileDiagnostics& moved, const std::filesystem::path& from,
+         const std::filesystem::path& to) {
+        // Each diagnostic carries its own copy of the path.
+        for (auto& diagnostic : moved.diagnostics) {
+          diagnostic.path = util::ReplacePathPrefix(diagnostic.path, from, to);
+        }
+      },
+      [this](const std::string& path_key) { RebuildPath(path_key); });
 }
 
 bool DiagnosticsStore::ClearPathPrefix(const std::filesystem::path& path_prefix) {
-  const std::filesystem::path normalized_prefix = path_prefix.lexically_normal();
-  if (normalized_prefix.empty()) {
-    return false;
-  }
-
-  bool changed = false;
-  std::vector<std::string> affected_path_keys;
-  for (auto owner_it = diagnostics_by_owner_.begin(); owner_it != diagnostics_by_owner_.end();) {
-    auto& owner_entries = owner_it->second;
-    for (auto path_it = owner_entries.begin(); path_it != owner_entries.end();) {
-      if (!PathEqualsOrWithin(path_it->second.path, normalized_prefix)) {
-        ++path_it;
-        continue;
-      }
-
-      affected_path_keys.push_back(path_it->first);
-      path_it = owner_entries.erase(path_it);
-      changed = true;
-    }
-
-    if (owner_entries.empty()) {
-      owner_it = diagnostics_by_owner_.erase(owner_it);
-    } else {
-      ++owner_it;
-    }
-  }
-
-  std::sort(affected_path_keys.begin(), affected_path_keys.end());
-  affected_path_keys.erase(std::unique(affected_path_keys.begin(), affected_path_keys.end()),
-                           affected_path_keys.end());
-  for (const auto& path_key : affected_path_keys) {
-    RebuildPath(path_key);
-  }
-  return changed;
+  return ClearEntriesUnderPrefix(diagnostics_by_owner_, path_prefix,
+                                 [this](const std::string& path_key) { RebuildPath(path_key); });
 }
 
 void DiagnosticsStore::Clear() {

@@ -1,5 +1,6 @@
 #include "editor/PluginDecorationStore.h"
 
+#include "editor/OwnerPathIndexOps.h"
 #include "editor/PathKey.h"
 #include "util/PathMatch.h"
 
@@ -264,130 +265,29 @@ bool PluginDecorationStore::ReplaceForOwnerFile(std::string_view owner,
 }
 
 bool PluginDecorationStore::ClearOwner(std::string_view owner) {
-  const auto owner_it = by_owner_.find(owner);
-  if (owner_it == by_owner_.end()) {
-    return false;
-  }
-  std::vector<std::string> path_keys;
-  path_keys.reserve(owner_it->second.size());
-  for (const auto& entry : owner_it->second) {
-    path_keys.push_back(entry.first);
-  }
-  by_owner_.erase(owner_it);
-  for (const auto& path_key : path_keys) {
-    RebuildPath(path_key);
-  }
-  return !path_keys.empty();
+  return ClearOwnerEntries(by_owner_, owner,
+                           [this](const std::string& path_key) { RebuildPath(path_key); });
 }
 
 bool PluginDecorationStore::ClearOwnerFile(std::string_view owner,
                                            const std::filesystem::path& path) {
-  const std::string owner_key(owner);
-  const std::string path_key = PathKey(path);
-  if (owner_key.empty() || path_key.empty()) {
-    return false;
-  }
-  const auto owner_it = by_owner_.find(owner_key);
-  if (owner_it == by_owner_.end()) {
-    return false;
-  }
-  if (owner_it->second.erase(path_key) == 0) {
-    return false;
-  }
-  if (owner_it->second.empty()) {
-    by_owner_.erase(owner_it);
-  }
-  RebuildPath(path_key);
-  return true;
+  return ClearOwnerFileEntry(by_owner_, std::string(owner), PathKey(path),
+                             [this](const std::string& path_key) { RebuildPath(path_key); });
 }
 
 bool PluginDecorationStore::RetargetPathPrefix(const std::filesystem::path& old_prefix,
                                                const std::filesystem::path& new_prefix) {
-  const std::filesystem::path normalized_old = old_prefix.lexically_normal();
-  const std::filesystem::path normalized_new = new_prefix.lexically_normal();
-  if (normalized_old.empty() || normalized_new.empty() || normalized_old == normalized_new) {
-    return false;
-  }
-
-  bool changed = false;
-  std::vector<std::string> affected_path_keys;
-  for (auto owner_it = by_owner_.begin(); owner_it != by_owner_.end();) {
-    auto& owner_entries = owner_it->second;
-    std::vector<std::string> old_keys;
-    std::vector<std::pair<std::string, OwnerFileDecorations>> replacements;
-
-    for (const auto& [path_key, file] : owner_entries) {
-      if (!PathEqualsOrWithin(file.path, normalized_old)) {
-        continue;
-      }
-      OwnerFileDecorations moved = file;
-      moved.path = ReplacePathPrefix(file.path, normalized_old, normalized_new);
-      const std::string moved_key = PathKey(moved.path);
-      if (moved_key.empty()) {
-        continue;
-      }
-      old_keys.push_back(path_key);
-      replacements.push_back({moved_key, std::move(moved)});
-      affected_path_keys.push_back(path_key);
-      affected_path_keys.push_back(moved_key);
-      changed = true;
-    }
-
-    for (const auto& old_key : old_keys) {
-      owner_entries.erase(old_key);
-    }
-    for (auto& [new_key, moved] : replacements) {
-      owner_entries[new_key] = std::move(moved);
-    }
-    if (owner_entries.empty()) {
-      owner_it = by_owner_.erase(owner_it);
-    } else {
-      ++owner_it;
-    }
-  }
-
-  std::sort(affected_path_keys.begin(), affected_path_keys.end());
-  affected_path_keys.erase(std::unique(affected_path_keys.begin(), affected_path_keys.end()),
-                           affected_path_keys.end());
-  for (const auto& path_key : affected_path_keys) {
-    RebuildPath(path_key);
-  }
-  return changed;
+  return RetargetEntriesUnderPrefix(
+      by_owner_, old_prefix, new_prefix,
+      // Decorations carry no per-item path, so the entry's own path is all there
+      // is to fix up and RetargetEntriesUnderPrefix has already done it.
+      [](OwnerFileDecorations&, const std::filesystem::path&, const std::filesystem::path&) {},
+      [this](const std::string& path_key) { RebuildPath(path_key); });
 }
 
 bool PluginDecorationStore::ClearPathPrefix(const std::filesystem::path& path_prefix) {
-  const std::filesystem::path normalized_prefix = path_prefix.lexically_normal();
-  if (normalized_prefix.empty()) {
-    return false;
-  }
-
-  bool changed = false;
-  std::vector<std::string> affected_path_keys;
-  for (auto owner_it = by_owner_.begin(); owner_it != by_owner_.end();) {
-    auto& owner_entries = owner_it->second;
-    for (auto path_it = owner_entries.begin(); path_it != owner_entries.end();) {
-      if (!PathEqualsOrWithin(path_it->second.path, normalized_prefix)) {
-        ++path_it;
-        continue;
-      }
-      affected_path_keys.push_back(path_it->first);
-      path_it = owner_entries.erase(path_it);
-      changed = true;
-    }
-    if (owner_entries.empty()) {
-      owner_it = by_owner_.erase(owner_it);
-    } else {
-      ++owner_it;
-    }
-  }
-
-  std::sort(affected_path_keys.begin(), affected_path_keys.end());
-  affected_path_keys.erase(std::unique(affected_path_keys.begin(), affected_path_keys.end()),
-                           affected_path_keys.end());
-  for (const auto& path_key : affected_path_keys) {
-    RebuildPath(path_key);
-  }
-  return changed;
+  return ClearEntriesUnderPrefix(by_owner_, path_prefix,
+                                 [this](const std::string& path_key) { RebuildPath(path_key); });
 }
 
 void PluginDecorationStore::Clear() {
