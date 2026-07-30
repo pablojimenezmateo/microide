@@ -72,6 +72,45 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
+### Consumer-side reachability sweep — coordinator hooks (TD-2026-07-30-*)
+
+The third question in this family, after "is this symbol produced?" (2026-07-26)
+and "does anything populate this store?" (2026-07-27): *does anything call this
+hook?* A coordinator's `Operations` struct is how it declares what it needs the
+shell to do, and the shell fills every field with a working lambda — so a field
+nobody invokes compiles, wires, reads as part of the contract, and does nothing.
+
+- **[RESOLVED 2026-07-30] 35 wired-but-never-called `Operations` fields removed,
+  plus the lint that stops them returning.** `PanelMouseCoordinator` kept ten
+  debug-pane callbacks after that work moved to `DebugPaneMouseCoordinator`;
+  `WorkspaceKeyInputCoordinator` kept nineteen that lost to
+  `dispatch_git_sidebar_action`, to direct `AssistService` calls, or to a live
+  copy on another struct; the remaining six were name-collision cases. Two
+  functions existed only to be bound into a dead field and went with them:
+  `WorkspaceShell::DestroyLifecycleCursors` (58 lines of SDL cursor teardown
+  that never ran) and `DapManager::HasRegisteredAdapters`.
+  `LifecycleCoordinator::Shutdown` already carried a comment saying it
+  deliberately skips terminal teardown and cursor cleanup because the process
+  leaves via `quick_exit()` — its `clear_terminal_tabs` / `destroy_cursors`
+  fields said the opposite, so the fields went and the comment stayed.
+  New hard lint `CheckCoordinatorOperationsAreCalled` scopes reads by **include
+  graph, not by name**: six of the 35 were invisible to a name-only search
+  because another struct has a field spelled the same and that one is called
+  (`activate_tab`, `reset_caret_blink`, `read_primary_selection_text`,
+  `active_editor_tab`, `invalidate_editor_blame_path`, `debug_supports_reverse`).
+  Negative + positive controls in `tests/architecture/ArchitectureRuleFixtures.cpp`
+  include that collision case explicitly.
+
+- **[OPEN] TD-2026-07-30-001 — the project-search regex / case / hidden-file
+  toggles are mouse-only.** Found while removing the dead
+  `toggle_project_search_pattern_mode`, `cycle_project_search_case_mode` and
+  `toggle_project_search_hidden_files` hooks from the key coordinator: the
+  behavior is live, but only from `WorkspaceShellSidebarMouse`. VSCode binds
+  Alt+R / Alt+C / Alt+H (and Alt+W for whole-word) inside the search box. Adding
+  them is a new keybinding, not a dead wire, so it was deliberately kept out of
+  the removal commit. Files: `src/workspace/WorkspaceShellProjectSearch.cpp`,
+  `src/workspace/WorkspaceKeybindingRegistry.cpp`.
+
 ### Producer-side reachability sweep (TD-2026-07-27-*)
 
 A follow-on to the 2026-07-26 sweep, asking the mirror-image question: not "is

@@ -81,6 +81,36 @@ std::optional<editor::EditorViewMetrics> FastEditorPointerMetricsFromViewportSta
   return metrics;
 }
 
+// Resolve the pointer metrics for a viewport, preferring the allocation-free
+// fast path and falling back to the full layout bundle when the viewport's
+// cached row/column counts do not agree with a recomputed layout (a resize or
+// a folding change between frames).
+//
+// The drag and the selection-motion handlers each spelled this out: the same
+// fast call with the same `editor.line_numbers` default-true lookup, the same
+// has_value test, the same fallback that builds the bundle and discards its
+// sticky scratch. Only the trace label differed, so it is a parameter.
+editor::EditorViewMetrics ResolveEditorPointerMetrics(
+    editor::TextViewport& viewport,
+    const SDL_FRect& editor_rect,
+    render::TextRenderer& text_renderer,
+    const std::function<std::optional<std::string>(std::string_view)>& get_setting_value,
+    const std::function<editor::FoldingModel*()>& ensure_active_folding_model_fresh,
+    const char* fallback_trace_label) {
+  if (const auto fast_metrics = FastEditorPointerMetricsFromViewportState(
+          viewport, editor_rect, text_renderer,
+          SettingFlagEnabled(
+              get_setting_value ? get_setting_value("editor.line_numbers") : std::nullopt, true));
+      fast_metrics.has_value()) {
+    return *fast_metrics;
+  }
+  util::PerformanceTrace::Scope fallback_scope(fallback_trace_label);
+  const auto [metrics, sticky_scratch] = EditorPointerLayoutBundle(
+      viewport, editor_rect, text_renderer, get_setting_value, ensure_active_folding_model_fresh);
+  (void)sticky_scratch;
+  return metrics;
+}
+
 bool SettingOn(const std::function<std::optional<std::string>(std::string_view)>& get_setting_value,
                std::string_view id) {
   if (!get_setting_value) {
@@ -501,26 +531,10 @@ bool EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
   if (viewport == nullptr) {
     return false;
   }
-  editor::EditorViewMetrics metrics{};
-  if (const auto fast_metrics =
-          FastEditorPointerMetricsFromViewportState(
-              *viewport, editor_rect, text_renderer_,
-              SettingFlagEnabled(operations_.get_setting_value
-                                     ? operations_.get_setting_value("editor.line_numbers")
-                                     : std::nullopt,
-                                 true));
-      fast_metrics.has_value()) {
-    metrics = *fast_metrics;
-  } else {
-    util::PerformanceTrace::Scope fallback_scope(
-        "EditorMouseCoordinator::HandleDrag::FallbackPointerLayout");
-    const auto [resolved_metrics, metrics_sticky_scratch] =
-        EditorPointerLayoutBundle(*viewport, editor_rect, text_renderer_,
-                                  operations_.get_setting_value,
-                                  operations_.ensure_active_folding_model_fresh);
-    (void)metrics_sticky_scratch;
-    metrics = resolved_metrics;
-  }
+  const editor::EditorViewMetrics metrics = ResolveEditorPointerMetrics(
+      *viewport, editor_rect, text_renderer_, operations_.get_setting_value,
+      operations_.ensure_active_folding_model_fresh,
+      "EditorMouseCoordinator::HandleDrag::FallbackPointerLayout");
   const auto scroll_layout = operations_.compute_editor_scroll_layout(editor_rect, *viewport, metrics);
 
   if (interaction_state_.drag_target == DragTarget::EditorVerticalScrollbar) {
@@ -563,26 +577,10 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
     return false;
   }
 
-  editor::EditorViewMetrics metrics{};
-  if (const auto fast_metrics =
-          FastEditorPointerMetricsFromViewportState(
-              *viewport, editor_rect, text_renderer_,
-              SettingFlagEnabled(operations_.get_setting_value
-                                     ? operations_.get_setting_value("editor.line_numbers")
-                                     : std::nullopt,
-                                 true));
-      fast_metrics.has_value()) {
-    metrics = *fast_metrics;
-  } else {
-    util::PerformanceTrace::Scope fallback_scope(
-        "EditorMouseCoordinator::HandleSelectionMotion::FallbackPointerLayout");
-    const auto [resolved_metrics, selection_sticky_scratch] =
-        EditorPointerLayoutBundle(*viewport, editor_rect, text_renderer_,
-                                  operations_.get_setting_value,
-                                  operations_.ensure_active_folding_model_fresh);
-    (void)selection_sticky_scratch;
-    metrics = resolved_metrics;
-  }
+  const editor::EditorViewMetrics metrics = ResolveEditorPointerMetrics(
+      *viewport, editor_rect, text_renderer_, operations_.get_setting_value,
+      operations_.ensure_active_folding_model_fresh,
+      "EditorMouseCoordinator::HandleSelectionMotion::FallbackPointerLayout");
 
   const std::size_t row = ResolveGapAwareRow(state_, *viewport, metrics,
                                              event.motion.y, operations_.get_setting_value)
