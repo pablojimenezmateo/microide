@@ -369,6 +369,15 @@
     ScrollSurfaceLayout scroll;
   };
 
+  // The terminal caret's rect inside a bottom-panel log layout, or nullopt when it
+  // is scrolled out of view or would sit past the right edge. The paint path and
+  // the blink-invalidation path both resolve through it — computing a caret's rect
+  // twice is how a caret ends up leaving a ghost, or blinking a region that does
+  // not quite cover it.
+  std::optional<SDL_FRect> TerminalCaretRectIn(
+      const LogSurfaceLayout& panel_layout,
+      const terminal::TerminalCursorSnapshot& cursor) const;
+
   using VisibleStripTab = workspace::VisibleStripTab;
   using TabStripOverflowControls = workspace::TabStripOverflowControls;
 

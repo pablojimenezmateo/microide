@@ -591,37 +591,25 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   if (terminal_panel) {
     if (auto* active_terminal = ActiveTerminalTab(); active_terminal != nullptr) {
       const terminal::TerminalCursorSnapshot cursor = active_terminal->session.CursorSnapshot();
-      if (cursor.visible &&
-          cursor.row >= static_cast<std::size_t>(panel_layout.scroll.vertical_scroll) &&
-          cursor.row <
-              static_cast<std::size_t>(panel_layout.scroll.vertical_scroll +
-                                       panel_layout.scroll.visible_rows) &&
-          (panel_vm.focus != FocusTarget::Panel ||
-           CaretVisibleNow())) {
-        const float char_width = std::max(1.0f, terminal_text_renderer_.CharWidth());
-        const float cursor_x = panel_layout.text_x + static_cast<float>(cursor.column) * char_width;
-        const float cursor_y =
-            panel_layout.text_y +
-            static_cast<float>(cursor.row -
-                               static_cast<std::size_t>(panel_layout.scroll.vertical_scroll)) *
-                panel_layout.line_height;
-        if (cursor_x <= panel_layout.content_rect.x + panel_layout.content_rect.w - char_width) {
-          DrawFilledRect(renderer,
-                         MakeRect(cursor_x, cursor_y - 1.0f, char_width, panel_layout.line_height),
-                         theme_.cursor);
-          if (cursor.row >= first_row &&
-              cursor.row - first_row < terminal_lines->size()) {
-            const auto& line = (*terminal_lines)[cursor.row - first_row];
-            if (cursor.column < line.cells.size()) {
-              const auto& cell = line.cells[cursor.column];
-              const auto display_text = cell.DisplayText();
-              if (!display_text.empty()) {
-                const SDL_Color cursor_foreground =
-                    resolve_terminal_colors(cell.style, CellEmphasis::None).second;
-                // DrawString takes std::string_view; pass the view directly without copying.
-                terminal_text_renderer_.DrawString(renderer, cursor_x, cursor_y, cursor_foreground,
-                                                   display_text);
-              }
+      // Same rect the blink invalidation asks for (TerminalCaretRectIn), so the
+      // dirty region and the painted caret cannot disagree.
+      const std::optional<SDL_FRect> caret_rect = TerminalCaretRectIn(panel_layout, cursor);
+      if (caret_rect.has_value() &&
+          (panel_vm.focus != FocusTarget::Panel || CaretVisibleNow())) {
+        DrawFilledRect(renderer, *caret_rect, theme_.cursor);
+        if (cursor.row >= first_row && cursor.row - first_row < terminal_lines->size()) {
+          const auto& line = (*terminal_lines)[cursor.row - first_row];
+          if (cursor.column < line.cells.size()) {
+            const auto& cell = line.cells[cursor.column];
+            const auto display_text = cell.DisplayText();
+            if (!display_text.empty()) {
+              const SDL_Color cursor_foreground =
+                  resolve_terminal_colors(cell.style, CellEmphasis::None).second;
+              // The glyph is drawn at the caret's own origin; the rect carries a
+              // 1px lift, so undo it here to keep the text on the row baseline.
+              // DrawString takes std::string_view; pass the view directly without copying.
+              terminal_text_renderer_.DrawString(renderer, caret_rect->x, caret_rect->y + 1.0f,
+                                                 cursor_foreground, display_text);
             }
           }
         }
