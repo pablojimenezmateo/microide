@@ -367,8 +367,11 @@ MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
   int incoming_line = 1;
   int result_line = 1;
   int current_line = 1;
-  for (const MergeHunk& hunk : model.hunks) {
-    for (int line = base_cursor; line < hunk.base_start; ++line) {
+  // A run of base lines no hunk touches: identical in all three panes, so every
+  // *_changed flag is false and all three line numbers advance together. Emitted
+  // both for the gap ahead of each hunk and for the tail after the last one.
+  const auto emit_unchanged_rows = [&](int from_line, int to_line) {
+    for (int line = from_line; line < to_line; ++line) {
       const std::string& text = model.base_lines[static_cast<std::size_t>(line)];
       display.rows.push_back(MergeDisplayRow{
           .incoming_text = text,
@@ -384,6 +387,9 @@ MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
           .current_changed = false,
       });
     }
+  };
+  for (const MergeHunk& hunk : model.hunks) {
+    emit_unchanged_rows(base_cursor, hunk.base_start);
 
     const std::vector<std::string> hunk_result_lines = MergeChoiceLines(hunk, hunk.choice);
     const bool incoming_changed = hunk.incoming_lines != hunk.base_lines;
@@ -425,22 +431,7 @@ MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
     base_cursor = hunk.base_end;
   }
 
-  for (int line = base_cursor; line < static_cast<int>(model.base_lines.size()); ++line) {
-    const std::string& text = model.base_lines[static_cast<std::size_t>(line)];
-    display.rows.push_back(MergeDisplayRow{
-        .incoming_text = text,
-        .result_text = text,
-        .current_text = text,
-        .incoming_line = incoming_line++,
-        .result_line = result_line++,
-        .current_line = current_line++,
-        .hunk = -1,
-        .conflict = false,
-        .incoming_changed = false,
-        .result_changed = false,
-        .current_changed = false,
-    });
-  }
+  emit_unchanged_rows(base_cursor, static_cast<int>(model.base_lines.size()));
 
   // Only materialize the full merge result for the empty-display fallback; a
   // non-empty display (the common case) never needs it, so a large clean merge
