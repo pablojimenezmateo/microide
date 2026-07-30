@@ -47,16 +47,6 @@ std::size_t CountRemainingMergeConflicts(std::span<const MergeTrackedConflict> c
   return remaining;
 }
 
-std::size_t CountResolvedMergeConflicts(std::span<const MergeTrackedConflict> conflicts) {
-  std::size_t resolved = 0;
-  for (const MergeTrackedConflict& conflict : conflicts) {
-    if (conflict.valid && conflict.resolved) {
-      ++resolved;
-    }
-  }
-  return resolved;
-}
-
 MergeResultState ComputeMergeResultState(const MergeTabState& merge_tab,
                                          const compare::MergeFileConflictMetadata& metadata) {
   if (merge_tab.index_stale || merge_tab.external_result_stale) {

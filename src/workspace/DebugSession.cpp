@@ -51,26 +51,6 @@ bool IsTerminalState(DebugSession::State state) {
 
 }  // namespace
 
-const char* DebugSessionStateName(DebugSession::State state) {
-  switch (state) {
-    case DebugSession::State::Inactive:
-      return "inactive";
-    case DebugSession::State::Initializing:
-      return "initializing";
-    case DebugSession::State::Configuring:
-      return "configuring";
-    case DebugSession::State::Running:
-      return "running";
-    case DebugSession::State::Stopped:
-      return "stopped";
-    case DebugSession::State::Terminated:
-      return "terminated";
-    case DebugSession::State::Failed:
-      return "failed";
-  }
-  return "unknown";
-}
-
 DebugSession::DebugSession() : client_(std::make_unique<DapClient>()) {}
 
 DebugSession::DebugSession(std::unique_ptr<DapClient> client) : client_(std::move(client)) {

@@ -60,7 +60,6 @@ struct BranchReviewTargetState {
   std::uint64_t last_accessed_unix_ms = 0;
 };
 
-std::string BranchReviewTargetKey(const BranchReviewTargetIdentity& target);
 std::string BranchReviewMarkerLabel(BranchReviewMarkerStatus status);
 
 BranchReviewHunkIdentity ComputeBranchReviewHunkIdentity(const CompareModel& model,

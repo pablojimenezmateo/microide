@@ -44,18 +44,6 @@ bool HostPathsAreCaseInsensitive() {
   return false;
 }
 
-std::string_view HostPlatformName(HostPlatform platform) {
-  switch (platform) {
-    case HostPlatform::Linux:
-      return "linux";
-    case HostPlatform::MacOS:
-      return "macos";
-    case HostPlatform::Windows:
-      return "windows";
-  }
-  return "linux";
-}
-
 void SetHostPlatformOverrideForTesting(std::optional<HostPlatform> platform) {
   HostPlatformOverride() = platform;
 }

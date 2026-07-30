@@ -272,11 +272,6 @@ int CompareTabSelectedHunkIndex(const CompareTabState& compare_tab) {
   return compare_tab.model.rows[std::min(model_row, compare_tab.model.rows.size() - 1)].hunk;
 }
 
-void SetCompareTabSelectedPresentationRow(CompareTabState& compare_tab, std::size_t row) {
-  const std::size_t row_count = CompareTabPresentationRowCount(compare_tab);
-  compare_tab.selected_row = row_count == 0 ? 0 : std::min(row, row_count - 1);
-}
-
 const compare::ComparePresentationRow* CompareTabPresentationRowAt(
     const CompareTabState& compare_tab,
     std::size_t presentation_row) {

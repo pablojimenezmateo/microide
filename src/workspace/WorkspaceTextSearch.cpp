@@ -13,11 +13,6 @@ bool StartsWith(std::string_view text, std::string_view prefix) {
   return text.substr(0, prefix.size()) == prefix;
 }
 
-bool EndsWith(std::string_view text, std::string_view suffix) {
-  return text.size() >= suffix.size() &&
-         text.substr(text.size() - suffix.size(), suffix.size()) == suffix;
-}
-
 std::string ToLower(std::string_view text) {
   // UTF-8 case fold (length-preserving for the covered scripts) so buffer literal
   // search matches the case-insensitive behavior of project search and ReplaceAll:

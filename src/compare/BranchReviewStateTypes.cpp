@@ -81,14 +81,6 @@ bool BranchReviewHunkIdentity::operator==(const BranchReviewHunkIdentity& other)
          content_hash == other.content_hash;
 }
 
-std::string BranchReviewTargetKey(const BranchReviewTargetIdentity& target) {
-  std::ostringstream stream;
-  stream << target.repository_root.generic_string() << '\n' << target.base_commit << '\n'
-         << target.head_commit << '\n' << target.merge_base_commit << '\n'
-         << target.snapshot_generation;
-  return stream.str();
-}
-
 std::string BranchReviewMarkerLabel(const BranchReviewMarkerStatus status) {
   switch (status) {
     case BranchReviewMarkerStatus::Unreviewed:

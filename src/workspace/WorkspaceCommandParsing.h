@@ -44,7 +44,6 @@ inline constexpr std::array<float, 10> kUiScalePresets = {
 inline constexpr float kMinUiScale = kUiScalePresets.front();
 inline constexpr float kMaxUiScale = kUiScalePresets.back();
 
-std::string UiScaleLabel(float scale);
 std::optional<float> ParseUiScaleValue(std::string_view text);
 float StepUiScale(float current_scale, int delta);
 

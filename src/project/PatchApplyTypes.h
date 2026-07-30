@@ -72,7 +72,4 @@ struct PatchApplyResult {
 
 bool PatchOperationAppliesToIndex(PatchOperationKind operation);
 bool PatchOperationReversesPatch(PatchOperationKind operation);
-GitOperationResultCategory MapPatchResultToGitCategory(PatchApplyResultCategory category);
-const char* PatchApplyResultCategoryLabel(PatchApplyResultCategory category);
-
 }  // namespace microide::project

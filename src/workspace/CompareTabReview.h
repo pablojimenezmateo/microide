@@ -41,8 +41,6 @@ std::size_t CompareTabPresentationRowCount(const CompareTabState& compare_tab);
 std::size_t CompareTabSelectedModelRow(const CompareTabState& compare_tab);
 const compare::CompareRow& CompareTabSelectedModelRowRef(const CompareTabState& compare_tab);
 int CompareTabSelectedHunkIndex(const CompareTabState& compare_tab);
-void SetCompareTabSelectedPresentationRow(CompareTabState& compare_tab, std::size_t row);
-
 const compare::ComparePresentationRow* CompareTabPresentationRowAt(const CompareTabState& compare_tab,
                                                                  std::size_t presentation_row);
 

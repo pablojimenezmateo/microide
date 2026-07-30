@@ -322,7 +322,6 @@ set(MICROIDE_CORE_SOURCES
   src/project/ProjectBackgroundExecutor.cpp
   src/project/SubprocessHelper.cpp
   src/project/ProjectSearchService.cpp
-  src/project/ProjectRoot.cpp
   src/render/DebugTextBackend.cpp
   src/render/TextRenderer.cpp
   src/render/TextRendererBackend.cpp

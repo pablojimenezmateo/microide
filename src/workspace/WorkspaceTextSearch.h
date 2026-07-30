@@ -12,7 +12,6 @@
 namespace microide::workspace {
 
 bool StartsWith(std::string_view text, std::string_view prefix);
-bool EndsWith(std::string_view text, std::string_view suffix);
 std::string ToLower(std::string_view text);
 
 std::vector<std::string> SplitSyntaxLines(std::string_view text);

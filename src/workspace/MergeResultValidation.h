@@ -60,7 +60,6 @@ bool MergeResultContainsConflictMarkers(std::string_view text);
 MergeResultState ComputeMergeResultState(const MergeTabState& merge_tab,
                                          const compare::MergeFileConflictMetadata& metadata);
 std::size_t CountRemainingMergeConflicts(std::span<const MergeTrackedConflict> conflicts);
-std::size_t CountResolvedMergeConflicts(std::span<const MergeTrackedConflict> conflicts);
 MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request);
 
 // The file's last-write tick, or nullopt if it does not exist / cannot be read.

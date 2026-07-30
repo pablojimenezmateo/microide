@@ -43,7 +43,6 @@ struct MergeConflictClassificationInput {
 };
 
 MergeFileConflictMetadata ClassifyMergeFileConflict(const MergeConflictClassificationInput& input);
-const char* MergeFileConflictKindLabel(MergeFileConflictKind kind);
 bool MergeContentLooksBinary(std::string_view content);
 bool MergeContentIsLineEndingHeavy(std::string_view base,
                                     std::string_view incoming,

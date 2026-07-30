@@ -12,8 +12,6 @@ enum class HostPlatform {
 };
 
 HostPlatform CurrentHostPlatform();
-std::string_view HostPlatformName(HostPlatform platform);
-
 // True when the host filesystem treats paths case-insensitively (the default on
 // Windows and macOS). Honors the test override so path-casing behavior can be
 // exercised on a Linux CI host. Correctness note: on a case-sensitive host, `.GIT`

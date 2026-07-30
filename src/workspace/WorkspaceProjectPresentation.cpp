@@ -164,24 +164,6 @@ std::string BuildMergeBreadcrumbLabel(const std::filesystem::path& project_root,
   return "merge";
 }
 
-std::optional<SDL_Color> ParseProjectColor(std::string_view text) {
-  const std::string token = util::TrimAsciiWhitespace(text);
-  if (const auto rgb = util::DecodeHexColor(token)) {
-    return SDL_Color{(*rgb)[0], (*rgb)[1], (*rgb)[2], 0xff};
-  }
-  return std::nullopt;
-}
-
-std::string FormatProjectColor(SDL_Color color) {
-  std::ostringstream stream;
-  stream << '#'
-         << std::hex << std::setfill('0') << std::nouppercase
-         << std::setw(2) << static_cast<int>(color.r)
-         << std::setw(2) << static_cast<int>(color.g)
-         << std::setw(2) << static_cast<int>(color.b);
-  return stream.str();
-}
-
 SDL_Color DefaultProjectBaseColor(const std::filesystem::path& project_root) {
   static constexpr std::array<SDL_Color, 10> kPalette = {
       // Matplotlib qualitative "Accent" base colors.

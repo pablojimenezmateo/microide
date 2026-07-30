@@ -108,12 +108,6 @@ std::string GitSidebarDisabledActionMessage(GitSidebarActionId action,
                                             bool repo_available,
                                             bool supports_mutations);
 
-std::string BuildGitBranchSummaryLine(std::string_view branch_label,
-                                      std::string_view upstream_label,
-                                      int ahead,
-                                      int behind,
-                                      bool repo_available);
-
 std::string BuildGitStaleBanner(bool snapshot_stale, bool refreshing);
 
 std::string BuildGitRefreshErrorBanner(std::string_view refresh_error);

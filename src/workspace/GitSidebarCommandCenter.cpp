@@ -344,28 +344,6 @@ std::string GitSidebarDisabledActionMessage(const GitSidebarActionId action,
   return {};
 }
 
-std::string BuildGitBranchSummaryLine(const std::string_view branch_label,
-                                      const std::string_view upstream_label,
-                                      const int ahead,
-                                      const int behind,
-                                      const bool repo_available) {
-  if (!repo_available) {
-    return "Not a git repository";
-  }
-  std::string summary = branch_label.empty() ? "HEAD" : std::string(branch_label);
-  if (!upstream_label.empty()) {
-    summary += " → ";
-    summary += upstream_label;
-  }
-  if (ahead > 0 || behind > 0) {
-    summary += " ↑";
-    summary += std::to_string(ahead);
-    summary += " ↓";
-    summary += std::to_string(behind);
-  }
-  return summary;
-}
-
 std::string BuildGitStaleBanner(const bool snapshot_stale, const bool refreshing) {
   if (!snapshot_stale || refreshing) {
     return {};

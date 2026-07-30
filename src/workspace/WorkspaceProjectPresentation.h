@@ -41,8 +41,6 @@ std::string BuildMergeBreadcrumbLabel(const std::filesystem::path& project_root,
                                       const std::filesystem::path& output_path,
                                       std::string_view incoming_label,
                                       std::string_view current_label);
-std::optional<SDL_Color> ParseProjectColor(std::string_view text);
-std::string FormatProjectColor(SDL_Color color);
 SDL_Color DefaultProjectBaseColor(const std::filesystem::path& project_root);
 void ApplyProjectAccent(render::Theme& theme, SDL_Color accent);
 

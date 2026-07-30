@@ -10,11 +10,6 @@
 
 namespace microide::workspace {
 
-std::string UiScaleLabel(float scale) {
-  const int percent = static_cast<int>(std::lround(scale * 100.0f));
-  return std::to_string(percent) + "%";
-}
-
 std::optional<float> ParseUiScaleValue(std::string_view text) {
   if (text.empty()) {
     return std::nullopt;

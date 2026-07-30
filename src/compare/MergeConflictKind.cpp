@@ -198,40 +198,4 @@ MergeFileConflictMetadata ClassifyMergeFileConflict(
   };
 }
 
-const char* MergeFileConflictKindLabel(MergeFileConflictKind kind) {
-  switch (kind) {
-    case MergeFileConflictKind::BothModified:
-      return "both-modified";
-    case MergeFileConflictKind::BothAdded:
-      return "add/add";
-    case MergeFileConflictKind::BothDeleted:
-      return "both-deleted";
-    case MergeFileConflictKind::DeletedByUs:
-      return "deleted-by-us";
-    case MergeFileConflictKind::DeletedByThem:
-      return "deleted-by-them";
-    case MergeFileConflictKind::AddedByUs:
-      return "added-by-us";
-    case MergeFileConflictKind::AddedByThem:
-      return "added-by-them";
-    case MergeFileConflictKind::RenameRename:
-      return "rename/rename";
-    case MergeFileConflictKind::RenameDelete:
-      return "rename/delete";
-    case MergeFileConflictKind::FileDirectory:
-      return "file/directory";
-    case MergeFileConflictKind::Binary:
-      return "binary";
-    case MergeFileConflictKind::Submodule:
-      return "submodule";
-    case MergeFileConflictKind::Mode:
-      return "mode";
-    case MergeFileConflictKind::LineEndingHeavy:
-      return "line-ending-heavy";
-    case MergeFileConflictKind::Unknown:
-      return "unknown";
-  }
-  return "unknown";
-}
-
 }  // namespace microide::compare

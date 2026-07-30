@@ -317,6 +317,4 @@ class DebugSession {
 };
 
 // Stable name for a session state (status text, tracing, tests).
-const char* DebugSessionStateName(DebugSession::State state);
-
 }  // namespace microide::workspace
