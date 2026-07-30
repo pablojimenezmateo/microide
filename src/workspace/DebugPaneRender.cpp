@@ -76,26 +76,13 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
   const DebugPaneModeRowLayout mode_row = DebugPaneModeRow(layout.right_pane);
   for (int i = 0; i < mode_row.tab_count; ++i) {
     const DebugPaneModeTab& tab = mode_row.tabs[static_cast<std::size_t>(i)];
-    const bool active = tab.mode == pane_vm.mode;
-    const bool hovered =
-        last_mouse_position_valid_ && Contains(tab.rect, last_mouse_x_, last_mouse_y_);
-    const ButtonColors colors = ResolveButtonColors(
-        theme_, ButtonTone::Neutral,
-        ButtonVisualState{.enabled = true, .hovered = hovered, .active = active});
-    DrawFilledRect(renderer, tab.rect, colors.fill);
-    DrawRect(renderer, tab.rect, colors.border);
-    if (mode_row.icon_only) {
-      draw_mode_glyph(tab.mode, tab.rect, colors.text);
-    } else {
-      const SDL_FRect icon_rect = MakeRect(tab.rect.x + 4.0f, tab.rect.y, 16.0f, tab.rect.h);
-      draw_mode_glyph(tab.mode, icon_rect, colors.text);
-      const float label_x = icon_rect.x + icon_rect.w + 1.0f;
-      DrawVCenteredTextOn(
-          text_renderer_, renderer,
-          MakeRect(label_x, tab.rect.y, std::max(0.0f, tab.rect.x + tab.rect.w - label_x - 4.0f),
-                   tab.rect.h),
-          0.0f, colors.text, colors.fill, tab.label);
-    }
+    DrawModeTab(text_renderer_, renderer, theme_, tab.rect,
+                last_mouse_position_valid_ && Contains(tab.rect, last_mouse_x_, last_mouse_y_),
+                tab.mode == pane_vm.mode,
+                mode_row.icon_only ? std::string_view{} : tab.label,
+                [&](const SDL_FRect& icon_rect, SDL_Color color) {
+                  draw_mode_glyph(tab.mode, icon_rect, color);
+                });
   }
 
   // Narrow per-mode model pointers wired by the builder — no broad state access.

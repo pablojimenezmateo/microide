@@ -786,6 +786,45 @@ inline void DrawVCenteredTextOn(const render::TextRenderer& text_renderer,
   DrawText(text_renderer, renderer, rect.x + left_padding, y, foreground, text);
 }
 
+// One tab of a mode strip: the icon-plus-label chips that pick the sidebar view
+// (Explorer / Search / Source Control / ...) and the debug pane's mode
+// (Variables / Watch / Breakpoints). Both strips collapse to icon-only when the
+// pane is too narrow for labels, which is what `label.empty()` selects.
+//
+// The two strips are laid out by different code and carry different tab types,
+// but they are the same control and must keep looking like one: same neutral
+// button tone, same 4px icon inset, same 16px icon column, same 1px gap before
+// the label, same 4px trailing inset. Those five constants used to live twice.
+//
+// `draw_icon(icon_rect, color)` paints the glyph; each strip owns its own
+// mode-to-glyph mapping.
+template <typename DrawIcon>
+inline void DrawModeTab(const render::TextRenderer& text_renderer,
+                        SDL_Renderer* renderer,
+                        const render::Theme& theme,
+                        const SDL_FRect& rect,
+                        bool hovered,
+                        bool active,
+                        std::string_view label,
+                        DrawIcon&& draw_icon) {
+  const ButtonColors colors = ResolveButtonColors(
+      theme, ButtonTone::Neutral,
+      ButtonVisualState{.enabled = true, .hovered = hovered, .active = active});
+  FillRect(renderer, rect, colors.fill);
+  OutlineRect(renderer, rect, colors.border);
+  if (label.empty()) {
+    draw_icon(rect, colors.text);
+    return;
+  }
+  const SDL_FRect icon_rect = MakeRect(rect.x + 4.0f, rect.y, 16.0f, rect.h);
+  draw_icon(icon_rect, colors.text);
+  const float label_x = icon_rect.x + icon_rect.w + 1.0f;
+  DrawVCenteredTextOn(
+      text_renderer, renderer,
+      MakeRect(label_x, rect.y, std::max(0.0f, rect.x + rect.w - label_x - 4.0f), rect.h),
+      0.0f, colors.text, colors.fill, label);
+}
+
 inline void DrawCenteredTextOn(const render::TextRenderer& text_renderer,
                                SDL_Renderer* renderer,
                                const SDL_FRect& rect,

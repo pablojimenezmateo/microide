@@ -205,28 +205,15 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
   };
   for (int i = 0; i < mode_row.tab_count; ++i) {
     const SidebarModeTab& tab = mode_row.tabs[static_cast<std::size_t>(i)];
-    const bool active = tab.id == active_view_id;
-    const bool hovered =
-        last_mouse_position_valid_ && Contains(tab.rect, last_mouse_x_, last_mouse_y_);
-    const ButtonColors colors = ResolveButtonColors(
-        theme_, ButtonTone::Neutral,
-        ButtonVisualState{.enabled = true, .hovered = hovered, .active = active});
-    DrawFilledRect(renderer, tab.rect, colors.fill);
-    DrawRect(renderer, tab.rect, colors.border);
-    if (mode_row.icon_only) {
-      draw_mode_glyph(tab.mode, tab.rect, colors.text);
-    } else {
-      const SDL_FRect icon_rect = MakeRect(tab.rect.x + 4.0f, tab.rect.y, 16.0f, tab.rect.h);
-      draw_mode_glyph(tab.mode, icon_rect, colors.text);
-      const float label_x = icon_rect.x + icon_rect.w + 1.0f;
-      const SidebarViewSpec* spec = FindBuiltinSidebarView(tab.mode);
-      const std::string_view tab_label = spec != nullptr ? spec->label : std::string_view{};
-      DrawVCenteredTextOn(
-          text_renderer_, renderer,
-          MakeRect(label_x, tab.rect.y, std::max(0.0f, tab.rect.x + tab.rect.w - label_x - 4.0f),
-                   tab.rect.h),
-          0.0f, colors.text, colors.fill, tab_label);
-    }
+    const SidebarViewSpec* spec = FindBuiltinSidebarView(tab.mode);
+    const std::string_view tab_label =
+        mode_row.icon_only || spec == nullptr ? std::string_view{} : spec->label;
+    DrawModeTab(text_renderer_, renderer, theme_, tab.rect,
+                last_mouse_position_valid_ && Contains(tab.rect, last_mouse_x_, last_mouse_y_),
+                tab.id == active_view_id, tab_label,
+                [&](const SDL_FRect& icon_rect, SDL_Color color) {
+                  draw_mode_glyph(tab.mode, icon_rect, color);
+                });
   }
   if (mode_row.has_overflow) {
     const bool hovered =
