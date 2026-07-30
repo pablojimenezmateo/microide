@@ -1012,6 +1012,25 @@ void TestWorkspaceShellStatusBarSegmentsExplainThemselvesOnHover() {
          "a status bar tooltip should flip above the bar instead of off-screen");
   Expect(tooltip_rect->y >= layout.full.y,
          "a flipped tooltip should stay inside the window");
+
+#if MICROIDE_HAS_SDL3_TTF
+  // ...and it actually paints. The status bar renders after the tooltip pass, so
+  // a card placed over the bar would be covered; the flip above has to hold in
+  // pixels, not just in geometry.
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "the status bar tooltip fixture should capture rendered pixels");
+  const auto theme = microide::render::MakeDefaultTheme();
+  const SDL_Color actual =
+      ReadSurfacePixelOrThrow(pixels, static_cast<int>(std::floor(tooltip_rect->x + 2.0f)),
+                              static_cast<int>(std::floor(tooltip_rect->y + 2.0f)));
+  Expect(actual.r == theme.surface_raised.r && actual.g == theme.surface_raised.g &&
+             actual.b == theme.surface_raised.b && actual.a == theme.surface_raised.a,
+         "a status bar tooltip should render as the shared compact tooltip card");
+  SDL_DestroySurface(pixels);
+#endif
 }
 
 void TestWorkspaceShellFindWidgetControlsNameThemselvesOnHover() {
