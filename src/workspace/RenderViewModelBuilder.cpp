@@ -192,7 +192,10 @@ std::string_view CachedProjectSearchEmptyText(const ProjectSearchState& ps) {
     } else if (ps.running) {
       cache.text = "Searching…";
     } else if (ps.query.text().empty()) {
-      cache.text = "Project Search is idle";
+      // Nothing: the status line directly above already says "Type to search the
+      // project". Saying it twice, and in the second voice naming the subsystem
+      // back at the user ("Project Search is idle"), was noise.
+      cache.text.clear();
     } else {
       cache.text = FormatEmptyState("matches");
     }
