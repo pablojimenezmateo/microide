@@ -71,50 +71,11 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
             : std::string(command);
     launch_label_ = default_launch_label_;
     lines_ = {TerminalLine{}};
-    current_style_ = TerminalStyle{};
-    escape_sequence_buffer_.clear();
-    pending_utf8_sequence_.clear();
-    child_pid_ = -1;
-    running_ = false;
-    stop_requested_ = false;
+    ResetEmulationStateLocked();
     wake_event_pending_ = false;
-    escape_mode_ = EscapeMode::None;
-    osc_escape_pending_ = false;
-    pending_clipboard_text_.reset();
-    use_alternate_screen_ = false;
-    mouse_tracking_normal_ = false;
-    mouse_tracking_drag_ = false;
-    mouse_tracking_any_ = false;
-    mouse_sgr_ext_mode_ = false;
-    application_cursor_keys_mode_ = false;
-    origin_mode_ = false;
-    auto_wrap_mode_ = true;
-    bracketed_paste_mode_ = false;
-    focus_event_mode_ = false;
-    cursor_visible_ = true;
-    // Reset the remaining negotiated/terminal state so a reused session never
-    // inherits a prior shell's protocol state (stale Kitty-keyboard flags would
-    // mis-encode Enter/Tab; a stuck synchronized-output flag would suppress the
-    // first redraw wakes; stale cursor shape / reported cwd / tab stops would
-    // leak through). Kept in lockstep with Stop() and TestAccess::Reset.
-    kitty_keyboard_flags_ = 0;
-    kitty_keyboard_stack_.clear();
-    synchronized_output_ = false;
-    sync_suppressed_wakes_ = 0;
-    cursor_shape_ = CursorShape::Block;
-    cursor_blinking_ = true;
-    reported_working_directory_.clear();
-    tab_stops_.clear();
-    primary_screen_ = ScreenState{};
-    alternate_screen_ = ScreenState{};
     rows_ = 24;
     columns_ = 80;
-    cursor_row_ = 0;
-    cursor_column_ = 0;
-    saved_cursor_row_ = 0;
-    saved_cursor_column_ = 0;
     snapshot_generation_ = 1;
-    ResetScrollRegionLocked();
   }
 
   std::shared_ptr<platform::TerminalBackend> backend = platform::CreateTerminalBackend();
@@ -192,51 +153,12 @@ bool TerminalSession::StartPlaceholderForTesting(const std::filesystem::path& wo
         command.empty() ? ShellProgramName(DefaultShellPath()) : std::string(command);
     launch_label_ = default_launch_label_;
     lines_ = {TerminalLine{}};
-    current_style_ = TerminalStyle{};
-    escape_sequence_buffer_.clear();
-    pending_utf8_sequence_.clear();
     backend_.reset();
-    child_pid_ = -1;
-    running_ = false;
-    stop_requested_ = false;
+    ResetEmulationStateLocked();
     wake_event_pending_ = false;
-    escape_mode_ = EscapeMode::None;
-    osc_escape_pending_ = false;
-    pending_clipboard_text_.reset();
-    use_alternate_screen_ = false;
-    mouse_tracking_normal_ = false;
-    mouse_tracking_drag_ = false;
-    mouse_tracking_any_ = false;
-    mouse_sgr_ext_mode_ = false;
-    application_cursor_keys_mode_ = false;
-    origin_mode_ = false;
-    auto_wrap_mode_ = true;
-    bracketed_paste_mode_ = false;
-    focus_event_mode_ = false;
-    cursor_visible_ = true;
-    // Reset the remaining negotiated/terminal state so a reused session never
-    // inherits a prior shell's protocol state (stale Kitty-keyboard flags would
-    // mis-encode Enter/Tab; a stuck synchronized-output flag would suppress the
-    // first redraw wakes; stale cursor shape / reported cwd / tab stops would
-    // leak through). Kept in lockstep with Stop() and TestAccess::Reset.
-    kitty_keyboard_flags_ = 0;
-    kitty_keyboard_stack_.clear();
-    synchronized_output_ = false;
-    sync_suppressed_wakes_ = 0;
-    cursor_shape_ = CursorShape::Block;
-    cursor_blinking_ = true;
-    reported_working_directory_.clear();
-    tab_stops_.clear();
-    primary_screen_ = ScreenState{};
-    alternate_screen_ = ScreenState{};
     rows_ = 24;
     columns_ = 80;
-    cursor_row_ = 0;
-    cursor_column_ = 0;
-    saved_cursor_row_ = 0;
-    saved_cursor_column_ = 0;
     snapshot_generation_ = 1;
-    ResetScrollRegionLocked();
     test_sent_bytes_.clear();
   }
   PushWakeEvent();
@@ -261,45 +183,9 @@ void TerminalSession::Stop() {
   }
 
   std::scoped_lock lock(mutex_);
-  running_ = false;
-  child_pid_ = -1;
-  stop_requested_ = false;
-  current_style_ = TerminalStyle{};
-  escape_sequence_buffer_.clear();
-  pending_utf8_sequence_.clear();
   default_launch_label_.clear();
   launch_label_.clear();
-  escape_mode_ = EscapeMode::None;
-  osc_escape_pending_ = false;
-  pending_clipboard_text_.reset();
-  use_alternate_screen_ = false;
-  mouse_tracking_normal_ = false;
-  mouse_tracking_drag_ = false;
-  mouse_tracking_any_ = false;
-  mouse_sgr_ext_mode_ = false;
-  application_cursor_keys_mode_ = false;
-  origin_mode_ = false;
-  auto_wrap_mode_ = true;
-  bracketed_paste_mode_ = false;
-  focus_event_mode_ = false;
-  cursor_visible_ = true;
-  // Reset the remaining negotiated/terminal state (see Start()); kept in lockstep
-  // so a reused session never inherits a prior shell's protocol state.
-  kitty_keyboard_flags_ = 0;
-  kitty_keyboard_stack_.clear();
-  synchronized_output_ = false;
-  sync_suppressed_wakes_ = 0;
-  cursor_shape_ = CursorShape::Block;
-  cursor_blinking_ = true;
-  reported_working_directory_.clear();
-  tab_stops_.clear();
-  primary_screen_ = ScreenState{};
-  alternate_screen_ = ScreenState{};
-  cursor_row_ = 0;
-  cursor_column_ = 0;
-  saved_cursor_row_ = 0;
-  saved_cursor_column_ = 0;
-  ResetScrollRegionLocked();
+  ResetEmulationStateLocked();
   if (lines_.empty()) {
     lines_.push_back(TerminalLine{});
   }

@@ -291,6 +291,16 @@ class TerminalSession {
   void SetAlternateScreenLocked(bool enabled, bool clear);
   void TrimScrollbackLocked();
   void AdvanceSnapshotGenerationLocked();
+  // Clears everything a session negotiates or accumulates while a child is
+  // attached: process bookkeeping, the escape/UTF-8 decoder, every DEC/xterm
+  // private mode, the Kitty-keyboard and synchronized-output state, the cursor
+  // shape/position pair, both screens, and the scroll region. Start(),
+  // StartPlaceholderForTesting() and Stop() all need exactly this set, and each
+  // used to spell it out inline — three ~35-line copies that a comment asked
+  // future readers to "keep in lockstep" by hand. Callers layer their own
+  // differences on top (Start seeds the 24x80 geometry and the launch label,
+  // Stop clears the label and keeps the geometry).
+  void ResetEmulationStateLocked();
   bool ReserveWakeEvent(Uint32& event_type) const;
   void PushWakeEvent() const;
 

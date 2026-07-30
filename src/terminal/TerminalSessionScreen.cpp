@@ -556,6 +556,56 @@ void TerminalSession::ResetScrollRegionLocked() {
   scroll_region_bottom_ = rows_ > 0 ? rows_ - 1 : 0;
 }
 
+void TerminalSession::ResetEmulationStateLocked() {
+  // Process bookkeeping.
+  child_pid_ = -1;
+  running_ = false;
+  stop_requested_ = false;
+
+  // Parser state: a half-consumed escape or UTF-8 sequence from the old child
+  // would otherwise be completed by the new one's first bytes.
+  current_style_ = TerminalStyle{};
+  escape_sequence_buffer_.clear();
+  pending_utf8_sequence_.clear();
+  escape_mode_ = EscapeMode::None;
+  osc_escape_pending_ = false;
+  pending_clipboard_text_.reset();
+
+  // DEC/xterm private modes. auto_wrap_mode_ and cursor_visible_ default on;
+  // every other mode defaults off.
+  use_alternate_screen_ = false;
+  mouse_tracking_normal_ = false;
+  mouse_tracking_drag_ = false;
+  mouse_tracking_any_ = false;
+  mouse_sgr_ext_mode_ = false;
+  application_cursor_keys_mode_ = false;
+  origin_mode_ = false;
+  auto_wrap_mode_ = true;
+  bracketed_paste_mode_ = false;
+  focus_event_mode_ = false;
+  cursor_visible_ = true;
+
+  // Negotiated protocol state. Stale Kitty-keyboard flags mis-encode Enter/Tab,
+  // and a stuck synchronized-output flag suppresses the first redraw wakes.
+  kitty_keyboard_flags_ = 0;
+  kitty_keyboard_stack_.clear();
+  synchronized_output_ = false;
+  sync_suppressed_wakes_ = 0;
+  cursor_shape_ = CursorShape::Block;
+  cursor_blinking_ = true;
+  reported_working_directory_.clear();
+  tab_stops_.clear();
+
+  // Screens, cursor, and the scroll region.
+  primary_screen_ = ScreenState{};
+  alternate_screen_ = ScreenState{};
+  cursor_row_ = 0;
+  cursor_column_ = 0;
+  saved_cursor_row_ = 0;
+  saved_cursor_column_ = 0;
+  ResetScrollRegionLocked();
+}
+
 void TerminalSession::ResetTabStopsLocked() {
   const std::size_t width = std::max<std::size_t>(1, columns_);
   tab_stops_.assign(width, false);

@@ -157,7 +157,12 @@ RuleResult CheckTerminalSessionPrivateMethodCount(const std::filesystem::path& r
   // 41: +1 for HasCustomScrollRegionLocked, the named predicate that gates
   // primary-buffer DECSTBM scroll-region behavior (used by AdvanceCursorRowLocked,
   // Reverse Index, and SU/SD) so the common full-screen path stays untouched.
-  constexpr std::size_t kCap = 41;
+  // 42: +1 for ResetEmulationStateLocked. This cap exists to stop the header
+  // accreting helpers, so a helper that *removes* code earns its slot — that one
+  // collapsed three inline ~35-line copies of the session reset (Start,
+  // StartPlaceholderForTesting, Stop) that a comment asked readers to keep in
+  // lockstep by hand, a net loss of ~90 lines from the .cpp.
+  constexpr std::size_t kCap = 42;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::string text = ReadRuleTarget(result, path);
   const std::regex locked_helper_pattern(R"((?:void|bool|std::size_t)\s+\w+Locked\s*\()");
