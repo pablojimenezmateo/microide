@@ -467,6 +467,16 @@ class PluginHost {
 
   struct Callbacks {
     std::function<bool(std::string_view)> is_command_name_available;
+    // open_file and show_sidebar return an OPTIMISTIC bool when the plugin
+    // worker does not hold exclusive shell access: PluginHostCallbacks marshals
+    // the request to the UI thread and answers `true` immediately, because the
+    // real outcome is not known yet. Only the direct-execution path returns the
+    // host's actual result. So `false` means "definitely failed, synchronously";
+    // `true` means "accepted", not "succeeded".
+    //
+    // A host that wants a failure to be visible must therefore report it itself
+    // rather than relying on this return — the shell writes the reason to the
+    // Plugin Errors output channel (see WorkspaceShellPlugins.cpp).
     std::function<bool(const OpenFileRequest&)> open_file;
     std::function<std::optional<ActiveBuffer>()> active_buffer;
     std::function<bool(std::string_view)> show_sidebar;
