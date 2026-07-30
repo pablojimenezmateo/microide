@@ -277,106 +277,85 @@ bool PatchApplyService::RejectIgnoreWhitespaceApply(const CompareTabState& compa
   return true;
 }
 
-bool PatchApplyService::RequestStageHunk(CompareTabState& compare_tab) {
+std::optional<PatchApplyService::ResolvedPatch> PatchApplyService::ResolvePatch(
+    CompareTabState& compare_tab,
+    PatchOperationKind operation,
+    bool line_scope,
+    std::string_view unavailable_detail,
+    std::string_view empty_patch_detail) {
   if (RejectIgnoreWhitespaceApply(compare_tab)) {
-    return false;
+    return std::nullopt;
   }
-  const auto request = BuildRequest(compare_tab, PatchOperationKind::StageHunk, false);
+  auto request = BuildRequest(compare_tab, operation, line_scope);
   if (!request.has_value()) {
     ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
-                  .detail = "Stage hunk is not available for this compare target"});
-    return false;
+                  .detail = std::string(unavailable_detail)});
+    return std::nullopt;
   }
   auto patch = BuildPatchForRequest(*request, compare_tab.model);
   if (!patch.has_value()) {
     ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
-                  .detail = "Selected hunk has no stageable changes"});
+                  .detail = std::string(empty_patch_detail)});
+    return std::nullopt;
+  }
+  return ResolvedPatch{.request = std::move(*request), .patch_text = std::move(*patch)};
+}
+
+bool PatchApplyService::RequestStageHunk(CompareTabState& compare_tab) {
+  auto resolved = ResolvePatch(compare_tab, PatchOperationKind::StageHunk, false,
+                               "Stage hunk is not available for this compare target",
+                               "Selected hunk has no stageable changes");
+  if (!resolved.has_value()) {
     return false;
   }
-  DispatchApply(*request, std::move(*patch));
+  DispatchApply(std::move(resolved->request), std::move(resolved->patch_text));
   return true;
 }
 
 bool PatchApplyService::RequestStageSelectedLines(CompareTabState& compare_tab) {
-  if (RejectIgnoreWhitespaceApply(compare_tab)) {
+  auto resolved = ResolvePatch(compare_tab, PatchOperationKind::StageSelectedLines, true,
+                               "Stage selected lines is not available for this selection",
+                               "Selected lines have no stageable changes");
+  if (!resolved.has_value()) {
     return false;
   }
-  const auto request = BuildRequest(compare_tab, PatchOperationKind::StageSelectedLines, true);
-  if (!request.has_value()) {
-    ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
-                  .detail = "Stage selected lines is not available for this selection"});
-    return false;
-  }
-  auto patch = BuildPatchForRequest(*request, compare_tab.model);
-  if (!patch.has_value()) {
-    ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
-                  .detail = "Selected lines have no stageable changes"});
-    return false;
-  }
-  DispatchApply(*request, std::move(*patch));
+  DispatchApply(std::move(resolved->request), std::move(resolved->patch_text));
   return true;
 }
 
 bool PatchApplyService::RequestUnstageHunk(CompareTabState& compare_tab) {
-  if (RejectIgnoreWhitespaceApply(compare_tab)) {
+  auto resolved = ResolvePatch(compare_tab, PatchOperationKind::UnstageHunk, false,
+                               "Unstage hunk is not available for this compare target",
+                               "Selected hunk has no unstaged changes");
+  if (!resolved.has_value()) {
     return false;
   }
-  const auto request = BuildRequest(compare_tab, PatchOperationKind::UnstageHunk, false);
-  if (!request.has_value()) {
-    ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
-                  .detail = "Unstage hunk is not available for this compare target"});
-    return false;
-  }
-  auto patch = BuildPatchForRequest(*request, compare_tab.model);
-  if (!patch.has_value()) {
-    ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
-                  .detail = "Selected hunk has no unstaged changes"});
-    return false;
-  }
-  DispatchApply(*request, std::move(*patch));
+  DispatchApply(std::move(resolved->request), std::move(resolved->patch_text));
   return true;
 }
 
 bool PatchApplyService::RequestUnstageSelectedLines(CompareTabState& compare_tab) {
-  if (RejectIgnoreWhitespaceApply(compare_tab)) {
+  auto resolved = ResolvePatch(compare_tab, PatchOperationKind::UnstageSelectedLines, true,
+                               "Unstage selected lines is not available for this selection",
+                               "Selected lines have no unstaged changes");
+  if (!resolved.has_value()) {
     return false;
   }
-  const auto request = BuildRequest(compare_tab, PatchOperationKind::UnstageSelectedLines, true);
-  if (!request.has_value()) {
-    ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
-                  .detail = "Unstage selected lines is not available for this selection"});
-    return false;
-  }
-  auto patch = BuildPatchForRequest(*request, compare_tab.model);
-  if (!patch.has_value()) {
-    ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
-                  .detail = "Selected lines have no unstaged changes"});
-    return false;
-  }
-  DispatchApply(*request, std::move(*patch));
+  DispatchApply(std::move(resolved->request), std::move(resolved->patch_text));
   return true;
 }
 
 bool PatchApplyService::RequestDiscardHunkPreview(CompareTabState& compare_tab) {
-  if (RejectIgnoreWhitespaceApply(compare_tab)) {
-    return false;
-  }
-  const auto request = BuildRequest(compare_tab, PatchOperationKind::DiscardHunk, false);
-  if (!request.has_value()) {
-    ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
-                  .detail = "Discard hunk is not available for this compare target"});
-    return false;
-  }
-  auto patch = BuildPatchForRequest(*request, compare_tab.model);
-  if (!patch.has_value()) {
-    ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
-                  .detail = "Selected hunk has no discardable changes"});
+  auto resolved = ResolvePatch(compare_tab, PatchOperationKind::DiscardHunk, false,
+                               "Discard hunk is not available for this compare target",
+                               "Selected hunk has no discardable changes");
+  if (!resolved.has_value()) {
     return false;
   }
   std::lock_guard lock(mutex_);
   pending_discard_ = PendingDiscard{
-      .request = *request,
-      .patch_text = *patch,
+      .request = std::move(resolved->request),
+      .patch_text = std::move(resolved->patch_text),
   };
   if (callbacks_.open_discard_preview_prompt != nullptr) {
     callbacks_.open_discard_preview_prompt(project::PatchApplyPreview{
@@ -388,25 +367,16 @@ bool PatchApplyService::RequestDiscardHunkPreview(CompareTabState& compare_tab) 
 }
 
 bool PatchApplyService::RequestDiscardSelectedLinesPreview(CompareTabState& compare_tab) {
-  if (RejectIgnoreWhitespaceApply(compare_tab)) {
-    return false;
-  }
-  const auto request = BuildRequest(compare_tab, PatchOperationKind::DiscardSelectedLines, true);
-  if (!request.has_value()) {
-    ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
-                  .detail = "Discard selected lines is not available for this selection"});
-    return false;
-  }
-  auto patch = BuildPatchForRequest(*request, compare_tab.model);
-  if (!patch.has_value()) {
-    ReportResult({.category = PatchApplyResultCategory::UnsupportedTarget,
-                  .detail = "Selected lines have no discardable changes"});
+  auto resolved = ResolvePatch(compare_tab, PatchOperationKind::DiscardSelectedLines, true,
+                               "Discard selected lines is not available for this selection",
+                               "Selected lines have no discardable changes");
+  if (!resolved.has_value()) {
     return false;
   }
   std::lock_guard lock(mutex_);
   pending_discard_ = PendingDiscard{
-      .request = *request,
-      .patch_text = *patch,
+      .request = std::move(resolved->request),
+      .patch_text = std::move(resolved->patch_text),
   };
   if (callbacks_.open_discard_preview_prompt != nullptr) {
     callbacks_.open_discard_preview_prompt(project::PatchApplyPreview{
