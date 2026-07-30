@@ -54,11 +54,6 @@ class SoftwareCanvas final {
   SDL_Renderer* renderer_ = nullptr;
 };
 
-bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
-  return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
-         lhs.y + lhs.h > rhs.y;
-}
-
 int CountNonBackgroundPixels(SDL_Surface* surface,
                              const SDL_Rect& rect,
                              SDL_Color background) {

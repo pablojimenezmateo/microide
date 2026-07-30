@@ -241,12 +241,6 @@ exit 0
 #endif
 }
 
-bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
-  return std::any_of(rects.begin(), rects.end(), [&](const SDL_FRect& rect) {
-    return SDL_HasRectIntersectionFloat(&rect, &target);
-  });
-}
-
 std::string DescribePluginState(const WorkspaceShell& shell) {
   std::ostringstream description;
   const auto& errors = WorkspaceShellTestAccess::PluginErrors(shell);

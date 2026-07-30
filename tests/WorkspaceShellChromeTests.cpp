@@ -24,27 +24,6 @@ using microide::workspace::ActionId;
 using microide::workspace::TreeContextTargetKind;
 using microide::workspace::WorkspaceTreeContextMenuItems;
 
-bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
-  return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
-         lhs.y + lhs.h > rhs.y;
-}
-
-bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
-  return std::any_of(rects.begin(), rects.end(),
-                     [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
-}
-
-// Stronger than AnyRectIntersects: one dirty rect must COVER the target. Hover
-// invalidation already drops a 1x1 rect wherever the pointer is, and adjacent
-// chrome rects overlap generously, so a bare intersection test will happily pass
-// while the thing under test never repainted at all.
-bool AnyRectCovers(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
-  return std::any_of(rects.begin(), rects.end(), [&](const SDL_FRect& rect) {
-    return rect.x <= target.x && rect.y <= target.y &&
-           rect.x + rect.w >= target.x + target.w && rect.y + rect.h >= target.y + target.h;
-  });
-}
-
 bool WaitForGitSidebarEntryCount(WorkspaceShell& shell, std::size_t expected_count) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (std::chrono::steady_clock::now() < deadline) {
@@ -57,14 +36,6 @@ bool WaitForGitSidebarEntryCount(WorkspaceShell& shell, std::size_t expected_cou
   }
   WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
   return WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == expected_count;
-}
-
-float MaxRectHeight(const std::vector<SDL_FRect>& rects) {
-  float max_height = 0.0f;
-  for (const SDL_FRect& rect : rects) {
-    max_height = std::max(max_height, rect.h);
-  }
-  return max_height;
 }
 
 SDL_Color ReadSurfacePixelOrThrow(SDL_Surface* surface, int x, int y) {
@@ -450,9 +421,9 @@ void TestWorkspaceShellPopupRowHoverReturnsPopupOnlyInvalidation() {
          "popup row hover should stay on a partial redraw path");
   Expect(hover_result.redraw.rects.size() <= 2,
          "popup row hover should only dirty the affected popup rows");
-  Expect(AnyRectIntersects(hover_result.redraw.rects, *first_item),
+  Expect(AnyRectCovers(hover_result.redraw.rects, *first_item),
          "popup row hover should redraw the previously highlighted row");
-  Expect(AnyRectIntersects(hover_result.redraw.rects, *second_item),
+  Expect(AnyRectCovers(hover_result.redraw.rects, *second_item),
          "popup row hover should redraw the newly highlighted row");
 }
 
@@ -494,9 +465,9 @@ void TestWorkspaceShellTreeSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
   // Up to 4 rects: previous + new hover-button rects + previous + new tooltip rects.
   Expect(hover_result.redraw.rects.size() <= 4,
          "tree header hover should only dirty the affected controls and tooltips");
-  Expect(AnyRectIntersects(hover_result.redraw.rects, mode_rect),
+  Expect(AnyRectCovers(hover_result.redraw.rects, mode_rect),
          "tree header hover should redraw the previously hovered control");
-  Expect(AnyRectIntersects(hover_result.redraw.rects, collapse_rect),
+  Expect(AnyRectCovers(hover_result.redraw.rects, collapse_rect),
          "tree header hover should redraw the newly hovered control");
   Expect(AnyRectCovers(hover_result.redraw.rects, *departed_tooltip),
          "leaving a mode tab should repaint the tooltip card it was showing");
@@ -532,9 +503,9 @@ void TestWorkspaceShellSearchSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
   // Up to 4 rects: previous + new hover-button rects + previous + new tooltip rects.
   Expect(hover_result.redraw.rects.size() <= 4,
          "search header hover should only dirty the affected controls and tooltips");
-  Expect(AnyRectIntersects(hover_result.redraw.rects, mode_rect),
+  Expect(AnyRectCovers(hover_result.redraw.rects, mode_rect),
          "search header hover should redraw the previously hovered control");
-  Expect(AnyRectIntersects(hover_result.redraw.rects, case_rect),
+  Expect(AnyRectCovers(hover_result.redraw.rects, case_rect),
          "search header hover should redraw the newly hovered control");
 }
 
@@ -574,9 +545,9 @@ void TestWorkspaceShellGitSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
   // Up to 4 rects: previous + new hover-button rects + previous + new tooltip rects.
   Expect(hover_result.redraw.rects.size() <= 4,
          "git header hover should only dirty the affected controls and tooltips");
-  Expect(AnyRectIntersects(hover_result.redraw.rects, top_action_rects[0]),
+  Expect(AnyRectCovers(hover_result.redraw.rects, top_action_rects[0]),
          "git header hover should redraw the previously hovered control");
-  Expect(AnyRectIntersects(hover_result.redraw.rects, top_action_rects[2]),
+  Expect(AnyRectCovers(hover_result.redraw.rects, top_action_rects[2]),
          "git header hover should redraw the newly hovered control");
   // Arriving on Refresh has to paint its tooltip; the git sidebar tooltip used to
   // be absent from motion change-detection, so the card only appeared if the
@@ -989,6 +960,40 @@ void TestWorkspaceShellTabTooltipRendersAboveSidebar() {
          "hovered tab tooltips should render above the sidebar fill");
 
   SDL_DestroySurface(pixels);
+}
+
+// A dirty rect has to fully contain the content it stands for. All three
+// row-range builders (editor, compare, merge) nudged the top up by a pixel and
+// left the height alone, so the LAST pixel row of a partially repainted range was
+// never invalidated and kept whatever had been drawn there.
+void TestWorkspaceShellEditorLineRangeDirtyRectCoversItsLines() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "one\ntwo\nthree\nfour\nfive\nsix\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorRenderMetrics(shell);
+  Expect(metrics.line_height > 0.0f, "the fixture should resolve editor render metrics");
+
+  for (const std::size_t span : {std::size_t{1}, std::size_t{3}}) {
+    const std::size_t start_line = 1;
+    const auto rect =
+        WorkspaceShellTestAccess::ActiveEditorLineRangeRect(shell, start_line, start_line + span);
+    Expect(rect.has_value(), "a visible line range should resolve a dirty rect");
+    // The rows the range names occupy [first_line_y + start*lh, + span*lh).
+    const float content_top =
+        metrics.first_line_y + static_cast<float>(start_line) * metrics.line_height;
+    const float content_bottom = content_top + static_cast<float>(span) * metrics.line_height;
+    Expect(rect->y <= content_top,
+           "a line-range dirty rect should start at or above its first row");
+    Expect(rect->y + rect->h >= content_bottom,
+           "a line-range dirty rect should extend past the bottom of its last row");
+  }
 }
 
 void TestWorkspaceShellFindWidgetHoverRepaintsTheCard() {
@@ -3129,6 +3134,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSearchSidebarHeaderHoverReturnsButtonOnlyInvalidation);
   AddTest(tests, "WorkspaceShell/GitSidebarHeaderHoverReturnsButtonOnlyInvalidation",
           TestWorkspaceShellGitSidebarHeaderHoverReturnsButtonOnlyInvalidation);
+  AddTest(tests, "WorkspaceShell/EditorLineRangeDirtyRectCoversItsLines",
+          TestWorkspaceShellEditorLineRangeDirtyRectCoversItsLines);
   AddTest(tests, "WorkspaceShell/FindWidgetHoverRepaintsTheCard",
           TestWorkspaceShellFindWidgetHoverRepaintsTheCard);
   AddTest(tests, "WorkspaceShell/StatusBarSegmentsExplainThemselvesOnHover",

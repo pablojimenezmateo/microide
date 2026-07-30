@@ -159,6 +159,9 @@ std::optional<SDL_FRect> ComputeVisibleLineRangeRect(const SDL_FRect& viewport_r
       layout.first_line_y + static_cast<float>(rect_start - layout.scroll_line) * layout.line_height;
   const float h =
       static_cast<float>(std::min(rect_end, visible_end_line) - rect_start) * layout.line_height;
+  // The diff surfaces paint their row bands one pixel above the nominal text grid
+  // (see WorkspaceShellRenderCompare/Merge), so this returns the band as painted.
+  // Redraw callers wrap it in DirtyRectWithHalo; paint callers use it as-is.
   return MakeRect(viewport_rect.x, y - 1.0f, viewport_rect.w, h);
 }
 

@@ -18,16 +18,6 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
-bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
-  return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
-         lhs.y + lhs.h > rhs.y;
-}
-
-bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
-  return std::any_of(rects.begin(), rects.end(),
-                     [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
-}
-
 std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOverlay(
     WorkspaceShell& shell,
     std::size_t minimum_line_count = 1) {
@@ -227,9 +217,9 @@ void TestWorkspaceShellEditorDirtyTransitionRedrawsBlameNeighborhood() {
          "editor typing should stay on the partial redraw path");
   Expect(!WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell).has_value(),
          "dirty editor buffers should suppress blame immediately after typing");
-  Expect(AnyRectIntersects(result.redraw.rects, overlay->lines.front().rect),
+  Expect(AnyRectCovers(result.redraw.rects, overlay->lines.front().rect),
          "dirty-state redraw should include the blame line above the caret");
-  Expect(AnyRectIntersects(result.redraw.rects, overlay->lines.back().rect),
+  Expect(AnyRectCovers(result.redraw.rects, overlay->lines.back().rect),
          "dirty-state redraw should include the blame line below the caret");
 }
 

@@ -276,8 +276,9 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentMergeResultLineRangeRect(std::si
       ComputeMergeSurfaceLayout(layout->editor_surface, *merge_tab);
   const MergeInteractionLayout interaction =
       BuildMergeInteractionLayout(layout->editor_surface, surface_layout, *merge_tab);
-  return ComputeVisibleLineRangeRect(interaction.result.rect, interaction.result.lines, start_line,
-                                     end_line);
+  const auto band = ComputeVisibleLineRangeRect(interaction.result.rect, interaction.result.lines,
+                                                start_line, end_line);
+  return band.has_value() ? std::optional<SDL_FRect>(DirtyRectWithHalo(*band)) : std::nullopt;
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentMergeResultLineToBottomRect(

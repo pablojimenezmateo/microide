@@ -75,16 +75,6 @@ class SoftwareCanvas final {
 
 #endif
 
-bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
-  return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
-         lhs.y + lhs.h > rhs.y;
-}
-
-bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
-  return std::any_of(rects.begin(), rects.end(),
-                     [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
-}
-
 // The compare/ref picker now runs its git query on the background executor and
 // populates on a later frame via the git-sidebar wake event. Drive the mailbox
 // drain until the picker leaves its loading state (or a 2s deadline elapses).
@@ -93,14 +83,6 @@ bool SettleComparePicker(WorkspaceShell& shell) {
       [&shell]() { return !WorkspaceShellTestAccess::ComparePickerLoading(shell); },
       std::chrono::seconds(2), std::chrono::milliseconds(5),
       [&shell]() { WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell); });
-}
-
-float MaxRectHeight(const std::vector<SDL_FRect>& rects) {
-  float max_height = 0.0f;
-  for (const SDL_FRect& rect : rects) {
-    max_height = std::max(max_height, rect.h);
-  }
-  return max_height;
 }
 
 std::optional<microide::editor::EditorBlameOverlay> WaitForActiveCompareBlameOverlay(
@@ -846,9 +828,9 @@ void TestWorkspaceShellCompareSelectionStepInvalidatesRowBand() {
   Expect(result.handled, "compare selection step should be handled");
   Expect(!result.redraw.full && !result.redraw.rects.empty(),
          "compare selection step should stay on a partial redraw path");
-  Expect(previous_row_rect.has_value() && AnyRectIntersects(result.redraw.rects, *previous_row_rect),
+  Expect(previous_row_rect.has_value() && AnyRectCovers(result.redraw.rects, *previous_row_rect),
          "compare selection step should repaint the previously selected row");
-  Expect(next_row_rect.has_value() && AnyRectIntersects(result.redraw.rects, *next_row_rect),
+  Expect(next_row_rect.has_value() && AnyRectCovers(result.redraw.rects, *next_row_rect),
          "compare selection step should repaint the newly selected row");
   Expect(MaxRectHeight(result.redraw.rects) <
              static_cast<float>(surface.visible_rows) * surface.line_height,

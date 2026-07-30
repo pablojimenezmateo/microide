@@ -334,7 +334,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCompareRowRangeRect(std::size_t 
   const float width = surface_layout.gutter_width + surface_layout.left_width +
                       surface_layout.divider_width + surface_layout.gutter_width +
                       surface_layout.right_width;
-  return MakeRect(surface_layout.left_x, y - 1.0f, width, h);
+  return DirtyRectWithHalo(MakeRect(surface_layout.left_x, y, width, h));
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentCompareRowToBottomRect(std::size_t start_row) const {

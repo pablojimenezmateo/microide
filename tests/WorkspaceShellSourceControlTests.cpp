@@ -20,16 +20,6 @@ using microide::workspace::TabEntry;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
-bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
-  return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
-         lhs.y + lhs.h > rhs.y;
-}
-
-bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
-  return std::any_of(rects.begin(), rects.end(),
-                     [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
-}
-
 std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOverlay(
     WorkspaceShell& shell,
     std::size_t minimum_line_count = 1) {

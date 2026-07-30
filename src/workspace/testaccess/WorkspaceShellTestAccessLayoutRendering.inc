@@ -258,14 +258,17 @@
                                                             std::size_t start_line,
                                                             std::size_t end_line) {
     return shell.CurrentEditorLineRangeRect(start_line, end_line);
-  }  static std::optional<SDL_FRect> ActiveCompareRowRangeRect(WorkspaceShell& shell,
+  }
+  static std::optional<SDL_FRect> ActiveCompareRowRangeRect(WorkspaceShell& shell,
                                                             std::size_t start_row,
                                                             std::size_t end_row) {
     return shell.CurrentCompareRowRangeRect(start_row, end_row);
-  }  static std::optional<SDL_FRect> ActiveMergeConflictRect(WorkspaceShell& shell,
+  }
+  static std::optional<SDL_FRect> ActiveMergeConflictRect(WorkspaceShell& shell,
                                                           std::size_t conflict_index) {
     return shell.CurrentMergeConflictRect(conflict_index);
-  }  static float TextCharWidth(WorkspaceShell& shell) { return shell.text_renderer_.CharWidth(); }
+  }
+  static float TextCharWidth(WorkspaceShell& shell) { return shell.text_renderer_.CharWidth(); }
   static float TextLineHeight(WorkspaceShell& shell) { return shell.text_renderer_.LineHeight(); }
   static std::optional<microide::editor::EditorBlameOverlay> ActiveEditorBlameOverlay(
       WorkspaceShell& shell) {

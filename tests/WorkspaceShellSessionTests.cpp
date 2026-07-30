@@ -52,24 +52,6 @@ class ScopedSessionAppHomes {
   ScopedEnvVar appdata_;
 };
 
-bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
-  return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
-         lhs.y + lhs.h > rhs.y;
-}
-
-bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
-  return std::any_of(rects.begin(), rects.end(),
-                     [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
-}
-
-float MaxRectHeight(const std::vector<SDL_FRect>& rects) {
-  float max_height = 0.0f;
-  for (const SDL_FRect& rect : rects) {
-    max_height = std::max(max_height, rect.h);
-  }
-  return max_height;
-}
-
 void TestWorkspaceShellRestoreSessionPreservesBranchCompareState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -440,9 +422,9 @@ void TestWorkspaceShellMoveMergeSelectionInvalidatesConflictBand() {
 
   Expect(!redraw.full && !redraw.rects.empty(),
          "merge conflict navigation should stay on a partial redraw path");
-  Expect(previous_conflict_rect.has_value() && AnyRectIntersects(redraw.rects, *previous_conflict_rect),
+  Expect(previous_conflict_rect.has_value() && AnyRectCovers(redraw.rects, *previous_conflict_rect),
          "merge conflict navigation should repaint the previously selected conflict");
-  Expect(next_conflict_rect.has_value() && AnyRectIntersects(redraw.rects, *next_conflict_rect),
+  Expect(next_conflict_rect.has_value() && AnyRectCovers(redraw.rects, *next_conflict_rect),
          "merge conflict navigation should repaint the newly selected conflict");
   Expect(MaxRectHeight(redraw.rects) < layout.editor_surface.h,
          "merge conflict navigation should redraw less than the full merge surface height");

@@ -650,12 +650,11 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
   }
   const std::size_t clipped_start = std::max(start_row, visible_start_row);
   const std::size_t clipped_end = std::min(end_row, visible_end_row);
-  return MakeRect(pane_rect.x,
-                  metrics.first_line_y +
-                      static_cast<float>(clipped_start - visible_start_row) * metrics.line_height -
-                      1.0f,
-                  pane_rect.w,
-                  static_cast<float>(clipped_end - clipped_start) * metrics.line_height);
+  return DirtyRectWithHalo(MakeRect(
+      pane_rect.x,
+      metrics.first_line_y +
+          static_cast<float>(clipped_start - visible_start_row) * metrics.line_height,
+      pane_rect.w, static_cast<float>(clipped_end - clipped_start) * metrics.line_height));
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineToBottomRect(std::size_t start_line) const {

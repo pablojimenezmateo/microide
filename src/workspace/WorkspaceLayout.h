@@ -281,6 +281,20 @@ struct EditorBannerButtonLayout {
 };
 
 SDL_FRect MakeRect(float x, float y, float w, float h);
+
+// Turns a content rect into the dirty rect that stands for it: one pixel of halo
+// on every side, for antialiased glyph edges and 1px underlines/stripes that sit
+// just outside the nominal row box.
+//
+// The three row-range redraw-rect builders (editor, compare, merge) each nudged
+// the top up by a pixel and left the height alone, so the LAST pixel row of a
+// partially repainted range was never invalidated — a stale sliver of whatever
+// had been drawn there survived. The blame overlay made it visible: typing to
+// dirty a buffer suppresses blame, but the bottom row of the blame line below the
+// caret kept its old text.
+inline SDL_FRect DirtyRectWithHalo(const SDL_FRect& content) {
+  return SDL_FRect{content.x - 1.0f, content.y - 1.0f, content.w + 2.0f, content.h + 2.0f};
+}
 WorkspaceLayout ComputeLayout(float window_width,
                               float window_height,
                               bool sidebar_visible,
